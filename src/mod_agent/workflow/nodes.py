@@ -1,0 +1,305 @@
+"""Stub business nodes for the Phase A workflow skeleton."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Mapping
+from uuid import uuid4
+
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+
+from .state import ModAgentState, StageName
+
+NodeName = str
+
+NODE_STAGE_MAP: Mapping[NodeName, StageName] = {
+    "plan_request": "request_planning",
+    "draft_feature_spec": "feature_spec",
+    "retrieve_evidence": "evidence_retrieval",
+    "create_implementation_plan": "implementation_plan",
+    "generate_patch_proposal": "patch_proposal",
+    "review_proposal": "proposal_review",
+    "dry_run_apply": "dry_run_apply",
+    "build": "build",
+    "collect_runtime_evidence": "runtime_evidence",
+    "create_repair_plan": "repair_plan",
+    "evaluate": "evaluation",
+    "done": "done",
+    "blocked": "blocked",
+}
+
+NODE_ARTIFACT_MAP: Mapping[NodeName, str] = {
+    "plan_request": "request_planning_report",
+    "draft_feature_spec": "feature_spec",
+    "retrieve_evidence": "evidence_pack",
+    "create_implementation_plan": "implementation_plan",
+    "generate_patch_proposal": "patch_proposal",
+    "review_proposal": "proposal_review",
+    "dry_run_apply": "dry_run_result",
+    "build": "build_result",
+    "collect_runtime_evidence": "runtime_evidence",
+    "create_repair_plan": "repair_plan",
+    "evaluate": "eval_report",
+    "done": "workflow_summary",
+    "blocked": "blocked_report",
+}
+
+
+@dataclass(frozen=True)
+class TraceEvent:
+    """Structured trace event emitted by a stub node."""
+
+    event_id: str
+    run_id: str
+    feature_id: str
+    node_name: str
+    stage: StageName
+    event_type: str
+    status: str
+    artifact_refs: list[str]
+    summary: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable trace event."""
+
+        return {
+            "event_id": self.event_id,
+            "run_id": self.run_id,
+            "feature_id": self.feature_id,
+            "node_name": self.node_name,
+            "stage": self.stage,
+            "event_type": self.event_type,
+            "status": self.status,
+            "artifact_refs": self.artifact_refs,
+            "summary": self.summary,
+        }
+
+
+@dataclass(frozen=True)
+class StubNodeResult:
+    """Result produced by a stub node execution."""
+
+    state: ModAgentState
+    artifact_ref: ArtifactRef
+    trace_event: TraceEvent
+
+
+class StubNodeRunner:
+    """Run Phase A business nodes as safe, artifact-backed stubs."""
+
+    def __init__(self, artifact_store: ArtifactStore) -> None:
+        self.artifact_store = artifact_store
+
+    def run(self, node_name: NodeName, state: ModAgentState) -> StubNodeResult:
+        """Execute a stub node and return updated state plus trace."""
+
+        if node_name not in NODE_STAGE_MAP:
+            raise KeyError(f"Unknown stub node: {node_name}")
+
+        stage = NODE_STAGE_MAP[node_name]
+        artifact_type = NODE_ARTIFACT_MAP[node_name]
+        feature_id = state.get("feature_id") or state["request_id"]
+        event_id = f"evt_{uuid4().hex}"
+        payload = self._payload_for(
+            artifact_type=artifact_type,
+            node_name=node_name,
+            stage=stage,
+            user_request=state["user_request"],
+        )
+        artifact_ref = self.artifact_store.write(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            payload=payload,
+            status="stubbed",
+            trace_refs=[event_id],
+        )
+        next_state = self._copy_state(state)
+        next_state["feature_id"] = feature_id
+        next_state["current_stage"] = stage
+        next_state["artifacts"][artifact_type] = artifact_ref.path
+        next_state["artifact_hashes"][artifact_type] = artifact_ref.artifact_hash
+
+        if node_name == "blocked" and not next_state["blockers"]:
+            next_state["blockers"].append(
+                {
+                    "stage": stage,
+                    "reason": "Phase A blocked stub node reached.",
+                }
+            )
+
+        trace_event = TraceEvent(
+            event_id=event_id,
+            run_id=state["run_id"],
+            feature_id=feature_id,
+            node_name=node_name,
+            stage=stage,
+            event_type="node_finished",
+            status="stubbed",
+            artifact_refs=[artifact_ref.path],
+            summary=f"{node_name} completed as a Phase A stub.",
+        )
+        return StubNodeResult(
+            state=next_state,
+            artifact_ref=artifact_ref,
+            trace_event=trace_event,
+        )
+
+    @staticmethod
+    def _payload_for(
+        *,
+        artifact_type: str,
+        node_name: str,
+        stage: StageName,
+        user_request: str,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "node_name": node_name,
+            "stage": stage,
+            "message": (
+                "Phase A stub node. No real retrieval, patch generation, build, "
+                "runtime action, or source write was performed."
+            ),
+        }
+        if artifact_type == "request_planning_report":
+            payload.update(
+                {
+                    "feature_id": "stubbed_feature",
+                    "user_request": user_request,
+                    "route": "standard_feature",
+                    "risk_level": "medium",
+                    "target_mod": None,
+                    "requires_hook_evidence": True,
+                    "requires_runtime_evidence": False,
+                    "uncertainties": [],
+                    "blocked": False,
+                }
+            )
+        if artifact_type == "feature_spec":
+            payload.update(
+                {
+                    "feature_id": "stubbed_feature",
+                    "user_request": user_request,
+                    "target_behavior": user_request,
+                    "non_goals": ["Phase A stub does not define real non-goals."],
+                    "target_mod": None,
+                    "risk_level": "medium",
+                    "acceptance_criteria": ["Phase A stub has no real acceptance criteria."],
+                    "evidence_requirements": ["Phase A stub requires future evidence."],
+                    "runtime_verification_plan": [],
+                    "blocked": False,
+                    "blockers": [],
+                }
+            )
+        if artifact_type == "evidence_pack":
+            payload.update(
+                {
+                    "query": user_request,
+                    "readiness": "insufficient",
+                    "can_generate_patch": False,
+                    "items": [],
+                    "gaps": ["Phase A stub did not run evidence retrieval."],
+                    "excluded": [],
+                    "blockers": [
+                        {
+                            "code": "STUBBED_EVIDENCE_RETRIEVAL",
+                            "message": "Evidence retrieval is stubbed in this workflow node.",
+                            "needed_evidence": ["knowledge index", "symbol evidence"],
+                        }
+                    ],
+                }
+            )
+        if artifact_type == "implementation_plan":
+            payload.update(
+                {
+                    "feature_id": "stubbed_feature",
+                    "target_files": [],
+                    "target_symbols": [],
+                    "evidence_refs": [],
+                    "proposed_changes": [],
+                    "side_effect_boundaries": [],
+                    "test_plan": [],
+                    "rollback_plan": [],
+                    "open_questions": ["Phase A stub did not create a real implementation plan."],
+                    "blocking": True,
+                    "blockers": [
+                        {
+                            "code": "STUBBED_IMPLEMENTATION_PLAN",
+                            "message": "Implementation planning is stubbed in this workflow node.",
+                        }
+                    ],
+                }
+            )
+        if artifact_type == "patch_proposal":
+            payload.update(
+                {
+                    "proposal_id": "stubbed_proposal",
+                    "feature_id": "stubbed_feature",
+                    "summary": "Phase A stub proposal.",
+                    "files": [],
+                    "diff_intent": [],
+                    "evidence_refs": [],
+                    "scope_boundary": [],
+                    "risk_assessment": {
+                        "risk_level": "blocked",
+                        "requires_manual_review": True,
+                    },
+                    "expected_tests": [],
+                    "manual_review_notes": ["Phase A stub did not generate patch intent."],
+                    "blocked": True,
+                    "blockers": [
+                        {
+                            "code": "STUBBED_PATCH_PROPOSAL",
+                            "message": "Patch proposal generation is stubbed.",
+                        }
+                    ],
+                }
+            )
+        if artifact_type == "proposal_review":
+            payload.update(
+                {
+                    "decision": "revise_proposal",
+                    "findings": [
+                        {
+                            "rule_id": "stubbed_review",
+                            "level": "blocking",
+                            "message": "Proposal review is stubbed.",
+                            "change_id": None,
+                            "evidence_refs": [],
+                        }
+                    ],
+                    "required_changes": ["Run real proposal review before dry-run apply."],
+                    "allowed_next_stage": None,
+                    "checked_rules": ["stubbed_review"],
+                    "trace_metrics": {
+                        "num_changes_checked": 0,
+                        "num_blocking_findings": 1,
+                    },
+                }
+            )
+        return payload
+
+    @staticmethod
+    def _copy_state(state: ModAgentState) -> ModAgentState:
+        return ModAgentState(
+            run_id=state["run_id"],
+            request_id=state["request_id"],
+            feature_id=state["feature_id"],
+            user_request=state["user_request"],
+            target_domain=state["target_domain"],
+            target_mod=state["target_mod"],
+            execution_path=state["execution_path"],
+            risk_level=state["risk_level"],
+            current_stage=state["current_stage"],
+            next_stage=state["next_stage"],
+            artifacts=dict(state["artifacts"]),
+            artifact_hashes=dict(state["artifact_hashes"]),
+            approvals=dict(state["approvals"]),
+            blockers=list(state["blockers"]),
+            warnings=list(state["warnings"]),
+            evidence_summary=dict(state["evidence_summary"]),
+            review_summary=dict(state["review_summary"]),
+            build_summary=dict(state["build_summary"]),
+            runtime_summary=dict(state["runtime_summary"]),
+            trace_events=list(state["trace_events"]),
+            retry_count=state["retry_count"],
+        )

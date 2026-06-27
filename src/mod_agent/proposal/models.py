@@ -1,0 +1,115 @@
+"""Contracts for patch proposal and review gate artifacts."""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass
+from typing import Any, Literal
+
+ReviewDecision = Literal[
+    "approve_dry_run",
+    "revise_proposal",
+    "blocked_insufficient_evidence",
+    "blocked_scope_risk",
+    "blocked_requires_human",
+    "already_satisfied",
+]
+
+
+@dataclass(frozen=True)
+class PatchProposal:
+    """Reviewable patch intent, not an applied diff."""
+
+    proposal_id: str
+    feature_id: str
+    summary: str
+    files: tuple[str, ...]
+    diff_intent: tuple[dict[str, Any], ...]
+    evidence_refs: tuple[str, ...]
+    scope_boundary: tuple[str, ...]
+    risk_assessment: dict[str, Any]
+    expected_tests: tuple[str, ...]
+    manual_review_notes: tuple[str, ...] = ()
+    blocked: bool = False
+    blockers: tuple[dict[str, Any], ...] = ()
+
+    def to_artifact_payload(self) -> dict[str, Any]:
+        """Return payload compatible with the patch_proposal contract."""
+
+        return {
+            "node_name": "generate_patch_proposal",
+            "stage": "patch_proposal",
+            "message": (
+                "Patch proposal is ready for review."
+                if not self.blocked
+                else "Patch proposal is blocked before review."
+            ),
+            "proposal_id": self.proposal_id,
+            "feature_id": self.feature_id,
+            "summary": self.summary,
+            "files": list(self.files),
+            "diff_intent": list(self.diff_intent),
+            "evidence_refs": list(self.evidence_refs),
+            "scope_boundary": list(self.scope_boundary),
+            "risk_assessment": self.risk_assessment,
+            "expected_tests": list(self.expected_tests),
+            "manual_review_notes": list(self.manual_review_notes),
+            "blocked": self.blocked,
+            "blockers": list(self.blockers),
+        }
+
+
+@dataclass(frozen=True)
+class ReviewFinding:
+    """Structured finding emitted by a review rule."""
+
+    rule_id: str
+    level: str
+    message: str
+    change_id: str | None = None
+    evidence_refs: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return JSON-serializable finding."""
+
+        return {
+            "rule_id": self.rule_id,
+            "level": self.level,
+            "message": self.message,
+            "change_id": self.change_id,
+            "evidence_refs": list(self.evidence_refs),
+        }
+
+
+@dataclass(frozen=True)
+class ProposalReview:
+    """Composite review gate result."""
+
+    decision: ReviewDecision
+    findings: tuple[ReviewFinding, ...]
+    required_changes: tuple[str, ...]
+    allowed_next_stage: str | None
+    checked_rules: tuple[str, ...]
+    trace_metrics: dict[str, int]
+
+    def to_artifact_payload(self) -> dict[str, Any]:
+        """Return payload compatible with the proposal_review contract."""
+
+        return {
+            "node_name": "review_proposal",
+            "stage": "proposal_review",
+            "message": f"Proposal review decision: {self.decision}.",
+            "decision": self.decision,
+            "findings": [finding.to_dict() for finding in self.findings],
+            "required_changes": list(self.required_changes),
+            "allowed_next_stage": self.allowed_next_stage,
+            "checked_rules": list(self.checked_rules),
+            "trace_metrics": self.trace_metrics,
+        }
+
+
+def stable_proposal_id(feature_id: str, evidence_refs: tuple[str, ...]) -> str:
+    """Create a stable proposal id for a feature/evidence set."""
+
+    seed = f"{feature_id}:{','.join(evidence_refs)}"
+    return "proposal_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
