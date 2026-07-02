@@ -131,6 +131,12 @@ class TestElapsedMs:
         time.sleep(0.005)
         assert tc.elapsed_ms() > 0
 
+    def test_total_elapsed_allows_raw_zero_duration(self) -> None:
+        tc = TraceContext()
+        tc._finish_perf_ns = tc._start_perf_ns
+
+        assert tc.elapsed_ms() == 0.0
+
     def test_stage_elapsed(self) -> None:
         tc = TraceContext()
         tc.record_stage("a", {}, elapsed_ms=12.3)
