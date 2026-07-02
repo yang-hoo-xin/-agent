@@ -86,8 +86,8 @@ blocked      Cannot proceed until named evidence, dependency, or user input exis
 | RET-004 | 8.7, 45.8 | Dense retrieval with embedding provider abstraction | RET | not_started | after BM25/symbol stable | Deferred behind V1 lexical/symbol evidence |
 | RET-005 | 8.8, 45.9.2 | RRF fusion across retrieval routes | RET | not_started | future hybrid retrieval task | No fusion implementation |
 | RET-006 | 8.9, 45.9.3 | Rerank with fallback and trace visibility | RET | not_started | future rerank task | No rerank implementation |
-| RET-007 | 8.10, 45.10 | Evidence readiness gate blocks unsafe patching | RET | tested | Q-007 and Q-010 done | Readiness blocks unsafe graph continuation before implementation/proposal/review/execution artifacts; hybrid readiness remains future work |
-| RET-008 | 8.11, 37.5, 45.4 | EvidencePack includes methods used, missing evidence, disabled modes, timing | RET | tested | Q-007 done | Artifact payload requires and serializes retrieval_methods_used, missing_evidence, disabled_modes, timing, and trace_refs |
+| RET-007 | 8.10, 45.10 | Evidence readiness gate blocks unsafe patching | RET | tested | Q-007, Q-010, R-009 done | Readiness blocks unsafe graph continuation before implementation/proposal/review/execution artifacts; R-009 blocks legacy_rag_auxiliary-only retrieval from advancing writable planning |
+| RET-008 | 8.11, 37.5, 45.4 | EvidencePack includes methods used, missing evidence, disabled modes, timing | RET | tested | Q-007, R-009 done | Artifact payload requires and serializes retrieval_methods_used, missing_evidence, disabled_modes, timing, trace_refs, authority, and authoritative_for_patch |
 | RET-009 | 45.11 | Citation and source transparency | RET | partial | future citation task | Evidence refs exist; citation contract not fully implemented |
 | RET-010 | 37.8 | Targeted design and process black-box decomposition | RET | partial | Q-010 done; Q-008 and dashboard tasks next | EvidencePack and retrieve_evidence trace now expose methods, missing evidence, disabled modes, and timing; dashboard/eval views remain incomplete |
 
@@ -192,6 +192,7 @@ blocked      Cannot proceed until named evidence, dependency, or user input exis
 | MISS-R006A | 18, 39, 45.12 | DataService delete_document and reset_all are blocked by default and require explicit confirmation, explicit enablement, and permission approval before execution | R-006 | `src/observability/dashboard/services/data_service.py`, `tests/unit/test_dashboard_data_service.py`, `tests/unit/test_permissions.py` |
 | MISS-R007A | 18, 39, 45.12 | TraceService dashboard reads now redact sensitive keys including nested non-string values, hide Windows and POSIX absolute paths, cap long strings, keep safe_mode redacted, and require explicit include_raw=True for unsafe raw trace payloads | R-007 unit closure repair | `src/observability/dashboard/services/trace_service.py`, `src/core/trace/trace_context.py`, `tests/unit/test_trace_service.py`, `tests/unit/test_trace_context.py` |
 | MISS-R007B | 39.3 | Dashboard smoke e2e now runs successfully in .venv after installing streamlit | R-007 e2e closure | `tests/e2e/test_dashboard_smoke.py` |
+| MISS-R009A | 8.10, 8.11, 37.5, 45.10 | Legacy RAG retrieval output is explicitly auxiliary and cannot bypass mod_agent deterministic evidence/readiness gates for writable planning | R-009 | `src/mod_agent/evidence/models.py`, `src/mod_agent/evidence/readiness.py`, `src/mod_agent/planning/implementation_plan.py`, `tests/unit/test_evidence_retrieval.py`, `tests/unit/test_planning.py` |
 
 ## Open Missing Requirement Register
 

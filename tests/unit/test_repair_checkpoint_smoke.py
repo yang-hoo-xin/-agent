@@ -285,6 +285,8 @@ def _evidence_payload() -> dict[str, object]:
         "query": "make Load enable diagnostics",
         "readiness": "sufficient",
         "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
         "items": [
             {
                 "evidence_id": "build_diag:0:CS0246:Plugin.cs:12",

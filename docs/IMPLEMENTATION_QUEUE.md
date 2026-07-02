@@ -18,9 +18,17 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-008 Fake Execution Status Normalization
-next_recommended_task: R-009 Retrieval Authority Boundary
+last_completed: R-009 Retrieval Authority Boundary
+next_recommended_task: R-010 Single Collection Resolver
 Q-020_status: queued; blocked behind active Review Repair Queue
+```
+
+## Legacy Test Triage
+
+```text
+LEGACY-TEST-001_status: queued
+Scope: normalize full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy test assertions.
+Policy: LEGACY-TEST-001 does not block R-009. R-009 may only absorb evidence_retrieval, stub_nodes, and sparse_encoder failures that directly affect retrieval authority or evidence boundary behavior.
 ```
 ## Recently Completed
 
@@ -57,6 +65,7 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | R-006 | completed | Dashboard destructive operations are blocked by default behind confirmation, explicit enablement, permission decision, and operation summaries | `docs/audits/LOOP_HISTORY.md` |
 | R-007 | completed | Trace/dashboard reads are redacted by default, raw access is explicit, timing preserves raw zero duration, and dashboard smoke e2e passes | `docs/audits/LOOP_HISTORY.md` |
 | R-008 | completed | Fake/local execution summaries distinguish workflow completion from requested behavior success | `docs/audits/LOOP_HISTORY.md` |
+| R-009 | completed | Legacy RAG output is auxiliary only; controlled implementation can advance only from mod_agent deterministic evidence packs | `docs/PROJECT_STATE.md` |
 ## Review Repair Queue
 
 ```text
@@ -246,7 +255,7 @@ Completed evidence:
 ### R-009: Retrieval Authority Boundary
 
 ```text
-Status: queued
+Status: completed
 Module: RET, KB, WF
 Spec refs: 8, 37, 45, 49
 Source finding: P1-001
@@ -261,6 +270,15 @@ Failure behavior: unsupported source routes to insufficient evidence
 Out of scope: replacing legacy RAG APIs
 Dependencies: Q-007, Q-010
 Conflict checks: preserve mature RAG skeleton as auxiliary evidence subsystem
+Completed evidence:
+  - EvidenceItem now carries an authority value and EvidencePack artifacts serialize authority plus authoritative_for_patch.
+  - EvidenceReadinessClassifier blocks legacy_rag_auxiliary-only evidence as AUXILIARY_RETRIEVAL_NOT_AUTHORITATIVE.
+  - ImplementationPlanner requires authority=mod_agent_deterministic_evidence and authoritative_for_patch=true before planning writable changes.
+  - Stub retrieval evidence is explicitly marked non-authoritative for patching.
+  - sparse/query tokenization preserves code-like terms such as machine-learning, deep_learning, and gpt-4 for retrieval boundary tests.
+  - focused R-009 tests passed: 123 passed, 1 warning.
+  - affected workflow/dashboard tests passed: 21 passed.
+  - affected hybrid/query trace tests passed: 43 passed, 1 warning.
 ```
 
 ### R-010: Single Collection Resolver

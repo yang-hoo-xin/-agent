@@ -43,7 +43,8 @@ def test_stub_node_emits_structured_trace_event(tmp_path: Path) -> None:
     )
     runner = StubNodeRunner(ArtifactStore(tmp_path / "artifacts"))
 
-    result = runner.run("retrieve_evidence", state)
+    feature_result = runner.run("draft_feature_spec", state)
+    result = runner.run("retrieve_evidence", feature_result.state)
 
     event = result.trace_event.to_dict()
     assert event["event_type"] == "node_finished"

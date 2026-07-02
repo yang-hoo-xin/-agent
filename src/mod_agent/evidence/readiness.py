@@ -12,6 +12,7 @@ from .models import (
 
 HOOK_SOURCE_TYPES = frozenset({"target_source", "reference_mod", "decompiled_api"})
 HOOK_METHODS = frozenset({"symbol", "symbol_exact", "symbol_substring"})
+AUTHORITATIVE_ITEM_AUTHORITY = "mod_agent_deterministic"
 
 
 class EvidenceReadinessClassifier:
@@ -30,6 +31,31 @@ class EvidenceReadinessClassifier:
             return EvidencePack.empty(
                 query=request.query,
                 reason="No source, API, artifact, log, or domain evidence matched the request.",
+            )
+
+        authoritative_items = [
+            item for item in items if item.authority == AUTHORITATIVE_ITEM_AUTHORITY
+        ]
+        if not authoritative_items:
+            blockers = (
+                {
+                    "code": "AUXILIARY_RETRIEVAL_NOT_AUTHORITATIVE",
+                    "message": (
+                        "Auxiliary or legacy retrieval output cannot approve "
+                        "controlled implementation."
+                    ),
+                    "needed_evidence": ["mod_agent deterministic evidence pack"],
+                },
+            )
+            return EvidencePack(
+                query=request.query,
+                readiness="partial",
+                can_generate_patch=False,
+                items=tuple(items),
+                excluded=tuple(excluded or []),
+                gaps=("Only auxiliary retrieval output was available.",),
+                blockers=blockers,
+                missing_evidence=missing_evidence_from_blockers(blockers),
             )
 
         if any("contradiction" in note.lower() for item in items for note in item.risk_notes):
@@ -55,12 +81,12 @@ class EvidenceReadinessClassifier:
             return self._pack(
                 request=request,
                 readiness="sufficient",
-                items=items,
+                items=authoritative_items,
                 excluded=excluded or [],
                 message="Quick patch evidence is sufficient without hook evidence.",
             )
 
-        if request.requires_hook_evidence and not self._has_hook_evidence(items):
+        if request.requires_hook_evidence and not self._has_hook_evidence(authoritative_items):
             blockers = (
                 {
                     "code": "INSUFFICIENT_HOOK_EVIDENCE",
@@ -89,7 +115,7 @@ class EvidenceReadinessClassifier:
         return self._pack(
             request=request,
             readiness="sufficient",
-            items=items,
+            items=authoritative_items,
             excluded=excluded or [],
             message="Evidence is sufficient for implementation planning.",
         )

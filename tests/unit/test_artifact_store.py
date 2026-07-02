@@ -66,6 +66,8 @@ def _evidence_payload() -> dict[str, object]:
         "query": "Load",
         "readiness": "insufficient",
         "can_generate_patch": False,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": False,
         "items": [],
         "gaps": ["stub"],
         "excluded": [],

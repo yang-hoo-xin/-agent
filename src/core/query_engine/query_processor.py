@@ -222,8 +222,22 @@ class QueryProcessor:
         """
         tokens: List[str] = []
 
-        # Use jieba to segment (handles Chinese + keeps English intact)
-        raw_tokens = jieba.lcut(text)
+        # Preserve English/code-like terms before jieba splits hyphenated tokens.
+        protected_terms = re.findall(r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*", text)
+        protected_spans = [match.span() for match in re.finditer(r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*", text)]
+        masked_parts: list[str] = []
+        last = 0
+        for start, end in protected_spans:
+            masked_parts.append(text[last:start])
+            masked_parts.append(" " * (end - start))
+            last = end
+        masked_parts.append(text[last:])
+        masked_text = "".join(masked_parts)
+
+        tokens.extend(protected_terms)
+
+        # Use jieba to segment the remaining text.
+        raw_tokens = jieba.lcut(masked_text)
 
         for token in raw_tokens:
             token = token.strip()

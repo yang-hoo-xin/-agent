@@ -108,12 +108,14 @@ class StubNodeRunner:
             stage=stage,
             user_request=state["user_request"],
         )
+        upstream_refs = self._upstream_refs_for(artifact_type, feature_id, state)
         artifact_ref = self.artifact_store.write(
             feature_id=feature_id,
             artifact_type=artifact_type,
             payload=payload,
             status="stubbed",
             trace_refs=[event_id],
+            upstream_refs=upstream_refs,
         )
         next_state = self._copy_state(state)
         next_state["feature_id"] = feature_id
@@ -145,6 +147,28 @@ class StubNodeRunner:
             artifact_ref=artifact_ref,
             trace_event=trace_event,
         )
+
+    def _upstream_refs_for(
+        self,
+        artifact_type: str,
+        feature_id: str,
+        state: ModAgentState,
+    ) -> list[ArtifactRef]:
+        contract = self.artifact_store.registry.get(artifact_type)
+        refs: list[ArtifactRef] = []
+        for upstream_type in sorted(contract.required_upstream_artifacts):
+            path = state["artifacts"].get(upstream_type)
+            artifact_hash = state["artifact_hashes"].get(upstream_type)
+            if path and artifact_hash:
+                refs.append(
+                    ArtifactRef(
+                        feature_id=feature_id,
+                        artifact_type=upstream_type,
+                        path=path,
+                        artifact_hash=artifact_hash,
+                    )
+                )
+        return refs
 
     @staticmethod
     def _payload_for(
@@ -203,6 +227,8 @@ class StubNodeRunner:
                     "query": user_request,
                     "readiness": "insufficient",
                     "can_generate_patch": False,
+                    "authority": "mod_agent_deterministic_evidence",
+                    "authoritative_for_patch": False,
                     "items": [],
                     "gaps": ["Phase A stub did not run evidence retrieval."],
                     "excluded": [],

@@ -9,15 +9,15 @@ Last updated: 2026-07-02
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-008 Fake Execution Status Normalization
-next_recommended_task: R-009 Retrieval Authority Boundary
+last_completed: R-009 Retrieval Authority Boundary
+next_recommended_task: R-010 Single Collection Resolver
 ordinary_queue_status: Q-020 and later tasks remain queued but blocked behind active Review Repair Queue
 ```
 
 ## Current Baseline
 
 ```text
-branch: repair/r008-fake-execution-status-normalization
+branch: repair/r009-retrieval-authority-boundary
 remote: https://github.com/yang-hoo-xin/-agent.git
 baseline commit: 914f16e chore: establish controlled mod agent baseline
 baseline tag: baseline-controlled-agent-v0
@@ -25,7 +25,8 @@ repair chain:
   R-001-R-005 aggregate baseline: 55c0d66 chore(repair): restore R-001-R-005 historical repair baseline
   R-006 clean extraction: 525d8e7 fix(dashboard): extract R-006 destructive operation guard
   R-007 closure repair: 1c398dd fix(observability): close R-007 trace redaction boundary
-current R-008 status: completed; focused and affected tests passed
+  R-008 fake execution normalization: 86a5dc9 fix(workflow): normalize fake execution status reporting
+current R-009 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -33,7 +34,6 @@ commit policy: manual commit after focused tests and status review
 
 | Task | Source Finding | Status | Blocking Reason |
 | --- | --- | --- | --- |
-| R-009 | P1-001 | queued | legacy RAG and mod_agent evidence authority need a clear boundary |
 | R-010 | P1-002 | queued | controlled-agent paths need a single collection resolver |
 | R-011 | P1-003 | queued | document/chunk/hash/source identity fields need one explicit mapping |
 | R-012 | P1-005 | queued | checkpoint/resume needs graph-level proposal/diff hash binding and state restoration evidence |
@@ -70,9 +70,21 @@ latest affected R-008 suite:
   .\.venv\Scripts\python.exe -m pytest tests/unit/test_repair_loop.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_data_service.py tests/e2e/test_dashboard_smoke.py -q
   result: 17 passed
 
+latest focused R-009 suite:
+  .\.venv\Scripts\python.exe -m pytest tests/unit/test_evidence_retrieval.py tests/unit/test_stub_nodes.py tests/unit/test_sparse_encoder.py tests/unit/test_query_processor.py tests/unit/test_planning.py tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py tests/unit/test_proposal_review.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short --disable-warnings
+  result: 123 passed, 1 warning
+
+latest affected R-009 workflow/dashboard suite:
+  .\.venv\Scripts\python.exe -m pytest tests/unit/test_workflow_graph.py tests/unit/test_repair_loop.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_data_service.py -q --tb=short --disable-warnings
+  result: 21 passed
+
+latest affected R-009 retrieval integration suite:
+  .\.venv\Scripts\python.exe -m pytest tests/integration/test_hybrid_search.py tests/integration/test_query_trace.py -q --tb=short --disable-warnings
+  result: 43 passed, 1 warning
+
 known broader-suite gaps:
-  full tests/unit has historical collection/dependency issues recorded in LOOP_HISTORY
-  git diff --check passed for the R-008 diff
+  LEGACY-TEST-001 is queued for full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy assertions.
+  R-009 absorbed only evidence_retrieval, stub_nodes, sparse_encoder/query tokenization, and planning/artifact contract changes directly tied to retrieval authority or evidence boundary behavior.
   streamlit is installed in .venv to satisfy dashboard e2e dependency
 ```
 
@@ -95,25 +107,35 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: R-008 Fake Execution Status Normalization
+task: R-009 Retrieval Authority Boundary
 status: completed; focused and affected tests passed
 files_changed:
-  src/mod_agent/workflow/graph.py
-  tests/unit/test_workflow_graph.py
-  tests/unit/test_build_adapter.py
+  src/mod_agent/evidence/models.py
+  src/mod_agent/evidence/readiness.py
+  src/mod_agent/planning/implementation_plan.py
+  src/mod_agent/workflow/nodes.py
+  src/ingestion/embedding/sparse_encoder.py
+  src/core/query_engine/query_processor.py
+  tests/unit/test_evidence_retrieval.py
+  tests/unit/test_stub_nodes.py
+  tests/unit/test_planning.py
   tests/unit/test_artifact_contract.py
+  tests/unit/test_artifact_store.py
+  tests/unit/test_proposal_review.py
+  tests/unit/test_repair_checkpoint_smoke.py
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
   docs/PROJECT_STATE.md
 behavior:
-  Fake build status is reported as fake_completed rather than fake_success.
-  Fake eval_report and workflow_summary payloads distinguish workflow_completion_status=fake_execution_completed from requested_behavior_status=not_verified.
-  workflow_summary final_status remains inconclusive and all claims_real_* fields remain false.
-  Artifact contract coverage now requires completion/status fields on eval_report and workflow_summary.
+  EvidencePack artifacts now declare authority and authoritative_for_patch.
+  legacy_rag_auxiliary evidence is blocked from advancing writable planning.
+  Stub retrieval output remains auxiliary/non-authoritative for patching.
+  sparse/query tokenization preserves code-like terms used in retrieval boundary tests.
 verification:
-  focused R-008 tests: 41 passed
-  affected R-008 tests: 17 passed
-next_recommended_task: R-009 Retrieval Authority Boundary
+  focused R-009 tests: 123 passed, 1 warning
+  affected workflow/dashboard tests: 21 passed
+  affected retrieval integration tests: 43 passed, 1 warning
+next_recommended_task: R-010 Single Collection Resolver
 ```
 
 ## Next Execution Rule

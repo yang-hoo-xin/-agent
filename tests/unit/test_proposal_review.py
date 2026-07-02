@@ -218,6 +218,8 @@ def test_proposal_payloads_validate_against_artifact_contract(tmp_path) -> None:
             "query": "make Load enable diagnostics",
             "readiness": "sufficient",
             "can_generate_patch": True,
+            "authority": "mod_agent_deterministic_evidence",
+            "authoritative_for_patch": True,
             "items": _evidence_pack()["items"],
             "gaps": [],
             "excluded": [],

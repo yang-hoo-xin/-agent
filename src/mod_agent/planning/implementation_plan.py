@@ -7,6 +7,8 @@ from typing import Any
 from .models import FeatureSpec, ImplementationPlan
 
 EDITABLE_EVIDENCE_SOURCE_TYPES = frozenset({"target_source"})
+AUTHORITATIVE_EVIDENCE_PACK = "mod_agent_deterministic_evidence"
+AUTHORITATIVE_ITEM_AUTHORITY = "mod_agent_deterministic"
 
 
 class ImplementationPlanner:
@@ -40,6 +42,26 @@ class ImplementationPlanner:
                 open_questions=open_questions,
             )
 
+        if (
+            evidence_pack.get("authority") != AUTHORITATIVE_EVIDENCE_PACK
+            or evidence_pack.get("authoritative_for_patch") is not True
+        ):
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(
+                    {
+                        "code": "NON_AUTHORITATIVE_EVIDENCE_PACK",
+                        "message": (
+                            "Only mod_agent deterministic evidence packs can "
+                            "advance implementation planning."
+                        ),
+                    },
+                ),
+                open_questions=(
+                    "Resolve mod_agent deterministic evidence before planning edits.",
+                ),
+            )
+
         items = list(evidence_pack.get("items") or [])
         evidence_refs = tuple(
             item["evidence_id"] for item in items if item.get("evidence_id")
@@ -55,6 +77,8 @@ class ImplementationPlanner:
             if item.get("evidence_id")
             and item.get("source_path")
             and item.get("source_type") in EDITABLE_EVIDENCE_SOURCE_TYPES
+            and item.get("authority", AUTHORITATIVE_ITEM_AUTHORITY)
+            == AUTHORITATIVE_ITEM_AUTHORITY
         ]
         target_files = tuple(
             dict.fromkeys(item["source_path"] for item in editable_items)

@@ -83,6 +83,8 @@ def test_implementation_plan_binds_every_change_to_evidence() -> None:
     evidence_pack = {
         "readiness": "sufficient",
         "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
         "items": [
             {
                 "evidence_id": "ev_001",
@@ -119,6 +121,8 @@ def test_implementation_plan_blocks_when_evidence_source_is_not_editable() -> No
     evidence_pack = {
         "readiness": "sufficient",
         "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
         "items": [
             {
                 "evidence_id": "ev_api_001",
@@ -151,6 +155,8 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
         evidence_pack={
             "readiness": "sufficient",
             "can_generate_patch": True,
+            "authority": "mod_agent_deterministic_evidence",
+            "authoritative_for_patch": True,
             "items": [
                 {
                     "evidence_id": "ev_001",
@@ -182,6 +188,8 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
             "query": "make Load enable diagnostics",
             "readiness": "sufficient",
             "can_generate_patch": True,
+            "authority": "mod_agent_deterministic_evidence",
+            "authoritative_for_patch": True,
             "items": [
                 {
                     "evidence_id": "ev_001",
@@ -211,3 +219,32 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
     assert store.read(request_ref)["data"]["route"] == plan.route
     assert store.read(feature_ref)["data"]["target_behavior"] == plan.user_request
     assert store.read(implementation_ref)["data"]["evidence_refs"] == ["ev_001"]
+
+
+def test_implementation_plan_blocks_non_authoritative_evidence_pack() -> None:
+    plan = RequestPlanner().plan("make Load enable diagnostics")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "legacy_rag_auxiliary",
+        "authoritative_for_patch": False,
+        "items": [
+            {
+                "evidence_id": "legacy_001",
+                "source_type": "target_source",
+                "source_path": "mods/BetterHitFeedback/Plugin.cs",
+                "symbol": "Load",
+                "authority": "legacy_rag_auxiliary",
+            }
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.proposed_changes == ()
+    assert implementation.blockers[0]["code"] == "NON_AUTHORITATIVE_EVIDENCE_PACK"

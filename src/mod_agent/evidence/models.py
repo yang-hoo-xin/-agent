@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 EvidenceReadiness = Literal["sufficient", "partial", "insufficient", "contradictory"]
+EvidenceAuthority = Literal["mod_agent_deterministic", "legacy_rag_auxiliary"]
+EVIDENCE_PACK_AUTHORITY = "mod_agent_deterministic_evidence"
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,7 @@ class EvidenceItem:
     score: float
     claim_supported: str
     excerpt: str
+    authority: EvidenceAuthority = "mod_agent_deterministic"
     risk_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -47,6 +50,7 @@ class EvidenceItem:
             "score": self.score,
             "claim_supported": self.claim_supported,
             "excerpt": self.excerpt,
+            "authority": self.authority,
             "risk_notes": list(self.risk_notes),
         }
 
@@ -83,6 +87,8 @@ class EvidencePack:
             "query": self.query,
             "readiness": self.readiness,
             "can_generate_patch": self.can_generate_patch,
+            "authority": EVIDENCE_PACK_AUTHORITY,
+            "authoritative_for_patch": self.can_generate_patch,
             "items": [item.to_dict() for item in self.items],
             "gaps": list(self.gaps),
             "excluded": list(self.excluded),
