@@ -18,8 +18,8 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-009 Retrieval Authority Boundary
-next_recommended_task: R-010 Single Collection Resolver
+last_completed: R-010 Single Collection Resolver
+next_recommended_task: R-011 Identifier And Hash Field Mapping
 Q-020_status: queued; blocked behind active Review Repair Queue
 ```
 
@@ -82,6 +82,7 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | R-007 | completed | Trace/dashboard reads are redacted by default, raw access is explicit, timing preserves raw zero duration, and dashboard smoke e2e passes | `docs/audits/LOOP_HISTORY.md` |
 | R-008 | completed | Fake/local execution summaries distinguish workflow completion from requested behavior success | `docs/audits/LOOP_HISTORY.md` |
 | R-009 | completed | Legacy RAG output is auxiliary only; controlled implementation can advance only from mod_agent deterministic evidence packs | `docs/PROJECT_STATE.md` |
+| R-010 | completed | Controlled-agent retrieval uses one collection resolver for explicit collection overrides and configured defaults | `docs/PROJECT_STATE.md` |
 ## Review Repair Queue
 
 ```text
@@ -300,7 +301,7 @@ Completed evidence:
 ### R-010: Single Collection Resolver
 
 ```text
-Status: queued
+Status: completed
 Module: KB, RET, MCP
 Spec refs: 7, 8, 45
 Source finding: P1-002
@@ -315,6 +316,14 @@ Failure behavior: missing collection config returns structured blocked/degraded 
 Out of scope: legacy RAG global cleanup unless directly used by mod_agent
 Dependencies: Q-005, Q-009
 Conflict checks: avoid breaking existing RAG tests by changing unrelated defaults
+Completed evidence:
+  - CollectionResolver now resolves explicit collection_id first and otherwise reads vector_store.collection_name from settings.
+  - DeterministicEvidenceRetriever no longer hardcodes the controlled-agent default collection; it uses CollectionResolver.
+  - build_graph accepts collection_id and collection_resolver for controlled retrieval paths.
+  - Collection resolution failures produce an insufficient EvidencePack and route the workflow to blocked instead of crashing.
+  - No tracked src/mod_agent/mcp files exist in the current tree, so no controlled MCP collection resolver path was changed in R-010.
+  - focused R-010 tests passed: 23 passed.
+  - affected repair/knowledge/config tests passed: 12 passed.
 ```
 
 ### R-011: Identifier And Hash Field Mapping

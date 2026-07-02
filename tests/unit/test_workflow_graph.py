@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.knowledge import (
+    CollectionResolver,
     IncrementalIndexer,
     KnowledgeDatabase,
     SourceDefinition,
@@ -97,6 +98,30 @@ def test_missing_knowledge_routes_to_blocked_after_evidence(tmp_path: Path) -> N
     assert result["evidence_summary"]["missing_evidence"]
     assert result["evidence_summary"]["timing"]["final_count"] == 0.0
     assert result["blockers"]
+
+
+def test_collection_resolution_failure_routes_to_blocked_after_evidence(
+    tmp_path: Path,
+) -> None:
+    graph = build_graph(
+        ArtifactStore(tmp_path / "artifacts"),
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        collection_resolver=CollectionResolver(settings_path=tmp_path / "missing.yaml"),
+    )
+    state = create_initial_state(
+        run_id="run_001",
+        request_id="req_001",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    assert result["current_stage"] == "blocked"
+    assert result["evidence_summary"]["readiness"] == "insufficient"
+    assert result["evidence_summary"]["can_generate_patch"] is False
+    assert "Collection resolution failed" in result["evidence_summary"]["gaps"][0]
+    assert result["blockers"][0]["code"] == "INSUFFICIENT_EVIDENCE"
 
 
 def test_vague_request_routes_to_blocked(tmp_path: Path) -> None:

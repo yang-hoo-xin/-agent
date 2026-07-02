@@ -11,6 +11,7 @@ from time import perf_counter
 from src.mod_agent.knowledge import (
     BM25Hit,
     BM25Indexer,
+    CollectionResolver,
     KnowledgeChunkRecord,
     KnowledgeDatabase,
     SourceRecord,
@@ -35,13 +36,15 @@ class DeterministicEvidenceRetriever:
         readiness_classifier: EvidenceReadinessClassifier | None = None,
         bm25_indexer: BM25Indexer | None = None,
         symbol_indexer: SymbolIndexer | None = None,
-        collection_id: str = "default",
+        collection_id: str | None = None,
+        collection_resolver: CollectionResolver | None = None,
     ) -> None:
         self.database = database
         self.readiness_classifier = readiness_classifier or EvidenceReadinessClassifier()
         self.bm25_indexer = bm25_indexer or BM25Indexer(database)
         self.symbol_indexer = symbol_indexer or SymbolIndexer()
-        self.collection_id = collection_id
+        resolution = (collection_resolver or CollectionResolver()).resolve(collection_id)
+        self.collection_id = resolution.collection_id
 
     def retrieve(self, request: EvidenceRequest) -> EvidencePack:
         """Retrieve evidence and classify readiness."""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from src.core.settings import Settings
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.evidence import (
     DeterministicEvidenceRetriever,
@@ -12,9 +13,13 @@ from src.mod_agent.evidence import (
     EvidenceRequest,
 )
 from src.mod_agent.knowledge import (
+    BM25Indexer,
+    Chunk,
+    CollectionResolver,
     IncrementalIndexer,
     KnowledgeDatabase,
     SourceDefinition,
+    SourceRecord,
     SourceRegistry,
 )
 
@@ -36,6 +41,96 @@ def _feature_payload() -> dict[str, object]:
         "blocked": False,
         "blockers": [],
     }
+
+
+def _settings(collection_name: str) -> Settings:
+    return Settings.from_dict(
+        {
+            "llm": {
+                "provider": "openai",
+                "model": "gpt-4o",
+                "temperature": 0.0,
+                "max_tokens": 4096,
+            },
+            "embedding": {
+                "provider": "openai",
+                "model": "text-embedding-ada-002",
+                "dimensions": 1536,
+            },
+            "vector_store": {
+                "provider": "chroma",
+                "persist_directory": "./data/db/chroma",
+                "collection_name": collection_name,
+            },
+            "retrieval": {
+                "dense_top_k": 20,
+                "sparse_top_k": 20,
+                "fusion_top_k": 10,
+                "rrf_k": 60,
+            },
+            "rerank": {
+                "enabled": False,
+                "provider": "none",
+                "model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                "top_k": 5,
+            },
+            "evaluation": {
+                "enabled": False,
+                "provider": "custom",
+                "metrics": ["hit_rate"],
+            },
+            "observability": {
+                "log_level": "INFO",
+                "trace_enabled": True,
+                "trace_file": "./logs/traces.jsonl",
+                "structured_logging": True,
+            },
+        }
+    )
+
+
+def _index_chunk_collection(
+    db: KnowledgeDatabase,
+    *,
+    collection_id: str,
+    text: str,
+) -> None:
+    index_version = "v1"
+    db.upsert_source(
+        SourceRecord(
+            source_id="target_mod",
+            source_type="target_source",
+            root_path=collection_id,
+        )
+    )
+    db.start_index_version(
+        collection_id=collection_id,
+        index_version=index_version,
+        source_count=1,
+        chunk_count=1,
+    )
+    db.upsert_chunk(
+        Chunk(
+            chunk_id=f"{collection_id}_chunk_001",
+            document_id=f"{collection_id}_doc_001",
+            text=text,
+            text_for_retrieval=text,
+            metadata={
+                "content_hash": f"{collection_id}_hash",
+                "source_id": "target_mod",
+                "source_type": "target_source",
+                "source_path": f"{collection_id}/config.json",
+            },
+        ),
+        collection_id=collection_id,
+        index_version=index_version,
+    )
+    BM25Indexer(db).index(collection_id=collection_id, index_version=index_version)
+    db.set_index_version_status(
+        collection_id=collection_id,
+        index_version=index_version,
+        status="stable",
+    )
 
 
 def _index_source(
@@ -88,6 +183,61 @@ public class Plugin
     assert pack.items[0].symbol == "Load"
     assert pack.items[0].source_type == "target_source"
     assert pack.items[0].retrieval_method == "symbol_exact"
+
+
+def test_deterministic_retriever_uses_configured_collection_default(
+    tmp_path: Path,
+) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    _index_chunk_collection(
+        db,
+        collection_id="knowledge_hub",
+        text="EnableLogging is configured in this collection.",
+    )
+    resolver = CollectionResolver(settings=_settings("knowledge_hub"))
+
+    pack = DeterministicEvidenceRetriever(
+        db,
+        collection_resolver=resolver,
+    ).retrieve(
+        EvidenceRequest(
+            query="EnableLogging",
+            execution_path="quick_patch",
+            requires_hook_evidence=False,
+        )
+    )
+
+    assert pack.readiness == "sufficient"
+    assert pack.can_generate_patch is True
+    assert pack.items[0].source_path == "knowledge_hub/config.json"
+
+
+def test_deterministic_retriever_explicit_collection_overrides_default(
+    tmp_path: Path,
+) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    _index_chunk_collection(
+        db,
+        collection_id="request_scope",
+        text="EnableLogging exists only in the explicit collection.",
+    )
+    resolver = CollectionResolver(settings=_settings("knowledge_hub"))
+
+    pack = DeterministicEvidenceRetriever(
+        db,
+        collection_id="request_scope",
+        collection_resolver=resolver,
+    ).retrieve(
+        EvidenceRequest(
+            query="EnableLogging",
+            execution_path="quick_patch",
+            requires_hook_evidence=False,
+        )
+    )
+
+    assert pack.readiness == "sufficient"
+    assert pack.can_generate_patch is True
+    assert pack.items[0].source_path == "request_scope/config.json"
 
 
 def test_missing_source_returns_insufficient_empty_pack(tmp_path: Path) -> None:

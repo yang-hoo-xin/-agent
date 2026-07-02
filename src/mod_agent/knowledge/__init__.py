@@ -1,6 +1,11 @@
 """Knowledge base primitives for evidence-grounded code development."""
 
 from .bm25_indexer import BM25Indexer, normalize_bm25_token, tokenize_bm25
+from .collection_resolver import (
+    CollectionResolution,
+    CollectionResolutionError,
+    CollectionResolver,
+)
 from .database import KnowledgeDatabase
 from .indexer import IncrementalIndexer, IndexingReport
 from .models import (
@@ -30,6 +35,9 @@ __all__ = [
     "BM25Hit",
     "BM25IndexResult",
     "BM25Indexer",
+    "CollectionResolution",
+    "CollectionResolutionError",
+    "CollectionResolver",
     "IncrementalIndexer",
     "Chunk",
     "ChunkRecord",

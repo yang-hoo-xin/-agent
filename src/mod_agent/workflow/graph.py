@@ -18,7 +18,11 @@ from src.mod_agent.domain import (
     UnsupportedDomainAdapter,
 )
 from src.mod_agent.evidence import DeterministicEvidenceRetriever, EvidenceRequest
-from src.mod_agent.knowledge import KnowledgeDatabase
+from src.mod_agent.knowledge import (
+    CollectionResolutionError,
+    CollectionResolver,
+    KnowledgeDatabase,
+)
 from src.mod_agent.planning import (
     FeatureSpec,
     FeatureSpecBuilder,
@@ -55,6 +59,8 @@ def build_graph(
     artifact_store: ArtifactStore,
     *,
     knowledge_database: KnowledgeDatabase | None = None,
+    collection_id: str | None = None,
+    collection_resolver: CollectionResolver | None = None,
     domain_adapter_registry: DomainAdapterRegistry | None = None,
     build_result_factory: BuildResultFactory | None = None,
     checkpointer: Any | None = None,
@@ -94,6 +100,8 @@ def build_graph(
                 state,
                 artifact_store,
                 knowledge_database,
+                collection_id,
+                collection_resolver,
             ),
         ),
     )
@@ -348,6 +356,8 @@ def _run_retrieve_evidence(
     state: ModAgentState,
     artifact_store: ArtifactStore,
     knowledge_database: KnowledgeDatabase | None,
+    collection_id: str | None,
+    collection_resolver: CollectionResolver | None,
 ) -> ModAgentState:
     feature_data = _read_artifact_data(state, artifact_store, "feature_spec")
     if knowledge_database is None:
@@ -365,7 +375,19 @@ def _run_retrieve_evidence(
                 "target method" in feature_data.get("evidence_requirements", [])
             ),
         )
-        pack = DeterministicEvidenceRetriever(knowledge_database).retrieve(request)
+        try:
+            pack = DeterministicEvidenceRetriever(
+                knowledge_database,
+                collection_id=collection_id,
+                collection_resolver=collection_resolver,
+            ).retrieve(request)
+        except CollectionResolutionError as exc:
+            from src.mod_agent.evidence import EvidencePack
+
+            pack = EvidencePack.empty(
+                query=request.query,
+                reason=f"Collection resolution failed: {exc}",
+            )
     artifact_ref = artifact_store.write(
         feature_id=state["feature_id"] or state["request_id"],
         artifact_type="evidence_pack",

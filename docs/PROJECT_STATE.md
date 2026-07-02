@@ -9,15 +9,15 @@ Last updated: 2026-07-02
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-009 Retrieval Authority Boundary
-next_recommended_task: R-010 Single Collection Resolver
+last_completed: R-010 Single Collection Resolver
+next_recommended_task: R-011 Identifier And Hash Field Mapping
 ordinary_queue_status: Q-020 and later tasks remain queued but blocked behind active Review Repair Queue
 ```
 
 ## Current Baseline
 
 ```text
-branch: repair/r009-retrieval-authority-boundary
+branch: repair/r010-single-collection-resolver
 remote: https://github.com/yang-hoo-xin/-agent.git
 baseline commit: 914f16e chore: establish controlled mod agent baseline
 baseline tag: baseline-controlled-agent-v0
@@ -26,7 +26,9 @@ repair chain:
   R-006 clean extraction: 525d8e7 fix(dashboard): extract R-006 destructive operation guard
   R-007 closure repair: 1c398dd fix(observability): close R-007 trace redaction boundary
   R-008 fake execution normalization: 86a5dc9 fix(workflow): normalize fake execution status reporting
-current R-009 status: completed; focused and affected tests passed
+  R-009 retrieval authority boundary: 547ba22 fix(retrieval): enforce R-009 evidence authority boundary
+  R-009 hardening follow-up record: 09625b0 docs(repair): record R-009 authority hardening follow-ups
+current R-010 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -34,7 +36,6 @@ commit policy: manual commit after focused tests and status review
 
 | Task | Source Finding | Status | Blocking Reason |
 | --- | --- | --- | --- |
-| R-010 | P1-002 | queued | controlled-agent paths need a single collection resolver |
 | R-011 | P1-003 | queued | document/chunk/hash/source identity fields need one explicit mapping |
 | R-012 | P1-005 | queued | checkpoint/resume needs graph-level proposal/diff hash binding and state restoration evidence |
 | R-013 | P1-006 | queued | dashboard needs mod_agent workflow/artifact/proposal/build/runtime/repair projections |
@@ -82,6 +83,14 @@ latest affected R-009 retrieval integration suite:
   .\.venv\Scripts\python.exe -m pytest tests/integration/test_hybrid_search.py tests/integration/test_query_trace.py -q --tb=short --disable-warnings
   result: 43 passed, 1 warning
 
+latest focused R-010 suite:
+  .\.venv\Scripts\python.exe -m pytest tests/unit/test_collection_resolver.py tests/unit/test_evidence_retrieval.py tests/unit/test_workflow_graph.py -q --tb=short --disable-warnings
+  result: 23 passed
+
+latest affected R-010 suite:
+  .\.venv\Scripts\python.exe -m pytest tests/unit/test_repair_loop.py tests/unit/test_knowledge_base.py tests/unit/test_config_loading.py -q --tb=short --disable-warnings
+  result: 12 passed
+
 known broader-suite gaps:
   LEGACY-TEST-001 is queued for full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy assertions.
   R-009 absorbed only evidence_retrieval, stub_nodes, sparse_encoder/query tokenization, and planning/artifact contract changes directly tied to retrieval authority or evidence boundary behavior.
@@ -109,35 +118,29 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: R-009 Retrieval Authority Boundary
+task: R-010 Single Collection Resolver
 status: completed; focused and affected tests passed
 files_changed:
-  src/mod_agent/evidence/models.py
-  src/mod_agent/evidence/readiness.py
-  src/mod_agent/planning/implementation_plan.py
-  src/mod_agent/workflow/nodes.py
-  src/ingestion/embedding/sparse_encoder.py
-  src/core/query_engine/query_processor.py
+  src/mod_agent/knowledge/collection_resolver.py
+  src/mod_agent/knowledge/__init__.py
+  src/mod_agent/evidence/retriever.py
+  src/mod_agent/workflow/graph.py
+  tests/unit/test_collection_resolver.py
   tests/unit/test_evidence_retrieval.py
-  tests/unit/test_stub_nodes.py
-  tests/unit/test_planning.py
-  tests/unit/test_artifact_contract.py
-  tests/unit/test_artifact_store.py
-  tests/unit/test_proposal_review.py
-  tests/unit/test_repair_checkpoint_smoke.py
+  tests/unit/test_workflow_graph.py
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
   docs/PROJECT_STATE.md
 behavior:
-  EvidencePack artifacts now declare authority and authoritative_for_patch.
-  legacy_rag_auxiliary evidence is blocked from advancing writable planning.
-  Stub retrieval output remains auxiliary/non-authoritative for patching.
-  sparse/query tokenization preserves code-like terms used in retrieval boundary tests.
+  CollectionResolver resolves explicit collection_id first and otherwise uses vector_store.collection_name from settings.
+  DeterministicEvidenceRetriever uses CollectionResolver instead of a hardcoded controlled-agent default collection.
+  build_graph accepts collection_id and collection_resolver for controlled retrieval paths.
+  Missing or invalid collection configuration produces an insufficient EvidencePack and routes the workflow to blocked.
+  No tracked src/mod_agent/mcp files exist in the current tree, so R-010 did not modify controlled MCP files.
 verification:
-  focused R-009 tests: 123 passed, 1 warning
-  affected workflow/dashboard tests: 21 passed
-  affected retrieval integration tests: 43 passed, 1 warning
-next_recommended_task: R-010 Single Collection Resolver
+  focused R-010 tests: 23 passed
+  affected repair/knowledge/config tests: 12 passed
+next_recommended_task: R-011 Identifier And Hash Field Mapping
 ```
 
 ## Next Execution Rule
