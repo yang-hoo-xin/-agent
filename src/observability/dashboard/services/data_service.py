@@ -8,10 +8,27 @@ UI to storage internals.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from src.mod_agent.tools.permissions import PermissionModel
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DashboardOperationResult:
+    """Structured outcome for guarded dashboard write operations."""
+
+    success: bool
+    operation_summary: Dict[str, Any]
+    chunks_deleted: int = 0
+    bm25_removed: bool = False
+    images_deleted: int = 0
+    integrity_removed: bool = False
+    errors: List[str] = field(default_factory=list)
 
 
 class DataService:
@@ -21,11 +38,101 @@ class DataService:
     importing the module alone has zero cost.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        permission_model: Any | None = None,
+        destructive_operations_enabled: bool = False,
+    ) -> None:
         self._manager: Any = None
         self._chroma: Any = None
         self._images: Any = None
         self._current_collection: str = ""
+        self._permission_model = permission_model or PermissionModel()
+        self._destructive_operations_enabled = destructive_operations_enabled
+        self._operation_audit: List[Dict[str, Any]] = []
+
+    @property
+    def operation_audit(self) -> List[Dict[str, Any]]:
+        """Return a copy of destructive-operation audit summaries."""
+        return list(self._operation_audit)
+
+    def _record_operation(
+        self,
+        *,
+        operation: str,
+        status: str,
+        confirmed: bool,
+        decision: Any,
+        reason: str,
+        target: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        summary = {
+            "operation": operation,
+            "status": status,
+            "permission_level": getattr(decision, "level", "confirmed_write"),
+            "confirmed": confirmed,
+            "allowed": bool(getattr(decision, "allowed", False)),
+            "required_approval": getattr(decision, "required_approval", None),
+            "reason": reason,
+            "target": target,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        self._operation_audit.append(summary)
+        return summary
+
+    def _blocked_delete_result(
+        self,
+        *,
+        confirmed: bool,
+        decision: Any,
+        reason: str,
+        target: Dict[str, Any],
+    ) -> DashboardOperationResult:
+        summary = self._record_operation(
+            operation="delete_document",
+            status="blocked",
+            confirmed=confirmed,
+            decision=decision,
+            reason=reason,
+            target=target,
+        )
+        return DashboardOperationResult(
+            success=False,
+            operation_summary=summary,
+            errors=[reason],
+        )
+
+    def _blocked_reset_result(
+        self,
+        *,
+        confirmed: bool,
+        decision: Any,
+        reason: str,
+    ) -> Dict[str, Any]:
+        summary = self._record_operation(
+            operation="reset_all",
+            status="blocked",
+            confirmed=confirmed,
+            decision=decision,
+            reason=reason,
+            target={},
+        )
+        return {
+            "collections_deleted": 0,
+            "bm25_cleared": False,
+            "images_cleared": False,
+            "integrity_cleared": False,
+            "traces_cleared": False,
+            "errors": [reason],
+            "operation_summary": summary,
+        }
+
+    def _destructive_permission_decision(self, *, confirmed: bool) -> Any:
+        return self._permission_model.decide(
+            "confirmed_write",
+            human_approved=confirmed,
+        )
 
     # ------------------------------------------------------------------
     # Lazy initialisation
@@ -170,16 +277,66 @@ class DataService:
         source_path: str,
         collection: Optional[str] = None,
         source_hash: Optional[str] = None,
-    ) -> Any:
-        """Delete a document via the underlying DocumentManager.
+        *,
+        confirmed: bool = False,
+    ) -> DashboardOperationResult:
+        """Guard document deletion behind confirmation and permission checks.
 
-        Returns a ``DeleteResult`` dataclass.
+        Returns a ``DashboardOperationResult`` without mutating storage when
+        confirmation, explicit enablement, or permission approval is missing.
         """
+        target = {
+            "source_path": source_path,
+            "collection": collection or "default",
+            "source_hash": source_hash,
+        }
+        decision = self._destructive_permission_decision(confirmed=confirmed)
+        if not confirmed:
+            return self._blocked_delete_result(
+                confirmed=confirmed,
+                decision=decision,
+                reason="delete_document requires explicit confirmation.",
+                target=target,
+            )
+        if not self._destructive_operations_enabled:
+            return self._blocked_delete_result(
+                confirmed=confirmed,
+                decision=decision,
+                reason="dashboard destructive operations are disabled by default.",
+                target=target,
+            )
+        if not getattr(decision, "allowed", False):
+            return self._blocked_delete_result(
+                confirmed=confirmed,
+                decision=decision,
+                reason=getattr(decision, "reason", "permission denied"),
+                target=target,
+            )
+
         self._ensure_stores(collection)
-        return self._manager.delete_document(
+        result = self._manager.delete_document(
             source_path,
             collection or "default",
             source_hash=source_hash,
+        )
+        status = "succeeded" if result.success else "failed"
+        reason = "delete_document completed." if result.success else "; ".join(result.errors)
+        summary = self._record_operation(
+            operation="delete_document",
+            status=status,
+            confirmed=confirmed,
+            decision=decision,
+            reason=reason,
+            target=target,
+        )
+        return DashboardOperationResult(
+            success=result.success,
+            chunks_deleted=result.chunks_deleted,
+            bm25_removed=result.bm25_removed,
+            images_deleted=result.images_deleted,
+            integrity_removed=result.integrity_removed,
+            errors=list(result.errors),
+            operation_summary=summary,
         )
 
     def get_collection_stats(
@@ -192,11 +349,46 @@ class DataService:
         stats = self._manager.get_collection_stats(collection)
         return asdict(stats)
 
-    def reset_all(self) -> Dict[str, Any]:
-        """Delete ALL data: ChromaDB collections, BM25 indexes, images, integrity DB, and trace logs.
+    def reset_all(self, *, confirmed: bool = False) -> Dict[str, Any]:
+        """Guard full reset behind confirmation and permission checks.
 
         Returns a summary dict with counts of what was deleted.
         """
+        decision = self._destructive_permission_decision(confirmed=confirmed)
+        if not confirmed:
+            return self._blocked_reset_result(
+                confirmed=confirmed,
+                decision=decision,
+                reason="reset_all requires explicit confirmation.",
+            )
+        if not self._destructive_operations_enabled:
+            return self._blocked_reset_result(
+                confirmed=confirmed,
+                decision=decision,
+                reason="dashboard destructive operations are disabled by default.",
+            )
+        if not getattr(decision, "allowed", False):
+            return self._blocked_reset_result(
+                confirmed=confirmed,
+                decision=decision,
+                reason=getattr(decision, "reason", "permission denied"),
+            )
+
+        summary = self._perform_reset_all()
+        status = "failed" if summary["errors"] else "succeeded"
+        operation_summary = self._record_operation(
+            operation="reset_all",
+            status=status,
+            confirmed=confirmed,
+            decision=decision,
+            reason="reset_all completed." if status == "succeeded" else "; ".join(summary["errors"]),
+            target={},
+        )
+        summary["operation_summary"] = operation_summary
+        return summary
+
+    def _perform_reset_all(self) -> Dict[str, Any]:
+        """Delete dashboard-managed data after reset_all guard approval."""
         import shutil
         from src.core.settings import load_settings, resolve_path
         import chromadb
