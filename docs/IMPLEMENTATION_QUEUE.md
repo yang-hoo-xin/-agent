@@ -30,6 +30,22 @@ LEGACY-TEST-001_status: queued
 Scope: normalize full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy test assertions.
 Policy: LEGACY-TEST-001 does not block R-009. R-009 may only absorb evidence_retrieval, stub_nodes, and sparse_encoder failures that directly affect retrieval authority or evidence boundary behavior.
 ```
+
+## Hardening Follow-ups
+
+```text
+R-009-HARDENING-001_status: queued
+Source task: R-009 Retrieval Authority Boundary
+Scope: harden authority defaults, raw evidence-pack provenance, dashboard authority display semantics, and shared retrieval tokenization.
+Policy: this records R-009 residual hardening work and does not reopen the completed R-009 loop.
+Required follow-ups:
+  - EvidenceItem.authority should default to legacy_rag_auxiliary; deterministic retrievers should explicitly set mod_agent_deterministic.
+  - ImplementationPlanner should not treat raw dict evidence items with missing authority as authoritative.
+  - ImplementationPlanner should eventually consume ArtifactRef/envelope or provenance-validated evidence payloads instead of untrusted raw dicts.
+  - Dashboard authority displays must show readiness, can_generate_patch, and authoritative_for_patch together so authority is not misread as patch approval.
+  - sparse/query tokenization should be extracted into a shared implementation to remove case and rule drift.
+Recommended placement: address with artifact provenance / R-012 hardening, R-013 dashboard projection, and retrieval tokenizer cleanup work.
+```
 ## Recently Completed
 
 Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
