@@ -9,22 +9,23 @@ Last updated: 2026-07-02
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-007 Trace And Dashboard Redaction Boundary
-next_recommended_task: R-008 Fake Execution Status Normalization
+last_completed: R-008 Fake Execution Status Normalization
+next_recommended_task: R-009 Retrieval Authority Boundary
 ordinary_queue_status: Q-020 and later tasks remain queued but blocked behind active Review Repair Queue
 ```
 
 ## Current Baseline
 
 ```text
-branch: repair/r007-closure-clean-v2
+branch: repair/r008-fake-execution-status-normalization
 remote: https://github.com/yang-hoo-xin/-agent.git
 baseline commit: 914f16e chore: establish controlled mod agent baseline
 baseline tag: baseline-controlled-agent-v0
 repair chain:
   R-001-R-005 aggregate baseline: 55c0d66 chore(repair): restore R-001-R-005 historical repair baseline
   R-006 clean extraction: 525d8e7 fix(dashboard): extract R-006 destructive operation guard
-current R-007 status: completed; focused tests passed; dashboard e2e passed after installing streamlit in .venv
+  R-007 closure repair: 1c398dd fix(observability): close R-007 trace redaction boundary
+current R-008 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -32,7 +33,6 @@ commit policy: manual commit after focused tests and status review
 
 | Task | Source Finding | Status | Blocking Reason |
 | --- | --- | --- | --- |
-| R-008 | P0-001 | queued | fake/local execution summary must not imply real requested-behavior success |
 | R-009 | P1-001 | queued | legacy RAG and mod_agent evidence authority need a clear boundary |
 | R-010 | P1-002 | queued | controlled-agent paths need a single collection resolver |
 | R-011 | P1-003 | queued | document/chunk/hash/source identity fields need one explicit mapping |
@@ -62,9 +62,17 @@ latest dashboard e2e smoke:
   .\.venv\Scripts\python.exe -m pytest tests/e2e/test_dashboard_smoke.py -q
   result: 6 passed
 
+latest focused R-008 suite:
+  .\.venv\Scripts\python.exe -m pytest tests/unit/test_workflow_graph.py tests/unit/test_build_adapter.py tests/unit/test_artifact_contract.py -q
+  result: 41 passed
+
+latest affected R-008 suite:
+  .\.venv\Scripts\python.exe -m pytest tests/unit/test_repair_loop.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_data_service.py tests/e2e/test_dashboard_smoke.py -q
+  result: 17 passed
+
 known broader-suite gaps:
   full tests/unit has historical collection/dependency issues recorded in LOOP_HISTORY
-  git diff --check passed for the R-007 closure repair diff
+  git diff --check passed for the R-008 diff
   streamlit is installed in .venv to satisfy dashboard e2e dependency
 ```
 
@@ -87,28 +95,25 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: R-007 Trace And Dashboard Redaction Boundary closure repair
-status: completed; focused tests passed; dashboard e2e passed
+task: R-008 Fake Execution Status Normalization
+status: completed; focused and affected tests passed
 files_changed:
-  src/observability/dashboard/services/trace_service.py
-  src/core/trace/trace_context.py
-  tests/unit/test_trace_service.py
-  tests/unit/test_trace_context.py
+  src/mod_agent/workflow/graph.py
+  tests/unit/test_workflow_graph.py
+  tests/unit/test_build_adapter.py
+  tests/unit/test_artifact_contract.py
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
   docs/PROJECT_STATE.md
 behavior:
-  TraceService now returns sanitized traces by default for dashboard display paths.
-  Sensitive keys, absolute paths, and long string payloads are redacted or capped by default.
-  safe_mode=True remains redacted; raw trace payloads require explicit include_raw=True for unsafe/debug-only access.
-  Sensitive keys redact entire values before recursion, including nested dict/list values.
-  Stage timing extraction preserves allowlisted summary fields while sanitizing nested stage data.
-  TraceContext elapsed_ms uses raw perf_counter_ns measurement without a fabricated positive duration floor.
-  R-006 remains completed because its acceptance criteria are service-level destructive-operation guarding; dashboard e2e is not required for R-006 clean completion, but R-006 is not e2e verified.
+  Fake build status is reported as fake_completed rather than fake_success.
+  Fake eval_report and workflow_summary payloads distinguish workflow_completion_status=fake_execution_completed from requested_behavior_status=not_verified.
+  workflow_summary final_status remains inconclusive and all claims_real_* fields remain false.
+  Artifact contract coverage now requires completion/status fields on eval_report and workflow_summary.
 verification:
-  focused R-007 closure-repair tests: 56 passed
-  dashboard smoke: 6 passed after installing streamlit in .venv
-next_recommended_task: R-008 Fake Execution Status Normalization
+  focused R-008 tests: 41 passed
+  affected R-008 tests: 17 passed
+next_recommended_task: R-009 Retrieval Authority Boundary
 ```
 
 ## Next Execution Rule

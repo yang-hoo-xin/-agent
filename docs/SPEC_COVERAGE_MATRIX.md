@@ -5,7 +5,7 @@ This file tracks detailed coverage of `DEV_SPEC.md`.
 It is not a replacement for `DEV_SPEC.md`, `PROJECT_STATE.md`, or `IMPLEMENTATION_QUEUE.md`.
 It is the bridge between the full specification and small implementation loops.
 
-Last updated: 2026-07-01
+Last updated: 2026-07-02
 
 ## Status Values
 
@@ -49,7 +49,7 @@ blocked      Cannot proceed until named evidence, dependency, or user input exis
 | --- | --- | --- | --- | --- | --- | --- |
 | GOV-001 | 0.0, 50.4 | Capability-first controlled code-generation loop outranks passive RAG expansion | WF | tested | Q-001, Q-002A done | Queue now prioritizes controlled fake execution before deeper Knowledge Hub work |
 | GOV-002 | 0.0B, 2.1, 50.8 | Project is a vertical code development Agent, not a GTFO-only script set | DOM | partial | Q-017 done; future onboarding workflow | GTFO rules now live behind a DomainAdapter/GameProfile boundary; full onboarding workflow and capability report remain incomplete |
-| GOV-003 | 0.5, 44, 50.7 | Claims must be backed by artifact/test evidence | OBS | partial | ongoing per-loop rule | Q-002A prevents fake execution from claiming real success |
+| GOV-003 | 0.5, 44, 50.7 | Claims must be backed by artifact/test evidence | OBS | partial | ongoing per-loop rule; R-008 done | Q-002A prevents fake execution from claiming real success; R-008 adds explicit workflow_completion_status=fake_execution_completed and requested_behavior_status=not_verified while keeping real-success claims false |
 | GOV-004 | 42, 48.2 | Detailed spec requirements need durable tracking | OBS | implemented | this file | This matrix now records requirement-level coverage and gaps |
 | GOV-005 | 50.6 | Token and context budget policy must preserve project continuity | OBS | partial | future context-pack task | Execution guide and state files exist; no automated context pack yet |
 | GOV-006 | 48.12, 49.8 | ADR and glossary backlog must exist for core design choices | OBS | not_started | future ADR task | No ADR/glossary files tracked yet |
@@ -64,7 +64,7 @@ blocked      Cannot proceed until named evidence, dependency, or user input exis
 | WF-003 | 5.5, 49.1.4 | Conditional edge matrix for request/evidence/review/build/runtime/repair | WF | partial | Q-010 and Q-014 done; later E2E branch tasks | Q-010 verifies evidence-before-plan/proposal routing and retrieval trace details; Q-014 verifies build/runtime failure routing into repair; full real runtime branch E2E remains incomplete |
 | WF-004 | 5.6, 49.1.5 | Checkpoint, interrupt, resume, stale resume | WF | tested | Q-015 done | `src/mod_agent/workflow/checkpointing.py` and `interrupts.py` define checkpoint/resume contracts, MemorySaver-ready graph compile, stale resume blocking, and double resume rejection; joint Q-014/Q-015 smoke verifies review checkpoint resume over repair artifacts |
 | WF-005 | 5.7, 49.1.4 | Failure routes enter blocked or repair instead of silent continue | WF | partial | Q-014 done; later real runtime branch smoke | Blocked paths and build/runtime repair routes exist; graph-level failed build repair loop is tested, while real runtime branch E2E remains incomplete |
-| WF-006 | 41.4, 49.4 | End-to-end controlled fake execution loop | WF | tested | Q-002A done | Fake dry-run/build/runtime/eval/summary path tested |
+| WF-006 | 41.4, 49.4 | End-to-end controlled fake execution loop | WF | tested | Q-002A and R-008 done | Fake dry-run/build/runtime/eval/summary path tested; fake summaries now distinguish workflow completion from requested behavior verification |
 | ART-001 | 6, 49.2 | Artifact envelope with schema version, hash, status, upstream refs | ART | tested | R-005 done | ArtifactStore.write now enforces required_upstream_artifacts, validates same-feature upstream refs, checks upstream hash/schema/freshness before normal writes, and preserves blocked stale resume reports as audit artifacts; R-005 accepted as PASS_WITH_RISK with artifact integrity and immutable revision follow-ups recorded below |
 | ART-002 | 6.5, 49.2.4 | Stale detection blocks unsafe downstream use | ART | tested | Q-001 done | Stale artifact tests pass |
 | ART-003 | 49.2.2 | Artifact dependency graph and immutable revisions | ART | partial | Q-016 done; future immutable revision/DAG UI task | DashboardProjectionBuilder exposes artifact DAG nodes/edges, upstream status, freshness status, stale reasons, missing artifacts, and dashboard_projection fields; immutable revision history and UI viewer remain incomplete |

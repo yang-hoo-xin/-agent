@@ -224,7 +224,7 @@ def test_approved_path_writes_explicit_fake_execution_artifacts(tmp_path: Path) 
     assert build["execution_mode"] == "fake"
     assert build["status"] == "skipped"
     assert build["real_build_performed"] is False
-    assert build["build_status"] == "fake_success"
+    assert build["build_status"] == "fake_completed"
     assert build["claims_real_build_success"] is False
     assert build["repair_handoff"]["allowed"] is False
     assert runtime["execution_mode"] == "fake"
@@ -236,9 +236,14 @@ def test_approved_path_writes_explicit_fake_execution_artifacts(tmp_path: Path) 
     assert runtime["real_runtime_performed"] is False
     assert runtime["raw_supplied_output"] is None
     assert runtime["claims_real_runtime_success"] is False
+    assert evaluation["workflow_completion_status"] == "fake_execution_completed"
+    assert evaluation["requested_behavior_status"] == "not_verified"
     assert evaluation["verdict"] == "inconclusive"
     assert evaluation["claims_real_success"] is False
     assert evaluation["input_acceptance_status"] == "inconclusive"
+    assert summary["workflow_completion_status"] == "fake_execution_completed"
+    assert summary["requested_behavior_status"] == "not_verified"
+    assert summary["final_status"] == "inconclusive"
     assert summary["claims_real_mod_success"] is False
     assert summary["claims_real_build_success"] is False
     assert summary["claims_real_runtime_success"] is False

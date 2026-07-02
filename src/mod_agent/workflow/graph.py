@@ -726,6 +726,8 @@ def _run_fake_evaluate(
             "inconclusive for real build and runtime success."
         ),
         "execution_mode": "fake",
+        "workflow_completion_status": "fake_execution_completed",
+        "requested_behavior_status": "not_verified",
         "verdict": "inconclusive",
         "claims_real_success": False,
         "checks": [
@@ -775,6 +777,8 @@ def _run_workflow_summary(
             "No real file write, real build, or real runtime success is claimed."
         ),
         "execution_mode": "fake",
+        "workflow_completion_status": "fake_execution_completed",
+        "requested_behavior_status": "not_verified",
         "final_status": "inconclusive",
         "claims_real_mod_success": False,
         "claims_real_build_success": False,

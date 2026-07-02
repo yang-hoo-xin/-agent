@@ -187,6 +187,25 @@ def test_runtime_evidence_contract_requires_acceptance_fields() -> None:
     assert required.issubset(manual_contract.required_fields)
 
 
+def test_eval_and_workflow_summary_contracts_separate_completion_from_success() -> None:
+    registry = ArtifactTypeRegistry()
+
+    eval_contract = registry.get("eval_report")
+    summary_contract = registry.get("workflow_summary")
+    required = {
+        "execution_mode",
+        "workflow_completion_status",
+        "requested_behavior_status",
+    }
+
+    assert required.issubset(eval_contract.required_fields)
+    assert required.issubset(summary_contract.required_fields)
+    assert "claims_real_success" in eval_contract.required_fields
+    assert "claims_real_mod_success" in summary_contract.required_fields
+    assert "workflow_completion_status" in eval_contract.dashboard_projection
+    assert "requested_behavior_status" in summary_contract.dashboard_projection
+
+
 def test_screenshot_registry_contract_keeps_visual_evidence_separate() -> None:
     registry = ArtifactTypeRegistry()
 

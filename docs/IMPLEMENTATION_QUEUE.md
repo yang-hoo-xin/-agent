@@ -18,8 +18,8 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-007 Trace And Dashboard Redaction Boundary
-next_recommended_task: R-008 Fake Execution Status Normalization
+last_completed: R-008 Fake Execution Status Normalization
+next_recommended_task: R-009 Retrieval Authority Boundary
 Q-020_status: queued; blocked behind active Review Repair Queue
 ```
 ## Recently Completed
@@ -56,6 +56,7 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | R-005 | completed | ArtifactStore enforces required upstream lineage | `docs/audits/LOOP_HISTORY.md` |
 | R-006 | completed | Dashboard destructive operations are blocked by default behind confirmation, explicit enablement, permission decision, and operation summaries | `docs/audits/LOOP_HISTORY.md` |
 | R-007 | completed | Trace/dashboard reads are redacted by default, raw access is explicit, timing preserves raw zero duration, and dashboard smoke e2e passes | `docs/audits/LOOP_HISTORY.md` |
+| R-008 | completed | Fake/local execution summaries distinguish workflow completion from requested behavior success | `docs/audits/LOOP_HISTORY.md` |
 ## Review Repair Queue
 
 ```text
@@ -217,7 +218,7 @@ Closure evidence so far:
 ### R-008: Fake Execution Status Normalization
 
 ```text
-Status: queued
+Status: completed
 Module: WF, BUILD, RUN, OBS
 Spec refs: 12, 15, 18, 49.4
 Source finding: P0-001
@@ -232,6 +233,14 @@ Failure behavior: missing evidence mode blocks success claims
 Out of scope: real runtime collector
 Dependencies: Q-002A, Q-012, Q-013, Q-019
 Conflict checks: do not break blocked-review path
+Completed evidence:
+  - fake build_result tests now expect build_status=fake_completed, not fake_success.
+  - fake eval_report and workflow_summary payloads include workflow_completion_status=fake_execution_completed.
+  - fake eval_report and workflow_summary payloads include requested_behavior_status=not_verified.
+  - workflow_summary final_status remains inconclusive and all claims_real_* fields remain false.
+  - artifact contract tests require the completion/status fields in eval_report and workflow_summary.
+  - focused R-008 tests passed: 41 passed.
+  - affected repair/dashboard tests passed: 17 passed.
 ```
 
 ### R-009: Retrieval Authority Boundary

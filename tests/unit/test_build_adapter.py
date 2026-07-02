@@ -206,7 +206,7 @@ def test_fake_build_result_never_claims_real_build_success() -> None:
 
     assert payload["execution_mode"] == "fake"
     assert payload["status"] == "skipped"
-    assert payload["build_status"] == "fake_success"
+    assert payload["build_status"] == "fake_completed"
     assert payload["real_build_performed"] is False
     assert payload["claims_real_build_success"] is False
 
