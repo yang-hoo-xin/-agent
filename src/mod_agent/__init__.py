@@ -3,11 +3,15 @@
 __all__ = [
     "__version__",
     "artifacts",
+    "build",
+    "domain",
     "evidence",
     "git",
     "knowledge",
     "planning",
     "proposal",
+    "repair",
+    "runtime",
     "tools",
     "workflow",
 ]

@@ -6,7 +6,13 @@ import hashlib
 import re
 from pathlib import Path
 
-from .models import SymbolRecord
+from .database import KnowledgeDatabase
+from .models import (
+    KnowledgeChunkRecord,
+    SymbolIndexEntry,
+    SymbolIndexResult,
+    SymbolRecord,
+)
 
 _CS_TYPE_RE = re.compile(r"\b(class|interface|struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)")
 _CS_METHOD_RE = re.compile(
@@ -19,6 +25,57 @@ _PY_FUNCTION_RE = re.compile(r"^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 
 class SymbolIndexer:
     """Extract a small deterministic symbol index from text files."""
+
+    def index_chunks(
+        self,
+        database: KnowledgeDatabase,
+        *,
+        collection_id: str,
+        index_version: str,
+        chunks: list[KnowledgeChunkRecord] | None = None,
+    ) -> SymbolIndexResult:
+        """Replace chunk-bound symbol rows for one index version."""
+
+        indexed_chunks = chunks
+        if indexed_chunks is None:
+            indexed_chunks = database.list_chunks(
+                collection_id=collection_id,
+                index_version=index_version,
+            )
+        entries: list[SymbolIndexEntry] = []
+        for chunk in indexed_chunks:
+            entries.extend(self._entries_from_chunk(chunk))
+        database.replace_symbol_index(
+            collection_id=collection_id,
+            index_version=index_version,
+            entries=entries,
+        )
+        return SymbolIndexResult(
+            collection_id=collection_id,
+            index_version=index_version,
+            chunk_count=len(indexed_chunks),
+            symbol_count=len(entries),
+        )
+
+    def search_chunk_symbols(
+        self,
+        database: KnowledgeDatabase,
+        *,
+        collection_id: str,
+        index_version: str,
+        symbol: str,
+        symbol_kind: str | None = None,
+        limit: int = 20,
+    ) -> list[SymbolIndexEntry]:
+        """Search chunk-bound symbols by exact name."""
+
+        return database.search_symbol_index(
+            collection_id=collection_id,
+            index_version=index_version,
+            symbol=symbol,
+            symbol_kind=symbol_kind,
+            limit=limit,
+        )
 
     def extract(
         self,
@@ -49,6 +106,41 @@ class SymbolIndexer:
                 content_hash=content_hash,
             )
         return []
+
+    @staticmethod
+    def _entries_from_chunk(chunk: KnowledgeChunkRecord) -> list[SymbolIndexEntry]:
+        raw_symbols = chunk.metadata.get("symbols", [])
+        if not isinstance(raw_symbols, list):
+            return []
+        entries: list[SymbolIndexEntry] = []
+        source_path = str(chunk.metadata.get("source_path", ""))
+        start_line = chunk.metadata.get("start_line")
+        end_line = chunk.metadata.get("end_line")
+        symbol_kind = str(chunk.metadata.get("chunk_type", "symbol"))
+        for raw_symbol in raw_symbols:
+            if not isinstance(raw_symbol, str):
+                continue
+            symbol = raw_symbol.strip()
+            if not symbol:
+                continue
+            entries.append(
+                SymbolIndexEntry(
+                    collection_id=chunk.collection_id,
+                    index_version=chunk.index_version,
+                    symbol=symbol,
+                    symbol_kind=symbol_kind,
+                    chunk_id=chunk.chunk_id,
+                    source_path=source_path,
+                    start_line=start_line if isinstance(start_line, int) else None,
+                    end_line=end_line if isinstance(end_line, int) else None,
+                    metadata={
+                        **chunk.metadata,
+                        "symbol": symbol,
+                        "symbol_kind": symbol_kind,
+                    },
+                )
+            )
+        return entries
 
     def _extract_csharp(
         self,

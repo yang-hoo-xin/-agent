@@ -12,6 +12,7 @@ def _implementation_payload() -> dict[str, object]:
         "stage": "implementation_plan",
         "message": "Implementation plan is evidence-bound.",
         "feature_id": "feature_001",
+        "evidence_source_paths": ["mods/BetterHitFeedback/Plugin.cs"],
         "target_files": ["mods/BetterHitFeedback/Plugin.cs"],
         "target_symbols": ["Load"],
         "evidence_refs": ["ev_001"],
@@ -19,6 +20,8 @@ def _implementation_payload() -> dict[str, object]:
             {
                 "change_id": "chg_001",
                 "change_type": "modify_behavior",
+                "evidence_source_path": "mods/BetterHitFeedback/Plugin.cs",
+                "edit_target_path": "mods/BetterHitFeedback/Plugin.cs",
                 "target_file": "mods/BetterHitFeedback/Plugin.cs",
                 "target_symbol": "Load",
                 "operation": "minimal_evidence_bound_change",
@@ -43,6 +46,7 @@ def _evidence_pack() -> dict[str, object]:
         "items": [
             {
                 "evidence_id": "ev_001",
+                "source_type": "target_source",
                 "source_path": "mods/BetterHitFeedback/Plugin.cs",
                 "symbol": "Load",
             }
@@ -64,6 +68,15 @@ def test_patch_proposal_builder_converts_implementation_plan_to_reviewable_inten
     assert proposal.files == ("mods/BetterHitFeedback/Plugin.cs",)
     assert proposal.evidence_refs == ("ev_001",)
     assert proposal.diff_intent[0]["change_id"] == "chg_001"
+    assert proposal.diff_intent[0]["evidence_source_path"] == (
+        "mods/BetterHitFeedback/Plugin.cs"
+    )
+    assert proposal.diff_intent[0]["edit_target_path"] == (
+        "mods/BetterHitFeedback/Plugin.cs"
+    )
+    assert proposal.diff_intent[0]["target_file"] == (
+        "mods/BetterHitFeedback/Plugin.cs"
+    )
     assert proposal.diff_intent[0]["evidence_refs"] == ["ev_001"]
     assert proposal.expected_tests == ("compile",)
 
@@ -76,6 +89,17 @@ def test_patch_proposal_builder_blocks_no_op_plan() -> None:
 
     assert proposal.blocked is True
     assert proposal.blockers[0]["code"] == "NO_OP_PROPOSAL"
+
+
+def test_patch_proposal_builder_blocks_unresolved_edit_target() -> None:
+    payload = _implementation_payload()
+    payload["target_files"] = []
+    payload["proposed_changes"][0].pop("edit_target_path")
+
+    proposal = PatchProposalBuilder().build(payload)
+
+    assert proposal.blocked is True
+    assert proposal.blockers[0]["code"] == "EDIT_TARGET_UNRESOLVED"
 
 
 def test_reviewer_approves_evidence_bound_dry_run_proposal() -> None:
@@ -92,6 +116,23 @@ def test_reviewer_approves_evidence_bound_dry_run_proposal() -> None:
     assert review.allowed_next_stage == "dry_run_apply"
     assert review.required_changes == ()
     assert review.trace_metrics["num_changes_checked"] == 1
+
+
+def test_reviewer_blocks_evidence_bound_proposal_without_evidence_pack() -> None:
+    proposal = PatchProposalBuilder().build(_implementation_payload())
+
+    review = ProposalReviewer().review(
+        proposal.to_artifact_payload(),
+        feature_spec=_feature_spec(),
+        permission_level="dry_run_write",
+    )
+
+    assert review.decision == "blocked_insufficient_evidence"
+    assert review.allowed_next_stage is None
+    assert any(finding.rule_id == "evidence_binding" for finding in review.findings)
+    assert review.required_changes == (
+        "Change unit evidence refs cannot be validated without an evidence pack or repair plan.",
+    )
 
 
 def test_reviewer_blocks_unbound_change() -> None:
@@ -147,10 +188,59 @@ def test_proposal_payloads_validate_against_artifact_contract(tmp_path) -> None:
         feature_spec=_feature_spec(),
     )
 
+    feature_ref = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload={
+            "node_name": "draft_feature_spec",
+            "stage": "feature_spec",
+            "message": "Feature spec is ready.",
+            "feature_id": "feature_001",
+            "user_request": "make Load enable diagnostics",
+            "target_behavior": "make Load enable diagnostics",
+            "non_goals": [],
+            "target_mod": "BetterHitFeedback",
+            "risk_level": "medium",
+            "acceptance_criteria": [],
+            "evidence_requirements": [],
+            "runtime_verification_plan": [],
+            "blocked": False,
+            "blockers": [],
+        },
+    )
+    evidence_ref = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload={
+            "node_name": "retrieve_evidence",
+            "stage": "evidence_retrieval",
+            "message": "Evidence is sufficient.",
+            "query": "make Load enable diagnostics",
+            "readiness": "sufficient",
+            "can_generate_patch": True,
+            "items": _evidence_pack()["items"],
+            "gaps": [],
+            "excluded": [],
+            "blockers": [],
+            "retrieval_methods_used": ["symbol_exact"],
+            "missing_evidence": [],
+            "disabled_modes": {},
+            "timing": {},
+            "trace_refs": [],
+        },
+        upstream_refs=[feature_ref],
+    )
+    implementation_ref = store.write(
+        feature_id="feature_001",
+        artifact_type="implementation_plan",
+        payload=_implementation_payload(),
+        upstream_refs=[feature_ref, evidence_ref],
+    )
     proposal_ref = store.write(
         feature_id="feature_001",
         artifact_type="patch_proposal",
         payload=proposal.to_artifact_payload(),
+        upstream_refs=[implementation_ref, evidence_ref],
     )
     review_ref = store.write(
         feature_id="feature_001",

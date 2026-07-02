@@ -118,6 +118,7 @@ class ImplementationPlan:
     open_questions: tuple[str, ...] = ()
     blocking: bool = False
     blockers: tuple[dict[str, Any], ...] = ()
+    evidence_source_paths: tuple[str, ...] = ()
 
     def to_artifact_payload(self) -> dict[str, Any]:
         return {
@@ -129,6 +130,7 @@ class ImplementationPlan:
                 else "Implementation planning blocked by evidence or open questions."
             ),
             "feature_id": self.feature_id,
+            "evidence_source_paths": list(self.evidence_source_paths),
             "target_files": list(self.target_files),
             "target_symbols": list(self.target_symbols),
             "evidence_refs": list(self.evidence_refs),

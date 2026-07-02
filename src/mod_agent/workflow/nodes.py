@@ -7,6 +7,8 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.build import build_fake_build_result
+from src.mod_agent.runtime import build_fake_runtime_evidence_payload
 
 from .state import ModAgentState, StageName
 
@@ -191,6 +193,11 @@ class StubNodeRunner:
                 }
             )
         if artifact_type == "evidence_pack":
+            blocker = {
+                "code": "STUBBED_EVIDENCE_RETRIEVAL",
+                "message": "Evidence retrieval is stubbed in this workflow node.",
+                "needed_evidence": ["knowledge index", "symbol evidence"],
+            }
             payload.update(
                 {
                     "query": user_request,
@@ -199,19 +206,45 @@ class StubNodeRunner:
                     "items": [],
                     "gaps": ["Phase A stub did not run evidence retrieval."],
                     "excluded": [],
-                    "blockers": [
+                    "blockers": [blocker],
+                    "retrieval_methods_used": [],
+                    "missing_evidence": [
                         {
-                            "code": "STUBBED_EVIDENCE_RETRIEVAL",
-                            "message": "Evidence retrieval is stubbed in this workflow node.",
-                            "needed_evidence": ["knowledge index", "symbol evidence"],
+                            "needed_evidence": needed,
+                            "blocker_code": blocker["code"],
+                            "reason": blocker["message"],
                         }
+                        for needed in blocker["needed_evidence"]
                     ],
+                    "disabled_modes": {
+                        "deterministic": "Stub node did not run deterministic retrieval.",
+                        "bm25": "Stub node did not run BM25 retrieval.",
+                        "dense": "Stub node did not run dense retrieval.",
+                        "fusion": "Stub node did not run fusion.",
+                        "rerank": "Stub node did not run rerank.",
+                        "neural_sparse": "Neural sparse retrieval is outside the V1 retrieval path.",
+                    },
+                    "timing": {
+                        "query_processing_ms": 0.0,
+                        "symbol_ms": 0.0,
+                        "text_ms": 0.0,
+                        "bm25_ms": 0.0,
+                        "dense_ms": 0.0,
+                        "fusion_ms": 0.0,
+                        "rerank_ms": 0.0,
+                        "readiness_ms": 0.0,
+                        "total_ms": 0.0,
+                        "final_count": 0.0,
+                        "excluded_count": 0.0,
+                    },
+                    "trace_refs": [],
                 }
             )
         if artifact_type == "implementation_plan":
             payload.update(
                 {
                     "feature_id": "stubbed_feature",
+                    "evidence_source_paths": [],
                     "target_files": [],
                     "target_symbols": [],
                     "evidence_refs": [],
@@ -274,6 +307,52 @@ class StubNodeRunner:
                         "num_changes_checked": 0,
                         "num_blocking_findings": 1,
                     },
+                }
+            )
+        if artifact_type == "build_result":
+            payload.update(
+                build_fake_build_result(
+                    feature_id="stubbed_feature",
+                    input_execution_mode=None,
+                ).to_artifact_payload()
+            )
+        if artifact_type == "runtime_evidence":
+            payload.update(
+                build_fake_runtime_evidence_payload(
+                    feature_id="stubbed_feature",
+                    input_execution_mode=None,
+                )
+            )
+        if artifact_type == "repair_plan":
+            payload.update(
+                {
+                    "repair_id": "stubbed_repair",
+                    "feature_id": "stubbed_feature",
+                    "failure_source": "build",
+                    "failure_class": "unknown",
+                    "failure_evidence": ["stubbed_failure_evidence"],
+                    "evidence_refs": ["stubbed_failure_evidence"],
+                    "root_cause_hypotheses": [
+                        "Stub repair plan has no real failure evidence."
+                    ],
+                    "hypothesis": "Stub repair plan has no real failure evidence.",
+                    "recommended_fix_strategy": "Run real repair planning before retry.",
+                    "minimal_changes": [],
+                    "retry_count": 0,
+                    "retry_budget": 0,
+                    "retry_budget_remaining": 0,
+                    "retry_exhausted": True,
+                    "scope_expansion_allowed": False,
+                    "stop_condition": "Phase A stub cannot retry.",
+                    "forbidden_regressions": [],
+                    "requires_new_evidence": True,
+                    "allowed_next_stage": None,
+                    "blockers": [
+                        {
+                            "code": "STUBBED_REPAIR_PLAN",
+                            "message": "Repair planning is stubbed.",
+                        }
+                    ],
                 }
             )
         return payload

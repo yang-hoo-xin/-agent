@@ -9,6 +9,14 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.build import BuildResult, build_fake_build_result
+from src.mod_agent.domain import (
+    DomainAdapterRegistry,
+    DomainReviewPolicy,
+    GTFO_DOMAIN_NAME,
+    GTFOAdapter,
+    UnsupportedDomainAdapter,
+)
 from src.mod_agent.evidence import DeterministicEvidenceRetriever, EvidenceRequest
 from src.mod_agent.knowledge import KnowledgeDatabase
 from src.mod_agent.planning import (
@@ -20,27 +28,38 @@ from src.mod_agent.planning import (
     Uncertainty,
 )
 from src.mod_agent.proposal import PatchProposalBuilder, ProposalReviewer
+from src.mod_agent.repair import RepairPatchProposalBuilder, RepairPlanner
+from src.mod_agent.runtime import build_fake_runtime_evidence_payload
 
 from .nodes import StubNodeRunner
 from .state import ModAgentState
 from .transitions import (
     continue_route,
+    route_after_build,
     route_after_evidence,
     route_after_feature_spec,
     route_after_implementation_plan,
     route_after_patch_proposal,
     route_after_plan_request,
+    route_after_repair_plan,
     route_after_review,
+    route_after_runtime_evidence,
     route_registry,
 )
 
 GraphNode = Callable[[ModAgentState], ModAgentState]
+BuildResultFactory = Callable[[str, str | None], BuildResult]
 
 
 def build_graph(
     artifact_store: ArtifactStore,
     *,
     knowledge_database: KnowledgeDatabase | None = None,
+    domain_adapter_registry: DomainAdapterRegistry | None = None,
+    build_result_factory: BuildResultFactory | None = None,
+    checkpointer: Any | None = None,
+    interrupt_before: list[str] | None = None,
+    interrupt_after: list[str] | None = None,
 ):
     """Build a compiled LangGraph graph with real planning/review routing.
 
@@ -50,6 +69,7 @@ def build_graph(
     """
 
     stub_runner = StubNodeRunner(artifact_store)
+    effective_domain_registry = domain_adapter_registry or _default_domain_adapter_registry()
     graph = StateGraph(ModAgentState)
 
     graph.add_node(
@@ -95,19 +115,57 @@ def build_graph(
         "review_proposal",
         _make_real_graph_node(
             "review_proposal",
-            lambda state: _run_review_proposal(state, artifact_store),
+            lambda state: _run_review_proposal(
+                state,
+                artifact_store,
+                domain_adapter_registry=effective_domain_registry,
+            ),
         ),
     )
 
-    for node_name in {
+    graph.add_node(
         "dry_run_apply",
+        _make_real_graph_node(
+            "dry_run_apply",
+            lambda state: _run_fake_dry_run_apply(state, artifact_store),
+        ),
+    )
+    graph.add_node(
         "build",
+        _make_real_graph_node(
+            "build",
+            lambda state: _run_build(state, artifact_store, build_result_factory),
+        ),
+    )
+    graph.add_node(
         "collect_runtime_evidence",
+        _make_real_graph_node(
+            "collect_runtime_evidence",
+            lambda state: _run_fake_runtime_evidence(state, artifact_store),
+        ),
+    )
+    graph.add_node(
         "evaluate",
+        _make_real_graph_node(
+            "evaluate",
+            lambda state: _run_fake_evaluate(state, artifact_store),
+        ),
+    )
+    graph.add_node(
+        "create_repair_plan",
+        _make_real_graph_node(
+            "create_repair_plan",
+            lambda state: _run_create_repair_plan(state, artifact_store),
+        ),
+    )
+    graph.add_node(
         "done",
-        "blocked",
-    }:
-        graph.add_node(node_name, _make_stub_graph_node(node_name, stub_runner))
+        _make_real_graph_node(
+            "done",
+            lambda state: _run_workflow_summary(state, artifact_store),
+        ),
+    )
+    graph.add_node("blocked", _make_stub_graph_node("blocked", stub_runner))
 
     graph.add_edge(START, "plan_request")
     registry = route_registry()
@@ -141,10 +199,27 @@ def build_graph(
         route_after_review,
         dict(registry["review_proposal"]),
     )
-    for node_name in [
+    graph.add_conditional_edges(
         "dry_run_apply",
+        continue_route,
+        dict(registry["dry_run_apply"]),
+    )
+    graph.add_conditional_edges(
         "build",
+        route_after_build,
+        dict(registry["build"]),
+    )
+    graph.add_conditional_edges(
         "collect_runtime_evidence",
+        route_after_runtime_evidence,
+        dict(registry["collect_runtime_evidence"]),
+    )
+    graph.add_conditional_edges(
+        "create_repair_plan",
+        route_after_repair_plan,
+        dict(registry["create_repair_plan"]),
+    )
+    for node_name in [
         "evaluate",
     ]:
         graph.add_conditional_edges(
@@ -154,7 +229,11 @@ def build_graph(
         )
     graph.add_edge("done", END)
     graph.add_edge("blocked", END)
-    return graph.compile()
+    return graph.compile(
+        checkpointer=checkpointer,
+        interrupt_before=interrupt_before,
+        interrupt_after=interrupt_after,
+    )
 
 
 def _make_real_graph_node(node_name: str, run: GraphNode) -> GraphNode:
@@ -176,6 +255,7 @@ def _make_real_graph_node(node_name: str, run: GraphNode) -> GraphNode:
             status=_node_status(result, node_name),
             artifact_refs=_node_artifact_refs(result, node_name),
             summary=f"{node_name} completed.",
+            details=_node_trace_details(result, node_name),
         )
         return _copy_state_with_trace(result, finished)
 
@@ -300,6 +380,10 @@ def _run_retrieve_evidence(
         "can_generate_patch": pack.can_generate_patch,
         "num_items": len(pack.items),
         "gaps": list(pack.gaps),
+        "retrieval_methods_used": list(pack.retrieval_methods_used),
+        "missing_evidence": list(pack.missing_evidence),
+        "disabled_modes": dict(pack.disabled_modes),
+        "timing": dict(pack.timing),
     }
     _record_artifact(next_state, "evidence_pack", artifact_ref)
     if not pack.can_generate_patch:
@@ -341,17 +425,27 @@ def _run_generate_patch_proposal(
     state: ModAgentState,
     artifact_store: ArtifactStore,
 ) -> ModAgentState:
-    implementation = _read_artifact_data(state, artifact_store, "implementation_plan")
-    proposal = PatchProposalBuilder().build(implementation)
+    if state["current_stage"] == "repair_plan" and "repair_plan" in state["artifacts"]:
+        repair_plan = _read_artifact_data(state, artifact_store, "repair_plan")
+        proposal = RepairPatchProposalBuilder().build(repair_plan)
+        upstream_refs = [
+            _artifact_ref_from_state(state, "implementation_plan"),
+            _artifact_ref_from_state(state, "repair_plan"),
+            _artifact_ref_from_state(state, "evidence_pack"),
+        ]
+    else:
+        implementation = _read_artifact_data(state, artifact_store, "implementation_plan")
+        proposal = PatchProposalBuilder().build(implementation)
+        upstream_refs = [
+            _artifact_ref_from_state(state, "implementation_plan"),
+            _artifact_ref_from_state(state, "evidence_pack"),
+        ]
     artifact_ref = artifact_store.write(
         feature_id=proposal.feature_id,
         artifact_type="patch_proposal",
         payload=proposal.to_artifact_payload(),
         status="blocked" if proposal.blocked else "success",
-        upstream_refs=[
-            _artifact_ref_from_state(state, "implementation_plan"),
-            _artifact_ref_from_state(state, "evidence_pack"),
-        ],
+        upstream_refs=upstream_refs,
     )
     next_state = _copy_state(state)
     next_state["current_stage"] = "patch_proposal"
@@ -364,14 +458,26 @@ def _run_generate_patch_proposal(
 def _run_review_proposal(
     state: ModAgentState,
     artifact_store: ArtifactStore,
+    *,
+    domain_adapter_registry: DomainAdapterRegistry | None = None,
 ) -> ModAgentState:
     proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
     evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
+    repair_plan = (
+        _read_artifact_data(state, artifact_store, "repair_plan")
+        if "repair_plan" in state["artifacts"]
+        else None
+    )
     review = ProposalReviewer().review(
         proposal,
         evidence_pack=evidence_pack,
+        repair_plan=repair_plan,
         feature_spec=feature_spec,
+        domain_policy=_domain_review_policy_from_state(
+            state,
+            domain_adapter_registry,
+        ),
         permission_level="dry_run_write",
     )
     artifact_ref = artifact_store.write(
@@ -399,6 +505,300 @@ def _run_review_proposal(
             for finding in review.findings
             if finding.level == "blocking"
         )
+    return next_state
+
+
+def _domain_review_policy_from_state(
+    state: ModAgentState,
+    domain_adapter_registry: DomainAdapterRegistry | None,
+) -> DomainReviewPolicy | None:
+    """Resolve the review policy for a workflow run."""
+
+    registry = domain_adapter_registry or _default_domain_adapter_registry()
+    target_domain = state.get("target_domain")
+    if not target_domain:
+        return None
+
+    adapter_name = target_domain
+    if target_domain == "gtfo" and GTFO_DOMAIN_NAME in registry.names():
+        adapter_name = GTFO_DOMAIN_NAME
+
+    try:
+        adapter = registry.get(adapter_name)
+    except KeyError:
+        adapter = UnsupportedDomainAdapter()
+
+    return adapter.identify_project(".").review_policy()
+
+
+def _default_domain_adapter_registry() -> DomainAdapterRegistry:
+    """Return the default domain policy registry for workflow review gates."""
+
+    return DomainAdapterRegistry((GTFOAdapter(), UnsupportedDomainAdapter()))
+
+
+def _run_fake_dry_run_apply(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+) -> ModAgentState:
+    proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
+    review = _read_artifact_data(state, artifact_store, "proposal_review")
+    approved = review.get("allowed_next_stage") == "dry_run_apply"
+    changed_files = list(proposal.get("files") or [])
+    diff_intent = list(proposal.get("diff_intent") or [])
+    payload = {
+        "node_name": "dry_run_apply",
+        "stage": "dry_run_apply",
+        "message": (
+            "Fake dry-run completed. No source files were written and no patch "
+            "was applied."
+        ),
+        "execution_mode": "fake",
+        "actual_write_performed": False,
+        "real_patch_applied": False,
+        "approved_by_review": approved,
+        "proposal_id": proposal.get("proposal_id"),
+        "review_decision": review.get("decision"),
+        "would_write": bool(diff_intent),
+        "changed_files": changed_files,
+        "diff_stats": {
+            "files": len(changed_files),
+            "change_units": len(diff_intent),
+            "insertions": 0,
+            "deletions": 0,
+        },
+        "limitations": [
+            "This is an isolated fake dry-run artifact.",
+            "It does not prove a patch applies to the filesystem.",
+        ],
+    }
+    status = "success" if approved else "blocked"
+    artifact_ref = artifact_store.write(
+        feature_id=proposal["feature_id"],
+        artifact_type="dry_run_result",
+        payload=payload,
+        status=status,
+        upstream_refs=[
+            _artifact_ref_from_state(state, "patch_proposal"),
+            _artifact_ref_from_state(state, "proposal_review"),
+        ],
+    )
+    next_state = _copy_state(state)
+    next_state["current_stage"] = "dry_run_apply"
+    _record_artifact(next_state, "dry_run_result", artifact_ref)
+    if not approved:
+        next_state["blockers"].append(
+            {
+                "stage": "dry_run_apply",
+                "code": "REVIEW_NOT_APPROVED",
+                "message": "Dry-run cannot proceed without review approval.",
+            }
+        )
+    return next_state
+
+
+def _run_build(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    build_result_factory: BuildResultFactory | None,
+) -> ModAgentState:
+    dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
+    feature_id = state["feature_id"] or state["request_id"]
+    result = (
+        build_result_factory(feature_id, dry_run.get("execution_mode"))
+        if build_result_factory is not None
+        else build_fake_build_result(
+            feature_id=feature_id,
+            input_execution_mode=dry_run.get("execution_mode"),
+        )
+    )
+    payload = result.to_artifact_payload()
+    artifact_ref = artifact_store.write(
+        feature_id=feature_id,
+        artifact_type="build_result",
+        payload=payload,
+        status="failed" if payload["status"] == "failed" else "success",
+        upstream_refs=[_artifact_ref_from_state(state, "dry_run_result")],
+    )
+    next_state = _copy_state(state)
+    next_state["current_stage"] = "build"
+    next_state["build_summary"] = {
+        "status": payload["status"],
+        "build_status": payload["build_status"],
+        "execution_mode": payload["execution_mode"],
+        "real_build_performed": payload["real_build_performed"],
+        "error_class": payload["error_class"],
+        "repair_handoff": payload["repair_handoff"],
+        "claims_real_build_success": payload["claims_real_build_success"],
+    }
+    _record_artifact(next_state, "build_result", artifact_ref)
+    return next_state
+
+
+def _run_create_repair_plan(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+) -> ModAgentState:
+    feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
+    planner = RepairPlanner()
+    feature_id = state["feature_id"] or state["request_id"]
+    if state["build_summary"].get("status") == "failed":
+        build_ref = _artifact_ref_from_state(state, "build_result")
+        plan = planner.from_build_failure(
+            build_result=_read_artifact_data(state, artifact_store, "build_result"),
+            build_result_ref=build_ref.path,
+            retry_count=state["retry_count"],
+            target_behavior=str(feature_spec.get("target_behavior") or ""),
+        )
+        upstream_refs = [build_ref]
+    else:
+        runtime_ref = _artifact_ref_from_state(state, "runtime_evidence")
+        plan = planner.from_runtime_failure(
+            runtime_evidence=_read_artifact_data(
+                state,
+                artifact_store,
+                "runtime_evidence",
+            ),
+            runtime_evidence_ref=runtime_ref.path,
+            retry_count=state["retry_count"],
+            target_behavior=str(feature_spec.get("target_behavior") or ""),
+        )
+        upstream_refs = [runtime_ref]
+    artifact_ref = artifact_store.write(
+        feature_id=feature_id,
+        artifact_type="repair_plan",
+        payload=plan.to_artifact_payload(),
+        status="blocked" if plan.blockers else "success",
+        upstream_refs=upstream_refs,
+    )
+    next_state = _copy_state(state)
+    next_state["current_stage"] = "repair_plan"
+    next_state["retry_count"] = plan.retry_count
+    _record_artifact(next_state, "repair_plan", artifact_ref)
+    if plan.blockers:
+        next_state["blockers"].extend(plan.blockers)
+    return next_state
+
+
+def _run_fake_runtime_evidence(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+) -> ModAgentState:
+    build = _read_artifact_data(state, artifact_store, "build_result")
+    feature_id = state["feature_id"] or state["request_id"]
+    payload = build_fake_runtime_evidence_payload(
+        feature_id=feature_id,
+        input_execution_mode=build.get("execution_mode"),
+    )
+    artifact_ref = artifact_store.write(
+        feature_id=feature_id,
+        artifact_type="runtime_evidence",
+        payload=payload,
+        status="skipped",
+        upstream_refs=[_artifact_ref_from_state(state, "build_result")],
+    )
+    next_state = _copy_state(state)
+    next_state["current_stage"] = "runtime_evidence"
+    next_state["runtime_summary"] = {
+        "status": payload["verification_status"],
+        "execution_mode": "fake",
+        "real_runtime_performed": False,
+        "startup_loaded": payload["startup_loaded"],
+        "gameplay_behavior_verified": payload["gameplay_behavior_verified"],
+        "acceptance_status": payload["acceptance_status"],
+        "claims_real_runtime_success": False,
+    }
+    _record_artifact(next_state, "runtime_evidence", artifact_ref)
+    return next_state
+
+
+def _run_fake_evaluate(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+) -> ModAgentState:
+    runtime = _read_artifact_data(state, artifact_store, "runtime_evidence")
+    feature_id = state["feature_id"] or state["request_id"]
+    payload = {
+        "node_name": "evaluate",
+        "stage": "evaluation",
+        "message": (
+            "Evaluation completed for a fake/local workflow path. Result remains "
+            "inconclusive for real build and runtime success."
+        ),
+        "execution_mode": "fake",
+        "verdict": "inconclusive",
+        "claims_real_success": False,
+        "checks": [
+            {
+                "check": "review_gate_approved",
+                "status": "passed",
+            },
+            {
+                "check": "real_build",
+                "status": "not_run",
+            },
+            {
+                "check": "real_runtime",
+                "status": "passed" if runtime.get("claims_real_runtime_success") else "not_run",
+            },
+        ],
+        "input_runtime_status": runtime.get("verification_status"),
+        "input_acceptance_status": runtime.get("acceptance_status"),
+    }
+    artifact_ref = artifact_store.write(
+        feature_id=feature_id,
+        artifact_type="eval_report",
+        payload=payload,
+        status="success",
+        upstream_refs=[
+            _artifact_ref_from_state(state, "build_result"),
+            _artifact_ref_from_state(state, "runtime_evidence"),
+        ],
+    )
+    next_state = _copy_state(state)
+    next_state["current_stage"] = "evaluation"
+    _record_artifact(next_state, "eval_report", artifact_ref)
+    return next_state
+
+
+def _run_workflow_summary(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+) -> ModAgentState:
+    eval_report = _read_artifact_data(state, artifact_store, "eval_report")
+    feature_id = state["feature_id"] or state["request_id"]
+    payload = {
+        "node_name": "done",
+        "stage": "done",
+        "message": (
+            "Workflow reached the end of the controlled fake execution loop. "
+            "No real file write, real build, or real runtime success is claimed."
+        ),
+        "execution_mode": "fake",
+        "final_status": "inconclusive",
+        "claims_real_mod_success": False,
+        "claims_real_build_success": False,
+        "claims_real_runtime_success": False,
+        "artifact_refs": dict(state["artifacts"]),
+        "build_summary": dict(state["build_summary"]),
+        "runtime_summary": dict(state["runtime_summary"]),
+        "eval_verdict": eval_report.get("verdict"),
+        "next_required_evidence": [
+            "real dry-run/apply result",
+            "real build output",
+            "real runtime or manual verification evidence",
+        ],
+    }
+    artifact_ref = artifact_store.write(
+        feature_id=feature_id,
+        artifact_type="workflow_summary",
+        payload=payload,
+        status="success",
+        upstream_refs=[_artifact_ref_from_state(state, "eval_report")],
+    )
+    next_state = _copy_state(state)
+    next_state["current_stage"] = "done"
+    _record_artifact(next_state, "workflow_summary", artifact_ref)
     return next_state
 
 
@@ -478,6 +878,14 @@ def _node_status(state: ModAgentState, node_name: str) -> str:
             if state["review_summary"].get("allowed_next_stage") == "dry_run_apply"
             else "blocked"
         )
+    if node_name == "build" and state["build_summary"]:
+        return str(state["build_summary"].get("status", "success"))
+    if node_name == "collect_runtime_evidence" and state["runtime_summary"]:
+        return str(state["runtime_summary"].get("status", "success"))
+    if node_name == "create_repair_plan":
+        return "blocked" if state["blockers"] else "success"
+    if node_name == "done":
+        return "inconclusive"
     if state["blockers"]:
         return "blocked"
     return "success"
@@ -491,11 +899,38 @@ def _node_artifact_refs(state: ModAgentState, node_name: str) -> list[str]:
         "create_implementation_plan": "implementation_plan",
         "generate_patch_proposal": "patch_proposal",
         "review_proposal": "proposal_review",
+        "dry_run_apply": "dry_run_result",
+        "build": "build_result",
+        "collect_runtime_evidence": "runtime_evidence",
+        "create_repair_plan": "repair_plan",
+        "evaluate": "eval_report",
+        "done": "workflow_summary",
     }
     artifact_type = artifact_by_node.get(node_name)
     if artifact_type is None or artifact_type not in state["artifacts"]:
         return []
     return [state["artifacts"][artifact_type]]
+
+
+def _node_trace_details(state: ModAgentState, node_name: str) -> dict[str, Any]:
+    if node_name == "retrieve_evidence" and state["evidence_summary"]:
+        missing_evidence = list(state["evidence_summary"].get("missing_evidence") or [])
+        return {
+            "readiness": state["evidence_summary"].get("readiness"),
+            "can_generate_patch": state["evidence_summary"].get("can_generate_patch"),
+            "retrieval_methods_used": list(
+                state["evidence_summary"].get("retrieval_methods_used") or []
+            ),
+            "missing_evidence_count": len(missing_evidence),
+            "disabled_modes": dict(state["evidence_summary"].get("disabled_modes") or {}),
+            "timing": dict(state["evidence_summary"].get("timing") or {}),
+        }
+    if node_name == "create_repair_plan" and "repair_plan" in state["artifacts"]:
+        return {
+            "retry_count": state["retry_count"],
+            "blocked": bool(state["blockers"]),
+        }
+    return {}
 
 
 def _trace_event(
@@ -506,8 +941,9 @@ def _trace_event(
     status: str,
     artifact_refs: list[str],
     summary: str,
+    details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    event = {
         "event_id": f"evt_{uuid4().hex}",
         "run_id": state["run_id"],
         "feature_id": state.get("feature_id") or state["request_id"],
@@ -518,6 +954,9 @@ def _trace_event(
         "artifact_refs": artifact_refs,
         "summary": summary,
     }
+    if details:
+        event["details"] = details
+    return event
 
 
 def _copy_state_with_trace(

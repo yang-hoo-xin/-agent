@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from .models import EvidenceItem, EvidencePack, EvidenceReadiness, EvidenceRequest
+from .models import (
+    EvidenceItem,
+    EvidencePack,
+    EvidenceReadiness,
+    EvidenceRequest,
+    missing_evidence_from_blockers,
+)
 
 HOOK_SOURCE_TYPES = frozenset({"target_source", "reference_mod", "decompiled_api"})
 HOOK_METHODS = frozenset({"symbol", "symbol_exact", "symbol_substring"})
@@ -27,6 +33,13 @@ class EvidenceReadinessClassifier:
             )
 
         if any("contradiction" in note.lower() for item in items for note in item.risk_notes):
+            blockers = (
+                {
+                    "code": "CONTRADICTORY_EVIDENCE",
+                    "message": "Retrieved evidence contains contradiction risk notes.",
+                    "needed_evidence": ["consistent source/API/log evidence"],
+                },
+            )
             return EvidencePack(
                 query=request.query,
                 readiness="contradictory",
@@ -34,13 +47,8 @@ class EvidenceReadinessClassifier:
                 items=tuple(items),
                 excluded=tuple(excluded or []),
                 gaps=("Evidence contains contradiction risk notes.",),
-                blockers=(
-                    {
-                        "code": "CONTRADICTORY_EVIDENCE",
-                        "message": "Retrieved evidence contains contradiction risk notes.",
-                        "needed_evidence": ["consistent source/API/log evidence"],
-                    },
-                ),
+                blockers=blockers,
+                missing_evidence=missing_evidence_from_blockers(blockers),
             )
 
         if request.execution_path == "quick_patch" and not request.requires_hook_evidence:
@@ -53,6 +61,20 @@ class EvidenceReadinessClassifier:
             )
 
         if request.requires_hook_evidence and not self._has_hook_evidence(items):
+            blockers = (
+                {
+                    "code": "INSUFFICIENT_HOOK_EVIDENCE",
+                    "message": (
+                        "No source/API evidence identifies a safe hook for the "
+                        "requested runtime behavior."
+                    ),
+                    "needed_evidence": [
+                        "target method",
+                        "call timing",
+                        "side effect boundary",
+                    ],
+                },
+            )
             return EvidencePack(
                 query=request.query,
                 readiness="partial",
@@ -60,20 +82,8 @@ class EvidenceReadinessClassifier:
                 items=tuple(items),
                 excluded=tuple(excluded or []),
                 gaps=("No target/source/API symbol evidence identifies a safe hook.",),
-                blockers=(
-                    {
-                        "code": "INSUFFICIENT_HOOK_EVIDENCE",
-                        "message": (
-                            "No source/API evidence identifies a safe hook for the "
-                            "requested runtime behavior."
-                        ),
-                        "needed_evidence": [
-                            "target method",
-                            "call timing",
-                            "side effect boundary",
-                        ],
-                    },
-                ),
+                blockers=blockers,
+                missing_evidence=missing_evidence_from_blockers(blockers),
             )
 
         return self._pack(

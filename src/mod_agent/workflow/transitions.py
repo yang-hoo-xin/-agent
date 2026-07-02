@@ -64,6 +64,32 @@ def route_after_review(state: ModAgentState) -> str:
     return "blocked"
 
 
+def route_after_build(state: ModAgentState) -> str:
+    """Route failed builds to repair planning."""
+
+    if state["build_summary"].get("status") == "failed":
+        return "repair"
+    return "continue"
+
+
+def route_after_runtime_evidence(state: ModAgentState) -> str:
+    """Route explicit runtime failures to repair planning."""
+
+    runtime_status = state["runtime_summary"].get("status")
+    acceptance_status = state["runtime_summary"].get("acceptance_status")
+    if runtime_status == "failed" or acceptance_status == "failed":
+        return "repair"
+    return "continue"
+
+
+def route_after_repair_plan(state: ModAgentState) -> str:
+    """Route repair plans back through proposal review or block exhausted loops."""
+
+    if state["blockers"]:
+        return "blocked"
+    return "continue"
+
+
 def route_registry() -> RouteRegistry:
     """Return the route matrix used by graph construction and audits."""
 
@@ -93,8 +119,18 @@ def route_registry() -> RouteRegistry:
             "continue": "dry_run_apply",
         },
         "dry_run_apply": {"continue": "build"},
-        "build": {"continue": "collect_runtime_evidence"},
-        "collect_runtime_evidence": {"continue": "evaluate"},
+        "build": {
+            "continue": "collect_runtime_evidence",
+            "repair": "create_repair_plan",
+        },
+        "collect_runtime_evidence": {
+            "continue": "evaluate",
+            "repair": "create_repair_plan",
+        },
+        "create_repair_plan": {
+            "blocked": "blocked",
+            "continue": "generate_patch_proposal",
+        },
         "evaluate": {"continue": "done"},
     }
 

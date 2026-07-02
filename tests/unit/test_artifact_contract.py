@@ -55,6 +55,7 @@ def _implementation_payload() -> dict[str, object]:
         "stage": "implementation_plan",
         "message": "stub",
         "feature_id": "feature_001",
+        "evidence_source_paths": [],
         "target_files": [],
         "target_symbols": [],
         "evidence_refs": [],
@@ -114,6 +115,11 @@ def _evidence_payload() -> dict[str, object]:
         "gaps": ["stub"],
         "excluded": [],
         "blockers": [],
+        "retrieval_methods_used": [],
+        "missing_evidence": [],
+        "disabled_modes": {},
+        "timing": {},
+        "trace_refs": [],
     }
 
 
@@ -130,9 +136,14 @@ def test_every_workflow_artifact_type_is_registered() -> None:
         "dry_run_result",
         "build_result",
         "runtime_evidence",
+        "manual_evidence",
+        "screenshot_registry",
         "repair_plan",
+        "workflow_checkpoint",
+        "resume_report",
         "eval_report",
         "workflow_trace",
+        "job_status",
         "git_change_record",
         "knowledge_index_report",
     }.issubset(registry.artifact_types())
@@ -149,6 +160,108 @@ def test_git_change_record_contract_supports_audit_and_replay() -> None:
     )
     assert "repair_plan" in contract.consumer_stages
     assert contract.dashboard_projection
+
+
+def test_runtime_evidence_contract_requires_acceptance_fields() -> None:
+    registry = ArtifactTypeRegistry()
+
+    contract = registry.get("runtime_evidence")
+    manual_contract = registry.get("manual_evidence")
+
+    required = {
+        "feature_id",
+        "execution_mode",
+        "evidence_source",
+        "startup_loaded",
+        "gameplay_behavior_verified",
+        "evidence_items",
+        "verification_status",
+        "acceptance_status",
+        "raw_supplied_output",
+        "sources",
+        "non_goals_checked",
+        "limitations",
+        "claims_real_runtime_success",
+    }
+    assert required.issubset(contract.required_fields)
+    assert required.issubset(manual_contract.required_fields)
+
+
+def test_screenshot_registry_contract_keeps_visual_evidence_separate() -> None:
+    registry = ArtifactTypeRegistry()
+
+    contract = registry.get("screenshot_registry")
+
+    assert contract.producer_stage == "runtime_evidence"
+    assert {
+        "feature_id",
+        "screenshot_count",
+        "captioned_count",
+        "missing_caption_count",
+        "screenshots",
+        "verification_status",
+        "acceptance_status",
+        "claims_real_runtime_success",
+        "limitations",
+    }.issubset(contract.required_fields)
+    assert {"evaluate", "repair_plan", "dashboard"}.issubset(contract.consumer_stages)
+
+
+def test_build_result_contract_requires_structured_build_fields() -> None:
+    registry = ArtifactTypeRegistry()
+
+    contract = registry.get("build_result")
+
+    assert {
+        "feature_id",
+        "execution_mode",
+        "status",
+        "command",
+        "exit_code",
+        "stdout_path",
+        "stderr_path",
+        "errors",
+        "warnings",
+        "duration_ms",
+        "error_class",
+        "diagnostics",
+        "repair_handoff",
+        "expected_artifacts",
+        "verified_artifacts",
+        "artifact_verification",
+        "real_build_performed",
+        "claims_real_build_success",
+    }.issubset(contract.required_fields)
+
+
+def test_repair_plan_contract_requires_retry_and_evidence_fields() -> None:
+    registry = ArtifactTypeRegistry()
+
+    contract = registry.get("repair_plan")
+
+    assert {
+        "repair_id",
+        "feature_id",
+        "failure_source",
+        "failure_class",
+        "failure_evidence",
+        "evidence_refs",
+        "root_cause_hypotheses",
+        "hypothesis",
+        "recommended_fix_strategy",
+        "minimal_changes",
+        "retry_count",
+        "retry_budget",
+        "retry_budget_remaining",
+        "retry_exhausted",
+        "scope_expansion_allowed",
+        "stop_condition",
+        "forbidden_regressions",
+        "requires_new_evidence",
+        "allowed_next_stage",
+        "blockers",
+    }.issubset(contract.required_fields)
+    assert "generate_patch_proposal" in contract.consumer_stages
 
 
 def test_dashboard_projection_contract_is_present() -> None:
@@ -173,6 +286,11 @@ def test_evidence_pack_contract_requires_readiness_fields() -> None:
         "gaps",
         "excluded",
         "blockers",
+        "retrieval_methods_used",
+        "missing_evidence",
+        "disabled_modes",
+        "timing",
+        "trace_refs",
     }.issubset(contract.required_fields)
 
 
@@ -230,18 +348,27 @@ def test_upstream_hash_recorded(tmp_path: Path) -> None:
         artifact_type="feature_spec",
         payload=_feature_payload(),
     )
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec],
+    )
 
     plan = store.write(
         feature_id="feature_001",
         artifact_type="implementation_plan",
         payload=_implementation_payload(),
-        upstream_refs=[feature_spec],
+        upstream_refs=[feature_spec, evidence_pack],
     )
 
     envelope = store.read(plan)
-    upstream = envelope["inputs"]["upstream_artifacts"][0]
-    assert upstream["artifact_type"] == "feature_spec"
-    assert upstream["artifact_hash"] == feature_spec.artifact_hash
+    upstream_by_type = {
+        upstream["artifact_type"]: upstream
+        for upstream in envelope["inputs"]["upstream_artifacts"]
+    }
+    assert upstream_by_type["feature_spec"]["artifact_hash"] == feature_spec.artifact_hash
+    assert upstream_by_type["evidence_pack"]["artifact_hash"] == evidence_pack.artifact_hash
 
 
 def test_stale_detected_after_upstream_change(tmp_path: Path) -> None:
@@ -251,11 +378,17 @@ def test_stale_detected_after_upstream_change(tmp_path: Path) -> None:
         artifact_type="feature_spec",
         payload=_feature_payload(),
     )
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec],
+    )
     plan = store.write(
         feature_id="feature_001",
         artifact_type="implementation_plan",
         payload=_implementation_payload(),
-        upstream_refs=[feature_spec],
+        upstream_refs=[feature_spec, evidence_pack],
     )
     store.write(
         feature_id="feature_001",
@@ -305,11 +438,17 @@ def test_dashboard_can_read_stale_reason(tmp_path: Path) -> None:
         artifact_type="feature_spec",
         payload=_feature_payload(),
     )
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec],
+    )
     plan = store.write(
         feature_id="feature_001",
         artifact_type="implementation_plan",
         payload=_implementation_payload(),
-        upstream_refs=[feature_spec],
+        upstream_refs=[feature_spec, evidence_pack],
     )
     store.write(
         feature_id="feature_001",

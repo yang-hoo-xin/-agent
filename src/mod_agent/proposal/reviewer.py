@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Any
 
+from src.mod_agent.domain import DomainReviewPolicy
+
 from .models import ProposalReview, ReviewFinding
 
 CHECKED_RULES = (
@@ -13,6 +15,7 @@ CHECKED_RULES = (
     "scope_boundary",
     "target_alignment",
     "risk_policy",
+    "domain_profile",
     "forbidden_paths",
     "permission_level",
     "test_plan_presence",
@@ -28,14 +31,16 @@ class ProposalReviewer:
         proposal: dict[str, Any],
         *,
         evidence_pack: dict[str, Any] | None = None,
+        repair_plan: dict[str, Any] | None = None,
         feature_spec: dict[str, Any] | None = None,
+        domain_policy: DomainReviewPolicy | None = None,
         permission_level: str = "dry_run_write",
     ) -> ProposalReview:
         """Return a composite review decision."""
 
         findings: list[ReviewFinding] = []
         diff_intent = list(proposal.get("diff_intent") or [])
-        evidence_ids = self._evidence_ids(evidence_pack)
+        evidence_ids = self._evidence_ids(evidence_pack, repair_plan)
         proposal_evidence_refs = set(proposal.get("evidence_refs") or [])
         allowed_files = set(proposal.get("files") or [])
 
@@ -93,6 +98,19 @@ class ProposalReviewer:
                 )
             )
 
+        if domain_policy is not None and self._requires_game_profile(proposal):
+            if not domain_policy.allows_runtime_change():
+                findings.append(
+                    ReviewFinding(
+                        rule_id="domain_profile",
+                        level="blocking",
+                        message=(
+                            "Game-specific runtime changes are blocked without "
+                            "an experimental or supported GameProfile."
+                        ),
+                    )
+                )
+
         for change in diff_intent:
             change_id = change.get("change_id")
             refs = tuple(change.get("evidence_refs") or ())
@@ -106,12 +124,28 @@ class ProposalReviewer:
                         change_id=change_id,
                     )
                 )
+            elif not evidence_ids:
+                findings.append(
+                    ReviewFinding(
+                        rule_id="evidence_binding",
+                        level="blocking",
+                        message=(
+                            "Change unit evidence refs cannot be validated without "
+                            "an evidence pack or repair plan."
+                        ),
+                        change_id=change_id,
+                        evidence_refs=refs,
+                    )
+                )
             elif evidence_ids and not set(refs).issubset(evidence_ids):
                 findings.append(
                     ReviewFinding(
                         rule_id="evidence_binding",
                         level="blocking",
-                        message="Change unit references evidence not present in evidence pack.",
+                        message=(
+                            "Change unit references evidence not present in the "
+                            "approved evidence source."
+                        ),
                         change_id=change_id,
                         evidence_refs=refs,
                     )
@@ -146,6 +180,17 @@ class ProposalReviewer:
                         change_id=change_id,
                     )
                 )
+            if target_file and domain_policy is not None:
+                domain_path = domain_policy.review_path(str(target_file))
+                if not domain_path.allowed:
+                    findings.append(
+                        ReviewFinding(
+                            rule_id=domain_path.rule_id or "forbidden_paths",
+                            level="blocking",
+                            message=domain_path.reason,
+                            change_id=change_id,
+                        )
+                    )
 
         blocking = [finding for finding in findings if finding.level == "blocking"]
         if blocking:
@@ -175,14 +220,22 @@ class ProposalReviewer:
         )
 
     @staticmethod
-    def _evidence_ids(evidence_pack: dict[str, Any] | None) -> set[str]:
-        if evidence_pack is None:
-            return set()
-        return {
-            item["evidence_id"]
-            for item in evidence_pack.get("items", [])
-            if item.get("evidence_id")
-        }
+    def _evidence_ids(
+        evidence_pack: dict[str, Any] | None,
+        repair_plan: dict[str, Any] | None,
+    ) -> set[str]:
+        evidence_ids = set()
+        if evidence_pack is not None:
+            evidence_ids.update(
+                {
+                    item["evidence_id"]
+                    for item in evidence_pack.get("items", [])
+                    if item.get("evidence_id")
+                }
+            )
+        if repair_plan is not None:
+            evidence_ids.update(str(ref) for ref in repair_plan.get("evidence_refs", []))
+        return evidence_ids
 
     @staticmethod
     def _target_aligned(proposal: dict[str, Any], feature_spec: dict[str, Any]) -> bool:
@@ -208,12 +261,31 @@ class ProposalReviewer:
         return bool(parts & forbidden_parts)
 
     @staticmethod
+    def _requires_game_profile(proposal: dict[str, Any]) -> bool:
+        risk = proposal.get("risk_assessment", {})
+        if risk.get("requires_game_profile"):
+            return True
+        risk_tags = set(risk.get("risk_tags") or [])
+        if risk.get("risk_level") in {"high", "critical"}:
+            return True
+        game_specific_tags = {
+            "game_hook",
+            "runtime_behavior_change",
+            "native/interop/reflection-heavy",
+            "critical",
+            "high",
+        }
+        return bool(risk_tags & game_specific_tags)
+
+    @staticmethod
     def _blocked_decision(blocking: list[ReviewFinding]) -> str:
         rule_ids = {finding.rule_id for finding in blocking}
         if "evidence_binding" in rule_ids:
             return "blocked_insufficient_evidence"
         if "scope_boundary" in rule_ids or "forbidden_paths" in rule_ids:
             return "blocked_scope_risk"
+        if "domain_profile" in rule_ids:
+            return "blocked_requires_human"
         if "permission_level" in rule_ids or "risk_policy" in rule_ids:
             return "blocked_requires_human"
         return "revise_proposal"

@@ -62,6 +62,11 @@ class EvidencePack:
     gaps: tuple[str, ...] = ()
     excluded: tuple[dict[str, Any], ...] = ()
     blockers: tuple[dict[str, Any], ...] = ()
+    retrieval_methods_used: tuple[str, ...] = ()
+    missing_evidence: tuple[dict[str, Any], ...] = ()
+    disabled_modes: dict[str, str] = field(default_factory=dict)
+    timing: dict[str, float] = field(default_factory=dict)
+    trace_refs: tuple[str, ...] = ()
     message: str = ""
 
     def to_artifact_payload(self) -> dict[str, Any]:
@@ -82,26 +87,74 @@ class EvidencePack:
             "gaps": list(self.gaps),
             "excluded": list(self.excluded),
             "blockers": list(self.blockers),
+            "retrieval_methods_used": list(self.retrieval_methods_used),
+            "missing_evidence": list(self.missing_evidence),
+            "disabled_modes": dict(self.disabled_modes),
+            "timing": dict(self.timing),
+            "trace_refs": list(self.trace_refs),
         }
 
     @classmethod
     def empty(cls, *, query: str, reason: str) -> "EvidencePack":
         """Return an insufficient empty pack with a blocking reason."""
 
+        blockers = (
+            {
+                "code": "INSUFFICIENT_EVIDENCE",
+                "message": reason,
+                "needed_evidence": [
+                    "target source symbol",
+                    "API reference",
+                    "domain note",
+                ],
+            },
+        )
         return cls(
             query=query,
             readiness="insufficient",
             can_generate_patch=False,
             gaps=(reason,),
-            blockers=(
-                {
-                    "code": "INSUFFICIENT_EVIDENCE",
-                    "message": reason,
-                    "needed_evidence": [
-                        "target source symbol",
-                        "API reference",
-                        "domain note",
-                    ],
-                },
-            ),
+            blockers=blockers,
+            missing_evidence=missing_evidence_from_blockers(blockers),
+            disabled_modes={
+                "deterministic": reason,
+                "bm25": "BM25 inverted index is not available for this evidence pack.",
+                "dense": "Dense retrieval is not available for this evidence pack.",
+                "fusion": "Fusion is not available for this evidence pack.",
+                "rerank": "Rerank is not available for this evidence pack.",
+                "neural_sparse": "Neural sparse retrieval is outside the V1 retrieval path.",
+            },
+            timing={
+                "query_processing_ms": 0.0,
+                "symbol_ms": 0.0,
+                "text_ms": 0.0,
+                "bm25_ms": 0.0,
+                "dense_ms": 0.0,
+                "fusion_ms": 0.0,
+                "rerank_ms": 0.0,
+                "readiness_ms": 0.0,
+                "total_ms": 0.0,
+                "final_count": 0.0,
+                "excluded_count": 0.0,
+            },
         )
+
+
+def missing_evidence_from_blockers(
+    blockers: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    """Build structured missing evidence entries from readiness blockers."""
+
+    missing: list[dict[str, Any]] = []
+    for blocker in blockers:
+        blocker_code = str(blocker.get("code", "UNKNOWN_BLOCKER"))
+        blocker_message = str(blocker.get("message", "Evidence is missing."))
+        for needed in blocker.get("needed_evidence", []):
+            missing.append(
+                {
+                    "needed_evidence": str(needed),
+                    "blocker_code": blocker_code,
+                    "reason": blocker_message,
+                }
+            )
+    return tuple(missing)

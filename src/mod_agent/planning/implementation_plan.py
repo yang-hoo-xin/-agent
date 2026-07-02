@@ -6,6 +6,8 @@ from typing import Any
 
 from .models import FeatureSpec, ImplementationPlan
 
+EDITABLE_EVIDENCE_SOURCE_TYPES = frozenset({"target_source"})
+
 
 class ImplementationPlanner:
     """Create an evidence-bound implementation plan without producing a patch."""
@@ -42,28 +44,61 @@ class ImplementationPlanner:
         evidence_refs = tuple(
             item["evidence_id"] for item in items if item.get("evidence_id")
         )
+        evidence_source_paths = tuple(
+            dict.fromkeys(
+                item["source_path"] for item in items if item.get("source_path")
+            )
+        )
+        editable_items = [
+            item
+            for item in items
+            if item.get("evidence_id")
+            and item.get("source_path")
+            and item.get("source_type") in EDITABLE_EVIDENCE_SOURCE_TYPES
+        ]
         target_files = tuple(
-            dict.fromkeys(item["source_path"] for item in items if item.get("source_path"))
+            dict.fromkeys(item["source_path"] for item in editable_items)
         )
         target_symbols = tuple(
-            dict.fromkeys(item["symbol"] for item in items if item.get("symbol"))
+            dict.fromkeys(item["symbol"] for item in editable_items if item.get("symbol"))
         )
-        if not evidence_refs or not target_files:
+        if not evidence_refs:
             return self._blocked(
                 feature_id=feature_spec.feature_id,
                 blockers=(
                     {
                         "code": "MISSING_EVIDENCE_BINDING",
-                        "message": "Sufficient readiness was claimed without evidence refs or target files.",
+                        "message": "Sufficient readiness was claimed without evidence refs.",
                     },
                 ),
-                open_questions=("Evidence pack lacks concrete target files or evidence ids.",),
+                open_questions=("Evidence pack lacks evidence ids.",),
+                evidence_source_paths=evidence_source_paths,
+            )
+
+        if not target_files:
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(
+                    {
+                        "code": "EDIT_TARGET_UNRESOLVED",
+                        "message": (
+                            "Evidence sources do not resolve to an editable target source."
+                        ),
+                        "evidence_source_paths": list(evidence_source_paths),
+                    },
+                ),
+                open_questions=(
+                    "Resolve an editable target source before patch proposal generation.",
+                ),
+                evidence_source_paths=evidence_source_paths,
             )
 
         proposed_changes = tuple(
             {
                 "change_id": f"chg_{index:03d}",
                 "change_type": "modify_behavior",
+                "evidence_source_path": item.get("source_path"),
+                "edit_target_path": item.get("source_path"),
                 "target_file": item.get("source_path"),
                 "target_symbol": item.get("symbol"),
                 "operation": "minimal_evidence_bound_change",
@@ -73,8 +108,7 @@ class ImplementationPlanner:
                 "expected_validation": list(feature_spec.runtime_verification_plan),
                 "rollback_hint": "Revert this change unit or restore previous behavior.",
             }
-            for index, item in enumerate(items, start=1)
-            if item.get("evidence_id") and item.get("source_path")
+            for index, item in enumerate(editable_items, start=1)
         )
 
         return ImplementationPlan(
@@ -91,6 +125,7 @@ class ImplementationPlanner:
             ),
             open_questions=(),
             blocking=False,
+            evidence_source_paths=evidence_source_paths,
         )
 
     @staticmethod
@@ -99,6 +134,7 @@ class ImplementationPlanner:
         feature_id: str,
         blockers: tuple[dict[str, Any], ...],
         open_questions: tuple[str, ...],
+        evidence_source_paths: tuple[str, ...] = (),
     ) -> ImplementationPlan:
         return ImplementationPlan(
             feature_id=feature_id,
@@ -112,4 +148,5 @@ class ImplementationPlanner:
             open_questions=open_questions,
             blocking=True,
             blockers=blockers,
+            evidence_source_paths=evidence_source_paths,
         )

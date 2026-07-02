@@ -8,6 +8,13 @@ from typing import Any
 
 from .database import KnowledgeDatabase
 from .models import SourceRecord
+from .source_discovery import (
+    DEFAULT_IGNORED_DIR_NAMES,
+    DEFAULT_IGNORED_FILE_PATTERNS,
+    aggregate_source_hash,
+    iter_indexable_paths,
+    normalize_extensions,
+)
 
 DEFAULT_EXTENSIONS = frozenset({".cs", ".py", ".json", ".yaml", ".yml", ".md", ".txt", ".log"})
 
@@ -25,6 +32,9 @@ class SourceDefinition:
     root_path: str | Path
     metadata: dict[str, Any] = field(default_factory=dict)
     allowed_extensions: frozenset[str] = DEFAULT_EXTENSIONS
+    ignored_dir_names: frozenset[str] = DEFAULT_IGNORED_DIR_NAMES
+    ignored_file_patterns: frozenset[str] = DEFAULT_IGNORED_FILE_PATTERNS
+    include_generated_mods: bool = False
 
 
 class SourceRegistry:
@@ -44,16 +54,16 @@ class SourceRegistry:
             raise SourceRegistryError(f"Source root does not exist: {root}")
         if not root.is_dir():
             raise SourceRegistryError(f"Source root is not a directory: {root}")
-        normalized_extensions = frozenset(
-            extension if extension.startswith(".") else f".{extension}"
-            for extension in definition.allowed_extensions
-        )
+        normalized_extensions = normalize_extensions(definition.allowed_extensions)
         stored = SourceDefinition(
             source_id=definition.source_id,
             source_type=definition.source_type,
             root_path=root,
             metadata=dict(definition.metadata),
             allowed_extensions=normalized_extensions,
+            ignored_dir_names=frozenset(definition.ignored_dir_names),
+            ignored_file_patterns=frozenset(definition.ignored_file_patterns),
+            include_generated_mods=definition.include_generated_mods,
         )
         self._definitions[definition.source_id] = stored
         record = SourceRecord(
@@ -63,6 +73,9 @@ class SourceRegistry:
             metadata={
                 **definition.metadata,
                 "allowed_extensions": sorted(normalized_extensions),
+                "ignored_dir_names": sorted(definition.ignored_dir_names),
+                "ignored_file_patterns": sorted(definition.ignored_file_patterns),
+                "include_generated_mods": definition.include_generated_mods,
             },
         )
         self.database.upsert_source(record)
@@ -78,18 +91,19 @@ class SourceRegistry:
 
         definition = self._definition_for(source_id)
         root = Path(definition.root_path).resolve()
-        files: list[Path] = []
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
-            resolved = path.resolve()
-            try:
-                resolved.relative_to(root)
-            except ValueError as exc:
-                raise SourceRegistryError("Discovered path escaped source root") from exc
-            if resolved.suffix.lower() in definition.allowed_extensions:
-                files.append(resolved)
-        return files
+        return iter_indexable_paths(
+            root=root,
+            allowed_extensions=definition.allowed_extensions,
+            ignored_dir_names=definition.ignored_dir_names,
+            ignored_file_patterns=definition.ignored_file_patterns,
+            include_generated_mods=definition.include_generated_mods,
+        )
+
+    def source_content_hash(self, source_id: str) -> str:
+        """Return a stable aggregate hash for currently discovered files."""
+
+        root = self.source_root(source_id)
+        return aggregate_source_hash(self.iter_files(source_id), root=root)
 
     def source_root(self, source_id: str) -> Path:
         """Return the resolved root path for a registered source."""
@@ -110,12 +124,21 @@ class SourceRegistry:
         for record in self.database.list_sources():
             if record.source_id == source_id:
                 extensions = frozenset(record.metadata.get("allowed_extensions", DEFAULT_EXTENSIONS))
+                ignored_dir_names = frozenset(
+                    record.metadata.get("ignored_dir_names", DEFAULT_IGNORED_DIR_NAMES)
+                )
+                ignored_file_patterns = frozenset(
+                    record.metadata.get("ignored_file_patterns", DEFAULT_IGNORED_FILE_PATTERNS)
+                )
                 definition = SourceDefinition(
                     source_id=record.source_id,
                     source_type=record.source_type,
                     root_path=record.root_path,
                     metadata=record.metadata,
-                    allowed_extensions=extensions,
+                    allowed_extensions=normalize_extensions(extensions),
+                    ignored_dir_names=ignored_dir_names,
+                    ignored_file_patterns=ignored_file_patterns,
+                    include_generated_mods=bool(record.metadata.get("include_generated_mods", False)),
                 )
                 self._definitions[source_id] = definition
                 return definition
@@ -137,6 +160,7 @@ class SourceRegistry:
             "build_log",
             "runtime_log",
             "manual_note",
+            "screenshot",
         }
         if source_type not in allowed:
             raise SourceRegistryError(f"Unsupported source_type: {source_type!r}")

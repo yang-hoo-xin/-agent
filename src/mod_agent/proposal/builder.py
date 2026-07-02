@@ -39,6 +39,27 @@ class PatchProposalBuilder:
             )
 
         files = tuple(dict.fromkeys(implementation_plan.get("target_files") or ()))
+        unresolved_changes = [
+            change
+            for change in proposed_changes
+            if not change.get("edit_target_path")
+        ]
+        if not files or unresolved_changes:
+            return self._blocked(
+                feature_id=feature_id,
+                evidence_refs=evidence_refs,
+                blockers=(
+                    {
+                        "code": "EDIT_TARGET_UNRESOLVED",
+                        "message": (
+                            "Patch proposal requires implementation_plan edit_target_path "
+                            "values resolved before review."
+                        ),
+                    },
+                ),
+                note="Implementation plan did not resolve edit targets.",
+            )
+
         expected_tests = tuple(implementation_plan.get("test_plan") or ())
         diff_intent = tuple(self._change_intent(change) for change in proposed_changes)
         risk_tags = sorted(
@@ -77,7 +98,9 @@ class PatchProposalBuilder:
         return {
             "change_id": change.get("change_id"),
             "change_type": change.get("change_type"),
-            "target_file": change.get("target_file"),
+            "target_file": change.get("edit_target_path"),
+            "edit_target_path": change.get("edit_target_path"),
+            "evidence_source_path": change.get("evidence_source_path"),
             "target_symbol": change.get("target_symbol"),
             "operation": change.get("operation"),
             "rationale": change.get("rationale"),

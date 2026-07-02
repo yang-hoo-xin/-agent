@@ -86,6 +86,7 @@ def test_implementation_plan_binds_every_change_to_evidence() -> None:
         "items": [
             {
                 "evidence_id": "ev_001",
+                "source_type": "target_source",
                 "source_path": "mods/BetterHitFeedback/Plugin.cs",
                 "symbol": "Load",
             }
@@ -98,11 +99,47 @@ def test_implementation_plan_binds_every_change_to_evidence() -> None:
     )
 
     assert implementation.blocking is False
+    assert implementation.evidence_source_paths == ("mods/BetterHitFeedback/Plugin.cs",)
     assert implementation.target_files == ("mods/BetterHitFeedback/Plugin.cs",)
     assert implementation.target_symbols == ("Load",)
     assert implementation.evidence_refs == ("ev_001",)
+    assert implementation.proposed_changes[0]["evidence_source_path"] == (
+        "mods/BetterHitFeedback/Plugin.cs"
+    )
+    assert implementation.proposed_changes[0]["edit_target_path"] == (
+        "mods/BetterHitFeedback/Plugin.cs"
+    )
     assert implementation.proposed_changes[0]["evidence_refs"] == ["ev_001"]
     assert implementation.rollback_plan
+
+
+def test_implementation_plan_blocks_when_evidence_source_is_not_editable() -> None:
+    plan = RequestPlanner().plan("make Load enable diagnostics")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "items": [
+            {
+                "evidence_id": "ev_api_001",
+                "source_type": "decompiled_api",
+                "source_path": "decompiled/EnemyAgent.cs",
+                "symbol": "Load",
+            }
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.target_files == ()
+    assert implementation.proposed_changes == ()
+    assert implementation.evidence_refs == ()
+    assert implementation.evidence_source_paths == ("decompiled/EnemyAgent.cs",)
+    assert implementation.blockers[0]["code"] == "EDIT_TARGET_UNRESOLVED"
 
 
 def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
@@ -117,6 +154,7 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
             "items": [
                 {
                     "evidence_id": "ev_001",
+                    "source_type": "target_source",
                     "source_path": "mods/BetterHitFeedback/Plugin.cs",
                     "symbol": "Load",
                 }
@@ -134,11 +172,40 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
         artifact_type="feature_spec",
         payload=spec.to_artifact_payload(),
     )
+    evidence_ref = store.write(
+        feature_id=plan.feature_id,
+        artifact_type="evidence_pack",
+        payload={
+            "node_name": "retrieve_evidence",
+            "stage": "evidence_retrieval",
+            "message": "Evidence is sufficient.",
+            "query": "make Load enable diagnostics",
+            "readiness": "sufficient",
+            "can_generate_patch": True,
+            "items": [
+                {
+                    "evidence_id": "ev_001",
+                    "source_type": "target_source",
+                    "source_path": "mods/BetterHitFeedback/Plugin.cs",
+                    "symbol": "Load",
+                }
+            ],
+            "gaps": [],
+            "excluded": [],
+            "blockers": [],
+            "retrieval_methods_used": ["symbol_exact"],
+            "missing_evidence": [],
+            "disabled_modes": {},
+            "timing": {},
+            "trace_refs": [],
+        },
+        upstream_refs=[feature_ref],
+    )
     implementation_ref = store.write(
         feature_id=plan.feature_id,
         artifact_type="implementation_plan",
         payload=implementation.to_artifact_payload(),
-        upstream_refs=[feature_ref],
+        upstream_refs=[feature_ref, evidence_ref],
     )
 
     assert store.read(request_ref)["data"]["route"] == plan.route

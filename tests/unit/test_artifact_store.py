@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactStoreError
+from src.mod_agent.artifacts import (
+    ArtifactRef,
+    ArtifactStore,
+    ArtifactStoreError,
+    StaleArtifactError,
+)
 
 
 def _payload(stage: str = "feature_spec") -> dict[str, str]:
@@ -65,6 +70,38 @@ def _evidence_payload() -> dict[str, object]:
         "gaps": ["stub"],
         "excluded": [],
         "blockers": [],
+        "retrieval_methods_used": [],
+        "missing_evidence": [],
+        "disabled_modes": {},
+        "timing": {},
+        "trace_refs": [],
+    }
+
+
+def _changed_feature_payload() -> dict[str, object]:
+    payload = _feature_payload()
+    payload["message"] = "changed"
+    payload["target_behavior"] = "changed"
+    return payload
+
+
+def _implementation_payload() -> dict[str, object]:
+    return {
+        "node_name": "create_implementation_plan",
+        "stage": "implementation_plan",
+        "message": "stub",
+        "feature_id": "feature_001",
+        "evidence_source_paths": [],
+        "target_files": [],
+        "target_symbols": [],
+        "evidence_refs": [],
+        "proposed_changes": [],
+        "side_effect_boundaries": [],
+        "test_plan": [],
+        "rollback_plan": [],
+        "open_questions": [],
+        "blocking": False,
+        "blockers": [],
     }
 
 
@@ -115,6 +152,7 @@ def test_list_feature_artifacts_returns_refs(tmp_path: Path) -> None:
         feature_id="feature_001",
         artifact_type="evidence_pack",
         payload=_evidence_payload(),
+        upstream_refs=[first],
     )
 
     refs = store.list_feature_artifacts("feature_001")
@@ -124,6 +162,87 @@ def test_list_feature_artifacts_returns_refs(tmp_path: Path) -> None:
         first.artifact_hash,
         second.artifact_hash,
     }
+
+
+def test_required_upstream_artifacts_are_enforced(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+
+    with pytest.raises(ArtifactStoreError, match="missing required upstream artifacts"):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="evidence_pack",
+            payload=_evidence_payload(),
+        )
+
+
+def test_required_upstream_artifacts_are_recorded(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec],
+    )
+
+    envelope = store.read(evidence_pack)
+    assert envelope["inputs"]["upstream_artifacts"] == [
+        {
+            "artifact_type": "feature_spec",
+            "path": feature_spec.path,
+            "artifact_hash": feature_spec.artifact_hash,
+        }
+    ]
+
+
+def test_cross_feature_upstream_rejected(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    with pytest.raises(ArtifactStoreError, match="feature_id mismatch"):
+        store.write(
+            feature_id="feature_002",
+            artifact_type="evidence_pack",
+            payload=_evidence_payload(),
+            upstream_refs=[feature_spec],
+        )
+
+
+def test_stale_upstream_rejected_on_write(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec],
+    )
+    changed_feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_changed_feature_payload(),
+    )
+
+    with pytest.raises(StaleArtifactError, match="feature_spec hash changed"):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="implementation_plan",
+            payload=_implementation_payload(),
+            upstream_refs=[changed_feature_spec, evidence_pack],
+        )
 
 
 def test_exists_returns_false_for_missing_ref(tmp_path: Path) -> None:
