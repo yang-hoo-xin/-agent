@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from .models import (
+    CHUNK_IDENTITY_FIELDS,
+    DOCUMENT_IDENTITY_FIELDS,
     Chunk,
     Document,
     IndexVersion,
@@ -160,6 +162,7 @@ class KnowledgeDatabase:
     def upsert_document(self, document: Document) -> KnowledgeDocumentRecord:
         """Persist document metadata and hash contract."""
 
+        self._validate_document_identity(document)
         source_id = self._required_metadata(document.metadata, "source_id")
         raw_text_hash = self._required_metadata(document.metadata, "raw_text_hash")
         canonical_text_hash = self._required_metadata(document.metadata, "canonical_text_hash")
@@ -210,6 +213,7 @@ class KnowledgeDatabase:
     ) -> KnowledgeChunkRecord:
         """Persist one chunk bound to an index version."""
 
+        self._validate_chunk_identity(chunk)
         content_hash = self._required_metadata(chunk.metadata, "content_hash")
         with self._connect() as conn:
             conn.execute(
@@ -968,6 +972,55 @@ class KnowledgeDatabase:
             end_line=row["end_line"],
             metadata=json.loads(row["metadata_json"] or "{}"),
         )
+
+    def _validate_document_identity(self, document: Document) -> None:
+        metadata = document.metadata
+        missing = sorted(field for field in DOCUMENT_IDENTITY_FIELDS if field not in metadata)
+        if missing:
+            raise KnowledgeDatabaseError(
+                f"Document {document.document_id!r} missing identity fields: {missing}"
+            )
+        metadata_document_id = self._required_metadata(metadata, "document_id")
+        if metadata_document_id != document.document_id:
+            raise KnowledgeDatabaseError(
+                "Document metadata document_id must match document.document_id"
+            )
+        file_hash = self._required_metadata(metadata, "file_hash")
+        source_hash = self._required_metadata(metadata, "source_hash")
+        content_hash = self._required_metadata(metadata, "content_hash")
+        doc_hash = self._required_metadata(metadata, "doc_hash")
+        canonical_text_hash = self._required_metadata(metadata, "canonical_text_hash")
+        if source_hash != file_hash:
+            raise KnowledgeDatabaseError("Document source_hash must equal file_hash")
+        if content_hash != file_hash:
+            raise KnowledgeDatabaseError("Document content_hash must equal file_hash")
+        if doc_hash != canonical_text_hash:
+            raise KnowledgeDatabaseError("Document doc_hash must equal canonical_text_hash")
+
+    def _validate_chunk_identity(self, chunk: Chunk) -> None:
+        metadata = chunk.metadata
+        missing = sorted(field for field in CHUNK_IDENTITY_FIELDS if field not in metadata)
+        if missing:
+            raise KnowledgeDatabaseError(
+                f"Chunk {chunk.chunk_id!r} missing identity fields: {missing}"
+            )
+        metadata_chunk_id = self._required_metadata(metadata, "chunk_id")
+        metadata_document_id = self._required_metadata(metadata, "document_id")
+        source_ref = self._required_metadata(metadata, "source_ref")
+        file_hash = self._required_metadata(metadata, "file_hash")
+        source_hash = self._required_metadata(metadata, "source_hash")
+        if metadata_chunk_id != chunk.chunk_id:
+            raise KnowledgeDatabaseError(
+                "Chunk metadata chunk_id must match chunk.chunk_id"
+            )
+        if metadata_document_id != chunk.document_id:
+            raise KnowledgeDatabaseError(
+                "Chunk metadata document_id must match chunk.document_id"
+            )
+        if source_ref != chunk.document_id:
+            raise KnowledgeDatabaseError("Chunk source_ref must equal document_id")
+        if source_hash != file_hash:
+            raise KnowledgeDatabaseError("Chunk source_hash must equal file_hash")
 
     @staticmethod
     def _required_metadata(metadata: dict[str, Any], key: str) -> str:

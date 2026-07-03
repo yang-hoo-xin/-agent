@@ -18,6 +18,7 @@ from src.mod_agent.knowledge import (
     SymbolIndexEntry,
     SymbolIndexer,
     SymbolRecord,
+    evidence_identity_from_metadata,
 )
 
 from .models import EvidenceItem, EvidencePack, EvidenceRequest
@@ -193,6 +194,8 @@ class DeterministicEvidenceRetriever:
             score=1.0,
             claim_supported=f"Symbol {symbol.name} exists in {symbol.relative_path}.",
             excerpt=symbol.excerpt,
+            source_hash=symbol.content_hash,
+            file_hash=symbol.content_hash,
             risk_notes=(),
         )
 
@@ -264,6 +267,10 @@ class DeterministicEvidenceRetriever:
         seed = f"{entry.index_version}:{entry.chunk_id}:{entry.symbol}:{entry.symbol_kind}"
         evidence_id = "symidx_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
         excerpt = chunk.chunk_text.strip()[:240] if chunk else entry.symbol
+        identity = evidence_identity_from_metadata(entry.metadata)
+        if chunk is not None:
+            identity["chunk_id"] = chunk.chunk_id
+            identity["document_id"] = chunk.document_id
         return EvidenceItem(
             evidence_id=evidence_id,
             source_type=source_type,
@@ -277,6 +284,7 @@ class DeterministicEvidenceRetriever:
                 f"for index version {entry.index_version}."
             ),
             excerpt=excerpt,
+            **identity,
             risk_notes=(),
         )
 
@@ -340,6 +348,7 @@ class DeterministicEvidenceRetriever:
                 f"in index version {hit.index_version}."
             ),
             excerpt=hit.excerpt,
+            **evidence_identity_from_metadata(hit.metadata),
             risk_notes=(),
         )
 
@@ -390,6 +399,8 @@ class DeterministicEvidenceRetriever:
                         f"{indexed_file.relative_path}."
                     ),
                     excerpt=excerpt,
+                    source_hash=indexed_file.content_hash,
+                    file_hash=indexed_file.content_hash,
                     risk_notes=(),
                 )
             )

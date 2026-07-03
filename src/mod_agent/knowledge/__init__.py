@@ -9,6 +9,11 @@ from .collection_resolver import (
 from .database import KnowledgeDatabase
 from .indexer import IncrementalIndexer, IndexingReport
 from .models import (
+    CHUNK_IDENTITY_FIELDS,
+    DOCUMENT_IDENTITY_FIELDS,
+    EVIDENCE_IDENTITY_FIELDS,
+    IDENTITY_FIELD_MAPPING,
+    IDENTITY_SCHEMA_VERSION,
     BM25Hit,
     BM25IndexResult,
     Chunk,
@@ -26,6 +31,7 @@ from .models import (
     SymbolRecord,
     chunk_from_document,
     chunk_record_from_chunk,
+    evidence_identity_from_metadata,
 )
 from .source_discovery import DiscoveredSourceFile, SourceDiscovery
 from .source_registry import SourceDefinition, SourceRegistry
@@ -38,6 +44,11 @@ __all__ = [
     "CollectionResolution",
     "CollectionResolutionError",
     "CollectionResolver",
+    "CHUNK_IDENTITY_FIELDS",
+    "DOCUMENT_IDENTITY_FIELDS",
+    "EVIDENCE_IDENTITY_FIELDS",
+    "IDENTITY_FIELD_MAPPING",
+    "IDENTITY_SCHEMA_VERSION",
     "IncrementalIndexer",
     "Chunk",
     "ChunkRecord",
@@ -61,6 +72,7 @@ __all__ = [
     "SymbolRecord",
     "chunk_from_document",
     "chunk_record_from_chunk",
+    "evidence_identity_from_metadata",
     "normalize_bm25_token",
     "tokenize_bm25",
 ]

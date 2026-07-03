@@ -5,7 +5,7 @@ This file tracks detailed coverage of `DEV_SPEC.md`.
 It is not a replacement for `DEV_SPEC.md`, `PROJECT_STATE.md`, or `IMPLEMENTATION_QUEUE.md`.
 It is the bridge between the full specification and small implementation loops.
 
-Last updated: 2026-07-02
+Last updated: 2026-07-03
 
 ## Status Values
 
@@ -68,7 +68,7 @@ blocked      Cannot proceed until named evidence, dependency, or user input exis
 | ART-001 | 6, 49.2 | Artifact envelope with schema version, hash, status, upstream refs | ART | tested | R-005 done | ArtifactStore.write now enforces required_upstream_artifacts, validates same-feature upstream refs, checks upstream hash/schema/freshness before normal writes, and preserves blocked stale resume reports as audit artifacts; R-005 accepted as PASS_WITH_RISK with artifact integrity and immutable revision follow-ups recorded below |
 | ART-002 | 6.5, 49.2.4 | Stale detection blocks unsafe downstream use | ART | tested | Q-001 done | Stale artifact tests pass |
 | ART-003 | 49.2.2 | Artifact dependency graph and immutable revisions | ART | partial | Q-016 done; future immutable revision/DAG UI task | DashboardProjectionBuilder exposes artifact DAG nodes/edges, upstream status, freshness status, stale reasons, missing artifacts, and dashboard_projection fields; immutable revision history and UI viewer remain incomplete |
-| ART-004 | 31, 49.2.3 | Registry covers workflow artifact types | ART | tested | Q-001 done | Registry tests pass |
+| ART-004 | 31, 49.2.3 | Registry covers workflow artifact types | ART | tested | Q-001 and R-011 done | Registry tests pass; R-011 adds evidence_pack identity_schema_version and identity_field_mapping requirements |
 | ART-005 | 49.2.5 | Artifact migrations for schema evolution | ART | not_started | future migration task | Unknown schema version is rejected; migration path not implemented |
 
 ## Knowledge And Retrieval Coverage
@@ -76,18 +76,18 @@ blocked      Cannot proceed until named evidence, dependency, or user input exis
 | Coverage ID | Spec Refs | Requirement | Module | Status | Queue / Next | Current Evidence Or Gap |
 | --- | --- | --- | --- | --- | --- | --- |
 | KB-001 | 7.2, 37.2, 45.5.1 | Source discovery with stable source identity and ignore rules | KB | tested | Q-003 done | SourceDiscovery and SourceRegistry now classify supported source patterns, prune ignored/cache/build directories, and produce stable source ids and content hashes |
-| KB-002 | 7.3, 37.3, 45.5.4 | Raw text, canonical text, retrieval text, metadata contract | KB | tested | Q-002 done | Document, Chunk, and ChunkRecord contracts now preserve raw/canonical/retrieval text separation with inherited metadata and stable hashes |
+| KB-002 | 7.3, 37.3, 45.5.4 | Raw text, canonical text, retrieval text, metadata contract | KB | tested | Q-002 and R-011 done | Document, Chunk, and ChunkRecord contracts now preserve raw/canonical/retrieval text separation with inherited metadata and stable hashes; R-011 defines identity_v1 for document_id, file_hash, source_hash, doc_hash, chunk_id, source_ref, and content_hash |
 | KB-003 | 7.6, 45.5.3 | Code, decompiled API, artifact, log loaders | KB | partial | future loader tasks | Existing indexing is code/source oriented; full loader set missing |
-| KB-004 | 7.7, 45.18.6 | SQLite metadata store for sources, documents, chunks, index versions | KB | tested | Q-004 and R-010 done | KnowledgeDatabase now persists collection-scoped sources, documents, chunks, and index_versions; R-010 adds one controlled-agent CollectionResolver so retrieval defaults resolve from `vector_store.collection_name`; tests prove failed builds do not replace stable index versions |
+| KB-004 | 7.7, 45.18.6 | SQLite metadata store for sources, documents, chunks, index versions | KB | tested | Q-004, R-010, and R-011 done | KnowledgeDatabase now persists collection-scoped sources, documents, chunks, and index_versions; R-010 adds one controlled-agent CollectionResolver so retrieval defaults resolve from `vector_store.collection_name`; R-011 blocks missing or inconsistent document/chunk identity metadata before persistence |
 | KB-005 | 7.8, 45.18.3 | Incremental indexing skips unchanged content | KB | tested | Q-001 done | Incremental indexing tests pass for current implementation |
 | RET-001 | 8.5, 37.5 | Deterministic retriever for exact evidence | RET | tested | Q-001 and R-010 done | Deterministic retrieval tests pass; R-010 removes the hardcoded controlled-agent default collection from DeterministicEvidenceRetriever and verifies explicit collection overrides |
-| RET-002 | 8.6, 37.4, 45.9 | Symbol retrieval with source spans and chunk ids | RET | tested | Q-006 done | SymbolIndexer now builds chunk-bound symbol_index rows with collection_id, index_version, chunk_id, source_path, and span; retriever prefers stable chunk symbol evidence before legacy file symbols |
+| RET-002 | 8.6, 37.4, 45.9 | Symbol retrieval with source spans and chunk ids | RET | tested | Q-006 and R-011 done | SymbolIndexer now builds chunk-bound symbol_index rows with collection_id, index_version, chunk_id, source_path, and span; retriever prefers stable chunk symbol evidence before legacy file symbols and R-011 serializes chunk/document identity fields on chunk-backed evidence items |
 | RET-003 | 37.4, 45.8, 45.18.6 | BM25 lexical sparse inverted index V1 | RET | tested | Q-005 and R-010 done | BM25Indexer persists bm25_terms and bm25_postings in SQLite, returns score plus hit_terms and term_frequencies, and DeterministicEvidenceRetriever can emit bm25 evidence from the resolved stable collection index version |
 | RET-004 | 8.7, 45.8 | Dense retrieval with embedding provider abstraction | RET | not_started | after BM25/symbol stable | Deferred behind V1 lexical/symbol evidence |
 | RET-005 | 8.8, 45.9.2 | RRF fusion across retrieval routes | RET | not_started | future hybrid retrieval task | No fusion implementation |
 | RET-006 | 8.9, 45.9.3 | Rerank with fallback and trace visibility | RET | not_started | future rerank task | No rerank implementation |
 | RET-007 | 8.10, 45.10 | Evidence readiness gate blocks unsafe patching | RET | tested | Q-007, Q-010, R-009 done | Readiness blocks unsafe graph continuation before implementation/proposal/review/execution artifacts; R-009 blocks legacy_rag_auxiliary-only retrieval from advancing writable planning |
-| RET-008 | 8.11, 37.5, 45.4 | EvidencePack includes methods used, missing evidence, disabled modes, timing | RET | tested | Q-007, R-009 done | Artifact payload requires and serializes retrieval_methods_used, missing_evidence, disabled_modes, timing, trace_refs, authority, and authoritative_for_patch |
+| RET-008 | 8.11, 37.5, 45.4 | EvidencePack includes methods used, missing evidence, disabled modes, timing | RET | tested | Q-007, R-009, and R-011 done | Artifact payload requires and serializes retrieval_methods_used, missing_evidence, disabled_modes, timing, trace_refs, authority, authoritative_for_patch, identity_schema_version, and identity_field_mapping |
 | RET-009 | 45.11 | Citation and source transparency | RET | partial | future citation task | Evidence refs exist; citation contract not fully implemented |
 | RET-010 | 37.8 | Targeted design and process black-box decomposition | RET | partial | Q-010 done; Q-008 and dashboard tasks next | EvidencePack and retrieve_evidence trace now expose methods, missing evidence, disabled modes, and timing; dashboard/eval views remain incomplete |
 
@@ -194,6 +194,7 @@ blocked      Cannot proceed until named evidence, dependency, or user input exis
 | MISS-R007B | 39.3 | Dashboard smoke e2e now runs successfully in .venv after installing streamlit | R-007 e2e closure | `tests/e2e/test_dashboard_smoke.py` |
 | MISS-R009A | 8.10, 8.11, 37.5, 45.10 | Legacy RAG retrieval output is explicitly auxiliary and cannot bypass mod_agent deterministic evidence/readiness gates for writable planning | R-009 | `src/mod_agent/evidence/models.py`, `src/mod_agent/evidence/readiness.py`, `src/mod_agent/planning/implementation_plan.py`, `tests/unit/test_evidence_retrieval.py`, `tests/unit/test_planning.py` |
 | MISS-R010A | 7, 8, 45 | Controlled-agent evidence retrieval now resolves collection identity through one CollectionResolver: explicit collection_id overrides settings, default collection comes from `vector_store.collection_name`, and missing collection configuration routes workflow retrieval to blocked evidence | R-010 | `src/mod_agent/knowledge/collection_resolver.py`, `src/mod_agent/evidence/retriever.py`, `src/mod_agent/workflow/graph.py`, `tests/unit/test_collection_resolver.py`, `tests/unit/test_evidence_retrieval.py`, `tests/unit/test_workflow_graph.py` |
+| MISS-R011A | 6, 7, 8, 30, 45.4 | Controlled-agent identity fields now have one tested mapping: document_id identifies the loaded document, file_hash is the loaded source file hash, source_hash is the V1 alias for file_hash, doc_hash is canonical document text hash, chunk_id identifies a chunk, and source_ref points from chunk to document | R-011 | `src/mod_agent/knowledge/models.py`, `src/mod_agent/knowledge/database.py`, `src/mod_agent/evidence/models.py`, `src/mod_agent/evidence/retriever.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_knowledge_base.py`, `tests/unit/test_evidence_retrieval.py`, `tests/unit/test_artifact_contract.py` |
 
 ## Open Missing Requirement Register
 

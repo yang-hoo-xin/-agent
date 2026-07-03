@@ -157,6 +157,16 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
             "can_generate_patch": True,
             "authority": "mod_agent_deterministic_evidence",
             "authoritative_for_patch": True,
+            "identity_schema_version": "identity_v1",
+            "identity_field_mapping": {
+                "document_id": "Stable loaded document id",
+                "file_hash": "SHA256 of the loaded source file",
+                "source_hash": "Backward-compatible alias for file_hash",
+                "doc_hash": "SHA256 of the document canonical_text",
+                "chunk_id": "Stable chunk id",
+                "source_ref": "Chunk-to-document reference",
+                "content_hash": "Context-dependent stored content hash",
+            },
             "items": [
                 {
                     "evidence_id": "ev_001",
@@ -190,6 +200,16 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
             "can_generate_patch": True,
             "authority": "mod_agent_deterministic_evidence",
             "authoritative_for_patch": True,
+            "identity_schema_version": "identity_v1",
+            "identity_field_mapping": {
+                "document_id": "Stable loaded document id",
+                "file_hash": "SHA256 of the loaded source file",
+                "source_hash": "Backward-compatible alias for file_hash",
+                "doc_hash": "SHA256 of the document canonical_text",
+                "chunk_id": "Stable chunk id",
+                "source_ref": "Chunk-to-document reference",
+                "content_hash": "Context-dependent stored content hash",
+            },
             "items": [
                 {
                     "evidence_id": "ev_001",

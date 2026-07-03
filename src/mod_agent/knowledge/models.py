@@ -7,6 +7,47 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+IDENTITY_SCHEMA_VERSION = "identity_v1"
+IDENTITY_FIELD_MAPPING = {
+    "document_id": "Stable loaded document id generated from source_id, relative_path, and file_hash.",
+    "file_hash": "SHA256 of the loaded source file bytes decoded as text for V1 loaders.",
+    "source_hash": "Backward-compatible V1 alias for file_hash on file-backed sources.",
+    "doc_hash": "SHA256 of the document canonical_text.",
+    "chunk_id": "Stable chunk id generated from document_id, chunk_index, and chunk content_hash.",
+    "source_ref": "Chunk-to-document reference; for V1 chunks this must equal document_id.",
+    "content_hash": "Context-dependent stored content hash: file_hash on Document metadata, chunk text hash on Chunk metadata.",
+}
+DOCUMENT_IDENTITY_FIELDS = frozenset(
+    {
+        "document_id",
+        "file_hash",
+        "source_hash",
+        "doc_hash",
+        "content_hash",
+        "raw_text_hash",
+        "canonical_text_hash",
+    }
+)
+CHUNK_IDENTITY_FIELDS = frozenset(
+    {
+        "chunk_id",
+        "document_id",
+        "source_ref",
+        "file_hash",
+        "source_hash",
+        "doc_hash",
+        "content_hash",
+    }
+)
+EVIDENCE_IDENTITY_FIELDS = (
+    "chunk_id",
+    "document_id",
+    "source_ref",
+    "source_hash",
+    "file_hash",
+    "doc_hash",
+)
+
 
 @dataclass(frozen=True)
 class SourceRecord:
@@ -49,6 +90,14 @@ class Document:
     @property
     def content_hash(self) -> str:
         return str(self.metadata["content_hash"])
+
+    @property
+    def file_hash(self) -> str:
+        return str(self.metadata["file_hash"])
+
+    @property
+    def doc_hash(self) -> str:
+        return str(self.metadata["doc_hash"])
 
 
 @dataclass(frozen=True)
@@ -196,6 +245,8 @@ class IndexedFile:
 
         canonical_text = canonicalize_text(raw_text)
         metadata = source_metadata_for_file(source=source, indexed_file=self)
+        raw_text_hash = stable_hash(raw_text)
+        canonical_text_hash = stable_hash(canonical_text)
         document_id = stable_id("doc", source.source_id, self.relative_path, self.content_hash)
         return Document(
             document_id=document_id,
@@ -207,8 +258,9 @@ class IndexedFile:
             metadata={
                 **metadata,
                 "document_id": document_id,
-                "raw_text_hash": stable_hash(raw_text),
-                "canonical_text_hash": stable_hash(canonical_text),
+                "raw_text_hash": raw_text_hash,
+                "canonical_text_hash": canonical_text_hash,
+                "doc_hash": canonical_text_hash,
             },
         )
 
@@ -270,6 +322,8 @@ def source_metadata_for_file(
         "relative_path": indexed_file.relative_path,
         "source_type": source.source_type,
         "content_hash": indexed_file.content_hash,
+        "file_hash": indexed_file.content_hash,
+        "source_hash": indexed_file.content_hash,
         "loader": loader_name_for_path(source_path),
         "language": language_for_path(source_path),
         "project_id": str(source.metadata.get("project_id", project_id)),
@@ -321,7 +375,10 @@ def chunk_from_document(
         "symbols": list(symbols),
         "risk_tags": list(risk_tags),
         "evidence_kind": evidence_kind or default_evidence_kind(document),
-        "source_hash": document.content_hash,
+        "source_hash": document.file_hash,
+        "file_hash": document.file_hash,
+        "doc_hash": document.doc_hash,
+        "source_ref": document.document_id,
         "content_hash": content_hash,
         "metadata_version": "metadata_v1",
         "enrichment_version": "none",
@@ -359,6 +416,15 @@ def stable_hash(text: str) -> str:
 def stable_id(prefix: str, *parts: str) -> str:
     seed = ":".join(parts)
     return f"{prefix}_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+
+
+def evidence_identity_from_metadata(metadata: dict[str, Any]) -> dict[str, str | None]:
+    """Return the identity fields that evidence items expose for source tracing."""
+
+    return {
+        field: str(metadata[field]) if metadata.get(field) is not None else None
+        for field in EVIDENCE_IDENTITY_FIELDS
+    }
 
 
 def language_for_path(path: Path) -> str:

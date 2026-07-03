@@ -109,14 +109,25 @@ def _index_chunk_collection(
         source_count=1,
         chunk_count=1,
     )
+    document_id = f"{collection_id}_doc_001"
+    chunk_id = f"{collection_id}_chunk_001"
+    file_hash = f"{collection_id}_file_hash"
+    doc_hash = f"{collection_id}_doc_hash"
+    chunk_hash = f"{collection_id}_chunk_hash"
     db.upsert_chunk(
         Chunk(
-            chunk_id=f"{collection_id}_chunk_001",
-            document_id=f"{collection_id}_doc_001",
+            chunk_id=chunk_id,
+            document_id=document_id,
             text=text,
             text_for_retrieval=text,
             metadata={
-                "content_hash": f"{collection_id}_hash",
+                "chunk_id": chunk_id,
+                "document_id": document_id,
+                "source_ref": document_id,
+                "content_hash": chunk_hash,
+                "file_hash": file_hash,
+                "source_hash": file_hash,
+                "doc_hash": doc_hash,
                 "source_id": "target_mod",
                 "source_type": "target_source",
                 "source_path": f"{collection_id}/config.json",
@@ -210,6 +221,12 @@ def test_deterministic_retriever_uses_configured_collection_default(
     assert pack.readiness == "sufficient"
     assert pack.can_generate_patch is True
     assert pack.items[0].source_path == "knowledge_hub/config.json"
+    assert pack.items[0].chunk_id == "knowledge_hub_chunk_001"
+    assert pack.items[0].document_id == "knowledge_hub_doc_001"
+    assert pack.items[0].source_ref == "knowledge_hub_doc_001"
+    assert pack.items[0].file_hash == "knowledge_hub_file_hash"
+    assert pack.items[0].source_hash == "knowledge_hub_file_hash"
+    assert pack.items[0].doc_hash == "knowledge_hub_doc_hash"
 
 
 def test_deterministic_retriever_explicit_collection_overrides_default(
@@ -238,6 +255,7 @@ def test_deterministic_retriever_explicit_collection_overrides_default(
     assert pack.readiness == "sufficient"
     assert pack.can_generate_patch is True
     assert pack.items[0].source_path == "request_scope/config.json"
+    assert pack.items[0].chunk_id == "request_scope_chunk_001"
 
 
 def test_missing_source_returns_insufficient_empty_pack(tmp_path: Path) -> None:
@@ -326,6 +344,10 @@ def test_evidence_pack_payload_validates_against_artifact_contract(
     assert envelope["data"]["can_generate_patch"] is True
     assert envelope["data"]["authority"] == "mod_agent_deterministic_evidence"
     assert envelope["data"]["authoritative_for_patch"] is True
+    assert envelope["data"]["identity_schema_version"] == "identity_v1"
+    assert envelope["data"]["identity_field_mapping"]["source_ref"].startswith(
+        "Chunk-to-document reference"
+    )
 
 
 def test_legacy_rag_evidence_is_auxiliary_not_authoritative() -> None:

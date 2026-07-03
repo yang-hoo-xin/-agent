@@ -18,8 +18,8 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-010 Single Collection Resolver
-next_recommended_task: R-011 Identifier And Hash Field Mapping
+last_completed: R-011 Identifier And Hash Field Mapping
+next_recommended_task: R-012 Checkpoint Resume Graph Binding
 Q-020_status: queued; blocked behind active Review Repair Queue
 ```
 
@@ -83,6 +83,7 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | R-008 | completed | Fake/local execution summaries distinguish workflow completion from requested behavior success | `docs/audits/LOOP_HISTORY.md` |
 | R-009 | completed | Legacy RAG output is auxiliary only; controlled implementation can advance only from mod_agent deterministic evidence packs | `docs/PROJECT_STATE.md` |
 | R-010 | completed | Controlled-agent retrieval uses one collection resolver for explicit collection overrides and configured defaults | `docs/PROJECT_STATE.md` |
+| R-011 | completed | Controlled-agent knowledge/evidence identity fields now have explicit mapping, artifact schema metadata, and write-time validation | `docs/PROJECT_STATE.md` |
 ## Review Repair Queue
 
 ```text
@@ -329,7 +330,7 @@ Completed evidence:
 ### R-011: Identifier And Hash Field Mapping
 
 ```text
-Status: queued
+Status: completed
 Module: KB, RET, ART
 Spec refs: 6, 7, 8, 30
 Source finding: P1-003
@@ -344,6 +345,13 @@ Failure behavior: ambiguous or missing identity fields block indexing/evidence b
 Out of scope: database data migration
 Dependencies: R-005 optional
 Conflict checks: preserve backward-compatible aliases only with explicit mapping tests
+Completed evidence:
+  - knowledge.models now declares identity_v1 mapping for document_id, file_hash, source_hash, doc_hash, chunk_id, source_ref, and content_hash.
+  - IndexedFile.to_document and chunk_from_document populate explicit file_hash/doc_hash/source_ref fields while preserving source_hash as a tested V1 alias for file_hash.
+  - KnowledgeDatabase upsert_document and upsert_chunk reject missing or inconsistent identity metadata before persistence.
+  - EvidenceItem serializes chunk/document/source/hash identity fields so evidence items can resolve back to chunks and documents when retrieval is chunk-backed.
+  - evidence_pack artifact payloads now include identity_schema_version and identity_field_mapping.
+  - focused and affected R-011 tests passed: 65 passed.
 ```
 
 ### R-012: Checkpoint Resume Graph Binding

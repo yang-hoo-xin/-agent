@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
+
 EvidenceReadiness = Literal["sufficient", "partial", "insufficient", "contradictory"]
 EvidenceAuthority = Literal["mod_agent_deterministic", "legacy_rag_auxiliary"]
 EVIDENCE_PACK_AUTHORITY = "mod_agent_deterministic_evidence"
@@ -34,6 +36,12 @@ class EvidenceItem:
     score: float
     claim_supported: str
     excerpt: str
+    chunk_id: str | None = None
+    document_id: str | None = None
+    source_ref: str | None = None
+    source_hash: str | None = None
+    file_hash: str | None = None
+    doc_hash: str | None = None
     authority: EvidenceAuthority = "mod_agent_deterministic"
     risk_notes: tuple[str, ...] = ()
 
@@ -50,6 +58,12 @@ class EvidenceItem:
             "score": self.score,
             "claim_supported": self.claim_supported,
             "excerpt": self.excerpt,
+            "chunk_id": self.chunk_id,
+            "document_id": self.document_id,
+            "source_ref": self.source_ref,
+            "source_hash": self.source_hash,
+            "file_hash": self.file_hash,
+            "doc_hash": self.doc_hash,
             "authority": self.authority,
             "risk_notes": list(self.risk_notes),
         }
@@ -89,6 +103,8 @@ class EvidencePack:
             "can_generate_patch": self.can_generate_patch,
             "authority": EVIDENCE_PACK_AUTHORITY,
             "authoritative_for_patch": self.can_generate_patch,
+            "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+            "identity_field_mapping": dict(IDENTITY_FIELD_MAPPING),
             "items": [item.to_dict() for item in self.items],
             "gaps": list(self.gaps),
             "excluded": list(self.excluded),

@@ -5,13 +5,20 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.knowledge import (
+    Chunk,
+    IndexedFile,
     IncrementalIndexer,
     KnowledgeDatabase,
+    SourceRecord,
     SourceDefinition,
     SourceRegistry,
+    chunk_from_document,
 )
+from src.mod_agent.knowledge.database import KnowledgeDatabaseError
 
 
 def _write_plugin(root: Path, body: str | None = None) -> Path:
@@ -102,6 +109,67 @@ def test_incremental_indexer_extracts_symbols_and_searches_exact_symbol(
     assert results[0].name == "Load"
     assert results[0].source_path == str(plugin.resolve())
     assert results[0].to_evidence_item()["symbol"] == "Load"
+
+
+def test_document_and_chunk_identity_mapping_is_explicit(tmp_path: Path) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    source = SourceRecord(
+        source_id="target_mod",
+        source_type="target_source",
+        root_path=str(tmp_path),
+    )
+    indexed_file = IndexedFile(
+        file_id="file_001",
+        source_id="target_mod",
+        source_path=str(tmp_path / "Plugin.cs"),
+        relative_path="Plugin.cs",
+        content_hash="file_hash_001",
+        indexed_at="2026-07-03T00:00:00+00:00",
+    )
+
+    document = indexed_file.to_document(source=source, raw_text="raw\r\ntext")
+    chunk = chunk_from_document(document, text="chunk text", chunk_index=3)
+    document_record = db.upsert_document(document)
+    chunk_record = db.upsert_chunk(
+        chunk,
+        collection_id="knowledge_hub",
+        index_version="v1",
+    )
+
+    assert document.metadata["file_hash"] == "file_hash_001"
+    assert document.metadata["source_hash"] == "file_hash_001"
+    assert document.metadata["doc_hash"] == document.metadata["canonical_text_hash"]
+    assert document_record.metadata["document_id"] == document.document_id
+    assert chunk.metadata["source_ref"] == document.document_id
+    assert chunk.metadata["file_hash"] == "file_hash_001"
+    assert chunk.metadata["source_hash"] == "file_hash_001"
+    assert chunk.metadata["doc_hash"] == document.doc_hash
+    assert chunk_record.document_id == document.document_id
+    assert chunk_record.metadata["chunk_id"] == chunk.chunk_id
+
+
+def test_chunk_identity_missing_source_ref_blocks_indexing(tmp_path: Path) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+
+    with pytest.raises(KnowledgeDatabaseError, match="missing identity fields"):
+        db.upsert_chunk(
+            Chunk(
+                chunk_id="chunk_001",
+                document_id="doc_001",
+                text="chunk text",
+                text_for_retrieval="chunk text",
+                metadata={
+                    "chunk_id": "chunk_001",
+                    "document_id": "doc_001",
+                    "content_hash": "chunk_hash_001",
+                    "file_hash": "file_hash_001",
+                    "source_hash": "file_hash_001",
+                    "doc_hash": "doc_hash_001",
+                },
+            ),
+            collection_id="knowledge_hub",
+            index_version="v1",
+        )
 
 
 def test_incremental_indexer_skips_unchanged_files_and_reindexes_changed_file(
