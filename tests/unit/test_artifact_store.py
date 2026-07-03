@@ -12,6 +12,7 @@ from src.mod_agent.artifacts import (
     ArtifactStoreError,
     StaleArtifactError,
 )
+from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
 
 
 def _payload(stage: str = "feature_spec") -> dict[str, str]:
@@ -68,6 +69,8 @@ def _evidence_payload() -> dict[str, object]:
         "can_generate_patch": False,
         "authority": "mod_agent_deterministic_evidence",
         "authoritative_for_patch": False,
+        "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+        "identity_field_mapping": dict(IDENTITY_FIELD_MAPPING),
         "items": [],
         "gaps": ["stub"],
         "excluded": [],

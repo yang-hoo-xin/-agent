@@ -92,8 +92,8 @@ latest affected R-010 suite:
   result: 12 passed
 
 latest focused and affected R-011 suite:
-  .\.venv\Scripts\python.exe -m pytest tests/unit/test_knowledge_base.py tests/unit/test_evidence_retrieval.py tests/unit/test_artifact_contract.py tests/unit/test_workflow_graph.py tests/unit/test_repair_loop.py tests/unit/test_planning.py tests/unit/test_proposal_review.py -q --tb=short --disable-warnings
-  result: 65 passed
+  .\.venv\Scripts\python.exe -m pytest tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py tests/unit/test_knowledge_base.py tests/unit/test_evidence_retrieval.py tests/unit/test_workflow_graph.py tests/unit/test_repair_loop.py tests/unit/test_planning.py tests/unit/test_proposal_review.py -q --tb=short --disable-warnings
+  result: 77 passed
 
 known broader-suite gaps:
   LEGACY-TEST-001 is queued for full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy assertions.
@@ -125,6 +125,12 @@ known broader-suite gaps:
 task: R-011 Identifier And Hash Field Mapping
 status: completed; focused and affected tests passed
 files_changed:
+  .gitignore
+  src/mod_agent/artifacts/__init__.py
+  src/mod_agent/artifacts/envelope.py
+  src/mod_agent/artifacts/freshness.py
+  src/mod_agent/artifacts/registry.py
+  src/mod_agent/artifacts/store.py
   src/mod_agent/knowledge/__init__.py
   src/mod_agent/knowledge/models.py
   src/mod_agent/knowledge/database.py
@@ -134,6 +140,7 @@ files_changed:
   tests/unit/test_knowledge_base.py
   tests/unit/test_evidence_retrieval.py
   tests/unit/test_artifact_contract.py
+  tests/unit/test_artifact_store.py
   tests/unit/test_planning.py
   tests/unit/test_proposal_review.py
   docs/IMPLEMENTATION_QUEUE.md
@@ -144,8 +151,9 @@ behavior:
   IndexedFile.to_document and chunk_from_document populate explicit identity metadata while preserving tested backward-compatible source_hash=file_hash.
   KnowledgeDatabase rejects missing or inconsistent document/chunk identity metadata before persistence.
   EvidenceItem and evidence_pack artifacts expose identity fields and identity_field_mapping for chunk/document traceability.
+  Root runtime artifact output remains ignored via /artifacts/, while src/mod_agent/artifacts source modules are tracked as formal code.
 verification:
-  focused and affected R-011 tests: 65 passed
+  focused and affected R-011 plus artifact store tests: 77 passed
 next_recommended_task: R-012 Checkpoint Resume Graph Binding
 ```
 

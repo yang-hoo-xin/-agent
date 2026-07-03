@@ -351,7 +351,9 @@ Completed evidence:
   - KnowledgeDatabase upsert_document and upsert_chunk reject missing or inconsistent identity metadata before persistence.
   - EvidenceItem serializes chunk/document/source/hash identity fields so evidence items can resolve back to chunks and documents when retrieval is chunk-backed.
   - evidence_pack artifact payloads now include identity_schema_version and identity_field_mapping.
-  - focused and affected R-011 tests passed: 65 passed.
+  - .gitignore now anchors root /artifacts/ runtime output so src/mod_agent/artifacts/*.py is not ignored as source code.
+  - Artifact envelope/store/freshness/registry source modules are tracked as formal code.
+  - focused and affected R-011 plus artifact store tests passed: 77 passed.
 ```
 
 ### R-012: Checkpoint Resume Graph Binding

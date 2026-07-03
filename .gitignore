@@ -94,7 +94,7 @@ dmypy.json
 data/
 cache/
 logs/
-artifacts/
+/artifacts/
 generated_mods/
 *.dll
 *.pdb
