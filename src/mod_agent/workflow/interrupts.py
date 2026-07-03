@@ -151,6 +151,16 @@ class ResumeValidator:
                     "artifact_refs": missing_refs,
                 }
             )
+        expected_diff_hash = (checkpoint.get("resume_binding") or {}).get("diff_hash")
+        if expected_diff_hash and payload.diff_hash != expected_diff_hash:
+            blockers.append(
+                {
+                    "code": "RESUME_DIFF_HASH_MISMATCH",
+                    "message": "Resume payload diff_hash does not match checkpoint.",
+                    "expected_diff_hash": expected_diff_hash,
+                    "provided_diff_hash": payload.diff_hash,
+                }
+            )
         if blockers:
             return ResumeDecision(
                 status="blocked",
@@ -163,13 +173,31 @@ class ResumeValidator:
             status="accepted",
             allowed=True,
             reason="Resume payload accepted.",
-            applied_updates=self._updates_for(payload),
+            applied_updates=self._updates_for(payload, checkpoint=checkpoint),
         )
 
-    def _updates_for(self, payload: ResumePayload) -> dict[str, Any]:
+    def _updates_for(
+        self,
+        payload: ResumePayload,
+        *,
+        checkpoint: dict[str, Any],
+    ) -> dict[str, Any]:
         allowed_fields = self.RESUME_ALLOWED_FIELDS.get(payload.stage, ())
+        restored_state = dict(checkpoint.get("state_snapshot", {}))
         if payload.decision == "approve" and payload.stage == "review_proposal":
-            return {"approvals": {"review": True}, "allowed_fields": list(allowed_fields)}
+            return {
+                "approvals": {"review": True},
+                "allowed_fields": list(allowed_fields),
+                "restored_state": restored_state,
+            }
         if payload.decision == "approve" and payload.stage == "dry_run_apply":
-            return {"approvals": {"dry_run": True}, "allowed_fields": list(allowed_fields)}
-        return {"allowed_fields": list(allowed_fields), "decision": payload.decision}
+            return {
+                "approvals": {"dry_run": True},
+                "allowed_fields": list(allowed_fields),
+                "restored_state": restored_state,
+            }
+        return {
+            "allowed_fields": list(allowed_fields),
+            "decision": payload.decision,
+            "restored_state": restored_state,
+        }

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildProfile
+from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
 from src.mod_agent.proposal import ProposalReviewer
 from src.mod_agent.repair import RepairPatchProposalBuilder, RepairPlanner
 from src.mod_agent.workflow import (
@@ -27,6 +28,7 @@ def test_repair_review_checkpoint_resume_accepts_review_approval(
         interrupt_reason="repair proposal review requires approval",
         resume_allowed_fields=("approvals.review",),
     )
+    checkpoint = store.read(checkpoint_ref)["data"]
     payload = ResumePayload(
         resume_id="resume_joint_001",
         run_id="run_joint_001",
@@ -35,12 +37,11 @@ def test_repair_review_checkpoint_resume_accepts_review_approval(
         approved_by="human",
         approved_at="2026-06-30T00:00:00Z",
         artifact_refs=tuple(state["artifacts"].values()),
-        diff_hash="sha256:repair-proposal",
+        diff_hash=checkpoint["resume_binding"]["diff_hash"],
         notes="approve reviewed repair proposal for dry run",
     )
 
     decision, report_ref = checkpoint_store.resume(checkpoint_ref, payload)
-    checkpoint = store.read(checkpoint_ref)["data"]
     report = store.read(report_ref)["data"]
 
     assert payloads["repair_plan"]["failure_source"] == "build"
@@ -53,9 +54,33 @@ def test_repair_review_checkpoint_resume_accepts_review_approval(
     assert payloads["proposal_review"]["trace_metrics"]["num_blocking_findings"] == 0
     assert checkpoint["checkpoint_stage"] == "review_proposal"
     assert set(checkpoint["artifact_refs"]) == set(state["artifacts"].values())
+    assert checkpoint["resume_binding"]["patch_proposal_ref"] == refs[
+        "patch_proposal"
+    ].path
+    assert checkpoint["resume_binding"]["patch_proposal_hash"] == refs[
+        "patch_proposal"
+    ].artifact_hash
+    assert checkpoint["resume_binding"]["proposal_review_ref"] == refs[
+        "proposal_review"
+    ].path
+    assert checkpoint["resume_binding"]["proposal_review_hash"] == refs[
+        "proposal_review"
+    ].artifact_hash
+    assert checkpoint["resume_binding"]["diff_hash"].startswith("sha256:")
     assert decision.allowed is True
     assert decision.applied_updates["approvals"]["review"] is True
+    assert (
+        decision.applied_updates["restored_state"]["artifacts"]["patch_proposal"]
+        == refs["patch_proposal"].path
+    )
+    assert (
+        decision.applied_updates["restored_state"]["artifact_hashes"]["patch_proposal"]
+        == refs["patch_proposal"].artifact_hash
+    )
     assert report["allowed"] is True
+    assert report["applied_updates"]["restored_state"]["current_stage"] == (
+        "review_proposal"
+    )
     assert refs["proposal_review"].path in checkpoint["artifact_refs"]
     assert report["checkpoint_id"] == checkpoint["checkpoint_id"]
 
@@ -71,6 +96,7 @@ def test_repair_review_checkpoint_resume_blocks_double_and_stale_resume(
         interrupt_reason="repair proposal review requires approval",
         resume_allowed_fields=("approvals.review",),
     )
+    checkpoint = store.read(checkpoint_ref)["data"]
     payload = ResumePayload(
         resume_id="resume_joint_001",
         run_id="run_joint_001",
@@ -79,6 +105,7 @@ def test_repair_review_checkpoint_resume_blocks_double_and_stale_resume(
         approved_by="human",
         approved_at="2026-06-30T00:00:00Z",
         artifact_refs=tuple(state["artifacts"].values()),
+        diff_hash=checkpoint["resume_binding"]["diff_hash"],
     )
 
     first_decision, _ = checkpoint_store.resume(checkpoint_ref, payload)
@@ -95,13 +122,18 @@ def test_repair_review_checkpoint_resume_blocks_double_and_stale_resume(
         interrupt_reason="repair proposal review requires approval",
         resume_allowed_fields=("approvals.review",),
     )
-    changed_repair_plan = dict(stale_payloads["repair_plan"])
-    changed_repair_plan["message"] = "Repair plan changed after checkpoint."
+    stale_checkpoint = stale_store.read(stale_checkpoint_ref)["data"]
+    changed_proposal = dict(stale_payloads["patch_proposal"])
+    changed_proposal["message"] = "Patch proposal changed after checkpoint."
     stale_store.write(
         feature_id="feature_001",
-        artifact_type="repair_plan",
-        payload=changed_repair_plan,
-        upstream_refs=[refs["build_result"]],
+        artifact_type="patch_proposal",
+        payload=changed_proposal,
+        upstream_refs=[
+            refs["implementation_plan"],
+            refs["evidence_pack"],
+            refs["repair_plan"],
+        ],
     )
     stale_payload = ResumePayload(
         resume_id="resume_stale_001",
@@ -111,6 +143,7 @@ def test_repair_review_checkpoint_resume_blocks_double_and_stale_resume(
         approved_by="human",
         approved_at="2026-06-30T00:00:00Z",
         artifact_refs=tuple(stale_state["artifacts"].values()),
+        diff_hash=stale_checkpoint["resume_binding"]["diff_hash"],
     )
 
     stale_decision, stale_ref = stale_checkpoint_store.resume(
@@ -124,7 +157,37 @@ def test_repair_review_checkpoint_resume_blocks_double_and_stale_resume(
     assert second_report["blockers"][0]["code"] == "DOUBLE_RESUME_REJECTED"
     assert stale_decision.allowed is False
     assert stale_report["blockers"][0]["code"] == "STALE_RESUME_REJECTED"
-    assert stale_report["stale_reasons"] == ["repair_plan hash changed"]
+    assert stale_report["stale_reasons"] == ["patch_proposal hash changed"]
+
+
+def test_repair_review_checkpoint_resume_rejects_changed_diff_hash(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    state, _, _ = _repair_review_state(store)
+    checkpoint_store = WorkflowCheckpointStore(store)
+    checkpoint_ref = checkpoint_store.create_checkpoint(
+        state,
+        interrupt_reason="repair proposal review requires approval",
+        resume_allowed_fields=("approvals.review",),
+    )
+    payload = ResumePayload(
+        resume_id="resume_diff_hash_mismatch_001",
+        run_id="run_joint_001",
+        stage="review_proposal",
+        decision="approve",
+        approved_by="human",
+        approved_at="2026-06-30T00:00:00Z",
+        artifact_refs=tuple(state["artifacts"].values()),
+        diff_hash="sha256:not-the-checkpoint-diff",
+    )
+
+    decision, report_ref = checkpoint_store.resume(checkpoint_ref, payload)
+    report = store.read(report_ref)["data"]
+
+    assert decision.allowed is False
+    assert report["allowed"] is False
+    assert report["blockers"][0]["code"] == "RESUME_DIFF_HASH_MISMATCH"
 
 
 def _repair_review_state(
@@ -287,6 +350,8 @@ def _evidence_payload() -> dict[str, object]:
         "can_generate_patch": True,
         "authority": "mod_agent_deterministic_evidence",
         "authoritative_for_patch": True,
+        "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+        "identity_field_mapping": dict(IDENTITY_FIELD_MAPPING),
         "items": [
             {
                 "evidence_id": "build_diag:0:CS0246:Plugin.cs:12",

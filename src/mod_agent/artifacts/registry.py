@@ -510,6 +510,7 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                     "state_snapshot",
                     "artifact_refs",
                     "artifact_hashes",
+                    "resume_binding",
                     "resume_allowed_fields",
                     "interrupt_reason",
                     "checkpoint_policy",

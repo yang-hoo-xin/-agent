@@ -9,15 +9,15 @@ Last updated: 2026-07-03
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-011 Identifier And Hash Field Mapping
-next_recommended_task: R-012 Checkpoint Resume Graph Binding
+last_completed: R-012 Checkpoint Resume Graph Binding
+next_recommended_task: R-013 Mod-Agent Dashboard Projection
 ordinary_queue_status: Q-020 and later tasks remain queued but blocked behind active Review Repair Queue
 ```
 
 ## Current Baseline
 
 ```text
-branch: repair/r011-identifier-hash-field-mapping
+branch: repair/r012-checkpoint-resume-graph-binding
 remote: https://github.com/yang-hoo-xin/-agent.git
 baseline commit: 914f16e chore: establish controlled mod agent baseline
 baseline tag: baseline-controlled-agent-v0
@@ -29,7 +29,9 @@ repair chain:
   R-009 retrieval authority boundary: 547ba22 fix(retrieval): enforce R-009 evidence authority boundary
   R-009 hardening follow-up record: 09625b0 docs(repair): record R-009 authority hardening follow-ups
   R-010 single collection resolver: 3fc1ef5 fix(retrieval): resolve controlled collection centrally
-current R-011 status: completed; focused and affected tests passed
+  R-011 identifier and hash field mapping: fe5c5f3 fix(retrieval): enforce identity field mapping
+  R-011 artifact source tracking boundary: fbdca70 fix(git): track mod_agent artifact modules
+current R-012 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -37,7 +39,6 @@ commit policy: manual commit after focused tests and status review
 
 | Task | Source Finding | Status | Blocking Reason |
 | --- | --- | --- | --- |
-| R-012 | P1-005 | queued | checkpoint/resume needs graph-level proposal/diff hash binding and state restoration evidence |
 | R-013 | P1-006 | queued | dashboard needs mod_agent workflow/artifact/proposal/build/runtime/repair projections |
 
 ## Test Health
@@ -95,6 +96,10 @@ latest focused and affected R-011 suite:
   .\.venv\Scripts\python.exe -m pytest tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py tests/unit/test_knowledge_base.py tests/unit/test_evidence_retrieval.py tests/unit/test_workflow_graph.py tests/unit/test_repair_loop.py tests/unit/test_planning.py tests/unit/test_proposal_review.py -q --tb=short --disable-warnings
   result: 77 passed
 
+latest focused and affected R-012 suite:
+  .\.venv\Scripts\python.exe -m pytest tests/unit/test_workflow_graph.py tests/unit/test_repair_loop.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py -q --tb=short --disable-warnings
+  result: 48 passed
+
 known broader-suite gaps:
   LEGACY-TEST-001 is queued for full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy assertions.
   R-009 absorbed only evidence_retrieval, stub_nodes, sparse_encoder/query tokenization, and planning/artifact contract changes directly tied to retrieval authority or evidence boundary behavior.
@@ -122,39 +127,24 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: R-011 Identifier And Hash Field Mapping
+task: R-012 Checkpoint Resume Graph Binding
 status: completed; focused and affected tests passed
 files_changed:
-  .gitignore
-  src/mod_agent/artifacts/__init__.py
-  src/mod_agent/artifacts/envelope.py
-  src/mod_agent/artifacts/freshness.py
   src/mod_agent/artifacts/registry.py
-  src/mod_agent/artifacts/store.py
-  src/mod_agent/knowledge/__init__.py
-  src/mod_agent/knowledge/models.py
-  src/mod_agent/knowledge/database.py
-  src/mod_agent/evidence/models.py
-  src/mod_agent/evidence/retriever.py
-  src/mod_agent/artifacts/registry.py
-  tests/unit/test_knowledge_base.py
-  tests/unit/test_evidence_retrieval.py
+  src/mod_agent/workflow/checkpointing.py
+  src/mod_agent/workflow/interrupts.py
   tests/unit/test_artifact_contract.py
-  tests/unit/test_artifact_store.py
-  tests/unit/test_planning.py
-  tests/unit/test_proposal_review.py
+  tests/unit/test_repair_checkpoint_smoke.py
   docs/IMPLEMENTATION_QUEUE.md
-  docs/SPEC_COVERAGE_MATRIX.md
   docs/PROJECT_STATE.md
 behavior:
-  identity_v1 maps document_id, file_hash, source_hash, doc_hash, chunk_id, source_ref, and content_hash to one controlled-agent meaning.
-  IndexedFile.to_document and chunk_from_document populate explicit identity metadata while preserving tested backward-compatible source_hash=file_hash.
-  KnowledgeDatabase rejects missing or inconsistent document/chunk identity metadata before persistence.
-  EvidenceItem and evidence_pack artifacts expose identity fields and identity_field_mapping for chunk/document traceability.
-  Root runtime artifact output remains ignored via /artifacts/, while src/mod_agent/artifacts source modules are tracked as formal code.
+  workflow_checkpoint artifacts bind resume attempts to patch_proposal ref/hash, proposal_review ref/hash, and a sha256 diff_hash derived from patch_proposal.diff_intent.
+  ResumeValidator rejects missing or mismatched diff_hash when the checkpoint carries a bound diff_hash.
+  Accepted resume decisions expose restored_state from checkpoint state_snapshot so a resume cannot silently skip the reviewed graph state.
+  Changed patch_proposal upstream artifacts are rejected through stale checkpoint freshness checks.
 verification:
-  focused and affected R-011 plus artifact store tests: 77 passed
-next_recommended_task: R-012 Checkpoint Resume Graph Binding
+  focused and affected R-012 tests: 48 passed
+next_recommended_task: R-013 Mod-Agent Dashboard Projection
 ```
 
 ## Next Execution Rule

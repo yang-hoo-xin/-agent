@@ -359,7 +359,7 @@ Completed evidence:
 ### R-012: Checkpoint Resume Graph Binding
 
 ```text
-Status: queued
+Status: completed
 Module: WF, ART, GIT
 Spec refs: 5.6, 49.1.5
 Source finding: P1-005
@@ -379,6 +379,13 @@ Known R-005 PASS_WITH_RISK follow-up gaps:
   - ArtifactStore.read does not recompute envelope content hash; it compares envelope artifact_hash to ArtifactRef artifact_hash.
   - Artifact paths are still one feature/type file and do not preserve immutable historical revision files.
   - allow_stale_upstreams must remain audit/report-only and must not become an execution-input bypass.
+Completed evidence:
+  - workflow_checkpoint payloads now include resume_binding with patch_proposal ref/hash, proposal_review ref/hash, and a sha256 diff_hash derived from patch_proposal.diff_intent.
+  - ResumeValidator rejects missing or mismatched diff_hash when a checkpoint has a bound diff_hash.
+  - Accepted resume decisions include restored_state from the checkpoint state_snapshot so the graph resume point cannot silently skip the reviewed state.
+  - checkpoint smoke tests prove accepted restore behavior, double resume rejection, changed patch_proposal stale rejection, and changed diff_hash rejection.
+  - artifact contract tests require resume_binding on workflow_checkpoint payloads.
+  - focused and affected R-012 tests passed: 48 passed.
 ```
 
 ### R-013: Mod-Agent Dashboard Projection

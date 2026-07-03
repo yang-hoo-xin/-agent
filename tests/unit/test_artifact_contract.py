@@ -343,6 +343,20 @@ def test_patch_and_review_contracts_require_review_gate_fields() -> None:
     )
 
 
+def test_checkpoint_contract_requires_resume_binding() -> None:
+    registry = ArtifactTypeRegistry()
+
+    checkpoint = registry.get("workflow_checkpoint")
+
+    assert {
+        "state_snapshot",
+        "artifact_refs",
+        "artifact_hashes",
+        "resume_binding",
+        "resume_allowed_fields",
+    }.issubset(checkpoint.required_fields)
+
+
 def test_schema_validation_blocks_missing_required_field(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
 
