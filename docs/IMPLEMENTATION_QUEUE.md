@@ -19,7 +19,7 @@ Do not close a task without updating every affected coverage row.
 ```text
 current_queue: Review Repair Queue
 last_completed: R-013 Mod-Agent Dashboard Projection
-next_recommended_task: R-009-HARDENING-001
+next_recommended_task: finish R-009-HARDENING-001 review and git decision
 Q-020_status: queued; blocked behind active Review Repair Queue
 ```
 
@@ -34,7 +34,7 @@ Policy: LEGACY-TEST-001 does not block R-009. R-009 may only absorb evidence_ret
 ## Hardening Follow-ups
 
 ```text
-R-009-HARDENING-001_status: queued
+R-009-HARDENING-001_status: implemented; pending review and git decision
 Source task: R-009 Retrieval Authority Boundary
 Scope: harden authority defaults, raw evidence-pack provenance, dashboard authority display semantics, and shared retrieval tokenization.
 Policy: this records R-009 residual hardening work and does not reopen the completed R-009 loop.
@@ -45,6 +45,15 @@ Required follow-ups:
   - Dashboard authority displays must show readiness, can_generate_patch, and authoritative_for_patch together so authority is not misread as patch approval.
   - sparse/query tokenization should be extracted into a shared implementation to remove case and rule drift.
 Recommended placement: address with artifact provenance / R-012 hardening, R-013 dashboard projection, and retrieval tokenizer cleanup work.
+Implementation evidence:
+  - EvidenceItem.authority now defaults to legacy_rag_auxiliary.
+  - DeterministicEvidenceRetriever explicitly sets mod_agent_deterministic on symbol, symbol-index, BM25, and text evidence items.
+  - ImplementationPlanner blocks authoritative raw dict packs missing identity_schema_version, identity_field_mapping, explicit item authority, or deterministic item provenance metadata; auxiliary context items are ignored for planning.
+  - DashboardProjectionBuilder exposes readiness, can_generate_patch, authority, authoritative_for_patch, and projection_status together in the evidence summary.
+  - QueryProcessor and SparseEncoder now share tokenize_retrieval_text for code-like retrieval tokenization; jieba remains a mandatory dependency and no silent fallback is used.
+  - focused R-009-HARDENING-001 tests passed under .venv: 93 passed, 1 warning.
+  - affected R-009-HARDENING-001 tests passed: 68 passed.
+  - dashboard smoke passed: 6 passed.
 ```
 ## Recently Completed
 

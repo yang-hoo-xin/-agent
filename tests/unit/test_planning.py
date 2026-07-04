@@ -3,11 +3,37 @@
 from __future__ import annotations
 
 from src.mod_agent.artifacts import ArtifactStore
+from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
 from src.mod_agent.planning import (
     FeatureSpecBuilder,
     ImplementationPlanner,
     RequestPlanner,
 )
+
+
+def _identity_schema_payload() -> dict[str, object]:
+    return {
+        "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+        "identity_field_mapping": dict(IDENTITY_FIELD_MAPPING),
+    }
+
+
+def _authoritative_item(**overrides: object) -> dict[str, object]:
+    item: dict[str, object] = {
+        "evidence_id": "ev_001",
+        "source_type": "target_source",
+        "source_path": "mods/BetterHitFeedback/Plugin.cs",
+        "symbol": "Load",
+        "authority": "mod_agent_deterministic",
+        "chunk_id": "chunk_001",
+        "document_id": "doc_001",
+        "source_ref": "doc_001",
+        "source_hash": "file_hash_001",
+        "file_hash": "file_hash_001",
+        "doc_hash": "doc_hash_001",
+    }
+    item.update(overrides)
+    return item
 
 
 def test_request_planner_blocks_ambiguous_request() -> None:
@@ -85,14 +111,8 @@ def test_implementation_plan_binds_every_change_to_evidence() -> None:
         "can_generate_patch": True,
         "authority": "mod_agent_deterministic_evidence",
         "authoritative_for_patch": True,
-        "items": [
-            {
-                "evidence_id": "ev_001",
-                "source_type": "target_source",
-                "source_path": "mods/BetterHitFeedback/Plugin.cs",
-                "symbol": "Load",
-            }
-        ],
+        **_identity_schema_payload(),
+        "items": [_authoritative_item()],
     }
 
     implementation = ImplementationPlanner().build(
@@ -123,13 +143,14 @@ def test_implementation_plan_blocks_when_evidence_source_is_not_editable() -> No
         "can_generate_patch": True,
         "authority": "mod_agent_deterministic_evidence",
         "authoritative_for_patch": True,
+        **_identity_schema_payload(),
         "items": [
-            {
-                "evidence_id": "ev_api_001",
-                "source_type": "decompiled_api",
-                "source_path": "decompiled/EnemyAgent.cs",
-                "symbol": "Load",
-            }
+            _authoritative_item(
+                evidence_id="ev_api_001",
+                source_type="decompiled_api",
+                source_path="decompiled/EnemyAgent.cs",
+                symbol="Load",
+            )
         ],
     }
 
@@ -157,24 +178,8 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
             "can_generate_patch": True,
             "authority": "mod_agent_deterministic_evidence",
             "authoritative_for_patch": True,
-            "identity_schema_version": "identity_v1",
-            "identity_field_mapping": {
-                "document_id": "Stable loaded document id",
-                "file_hash": "SHA256 of the loaded source file",
-                "source_hash": "Backward-compatible alias for file_hash",
-                "doc_hash": "SHA256 of the document canonical_text",
-                "chunk_id": "Stable chunk id",
-                "source_ref": "Chunk-to-document reference",
-                "content_hash": "Context-dependent stored content hash",
-            },
-            "items": [
-                {
-                    "evidence_id": "ev_001",
-                    "source_type": "target_source",
-                    "source_path": "mods/BetterHitFeedback/Plugin.cs",
-                    "symbol": "Load",
-                }
-            ],
+            **_identity_schema_payload(),
+            "items": [_authoritative_item()],
         },
     )
 
@@ -200,24 +205,8 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
             "can_generate_patch": True,
             "authority": "mod_agent_deterministic_evidence",
             "authoritative_for_patch": True,
-            "identity_schema_version": "identity_v1",
-            "identity_field_mapping": {
-                "document_id": "Stable loaded document id",
-                "file_hash": "SHA256 of the loaded source file",
-                "source_hash": "Backward-compatible alias for file_hash",
-                "doc_hash": "SHA256 of the document canonical_text",
-                "chunk_id": "Stable chunk id",
-                "source_ref": "Chunk-to-document reference",
-                "content_hash": "Context-dependent stored content hash",
-            },
-            "items": [
-                {
-                    "evidence_id": "ev_001",
-                    "source_type": "target_source",
-                    "source_path": "mods/BetterHitFeedback/Plugin.cs",
-                    "symbol": "Load",
-                }
-            ],
+            **_identity_schema_payload(),
+            "items": [_authoritative_item()],
             "gaps": [],
             "excluded": [],
             "blockers": [],
@@ -249,6 +238,7 @@ def test_implementation_plan_blocks_non_authoritative_evidence_pack() -> None:
         "can_generate_patch": True,
         "authority": "legacy_rag_auxiliary",
         "authoritative_for_patch": False,
+        **_identity_schema_payload(),
         "items": [
             {
                 "evidence_id": "legacy_001",
@@ -268,3 +258,78 @@ def test_implementation_plan_blocks_non_authoritative_evidence_pack() -> None:
     assert implementation.blocking is True
     assert implementation.proposed_changes == ()
     assert implementation.blockers[0]["code"] == "NON_AUTHORITATIVE_EVIDENCE_PACK"
+
+
+def test_implementation_plan_blocks_item_with_missing_authority() -> None:
+    plan = RequestPlanner().plan("make Load enable diagnostics")
+    spec = FeatureSpecBuilder().build(plan)
+    item = _authoritative_item()
+    item.pop("authority")
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [item],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.blockers[0]["code"] == "NON_AUTHORITATIVE_EVIDENCE_ITEM"
+
+
+def test_implementation_plan_blocks_unprovenanced_raw_evidence_pack() -> None:
+    plan = RequestPlanner().plan("make Load enable diagnostics")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        "items": [_authoritative_item()],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.blockers[0]["code"] == "UNVERIFIED_EVIDENCE_PROVENANCE"
+
+
+def test_implementation_plan_ignores_auxiliary_context_items() -> None:
+    plan = RequestPlanner().plan("make Load enable diagnostics")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(),
+            {
+                "evidence_id": "legacy_001",
+                "source_type": "target_source",
+                "source_path": "legacy/Plugin.cs",
+                "symbol": "Load",
+                "authority": "legacy_rag_auxiliary",
+            },
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is False
+    assert implementation.evidence_refs == ("ev_001",)
+    assert implementation.evidence_source_paths == ("mods/BetterHitFeedback/Plugin.cs",)
+    assert implementation.target_files == ("mods/BetterHitFeedback/Plugin.cs",)

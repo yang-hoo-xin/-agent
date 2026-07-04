@@ -9,6 +9,8 @@ from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERS
 
 EvidenceReadiness = Literal["sufficient", "partial", "insufficient", "contradictory"]
 EvidenceAuthority = Literal["mod_agent_deterministic", "legacy_rag_auxiliary"]
+DETERMINISTIC_EVIDENCE_AUTHORITY = "mod_agent_deterministic"
+LEGACY_RAG_AUXILIARY_AUTHORITY = "legacy_rag_auxiliary"
 EVIDENCE_PACK_AUTHORITY = "mod_agent_deterministic_evidence"
 
 
@@ -42,7 +44,7 @@ class EvidenceItem:
     source_hash: str | None = None
     file_hash: str | None = None
     doc_hash: str | None = None
-    authority: EvidenceAuthority = "mod_agent_deterministic"
+    authority: EvidenceAuthority = LEGACY_RAG_AUXILIARY_AUTHORITY
     risk_notes: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:

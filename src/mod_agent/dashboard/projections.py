@@ -72,6 +72,7 @@ class DashboardProjectionBuilder:
                 "feature_id": feature_id,
                 "status": "empty",
                 "workflow": self._empty_section("No controlled-agent artifacts found."),
+                "evidence": self._empty_section("No evidence_pack artifact found."),
                 "proposal": self._empty_section("No proposal artifacts found."),
                 "build": self._empty_section("No build_result artifact found."),
                 "runtime": self._empty_section("No runtime_evidence artifact found."),
@@ -111,6 +112,7 @@ class DashboardProjectionBuilder:
             "feature_id": feature_id,
             "status": "blocked" if blockers else "available",
             "workflow": self._workflow_summary(artifact_by_type),
+            "evidence": self._evidence_summary(artifact_by_type),
             "proposal": self._proposal_summary(artifact_by_type),
             "build": self._build_summary(artifact_by_type),
             "runtime": self._runtime_summary(artifact_by_type),
@@ -278,6 +280,29 @@ class DashboardProjectionBuilder:
                 "allowed": resume_data.get("allowed"),
                 "status": resume_data.get("status"),
             },
+        }
+
+    @staticmethod
+    def _evidence_summary(artifact_by_type: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        evidence = artifact_by_type.get("evidence_pack")
+        if evidence is None:
+            return DashboardProjectionBuilder._empty_section("No evidence_pack artifact found.")
+        data = _data(evidence)
+        return {
+            "projection_status": (
+                "available" if data.get("can_generate_patch") else "blocked"
+            ),
+            "readiness": data.get("readiness"),
+            "can_generate_patch": data.get("can_generate_patch"),
+            "authority": data.get("authority"),
+            "authoritative_for_patch": data.get("authoritative_for_patch"),
+            "item_count": len(data.get("items") or []),
+            "retrieval_methods_used": _sanitize_value(
+                data.get("retrieval_methods_used") or [],
+                key_path=("retrieval_methods_used",),
+            ),
+            "missing_evidence_count": len(data.get("missing_evidence") or []),
+            "blocker_count": len(data.get("blockers") or []),
         }
 
     @staticmethod

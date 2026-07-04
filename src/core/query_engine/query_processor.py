@@ -17,9 +17,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Pattern, Set
 
-import jieba
-
 from src.core.types import ProcessedQuery
+from src.core.query_engine.tokenization import tokenize_retrieval_text
 
 
 # Default stopwords for Chinese
@@ -220,35 +219,7 @@ class QueryProcessor:
         Returns:
             List of tokens
         """
-        tokens: List[str] = []
-
-        # Preserve English/code-like terms before jieba splits hyphenated tokens.
-        protected_terms = re.findall(r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*", text)
-        protected_spans = [match.span() for match in re.finditer(r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*", text)]
-        masked_parts: list[str] = []
-        last = 0
-        for start, end in protected_spans:
-            masked_parts.append(text[last:start])
-            masked_parts.append(" " * (end - start))
-            last = end
-        masked_parts.append(text[last:])
-        masked_text = "".join(masked_parts)
-
-        tokens.extend(protected_terms)
-
-        # Use jieba to segment the remaining text.
-        raw_tokens = jieba.lcut(masked_text)
-
-        for token in raw_tokens:
-            token = token.strip()
-            if not token:
-                continue
-            # Skip pure punctuation / whitespace
-            if re.fullmatch(r'[\s\W]+', token, re.UNICODE):
-                continue
-            tokens.append(token)
-        
-        return tokens
+        return tokenize_retrieval_text(text, lowercase=False, min_token_length=1)
     
     def _filter_keywords(self, tokens: List[str]) -> List[str]:
         """Filter tokens to get meaningful keywords.

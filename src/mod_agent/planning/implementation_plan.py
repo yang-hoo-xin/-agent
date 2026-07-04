@@ -4,11 +4,21 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
+
+from src.mod_agent.evidence.models import (
+    DETERMINISTIC_EVIDENCE_AUTHORITY,
+    EVIDENCE_PACK_AUTHORITY,
+    LEGACY_RAG_AUXILIARY_AUTHORITY,
+)
 from .models import FeatureSpec, ImplementationPlan
 
 EDITABLE_EVIDENCE_SOURCE_TYPES = frozenset({"target_source"})
-AUTHORITATIVE_EVIDENCE_PACK = "mod_agent_deterministic_evidence"
-AUTHORITATIVE_ITEM_AUTHORITY = "mod_agent_deterministic"
+AUTHORITATIVE_EVIDENCE_PACK = EVIDENCE_PACK_AUTHORITY
+AUTHORITATIVE_ITEM_AUTHORITY = DETERMINISTIC_EVIDENCE_AUTHORITY
+EVIDENCE_ITEM_PROVENANCE_FIELDS = frozenset(
+    {"chunk_id", "document_id", "source_ref", "source_hash", "file_hash", "doc_hash"}
+)
 
 
 class ImplementationPlanner:
@@ -62,23 +72,124 @@ class ImplementationPlanner:
                 ),
             )
 
-        items = list(evidence_pack.get("items") or [])
+        if (
+            evidence_pack.get("identity_schema_version") != IDENTITY_SCHEMA_VERSION
+            or evidence_pack.get("identity_field_mapping") != dict(IDENTITY_FIELD_MAPPING)
+        ):
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(
+                    {
+                        "code": "UNVERIFIED_EVIDENCE_PROVENANCE",
+                        "message": (
+                            "Authoritative evidence packs must carry the current "
+                            "identity schema and field mapping."
+                        ),
+                    },
+                ),
+                open_questions=("Resolve provenance-validated evidence before planning edits.",),
+            )
+
+        raw_items = list(evidence_pack.get("items") or [])
+        items = [item for item in raw_items if isinstance(item, dict)]
+        if len(items) != len(raw_items):
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(
+                    {
+                        "code": "MALFORMED_EVIDENCE_ITEMS",
+                        "message": "Evidence pack items must be mappings.",
+                    },
+                ),
+                open_questions=("Regenerate evidence with structured evidence items.",),
+            )
+        missing_authority_items = [
+            item
+            for item in items
+            if "authority" not in item
+        ]
+        if missing_authority_items:
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(
+                    {
+                        "code": "NON_AUTHORITATIVE_EVIDENCE_ITEM",
+                        "message": (
+                            "Every evidence item used for implementation planning "
+                            "must be mod_agent deterministic evidence."
+                        ),
+                    },
+                ),
+                open_questions=("Regenerate evidence with explicit item authority.",),
+            )
+        unsupported_authority_items = [
+            item
+            for item in items
+            if item.get("authority")
+            not in {AUTHORITATIVE_ITEM_AUTHORITY, LEGACY_RAG_AUXILIARY_AUTHORITY}
+        ]
+        if unsupported_authority_items:
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(
+                    {
+                        "code": "UNSUPPORTED_EVIDENCE_ITEM_AUTHORITY",
+                        "message": "Evidence item authority is not recognized.",
+                    },
+                ),
+                open_questions=("Regenerate evidence with recognized item authority.",),
+            )
+        planning_items = [
+            item for item in items if item.get("authority") == AUTHORITATIVE_ITEM_AUTHORITY
+        ]
+        if not planning_items:
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(
+                    {
+                        "code": "MISSING_AUTHORITATIVE_EVIDENCE_ITEM",
+                        "message": (
+                            "Implementation planning requires at least one "
+                            "mod_agent deterministic evidence item."
+                        ),
+                    },
+                ),
+                open_questions=("Resolve mod_agent deterministic evidence before planning edits.",),
+            )
+        unprovenanced_items = [
+            item
+            for item in planning_items
+            if not any(item.get(field) for field in EVIDENCE_ITEM_PROVENANCE_FIELDS)
+        ]
+        if unprovenanced_items:
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(
+                    {
+                        "code": "UNVERIFIED_EVIDENCE_ITEM_PROVENANCE",
+                        "message": (
+                            "Every evidence item used for implementation planning "
+                            "must carry source identity metadata."
+                        ),
+                    },
+                ),
+                open_questions=("Regenerate evidence with item provenance metadata.",),
+            )
+
         evidence_refs = tuple(
-            item["evidence_id"] for item in items if item.get("evidence_id")
+            item["evidence_id"] for item in planning_items if item.get("evidence_id")
         )
         evidence_source_paths = tuple(
             dict.fromkeys(
-                item["source_path"] for item in items if item.get("source_path")
+                item["source_path"] for item in planning_items if item.get("source_path")
             )
         )
         editable_items = [
             item
-            for item in items
+            for item in planning_items
             if item.get("evidence_id")
             and item.get("source_path")
             and item.get("source_type") in EDITABLE_EVIDENCE_SOURCE_TYPES
-            and item.get("authority", AUTHORITATIVE_ITEM_AUTHORITY)
-            == AUTHORITATIVE_ITEM_AUTHORITY
         ]
         target_files = tuple(
             dict.fromkeys(item["source_path"] for item in editable_items)

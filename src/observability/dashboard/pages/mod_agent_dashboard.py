@@ -70,11 +70,13 @@ def _render_projection(projection: dict[str, Any]) -> None:
     with cols[3]:
         st.metric("Blockers", len(projection.get("blockers") or []))
 
-    workflow, proposal, build, runtime, repair, evaluation = st.tabs(
-        ["Workflow", "Proposal", "Build", "Runtime", "Repair", "Eval"]
+    workflow, evidence, proposal, build, runtime, repair, evaluation = st.tabs(
+        ["Workflow", "Evidence", "Proposal", "Build", "Runtime", "Repair", "Eval"]
     )
     with workflow:
         st.json(projection.get("workflow") or {})
+    with evidence:
+        st.json(projection.get("evidence") or {})
     with proposal:
         st.json(projection.get("proposal") or {})
     with build:

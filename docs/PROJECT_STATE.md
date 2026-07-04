@@ -10,14 +10,14 @@ Last updated: 2026-07-04
 ```text
 current_queue: Review Repair Queue
 last_completed: R-013 Mod-Agent Dashboard Projection
-next_recommended_task: R-009-HARDENING-001
+next_recommended_task: finish R-009-HARDENING-001 review and git decision
 ordinary_queue_status: Q-020 and later tasks remain queued but blocked behind active Review Repair Queue
 ```
 
 ## Current Baseline
 
 ```text
-branch: codex/r013-dashboard-projection
+branch: codex/r009-hardening-001
 remote: https://github.com/yang-hoo-xin/-agent.git
 baseline commit: 914f16e chore: establish controlled mod agent baseline
 baseline tag: baseline-controlled-agent-v0
@@ -33,6 +33,7 @@ repair chain:
   R-011 artifact source tracking boundary: fbdca70 fix(git): track mod_agent artifact modules
 current R-012 status: completed; focused and affected tests passed
 current R-013 status: completed; focused and affected tests passed
+current R-009-HARDENING-001 status: implemented; focused and affected tests passed; pending review and git decision
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -40,7 +41,7 @@ commit policy: manual commit after focused tests and status review
 
 | Task | Source Finding | Status | Blocking Reason |
 | --- | --- | --- | --- |
-| R-009-HARDENING-001 | R-009 residual hardening | queued | authority defaults, raw evidence-pack provenance, dashboard authority semantics, and tokenizer sharing remain queued before ordinary Q work |
+| R-009-HARDENING-001 | R-009 residual hardening | implemented; pending review and git decision | commit not completed yet |
 
 ## Test Health
 
@@ -113,10 +114,22 @@ latest R-013 dashboard smoke:
   .venv\Scripts\python.exe -m pytest tests/e2e/test_dashboard_smoke.py -q --tb=short
   result: 6 passed
 
+latest focused R-009-HARDENING-001 suite:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_planning.py tests/unit/test_evidence_retrieval.py tests/unit/test_dashboard_projection.py tests/unit/test_query_processor.py tests/unit/test_sparse_encoder.py -q --tb=short
+  result: 93 passed, 1 warning
+
+latest affected R-009-HARDENING-001 suite:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_artifact_contract.py tests/unit/test_workflow_graph.py tests/unit/test_repair_loop.py tests/unit/test_dashboard_data_service.py tests/unit/test_build_adapter.py tests/unit/test_trace_service.py -q --tb=short
+  result: 68 passed
+
+latest R-009-HARDENING-001 dashboard smoke:
+  .venv\Scripts\python.exe -m pytest tests/e2e/test_dashboard_smoke.py -q --tb=short
+  result: 6 passed
+
 known broader-suite gaps:
   LEGACY-TEST-001 is queued for full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy assertions.
   R-009 absorbed only evidence_retrieval, stub_nodes, sparse_encoder/query tokenization, and planning/artifact contract changes directly tied to retrieval authority or evidence boundary behavior.
-  R-009-HARDENING-001 is queued for authority default hardening, raw evidence-pack provenance validation, dashboard authority display semantics, and shared sparse/query tokenization cleanup.
+  R-009-HARDENING-001 is implemented and pending review/git decision for authority default hardening, raw evidence-pack provenance validation, dashboard authority display semantics, and shared sparse/query tokenization cleanup.
   streamlit is installed in .venv to satisfy dashboard e2e dependency
 ```
 
@@ -140,31 +153,34 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: R-013 Mod-Agent Dashboard Projection
-status: completed; focused and affected tests passed
+task: R-009-HARDENING-001
+status: implemented; focused and affected tests passed; pending review and git decision
 files_changed:
-  .gitignore
-  src/mod_agent/build/__init__.py
-  src/mod_agent/build/adapter.py
-  src/mod_agent/dashboard/__init__.py
+  src/core/query_engine/tokenization.py
+  src/core/query_engine/__init__.py
+  src/core/query_engine/query_processor.py
+  src/ingestion/embedding/sparse_encoder.py
+  src/mod_agent/evidence/models.py
+  src/mod_agent/evidence/readiness.py
+  src/mod_agent/evidence/retriever.py
+  src/mod_agent/planning/implementation_plan.py
   src/mod_agent/dashboard/projections.py
-  src/observability/dashboard/app.py
   src/observability/dashboard/pages/mod_agent_dashboard.py
+  tests/unit/test_evidence_retrieval.py
+  tests/unit/test_planning.py
   tests/unit/test_dashboard_projection.py
-  docs/IMPLEMENTATION_QUEUE.md
-  docs/SPEC_COVERAGE_MATRIX.md
-  docs/PROJECT_STATE.md
+  tests/unit/test_query_processor.py
+  tests/unit/test_sparse_encoder.py
 behavior:
-  DashboardProjectionBuilder reads controlled-agent artifacts through ArtifactStore and returns sanitized summaries for workflow, artifact, proposal, build, runtime, repair, and evaluation state.
-  The projection exposes contract-declared dashboard_projection fields and derived counts/statuses, while omitting raw artifact bodies such as diff_intent and raw_supplied_output.
-  Missing artifacts render explicit empty states; stale artifacts expose freshness status and stale_reasons; unknown artifacts render blocked summaries without leaking raw data.
-  The Streamlit dashboard now includes a read-only Controlled Agent page backed by the projection service.
-  .gitignore now keeps runtime build outputs ignored while allowing src/mod_agent/build/*.py and src/mod_agent/dashboard/*.py source files to be tracked.
+  EvidenceItem now defaults to legacy_rag_auxiliary, while DeterministicEvidenceRetriever explicitly assigns mod_agent_deterministic authority.
+  ImplementationPlanner blocks authoritative raw dict evidence packs that lack identity_schema_version, identity_field_mapping, explicit item authority, or deterministic item provenance metadata; auxiliary context items are ignored for planning.
+  Controlled-agent dashboard projection now shows evidence readiness, can_generate_patch, authority, authoritative_for_patch, and projection_status together.
+  QueryProcessor and SparseEncoder now share tokenize_retrieval_text for code-like retrieval tokenization; jieba remains a mandatory dependency and no silent fallback is used.
 verification:
-  focused R-013 projection tests: 6 passed
-  affected R-013 safety/workflow tests: 68 passed
+  focused R-009-HARDENING-001 tests: 93 passed, 1 warning
+  affected R-009-HARDENING-001 tests: 68 passed
   dashboard smoke: 6 passed
-next_recommended_task: R-009-HARDENING-001
+next_recommended_task: finish R-009-HARDENING-001 review and git decision
 ```
 
 ## Next Execution Rule

@@ -7,12 +7,13 @@ from .models import (
     EvidencePack,
     EvidenceReadiness,
     EvidenceRequest,
+    DETERMINISTIC_EVIDENCE_AUTHORITY,
     missing_evidence_from_blockers,
 )
 
 HOOK_SOURCE_TYPES = frozenset({"target_source", "reference_mod", "decompiled_api"})
 HOOK_METHODS = frozenset({"symbol", "symbol_exact", "symbol_substring"})
-AUTHORITATIVE_ITEM_AUTHORITY = "mod_agent_deterministic"
+AUTHORITATIVE_ITEM_AUTHORITY = DETERMINISTIC_EVIDENCE_AUTHORITY
 
 
 class EvidenceReadinessClassifier:

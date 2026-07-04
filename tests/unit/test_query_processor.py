@@ -17,6 +17,7 @@ from src.core.query_engine.query_processor import (
     CHINESE_STOPWORDS,
     ENGLISH_STOPWORDS,
 )
+from src.core.query_engine.tokenization import tokenize_retrieval_text
 from src.core.types import ProcessedQuery
 
 
@@ -57,6 +58,16 @@ class TestQueryProcessorBasic:
         assert "模型" in result.keywords
         # Keywords should be non-empty (acceptance criteria)
         assert len(result.keywords) > 0
+
+    def test_query_processor_uses_shared_code_like_tokenization(self):
+        processor = QueryProcessor()
+        result = processor.process("machine-learning deep_learning gpt-4")
+
+        assert result.keywords == tokenize_retrieval_text(
+            "machine-learning deep_learning gpt-4",
+            lowercase=False,
+            min_token_length=1,
+        )
 
 
 class TestStopwordFiltering:

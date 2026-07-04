@@ -21,7 +21,12 @@ from src.mod_agent.knowledge import (
     evidence_identity_from_metadata,
 )
 
-from .models import EvidenceItem, EvidencePack, EvidenceRequest
+from .models import (
+    DETERMINISTIC_EVIDENCE_AUTHORITY,
+    EvidenceItem,
+    EvidencePack,
+    EvidenceRequest,
+)
 from .readiness import EvidenceReadinessClassifier
 
 _TERM_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{1,}")
@@ -196,6 +201,7 @@ class DeterministicEvidenceRetriever:
             excerpt=symbol.excerpt,
             source_hash=symbol.content_hash,
             file_hash=symbol.content_hash,
+            authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
             risk_notes=(),
         )
 
@@ -285,6 +291,7 @@ class DeterministicEvidenceRetriever:
             ),
             excerpt=excerpt,
             **identity,
+            authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
             risk_notes=(),
         )
 
@@ -349,6 +356,7 @@ class DeterministicEvidenceRetriever:
             ),
             excerpt=hit.excerpt,
             **evidence_identity_from_metadata(hit.metadata),
+            authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
             risk_notes=(),
         )
 
@@ -401,6 +409,7 @@ class DeterministicEvidenceRetriever:
                     excerpt=excerpt,
                     source_hash=indexed_file.content_hash,
                     file_hash=indexed_file.content_hash,
+                    authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
                     risk_notes=(),
                 )
             )

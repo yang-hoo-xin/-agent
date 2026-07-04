@@ -34,6 +34,11 @@ def test_projection_exposes_summaries_without_raw_artifact_body(tmp_path: Path) 
     assert projection["proposal"]["proposal_id"] == "proposal_001"
     assert projection["proposal"]["change_count"] == 1
     assert projection["proposal"]["review_decision"] == "approved"
+    assert projection["evidence"]["readiness"] == "ready"
+    assert projection["evidence"]["can_generate_patch"] is True
+    assert projection["evidence"]["projection_status"] == "available"
+    assert projection["evidence"]["authority"] == "mod_agent_deterministic_evidence"
+    assert projection["evidence"]["authoritative_for_patch"] is True
     assert projection["build"]["execution_mode"] == "fake"
     assert projection["build"]["claims_real_build_success"] is False
     assert projection["runtime"]["acceptance_status"] == "inconclusive"

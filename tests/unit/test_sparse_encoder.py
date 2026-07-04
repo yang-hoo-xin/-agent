@@ -11,6 +11,7 @@ Tests cover:
 
 import pytest
 from src.ingestion.embedding.sparse_encoder import SparseEncoder
+from src.core.query_engine.tokenization import tokenize_retrieval_text
 from src.core.types import Chunk
 
 
@@ -175,6 +176,21 @@ def test_tokenize_handles_hyphens_and_underscores():
     
     assert "machine-learning" in results[0]["term_frequencies"]
     assert "deep_learning" in results[0]["term_frequencies"]
+
+
+def test_sparse_encoder_uses_shared_code_like_tokenization():
+    """Test SparseEncoder follows the shared retrieval tokenizer."""
+    encoder = SparseEncoder()
+    text = "Machine-Learning deep_learning GPT-4"
+    chunks = [Chunk(id="1", text=text, metadata={"source_path": "test.txt"})]
+
+    results = encoder.encode(chunks)
+
+    assert list(results[0]["term_frequencies"]) == tokenize_retrieval_text(
+        text,
+        lowercase=True,
+        min_token_length=2,
+    )
 
 
 def test_tokenize_handles_numbers():

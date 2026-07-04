@@ -17,6 +17,7 @@ from src.core.query_engine.query_processor import (
     CHINESE_STOPWORDS,
     ENGLISH_STOPWORDS,
 )
+from src.core.query_engine.tokenization import tokenize_retrieval_text
 from src.core.query_engine.dense_retriever import (
     DenseRetriever,
     create_dense_retriever,
@@ -40,6 +41,7 @@ __all__ = [
     "QueryProcessor",
     "QueryProcessorConfig",
     "create_query_processor",
+    "tokenize_retrieval_text",
     "DEFAULT_STOPWORDS",
     "CHINESE_STOPWORDS",
     "ENGLISH_STOPWORDS",

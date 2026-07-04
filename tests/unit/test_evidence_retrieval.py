@@ -194,6 +194,7 @@ public class Plugin
     assert pack.items[0].symbol == "Load"
     assert pack.items[0].source_type == "target_source"
     assert pack.items[0].retrieval_method == "symbol_exact"
+    assert pack.items[0].authority == "mod_agent_deterministic"
 
 
 def test_deterministic_retriever_uses_configured_collection_default(
@@ -370,5 +371,28 @@ def test_legacy_rag_evidence_is_auxiliary_not_authoritative() -> None:
     )
 
     assert pack.readiness == "partial"
+    assert pack.can_generate_patch is False
+    assert pack.blockers[0]["code"] == "AUXILIARY_RETRIEVAL_NOT_AUTHORITATIVE"
+
+
+def test_evidence_item_defaults_to_auxiliary_authority() -> None:
+    item = EvidenceItem(
+        evidence_id="raw_001",
+        source_type="target_source",
+        source_path="mods/BetterHitFeedback/Plugin.cs",
+        symbol="Load",
+        span={"start_line": 1, "end_line": 1},
+        retrieval_method="symbol_exact",
+        score=1.0,
+        claim_supported="Raw evidence mentions Load.",
+        excerpt="public void Load() {}",
+    )
+
+    pack = EvidenceReadinessClassifier().classify(
+        request=EvidenceRequest(query="Load", requires_hook_evidence=True),
+        items=[item],
+    )
+
+    assert item.authority == "legacy_rag_auxiliary"
     assert pack.can_generate_patch is False
     assert pack.blockers[0]["code"] == "AUXILIARY_RETRIEVAL_NOT_AUTHORITATIVE"
