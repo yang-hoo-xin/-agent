@@ -9,8 +9,8 @@ Last updated: 2026-07-04
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-013 Mod-Agent Dashboard Projection
-next_recommended_task: finish R-009-HARDENING-001 review and git decision
+last_completed: R-009-HARDENING-001
+next_recommended_task: review remaining Review Repair Queue hardening items before Q-020
 ordinary_queue_status: Q-020 and later tasks remain queued but blocked behind active Review Repair Queue
 ```
 
@@ -31,9 +31,10 @@ repair chain:
   R-010 single collection resolver: 3fc1ef5 fix(retrieval): resolve controlled collection centrally
   R-011 identifier and hash field mapping: fe5c5f3 fix(retrieval): enforce identity field mapping
   R-011 artifact source tracking boundary: fbdca70 fix(git): track mod_agent artifact modules
+  R-009 hardening authority/tokenization: 12787ba fix(retrieval): harden evidence authority and shared tokenization
 current R-012 status: completed; focused and affected tests passed
 current R-013 status: completed; focused and affected tests passed
-current R-009-HARDENING-001 status: implemented; focused and affected tests passed; pending review and git decision
+current R-009-HARDENING-001 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -41,7 +42,7 @@ commit policy: manual commit after focused tests and status review
 
 | Task | Source Finding | Status | Blocking Reason |
 | --- | --- | --- | --- |
-| R-009-HARDENING-001 | R-009 residual hardening | implemented; pending review and git decision | commit not completed yet |
+| Review Repair Queue refresh | post R-009-HARDENING-001 | queued | confirm remaining R hardening items before allowing Q-020 |
 
 ## Test Health
 
@@ -129,7 +130,7 @@ latest R-009-HARDENING-001 dashboard smoke:
 known broader-suite gaps:
   LEGACY-TEST-001 is queued for full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy assertions.
   R-009 absorbed only evidence_retrieval, stub_nodes, sparse_encoder/query tokenization, and planning/artifact contract changes directly tied to retrieval authority or evidence boundary behavior.
-  R-009-HARDENING-001 is implemented and pending review/git decision for authority default hardening, raw evidence-pack provenance validation, dashboard authority display semantics, and shared sparse/query tokenization cleanup.
+  R-009-HARDENING-001 is completed for authority default hardening, raw evidence-pack provenance validation, dashboard authority display semantics, and shared sparse/query tokenization cleanup.
   streamlit is installed in .venv to satisfy dashboard e2e dependency
 ```
 
@@ -154,7 +155,7 @@ known broader-suite gaps:
 
 ```text
 task: R-009-HARDENING-001
-status: implemented; focused and affected tests passed; pending review and git decision
+status: completed; focused and affected tests passed
 files_changed:
   src/core/query_engine/tokenization.py
   src/core/query_engine/__init__.py
@@ -180,7 +181,7 @@ verification:
   focused R-009-HARDENING-001 tests: 93 passed, 1 warning
   affected R-009-HARDENING-001 tests: 68 passed
   dashboard smoke: 6 passed
-next_recommended_task: finish R-009-HARDENING-001 review and git decision
+next_recommended_task: review remaining Review Repair Queue hardening items before Q-020
 ```
 
 ## Next Execution Rule

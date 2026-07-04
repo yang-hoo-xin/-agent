@@ -18,8 +18,8 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-013 Mod-Agent Dashboard Projection
-next_recommended_task: finish R-009-HARDENING-001 review and git decision
+last_completed: R-009-HARDENING-001
+next_recommended_task: review remaining Review Repair Queue hardening items before Q-020
 Q-020_status: queued; blocked behind active Review Repair Queue
 ```
 
@@ -34,7 +34,7 @@ Policy: LEGACY-TEST-001 does not block R-009. R-009 may only absorb evidence_ret
 ## Hardening Follow-ups
 
 ```text
-R-009-HARDENING-001_status: implemented; pending review and git decision
+R-009-HARDENING-001_status: completed
 Source task: R-009 Retrieval Authority Boundary
 Scope: harden authority defaults, raw evidence-pack provenance, dashboard authority display semantics, and shared retrieval tokenization.
 Policy: this records R-009 residual hardening work and does not reopen the completed R-009 loop.
@@ -95,6 +95,7 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | R-011 | completed | Controlled-agent knowledge/evidence identity fields now have explicit mapping, artifact schema metadata, and write-time validation | `docs/PROJECT_STATE.md` |
 | R-012 | completed | Checkpoint resume is bound to proposal/review/diff hashes and restores checkpoint state before resume | `docs/PROJECT_STATE.md` |
 | R-013 | completed | Controlled-agent dashboard projection exposes sanitized workflow/artifact/proposal/build/runtime/repair/eval summaries and dashboard page integration | `docs/PROJECT_STATE.md` |
+| R-009-HARDENING-001 | completed | Evidence authority defaults, raw dict provenance checks, dashboard authority projection, and shared tokenizer hardening | `docs/PROJECT_STATE.md` |
 ## Review Repair Queue
 
 ```text
