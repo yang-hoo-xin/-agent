@@ -452,9 +452,11 @@ Completed evidence:
   - config/settings.yaml now defines performance.operations budgets for indexing, retrieval, eval, captions, and tool_call.
   - src/core/settings.py parses optional PerformanceSettings and validates on_exceed values.
   - PerformanceBudgetPolicy checks OperationUsage against BudgetLimit and returns allowed, blocked, or degraded BudgetDecision results.
+  - Unconfigured operations are blocked by default, cache_enabled is enforced when configured, and max_concurrency must be greater than zero.
+  - Degraded decisions keep allowed true while using blocked artifact envelope status so dashboard/eval cannot treat degradation as success.
   - BudgetDecision exposes perf.budget_checked and perf.limit_exceeded trace-event summaries.
   - job_status payloads can include budget_summary, and dashboard projection includes that field.
-  - focused Q-020 tests passed: 26 passed.
+  - focused Q-020 tests passed: 31 passed.
   - affected Q-020 tests passed: 35 passed.
 ```
 

@@ -131,7 +131,7 @@ latest R-009-HARDENING-001 dashboard smoke:
 
 latest focused Q-020 suite:
   .venv\Scripts\python.exe -m pytest tests/unit/test_performance_budget.py tests/unit/test_config_loading.py tests/unit/test_artifact_contract.py -q --tb=short
-  result: 26 passed
+  result: 31 passed
 
 latest affected Q-020 suite:
   .venv\Scripts\python.exe -m pytest tests/unit/test_dashboard_config.py tests/unit/test_artifact_store.py tests/unit/test_dashboard_projection.py tests/e2e/test_dashboard_smoke.py -q --tb=short
@@ -180,10 +180,12 @@ files_changed:
 behavior:
   Added config-driven controlled-agent performance budgets for indexing, retrieval, eval, captions, and tool_call operations.
   Added PerformanceBudgetPolicy, BudgetLimit, OperationUsage, and BudgetDecision contracts with allowed, blocked, and degraded outcomes.
+  Unconfigured operations are blocked by default; cache_enabled is enforced when configured; max_concurrency must be greater than zero.
+  Degraded budget decisions keep decision.allowed true but write a blocked artifact envelope status to avoid dashboard/eval success overclaiming.
   Budget decisions emit perf.budget_checked and perf.limit_exceeded trace-event summaries and can serialize into job_status payloads.
   job_status dashboard projection now includes budget_summary.
 verification:
-  focused Q-020 tests: 26 passed
+  focused Q-020 tests: 31 passed
   affected Q-020 tests: 35 passed
 next_recommended_task: Q-021 Controlled-Agent MCP Tool Surface
 ```
@@ -193,5 +195,5 @@ next_recommended_task: Q-021 Controlled-Agent MCP Tool Surface
 Use `docs/IMPLEMENTATION_QUEUE.md`.
 Use `docs/SPEC_COVERAGE_MATRIX.md` to confirm which requirement rows a task changes.
 If the Review Repair Queue is active, select the first ready R task before Q feature work.
-Current Review Repair Queue refresh is clear; continue with Q-020 unless a new P0/P1 review finding is added.
+Current Review Repair Queue refresh is clear; continue with Q-021 unless a new P0/P1 review finding is added.
 Historical loop details live in `docs/audits/LOOP_HISTORY.md`.

@@ -282,12 +282,17 @@ class Settings:
                     raise SettingsError(
                         f"Expected on_exceed to be 'block' or 'degrade' for field: {path}.on_exceed"
                     )
+                max_concurrency = _optional_int(raw_operation, "max_concurrency", path)
+                if max_concurrency is not None and max_concurrency <= 0:
+                    raise SettingsError(
+                        f"Expected positive integer for field: {path}.max_concurrency"
+                    )
                 parsed_operations[operation_name] = PerformanceOperationSettings(
                     max_api_calls=_optional_int(raw_operation, "max_api_calls", path),
                     max_items=_optional_int(raw_operation, "max_items", path),
                     max_batches=_optional_int(raw_operation, "max_batches", path),
                     max_duration_ms=_optional_int(raw_operation, "max_duration_ms", path),
-                    max_concurrency=_optional_int(raw_operation, "max_concurrency", path),
+                    max_concurrency=max_concurrency,
                     cache_enabled=_optional_bool(raw_operation, "cache_enabled", path),
                     on_exceed=on_exceed,
                 )

@@ -25,6 +25,7 @@ def test_budget_check_allows_usage_within_limits() -> None:
                 max_api_calls=0,
                 max_items=20,
                 max_duration_ms=5000,
+                cache_enabled=True,
                 on_exceed="block",
             )
         ]
@@ -36,6 +37,7 @@ def test_budget_check_allows_usage_within_limits() -> None:
             api_calls=0,
             item_count=8,
             duration_ms=120.5,
+            cache_enabled=True,
         )
     )
 
@@ -104,10 +106,73 @@ def test_budget_check_degrades_when_policy_allows_degradation() -> None:
 
     assert decision.status == "degraded"
     assert decision.allowed is True
-    assert decision.artifact_status() == "success"
+    assert decision.artifact_status() == "blocked"
     assert decision.exceeded_limits == (
         {"limit": "max_items", "allowed": 5, "observed": 8},
     )
+
+
+def test_unconfigured_operation_is_blocked_by_default() -> None:
+    policy = PerformanceBudgetPolicy([])
+
+    decision = policy.check(OperationUsage(operation="unregistered_operation"))
+
+    assert decision.status == "blocked"
+    assert decision.allowed is False
+    assert decision.exceeded_limits == (
+        {
+            "limit": "configured_operation",
+            "allowed": "registered",
+            "observed": "missing",
+        },
+    )
+
+
+def test_cache_policy_is_enforced_when_configured() -> None:
+    policy = PerformanceBudgetPolicy(
+        [
+            BudgetLimit(
+                operation="indexing",
+                cache_enabled=True,
+                on_exceed="block",
+            )
+        ]
+    )
+
+    missing_report = policy.check(OperationUsage(operation="indexing"))
+    disabled_cache = policy.check(
+        OperationUsage(operation="indexing", cache_enabled=False)
+    )
+    enabled_cache = policy.check(
+        OperationUsage(operation="indexing", cache_enabled=True)
+    )
+
+    assert missing_report.status == "blocked"
+    assert missing_report.exceeded_limits == (
+        {"limit": "cache_enabled", "allowed": True, "observed": None},
+    )
+    assert disabled_cache.status == "blocked"
+    assert disabled_cache.exceeded_limits == (
+        {"limit": "cache_enabled", "allowed": True, "observed": False},
+    )
+    assert enabled_cache.status == "allowed"
+
+
+def test_concurrency_limits_must_be_positive() -> None:
+    for value in (0, -1):
+        try:
+            BudgetLimit(operation="retrieval", max_concurrency=value)
+        except ValueError as exc:
+            assert str(exc) == "max_concurrency must be greater than zero"
+        else:
+            raise AssertionError("max_concurrency must reject non-positive values")
+
+    try:
+        OperationUsage(operation="retrieval", concurrency=0)
+    except ValueError as exc:
+        assert str(exc) == "concurrency must be greater than zero"
+    else:
+        raise AssertionError("concurrency must reject zero")
 
 
 def test_policy_loads_from_performance_settings() -> None:
@@ -131,6 +196,7 @@ def test_policy_loads_from_performance_settings() -> None:
             batch_count=5,
             duration_ms=30000,
             concurrency=1,
+            cache_enabled=False,
         )
     )
 
@@ -176,8 +242,33 @@ def test_budget_decision_serializes_as_job_status_artifact(tmp_path) -> None:
     json.dumps(envelope["data"], sort_keys=True)
     assert envelope["status"] == "blocked"
     assert envelope["data"]["job_type"] == "retrieval_budget_check"
+    assert envelope["data"]["error"] == (
+        "Performance budget blocked; exceeded limits: max_items"
+    )
     assert envelope["data"]["budget_summary"]["status"] == "blocked"
     assert envelope["data"]["budget_summary"]["timing_summary"]["duration_ms"] == 0.0
+
+
+def test_degraded_job_status_payload_records_specific_budget_error() -> None:
+    policy = PerformanceBudgetPolicy(
+        [
+            BudgetLimit(
+                operation="captions",
+                max_items=1,
+                on_exceed="degrade",
+            )
+        ]
+    )
+    decision = policy.check(OperationUsage(operation="captions", item_count=2))
+    payload = policy.to_job_status_payload(
+        job_id="job_perf_002",
+        decision=decision,
+    )
+
+    assert decision.status == "degraded"
+    assert decision.artifact_status() == "blocked"
+    assert payload["status"] == "degraded"
+    assert payload["error"] == "Performance budget degraded; exceeded limits: max_items"
 
 
 def test_job_status_dashboard_projection_includes_budget_summary() -> None:

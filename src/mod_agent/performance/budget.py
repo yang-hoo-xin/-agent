@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 from src.core.settings import PerformanceOperationSettings, PerformanceSettings
 
@@ -31,11 +32,12 @@ class BudgetLimit:
             "max_items",
             "max_batches",
             "max_duration_ms",
-            "max_concurrency",
         ):
             value = getattr(self, field_name)
             if value is not None and value < 0:
                 raise ValueError(f"{field_name} must be non-negative")
+        if self.max_concurrency is not None and self.max_concurrency <= 0:
+            raise ValueError("max_concurrency must be greater than zero")
 
     @classmethod
     def from_settings(
@@ -79,6 +81,7 @@ class OperationUsage:
     concurrency: int = 1
     cache_hits: int = 0
     cache_misses: int = 0
+    cache_enabled: bool | None = None
 
     def __post_init__(self) -> None:
         if not self.operation.strip():
@@ -88,13 +91,14 @@ class OperationUsage:
             "item_count",
             "batch_count",
             "duration_ms",
-            "concurrency",
             "cache_hits",
             "cache_misses",
         ):
             value = getattr(self, field_name)
             if value < 0:
                 raise ValueError(f"{field_name} must be non-negative")
+        if self.concurrency <= 0:
+            raise ValueError("concurrency must be greater than zero")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -106,6 +110,7 @@ class OperationUsage:
             "concurrency": self.concurrency,
             "cache_hits": self.cache_hits,
             "cache_misses": self.cache_misses,
+            "cache_enabled": self.cache_enabled,
         }
 
 
@@ -154,7 +159,9 @@ class BudgetDecision:
         ]
 
     def artifact_status(self) -> str:
-        return "blocked" if self.status == "blocked" else "success"
+        if self.status in {"blocked", "degraded"}:
+            return "blocked"
+        return "success"
 
 
 class PerformanceBudgetPolicy:
@@ -203,6 +210,20 @@ class PerformanceBudgetPolicy:
         budget = self._budgets.get(usage.operation)
         if budget is None:
             budget = BudgetLimit(operation=usage.operation)
+            return BudgetDecision(
+                operation=usage.operation,
+                status="blocked",
+                allowed=False,
+                exceeded_limits=(
+                    {
+                        "limit": "configured_operation",
+                        "allowed": "registered",
+                        "observed": "missing",
+                    },
+                ),
+                budget=budget,
+                usage=usage,
+            )
 
         exceeded = tuple(self._exceeded_limits(budget, usage))
         if not exceeded:
@@ -248,9 +269,20 @@ class PerformanceBudgetPolicy:
             "finished_at": finished_at,
             "artifact_refs": list(artifact_refs),
             "trace_refs": list(trace_refs),
-            "error": None if decision.allowed else "Performance budget exceeded",
+            "error": self._error_message(decision),
             "budget_summary": decision.to_dict(),
         }
+
+    @staticmethod
+    def _error_message(decision: BudgetDecision) -> str | None:
+        if not decision.exceeded_limits:
+            return None
+        limits = ", ".join(
+            str(limit["limit"]) for limit in decision.exceeded_limits
+        )
+        if decision.status == "degraded":
+            return f"Performance budget degraded; exceeded limits: {limits}"
+        return f"Performance budget blocked; exceeded limits: {limits}"
 
     @staticmethod
     def _exceeded_limits(
@@ -274,4 +306,15 @@ class PerformanceBudgetPolicy:
                         "observed": observed_value,
                     }
                 )
+        if (
+            budget.cache_enabled is not None
+            and usage.cache_enabled != budget.cache_enabled
+        ):
+            exceeded.append(
+                {
+                    "limit": "cache_enabled",
+                    "allowed": budget.cache_enabled,
+                    "observed": usage.cache_enabled,
+                }
+            )
         return exceeded

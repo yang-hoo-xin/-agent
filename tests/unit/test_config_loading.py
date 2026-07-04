@@ -130,6 +130,56 @@ def test_performance_settings_reject_invalid_on_exceed(tmp_path: Path) -> None:
         load_settings(settings_path)
 
 
+def test_performance_settings_reject_zero_max_concurrency(tmp_path: Path) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_top_k: 20
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    performance:
+      operations:
+        retrieval:
+          max_concurrency: 0
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    with pytest.raises(
+        SettingsError,
+        match="performance.operations.retrieval.max_concurrency",
+    ):
+        load_settings(settings_path)
+
+
 def test_missing_required_field_raises_error(tmp_path: Path) -> None:
     config = """
     llm:
