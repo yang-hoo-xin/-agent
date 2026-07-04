@@ -17,10 +17,10 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: Review Repair Queue
-last_completed: R-009-HARDENING-001
-next_recommended_task: review remaining Review Repair Queue hardening items before Q-020
-Q-020_status: queued; blocked behind active Review Repair Queue
+current_queue: Q Queue
+last_completed: Review Repair Queue refresh
+next_recommended_task: Q-020 Performance Budget And Resource Limit Contract
+Q-020_status: ready
 ```
 
 ## Legacy Test Triage
@@ -96,21 +96,20 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | R-012 | completed | Checkpoint resume is bound to proposal/review/diff hashes and restores checkpoint state before resume | `docs/PROJECT_STATE.md` |
 | R-013 | completed | Controlled-agent dashboard projection exposes sanitized workflow/artifact/proposal/build/runtime/repair/eval summaries and dashboard page integration | `docs/PROJECT_STATE.md` |
 | R-009-HARDENING-001 | completed | Evidence authority defaults, raw dict provenance checks, dashboard authority projection, and shared tokenizer hardening | `docs/PROJECT_STATE.md` |
+| Review Repair Queue refresh | completed | Confirmed no active Review Repair Queue blocker remains before Q-020; future open gaps stay tracked by the coverage matrix | `docs/PROJECT_STATE.md` |
 ## Review Repair Queue
 
 ```text
-Status: active
+Status: inactive after post R-009-HARDENING-001 refresh
 Source review: C:/Users/10160/Desktop/ai学习/mod_agent_full_issue_summary.md
 Policy:
-  - R tasks supersede ordinary Q feature work until R-001 through R-007 are
-    done, blocked with exact evidence, downgraded with exact evidence, or
-    explicitly waived by the user.
+  - R tasks supersede ordinary Q feature work when an active P0/P1 review
+    finding is queued.
   - Each R task must be closed through the normal small-loop gate: code/test
     inspection, implementation, focused tests, affected tests when shared
     contracts change, diff audit, control-doc update, git decision, stop.
   - P0/P1 findings must not be hidden by broad "next phase" progress.
-  - Q-020 and later feature work remain queued but are blocked behind the
-    active P0/P1 repair queue.
+  - Q-020 and later feature work can proceed while this queue is inactive.
 ```
 
 ### R-003: Separate Evidence Source From Edit Target
@@ -433,7 +432,7 @@ Completed evidence:
 ### Q-020: Performance Budget And Resource Limit Contract
 
 ```text
-Status: queued; blocked behind active Review Repair Queue
+Status: ready
 Module: PERF, MCP, KB
 Spec refs: 45.18.1, 45.18.2, 45.18.4, 41.6
 Coverage IDs: PERF-001, PERF-002, PERF-004, PERF-006, MISS-013
