@@ -9,15 +9,15 @@ Last updated: 2026-07-04
 
 ```text
 current_queue: Q Queue
-last_completed: Review Repair Queue refresh
-next_recommended_task: Q-020 Performance Budget And Resource Limit Contract
-ordinary_queue_status: Q-020 ready; no active Review Repair Queue blocker remains after post R-009-HARDENING-001 refresh
+last_completed: Q-020
+next_recommended_task: Q-021 Controlled-Agent MCP Tool Surface
+ordinary_queue_status: Q-021 ready
 ```
 
 ## Current Baseline
 
 ```text
-branch: codex/r009-hardening-001
+branch: codex/q020-performance-budget
 remote: https://github.com/yang-hoo-xin/-agent.git
 baseline commit: 914f16e chore: establish controlled mod agent baseline
 baseline tag: baseline-controlled-agent-v0
@@ -36,6 +36,7 @@ current R-012 status: completed; focused and affected tests passed
 current R-013 status: completed; focused and affected tests passed
 current R-009-HARDENING-001 status: completed; focused and affected tests passed
 current Review Repair Queue refresh status: completed; control-doc refresh only
+current Q-020 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -128,6 +129,14 @@ latest R-009-HARDENING-001 dashboard smoke:
   .venv\Scripts\python.exe -m pytest tests/e2e/test_dashboard_smoke.py -q --tb=short
   result: 6 passed
 
+latest focused Q-020 suite:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_performance_budget.py tests/unit/test_config_loading.py tests/unit/test_artifact_contract.py -q --tb=short
+  result: 26 passed
+
+latest affected Q-020 suite:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_dashboard_config.py tests/unit/test_artifact_store.py tests/unit/test_dashboard_projection.py tests/e2e/test_dashboard_smoke.py -q --tb=short
+  result: 35 passed
+
 known broader-suite gaps:
   LEGACY-TEST-001 is queued for full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy assertions.
   R-009 absorbed only evidence_retrieval, stub_nodes, sparse_encoder/query tokenization, and planning/artifact contract changes directly tied to retrieval authority or evidence boundary behavior.
@@ -155,20 +164,28 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: Review Repair Queue refresh
-status: completed; no active Review Repair Queue blocker remains before Q-020
+task: Q-020
+status: completed; focused and affected tests passed
 files_changed:
+  config/settings.yaml
+  src/core/settings.py
+  src/mod_agent/artifacts/registry.py
+  src/mod_agent/performance/__init__.py
+  src/mod_agent/performance/budget.py
+  tests/unit/test_config_loading.py
+  tests/unit/test_performance_budget.py
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  Review Repair Queue status was refreshed after R-009-HARDENING-001.
-  R-001 through R-013 and R-009-HARDENING-001 are recorded as completed.
-  MISS-R005E was closed from the open register because allow_stale_upstreams is only used for blocked stale-resume resume_report audit writes; normal stale upstream writes remain rejected.
-  Q-020 is now the next recommended task.
+  Added config-driven controlled-agent performance budgets for indexing, retrieval, eval, captions, and tool_call operations.
+  Added PerformanceBudgetPolicy, BudgetLimit, OperationUsage, and BudgetDecision contracts with allowed, blocked, and degraded outcomes.
+  Budget decisions emit perf.budget_checked and perf.limit_exceeded trace-event summaries and can serialize into job_status payloads.
+  job_status dashboard projection now includes budget_summary.
 verification:
-  code/test inspection only; no implementation code changed
-next_recommended_task: Q-020 Performance Budget And Resource Limit Contract
+  focused Q-020 tests: 26 passed
+  affected Q-020 tests: 35 passed
+next_recommended_task: Q-021 Controlled-Agent MCP Tool Surface
 ```
 
 ## Next Execution Rule

@@ -156,6 +156,46 @@ observability:
   structured_logging: true
 
 # =============================================================================
+# Controlled-Agent Performance Budget Configuration
+# =============================================================================
+performance:
+  operations:
+    indexing:
+      max_items: 1000
+      max_batches: 20
+      max_duration_ms: 60000
+      max_concurrency: 1
+      cache_enabled: true
+      on_exceed: "degrade"
+    retrieval:
+      max_api_calls: 0
+      max_items: 20
+      max_duration_ms: 5000
+      max_concurrency: 1
+      cache_enabled: true
+      on_exceed: "block"
+    eval:
+      max_api_calls: 0
+      max_batches: 5
+      max_duration_ms: 30000
+      max_concurrency: 1
+      cache_enabled: false
+      on_exceed: "block"
+    captions:
+      max_api_calls: 0
+      max_items: 10
+      max_duration_ms: 30000
+      max_concurrency: 1
+      cache_enabled: true
+      on_exceed: "degrade"
+    tool_call:
+      max_api_calls: 0
+      max_duration_ms: 10000
+      max_concurrency: 1
+      cache_enabled: false
+      on_exceed: "block"
+
+# =============================================================================
 # Ingestion Configuration
 # =============================================================================
 ingestion:

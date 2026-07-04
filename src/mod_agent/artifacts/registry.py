@@ -588,6 +588,7 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 "job_type",
                 "status",
                 "artifact_refs",
+                "budget_summary",
             ),
             eval_visibility=True,
         ),

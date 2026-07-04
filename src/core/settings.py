@@ -66,6 +66,24 @@ def _require_int(data: Dict[str, Any], key: str, path: str) -> int:
     return value
 
 
+def _optional_int(data: Dict[str, Any], key: str, path: str) -> Optional[int]:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, int):
+        raise SettingsError(f"Expected integer for field: {path}.{key}")
+    return value
+
+
+def _optional_bool(data: Dict[str, Any], key: str, path: str) -> Optional[bool]:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise SettingsError(f"Expected boolean for field: {path}.{key}")
+    return value
+
+
 def _require_number(data: Dict[str, Any], key: str, path: str) -> float:
     value = _require_value(data, key, path)
     if not isinstance(value, (int, float)):
@@ -168,6 +186,22 @@ class VisionLLMSettings:
 
 
 @dataclass(frozen=True)
+class PerformanceOperationSettings:
+    max_api_calls: Optional[int] = None
+    max_items: Optional[int] = None
+    max_batches: Optional[int] = None
+    max_duration_ms: Optional[int] = None
+    max_concurrency: Optional[int] = None
+    cache_enabled: Optional[bool] = None
+    on_exceed: str = "block"
+
+
+@dataclass(frozen=True)
+class PerformanceSettings:
+    operations: Dict[str, PerformanceOperationSettings]
+
+
+@dataclass(frozen=True)
 class IngestionSettings:
     chunk_size: int
     chunk_overlap: int
@@ -188,6 +222,7 @@ class Settings:
     observability: ObservabilitySettings
     ingestion: Optional[IngestionSettings] = None
     vision_llm: Optional[VisionLLMSettings] = None
+    performance: Optional[PerformanceSettings] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Settings":
@@ -228,6 +263,35 @@ class Settings:
                 deployment_name=vision_llm.get("deployment_name"),
                 base_url=vision_llm.get("base_url"),
             )
+
+        performance_settings = None
+        if "performance" in data:
+            performance = _require_mapping(data, "performance", "settings")
+            operations = _require_mapping(performance, "operations", "performance")
+            parsed_operations: Dict[str, PerformanceOperationSettings] = {}
+            for operation_name, raw_operation in operations.items():
+                if not isinstance(operation_name, str) or not operation_name.strip():
+                    raise SettingsError("Expected non-empty string for field: performance.operations")
+                if not isinstance(raw_operation, dict):
+                    raise SettingsError(
+                        f"Expected mapping for field: performance.operations.{operation_name}"
+                    )
+                path = f"performance.operations.{operation_name}"
+                on_exceed = str(raw_operation.get("on_exceed", "block"))
+                if on_exceed not in {"block", "degrade"}:
+                    raise SettingsError(
+                        f"Expected on_exceed to be 'block' or 'degrade' for field: {path}.on_exceed"
+                    )
+                parsed_operations[operation_name] = PerformanceOperationSettings(
+                    max_api_calls=_optional_int(raw_operation, "max_api_calls", path),
+                    max_items=_optional_int(raw_operation, "max_items", path),
+                    max_batches=_optional_int(raw_operation, "max_batches", path),
+                    max_duration_ms=_optional_int(raw_operation, "max_duration_ms", path),
+                    max_concurrency=_optional_int(raw_operation, "max_concurrency", path),
+                    cache_enabled=_optional_bool(raw_operation, "cache_enabled", path),
+                    on_exceed=on_exceed,
+                )
+            performance_settings = PerformanceSettings(operations=parsed_operations)
 
         settings = cls(
             llm=LLMSettings(
@@ -281,6 +345,7 @@ class Settings:
             ),
             ingestion=ingestion_settings,
             vision_llm=vision_llm_settings,
+            performance=performance_settings,
         )
 
         return settings

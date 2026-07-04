@@ -18,9 +18,9 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Q Queue
-last_completed: Review Repair Queue refresh
-next_recommended_task: Q-020 Performance Budget And Resource Limit Contract
-Q-020_status: ready
+last_completed: Q-020
+next_recommended_task: Q-021 Controlled-Agent MCP Tool Surface
+Q-021_status: ready
 ```
 
 ## Legacy Test Triage
@@ -97,6 +97,7 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | R-013 | completed | Controlled-agent dashboard projection exposes sanitized workflow/artifact/proposal/build/runtime/repair/eval summaries and dashboard page integration | `docs/PROJECT_STATE.md` |
 | R-009-HARDENING-001 | completed | Evidence authority defaults, raw dict provenance checks, dashboard authority projection, and shared tokenizer hardening | `docs/PROJECT_STATE.md` |
 | Review Repair Queue refresh | completed | Confirmed no active Review Repair Queue blocker remains before Q-020; future open gaps stay tracked by the coverage matrix | `docs/PROJECT_STATE.md` |
+| Q-020 | completed | Controlled-agent performance budget contract adds config-driven limits, blocked/degraded budget decisions, trace summaries, and job_status budget_summary serialization | `docs/PROJECT_STATE.md` |
 ## Review Repair Queue
 
 ```text
@@ -432,7 +433,7 @@ Completed evidence:
 ### Q-020: Performance Budget And Resource Limit Contract
 
 ```text
-Status: ready
+Status: completed
 Module: PERF, MCP, KB
 Spec refs: 45.18.1, 45.18.2, 45.18.4, 41.6
 Coverage IDs: PERF-001, PERF-002, PERF-004, PERF-006, MISS-013
@@ -447,12 +448,20 @@ Failure behavior: route to blocked/degraded status with explicit reason
 Out of scope: real load testing infrastructure
 Dependencies: Q-009, Q-007
 Conflict checks: performance claims require measured outputs
+Completed evidence:
+  - config/settings.yaml now defines performance.operations budgets for indexing, retrieval, eval, captions, and tool_call.
+  - src/core/settings.py parses optional PerformanceSettings and validates on_exceed values.
+  - PerformanceBudgetPolicy checks OperationUsage against BudgetLimit and returns allowed, blocked, or degraded BudgetDecision results.
+  - BudgetDecision exposes perf.budget_checked and perf.limit_exceeded trace-event summaries.
+  - job_status payloads can include budget_summary, and dashboard projection includes that field.
+  - focused Q-020 tests passed: 26 passed.
+  - affected Q-020 tests passed: 35 passed.
 ```
 
 ### Q-021: Controlled-Agent MCP Tool Surface
 
 ```text
-Status: queued
+Status: ready
 Module: MCP, ART, WF
 Spec refs: 20.3, 45.12
 Coverage IDs: MCP-001
