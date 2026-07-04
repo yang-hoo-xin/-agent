@@ -9,9 +9,9 @@ Last updated: 2026-07-04
 
 ```text
 current_queue: Q Queue
-last_completed: Q-020
-next_recommended_task: Q-021 Controlled-Agent MCP Tool Surface
-ordinary_queue_status: Q-021 ready
+last_completed: Q-021
+next_recommended_task: Q-022 Dense Retrieval Provider Contract
+ordinary_queue_status: Q-022 ready
 ```
 
 ## Current Baseline
@@ -37,6 +37,7 @@ current R-013 status: completed; focused and affected tests passed
 current R-009-HARDENING-001 status: completed; focused and affected tests passed
 current Review Repair Queue refresh status: completed; control-doc refresh only
 current Q-020 status: completed; focused and affected tests passed
+current Q-021 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -137,6 +138,18 @@ latest affected Q-020 suite:
   .venv\Scripts\python.exe -m pytest tests/unit/test_dashboard_config.py tests/unit/test_artifact_store.py tests/unit/test_dashboard_projection.py tests/e2e/test_dashboard_smoke.py -q --tb=short
   result: 35 passed
 
+latest focused Q-021 suite:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_controlled_agent_mcp_tools.py -q --tb=short
+  result: 6 passed
+
+latest affected Q-021 artifact/dashboard/performance suite:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_artifact_contract.py tests/unit/test_dashboard_projection.py tests/unit/test_performance_budget.py -q --tb=short
+  result: 33 passed
+
+latest affected Q-021 legacy MCP suite:
+  .venv\Scripts\python.exe -m pytest tests/integration/test_mcp_server.py tests/e2e/test_mcp_client.py -q --tb=short
+  result: 13 passed, 4 warnings
+
 known broader-suite gaps:
   LEGACY-TEST-001 is queued for full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy assertions.
   R-009 absorbed only evidence_retrieval, stub_nodes, sparse_encoder/query tokenization, and planning/artifact contract changes directly tied to retrieval authority or evidence boundary behavior.
@@ -164,30 +177,26 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: Q-020
+task: Q-021
 status: completed; focused and affected tests passed
 files_changed:
-  config/settings.yaml
-  src/core/settings.py
-  src/mod_agent/artifacts/registry.py
-  src/mod_agent/performance/__init__.py
-  src/mod_agent/performance/budget.py
-  tests/unit/test_config_loading.py
-  tests/unit/test_performance_budget.py
+  src/mod_agent/mcp/__init__.py
+  src/mod_agent/mcp/tools.py
+  tests/unit/test_controlled_agent_mcp_tools.py
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  Added config-driven controlled-agent performance budgets for indexing, retrieval, eval, captions, and tool_call operations.
-  Added PerformanceBudgetPolicy, BudgetLimit, OperationUsage, and BudgetDecision contracts with allowed, blocked, and degraded outcomes.
-  Unconfigured operations are blocked by default; cache_enabled is enforced when configured; max_concurrency must be greater than zero.
-  Degraded budget decisions keep decision.allowed true but write a blocked artifact envelope status to avoid dashboard/eval success overclaiming.
-  Budget decisions emit perf.budget_checked and perf.limit_exceeded trace-event summaries and can serialize into job_status payloads.
-  job_status dashboard projection now includes budget_summary.
+  Added a read-only/report-only controlled-agent MCP tool surface over ArtifactStore and sanitized dashboard projections.
+  Safe tools expose feature status, sanitized artifact summaries, retrieval preview, patch proposal preview, proposal review, eval report, and job status.
+  Dangerous actions remain hidden and unsupported: apply_patch, confirmed_apply, copy_to_game_directory, run_build, run_game, collect_runtime_evidence, and delete_artifacts.
+  Tool outputs include status, content, structuredContent, artifact_refs, trace_refs, blockers, and isError.
+  Budget job status uses budget_summary.allowed for continuation semantics and budget_summary.status or payload.status for display; envelope.status is treated as artifact visibility/audit metadata only.
 verification:
-  focused Q-020 tests: 31 passed
-  affected Q-020 tests: 35 passed
-next_recommended_task: Q-021 Controlled-Agent MCP Tool Surface
+  focused Q-021 tests: 6 passed
+  affected Q-021 artifact/dashboard/performance tests: 33 passed
+  affected Q-021 legacy MCP tests: 13 passed, 4 warnings
+next_recommended_task: Q-022 Dense Retrieval Provider Contract
 ```
 
 ## Next Execution Rule
@@ -195,5 +204,5 @@ next_recommended_task: Q-021 Controlled-Agent MCP Tool Surface
 Use `docs/IMPLEMENTATION_QUEUE.md`.
 Use `docs/SPEC_COVERAGE_MATRIX.md` to confirm which requirement rows a task changes.
 If the Review Repair Queue is active, select the first ready R task before Q feature work.
-Current Review Repair Queue refresh is clear; continue with Q-021 unless a new P0/P1 review finding is added.
+Current Review Repair Queue refresh is clear; continue with Q-022 unless a new P0/P1 review finding is added.
 Historical loop details live in `docs/audits/LOOP_HISTORY.md`.

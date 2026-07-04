@@ -18,9 +18,9 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Q Queue
-last_completed: Q-020
-next_recommended_task: Q-021 Controlled-Agent MCP Tool Surface
-Q-021_status: ready
+last_completed: Q-021
+next_recommended_task: Q-022 Dense Retrieval Provider Contract
+Q-022_status: ready
 ```
 
 ## Legacy Test Triage
@@ -98,6 +98,7 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | R-009-HARDENING-001 | completed | Evidence authority defaults, raw dict provenance checks, dashboard authority projection, and shared tokenizer hardening | `docs/PROJECT_STATE.md` |
 | Review Repair Queue refresh | completed | Confirmed no active Review Repair Queue blocker remains before Q-020; future open gaps stay tracked by the coverage matrix | `docs/PROJECT_STATE.md` |
 | Q-020 | completed | Controlled-agent performance budget contract adds config-driven limits, blocked/degraded budget decisions, trace summaries, and job_status budget_summary serialization | `docs/PROJECT_STATE.md` |
+| Q-021 | completed | Controlled-agent MCP tool surface exposes read-only/report-only status, artifact, retrieval, proposal, review, eval, and job summaries with degraded budget semantics preserved | `docs/PROJECT_STATE.md` |
 ## Review Repair Queue
 
 ```text
@@ -463,7 +464,7 @@ Completed evidence:
 ### Q-021: Controlled-Agent MCP Tool Surface
 
 ```text
-Status: ready
+Status: completed
 Module: MCP, ART, WF
 Spec refs: 20.3, 45.12
 Coverage IDs: MCP-001
@@ -478,12 +479,21 @@ Failure behavior: unsupported tools return structured errors
 Out of scope: network server deployment
 Dependencies: Q-009, ART-001
 Conflict checks: confirmed_apply, copy_to_game_directory, run_game, and delete_artifacts remain disabled
+Completed evidence:
+  - src/mod_agent/mcp/tools.py exposes only read-only/report-only controlled-agent tools.
+  - Dangerous tools are hidden from list_tools and unsupported when called.
+  - Tool results include status, content, structuredContent, artifact_refs, trace_refs, blockers, and isError.
+  - get_artifact returns sanitized dashboard_projection summaries and does not expose raw artifact bodies.
+  - get_job_status reads budget_summary.allowed for continuation semantics and treats envelope.status as artifact visibility/audit metadata only.
+  - focused Q-021 tests passed: 6 passed.
+  - affected Q-021 artifact/dashboard/performance tests passed: 33 passed.
+  - affected Q-021 legacy MCP tests passed: 13 passed, 4 warnings.
 ```
 
 ### Q-022: Dense Retrieval Provider Contract
 
 ```text
-Status: queued
+Status: ready
 Module: RET, KB, PERF
 Spec refs: 8.7, 45.8, 45.18.1
 Coverage IDs: RET-004, PERF-001
