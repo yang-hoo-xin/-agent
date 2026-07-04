@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,13 @@ DANGEROUS_TOOL_NAMES = frozenset(
     }
 )
 
+READ_ONLY_TOOL_ANNOTATIONS = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
+}
+
 
 @dataclass(frozen=True)
 class ControlledAgentMCPTool:
@@ -47,6 +55,7 @@ class ControlledAgentMCPTool:
             "name": self.name,
             "description": self.description,
             "inputSchema": self.input_schema,
+            "annotations": dict(READ_ONLY_TOOL_ANNOTATIONS),
         }
 
 
@@ -72,7 +81,7 @@ class ControlledAgentMCPToolSurface:
                 ControlledAgentMCPTool(
                     name="get_artifact",
                     description="Return a sanitized artifact summary, not the raw artifact body.",
-                    input_schema=_feature_artifact_schema(),
+                    input_schema=_feature_artifact_schema(self.artifact_store.registry.artifact_types()),
                 ),
                 ControlledAgentMCPTool(
                     name="preview_retrieval",
@@ -118,6 +127,10 @@ class ControlledAgentMCPToolSurface:
                 structured_content={
                     "tool": name,
                     "supported_tools": list(CONTROLLED_AGENT_TOOL_NAMES),
+                    "facade_error_semantics": (
+                        "This in-process facade returns unsupported tool calls as tool execution "
+                        "errors; a JSON-RPC adapter may map unknown tool names to protocol errors."
+                    ),
                 },
                 blockers=[
                     {
@@ -167,10 +180,7 @@ class ControlledAgentMCPToolSurface:
         return self.call_tool("__unsupported_internal__", {})
 
     def _list_features(self) -> dict[str, Any]:
-        features_dir = self.artifact_store._guard_path(self.artifact_store.root / "features")
-        feature_ids = []
-        if features_dir.exists():
-            feature_ids = sorted(path.name for path in features_dir.iterdir() if path.is_dir())
+        feature_ids = self.artifact_store.list_feature_ids()
         return _tool_result(
             status="available",
             message=f"Found {len(feature_ids)} controlled-agent feature ids.",
@@ -244,8 +254,9 @@ class ControlledAgentMCPToolSurface:
     def _get_job_status(self, feature_id: str) -> dict[str, Any]:
         summary = self._artifact_summary(feature_id, "job_status")
         refs = self._refs_by_type(feature_id, "job_status")
-        envelope = self.artifact_store.read(refs[-1]) if refs else None
-        data = envelope.get("data") if isinstance(envelope, dict) else {}
+        ref = self._single_ref_by_type(feature_id, "job_status", refs)
+        envelope = self.artifact_store.read(ref)
+        data = envelope.get("data")
         data = data if isinstance(data, dict) else {}
         budget_summary = data.get("budget_summary")
         budget_summary = budget_summary if isinstance(budget_summary, dict) else None
@@ -280,7 +291,7 @@ class ControlledAgentMCPToolSurface:
                     ),
                 },
             },
-            artifact_refs=[_artifact_ref_string(ref) for ref in refs],
+            artifact_refs=[_artifact_ref_string(ref)],
             trace_refs=self._trace_refs_by_type(feature_id, "job_status"),
             blockers=_summary_blockers(summary),
             is_error=is_error,
@@ -301,6 +312,24 @@ class ControlledAgentMCPToolSurface:
             for ref in self.artifact_store.list_feature_artifacts(feature_id)
             if ref.artifact_type == artifact_type
         ]
+
+    def _single_ref_by_type(
+        self,
+        feature_id: str,
+        artifact_type: str,
+        refs: list[ArtifactRef] | None = None,
+    ) -> ArtifactRef:
+        refs = list(refs if refs is not None else self._refs_by_type(feature_id, artifact_type))
+        if len(refs) == 1:
+            return refs[0]
+        if not refs:
+            raise ArtifactStoreError(
+                f"Artifact {artifact_type!r} does not exist for feature {feature_id!r}"
+            )
+        raise ArtifactStoreError(
+            f"Multiple {artifact_type!r} artifacts exist for feature {feature_id!r}; "
+            "selecting a job_status by position is not supported"
+        )
 
     def _trace_refs_by_type(self, feature_id: str, artifact_type: str) -> list[str]:
         trace_refs: list[str] = []
@@ -324,13 +353,14 @@ def _feature_schema() -> dict[str, Any]:
     }
 
 
-def _feature_artifact_schema() -> dict[str, Any]:
+def _feature_artifact_schema(artifact_types: frozenset[str]) -> dict[str, Any]:
     schema = _feature_schema()
     schema["properties"] = {
         **schema["properties"],
         "artifact_type": {
             "type": "string",
             "description": "Registered controlled-agent artifact type.",
+            "enum": sorted(artifact_types),
         },
     }
     schema["required"] = ["feature_id", "artifact_type"]
@@ -354,9 +384,17 @@ def _tool_result(
     blockers: list[dict[str, Any]] | None = None,
     is_error: bool = False,
 ) -> dict[str, Any]:
+    serialized_structured_content = json.dumps(
+        structured_content,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
     return {
         "status": status,
-        "content": [{"type": "text", "text": message}],
+        "content": [
+            {"type": "text", "text": message},
+            {"type": "text", "text": serialized_structured_content},
+        ],
         "structuredContent": structured_content,
         "artifact_refs": artifact_refs or [],
         "trace_refs": trace_refs or [],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
@@ -14,12 +15,27 @@ from src.mod_agent.performance import BudgetLimit, OperationUsage, PerformanceBu
 
 
 def test_controlled_agent_mcp_tools_hide_dangerous_actions(tmp_path) -> None:
-    surface = ControlledAgentMCPToolSurface(ArtifactStore(tmp_path / "artifacts"))
+    store = ArtifactStore(tmp_path / "artifacts")
+    surface = ControlledAgentMCPToolSurface(store)
 
-    tool_names = {tool["name"] for tool in surface.list_tools()}
+    tools = surface.list_tools()
+    tool_names = {tool["name"] for tool in tools}
 
     assert tool_names == set(CONTROLLED_AGENT_TOOL_NAMES)
     assert tool_names.isdisjoint(DANGEROUS_TOOL_NAMES)
+    for tool in tools:
+        assert tool["annotations"] == {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        }
+    get_artifact_schema = next(tool for tool in tools if tool["name"] == "get_artifact")[
+        "inputSchema"
+    ]
+    assert get_artifact_schema["properties"]["artifact_type"]["enum"] == sorted(
+        store.registry.artifact_types()
+    )
     blocked = surface.call_tool("run_game", {})
     assert blocked["status"] == "unsupported"
     assert blocked["isError"] is True
@@ -46,6 +62,11 @@ def test_every_tool_result_has_mcp_structured_fields(tmp_path) -> None:
         "feature_ids": [],
         "feature_count": 0,
     }
+    assert result["content"][0] == {
+        "type": "text",
+        "text": "Found 0 controlled-agent feature ids.",
+    }
+    assert json.loads(result["content"][1]["text"]) == result["structuredContent"]
 
 
 def test_get_job_status_uses_budget_summary_for_degraded_decision(tmp_path) -> None:
@@ -123,6 +144,35 @@ def test_get_job_status_blocks_budget_summary_disallow(tmp_path) -> None:
     assert result["status"] == "blocked"
     assert result["isError"] is True
     assert result["structuredContent"]["budget_decision"]["allowed"] is False
+
+
+def test_get_job_status_blocks_ambiguous_multiple_job_refs(tmp_path, monkeypatch) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    payload = PerformanceBudgetPolicy([]).to_job_status_payload(
+        job_id="job_perf_success",
+        decision=PerformanceBudgetPolicy([]).check(OperationUsage(operation="retrieval")),
+    )
+    ref = store.write(
+        feature_id="feature_001",
+        artifact_type="job_status",
+        payload=payload,
+    )
+    surface = ControlledAgentMCPToolSurface(store)
+
+    monkeypatch.setattr(
+        surface,
+        "_refs_by_type",
+        lambda feature_id, artifact_type: [ref, ref],
+    )
+
+    result = surface.call_tool(
+        "get_job_status",
+        {"feature_id": "feature_001"},
+    )
+
+    assert result["status"] == "blocked"
+    assert result["isError"] is True
+    assert "Multiple 'job_status' artifacts exist" in result["structuredContent"]["error"]
 
 
 def test_get_artifact_returns_sanitized_projection_not_raw_body(tmp_path) -> None:

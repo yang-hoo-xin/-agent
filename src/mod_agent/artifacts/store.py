@@ -183,6 +183,14 @@ class ArtifactStore:
             )
         return refs
 
+    def list_feature_ids(self) -> list[str]:
+        """List feature ids with artifact directories."""
+
+        features_dir = self._guard_path(self.root / "features")
+        if not features_dir.exists():
+            return []
+        return sorted(path.name for path in features_dir.iterdir() if path.is_dir())
+
     def exists(self, ref: ArtifactRef) -> bool:
         """Return whether a guarded artifact reference exists."""
 
