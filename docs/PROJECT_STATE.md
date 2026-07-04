@@ -3,21 +3,21 @@
 This file is the active state summary for the Controlled Mod Agent Platform.
 Historical loop details are archived in `docs/audits/LOOP_HISTORY.md`.
 
-Last updated: 2026-07-03
+Last updated: 2026-07-04
 
 ## Current Queue
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-012 Checkpoint Resume Graph Binding
-next_recommended_task: R-013 Mod-Agent Dashboard Projection
+last_completed: R-013 Mod-Agent Dashboard Projection
+next_recommended_task: R-009-HARDENING-001
 ordinary_queue_status: Q-020 and later tasks remain queued but blocked behind active Review Repair Queue
 ```
 
 ## Current Baseline
 
 ```text
-branch: repair/r012-checkpoint-resume-graph-binding
+branch: codex/r013-dashboard-projection
 remote: https://github.com/yang-hoo-xin/-agent.git
 baseline commit: 914f16e chore: establish controlled mod agent baseline
 baseline tag: baseline-controlled-agent-v0
@@ -32,6 +32,7 @@ repair chain:
   R-011 identifier and hash field mapping: fe5c5f3 fix(retrieval): enforce identity field mapping
   R-011 artifact source tracking boundary: fbdca70 fix(git): track mod_agent artifact modules
 current R-012 status: completed; focused and affected tests passed
+current R-013 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -39,7 +40,7 @@ commit policy: manual commit after focused tests and status review
 
 | Task | Source Finding | Status | Blocking Reason |
 | --- | --- | --- | --- |
-| R-013 | P1-006 | queued | dashboard needs mod_agent workflow/artifact/proposal/build/runtime/repair projections |
+| R-009-HARDENING-001 | R-009 residual hardening | queued | authority defaults, raw evidence-pack provenance, dashboard authority semantics, and tokenizer sharing remain queued before ordinary Q work |
 
 ## Test Health
 
@@ -100,6 +101,18 @@ latest focused and affected R-012 suite:
   .\.venv\Scripts\python.exe -m pytest tests/unit/test_workflow_graph.py tests/unit/test_repair_loop.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py -q --tb=short --disable-warnings
   result: 48 passed
 
+latest focused R-013 projection suite:
+  python -m pytest tests/unit/test_dashboard_projection.py -q --tb=short
+  result: 6 passed
+
+latest affected R-013 safety/workflow suite:
+  python -m pytest tests/unit/test_artifact_contract.py tests/unit/test_dashboard_data_service.py tests/unit/test_trace_service.py tests/unit/test_build_adapter.py tests/unit/test_workflow_graph.py tests/unit/test_repair_loop.py -q --tb=short
+  result: 68 passed
+
+latest R-013 dashboard smoke:
+  .venv\Scripts\python.exe -m pytest tests/e2e/test_dashboard_smoke.py -q --tb=short
+  result: 6 passed
+
 known broader-suite gaps:
   LEGACY-TEST-001 is queued for full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy assertions.
   R-009 absorbed only evidence_retrieval, stub_nodes, sparse_encoder/query tokenization, and planning/artifact contract changes directly tied to retrieval authority or evidence boundary behavior.
@@ -127,24 +140,31 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: R-012 Checkpoint Resume Graph Binding
+task: R-013 Mod-Agent Dashboard Projection
 status: completed; focused and affected tests passed
 files_changed:
-  src/mod_agent/artifacts/registry.py
-  src/mod_agent/workflow/checkpointing.py
-  src/mod_agent/workflow/interrupts.py
-  tests/unit/test_artifact_contract.py
-  tests/unit/test_repair_checkpoint_smoke.py
+  .gitignore
+  src/mod_agent/build/__init__.py
+  src/mod_agent/build/adapter.py
+  src/mod_agent/dashboard/__init__.py
+  src/mod_agent/dashboard/projections.py
+  src/observability/dashboard/app.py
+  src/observability/dashboard/pages/mod_agent_dashboard.py
+  tests/unit/test_dashboard_projection.py
   docs/IMPLEMENTATION_QUEUE.md
+  docs/SPEC_COVERAGE_MATRIX.md
   docs/PROJECT_STATE.md
 behavior:
-  workflow_checkpoint artifacts bind resume attempts to patch_proposal ref/hash, proposal_review ref/hash, and a sha256 diff_hash derived from patch_proposal.diff_intent.
-  ResumeValidator rejects missing or mismatched diff_hash when the checkpoint carries a bound diff_hash.
-  Accepted resume decisions expose restored_state from checkpoint state_snapshot so a resume cannot silently skip the reviewed graph state.
-  Changed patch_proposal upstream artifacts are rejected through stale checkpoint freshness checks.
+  DashboardProjectionBuilder reads controlled-agent artifacts through ArtifactStore and returns sanitized summaries for workflow, artifact, proposal, build, runtime, repair, and evaluation state.
+  The projection exposes contract-declared dashboard_projection fields and derived counts/statuses, while omitting raw artifact bodies such as diff_intent and raw_supplied_output.
+  Missing artifacts render explicit empty states; stale artifacts expose freshness status and stale_reasons; unknown artifacts render blocked summaries without leaking raw data.
+  The Streamlit dashboard now includes a read-only Controlled Agent page backed by the projection service.
+  .gitignore now keeps runtime build outputs ignored while allowing src/mod_agent/build/*.py and src/mod_agent/dashboard/*.py source files to be tracked.
 verification:
-  focused and affected R-012 tests: 48 passed
-next_recommended_task: R-013 Mod-Agent Dashboard Projection
+  focused R-013 projection tests: 6 passed
+  affected R-013 safety/workflow tests: 68 passed
+  dashboard smoke: 6 passed
+next_recommended_task: R-009-HARDENING-001
 ```
 
 ## Next Execution Rule

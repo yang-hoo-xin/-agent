@@ -9,6 +9,10 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+!src/mod_agent/build/
+!src/mod_agent/build/*.py
+!src/mod_agent/dashboard/
+!src/mod_agent/dashboard/*.py
 develop-eggs/
 dist/
 downloads/

@@ -18,8 +18,8 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Review Repair Queue
-last_completed: R-011 Identifier And Hash Field Mapping
-next_recommended_task: R-012 Checkpoint Resume Graph Binding
+last_completed: R-013 Mod-Agent Dashboard Projection
+next_recommended_task: R-009-HARDENING-001
 Q-020_status: queued; blocked behind active Review Repair Queue
 ```
 
@@ -84,6 +84,8 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | R-009 | completed | Legacy RAG output is auxiliary only; controlled implementation can advance only from mod_agent deterministic evidence packs | `docs/PROJECT_STATE.md` |
 | R-010 | completed | Controlled-agent retrieval uses one collection resolver for explicit collection overrides and configured defaults | `docs/PROJECT_STATE.md` |
 | R-011 | completed | Controlled-agent knowledge/evidence identity fields now have explicit mapping, artifact schema metadata, and write-time validation | `docs/PROJECT_STATE.md` |
+| R-012 | completed | Checkpoint resume is bound to proposal/review/diff hashes and restores checkpoint state before resume | `docs/PROJECT_STATE.md` |
+| R-013 | completed | Controlled-agent dashboard projection exposes sanitized workflow/artifact/proposal/build/runtime/repair/eval summaries and dashboard page integration | `docs/PROJECT_STATE.md` |
 ## Review Repair Queue
 
 ```text
@@ -391,7 +393,7 @@ Completed evidence:
 ### R-013: Mod-Agent Dashboard Projection
 
 ```text
-Status: queued
+Status: completed
 Module: OBS, WF, ART
 Spec refs: 18, 39, 45.12
 Source finding: P1-006
@@ -406,6 +408,16 @@ Failure behavior: missing artifacts show explicit empty/blocked states
 Out of scope: visual polish and live web server E2E
 Dependencies: R-007, Q-018, Q-019
 Conflict checks: use sanitized projection; do not expose raw artifact bodies by default
+Completed evidence:
+  - DashboardProjectionBuilder reads ArtifactStore refs and returns sanitized summaries for workflow, artifact, proposal, build, runtime, repair, and eval state.
+  - Projection outputs contract-declared dashboard_projection fields and derived counts/statuses, not raw artifact bodies.
+  - raw_supplied_output, diff_intent, sensitive keys, and absolute paths are not exposed in projection output by default.
+  - Missing artifacts render explicit empty states; stale artifacts expose freshness status and stale_reasons; unknown artifact types render blocked summaries without leaking raw data.
+  - Streamlit dashboard includes a read-only Controlled Agent page backed by the projection.
+  - .gitignore keeps runtime artifacts ignored while allowing src/mod_agent/build/*.py and src/mod_agent/dashboard/*.py source files to be tracked.
+  - focused R-013 tests passed: 6 passed.
+  - affected R-013 safety/workflow tests passed: 68 passed.
+  - dashboard smoke passed: 6 passed.
 ```
 
 ### Q-020: Performance Budget And Resource Limit Contract

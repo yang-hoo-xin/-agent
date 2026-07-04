@@ -44,10 +44,16 @@ def _page_evaluation_panel() -> None:
     render()
 
 
+def _page_mod_agent_dashboard() -> None:
+    from src.observability.dashboard.pages.mod_agent_dashboard import render
+    render()
+
+
 # ── Navigation ───────────────────────────────────────────────────────
 
 pages = [
     st.Page(_page_overview, title="Overview", icon="📊", default=True),
+    st.Page(_page_mod_agent_dashboard, title="Controlled Agent", icon="🧭"),
     st.Page(_page_data_browser, title="Data Browser", icon="🔍"),
     st.Page(_page_ingestion_manager, title="Ingestion Manager", icon="📥"),
     st.Page(_page_ingestion_traces, title="Ingestion Traces", icon="🔬"),
@@ -68,7 +74,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
-else:
-    # When run directly via `streamlit run app.py`
     main()
