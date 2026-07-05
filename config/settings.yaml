@@ -121,6 +121,8 @@ vector_store:
 # Retrieval Configuration
 # =============================================================================
 retrieval:
+  dense_enabled: false
+  dense_provider: "disabled"  # Options: disabled, fake (unit-test only)
   dense_top_k: 20
   sparse_top_k: 20
   fusion_top_k: 10

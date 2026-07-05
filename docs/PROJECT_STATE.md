@@ -3,21 +3,21 @@
 This file is the active state summary for the Controlled Mod Agent Platform.
 Historical loop details are archived in `docs/audits/LOOP_HISTORY.md`.
 
-Last updated: 2026-07-04
+Last updated: 2026-07-05
 
 ## Current Queue
 
 ```text
 current_queue: Q Queue
-last_completed: Q-021
-next_recommended_task: Q-022 Dense Retrieval Provider Contract
-ordinary_queue_status: Q-022 ready
+last_completed: Q-022
+next_recommended_task: Queue refresh and V1 acceptance audit
+ordinary_queue_status: Q-022 completed; refresh required before adding further Q work
 ```
 
 ## Current Baseline
 
 ```text
-branch: codex/q020-performance-budget
+branch: codex/q022-dense-retrieval-provider
 remote: https://github.com/yang-hoo-xin/-agent.git
 baseline commit: 914f16e chore: establish controlled mod agent baseline
 baseline tag: baseline-controlled-agent-v0
@@ -38,6 +38,7 @@ current R-009-HARDENING-001 status: completed; focused and affected tests passed
 current Review Repair Queue refresh status: completed; control-doc refresh only
 current Q-020 status: completed; focused and affected tests passed
 current Q-021 status: completed; focused and affected tests passed
+current Q-022 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -150,6 +151,14 @@ latest affected Q-021 legacy MCP suite:
   .venv\Scripts\python.exe -m pytest tests/integration/test_mcp_server.py tests/e2e/test_mcp_client.py -q --tb=short
   result: 13 passed, 4 warnings
 
+latest focused and affected Q-022 retrieval/config/artifact/dashboard/performance/knowledge suite:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_evidence_retrieval.py tests/unit/test_config_loading.py tests/unit/test_artifact_contract.py tests/unit/test_dashboard_projection.py tests/unit/test_performance_budget.py tests/unit/test_knowledge_base.py tests/unit/test_bm25_indexer_roundtrip.py tests/unit/test_collection_resolver.py -q --tb=short
+  result: 88 passed
+
+latest affected Q-022 workflow/planning/proposal suite:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_workflow_graph.py tests/unit/test_planning.py tests/unit/test_proposal_review.py -q --tb=short
+  result: 32 passed
+
 known broader-suite gaps:
   LEGACY-TEST-001 is queued for full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy assertions.
   R-009 absorbed only evidence_retrieval, stub_nodes, sparse_encoder/query tokenization, and planning/artifact contract changes directly tied to retrieval authority or evidence boundary behavior.
@@ -177,26 +186,33 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: Q-021
+task: Q-022
 status: completed; focused and affected tests passed
 files_changed:
-  src/mod_agent/mcp/__init__.py
-  src/mod_agent/mcp/tools.py
-  tests/unit/test_controlled_agent_mcp_tools.py
+  src/mod_agent/evidence/dense.py
+  src/mod_agent/evidence/__init__.py
+  src/mod_agent/evidence/retriever.py
+  src/mod_agent/evidence/models.py
+  src/mod_agent/artifacts/registry.py
+  src/mod_agent/knowledge/__init__.py
+  src/mod_agent/knowledge/models.py
+  src/core/settings.py
+  config/settings.yaml
+  tests/unit/test_evidence_retrieval.py
+  tests/unit/test_config_loading.py
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  Added a read-only/report-only controlled-agent MCP tool surface over ArtifactStore and sanitized dashboard projections.
-  Safe tools expose feature status, sanitized artifact summaries, retrieval preview, patch proposal preview, proposal review, eval report, and job status.
-  Dangerous actions remain hidden and unsupported: apply_patch, confirmed_apply, copy_to_game_directory, run_build, run_game, collect_runtime_evidence, and delete_artifacts.
-  Tool outputs include status, content, structuredContent, artifact_refs, trace_refs, blockers, and isError.
-  Budget job status uses budget_summary.allowed for continuation semantics and budget_summary.status or payload.status for display; envelope.status is treated as artifact visibility/audit metadata only.
+  Added a disabled-by-default dense retrieval provider contract with DisabledDenseRetrievalProvider and FakeDenseRetrievalProvider.
+  Added a KnowledgeChunkRecord to ChunkRecord projection so persisted chunks expose text_for_embedding without changing the database schema.
+  Dense evidence remains legacy_rag_auxiliary and cannot approve can_generate_patch without BM25/symbol deterministic evidence.
+  Dense budget/cost accounting is serialized into evidence_pack budget_summary, and fake dense retrieval exposes retrieval.dense_started and retrieval.dense_finished trace refs.
+  config/settings.yaml explicitly keeps retrieval.dense_enabled false and retrieval.dense_provider disabled.
 verification:
-  focused Q-021 tests: 6 passed
-  affected Q-021 artifact/dashboard/performance tests: 33 passed
-  affected Q-021 legacy MCP tests: 13 passed, 4 warnings
-next_recommended_task: Q-022 Dense Retrieval Provider Contract
+  focused and affected Q-022 retrieval/config/artifact/dashboard/performance/knowledge tests: 88 passed
+  affected Q-022 workflow/planning/proposal tests: 32 passed
+next_recommended_task: Queue refresh and V1 acceptance audit
 ```
 
 ## Next Execution Rule

@@ -84,6 +84,17 @@ def _optional_bool(data: Dict[str, Any], key: str, path: str) -> Optional[bool]:
     return value
 
 
+def _optional_retrieval_provider(retrieval: Dict[str, Any]) -> str:
+    value = retrieval.get("dense_provider", "disabled")
+    if not isinstance(value, str) or not value.strip():
+        raise SettingsError("Expected non-empty string for field: retrieval.dense_provider")
+    if value not in {"disabled", "fake"}:
+        raise SettingsError(
+            "Expected retrieval.dense_provider to be one of: disabled, fake"
+        )
+    return value
+
+
 def _require_number(data: Dict[str, Any], key: str, path: str) -> float:
     value = _require_value(data, key, path)
     if not isinstance(value, (int, float)):
@@ -147,6 +158,8 @@ class RetrievalSettings:
     sparse_top_k: int
     fusion_top_k: int
     rrf_k: int
+    dense_enabled: bool = False
+    dense_provider: str = "disabled"
 
 
 @dataclass(frozen=True)
@@ -330,6 +343,8 @@ class Settings:
                 sparse_top_k=_require_int(retrieval, "sparse_top_k", "retrieval"),
                 fusion_top_k=_require_int(retrieval, "fusion_top_k", "retrieval"),
                 rrf_k=_require_int(retrieval, "rrf_k", "retrieval"),
+                dense_enabled=_optional_bool(retrieval, "dense_enabled", "retrieval") or False,
+                dense_provider=_optional_retrieval_provider(retrieval),
             ),
             rerank=RerankSettings(
                 enabled=_require_bool(rerank, "enabled", "rerank"),

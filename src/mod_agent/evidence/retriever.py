@@ -17,15 +17,19 @@ from src.mod_agent.knowledge import (
     SourceRecord,
     SymbolIndexEntry,
     SymbolIndexer,
+    chunk_record_from_knowledge_chunk,
     SymbolRecord,
     evidence_identity_from_metadata,
 )
+from src.mod_agent.performance import OperationUsage, PerformanceBudgetPolicy
 
+from .dense import DenseRetrievalHit, DenseRetrievalProvider, DisabledDenseRetrievalProvider
 from .models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
     EvidenceItem,
     EvidencePack,
     EvidenceRequest,
+    LEGACY_RAG_AUXILIARY_AUTHORITY,
 )
 from .readiness import EvidenceReadinessClassifier
 
@@ -44,6 +48,10 @@ class DeterministicEvidenceRetriever:
         symbol_indexer: SymbolIndexer | None = None,
         collection_id: str | None = None,
         collection_resolver: CollectionResolver | None = None,
+        dense_provider: DenseRetrievalProvider | None = None,
+        dense_enabled: bool = False,
+        dense_top_k: int | None = None,
+        performance_policy: PerformanceBudgetPolicy | None = None,
     ) -> None:
         self.database = database
         self.readiness_classifier = readiness_classifier or EvidenceReadinessClassifier()
@@ -51,6 +59,10 @@ class DeterministicEvidenceRetriever:
         self.symbol_indexer = symbol_indexer or SymbolIndexer()
         resolution = (collection_resolver or CollectionResolver()).resolve(collection_id)
         self.collection_id = resolution.collection_id
+        self.dense_provider = dense_provider or DisabledDenseRetrievalProvider()
+        self.dense_enabled = dense_enabled
+        self.dense_top_k = dense_top_k
+        self.performance_policy = performance_policy
 
     def retrieve(self, request: EvidenceRequest) -> EvidencePack:
         """Retrieve evidence and classify readiness."""
@@ -75,10 +87,17 @@ class DeterministicEvidenceRetriever:
                 excluded_count=0,
                 symbol_count=0,
                 bm25_count=0,
+                dense_count=0,
                 text_count=0,
                 bm25_disabled_reason=(
                     "BM25 was not queried because the request had no searchable terms."
                 ),
+                dense_ms=0.0,
+                dense_disabled_reason=(
+                    "Dense retrieval was not queried because the request had no searchable terms."
+                ),
+                dense_budget_summary={},
+                dense_trace_refs=(),
             )
 
         sources = self._source_map()
@@ -141,6 +160,30 @@ class DeterministicEvidenceRetriever:
             bm25_count = len(bm25_items)
         bm25_ms = _elapsed_ms(bm25_started)
 
+        dense_started = perf_counter()
+        dense_items: list[EvidenceItem] = []
+        dense_disabled_reason = ""
+        dense_budget_summary: dict[str, object] = {}
+        dense_trace_refs: tuple[str, ...] = ()
+        if len(items) < request.max_items:
+            (
+                dense_items,
+                dense_disabled_reason,
+                dense_budget_summary,
+                dense_trace_refs,
+            ) = self._dense_items(
+                query=request.query,
+                sources=sources,
+                allowed_source_ids=allowed_source_ids,
+                index_version=stable_version.index_version if stable_version else None,
+                max_items=request.max_items - len(items),
+            )
+            for item in dense_items:
+                if item.evidence_id not in seen:
+                    items.append(item)
+                    seen.add(item.evidence_id)
+        dense_ms = _elapsed_ms(dense_started)
+
         text_started = perf_counter()
         text_count = 0
         if len(items) < request.max_items:
@@ -175,8 +218,13 @@ class DeterministicEvidenceRetriever:
             excluded_count=len(excluded),
             symbol_count=len([item for item in items if item.retrieval_method == "symbol_exact"]),
             bm25_count=bm25_count,
+            dense_count=len(dense_items),
             text_count=text_count,
             bm25_disabled_reason=bm25_disabled_reason,
+            dense_ms=dense_ms,
+            dense_disabled_reason=dense_disabled_reason,
+            dense_budget_summary=dense_budget_summary,
+            dense_trace_refs=dense_trace_refs,
         )
 
     def _symbol_item(
@@ -417,6 +465,136 @@ class DeterministicEvidenceRetriever:
                 break
         return items
 
+    def _dense_items(
+        self,
+        *,
+        query: str,
+        sources: dict[str, SourceRecord],
+        allowed_source_ids: set[str],
+        index_version: str | None,
+        max_items: int,
+    ) -> tuple[list[EvidenceItem], str, dict[str, object], tuple[str, ...]]:
+        if max_items <= 0:
+            return ([], "", {}, ())
+        if not self.dense_enabled:
+            report = DisabledDenseRetrievalProvider().retrieve(
+                query=query,
+                chunks=(),
+                top_k=0,
+            )
+            return (
+                [],
+                report.disabled_reason,
+                {"dense_retrieval": report.usage_dict()},
+                (),
+            )
+        if index_version is None:
+            return (
+                [],
+                f"No stable dense input chunks exist for collection {self.collection_id}.",
+                {
+                    "dense_retrieval": {
+                        "provider": getattr(self.dense_provider, "provider_name", "unknown"),
+                        "enabled": True,
+                        "status": "unavailable",
+                    }
+                },
+                (),
+            )
+
+        chunks = tuple(
+            chunk_record_from_knowledge_chunk(chunk)
+            for chunk in self.database.list_chunks(
+                collection_id=self.collection_id,
+                index_version=index_version,
+            )
+            if str(chunk.metadata.get("source_id", "")) in allowed_source_ids
+        )
+        top_k = min(max_items, self.dense_top_k or max_items)
+        report = self.dense_provider.retrieve(
+            query=query,
+            chunks=chunks,
+            top_k=top_k,
+        )
+        usage = OperationUsage(
+            operation="retrieval",
+            api_calls=report.api_calls,
+            item_count=report.embedded_items,
+            batch_count=report.batch_count,
+            cache_enabled=report.cache_enabled,
+        )
+        budget_summary: dict[str, object] = {
+            "dense_retrieval": {
+                **report.usage_dict(),
+                "usage": usage.to_dict(),
+                "trace_events": list(report.trace_events),
+            }
+        }
+        if self.performance_policy is not None:
+            decision = self.performance_policy.check(usage)
+            budget_summary["dense_retrieval"]["budget_decision"] = decision.to_dict()
+            if not decision.allowed:
+                return (
+                    [],
+                    f"Dense retrieval budget blocked: {decision.status}.",
+                    budget_summary,
+                    _dense_trace_refs(report),
+                )
+
+        chunk_map = self.database.chunks_by_id(
+            collection_id=self.collection_id,
+            index_version=index_version,
+            chunk_ids=tuple(hit.chunk_id for hit in report.hits),
+        )
+        items = [
+            self._dense_item(
+                hit=hit,
+                chunk=chunk_map[hit.chunk_id],
+                sources=sources,
+                provider=report.provider,
+            )
+            for hit in report.hits
+            if hit.chunk_id in chunk_map
+        ]
+        return (items, report.disabled_reason, budget_summary, _dense_trace_refs(report))
+
+    def _dense_item(
+        self,
+        *,
+        hit: DenseRetrievalHit,
+        chunk: KnowledgeChunkRecord,
+        sources: dict[str, SourceRecord],
+        provider: str,
+    ) -> EvidenceItem:
+        source_id = str(chunk.metadata.get("source_id", ""))
+        source = sources.get(source_id)
+        source_type = source.source_type if source else str(
+            chunk.metadata.get("source_type", source_id)
+        )
+        start_line = chunk.metadata.get("start_line")
+        end_line = chunk.metadata.get("end_line")
+        span = None
+        if isinstance(start_line, int) and isinstance(end_line, int):
+            span = {"start_line": start_line, "end_line": end_line}
+        score = float(getattr(hit, "score"))
+        return EvidenceItem(
+            evidence_id=f"dense_{chunk.chunk_id}",
+            source_type=source_type,
+            source_path=str(chunk.metadata.get("source_path", "")),
+            symbol=None,
+            span=span,
+            retrieval_method="dense",
+            score=score,
+            claim_supported=(
+                f"Dense provider {provider} matched chunk {chunk.chunk_id}; "
+                "dense output remains auxiliary for V1 patch gates."
+            ),
+            excerpt=chunk.chunk_text.strip()[:240],
+            **evidence_identity_from_metadata(chunk.metadata),
+            authority=LEGACY_RAG_AUXILIARY_AUTHORITY,
+            risk_notes=("Dense retrieval cannot approve V1 implementation gates.",),
+        )
+
     def _source_map(self) -> dict[str, SourceRecord]:
         return {source.source_id: source for source in self.database.list_sources()}
 
@@ -464,8 +642,13 @@ class DeterministicEvidenceRetriever:
         excluded_count: int,
         symbol_count: int,
         bm25_count: int,
+        dense_count: int,
         text_count: int,
         bm25_disabled_reason: str,
+        dense_ms: float,
+        dense_disabled_reason: str,
+        dense_budget_summary: dict[str, object],
+        dense_trace_refs: tuple[str, ...],
     ) -> EvidencePack:
         methods = tuple(
             dict.fromkeys(item.retrieval_method for item in pack.items)
@@ -475,7 +658,7 @@ class DeterministicEvidenceRetriever:
             "symbol_ms": symbol_ms,
             "text_ms": text_ms,
             "bm25_ms": bm25_ms,
-            "dense_ms": 0.0,
+            "dense_ms": dense_ms,
             "fusion_ms": 0.0,
             "rerank_ms": 0.0,
             "readiness_ms": readiness_ms,
@@ -484,14 +667,16 @@ class DeterministicEvidenceRetriever:
             "excluded_count": float(excluded_count),
             "symbol_count": float(symbol_count),
             "bm25_count": float(bm25_count),
+            "dense_count": float(dense_count),
             "text_count": float(text_count),
         }
         disabled_modes = {
-            "dense": "Dense retrieval is disabled until embedding and vector index are configured.",
             "fusion": "Fusion is disabled because RRF is not implemented in this retriever.",
             "rerank": "Rerank is disabled because no reranker is configured.",
             "neural_sparse": "Neural sparse retrieval is outside the V1 retrieval path.",
         }
+        if dense_disabled_reason:
+            disabled_modes["dense"] = dense_disabled_reason
         if bm25_disabled_reason:
             disabled_modes["bm25"] = bm25_disabled_reason
         return replace(
@@ -499,8 +684,19 @@ class DeterministicEvidenceRetriever:
             retrieval_methods_used=methods,
             disabled_modes=disabled_modes,
             timing=timing,
+            budget_summary=dense_budget_summary,
+            trace_refs=tuple(dict.fromkeys((*pack.trace_refs, *dense_trace_refs))),
         )
 
 
 def _elapsed_ms(started: float) -> float:
     return round((perf_counter() - started) * 1000, 3)
+
+
+def _dense_trace_refs(report: object) -> tuple[str, ...]:
+    events = getattr(report, "trace_events", ())
+    refs: list[str] = []
+    for event in events:
+        if isinstance(event, dict) and isinstance(event.get("event"), str):
+            refs.append(str(event["event"]))
+    return tuple(refs)

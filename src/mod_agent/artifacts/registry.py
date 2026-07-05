@@ -204,6 +204,7 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 "can_generate_patch",
                 "authority",
                 "authoritative_for_patch",
+                "budget_summary",
             ),
         ),
         ArtifactContract(

@@ -74,6 +74,8 @@ def test_load_settings_success(tmp_path: Path) -> None:
     assert settings.embedding.dimensions == 1536
     assert settings.vector_store.collection_name == "knowledge_hub"
     assert settings.retrieval.rrf_k == 60
+    assert settings.retrieval.dense_enabled is False
+    assert settings.retrieval.dense_provider == "disabled"
     assert settings.rerank.provider == "none"
     assert settings.evaluation.metrics == ["hit_rate", "mrr"]
     assert settings.observability.log_level == "INFO"
@@ -81,6 +83,98 @@ def test_load_settings_success(tmp_path: Path) -> None:
     assert settings.performance.operations["retrieval"].max_items == 20
     assert settings.performance.operations["retrieval"].on_exceed == "block"
     assert settings.ingestion is not None
+
+
+def test_retrieval_dense_provider_settings_are_explicit(tmp_path: Path) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_enabled: true
+      dense_provider: fake
+      dense_top_k: 5
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    settings = load_settings(settings_path)
+
+    assert settings.retrieval.dense_enabled is True
+    assert settings.retrieval.dense_provider == "fake"
+    assert settings.retrieval.dense_top_k == 5
+
+
+def test_retrieval_dense_provider_rejects_unknown_provider(tmp_path: Path) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_provider: openai
+      dense_top_k: 5
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    with pytest.raises(SettingsError, match="retrieval.dense_provider"):
+        load_settings(settings_path)
 
 
 def test_performance_settings_reject_invalid_on_exceed(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ from src.mod_agent.evidence import (
     EvidenceItem,
     EvidenceReadinessClassifier,
     EvidenceRequest,
+    FakeDenseRetrievalProvider,
 )
 from src.mod_agent.knowledge import (
     BM25Indexer,
@@ -22,6 +23,7 @@ from src.mod_agent.knowledge import (
     SourceRecord,
     SourceRegistry,
 )
+from src.mod_agent.performance import BudgetLimit, PerformanceBudgetPolicy
 
 
 def _feature_payload() -> dict[str, object]:
@@ -257,6 +259,125 @@ def test_deterministic_retriever_explicit_collection_overrides_default(
     assert pack.can_generate_patch is True
     assert pack.items[0].source_path == "request_scope/config.json"
     assert pack.items[0].chunk_id == "request_scope_chunk_001"
+
+
+def test_dense_retrieval_is_disabled_by_default(tmp_path: Path) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    _index_chunk_collection(
+        db,
+        collection_id="knowledge_hub",
+        text="Dense-only evidence lives in this chunk.",
+    )
+
+    pack = DeterministicEvidenceRetriever(db).retrieve(
+        EvidenceRequest(
+            query="DenseOnly",
+            execution_path="quick_patch",
+            requires_hook_evidence=False,
+        )
+    )
+
+    assert "dense" not in pack.retrieval_methods_used
+    assert pack.disabled_modes["dense"].startswith("Dense retrieval is disabled")
+    assert pack.budget_summary["dense_retrieval"]["enabled"] is False
+
+
+def test_fake_dense_provider_returns_auxiliary_chunk_with_budget_report(
+    tmp_path: Path,
+) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    _index_chunk_collection(
+        db,
+        collection_id="knowledge_hub",
+        text="Dense-only evidence lives in this chunk.",
+    )
+    policy = PerformanceBudgetPolicy(
+        [
+            BudgetLimit(
+                operation="retrieval",
+                max_api_calls=0,
+                max_items=20,
+                cache_enabled=True,
+                on_exceed="block",
+            )
+        ]
+    )
+
+    pack = DeterministicEvidenceRetriever(
+        db,
+        dense_enabled=True,
+        dense_provider=FakeDenseRetrievalProvider(
+            {"knowledge_hub_chunk_001": 0.91},
+            api_calls=0,
+            cache_enabled=True,
+        ),
+        performance_policy=policy,
+    ).retrieve(
+        EvidenceRequest(
+            query="DenseOnly",
+            execution_path="quick_patch",
+            requires_hook_evidence=False,
+        )
+    )
+
+    assert pack.readiness == "partial"
+    assert pack.can_generate_patch is False
+    assert pack.items[0].retrieval_method == "dense"
+    assert pack.items[0].chunk_id == "knowledge_hub_chunk_001"
+    assert pack.items[0].authority == "legacy_rag_auxiliary"
+    assert pack.retrieval_methods_used == ("dense",)
+    assert pack.trace_refs == (
+        "retrieval.dense_started",
+        "retrieval.dense_finished",
+    )
+    dense_budget = pack.budget_summary["dense_retrieval"]
+    assert dense_budget["api_calls"] == 0
+    assert dense_budget["embedded_items"] == 1
+    assert dense_budget["budget_decision"]["status"] == "allowed"
+    assert dense_budget["budget_decision"]["allowed"] is True
+
+
+def test_dense_provider_budget_block_degrades_to_existing_routes(
+    tmp_path: Path,
+) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    _index_chunk_collection(
+        db,
+        collection_id="knowledge_hub",
+        text="Dense-only evidence lives in this chunk.",
+    )
+    policy = PerformanceBudgetPolicy(
+        [
+            BudgetLimit(
+                operation="retrieval",
+                max_api_calls=0,
+                cache_enabled=True,
+                on_exceed="block",
+            )
+        ]
+    )
+
+    pack = DeterministicEvidenceRetriever(
+        db,
+        dense_enabled=True,
+        dense_provider=FakeDenseRetrievalProvider(
+            {"knowledge_hub_chunk_001": 0.91},
+            api_calls=1,
+            cache_enabled=True,
+        ),
+        performance_policy=policy,
+    ).retrieve(
+        EvidenceRequest(
+            query="DenseOnly",
+            execution_path="quick_patch",
+            requires_hook_evidence=False,
+        )
+    )
+
+    assert pack.items == ()
+    assert pack.can_generate_patch is False
+    assert "Dense retrieval budget blocked" in pack.disabled_modes["dense"]
+    assert pack.budget_summary["dense_retrieval"]["budget_decision"]["status"] == "blocked"
 
 
 def test_missing_source_returns_insufficient_empty_pack(tmp_path: Path) -> None:

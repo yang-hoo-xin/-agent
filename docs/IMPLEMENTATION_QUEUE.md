@@ -18,9 +18,9 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Q Queue
-last_completed: Q-021
-next_recommended_task: Q-022 Dense Retrieval Provider Contract
-Q-022_status: ready
+last_completed: Q-022
+next_recommended_task: Queue refresh and V1 acceptance audit
+Q_queue_status: Q-022 completed; refresh required before adding further Q work
 ```
 
 ## Legacy Test Triage
@@ -99,6 +99,7 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | Review Repair Queue refresh | completed | Confirmed no active Review Repair Queue blocker remains before Q-020; future open gaps stay tracked by the coverage matrix | `docs/PROJECT_STATE.md` |
 | Q-020 | completed | Controlled-agent performance budget contract adds config-driven limits, blocked/degraded budget decisions, trace summaries, and job_status budget_summary serialization | `docs/PROJECT_STATE.md` |
 | Q-021 | completed | Controlled-agent MCP tool surface exposes read-only/report-only status, artifact, retrieval, proposal, review, eval, and job summaries with degraded budget semantics preserved | `docs/PROJECT_STATE.md` |
+| Q-022 | completed | Dense retrieval provider contract is disabled by default, supports fake provider chunk hits, reports retrieval budget accounting, and cannot replace BM25/symbol V1 gates | `docs/PROJECT_STATE.md` |
 ## Review Repair Queue
 
 ```text
@@ -493,7 +494,7 @@ Completed evidence:
 ### Q-022: Dense Retrieval Provider Contract
 
 ```text
-Status: ready
+Status: completed
 Module: RET, KB, PERF
 Spec refs: 8.7, 45.8, 45.18.1
 Coverage IDs: RET-004, PERF-001
@@ -508,6 +509,14 @@ Failure behavior: unavailable provider degrades to existing retrieval routes
 Out of scope: real external embedding API calls
 Dependencies: Q-005, Q-006, Q-007
 Conflict checks: no network calls in unit tests
+Implementation evidence:
+  - Added dense retrieval provider contract with DisabledDenseRetrievalProvider and FakeDenseRetrievalProvider.
+  - Dense route is disabled by default through config/settings.yaml and Settings.retrieval.
+  - Fake dense hits can return chunk ids from KnowledgeDatabase stable chunks through ChunkRecord.text_for_embedding projection.
+  - Dense evidence remains legacy_rag_auxiliary, so it cannot approve can_generate_patch without BM25/symbol deterministic evidence.
+  - EvidencePack now serializes budget_summary for dense retrieval cost/accounting.
+  - focused and affected Q-022 retrieval/config/artifact/dashboard/performance/knowledge tests passed: 88 passed.
+  - affected Q-022 workflow/planning/proposal tests passed: 32 passed.
 ```
 
 

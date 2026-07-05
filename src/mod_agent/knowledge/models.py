@@ -409,6 +409,20 @@ def chunk_record_from_chunk(chunk: Chunk) -> ChunkRecord:
     )
 
 
+def chunk_record_from_knowledge_chunk(chunk: KnowledgeChunkRecord) -> ChunkRecord:
+    """Project a persisted chunk into the dense/sparse index-facing contract."""
+
+    return ChunkRecord(
+        chunk_id=chunk.chunk_id,
+        text_for_embedding=chunk.text_for_retrieval,
+        dense_vector=None,
+        sparse_terms=None,
+        bm25_terms=None,
+        metadata=dict(chunk.metadata),
+        content_hash=chunk.content_hash,
+    )
+
+
 def stable_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 

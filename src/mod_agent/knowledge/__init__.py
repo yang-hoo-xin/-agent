@@ -31,6 +31,7 @@ from .models import (
     SymbolRecord,
     chunk_from_document,
     chunk_record_from_chunk,
+    chunk_record_from_knowledge_chunk,
     evidence_identity_from_metadata,
 )
 from .source_discovery import DiscoveredSourceFile, SourceDiscovery
@@ -72,6 +73,7 @@ __all__ = [
     "SymbolRecord",
     "chunk_from_document",
     "chunk_record_from_chunk",
+    "chunk_record_from_knowledge_chunk",
     "evidence_identity_from_metadata",
     "normalize_bm25_token",
     "tokenize_bm25",

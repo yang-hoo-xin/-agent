@@ -86,6 +86,7 @@ class EvidencePack:
     missing_evidence: tuple[dict[str, Any], ...] = ()
     disabled_modes: dict[str, str] = field(default_factory=dict)
     timing: dict[str, float] = field(default_factory=dict)
+    budget_summary: dict[str, Any] = field(default_factory=dict)
     trace_refs: tuple[str, ...] = ()
     message: str = ""
 
@@ -115,6 +116,7 @@ class EvidencePack:
             "missing_evidence": list(self.missing_evidence),
             "disabled_modes": dict(self.disabled_modes),
             "timing": dict(self.timing),
+            "budget_summary": dict(self.budget_summary),
             "trace_refs": list(self.trace_refs),
         }
 
