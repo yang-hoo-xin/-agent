@@ -9,8 +9,8 @@ Last updated: 2026-07-05
 
 ```text
 current_queue: V1 Acceptance Audit Queue
-last_completed: V1-AUDIT-002
-next_recommended_task: V1-AUDIT-003 real/manual/supplied runtime acceptance evidence path
+last_completed: V1-AUDIT-003
+next_recommended_task: V1-AUDIT-004 real runtime branch E2E boundary decision
 ordinary_queue_status: Q-022 completed; V1 acceptance audit queue is active before adding further Q work
 ```
 
@@ -41,6 +41,7 @@ current Q-021 status: completed; focused and affected tests passed
 current Q-022 status: completed; focused and affected tests passed
 current V1-AUDIT-001 status: completed; focused and affected tests passed
 current V1-AUDIT-002 status: completed; focused and affected tests passed
+current V1-AUDIT-003 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -282,6 +283,34 @@ remaining:
   Real/manual/supplied runtime acceptance E2E evidence remains unverified.
   Do not claim V1 accepted until non-fake runtime acceptance evidence is tested.
 next_recommended_task: V1-AUDIT-003 real/manual/supplied runtime acceptance evidence path
+```
+
+## V1-AUDIT-003: Manual And Supplied Runtime Acceptance Evidence
+
+```text
+status: completed
+branch: codex/v1-acceptance-audit
+commit: 5aad3be fix(runtime): bind acceptance evidence to contract
+spec_refs:
+  DEV_SPEC.md 49.1.4
+  DEV_SPEC.md 50.9.3
+files:
+  src/mod_agent/runtime/evidence.py
+  tests/unit/test_runtime_evidence.py
+behavior:
+  Manual and supplied runtime evidence can verify acceptance only when evidence_items.supports_acceptance matches the current acceptance_contract.
+  Verified manual/supplied evidence with unrelated supports_acceptance now raises RuntimeEvidenceError.
+  Unverified supplied evidence preserves acceptance_contract while keeping acceptance_verified=False.
+  Fake runtime fixtures remain separate and still do not claim real runtime execution.
+verification:
+  focused runtime/routing/artifact tests: 25 passed
+  affected runtime/workflow/artifact tests: 74 passed
+  eval tests: 42 passed
+  git diff --check: passed
+remaining:
+  Automated real runtime execution and real runtime evidence collection remain unimplemented.
+  Do not claim V1 accepted until the real runtime branch is either tested end-to-end or explicitly scoped out of V1 acceptance.
+next_recommended_task: V1-AUDIT-004 real runtime branch E2E boundary decision
 ```
 
 ## Next Execution Rule
