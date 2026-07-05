@@ -17,10 +17,10 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: V1 Acceptance Audit Queue
-last_completed: V1-AUDIT-004
-next_recommended_task: V1-AUDIT-005 final V1 acceptance verdict and queue handoff
-Q_queue_status: Q-022 completed; V1 acceptance audit queue is active before adding further Q work
+current_queue: Post V1 Acceptance Handoff
+last_completed: V1-AUDIT-005
+next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-022 first if real V1 runtime acceptance is the goal
+Q_queue_status: Q-022 completed; V1 acceptance audit queue completed with real runtime acceptance still blocked
 ```
 
 ## V1 Acceptance Audit Queue
@@ -35,7 +35,7 @@ Queue purpose: verify the current implementation against DEV_SPEC.md V1 acceptan
 | V1-AUDIT-002 | completed | Carry FeatureSpec acceptance contract through runtime_evidence and eval_report, and enforce strict acceptance_verified routing | `src/mod_agent/workflow/graph.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_repair_loop.py` |
 | V1-AUDIT-003 | completed | Verify manual/supplied runtime acceptance evidence contract matching outside fake runtime fixtures | `src/mod_agent/runtime/evidence.py`, `tests/unit/test_runtime_evidence.py` |
 | V1-AUDIT-004 | completed | Make fake/local eval and workflow summaries explicitly block V1 acceptance when real build/runtime evidence is missing | `src/mod_agent/workflow/graph.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_artifact_contract.py` |
-| V1-AUDIT-005 | queued | Produce the final V1 acceptance verdict and queue handoff without claiming real runtime execution | `docs/V1_ACCEPTANCE_AUDIT.md`, `docs/SPEC_COVERAGE_MATRIX.md` |
+| V1-AUDIT-005 | completed | Produce the final V1 acceptance verdict and queue handoff without claiming real runtime execution | `docs/V1_ACCEPTANCE_AUDIT.md`, `docs/SPEC_COVERAGE_MATRIX.md` |
 
 ## Legacy Test Triage
 

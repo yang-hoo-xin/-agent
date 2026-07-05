@@ -8,10 +8,10 @@ Last updated: 2026-07-05
 ## Current Queue
 
 ```text
-current_queue: V1 Acceptance Audit Queue
-last_completed: V1-AUDIT-004
-next_recommended_task: V1-AUDIT-005 final V1 acceptance verdict and queue handoff
-ordinary_queue_status: Q-022 completed; V1 acceptance audit queue is active before adding further Q work
+current_queue: Post V1 Acceptance Handoff
+last_completed: V1-AUDIT-005
+next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-022 first if real V1 runtime acceptance is the goal
+ordinary_queue_status: Q-022 completed; V1 acceptance audit queue completed with real runtime acceptance still blocked
 ```
 
 ## Current Baseline
@@ -43,6 +43,7 @@ current V1-AUDIT-001 status: completed; focused and affected tests passed
 current V1-AUDIT-002 status: completed; focused and affected tests passed
 current V1-AUDIT-003 status: completed; focused and affected tests passed
 current V1-AUDIT-004 status: completed; focused and affected tests passed
+current V1-AUDIT-005 status: completed; documentation consistency checks passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -341,6 +342,33 @@ remaining:
   Automated real runtime execution and real runtime evidence collection remain unimplemented.
   Do not claim real V1 runtime acceptance from fake/local, manual, or supplied fixture-style evidence alone.
 next_recommended_task: V1-AUDIT-005 final V1 acceptance verdict and queue handoff
+```
+
+## V1-AUDIT-005: Final V1 Acceptance Verdict And Queue Handoff
+
+```text
+status: completed
+branch: codex/v1-acceptance-audit
+commit: pending
+files:
+  docs/V1_ACCEPTANCE_AUDIT.md
+  docs/IMPLEMENTATION_QUEUE.md
+  docs/PROJECT_STATE.md
+  docs/SPEC_COVERAGE_MATRIX.md
+verdict:
+  V1 contract path is accepted with known gaps.
+  Real runtime acceptance is not accepted.
+  The project must not claim real runtime success until MISS-022 is closed by implementation and tests.
+architecture_note:
+  v1_acceptance_status and v1_acceptance_blockers are V1 audit boundary fields.
+  They are not generalized in this audit.
+handoff:
+  If the next goal is real V1 runtime acceptance, start from MISS-022 real runtime collector/E2E.
+  If the next goal is feature expansion, select the next task from docs/SPEC_COVERAGE_MATRIX.md open gaps.
+verification:
+  documentation consistency checks: passed
+  git diff --check: passed
+next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-022 first if real V1 runtime acceptance is the goal
 ```
 
 ## Next Execution Rule

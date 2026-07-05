@@ -21,9 +21,9 @@ DEV_SPEC.md 50.9  V1 implementation-level architecture reference
 ## Current Result
 
 ```text
-status: implemented_with_known_gaps
-last_completed_queue_task: V1-AUDIT-004
-current_audit_task: V1-AUDIT-005
+status: contract_path_accepted_with_known_gaps
+last_completed_queue_task: V1-AUDIT-005
+current_audit_task: none
 ```
 
 V1 can currently claim a controlled local contract path for workflow, artifacts,
@@ -31,9 +31,9 @@ deterministic evidence, review gates, dry-run/build/runtime contracts, repair,
 eval contracts, read-only/report-only MCP facade tools, dashboard projection,
 and performance budget contracts.
 
-V1 cannot currently claim production-grade dense retrieval, production frontend,
-wire-level MCP JSON-RPC compliance, real performance benchmarking, or full real
-runtime branch coverage.
+V1 cannot currently claim real runtime acceptance, production-grade dense
+retrieval, production frontend, wire-level MCP JSON-RPC compliance, real
+performance benchmarking, or full real runtime branch coverage.
 
 ## Requirement Checks
 
@@ -75,11 +75,26 @@ required blockers: REAL_BUILD_EVIDENCE_MISSING and REAL_RUNTIME_EVIDENCE_MISSING
 forbidden claim: fake/local workflow completion is real V1 runtime acceptance
 ```
 
-## Next Recommended Task
+The `v1_acceptance_status` and `v1_acceptance_blockers` fields are V1 audit
+boundary fields. They are intentionally not generalized in this audit; a later
+release policy layer can replace them with a release-neutral acceptance policy
+result if the project needs multiple release tracks.
+
+## Final Verdict
 
 ```text
-task_id: V1-AUDIT-005
-goal: produce the final V1 acceptance verdict and queue handoff without claiming real runtime execution
-inputs: MISS-022, WF-003, WF-005, EXEC-005, EXEC-006, DEV_SPEC.md 49.1.4 and 50.9.3
-tests: focused V1 acceptance audit, workflow summary, artifact contract, and documentation consistency checks
+V1 contract path verdict: accepted with known gaps
+Real runtime acceptance verdict: not accepted
+Reason: automated real runtime execution and real runtime evidence collection are still unimplemented.
+Allowed claim: controlled local contract path is implemented and tested.
+Forbidden claim: the project has real runtime V1 acceptance.
+```
+
+## Queue Handoff
+
+```text
+V1 audit queue: completed
+If the next goal is real V1 runtime acceptance: start from MISS-022 real runtime collector/E2E.
+If the next goal is feature expansion: select the next task from docs/SPEC_COVERAGE_MATRIX.md open gaps.
+Do not claim real runtime success until MISS-022 is closed by implementation and tests.
 ```
