@@ -707,17 +707,25 @@ def _run_fake_runtime_evidence(
     artifact_store: ArtifactStore,
 ) -> ModAgentState:
     build = _read_artifact_data(state, artifact_store, "build_result")
+    feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
     feature_id = state["feature_id"] or state["request_id"]
     payload = build_fake_runtime_evidence_payload(
         feature_id=feature_id,
         input_execution_mode=build.get("execution_mode"),
+        acceptance_criteria=tuple(feature_spec.get("acceptance_criteria") or ()),
+        runtime_verification_plan=tuple(
+            feature_spec.get("runtime_verification_plan") or ()
+        ),
     )
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
         artifact_type="runtime_evidence",
         payload=payload,
-        status="skipped",
-        upstream_refs=[_artifact_ref_from_state(state, "build_result")],
+        status="success",
+        upstream_refs=[
+            _artifact_ref_from_state(state, "build_result"),
+            _artifact_ref_from_state(state, "feature_spec"),
+        ],
     )
     next_state = _copy_state(state)
     next_state["current_stage"] = "runtime_evidence"
@@ -728,6 +736,8 @@ def _run_fake_runtime_evidence(
         "startup_loaded": payload["startup_loaded"],
         "gameplay_behavior_verified": payload["gameplay_behavior_verified"],
         "acceptance_status": payload["acceptance_status"],
+        "acceptance_verified": payload["acceptance_verified"],
+        "acceptance_contract": payload["acceptance_contract"],
         "claims_real_runtime_success": False,
     }
     _record_artifact(next_state, "runtime_evidence", artifact_ref)
@@ -740,6 +750,7 @@ def _run_fake_evaluate(
 ) -> ModAgentState:
     runtime = _read_artifact_data(state, artifact_store, "runtime_evidence")
     feature_id = state["feature_id"] or state["request_id"]
+    acceptance_verified = bool(runtime.get("acceptance_verified"))
     payload = {
         "node_name": "evaluate",
         "stage": "evaluation",
@@ -749,7 +760,7 @@ def _run_fake_evaluate(
         ),
         "execution_mode": "fake",
         "workflow_completion_status": "fake_execution_completed",
-        "requested_behavior_status": "not_verified",
+        "requested_behavior_status": "verified" if acceptance_verified else "not_verified",
         "verdict": "inconclusive",
         "claims_real_success": False,
         "checks": [
@@ -768,6 +779,8 @@ def _run_fake_evaluate(
         ],
         "input_runtime_status": runtime.get("verification_status"),
         "input_acceptance_status": runtime.get("acceptance_status"),
+        "input_acceptance_verified": acceptance_verified,
+        "acceptance_contract": runtime.get("acceptance_contract"),
     }
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
@@ -800,7 +813,7 @@ def _run_workflow_summary(
         ),
         "execution_mode": "fake",
         "workflow_completion_status": "fake_execution_completed",
-        "requested_behavior_status": "not_verified",
+        "requested_behavior_status": eval_report.get("requested_behavior_status"),
         "final_status": "inconclusive",
         "claims_real_mod_success": False,
         "claims_real_build_success": False,

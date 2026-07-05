@@ -93,12 +93,24 @@ def test_repair_routes_are_explicit() -> None:
     state["build_summary"] = {"status": "success"}
     assert route_after_build(state) == "continue"
 
-    state["runtime_summary"] = {"status": "failed", "acceptance_status": "failed"}
+    state["runtime_summary"] = {
+        "status": "failed",
+        "acceptance_status": "failed",
+        "acceptance_verified": False,
+    }
     assert route_after_runtime_evidence(state) == "repair"
 
     state["runtime_summary"] = {
         "status": "inconclusive",
         "acceptance_status": "inconclusive",
+        "acceptance_verified": False,
+    }
+    assert route_after_runtime_evidence(state) == "repair"
+
+    state["runtime_summary"] = {
+        "status": "verified",
+        "acceptance_status": "accepted",
+        "acceptance_verified": True,
     }
     assert route_after_runtime_evidence(state) == "continue"
 

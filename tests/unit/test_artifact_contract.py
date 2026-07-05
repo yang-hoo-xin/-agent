@@ -189,6 +189,8 @@ def test_runtime_evidence_contract_requires_acceptance_fields() -> None:
         "evidence_items",
         "verification_status",
         "acceptance_status",
+        "acceptance_verified",
+        "acceptance_contract",
         "raw_supplied_output",
         "sources",
         "non_goals_checked",
@@ -204,14 +206,20 @@ def test_eval_and_workflow_summary_contracts_separate_completion_from_success() 
 
     eval_contract = registry.get("eval_report")
     summary_contract = registry.get("workflow_summary")
-    required = {
+    shared_required = {
         "execution_mode",
         "workflow_completion_status",
         "requested_behavior_status",
     }
+    eval_required = {
+        *shared_required,
+        "input_acceptance_status",
+        "input_acceptance_verified",
+        "acceptance_contract",
+    }
 
-    assert required.issubset(eval_contract.required_fields)
-    assert required.issubset(summary_contract.required_fields)
+    assert eval_required.issubset(eval_contract.required_fields)
+    assert shared_required.issubset(summary_contract.required_fields)
     assert "claims_real_success" in eval_contract.required_fields
     assert "claims_real_mod_success" in summary_contract.required_fields
     assert "workflow_completion_status" in eval_contract.dashboard_projection

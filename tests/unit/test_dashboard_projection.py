@@ -372,6 +372,11 @@ def _runtime_evidence_payload() -> dict[str, object]:
         "evidence_items": [],
         "verification_status": "inconclusive",
         "acceptance_status": "inconclusive",
+        "acceptance_verified": False,
+        "acceptance_contract": {
+            "acceptance_criteria": ["Requested behavior is implemented."],
+            "runtime_verification_plan": ["manual"],
+        },
         "raw_supplied_output": "SECRET_RUNTIME_OUTPUT",
         "sources": ["C:\\secret\\runtime.log"],
         "non_goals_checked": [],
@@ -421,6 +426,11 @@ def _eval_report_payload() -> dict[str, object]:
         "checks": [],
         "input_runtime_status": "inconclusive",
         "input_acceptance_status": "inconclusive",
+        "input_acceptance_verified": False,
+        "acceptance_contract": {
+            "acceptance_criteria": ["Requested behavior is implemented."],
+            "runtime_verification_plan": ["manual"],
+        },
     }
 
 

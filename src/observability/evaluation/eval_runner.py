@@ -239,7 +239,9 @@ class EvalRunner:
             )
             report.query_results.append(qr)
 
-        report.total_elapsed_ms = (time.monotonic() - t0) * 1000.0
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+        query_elapsed_ms = sum(qr.elapsed_ms for qr in report.query_results)
+        report.total_elapsed_ms = max(elapsed_ms, query_elapsed_ms, 0.001)
         report.aggregate_metrics = self._aggregate_metrics(report.query_results)
 
         logger.info(

@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.build import build_fake_build_result
+from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
 from src.mod_agent.runtime import build_fake_runtime_evidence_payload
 
 from .state import ModAgentState, StageName
@@ -229,6 +230,8 @@ class StubNodeRunner:
                     "can_generate_patch": False,
                     "authority": "mod_agent_deterministic_evidence",
                     "authoritative_for_patch": False,
+                    "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+                    "identity_field_mapping": dict(IDENTITY_FIELD_MAPPING),
                     "items": [],
                     "gaps": ["Phase A stub did not run evidence retrieval."],
                     "excluded": [],
@@ -347,6 +350,8 @@ class StubNodeRunner:
                 build_fake_runtime_evidence_payload(
                     feature_id="stubbed_feature",
                     input_execution_mode=None,
+                    acceptance_criteria=("Phase A stub has no real acceptance criteria.",),
+                    runtime_verification_plan=(),
                 )
             )
         if artifact_type == "repair_plan":

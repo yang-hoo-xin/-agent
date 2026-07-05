@@ -73,13 +73,11 @@ def route_after_build(state: ModAgentState) -> str:
 
 
 def route_after_runtime_evidence(state: ModAgentState) -> str:
-    """Route explicit runtime failures to repair planning."""
+    """Route unverified acceptance to repair planning."""
 
-    runtime_status = state["runtime_summary"].get("status")
-    acceptance_status = state["runtime_summary"].get("acceptance_status")
-    if runtime_status == "failed" or acceptance_status == "failed":
-        return "repair"
-    return "continue"
+    if state["runtime_summary"].get("acceptance_verified") is True:
+        return "continue"
+    return "repair"
 
 
 def route_after_repair_plan(state: ModAgentState) -> str:

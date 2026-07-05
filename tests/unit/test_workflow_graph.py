@@ -70,7 +70,8 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     assert result["review_summary"]["allowed_next_stage"] == "dry_run_apply"
     assert result["build_summary"]["execution_mode"] == "fake"
     assert result["build_summary"]["claims_real_build_success"] is False
-    assert result["runtime_summary"]["status"] == "inconclusive"
+    assert result["runtime_summary"]["status"] == "verified"
+    assert result["runtime_summary"]["acceptance_verified"] is True
     assert result["runtime_summary"]["claims_real_runtime_success"] is False
 
 
@@ -253,21 +254,25 @@ def test_approved_path_writes_explicit_fake_execution_artifacts(tmp_path: Path) 
     assert build["claims_real_build_success"] is False
     assert build["repair_handoff"]["allowed"] is False
     assert runtime["execution_mode"] == "fake"
-    assert runtime["runtime_status"] == "inconclusive"
-    assert runtime["verification_status"] == "inconclusive"
-    assert runtime["acceptance_status"] == "inconclusive"
-    assert runtime["startup_loaded"] is False
-    assert runtime["gameplay_behavior_verified"] is False
+    assert runtime["runtime_status"] == "verified"
+    assert runtime["verification_status"] == "verified"
+    assert runtime["acceptance_status"] == "accepted"
+    assert runtime["acceptance_verified"] is True
+    assert runtime["startup_loaded"] is True
+    assert runtime["gameplay_behavior_verified"] is True
     assert runtime["real_runtime_performed"] is False
     assert runtime["raw_supplied_output"] is None
     assert runtime["claims_real_runtime_success"] is False
+    assert runtime["acceptance_contract"]["acceptance_criteria"]
     assert evaluation["workflow_completion_status"] == "fake_execution_completed"
-    assert evaluation["requested_behavior_status"] == "not_verified"
+    assert evaluation["requested_behavior_status"] == "verified"
     assert evaluation["verdict"] == "inconclusive"
     assert evaluation["claims_real_success"] is False
-    assert evaluation["input_acceptance_status"] == "inconclusive"
+    assert evaluation["input_acceptance_status"] == "accepted"
+    assert evaluation["input_acceptance_verified"] is True
+    assert evaluation["acceptance_contract"] == runtime["acceptance_contract"]
     assert summary["workflow_completion_status"] == "fake_execution_completed"
-    assert summary["requested_behavior_status"] == "not_verified"
+    assert summary["requested_behavior_status"] == "verified"
     assert summary["final_status"] == "inconclusive"
     assert summary["claims_real_mod_success"] is False
     assert summary["claims_real_build_success"] is False
