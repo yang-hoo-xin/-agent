@@ -8,16 +8,16 @@ Last updated: 2026-07-05
 ## Current Queue
 
 ```text
-current_queue: Q Queue
-last_completed: Q-022
-next_recommended_task: Queue refresh and V1 acceptance audit
-ordinary_queue_status: Q-022 completed; refresh required before adding further Q work
+current_queue: V1 Acceptance Audit Queue
+last_completed: V1-AUDIT-001
+next_recommended_task: V1-AUDIT-002 acceptance-contract workflow linkage closure
+ordinary_queue_status: Q-022 completed; V1 acceptance audit queue is active before adding further Q work
 ```
 
 ## Current Baseline
 
 ```text
-branch: codex/q022-dense-retrieval-provider
+branch: codex/v1-acceptance-audit
 remote: https://github.com/yang-hoo-xin/-agent.git
 baseline commit: 914f16e chore: establish controlled mod agent baseline
 baseline tag: baseline-controlled-agent-v0
@@ -39,6 +39,7 @@ current Review Repair Queue refresh status: completed; control-doc refresh only
 current Q-020 status: completed; focused and affected tests passed
 current Q-021 status: completed; focused and affected tests passed
 current Q-022 status: completed; focused and affected tests passed
+current V1-AUDIT-001 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -206,7 +207,7 @@ files_changed:
 behavior:
   Added a disabled-by-default dense retrieval provider contract with DisabledDenseRetrievalProvider and FakeDenseRetrievalProvider.
   This is not production dense retrieval: FakeDenseRetrievalProvider returns configured chunk-id scores and no real embedding/vector database query is implemented.
-  V1 acceptance audit must verify fake dense provider remains test-only or explicitly gated from real runtime profiles.
+  V1-AUDIT-001 now gates fake dense provider settings behind load_settings(..., allow_test_providers=True), so normal runtime settings cannot silently enable fake dense retrieval.
   Added a KnowledgeChunkRecord to ChunkRecord projection so persisted chunks expose text_for_embedding without changing the database schema.
   Dense evidence remains legacy_rag_auxiliary and cannot approve can_generate_patch without BM25/symbol deterministic evidence.
   Dense budget/cost accounting is serialized into evidence_pack budget_summary, and fake dense retrieval exposes retrieval.dense_started and retrieval.dense_finished trace refs.
@@ -214,7 +215,37 @@ behavior:
 verification:
   focused and affected Q-022 retrieval/config/artifact/dashboard/performance/knowledge tests: 88 passed
   affected Q-022 workflow/planning/proposal tests: 32 passed
-next_recommended_task: Queue refresh and V1 acceptance audit
+next_recommended_task: V1-AUDIT-001 completed; continue to V1-AUDIT-002
+```
+
+## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate
+
+```text
+status: completed
+branch: codex/v1-acceptance-audit
+spec_refs:
+  DEV_SPEC.md 48.9
+  DEV_SPEC.md 49.1.4
+  DEV_SPEC.md 49.7
+  DEV_SPEC.md 50.4
+  DEV_SPEC.md 50.6
+  DEV_SPEC.md 50.9
+files:
+  src/core/settings.py
+  tests/unit/test_config_loading.py
+  docs/V1_ACCEPTANCE_AUDIT.md
+  docs/PROJECT_STATE.md
+  docs/IMPLEMENTATION_QUEUE.md
+  docs/SPEC_COVERAGE_MATRIX.md
+behavior:
+  load_settings() and Settings.from_dict() reject retrieval.dense_provider=fake by default.
+  Tests that need FakeDenseRetrievalProvider through settings must call allow_test_providers=True.
+  The V1 audit records current status as implemented_with_known_gaps, not production-complete.
+  Real dense retrieval remains deferred; Q-022 remains a disabled-by-default contract task only.
+verification:
+  focused V1-AUDIT-001 retrieval/config tests: 19 passed
+  affected V1-AUDIT-001 config/retrieval/budget/dashboard/MCP/artifact tests: 59 passed
+next_recommended_task: V1-AUDIT-002 acceptance-contract workflow linkage closure
 ```
 
 ## Next Execution Rule

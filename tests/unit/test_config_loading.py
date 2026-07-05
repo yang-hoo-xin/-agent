@@ -126,11 +126,56 @@ def test_retrieval_dense_provider_settings_are_explicit(tmp_path: Path) -> None:
     settings_path = tmp_path / "settings.yaml"
     _write_yaml(settings_path, config)
 
-    settings = load_settings(settings_path)
+    settings = load_settings(settings_path, allow_test_providers=True)
 
     assert settings.retrieval.dense_enabled is True
     assert settings.retrieval.dense_provider == "fake"
     assert settings.retrieval.dense_top_k == 5
+
+
+def test_retrieval_fake_dense_provider_requires_test_opt_in(tmp_path: Path) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_enabled: true
+      dense_provider: fake
+      dense_top_k: 5
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    with pytest.raises(SettingsError, match="allow_test_providers"):
+        load_settings(settings_path)
 
 
 def test_retrieval_dense_provider_rejects_unknown_provider(tmp_path: Path) -> None:

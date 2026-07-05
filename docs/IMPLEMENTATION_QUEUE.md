@@ -17,11 +17,22 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: Q Queue
-last_completed: Q-022
-next_recommended_task: Queue refresh and V1 acceptance audit
-Q_queue_status: Q-022 completed; refresh required before adding further Q work
+current_queue: V1 Acceptance Audit Queue
+last_completed: V1-AUDIT-001
+next_recommended_task: V1-AUDIT-002 acceptance-contract workflow linkage closure
+Q_queue_status: Q-022 completed; V1 acceptance audit queue is active before adding further Q work
 ```
+
+## V1 Acceptance Audit Queue
+
+```text
+Queue purpose: verify the current implementation against DEV_SPEC.md V1 acceptance boundaries before adding further Q work.
+```
+
+| Task | Status | Scope | Evidence |
+| --- | --- | --- | --- |
+| V1-AUDIT-001 | completed | Audit V1 acceptance boundaries and gate FakeDenseRetrievalProvider behind explicit test opt-in | `docs/V1_ACCEPTANCE_AUDIT.md`, `tests/unit/test_config_loading.py` |
+| V1-AUDIT-002 | queued | Close acceptance-contract workflow linkage before claiming V1 accepted | `docs/V1_ACCEPTANCE_AUDIT.md`, `docs/SPEC_COVERAGE_MATRIX.md` |
 
 ## Legacy Test Triage
 
@@ -513,7 +524,7 @@ Implementation evidence:
   - Added dense retrieval provider contract with DisabledDenseRetrievalProvider and FakeDenseRetrievalProvider.
   - Dense route is disabled by default through config/settings.yaml and Settings.retrieval.
   - This is a contract-level dense retrieval closure only; it does not implement production embedding calls or vector database retrieval.
-  - FakeDenseRetrievalProvider is for unit-test contract verification and must not be presented as real semantic retrieval.
+  - FakeDenseRetrievalProvider is for unit-test contract verification, must not be presented as real semantic retrieval, and now requires allow_test_providers=True when loaded through settings.
   - Fake dense hits can return chunk ids from KnowledgeDatabase stable chunks through ChunkRecord.text_for_embedding projection.
   - Dense evidence remains legacy_rag_auxiliary, so it cannot approve can_generate_patch without BM25/symbol deterministic evidence.
   - EvidencePack now serializes budget_summary for dense retrieval cost/accounting.

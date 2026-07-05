@@ -238,7 +238,9 @@ class Settings:
     performance: Optional[PerformanceSettings] = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Settings":
+    def from_dict(
+        cls, data: Dict[str, Any], *, allow_test_providers: bool = False
+    ) -> "Settings":
         if not isinstance(data, dict):
             raise SettingsError("Settings root must be a mapping")
 
@@ -368,6 +370,14 @@ class Settings:
             performance=performance_settings,
         )
 
+        if (
+            settings.retrieval.dense_provider == "fake"
+            and not allow_test_providers
+        ):
+            raise SettingsError(
+                "retrieval.dense_provider=fake requires allow_test_providers=True"
+            )
+
         return settings
 
 
@@ -390,12 +400,16 @@ def validate_settings(settings: Settings) -> None:
         raise SettingsError("Missing required field: observability.log_level")
 
 
-def load_settings(path: str | Path | None = None) -> Settings:
+def load_settings(
+    path: str | Path | None = None, *, allow_test_providers: bool = False
+) -> Settings:
     """Load settings from a YAML file and validate required fields.
 
     Args:
         path: Path to settings YAML.  Defaults to
             ``<repo>/config/settings.yaml`` (absolute, CWD-independent).
+        allow_test_providers: Explicitly allow test-only providers such as
+            ``retrieval.dense_provider=fake``.
     """
     settings_path = Path(path) if path is not None else DEFAULT_SETTINGS_PATH
     if not settings_path.is_absolute():
@@ -406,6 +420,8 @@ def load_settings(path: str | Path | None = None) -> Settings:
     with settings_path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
 
-    settings = Settings.from_dict(data or {})
+    settings = Settings.from_dict(
+        data or {}, allow_test_providers=allow_test_providers
+    )
     validate_settings(settings)
     return settings
