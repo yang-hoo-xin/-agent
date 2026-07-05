@@ -895,11 +895,25 @@ def _v1_acceptance_boundary(
                 "message": "V1 acceptance requires real build success evidence.",
             }
         )
+    if runtime.get("execution_mode") != "real":
+        blockers.append(
+            {
+                "code": "REAL_RUNTIME_MODE_REQUIRED",
+                "message": "V1 acceptance requires runtime evidence from real execution mode.",
+            }
+        )
     if runtime.get("real_runtime_performed") is not True:
         blockers.append(
             {
                 "code": "REAL_RUNTIME_EVIDENCE_MISSING",
                 "message": "V1 acceptance requires real runtime execution evidence.",
+            }
+        )
+    if runtime.get("claims_real_runtime_success") is not True:
+        blockers.append(
+            {
+                "code": "REAL_RUNTIME_SUCCESS_NOT_CLAIMED",
+                "message": "V1 acceptance requires an explicit real runtime success claim.",
             }
         )
     if runtime.get("acceptance_verified") is not True:

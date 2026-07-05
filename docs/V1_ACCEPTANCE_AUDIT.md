@@ -74,9 +74,10 @@ boundary explicit in `eval_report` and `workflow_summary`.
 ```text
 fake/local requested_behavior_status: may be verified for the contract fixture
 fake/local v1_acceptance_status: blocked
-required blockers: REAL_BUILD_EVIDENCE_MISSING and REAL_RUNTIME_EVIDENCE_MISSING
+fake/local required blockers: REAL_BUILD_EVIDENCE_MISSING, REAL_RUNTIME_MODE_REQUIRED, REAL_RUNTIME_EVIDENCE_MISSING, and REAL_RUNTIME_SUCCESS_NOT_CLAIMED
 forbidden claim: fake/local workflow completion is real V1 runtime acceptance
-real runtime probe path: can reach v1_acceptance_status=accepted when local build and real runtime evidence are both verified
+real runtime probe path: can reach v1_acceptance_status=accepted only when local build success is claimed and runtime evidence has execution_mode=real, real_runtime_performed=True, claims_real_runtime_success=True, and acceptance_verified=True
+real runtime evidence branch: not a production runtime launcher, persistent collector, or screenshot capture pipeline
 ```
 
 The `v1_acceptance_status` and `v1_acceptance_blockers` fields are V1 audit

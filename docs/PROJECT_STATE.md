@@ -392,13 +392,14 @@ behavior:
   Runtime evidence now has build_real_runtime_evidence_payload for explicitly executed runtime probe evidence.
   build_graph now accepts runtime_evidence_factory so tests and future adapters can provide non-fake runtime evidence.
   The graph has a tested path where local build evidence and real runtime evidence remove v1_acceptance_blockers and produce v1_acceptance_status=accepted.
+  V1 accepted now explicitly requires runtime execution_mode=real, real_runtime_performed=True, claims_real_runtime_success=True, and acceptance_verified=True.
   runtime_evidence and manual_evidence contracts now require real_runtime_performed.
 claim_boundary:
   This closes the MISS-022 contract/E2E gap outside fake/manual/supplied fixture-style evidence.
   It does not implement a production game process launcher, persistent runtime log collector, or screenshot capture pipeline.
 verification:
-  focused runtime/workflow/artifact tests: 34 passed
-  affected runtime/workflow/repair/eval/artifact/dashboard tests: 95 passed
+  focused runtime/workflow/artifact tests: 36 passed
+  affected runtime/workflow/repair/eval/artifact/dashboard tests: 97 passed
   git diff --check: passed
 remaining:
   Production runtime launcher/log collector remains open as MISS-026.
