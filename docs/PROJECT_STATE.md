@@ -9,15 +9,15 @@ Last updated: 2026-07-05
 
 ```text
 current_queue: Post V1 Acceptance Handoff
-last_completed: MISS-022
-next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-026 if production runtime launcher/log collector is the goal
-ordinary_queue_status: Q-022 and MISS-022 completed; production runtime automation remains tracked as MISS-026
+last_completed: MISS-026A
+next_recommended_task: continue MISS-026 if real game process launch, persistent log collection, and screenshot capture are the goal
+ordinary_queue_status: Q-022, MISS-022, and MISS-026A completed; real game runtime automation remains tracked as MISS-026
 ```
 
 ## Current Baseline
 
 ```text
-branch: codex/v1-acceptance-audit
+branch: codex/miss-026-runtime-collector
 remote: https://github.com/yang-hoo-xin/-agent.git
 baseline commit: 914f16e chore: establish controlled mod agent baseline
 baseline tag: baseline-controlled-agent-v0
@@ -365,12 +365,12 @@ architecture_note:
   They are not generalized in this audit.
 handoff:
   MISS-022 completed the injectable real runtime evidence branch after this audit.
-  If the next goal is production runtime automation, start from MISS-026 production runtime launcher/log collector.
+  If the next goal is production runtime automation, continue MISS-026 after MISS-026A with real game launch, persistent log collection, and screenshot capture.
   If the next goal is feature expansion, select the next task from docs/SPEC_COVERAGE_MATRIX.md open gaps.
 verification:
   documentation consistency checks: passed
   git diff --check: passed
-next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-026 if production runtime launcher/log collector is the goal
+next_recommended_task: continue MISS-026 if real game process launch, persistent log collection, and screenshot capture are the goal
 ```
 
 ## MISS-022: Real Runtime Evidence Branch
@@ -402,8 +402,34 @@ verification:
   affected runtime/workflow/repair/eval/artifact/dashboard tests: 97 passed
   git diff --check: passed
 remaining:
-  Production runtime launcher/log collector remains open as MISS-026.
-next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-026 if production runtime launcher/log collector is the goal
+  Real game process launch, persistent log collection, and screenshot capture remain open as MISS-026.
+next_recommended_task: continue MISS-026 if real game process launch, persistent log collection, and screenshot capture are the goal
+```
+
+## MISS-026A Local Runtime Probe Collector
+
+```text
+status: implemented
+branch: codex/miss-026-runtime-collector
+files:
+  src/mod_agent/runtime/probe.py
+  src/mod_agent/runtime/__init__.py
+  tests/unit/test_runtime_probe.py
+  tests/unit/test_workflow_graph.py
+behavior:
+  RuntimeProbeRunner can launch an explicitly approved local subprocess runtime probe.
+  The probe collects stdout and stderr, checks startup markers, maps acceptance_criteria to configured log markers, and builds a runtime_evidence payload through build_real_runtime_evidence_payload.
+  make_runtime_probe_evidence_factory exposes the runner as a graph-compatible runtime_evidence_factory without changing the default fake graph path.
+claim_boundary:
+  This proves a controlled local subprocess can produce runtime_evidence that the workflow consumes.
+  It does not launch the real game process, manage a persistent runtime log file, capture screenshots, or prove real mod behavior inside GTFO.
+verification:
+  focused runtime probe/runtime evidence/workflow tests: 23 passed
+  affected runtime/workflow/repair/artifact/dashboard tests: 51 passed
+  screenshot-specific unit test file: not present in tests/unit
+remaining:
+  Real game process launcher, persistent log collection, and screenshot capture remain open as MISS-026.
+next_recommended_task: continue MISS-026 if real game process launch, persistent log collection, and screenshot capture are the goal
 ```
 
 ## Next Execution Rule

@@ -41,8 +41,8 @@ benchmarking, or full production runtime branch coverage.
 
 | Area | V1 audit result | Evidence | Remaining gap |
 | --- | --- | --- | --- |
-| Controlled workflow | contract covered for fake/local path and tested real runtime evidence path | Q-011 through Q-015, R-012, V1-AUDIT-002, V1-AUDIT-003, V1-AUDIT-004, MISS-022, repair checkpoint smoke | production runtime launcher/log collector remains open |
-| Acceptance | contract linkage covered for fake/manual/supplied builders and injectable real runtime probe evidence | V1-AUDIT-002 carries FeatureSpec acceptance contract into runtime_evidence and eval_report with strict acceptance_verified routing; V1-AUDIT-003 verifies manual/supplied evidence must support every acceptance_criteria entry in acceptance_contract; V1-AUDIT-004 adds v1_acceptance_status and v1_acceptance_blockers to eval_report and workflow_summary; MISS-022 adds build_real_runtime_evidence_payload and a graph E2E test that reaches v1_acceptance_status=accepted with local build and real runtime probe evidence | production runtime launcher/log collector remains open |
+| Controlled workflow | contract covered for fake/local path, tested real runtime evidence path, and local subprocess probe path | Q-011 through Q-015, R-012, V1-AUDIT-002, V1-AUDIT-003, V1-AUDIT-004, MISS-022, MISS-026A, repair checkpoint smoke | real game launch, persistent log collection, and screenshot capture remain open |
+| Acceptance | contract linkage covered for fake/manual/supplied builders, injectable real runtime probe evidence, and local subprocess probe marker evidence | V1-AUDIT-002 carries FeatureSpec acceptance contract into runtime_evidence and eval_report with strict acceptance_verified routing; V1-AUDIT-003 verifies manual/supplied evidence must support every acceptance_criteria entry in acceptance_contract; V1-AUDIT-004 adds v1_acceptance_status and v1_acceptance_blockers to eval_report and workflow_summary; MISS-022 adds build_real_runtime_evidence_payload and a graph E2E test that reaches v1_acceptance_status=accepted with local build and real runtime probe evidence; MISS-026A verifies an explicitly approved local subprocess probe can feed runtime_evidence through the graph | real game launch, persistent log collection, and screenshot capture remain open |
 | Retrieval | V1 deterministic path covered | BM25/symbol/readiness rows RET-001 through RET-008 | RRF, rerank, and real dense provider remain future work |
 | Dense provider boundary | test-only fake provider gated | `load_settings(..., allow_test_providers=True)` is required for `retrieval.dense_provider=fake` | real provider index/query API remains deferred |
 | MCP | facade contract covered | Q-021 read-only/report-only tool surface | final JSON-RPC adapter must map unknown tool names to protocol error, tracked by MISS-020 |
@@ -91,8 +91,8 @@ result if the project needs multiple release tracks.
 V1 contract path verdict: accepted with known gaps
 Real runtime evidence branch verdict: accepted with known gaps
 Reason: injectable local build plus real runtime probe evidence reaches v1_acceptance_status=accepted in graph tests.
-Allowed claim: controlled local contract path and injectable real runtime evidence branch are implemented and tested.
-Forbidden claim: the project has production runtime automation or a production game process launcher.
+Allowed claim: controlled local contract path, injectable real runtime evidence branch, and local subprocess runtime probe/log collector are implemented and tested.
+Forbidden claim: the project has real game runtime automation, persistent game log collection, screenshot capture, or a production game process launcher.
 ```
 
 ## Queue Handoff
@@ -100,7 +100,8 @@ Forbidden claim: the project has production runtime automation or a production g
 ```text
 V1 audit queue: completed
 MISS-022 real runtime evidence branch: completed
-If the next goal is production runtime automation: start from MISS-026 production runtime launcher/log collector.
+MISS-026A local subprocess runtime probe/log collector: completed
+If the next goal is production runtime automation: continue MISS-026 real game runtime launcher, persistent log collection, and screenshot capture.
 If the next goal is feature expansion: select the next task from docs/SPEC_COVERAGE_MATRIX.md open gaps.
 Do not claim production runtime automation until MISS-026 is closed by implementation and tests.
 ```

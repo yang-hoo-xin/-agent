@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from src.mod_agent.artifacts import ArtifactStore
@@ -15,8 +16,10 @@ from src.mod_agent.knowledge import (
 )
 from src.mod_agent.runtime import (
     RuntimeEvidenceItem,
+    RuntimeProbeProfile,
     build_manual_runtime_evidence_payload,
     build_real_runtime_evidence_payload,
+    make_runtime_probe_evidence_factory,
 )
 from src.mod_agent.workflow import build_graph, create_initial_state
 
@@ -516,6 +519,68 @@ def test_real_runtime_without_success_claim_does_not_accept_v1_boundary(
     assert {
         blocker["code"] for blocker in evaluation["v1_acceptance_blockers"]
     } == {"REAL_RUNTIME_SUCCESS_NOT_CLAIMED"}
+
+
+def test_runtime_probe_factory_can_accept_v1_boundary(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    build_result_factory = _real_build_result_factory(tmp_path)
+    requested_behavior = "make Load enable diagnostics"
+    acceptance_criteria = (
+        f"Requested behavior is implemented: {requested_behavior}",
+        "Every proposed change is bound to evidence.",
+        "Validation output is reported with real command or artifact evidence.",
+    )
+    profile = RuntimeProbeProfile(
+        profile_id="graph_runtime_probe",
+        working_directory=str(tmp_path),
+        command=(
+            sys.executable,
+            "-c",
+            (
+                "print('MOD_AGENT_STARTUP_OK'); "
+                "print('MOD_AGENT_ACCEPTANCE_BEHAVIOR'); "
+                "print('MOD_AGENT_ACCEPTANCE_EVIDENCE'); "
+                "print('MOD_AGENT_ACCEPTANCE_VALIDATION')"
+            ),
+        ),
+        timeout_seconds=10,
+        startup_markers=("MOD_AGENT_STARTUP_OK",),
+        acceptance_markers={
+            acceptance_criteria[0]: "MOD_AGENT_ACCEPTANCE_BEHAVIOR",
+            acceptance_criteria[1]: "MOD_AGENT_ACCEPTANCE_EVIDENCE",
+            acceptance_criteria[2]: "MOD_AGENT_ACCEPTANCE_VALIDATION",
+        },
+    )
+
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        build_result_factory=build_result_factory,
+        runtime_evidence_factory=make_runtime_probe_evidence_factory(
+            profile=profile,
+            allow_execution=True,
+        ),
+    )
+    state = create_initial_state(
+        run_id="run_runtime_probe",
+        request_id="req_runtime_probe",
+        user_request=requested_behavior,
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    runtime = _artifact_data(store, result, "runtime_evidence")
+    evaluation = _artifact_data(store, result, "eval_report")
+
+    assert runtime["execution_mode"] == "real"
+    assert runtime["evidence_source"] == "real_runtime_probe"
+    assert runtime["real_runtime_performed"] is True
+    assert runtime["acceptance_verified"] is True
+    assert runtime["claims_real_runtime_success"] is True
+    assert runtime["raw_supplied_output"] is not None
+    assert evaluation["v1_acceptance_status"] == "accepted"
+    assert evaluation["v1_acceptance_blockers"] == []
 
 
 def test_review_block_does_not_create_fake_success_artifacts(tmp_path: Path) -> None:
