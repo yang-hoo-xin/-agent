@@ -174,7 +174,7 @@ known broader-suite gaps:
 | Spec detail coverage can be lost across many small loops | High | Use `docs/SPEC_COVERAGE_MATRIX.md` before selecting and closing tasks |
 | Imported RAG skeleton can dominate product direction | High | Treat RAG as Evidence Knowledge Subsystem only |
 | GTFO details can leak into generic platform | Medium | Put game-specific behavior behind domain adapters |
-| Dense/vector/multimodal features can block V1 | Medium | BM25/symbol/deterministic first; optional providers later |
+| Dense/vector/multimodal features can block V1 | Medium | BM25/symbol/deterministic first; Q-022 is contract-only dense provider work with real embedding/vector retrieval deferred |
 | Claims can outrun implemented evidence | High | Completion levels require tests and artifacts |
 | Fake/local execution artifacts may be mistaken for real build/runtime success | High | Every artifact must include `execution_mode=fake|local|supplied_output|real`; reports must not claim real gameplay success from fake/local evidence |
 | External review found P0/P1 structural issues after several Q loops | High | Review Repair Queue is completed through R-009-HARDENING-001; any new P0/P1 review finding still supersedes ordinary Q feature work |
@@ -205,6 +205,8 @@ files_changed:
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
   Added a disabled-by-default dense retrieval provider contract with DisabledDenseRetrievalProvider and FakeDenseRetrievalProvider.
+  This is not production dense retrieval: FakeDenseRetrievalProvider returns configured chunk-id scores and no real embedding/vector database query is implemented.
+  V1 acceptance audit must verify fake dense provider remains test-only or explicitly gated from real runtime profiles.
   Added a KnowledgeChunkRecord to ChunkRecord projection so persisted chunks expose text_for_embedding without changing the database schema.
   Dense evidence remains legacy_rag_auxiliary and cannot approve can_generate_patch without BM25/symbol deterministic evidence.
   Dense budget/cost accounting is serialized into evidence_pack budget_summary, and fake dense retrieval exposes retrieval.dense_started and retrieval.dense_finished trace refs.

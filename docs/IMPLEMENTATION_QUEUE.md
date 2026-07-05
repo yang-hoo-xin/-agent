@@ -99,7 +99,7 @@ Historical details for completed loops live in `docs/audits/LOOP_HISTORY.md`.
 | Review Repair Queue refresh | completed | Confirmed no active Review Repair Queue blocker remains before Q-020; future open gaps stay tracked by the coverage matrix | `docs/PROJECT_STATE.md` |
 | Q-020 | completed | Controlled-agent performance budget contract adds config-driven limits, blocked/degraded budget decisions, trace summaries, and job_status budget_summary serialization | `docs/PROJECT_STATE.md` |
 | Q-021 | completed | Controlled-agent MCP tool surface exposes read-only/report-only status, artifact, retrieval, proposal, review, eval, and job summaries with degraded budget semantics preserved | `docs/PROJECT_STATE.md` |
-| Q-022 | completed | Dense retrieval provider contract is disabled by default, supports fake provider chunk hits, reports retrieval budget accounting, and cannot replace BM25/symbol V1 gates | `docs/PROJECT_STATE.md` |
+| Q-022 | completed | Dense retrieval provider contract is disabled by default, supports fake provider chunk hits, reports retrieval budget accounting, and cannot replace BM25/symbol V1 gates; real embedding/vector retrieval remains deferred | `docs/PROJECT_STATE.md` |
 ## Review Repair Queue
 
 ```text
@@ -512,6 +512,8 @@ Conflict checks: no network calls in unit tests
 Implementation evidence:
   - Added dense retrieval provider contract with DisabledDenseRetrievalProvider and FakeDenseRetrievalProvider.
   - Dense route is disabled by default through config/settings.yaml and Settings.retrieval.
+  - This is a contract-level dense retrieval closure only; it does not implement production embedding calls or vector database retrieval.
+  - FakeDenseRetrievalProvider is for unit-test contract verification and must not be presented as real semantic retrieval.
   - Fake dense hits can return chunk ids from KnowledgeDatabase stable chunks through ChunkRecord.text_for_embedding projection.
   - Dense evidence remains legacy_rag_auxiliary, so it cannot approve can_generate_patch without BM25/symbol deterministic evidence.
   - EvidencePack now serializes budget_summary for dense retrieval cost/accounting.
