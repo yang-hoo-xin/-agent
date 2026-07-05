@@ -177,6 +177,7 @@ def _build_runtime_payload(
         startup_loaded=startup_loaded,
         gameplay_behavior_verified=gameplay_behavior_verified,
         evidence_items=items,
+        acceptance_criteria=tuple(acceptance_criteria),
     )
     claims_real_runtime_success = (
         verification_status == "verified"
@@ -220,6 +221,7 @@ def _validate_verification(
     startup_loaded: bool,
     gameplay_behavior_verified: bool,
     evidence_items: tuple[RuntimeEvidenceItem, ...],
+    acceptance_criteria: tuple[str, ...],
 ) -> None:
     allowed = {"verified", "partial", "failed", "inconclusive"}
     if verification_status not in allowed:
@@ -232,6 +234,12 @@ def _validate_verification(
         item.supports_acceptance and item.confidence > 0.0
         for item in evidence_items
     )
+    supported_acceptance = {
+        claim
+        for item in evidence_items
+        if item.confidence > 0.0
+        for claim in item.supports_acceptance
+    }
     if not startup_loaded:
         raise RuntimeEvidenceError("Verified runtime evidence requires startup_loaded")
     if not gameplay_behavior_verified:
@@ -241,6 +249,10 @@ def _validate_verification(
     if not has_acceptance_evidence:
         raise RuntimeEvidenceError(
             "Verified runtime evidence requires explicit acceptance evidence"
+        )
+    if acceptance_criteria and not supported_acceptance.intersection(acceptance_criteria):
+        raise RuntimeEvidenceError(
+            "Verified runtime evidence must support the acceptance contract"
         )
 
 
