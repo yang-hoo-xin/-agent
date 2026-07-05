@@ -349,7 +349,7 @@ next_recommended_task: V1-AUDIT-005 final V1 acceptance verdict and queue handof
 ```text
 status: completed
 branch: codex/v1-acceptance-audit
-commit: pending
+commit: 0c78c81 docs(v1): record final acceptance audit verdict
 files:
   docs/V1_ACCEPTANCE_AUDIT.md
   docs/IMPLEMENTATION_QUEUE.md
