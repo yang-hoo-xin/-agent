@@ -22,8 +22,8 @@ DEV_SPEC.md 50.9  V1 implementation-level architecture reference
 
 ```text
 status: implemented_with_known_gaps
-last_completed_queue_task: V1-AUDIT-003
-current_audit_task: V1-AUDIT-004
+last_completed_queue_task: V1-AUDIT-004
+current_audit_task: V1-AUDIT-005
 ```
 
 V1 can currently claim a controlled local contract path for workflow, artifacts,
@@ -39,8 +39,8 @@ runtime branch coverage.
 
 | Area | V1 audit result | Evidence | Remaining gap |
 | --- | --- | --- | --- |
-| Controlled workflow | contract covered for fake/local path | Q-011 through Q-015, R-012, V1-AUDIT-002, V1-AUDIT-003, repair checkpoint smoke | full real runtime branch E2E remains open in matrix rows WF-003/WF-005 |
-| Acceptance | contract linkage covered for fake/manual/supplied builder paths | V1-AUDIT-002 carries FeatureSpec acceptance contract into runtime_evidence and eval_report with strict acceptance_verified routing; V1-AUDIT-003 verifies manual/supplied evidence must support every acceptance_criteria entry in acceptance_contract before verified acceptance is recorded | automated real runtime branch E2E remains unverified |
+| Controlled workflow | contract covered for fake/local path with explicit V1 acceptance blocker | Q-011 through Q-015, R-012, V1-AUDIT-002, V1-AUDIT-003, V1-AUDIT-004, repair checkpoint smoke | full real runtime branch E2E remains open in matrix rows WF-003/WF-005 |
+| Acceptance | contract linkage covered for fake/manual/supplied builder paths, and fake/local workflow completion cannot claim V1 accepted | V1-AUDIT-002 carries FeatureSpec acceptance contract into runtime_evidence and eval_report with strict acceptance_verified routing; V1-AUDIT-003 verifies manual/supplied evidence must support every acceptance_criteria entry in acceptance_contract; V1-AUDIT-004 adds v1_acceptance_status and v1_acceptance_blockers to eval_report and workflow_summary | automated real runtime branch E2E remains unimplemented |
 | Retrieval | V1 deterministic path covered | BM25/symbol/readiness rows RET-001 through RET-008 | RRF, rerank, and real dense provider remain future work |
 | Dense provider boundary | test-only fake provider gated | `load_settings(..., allow_test_providers=True)` is required for `retrieval.dense_provider=fake` | real provider index/query API remains deferred |
 | MCP | facade contract covered | Q-021 read-only/report-only tool surface | final JSON-RPC adapter must map unknown tool names to protocol error, tracked by MISS-020 |
@@ -62,11 +62,24 @@ forbidden claim: dense retrieval can replace BM25/symbol V1 evidence gates
 blocked from normal settings loading unless the caller explicitly passes
 `allow_test_providers=True`.
 
+## Real Runtime Boundary
+
+The current graph still uses the fake/local runtime evidence builder for the
+controlled workflow tail. V1-AUDIT-004 makes that boundary explicit in
+`eval_report` and `workflow_summary`.
+
+```text
+fake/local requested_behavior_status: may be verified for the contract fixture
+fake/local v1_acceptance_status: blocked
+required blockers: REAL_BUILD_EVIDENCE_MISSING and REAL_RUNTIME_EVIDENCE_MISSING
+forbidden claim: fake/local workflow completion is real V1 runtime acceptance
+```
+
 ## Next Recommended Task
 
 ```text
-task_id: V1-AUDIT-004
-goal: decide and test the real runtime branch E2E boundary before any V1 acceptance claim
+task_id: V1-AUDIT-005
+goal: produce the final V1 acceptance verdict and queue handoff without claiming real runtime execution
 inputs: MISS-022, WF-003, WF-005, EXEC-005, EXEC-006, DEV_SPEC.md 49.1.4 and 50.9.3
-tests: focused real-runtime boundary, runtime evidence, workflow routing, repair, eval, and artifact contract tests
+tests: focused V1 acceptance audit, workflow summary, artifact contract, and documentation consistency checks
 ```

@@ -9,8 +9,8 @@ Last updated: 2026-07-05
 
 ```text
 current_queue: V1 Acceptance Audit Queue
-last_completed: V1-AUDIT-003
-next_recommended_task: V1-AUDIT-004 real runtime branch E2E boundary decision
+last_completed: V1-AUDIT-004
+next_recommended_task: V1-AUDIT-005 final V1 acceptance verdict and queue handoff
 ordinary_queue_status: Q-022 completed; V1 acceptance audit queue is active before adding further Q work
 ```
 
@@ -42,6 +42,7 @@ current Q-022 status: completed; focused and affected tests passed
 current V1-AUDIT-001 status: completed; focused and affected tests passed
 current V1-AUDIT-002 status: completed; focused and affected tests passed
 current V1-AUDIT-003 status: completed; focused and affected tests passed
+current V1-AUDIT-004 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -311,6 +312,35 @@ remaining:
   Automated real runtime execution and real runtime evidence collection remain unimplemented.
   Do not claim V1 accepted until the real runtime branch is either tested end-to-end or explicitly scoped out of V1 acceptance.
 next_recommended_task: V1-AUDIT-004 real runtime branch E2E boundary decision
+```
+
+## V1-AUDIT-004: Real Runtime Branch Acceptance Boundary
+
+```text
+status: completed
+branch: codex/v1-acceptance-audit
+commit: f6c83cf fix(workflow): block v1 acceptance without real runtime evidence
+spec_refs:
+  DEV_SPEC.md 49.1.4
+  DEV_SPEC.md 50.9.3
+files:
+  src/mod_agent/workflow/graph.py
+  src/mod_agent/artifacts/registry.py
+  tests/unit/test_workflow_graph.py
+  tests/unit/test_artifact_contract.py
+  tests/unit/test_dashboard_projection.py
+behavior:
+  Fake/local eval_report and workflow_summary now include v1_acceptance_status and v1_acceptance_blockers.
+  The default fake/local path records requested_behavior_status=verified only for the controlled contract fixture, while v1_acceptance_status remains blocked.
+  Missing real build success evidence records REAL_BUILD_EVIDENCE_MISSING.
+  Missing real runtime execution evidence records REAL_RUNTIME_EVIDENCE_MISSING.
+verification:
+  focused workflow/artifact/dashboard tests: 34 passed
+  affected runtime/workflow/repair/eval/artifact/dashboard tests: 105 passed
+remaining:
+  Automated real runtime execution and real runtime evidence collection remain unimplemented.
+  Do not claim real V1 runtime acceptance from fake/local, manual, or supplied fixture-style evidence alone.
+next_recommended_task: V1-AUDIT-005 final V1 acceptance verdict and queue handoff
 ```
 
 ## Next Execution Rule
