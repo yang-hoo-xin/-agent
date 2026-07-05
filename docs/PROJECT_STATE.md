@@ -298,7 +298,7 @@ files:
   src/mod_agent/runtime/evidence.py
   tests/unit/test_runtime_evidence.py
 behavior:
-  Manual and supplied runtime evidence can verify acceptance only when evidence_items.supports_acceptance matches the current acceptance_contract.
+  Manual and supplied runtime evidence can verify acceptance only when evidence_items.supports_acceptance covers every acceptance_criteria entry in the current acceptance_contract.
   Verified manual/supplied evidence with unrelated supports_acceptance now raises RuntimeEvidenceError.
   Unverified supplied evidence preserves acceptance_contract while keeping acceptance_verified=False.
   Fake runtime fixtures remain separate and still do not claim real runtime execution.

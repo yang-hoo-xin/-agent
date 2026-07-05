@@ -40,7 +40,7 @@ runtime branch coverage.
 | Area | V1 audit result | Evidence | Remaining gap |
 | --- | --- | --- | --- |
 | Controlled workflow | contract covered for fake/local path | Q-011 through Q-015, R-012, V1-AUDIT-002, V1-AUDIT-003, repair checkpoint smoke | full real runtime branch E2E remains open in matrix rows WF-003/WF-005 |
-| Acceptance | contract linkage covered for fake/manual/supplied builder paths | V1-AUDIT-002 carries FeatureSpec acceptance contract into runtime_evidence and eval_report with strict acceptance_verified routing; V1-AUDIT-003 verifies manual/supplied evidence must match acceptance_contract before verified acceptance is recorded | automated real runtime branch E2E remains unverified |
+| Acceptance | contract linkage covered for fake/manual/supplied builder paths | V1-AUDIT-002 carries FeatureSpec acceptance contract into runtime_evidence and eval_report with strict acceptance_verified routing; V1-AUDIT-003 verifies manual/supplied evidence must support every acceptance_criteria entry in acceptance_contract before verified acceptance is recorded | automated real runtime branch E2E remains unverified |
 | Retrieval | V1 deterministic path covered | BM25/symbol/readiness rows RET-001 through RET-008 | RRF, rerank, and real dense provider remain future work |
 | Dense provider boundary | test-only fake provider gated | `load_settings(..., allow_test_providers=True)` is required for `retrieval.dense_provider=fake` | real provider index/query API remains deferred |
 | MCP | facade contract covered | Q-021 read-only/report-only tool surface | final JSON-RPC adapter must map unknown tool names to protocol error, tracked by MISS-020 |

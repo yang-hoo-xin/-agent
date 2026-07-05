@@ -250,9 +250,10 @@ def _validate_verification(
         raise RuntimeEvidenceError(
             "Verified runtime evidence requires explicit acceptance evidence"
         )
-    if acceptance_criteria and not supported_acceptance.intersection(acceptance_criteria):
+    missing_acceptance = set(acceptance_criteria) - supported_acceptance
+    if missing_acceptance:
         raise RuntimeEvidenceError(
-            "Verified runtime evidence must support the acceptance contract"
+            "Verified runtime evidence must support every acceptance criterion"
         )
 
 

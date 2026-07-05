@@ -13,6 +13,7 @@ from src.mod_agent.runtime import (
 
 
 ACCEPTANCE_CRITERION = "Requested behavior is implemented: make Load enable diagnostics"
+SECOND_ACCEPTANCE_CRITERION = "Diagnostic toggle keeps unrelated markers unchanged"
 RUNTIME_PLAN_STEP = "acceptance_evidence_observed"
 
 
@@ -47,7 +48,7 @@ def test_manual_runtime_evidence_verifies_matching_acceptance_contract() -> None
 
 
 def test_supplied_runtime_evidence_rejects_unmatched_acceptance_contract() -> None:
-    with pytest.raises(RuntimeEvidenceError, match="acceptance contract"):
+    with pytest.raises(RuntimeEvidenceError, match="every acceptance criterion"):
         build_supplied_runtime_evidence_payload(
             feature_id="feature_001",
             raw_supplied_output="Game loaded and unrelated behavior was observed.",
@@ -64,6 +65,30 @@ def test_supplied_runtime_evidence_rejects_unmatched_acceptance_contract() -> No
             gameplay_behavior_verified=True,
             verification_status="verified",
             acceptance_criteria=(ACCEPTANCE_CRITERION,),
+            runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        )
+
+
+def test_manual_runtime_evidence_rejects_partial_acceptance_contract() -> None:
+    with pytest.raises(RuntimeEvidenceError, match="every acceptance criterion"):
+        build_manual_runtime_evidence_payload(
+            feature_id="feature_001",
+            evidence_items=(
+                RuntimeEvidenceItem(
+                    item_type="manual_note",
+                    source="tester",
+                    locator="manual://run-001",
+                    supports_acceptance=(ACCEPTANCE_CRITERION,),
+                    confidence=1.0,
+                ),
+            ),
+            startup_loaded=True,
+            gameplay_behavior_verified=True,
+            verification_status="verified",
+            acceptance_criteria=(
+                ACCEPTANCE_CRITERION,
+                SECOND_ACCEPTANCE_CRITERION,
+            ),
             runtime_verification_plan=(RUNTIME_PLAN_STEP,),
         )
 
