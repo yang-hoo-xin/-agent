@@ -9,9 +9,9 @@ Last updated: 2026-07-05
 
 ```text
 current_queue: Post V1 Acceptance Handoff
-last_completed: V1-AUDIT-005
-next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-022 first if real V1 runtime acceptance is the goal
-ordinary_queue_status: Q-022 completed; V1 acceptance audit queue completed with real runtime acceptance still blocked
+last_completed: MISS-022
+next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-026 if production runtime launcher/log collector is the goal
+ordinary_queue_status: Q-022 and MISS-022 completed; production runtime automation remains tracked as MISS-026
 ```
 
 ## Current Baseline
@@ -44,6 +44,7 @@ current V1-AUDIT-002 status: completed; focused and affected tests passed
 current V1-AUDIT-003 status: completed; focused and affected tests passed
 current V1-AUDIT-004 status: completed; focused and affected tests passed
 current V1-AUDIT-005 status: completed; documentation consistency checks passed
+current MISS-022 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -357,18 +358,51 @@ files:
   docs/SPEC_COVERAGE_MATRIX.md
 verdict:
   V1 contract path is accepted with known gaps.
-  Real runtime acceptance is not accepted.
-  The project must not claim real runtime success until MISS-022 is closed by implementation and tests.
+  Real runtime evidence branch was not accepted at V1-AUDIT-005 time; it is now closed by MISS-022.
+  The project must not claim production runtime automation until MISS-026 is closed by implementation and tests.
 architecture_note:
   v1_acceptance_status and v1_acceptance_blockers are V1 audit boundary fields.
   They are not generalized in this audit.
 handoff:
-  If the next goal is real V1 runtime acceptance, start from MISS-022 real runtime collector/E2E.
+  MISS-022 completed the injectable real runtime evidence branch after this audit.
+  If the next goal is production runtime automation, start from MISS-026 production runtime launcher/log collector.
   If the next goal is feature expansion, select the next task from docs/SPEC_COVERAGE_MATRIX.md open gaps.
 verification:
   documentation consistency checks: passed
   git diff --check: passed
-next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-022 first if real V1 runtime acceptance is the goal
+next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-026 if production runtime launcher/log collector is the goal
+```
+
+## MISS-022: Real Runtime Evidence Branch
+
+```text
+status: completed
+branch: codex/v1-acceptance-audit
+commit: 5529e1f fix(workflow): add real runtime evidence branch
+files:
+  src/mod_agent/runtime/evidence.py
+  src/mod_agent/runtime/__init__.py
+  src/mod_agent/workflow/graph.py
+  src/mod_agent/artifacts/registry.py
+  tests/unit/test_runtime_evidence.py
+  tests/unit/test_workflow_graph.py
+  tests/unit/test_artifact_contract.py
+  tests/unit/test_dashboard_projection.py
+behavior:
+  Runtime evidence now has build_real_runtime_evidence_payload for explicitly executed runtime probe evidence.
+  build_graph now accepts runtime_evidence_factory so tests and future adapters can provide non-fake runtime evidence.
+  The graph has a tested path where local build evidence and real runtime evidence remove v1_acceptance_blockers and produce v1_acceptance_status=accepted.
+  runtime_evidence and manual_evidence contracts now require real_runtime_performed.
+claim_boundary:
+  This closes the MISS-022 contract/E2E gap outside fake/manual/supplied fixture-style evidence.
+  It does not implement a production game process launcher, persistent runtime log collector, or screenshot capture pipeline.
+verification:
+  focused runtime/workflow/artifact tests: 34 passed
+  affected runtime/workflow/repair/eval/artifact/dashboard tests: 95 passed
+  git diff --check: passed
+remaining:
+  Production runtime launcher/log collector remains open as MISS-026.
+next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-026 if production runtime launcher/log collector is the goal
 ```
 
 ## Next Execution Rule

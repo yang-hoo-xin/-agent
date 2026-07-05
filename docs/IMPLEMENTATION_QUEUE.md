@@ -18,9 +18,9 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Post V1 Acceptance Handoff
-last_completed: V1-AUDIT-005
-next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-022 first if real V1 runtime acceptance is the goal
-Q_queue_status: Q-022 completed; V1 acceptance audit queue completed with real runtime acceptance still blocked
+last_completed: MISS-022
+next_recommended_task: select next task from docs/SPEC_COVERAGE_MATRIX.md open gaps; use MISS-026 if production runtime launcher/log collector is the goal
+Q_queue_status: Q-022 and MISS-022 completed; production runtime automation remains tracked as MISS-026
 ```
 
 ## V1 Acceptance Audit Queue
