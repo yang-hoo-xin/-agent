@@ -22,8 +22,8 @@ DEV_SPEC.md 50.9  V1 implementation-level architecture reference
 
 ```text
 status: implemented_with_known_gaps
-last_completed_queue_task: Q-022
-current_audit_task: V1-AUDIT-001
+last_completed_queue_task: V1-AUDIT-002
+current_audit_task: V1-AUDIT-003
 ```
 
 V1 can currently claim a controlled local contract path for workflow, artifacts,
@@ -32,16 +32,15 @@ eval contracts, read-only/report-only MCP facade tools, dashboard projection,
 and performance budget contracts.
 
 V1 cannot currently claim production-grade dense retrieval, production frontend,
-wire-level MCP JSON-RPC compliance, real performance benchmarking, full real
-runtime branch coverage, or complete acceptance-contract linkage across every
-workflow path.
+wire-level MCP JSON-RPC compliance, real performance benchmarking, or full real
+runtime branch coverage.
 
 ## Requirement Checks
 
 | Area | V1 audit result | Evidence | Remaining gap |
 | --- | --- | --- | --- |
-| Controlled workflow | contract covered | Q-011 through Q-015, R-012, repair checkpoint smoke | full real runtime branch E2E remains open in matrix rows WF-003/WF-005 |
-| Acceptance | partial | runtime evidence blocks verified status without explicit acceptance evidence | feature spec acceptance contract linkage remains partial in PLAN-002 |
+| Controlled workflow | contract covered for fake/local path | Q-011 through Q-015, R-012, V1-AUDIT-002, repair checkpoint smoke | full real runtime branch E2E remains open in matrix rows WF-003/WF-005 |
+| Acceptance | contract linkage covered for fake/local path | V1-AUDIT-002 carries FeatureSpec acceptance contract into runtime_evidence and eval_report with strict acceptance_verified routing | real/manual/supplied runtime acceptance evidence path remains unverified |
 | Retrieval | V1 deterministic path covered | BM25/symbol/readiness rows RET-001 through RET-008 | RRF, rerank, and real dense provider remain future work |
 | Dense provider boundary | test-only fake provider gated | `load_settings(..., allow_test_providers=True)` is required for `retrieval.dense_provider=fake` | real provider index/query API remains deferred |
 | MCP | facade contract covered | Q-021 read-only/report-only tool surface | final JSON-RPC adapter must map unknown tool names to protocol error, tracked by MISS-020 |
@@ -66,8 +65,8 @@ blocked from normal settings loading unless the caller explicitly passes
 ## Next Recommended Task
 
 ```text
-task_id: V1-AUDIT-002
-goal: close the acceptance-contract workflow linkage before claiming V1 accepted
-inputs: PLAN-002, EXEC-006, WF-003/WF-005, DEV_SPEC.md 49.1.4 and 50.9.3
-tests: focused workflow/planning/runtime/eval tests plus affected dashboard/MCP smoke
+task_id: V1-AUDIT-003
+goal: verify real/manual/supplied runtime acceptance evidence behavior before any V1 acceptance claim
+inputs: MISS-022, WF-003, WF-005, EXEC-005, EXEC-006, DEV_SPEC.md 49.1.4 and 50.9.3
+tests: focused runtime evidence, workflow routing, repair, eval, and artifact contract tests
 ```

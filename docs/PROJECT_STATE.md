@@ -9,8 +9,8 @@ Last updated: 2026-07-05
 
 ```text
 current_queue: V1 Acceptance Audit Queue
-last_completed: V1-AUDIT-001
-next_recommended_task: V1-AUDIT-002 acceptance-contract workflow linkage closure
+last_completed: V1-AUDIT-002
+next_recommended_task: V1-AUDIT-003 real/manual/supplied runtime acceptance evidence path
 ordinary_queue_status: Q-022 completed; V1 acceptance audit queue is active before adding further Q work
 ```
 
@@ -40,6 +40,7 @@ current Q-020 status: completed; focused and affected tests passed
 current Q-021 status: completed; focused and affected tests passed
 current Q-022 status: completed; focused and affected tests passed
 current V1-AUDIT-001 status: completed; focused and affected tests passed
+current V1-AUDIT-002 status: completed; focused and affected tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -246,6 +247,41 @@ verification:
   focused V1-AUDIT-001 retrieval/config tests: 19 passed
   affected V1-AUDIT-001 config/retrieval/budget/dashboard/MCP/artifact tests: 59 passed
 next_recommended_task: V1-AUDIT-002 acceptance-contract workflow linkage closure
+```
+
+## V1-AUDIT-002: Acceptance Contract Runtime Eval Linkage
+
+```text
+status: completed
+branch: codex/v1-acceptance-audit
+commit: b94b298 fix(workflow): carry acceptance contract through runtime eval
+spec_refs:
+  DEV_SPEC.md 49.1.4
+  DEV_SPEC.md 50.9.3
+files:
+  src/mod_agent/runtime/evidence.py
+  src/mod_agent/workflow/graph.py
+  src/mod_agent/workflow/transitions.py
+  src/mod_agent/artifacts/registry.py
+  src/observability/evaluation/eval_runner.py
+  tests/unit/test_workflow_graph.py
+  tests/unit/test_repair_loop.py
+  tests/unit/test_artifact_contract.py
+behavior:
+  FeatureSpec acceptance_criteria and runtime_verification_plan are copied into runtime_evidence.acceptance_contract.
+  eval_report records the same acceptance_contract and input_acceptance_verified.
+  route_after_runtime_evidence routes only acceptance_verified=True to evaluation; missing, false, and inconclusive acceptance route to repair.
+  Fake runtime fixtures can satisfy the acceptance contract for controlled workflow tests, but still record real_runtime_performed=False and claims_real_runtime_success=False.
+  Workflow summary still records claims_real_mod_success=False and final_status=inconclusive for the fake/local path.
+verification:
+  closure route and artifact-contract scripts passed
+  workflow/planning/runtime/artifact affected tests: 71 passed
+  eval tests: 42 passed
+  git diff --check: passed
+remaining:
+  Real/manual/supplied runtime acceptance E2E evidence remains unverified.
+  Do not claim V1 accepted until non-fake runtime acceptance evidence is tested.
+next_recommended_task: V1-AUDIT-003 real/manual/supplied runtime acceptance evidence path
 ```
 
 ## Next Execution Rule
