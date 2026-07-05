@@ -431,6 +431,13 @@ def _eval_report_payload() -> dict[str, object]:
             "acceptance_criteria": ["Requested behavior is implemented."],
             "runtime_verification_plan": ["manual"],
         },
+        "v1_acceptance_status": "blocked",
+        "v1_acceptance_blockers": [
+            {
+                "code": "REAL_RUNTIME_EVIDENCE_MISSING",
+                "message": "V1 acceptance requires real runtime execution evidence.",
+            }
+        ],
     }
 
 
@@ -446,4 +453,11 @@ def _workflow_summary_payload() -> dict[str, object]:
         "claims_real_mod_success": False,
         "claims_real_build_success": False,
         "claims_real_runtime_success": False,
+        "v1_acceptance_status": "blocked",
+        "v1_acceptance_blockers": [
+            {
+                "code": "REAL_RUNTIME_EVIDENCE_MISSING",
+                "message": "V1 acceptance requires real runtime execution evidence.",
+            }
+        ],
     }

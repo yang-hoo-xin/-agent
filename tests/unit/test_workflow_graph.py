@@ -268,6 +268,10 @@ def test_approved_path_writes_explicit_fake_execution_artifacts(tmp_path: Path) 
     assert evaluation["requested_behavior_status"] == "verified"
     assert evaluation["verdict"] == "inconclusive"
     assert evaluation["claims_real_success"] is False
+    assert evaluation["v1_acceptance_status"] == "blocked"
+    assert {
+        blocker["code"] for blocker in evaluation["v1_acceptance_blockers"]
+    } == {"REAL_BUILD_EVIDENCE_MISSING", "REAL_RUNTIME_EVIDENCE_MISSING"}
     assert evaluation["input_acceptance_status"] == "accepted"
     assert evaluation["input_acceptance_verified"] is True
     assert evaluation["acceptance_contract"] == runtime["acceptance_contract"]
@@ -277,6 +281,8 @@ def test_approved_path_writes_explicit_fake_execution_artifacts(tmp_path: Path) 
     assert summary["claims_real_mod_success"] is False
     assert summary["claims_real_build_success"] is False
     assert summary["claims_real_runtime_success"] is False
+    assert summary["v1_acceptance_status"] == "blocked"
+    assert summary["v1_acceptance_blockers"] == evaluation["v1_acceptance_blockers"]
 
 
 def test_review_block_does_not_create_fake_success_artifacts(tmp_path: Path) -> None:

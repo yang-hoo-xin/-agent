@@ -210,6 +210,8 @@ def test_eval_and_workflow_summary_contracts_separate_completion_from_success() 
         "execution_mode",
         "workflow_completion_status",
         "requested_behavior_status",
+        "v1_acceptance_status",
+        "v1_acceptance_blockers",
     }
     eval_required = {
         *shared_required,

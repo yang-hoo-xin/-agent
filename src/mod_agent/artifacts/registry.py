@@ -480,6 +480,8 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                     "input_acceptance_status",
                     "input_acceptance_verified",
                     "acceptance_contract",
+                    "v1_acceptance_status",
+                    "v1_acceptance_blockers",
                 }
             ),
             producer_stage="evaluation",
@@ -669,6 +671,8 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                     "claims_real_mod_success",
                     "claims_real_build_success",
                     "claims_real_runtime_success",
+                    "v1_acceptance_status",
+                    "v1_acceptance_blockers",
                 }
             ),
             producer_stage="done",

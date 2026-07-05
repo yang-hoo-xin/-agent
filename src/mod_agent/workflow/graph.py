@@ -748,9 +748,11 @@ def _run_fake_evaluate(
     state: ModAgentState,
     artifact_store: ArtifactStore,
 ) -> ModAgentState:
+    build = _read_artifact_data(state, artifact_store, "build_result")
     runtime = _read_artifact_data(state, artifact_store, "runtime_evidence")
     feature_id = state["feature_id"] or state["request_id"]
     acceptance_verified = bool(runtime.get("acceptance_verified"))
+    v1_boundary = _v1_acceptance_boundary(build=build, runtime=runtime)
     payload = {
         "node_name": "evaluate",
         "stage": "evaluation",
@@ -781,6 +783,7 @@ def _run_fake_evaluate(
         "input_acceptance_status": runtime.get("acceptance_status"),
         "input_acceptance_verified": acceptance_verified,
         "acceptance_contract": runtime.get("acceptance_contract"),
+        **v1_boundary,
     }
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
@@ -822,6 +825,8 @@ def _run_workflow_summary(
         "build_summary": dict(state["build_summary"]),
         "runtime_summary": dict(state["runtime_summary"]),
         "eval_verdict": eval_report.get("verdict"),
+        "v1_acceptance_status": eval_report.get("v1_acceptance_status"),
+        "v1_acceptance_blockers": list(eval_report.get("v1_acceptance_blockers") or []),
         "next_required_evidence": [
             "real dry-run/apply result",
             "real build output",
@@ -839,6 +844,39 @@ def _run_workflow_summary(
     next_state["current_stage"] = "done"
     _record_artifact(next_state, "workflow_summary", artifact_ref)
     return next_state
+
+
+def _v1_acceptance_boundary(
+    *,
+    build: dict[str, Any],
+    runtime: dict[str, Any],
+) -> dict[str, Any]:
+    blockers: list[dict[str, str]] = []
+    if build.get("claims_real_build_success") is not True:
+        blockers.append(
+            {
+                "code": "REAL_BUILD_EVIDENCE_MISSING",
+                "message": "V1 acceptance requires real build success evidence.",
+            }
+        )
+    if runtime.get("real_runtime_performed") is not True:
+        blockers.append(
+            {
+                "code": "REAL_RUNTIME_EVIDENCE_MISSING",
+                "message": "V1 acceptance requires real runtime execution evidence.",
+            }
+        )
+    if runtime.get("acceptance_verified") is not True:
+        blockers.append(
+            {
+                "code": "ACCEPTANCE_NOT_VERIFIED",
+                "message": "V1 acceptance requires verified runtime acceptance evidence.",
+            }
+        )
+    return {
+        "v1_acceptance_status": "blocked" if blockers else "accepted",
+        "v1_acceptance_blockers": blockers,
+    }
 
 
 def _request_plan_from_payload(data: dict[str, Any]) -> RequestPlan:
