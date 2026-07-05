@@ -117,6 +117,43 @@ def build_supplied_runtime_evidence_payload(
     )
 
 
+def build_real_runtime_evidence_payload(
+    *,
+    feature_id: str,
+    input_execution_mode: str | None,
+    evidence_items: Iterable[RuntimeEvidenceItem],
+    startup_loaded: bool,
+    gameplay_behavior_verified: bool,
+    verification_status: str,
+    raw_runtime_output: str | None = None,
+    non_goals_checked: Iterable[Mapping[str, Any]] = (),
+    limitations: Iterable[str] = (),
+    acceptance_criteria: Iterable[str] = (),
+    runtime_verification_plan: Iterable[str] = (),
+) -> dict[str, Any]:
+    """Build runtime evidence from an explicitly executed runtime probe."""
+
+    items = tuple(evidence_items)
+    return _build_runtime_payload(
+        node_name="collect_runtime_evidence",
+        feature_id=feature_id,
+        execution_mode="real",
+        evidence_source="real_runtime_probe",
+        startup_loaded=startup_loaded,
+        gameplay_behavior_verified=gameplay_behavior_verified,
+        evidence_items=items,
+        verification_status=verification_status,
+        raw_supplied_output=raw_runtime_output,
+        sources=_sources_from_items(items),
+        non_goals_checked=tuple(non_goals_checked),
+        limitations=tuple(limitations),
+        message="Real runtime probe evidence was collected and evaluated.",
+        input_execution_mode=input_execution_mode,
+        acceptance_criteria=tuple(acceptance_criteria),
+        runtime_verification_plan=tuple(runtime_verification_plan),
+    )
+
+
 def build_manual_runtime_evidence_payload(
     *,
     feature_id: str,

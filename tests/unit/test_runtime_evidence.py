@@ -8,6 +8,7 @@ from src.mod_agent.runtime import (
     RuntimeEvidenceError,
     RuntimeEvidenceItem,
     build_manual_runtime_evidence_payload,
+    build_real_runtime_evidence_payload,
     build_supplied_runtime_evidence_payload,
 )
 
@@ -113,3 +114,32 @@ def test_supplied_runtime_evidence_keeps_contract_when_unverified() -> None:
         "acceptance_criteria": [ACCEPTANCE_CRITERION],
         "runtime_verification_plan": [RUNTIME_PLAN_STEP],
     }
+
+
+def test_real_runtime_evidence_can_verify_full_acceptance_contract() -> None:
+    payload = build_real_runtime_evidence_payload(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        evidence_items=(
+            RuntimeEvidenceItem(
+                item_type="runtime_log",
+                source="runtime_probe",
+                locator="runtime://probe-001",
+                supports_acceptance=(ACCEPTANCE_CRITERION,),
+                confidence=1.0,
+                raw_excerpt="Runtime probe observed the diagnostic behavior.",
+            ),
+        ),
+        startup_loaded=True,
+        gameplay_behavior_verified=True,
+        verification_status="verified",
+        raw_runtime_output="Runtime probe observed the diagnostic behavior.",
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+    )
+
+    assert payload["execution_mode"] == "real"
+    assert payload["evidence_source"] == "real_runtime_probe"
+    assert payload["real_runtime_performed"] is True
+    assert payload["claims_real_runtime_success"] is True
+    assert payload["acceptance_verified"] is True

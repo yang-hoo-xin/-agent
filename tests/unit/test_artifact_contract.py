@@ -195,6 +195,7 @@ def test_runtime_evidence_contract_requires_acceptance_fields() -> None:
         "sources",
         "non_goals_checked",
         "limitations",
+        "real_runtime_performed",
         "claims_real_runtime_success",
     }
     assert required.issubset(contract.required_fields)

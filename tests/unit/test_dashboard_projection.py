@@ -381,6 +381,7 @@ def _runtime_evidence_payload() -> dict[str, object]:
         "sources": ["C:\\secret\\runtime.log"],
         "non_goals_checked": [],
         "limitations": ["fake runtime"],
+        "real_runtime_performed": False,
         "claims_real_runtime_success": False,
     }
 

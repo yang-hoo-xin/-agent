@@ -353,6 +353,7 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                     "sources",
                     "non_goals_checked",
                     "limitations",
+                    "real_runtime_performed",
                     "claims_real_runtime_success",
                 }
             ),
@@ -384,6 +385,7 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                     "sources",
                     "non_goals_checked",
                     "limitations",
+                    "real_runtime_performed",
                     "claims_real_runtime_success",
                 }
             ),

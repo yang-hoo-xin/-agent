@@ -5,6 +5,7 @@ from .evidence import (
     RuntimeEvidenceItem,
     build_fake_runtime_evidence_payload,
     build_manual_runtime_evidence_payload,
+    build_real_runtime_evidence_payload,
     build_supplied_runtime_evidence_payload,
 )
 from .screenshots import (
@@ -22,6 +23,7 @@ __all__ = [
     "ScreenshotRegistryError",
     "build_fake_runtime_evidence_payload",
     "build_manual_runtime_evidence_payload",
+    "build_real_runtime_evidence_payload",
     "build_screenshot_metadata",
     "build_screenshot_registry_payload",
     "build_supplied_runtime_evidence_payload",

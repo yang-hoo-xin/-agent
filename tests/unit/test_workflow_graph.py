@@ -5,12 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.mod_agent.artifacts import ArtifactStore
+from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.knowledge import (
     CollectionResolver,
     IncrementalIndexer,
     KnowledgeDatabase,
     SourceDefinition,
     SourceRegistry,
+)
+from src.mod_agent.runtime import (
+    RuntimeEvidenceItem,
+    build_real_runtime_evidence_payload,
 )
 from src.mod_agent.workflow import build_graph, create_initial_state
 
@@ -283,6 +288,99 @@ def test_approved_path_writes_explicit_fake_execution_artifacts(tmp_path: Path) 
     assert summary["claims_real_runtime_success"] is False
     assert summary["v1_acceptance_status"] == "blocked"
     assert summary["v1_acceptance_blockers"] == evaluation["v1_acceptance_blockers"]
+
+
+def test_real_runtime_evidence_path_can_accept_v1_boundary(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    build_root = tmp_path / "build"
+    expected_artifact = build_root / "bin" / "Debug" / "BetterHitFeedback.dll"
+
+    def build_result_factory(feature_id: str, input_execution_mode: str | None):
+        def runner(_: BuildProfile) -> BuildCommandResult:
+            expected_artifact.parent.mkdir(parents=True)
+            expected_artifact.write_bytes(b"verified runtime build")
+            return BuildCommandResult(exit_code=0, stdout="Build succeeded", duration_ms=8)
+
+        return BuildAdapter().run_local(
+            feature_id=feature_id,
+            profile=BuildProfile(
+                profile_id="test_dotnet",
+                build_system="dotnet",
+                working_directory=str(build_root),
+                command=("dotnet", "build"),
+                timeout_seconds=120,
+                expected_artifacts=("bin/Debug/BetterHitFeedback.dll",),
+            ),
+            command_runner=runner,
+            allow_execution=True,
+            input_execution_mode=input_execution_mode,
+        )
+
+    def runtime_evidence_factory(
+        feature_id: str,
+        build: dict[str, object],
+        feature_spec: dict[str, object],
+    ) -> dict[str, object]:
+        criteria = tuple(str(item) for item in feature_spec["acceptance_criteria"])
+        return build_real_runtime_evidence_payload(
+            feature_id=feature_id,
+            input_execution_mode=str(build["execution_mode"]),
+            evidence_items=(
+                RuntimeEvidenceItem(
+                    item_type="runtime_log",
+                    source="runtime_probe",
+                    locator="runtime://probe-001",
+                    supports_acceptance=criteria,
+                    confidence=1.0,
+                    raw_excerpt="Runtime probe observed the requested behavior.",
+                ),
+            ),
+            startup_loaded=True,
+            gameplay_behavior_verified=True,
+            verification_status="verified",
+            raw_runtime_output="Runtime probe observed the requested behavior.",
+            acceptance_criteria=criteria,
+            runtime_verification_plan=tuple(
+                str(item) for item in feature_spec["runtime_verification_plan"]
+            ),
+        )
+
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        build_result_factory=build_result_factory,
+        runtime_evidence_factory=runtime_evidence_factory,
+    )
+    state = create_initial_state(
+        run_id="run_real_runtime",
+        request_id="req_real_runtime",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    build = _artifact_data(store, result, "build_result")
+    runtime = _artifact_data(store, result, "runtime_evidence")
+    evaluation = _artifact_data(store, result, "eval_report")
+    summary = _artifact_data(store, result, "workflow_summary")
+
+    assert result["current_stage"] == "done"
+    assert build["execution_mode"] == "local"
+    assert build["claims_real_build_success"] is True
+    assert runtime["execution_mode"] == "real"
+    assert runtime["real_runtime_performed"] is True
+    assert runtime["claims_real_runtime_success"] is True
+    assert runtime["acceptance_verified"] is True
+    assert evaluation["v1_acceptance_status"] == "accepted"
+    assert evaluation["v1_acceptance_blockers"] == []
+    assert evaluation["workflow_completion_status"] == "real_runtime_acceptance_completed"
+    assert evaluation["verdict"] == "accepted"
+    assert evaluation["claims_real_success"] is True
+    assert summary["final_status"] == "accepted"
+    assert summary["claims_real_mod_success"] is True
+    assert summary["claims_real_build_success"] is True
+    assert summary["claims_real_runtime_success"] is True
 
 
 def test_review_block_does_not_create_fake_success_artifacts(tmp_path: Path) -> None:

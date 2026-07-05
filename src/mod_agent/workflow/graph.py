@@ -53,6 +53,7 @@ from .transitions import (
 
 GraphNode = Callable[[ModAgentState], ModAgentState]
 BuildResultFactory = Callable[[str, str | None], BuildResult]
+RuntimeEvidenceFactory = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
 
 
 def build_graph(
@@ -63,6 +64,7 @@ def build_graph(
     collection_resolver: CollectionResolver | None = None,
     domain_adapter_registry: DomainAdapterRegistry | None = None,
     build_result_factory: BuildResultFactory | None = None,
+    runtime_evidence_factory: RuntimeEvidenceFactory | None = None,
     checkpointer: Any | None = None,
     interrupt_before: list[str] | None = None,
     interrupt_after: list[str] | None = None,
@@ -70,8 +72,8 @@ def build_graph(
     """Build a compiled LangGraph graph with real planning/review routing.
 
     Planning, evidence retrieval, implementation planning, patch proposal, and
-    review are real controlled nodes. Later execution stages remain stubbed
-    until dry-run/build/runtime modules are implemented.
+    review are real controlled nodes. Dry-run remains fake; build and runtime
+    evidence can be injected for controlled contract tests.
     """
 
     stub_runner = StubNodeRunner(artifact_store)
@@ -149,7 +151,11 @@ def build_graph(
         "collect_runtime_evidence",
         _make_real_graph_node(
             "collect_runtime_evidence",
-            lambda state: _run_fake_runtime_evidence(state, artifact_store),
+            lambda state: _run_runtime_evidence(
+                state,
+                artifact_store,
+                runtime_evidence_factory,
+            ),
         ),
     )
     graph.add_node(
@@ -702,26 +708,32 @@ def _run_create_repair_plan(
     return next_state
 
 
-def _run_fake_runtime_evidence(
+def _run_runtime_evidence(
     state: ModAgentState,
     artifact_store: ArtifactStore,
+    runtime_evidence_factory: RuntimeEvidenceFactory | None,
 ) -> ModAgentState:
     build = _read_artifact_data(state, artifact_store, "build_result")
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
     feature_id = state["feature_id"] or state["request_id"]
-    payload = build_fake_runtime_evidence_payload(
-        feature_id=feature_id,
-        input_execution_mode=build.get("execution_mode"),
-        acceptance_criteria=tuple(feature_spec.get("acceptance_criteria") or ()),
-        runtime_verification_plan=tuple(
-            feature_spec.get("runtime_verification_plan") or ()
-        ),
+    payload = (
+        runtime_evidence_factory(feature_id, build, feature_spec)
+        if runtime_evidence_factory is not None
+        else build_fake_runtime_evidence_payload(
+            feature_id=feature_id,
+            input_execution_mode=build.get("execution_mode"),
+            acceptance_criteria=tuple(feature_spec.get("acceptance_criteria") or ()),
+            runtime_verification_plan=tuple(
+                feature_spec.get("runtime_verification_plan") or ()
+            ),
+        )
     )
+    acceptance_verified = bool(payload["acceptance_verified"])
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
         artifact_type="runtime_evidence",
         payload=payload,
-        status="success",
+        status="success" if acceptance_verified else "blocked",
         upstream_refs=[
             _artifact_ref_from_state(state, "build_result"),
             _artifact_ref_from_state(state, "feature_spec"),
@@ -731,14 +743,14 @@ def _run_fake_runtime_evidence(
     next_state["current_stage"] = "runtime_evidence"
     next_state["runtime_summary"] = {
         "status": payload["verification_status"],
-        "execution_mode": "fake",
-        "real_runtime_performed": False,
+        "execution_mode": payload["execution_mode"],
+        "real_runtime_performed": payload["real_runtime_performed"],
         "startup_loaded": payload["startup_loaded"],
         "gameplay_behavior_verified": payload["gameplay_behavior_verified"],
         "acceptance_status": payload["acceptance_status"],
-        "acceptance_verified": payload["acceptance_verified"],
+        "acceptance_verified": acceptance_verified,
         "acceptance_contract": payload["acceptance_contract"],
-        "claims_real_runtime_success": False,
+        "claims_real_runtime_success": payload["claims_real_runtime_success"],
     }
     _record_artifact(next_state, "runtime_evidence", artifact_ref)
     return next_state
@@ -753,18 +765,29 @@ def _run_fake_evaluate(
     feature_id = state["feature_id"] or state["request_id"]
     acceptance_verified = bool(runtime.get("acceptance_verified"))
     v1_boundary = _v1_acceptance_boundary(build=build, runtime=runtime)
+    v1_accepted = v1_boundary["v1_acceptance_status"] == "accepted"
+    execution_mode = "real" if v1_accepted else "fake"
+    workflow_completion_status = (
+        "real_runtime_acceptance_completed"
+        if v1_accepted
+        else "fake_execution_completed"
+    )
     payload = {
         "node_name": "evaluate",
         "stage": "evaluation",
         "message": (
-            "Evaluation completed for a fake/local workflow path. Result remains "
-            "inconclusive for real build and runtime success."
+            "Evaluation completed with real build and runtime acceptance evidence."
+            if v1_accepted
+            else (
+                "Evaluation completed for a fake/local workflow path. Result remains "
+                "inconclusive for real build and runtime success."
+            )
         ),
-        "execution_mode": "fake",
-        "workflow_completion_status": "fake_execution_completed",
+        "execution_mode": execution_mode,
+        "workflow_completion_status": workflow_completion_status,
         "requested_behavior_status": "verified" if acceptance_verified else "not_verified",
-        "verdict": "inconclusive",
-        "claims_real_success": False,
+        "verdict": "accepted" if v1_accepted else "inconclusive",
+        "claims_real_success": v1_accepted,
         "checks": [
             {
                 "check": "review_gate_approved",
@@ -772,11 +795,15 @@ def _run_fake_evaluate(
             },
             {
                 "check": "real_build",
-                "status": "not_run",
+                "status": "passed"
+                if build.get("claims_real_build_success")
+                else "not_run",
             },
             {
                 "check": "real_runtime",
-                "status": "passed" if runtime.get("claims_real_runtime_success") else "not_run",
+                "status": "passed"
+                if runtime.get("claims_real_runtime_success")
+                else "not_run",
             },
         ],
         "input_runtime_status": runtime.get("verification_status"),
@@ -807,20 +834,29 @@ def _run_workflow_summary(
 ) -> ModAgentState:
     eval_report = _read_artifact_data(state, artifact_store, "eval_report")
     feature_id = state["feature_id"] or state["request_id"]
+    accepted = eval_report.get("v1_acceptance_status") == "accepted"
     payload = {
         "node_name": "done",
         "stage": "done",
         "message": (
-            "Workflow reached the end of the controlled fake execution loop. "
-            "No real file write, real build, or real runtime success is claimed."
+            "Workflow reached done with real build and runtime acceptance evidence."
+            if accepted
+            else (
+                "Workflow reached the end of the controlled fake execution loop. "
+                "No real file write, real build, or real runtime success is claimed."
+            )
         ),
-        "execution_mode": "fake",
-        "workflow_completion_status": "fake_execution_completed",
+        "execution_mode": eval_report.get("execution_mode"),
+        "workflow_completion_status": eval_report.get("workflow_completion_status"),
         "requested_behavior_status": eval_report.get("requested_behavior_status"),
-        "final_status": "inconclusive",
-        "claims_real_mod_success": False,
-        "claims_real_build_success": False,
-        "claims_real_runtime_success": False,
+        "final_status": "accepted" if accepted else "inconclusive",
+        "claims_real_mod_success": bool(eval_report.get("claims_real_success")),
+        "claims_real_build_success": bool(
+            state["build_summary"].get("claims_real_build_success")
+        ),
+        "claims_real_runtime_success": bool(
+            state["runtime_summary"].get("claims_real_runtime_success")
+        ),
         "artifact_refs": dict(state["artifacts"]),
         "build_summary": dict(state["build_summary"]),
         "runtime_summary": dict(state["runtime_summary"]),
