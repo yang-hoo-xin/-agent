@@ -491,6 +491,51 @@ def test_stale_artifact_cannot_enter_patch_proposal_generation(tmp_path: Path) -
         store.read_for_stage(plan, consumer_stage="generate_patch_proposal")
 
 
+def test_transitive_stale_detected_after_deep_upstream_change(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec],
+    )
+    plan = store.write(
+        feature_id="feature_001",
+        artifact_type="implementation_plan",
+        payload=_implementation_payload(),
+        upstream_refs=[feature_spec, evidence_pack],
+    )
+    patch_proposal = store.write(
+        feature_id="feature_001",
+        artifact_type="patch_proposal",
+        payload=_patch_payload(),
+        upstream_refs=[plan, evidence_pack],
+    )
+    proposal_review = store.write(
+        feature_id="feature_001",
+        artifact_type="proposal_review",
+        payload=_review_payload(),
+        upstream_refs=[patch_proposal],
+    )
+    store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_changed_feature_payload(),
+    )
+
+    freshness = store.check_freshness(proposal_review)
+
+    assert freshness.status == "stale"
+    assert freshness.stale_reasons == ["feature_spec hash changed"]
+    with pytest.raises(StaleArtifactError, match="feature_spec hash changed"):
+        store.read_for_stage(proposal_review, consumer_stage="dry_run_apply")
+
+
 def test_dashboard_can_read_stale_reason(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
     feature_spec = store.write(

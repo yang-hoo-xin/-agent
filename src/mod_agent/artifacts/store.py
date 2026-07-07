@@ -147,23 +147,67 @@ class ArtifactStore:
     def check_freshness(self, ref: ArtifactRef) -> FreshnessView:
         """Check whether an artifact's upstream hashes still match."""
 
+        return self._check_freshness(ref, recursive=True)
+
+    def check_direct_freshness(self, ref: ArtifactRef) -> FreshnessView:
+        """Check only direct upstream hashes for write-time and checkpoint gates."""
+
+        return self._check_freshness(ref, recursive=False)
+
+    def _check_freshness(self, ref: ArtifactRef, *, recursive: bool) -> FreshnessView:
         envelope = self.read(ref)
         stale_reasons: list[str] = []
-        for upstream in envelope.get("inputs", {}).get("upstream_artifacts", []):
-            upstream_path = self._guard_path(Path(upstream["path"]))
-            if not upstream_path.exists():
-                stale_reasons.append(
-                    f"{upstream['artifact_type']} missing at {upstream['path']}"
-                )
-                continue
-            upstream_envelope = json.loads(upstream_path.read_text(encoding="utf-8"))
-            if upstream_envelope.get("artifact_hash") != upstream["artifact_hash"]:
-                stale_reasons.append(
-                    f"{upstream['artifact_type']} hash changed"
-                )
+        seen = {(str(self._guard_path(Path(ref.path))), ref.artifact_hash)}
+        self._collect_stale_reasons(envelope, stale_reasons, seen, recursive=recursive)
         if stale_reasons:
             return FreshnessView(status="stale", stale_reasons=stale_reasons)
         return FreshnessView(status="fresh", stale_reasons=[])
+
+    def _collect_stale_reasons(
+        self,
+        envelope: Mapping[str, Any],
+        stale_reasons: list[str],
+        seen: set[tuple[str, str]],
+        *,
+        recursive: bool,
+    ) -> None:
+        for upstream in envelope.get("inputs", {}).get("upstream_artifacts", []):
+            upstream_ref = ArtifactRef(
+                feature_id=envelope["feature_id"],
+                artifact_type=upstream["artifact_type"],
+                path=upstream["path"],
+                artifact_hash=upstream["artifact_hash"],
+            )
+            upstream_path = self._guard_path(Path(upstream_ref.path))
+            if not upstream_path.exists():
+                self._append_stale_reason(
+                    stale_reasons,
+                    f"{upstream_ref.artifact_type} missing at {upstream_ref.path}",
+                )
+                continue
+
+            try:
+                upstream_envelope = self.read(upstream_ref)
+            except ArtifactStoreError as exc:
+                reason = (
+                    f"{upstream_ref.artifact_type} hash changed"
+                    if str(exc) == "Artifact hash mismatch"
+                    else f"{upstream_ref.artifact_type} invalid: {exc}"
+                )
+                self._append_stale_reason(stale_reasons, reason)
+                continue
+
+            upstream_key = (str(upstream_path), upstream_ref.artifact_hash)
+            if upstream_key in seen:
+                continue
+            seen.add(upstream_key)
+            if recursive:
+                self._collect_stale_reasons(
+                    upstream_envelope,
+                    stale_reasons,
+                    seen,
+                    recursive=recursive,
+                )
 
     def read_for_stage(self, ref: ArtifactRef, *, consumer_stage: str) -> dict[str, Any]:
         """Read an artifact for a registered consumer, blocking stale inputs."""
@@ -251,7 +295,7 @@ class ArtifactStore:
                     f"Upstream artifact_type mismatch for {upstream.artifact_type!r}"
                 )
 
-            freshness = self.check_freshness(upstream)
+            freshness = self.check_direct_freshness(upstream)
             if not freshness.is_fresh and not allow_stale_upstreams:
                 raise StaleArtifactError("; ".join(freshness.stale_reasons))
 
@@ -281,6 +325,11 @@ class ArtifactStore:
         unexpected = sorted(fields - _ENVELOPE_FIELDS)
         if unexpected:
             raise ArtifactStoreError(f"Artifact envelope unexpected fields: {unexpected}")
+
+    @staticmethod
+    def _append_stale_reason(stale_reasons: list[str], reason: str) -> None:
+        if reason not in stale_reasons:
+            stale_reasons.append(reason)
 
     @staticmethod
     def _validate_feature_id(feature_id: str) -> None:

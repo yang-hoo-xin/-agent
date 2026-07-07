@@ -178,7 +178,7 @@ class WorkflowCheckpointStore:
 
         checkpoint_envelope = self.artifact_store.read(checkpoint_ref)
         checkpoint = checkpoint_envelope["data"]
-        freshness = self.artifact_store.check_freshness(checkpoint_ref)
+        freshness = self.artifact_store.check_direct_freshness(checkpoint_ref)
         if not freshness.is_fresh:
             decision = ResumeDecision(
                 status="blocked",

@@ -9,9 +9,9 @@ Last updated: 2026-07-07
 
 ```text
 current_queue: Artifact Integrity Follow-up
-last_completed: ARTIFACT-INTEGRITY-001
+last_completed: ARTIFACT-INTEGRITY-002
 current_stabilization_task: close the next bounded artifact integrity, eval baseline, GameProfile onboarding, or historical evidence restoration checkpoint
-next_recommended_task: choose between MISS-R005B transitive freshness, MISS-R005D immutable artifact revisions, MISS-026 real runtime automation, eval baseline, GameProfile onboarding, or historical evidence restoration
+next_recommended_task: choose between MISS-R005D immutable artifact revisions, MISS-026 real runtime automation, eval baseline, GameProfile onboarding, or historical evidence restoration
 ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, and PLANNING-BRIEF-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
 next_stage_after_expert_split: choose a non-Skill implementation checkpoint; do not continue splitting process Skills by default
 ```
@@ -57,6 +57,7 @@ current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/
 current SKILL-SPLIT-CLOSURE-001 status: completed; all five process Skills validate, no template residue is present in HEAD for process Skill directories, E2E-001 evidence remains discoverable, and control docs preserve runtime/real-game/automation boundaries
 current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief-playbook/SKILL.md` created as a process-only Skill for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning options, selected_plan, and feature_spec handoff guidance
 current ARTIFACT-INTEGRITY-001 status: completed; ArtifactStore.read recomputes the stored envelope content hash, rejects tampered payload content even when the ArtifactRef hash still matches the stored artifact_hash, and rejects missing or unexpected envelope top-level fields; focused artifact tests passed
+current ARTIFACT-INTEGRITY-002 status: completed; ArtifactStore.check_freshness and read_for_stage now detect stale deep upstream artifacts through recursive dependency traversal, while write-time and checkpoint-resume gates intentionally remain direct-freshness checks until immutable artifact revisions close MISS-R005D; focused artifact/checkpoint tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -353,31 +354,32 @@ known broader-suite gaps:
 | E2E-001 controlled local proof may be mistaken for real game proof | High | E2E-001 only claims the controlled local source/build-artifact/runtime-probe chain; real GTFO launch, log collection, screenshot capture, DLL copy, and live gameplay verification remain outside this checkpoint |
 | Focused E2E tests may be mistaken for full-suite health | High | E2E-001 only claims the listed focused and affected tests passed; full unit baseline is not claimed green |
 | Optional platform capabilities may outrun the proven delivery chain | High | Keep real dense, full multimodal, dashboard polish, write MCP, automatic game operations, and large benchmarks as explicit opt-in work; expert Skills should be split from the tested E2E-001 path |
-| R-005 artifact integrity remains PASS_WITH_RISK | Medium | Track transitive freshness, immutable revision files, and audit/report-only allow_stale_upstreams policy as future artifact integrity / immutable revision / R-012 follow-up gaps; read-time envelope content hash recomputation is completed by ARTIFACT-INTEGRITY-001 |
+| R-005 artifact integrity remains PASS_WITH_RISK | Medium | Track immutable revision files and audit/report-only allow_stale_upstreams policy as future artifact integrity / immutable revision / R-012 follow-up gaps; read-time envelope content hash recomputation is completed by ARTIFACT-INTEGRITY-001, and recursive consumer freshness is completed by ARTIFACT-INTEGRITY-002 |
 | Retrieval authority and tokenizer changes can regress planning safety or ranking behavior | Medium | R-009-HARDENING-001 completed the authority default, deterministic authority grant, raw dict provenance, dashboard authority display, and shared tokenizer work; future retrieval changes must keep focused sparse/query and planning tests in scope |
 
 ## Latest Loop Summary
 
 ```text
-task: ARTIFACT-INTEGRITY-001
+task: ARTIFACT-INTEGRITY-002
 status: completed
 files_changed:
   src/mod_agent/artifacts/store.py
-  tests/unit/test_artifact_store.py
+  src/mod_agent/workflow/checkpointing.py
+  tests/unit/test_artifact_contract.py
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  ArtifactStore.read now recomputes the stored envelope content hash from schema_version, artifact_type, feature_id, producer_stage, status, data, inputs, blockers, and trace_refs.
-  A tampered artifact payload is rejected even when the ArtifactRef hash still matches the stored artifact_hash.
-  Missing or unexpected envelope top-level fields are rejected so future envelope field additions require an explicit hash/field policy update.
-  This closes MISS-R005C only; transitive DAG freshness and immutable historical revision files remain open as MISS-R005B and MISS-R005D.
+  ArtifactStore.check_freshness now recursively traverses upstream_artifacts and deduplicates stale reasons.
+  ArtifactStore.read_for_stage now blocks stale deep upstream artifacts through the recursive freshness path.
+  ArtifactStore.check_direct_freshness now preserves direct-only write-time and checkpoint-resume gates until immutable revision storage closes MISS-R005D.
+  This closes MISS-R005B for consumer freshness only; immutable historical revision files remain open as MISS-R005D.
 validation:
-  python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short -> 35 passed
+  python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short -> 36 passed
 tests:
   focused artifact integrity tests only; full unit baseline is not claimed green.
 next:
-  Choose the next bounded non-Skill implementation checkpoint from the remaining open coverage rows.
+  Choose the next bounded non-Skill implementation checkpoint; MISS-R005D is the remaining artifact integrity path-overwrite gap.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate
