@@ -9,10 +9,10 @@ Last updated: 2026-07-07
 
 ```text
 current_queue: Post Artifact Integrity Selection
-last_completed: ARTIFACT-INTEGRITY-003
+last_completed: ARTIFACT-PROD-001A
 current_stabilization_task: choose the next bounded non-Skill implementation checkpoint
-next_recommended_task: choose between MISS-026 real runtime automation, eval baseline, GameProfile onboarding, or historical evidence restoration
-ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, and PLANNING-BRIEF-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
+next_recommended_task: choose between remaining artifact production storage hardening, MISS-026 real runtime automation, eval baseline, GameProfile onboarding, or historical evidence restoration
+ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, and ARTIFACT-PROD-001A completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
 next_stage_after_expert_split: choose a non-Skill implementation checkpoint; do not continue splitting process Skills by default
 ```
 
@@ -59,6 +59,7 @@ current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief
 current ARTIFACT-INTEGRITY-001 status: completed; ArtifactStore.read recomputes the stored envelope content hash, rejects tampered payload content even when the ArtifactRef hash still matches the stored artifact_hash, and rejects missing or unexpected envelope top-level fields; focused artifact tests passed
 current ARTIFACT-INTEGRITY-002 status: completed; ArtifactStore.check_freshness and read_for_stage now detect stale deep upstream artifacts through recursive dependency traversal, while write-time and checkpoint-resume gates intentionally remain direct-freshness checks; focused artifact/checkpoint tests passed
 current ARTIFACT-INTEGRITY-003 status: completed; ArtifactStore.write now preserves immutable revision files under per-type revision directories while maintaining read-validated latest artifact files for current dashboard/MCP views; focused artifact/dashboard/MCP/workflow/E2E tests passed
+current ARTIFACT-PROD-001A status: completed; ArtifactStore.write now writes revision and latest files through same-directory temporary files plus os.replace and cleans temporary files when replacement fails; focused artifact/dashboard/MCP/workflow/E2E tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -356,34 +357,31 @@ known broader-suite gaps:
 | Focused E2E tests may be mistaken for full-suite health | High | E2E-001 only claims the listed focused and affected tests passed; full unit baseline is not claimed green |
 | Optional platform capabilities may outrun the proven delivery chain | High | Keep real dense, full multimodal, dashboard polish, write MCP, automatic game operations, and large benchmarks as explicit opt-in work; expert Skills should be split from the tested E2E-001 path |
 | Artifact integrity can regress when artifact semantics change | Medium | Keep revision-path, latest-pointer, read-time hash, recursive freshness, direct checkpoint freshness, and audit/report-only allow_stale_upstreams tests in scope for future artifact changes |
-| ArtifactStore is not a production-grade storage backend | Medium | Track atomic temp-file rename, crash recovery, cross-process write locking, revision manifest/index files, historical revision query APIs, old-ref migration, and revision garbage collection as explicit future storage-hardening work |
+| ArtifactStore is not a production-grade storage backend | Medium | Atomic same-directory temporary file replacement is implemented and tested by ARTIFACT-PROD-001A; track crash recovery, partial write transaction recovery across revision/latest writes, cross-process write locking, revision manifest/index files, historical revision query APIs, old-ref migration, and revision garbage collection as explicit future storage-hardening work |
 | Retrieval authority and tokenizer changes can regress planning safety or ranking behavior | Medium | R-009-HARDENING-001 completed the authority default, deterministic authority grant, raw dict provenance, dashboard authority display, and shared tokenizer work; future retrieval changes must keep focused sparse/query and planning tests in scope |
 
 ## Latest Loop Summary
 
 ```text
-task: ARTIFACT-INTEGRITY-003
+task: ARTIFACT-PROD-001A
 status: completed
 files_changed:
   src/mod_agent/artifacts/store.py
   tests/unit/test_artifact_store.py
-  tests/unit/test_controlled_agent_mcp_tools.py
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  ArtifactStore.write now writes immutable revision files at features/{feature_id}/revisions/{artifact_type}/{artifact_hash}.json.
-  ArtifactStore.write also maintains the compatible latest pointer at features/{feature_id}/{artifact_type}.json for current dashboard and MCP views.
-  Freshness checks validate the latest pointer through ArtifactStore.read so tampered latest files are reported as stale/invalid.
-  ArtifactRef returned from write points at the immutable revision file, so historical refs remain readable after later writes of the same artifact_type.
-  list_feature_artifacts continues to expose latest refs for current feature status views.
-  This closes MISS-R005D; richer persisted artifact revision UI remains separate from the storage guarantee.
+  ArtifactStore.write now serializes each revision and latest artifact file through a same-directory temporary file.
+  ArtifactStore.write uses os.replace to replace the destination file after the temporary file is written and fsynced.
+  Temporary files are cleaned if replacement fails.
+  This closes the atomic per-file replacement slice only; crash recovery, partial write transaction recovery across revision/latest writes, cross-process write locking, manifest/index files, historical revision query APIs, old-ref migration, and revision garbage collection remain open under ARTIFACT-PROD-001.
 validation:
-  python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_projection.py tests/unit/test_controlled_agent_mcp_tools.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py -q --tb=short -> 67 passed
+  python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_projection.py tests/unit/test_controlled_agent_mcp_tools.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py -q --tb=short -> 69 passed
 tests:
   focused and affected artifact/dashboard/MCP/workflow/E2E tests only; full unit baseline is not claimed green.
 next:
-  Choose the next bounded non-Skill implementation checkpoint from MISS-026, eval baseline, GameProfile onboarding, or historical evidence restoration.
+  Choose the next bounded non-Skill implementation checkpoint from remaining artifact production storage hardening, MISS-026, eval baseline, GameProfile onboarding, or historical evidence restoration.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate

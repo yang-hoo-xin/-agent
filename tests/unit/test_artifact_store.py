@@ -151,6 +151,39 @@ def test_write_creates_parent_directories(tmp_path: Path) -> None:
     ).exists()
 
 
+def test_write_leaves_no_atomic_temp_files(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+
+    store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    assert list((tmp_path / "artifacts").rglob(".tmp-*")) == []
+
+
+def test_write_cleans_atomic_temp_file_when_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+
+    def fail_replace(_source: Path, _destination: Path) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr("src.mod_agent.artifacts.store.os.replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="feature_spec",
+            payload=_feature_payload(),
+        )
+
+    assert list((tmp_path / "artifacts").rglob(".tmp-*")) == []
+
+
 def test_list_feature_artifacts_returns_refs(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
     first = store.write(

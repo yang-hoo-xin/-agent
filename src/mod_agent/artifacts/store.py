@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Mapping
+from uuid import uuid4
 
 from .envelope import ArtifactEnvelope, ArtifactRef
 from .freshness import FreshnessView, StaleArtifactError
@@ -120,11 +122,9 @@ class ArtifactStore:
             artifact_type,
             artifact_hash,
         )
-        revision_path.parent.mkdir(parents=True, exist_ok=True)
-        revision_path.write_text(serialized_envelope, encoding="utf-8")
+        self._write_text_atomic(revision_path, serialized_envelope)
         latest_path = self._artifact_path(feature_id, artifact_type)
-        latest_path.parent.mkdir(parents=True, exist_ok=True)
-        latest_path.write_text(serialized_envelope, encoding="utf-8")
+        self._write_text_atomic(latest_path, serialized_envelope)
         return ArtifactRef(
             feature_id=feature_id,
             artifact_type=artifact_type,
@@ -317,6 +317,22 @@ class ArtifactStore:
             artifact_hash=artifact_hash,
         )
         return str(self.read(latest_ref)["artifact_hash"])
+
+    def _write_text_atomic(self, path: Path, content: str) -> None:
+        guarded_path = self._guard_path(path)
+        guarded_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self._guard_path(
+            guarded_path.with_name(f".tmp-{uuid4().hex[:12]}.json")
+        )
+        try:
+            with temp_path.open("w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, guarded_path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
 
     def _validate_upstream_refs(
         self,
