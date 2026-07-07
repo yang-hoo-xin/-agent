@@ -17,11 +17,11 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: Planning Brief
-last_completed: SKILL-SPLIT-CLOSURE-001
-next_recommended_task: create mod-planning-brief-playbook as a process-only planning brief Skill
-Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, and SKILL-SPLIT-CLOSURE-001 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
-next_stage_after_expert_split: PLANNING-BRIEF-001 create mod-planning-brief-playbook
+current_queue: Post Planning Brief Selection
+last_completed: PLANNING-BRIEF-001
+next_recommended_task: choose the next non-Skill implementation task from the coverage matrix before coding
+Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, and PLANNING-BRIEF-001 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
+next_stage_after_expert_split: select a non-Skill checkpoint; default options are MISS-026, artifact integrity, eval baseline, GameProfile onboarding, or historical evidence restoration
 ```
 
 ## Evidence Provenance Policy
@@ -80,11 +80,11 @@ Hook automation boundary:
 Repair automation boundary:
   Process playbooks do not implement an automatic repair executor, retry engine, review bypass, scope expansion, game launch, DLL copy, process control, or MCP write automation.
 Planning brief boundary:
-  The planned mod-planning-brief-playbook is not implemented yet.
-  PLANNING-BRIEF-001 must define the future mod_planning_brief artifact, not merely summarize the user's request.
-  It must cover user_intent extraction, request_type classification, knowledge_query_plan generation, retrieved_experience binding, planning_options, selected_plan, and handoff guidance for feature_spec, hook discovery, patch review, and runtime verification.
-  It must classify request_type as config-only, UI feedback, gameplay behavior, runtime diagnostics, hook-required, or unknown / needs evidence.
-  It must not claim natural-language-to-RAG extraction, accumulated-experience retrieval, planning negotiation, feature_spec generation, or code-generation guidance is validated until a future checkpoint creates and verifies that Skill.
+  mod-planning-brief-playbook is implemented as a process-only Skill.
+  PLANNING-BRIEF-001 defines the mod_planning_brief procedure; it is not merely a user request summary.
+  It covers user_intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning_options, selected_plan, and handoff guidance for feature_spec, hook discovery, patch review, and runtime verification.
+  It classifies request_type as config-only, UI feedback, gameplay behavior, runtime diagnostics, hook-required, or unknown / needs evidence.
+  It must not claim natural-language-to-RAG extraction, automated accumulated-experience retrieval, runtime planning negotiation, feature_spec generation, or code-generation guidance is implemented or validated.
 ```
 
 ## Post E2E-001 Optional Capability Policy
@@ -120,7 +120,7 @@ Allowed next:
 | SKILL-SPLIT-003 | completed | Split hook-discovery-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, runtime Skill system behavior, or automatic hook scanning behavior | `.agents/skills/hook-discovery-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\hook-discovery-playbook` |
 | SKILL-SPLIT-004 | completed | Split repair-loop-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, runtime Skill system behavior, or automatic repair execution | `.agents/skills/repair-loop-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\repair-loop-playbook` |
 | SKILL-SPLIT-CLOSURE-001 | completed | Audit process Skills after repair-loop-playbook: validate every Skill, confirm no template residue, confirm E2E-001 evidence remains discoverable, and confirm docs do not claim runtime Skill system or real game automation | `quick_validate.py` for five process Skills; `git ls-tree` over process Skill directories; control-doc overclaim scan; mod-delivery-playbook frontmatter formatting fixed |
-| PLANNING-BRIEF-001 | queued | Create mod-planning-brief-playbook for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan generation, historical experience and delivery lesson retrieval, risk and uncertainty review, user clarification or planning options, mod_planning_brief output, and feature_spec handoff guidance | New `.agents/skills/mod-planning-brief-playbook/SKILL.md` defining the process-only mod_planning_brief procedure and source_types `current_source`, `game_profile`, `prior_artifacts`, `delivery_lessons`, `symbol_search`, and `docs`; no implementation claim until created and verified |
+| PLANNING-BRIEF-001 | completed | Create mod-planning-brief-playbook for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, risk and uncertainty review, user clarification or planning options, mod_planning_brief output shape, and feature_spec handoff guidance | `.agents/skills/mod-planning-brief-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\mod-planning-brief-playbook`; no claim that natural-language-to-RAG extraction, automated experience retrieval, feature_spec generation, or code-generation guidance is implemented |
 
 ## V1 Acceptance Audit Queue
 

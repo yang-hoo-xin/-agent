@@ -8,12 +8,12 @@ Last updated: 2026-07-07
 ## Current Queue
 
 ```text
-current_queue: Planning Brief
-last_completed: SKILL-SPLIT-CLOSURE-001
-current_stabilization_task: PLANNING-BRIEF-001 create mod-planning-brief-playbook after expert Skill closure
-next_recommended_task: create mod-planning-brief-playbook as a process-only planning brief Skill
-ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, and SKILL-SPLIT-CLOSURE-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
-next_stage_after_expert_split: PLANNING-BRIEF-001 create mod-planning-brief-playbook
+current_queue: Post Planning Brief Selection
+last_completed: PLANNING-BRIEF-001
+current_stabilization_task: select the next non-Skill implementation checkpoint from the coverage matrix
+next_recommended_task: choose the next implementation task from MISS-026, artifact integrity, eval baseline, GameProfile onboarding, or historical evidence restoration before coding
+ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, and PLANNING-BRIEF-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
+next_stage_after_expert_split: choose a non-Skill implementation checkpoint; do not continue splitting process Skills by default
 ```
 
 ## Current Baseline
@@ -55,7 +55,7 @@ current SKILL-SPLIT-002 status: completed; `.agents/skills/runtime-diagnosis-pla
 current SKILL-SPLIT-003 status: completed; `.agents/skills/hook-discovery-playbook/SKILL.md` created as a process-only expert Skill for behavior decomposition, evidence-first hook discovery, hook option review, risk classification, and proposal/runtime diagnosis handoff
 current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/SKILL.md` created as a process-only expert Skill for failed gate classification, bounded repair eligibility, evidence-bound repair scope, review re-entry, and repair/handoff routing
 current SKILL-SPLIT-CLOSURE-001 status: completed; all five process Skills validate, no template residue is present in HEAD for process Skill directories, E2E-001 evidence remains discoverable, and control docs preserve runtime/real-game/automation boundaries
-current PLANNING-BRIEF-001 status: queued; planned process-only Skill for turning natural language mod ideas into a planning brief using current knowledge evidence, historical experience records, user negotiation, and feature_spec/code-generation guidance
+current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief-playbook/SKILL.md` created as a process-only Skill for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning options, selected_plan, and feature_spec handoff guidance
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -114,7 +114,7 @@ repair_automation_boundary:
 
 ```text
 planned_mod_planning_brief_playbook:
-  PLANNING-BRIEF-001 should add a process-only Skill named mod-planning-brief-playbook after SKILL-SPLIT-004 and a Skill split closure audit.
+  PLANNING-BRIEF-001 added a process-only Skill named mod-planning-brief-playbook after SKILL-SPLIT-004 and a Skill split closure audit.
 purpose:
   Turn natural language mod ideas into a negotiated planning brief that can feed feature_spec and later controlled code generation.
 inputs:
@@ -171,9 +171,9 @@ planned_mod_planning_brief_shape:
     patch_review_notes:
     runtime_verification_expectations:
 boundary:
-  This is not implemented yet.
+  The process-only Skill is implemented and validated.
   It must not claim natural-language-to-RAG extraction is implemented.
-  It must not claim historical experience retrieval, delivery lesson retrieval, planning negotiation, or mod_planning_brief validation is implemented.
+  It must not claim automated historical experience retrieval, automated delivery lesson retrieval, runtime planning negotiation, or mod_planning_brief artifact validation is implemented.
   It must not claim automatic code generation guidance is validated.
   It must keep product facts, current state, schemas, test results, and evidence payloads outside the Skill.
   It must not replace auto-coder or the existing request_planning/feature_spec artifacts.
@@ -358,30 +358,23 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: SKILL-SPLIT-CLOSURE-001
+task: PLANNING-BRIEF-001
 status: completed
 files_changed:
-  .agents/skills/mod-delivery-playbook/SKILL.md
+  .agents/skills/mod-planning-brief-playbook/SKILL.md
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  Closed the expert Skill split audit after repair-loop-playbook.
-  Validated mod-delivery-playbook, patch-review-playbook, runtime-diagnosis-playbook, hook-discovery-playbook, and repair-loop-playbook.
-  Fixed mod-delivery-playbook frontmatter formatting so quick_validate.py can parse it.
-  Confirmed process Skill directories in HEAD contain only SKILL.md files and no init_skill.py template residue.
-  Confirmed E2E-001 remains discoverable as controlled local delivery-chain evidence, not real game proof.
+  Added mod-planning-brief-playbook as a process-only planning Skill.
+  The Skill describes natural language Mod planning intent extraction, request_type classification, knowledge_query_plan creation, retrieved_experience recording, planning options, selected_plan, and handoff guidance.
+  The Skill does not implement natural-language-to-RAG extraction, automated experience retrieval, feature_spec generation, code generation, runtime Skill system behavior, or real runtime validation.
 validation:
-  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\mod-delivery-playbook -> Skill is valid!
-  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\patch-review-playbook -> Skill is valid!
-  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\runtime-diagnosis-playbook -> Skill is valid!
-  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\hook-discovery-playbook -> Skill is valid!
-  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\repair-loop-playbook -> Skill is valid!
-  git ls-tree -r --name-only HEAD .agents/skills/mod-delivery-playbook .agents/skills/patch-review-playbook .agents/skills/runtime-diagnosis-playbook .agents/skills/hook-discovery-playbook .agents/skills/repair-loop-playbook -> only SKILL.md files
+  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\mod-planning-brief-playbook -> Skill is valid!
 tests:
-  not run; this loop changes Skill frontmatter formatting and control documents only.
+  not run; this loop changes Skill and control documents only.
 next:
-  Start PLANNING-BRIEF-001 by creating mod-planning-brief-playbook as a process-only Skill.
+  Select the next non-Skill implementation checkpoint from the coverage matrix before coding.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate
