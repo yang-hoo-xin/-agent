@@ -17,10 +17,10 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: Artifact Integrity Follow-up
-last_completed: ARTIFACT-INTEGRITY-002
-next_recommended_task: choose the next bounded non-Skill implementation task from MISS-R005D, MISS-026, eval baseline, GameProfile onboarding, or historical evidence restoration
-Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, and ARTIFACT-INTEGRITY-002 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
+current_queue: Post Artifact Integrity Selection
+last_completed: ARTIFACT-INTEGRITY-003
+next_recommended_task: choose the next bounded non-Skill implementation task from MISS-026, eval baseline, GameProfile onboarding, or historical evidence restoration
+Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, and ARTIFACT-INTEGRITY-003 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
 next_stage_after_expert_split: non-Skill implementation checkpoints are active; do not continue splitting process Skills by default
 ```
 
@@ -122,7 +122,8 @@ Allowed next:
 | SKILL-SPLIT-CLOSURE-001 | completed | Audit process Skills after repair-loop-playbook: validate every Skill, confirm no template residue, confirm E2E-001 evidence remains discoverable, and confirm docs do not claim runtime Skill system or real game automation | `quick_validate.py` for five process Skills; `git ls-tree` over process Skill directories; control-doc overclaim scan; mod-delivery-playbook frontmatter formatting fixed |
 | PLANNING-BRIEF-001 | completed | Create mod-planning-brief-playbook for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, risk and uncertainty review, user clarification or planning options, mod_planning_brief output shape, and feature_spec handoff guidance | `.agents/skills/mod-planning-brief-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\mod-planning-brief-playbook`; no claim that natural-language-to-RAG extraction, automated experience retrieval, feature_spec generation, or code-generation guidance is implemented |
 | ARTIFACT-INTEGRITY-001 | completed | Recompute stored envelope content hash on ArtifactStore.read, reject tampered artifact payload content even when the ArtifactRef hash still matches the stored artifact_hash, and reject missing or unexpected envelope top-level fields | `src/mod_agent/artifacts/store.py`, `tests/unit/test_artifact_store.py`; focused command: `python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short` -> 35 passed |
-| ARTIFACT-INTEGRITY-002 | completed | Add recursive consumer freshness for check_freshness and read_for_stage while preserving direct-only write-time and checkpoint-resume gates until immutable artifact revisions close MISS-R005D | `src/mod_agent/artifacts/store.py`, `src/mod_agent/workflow/checkpointing.py`, `tests/unit/test_artifact_contract.py`; focused command: `python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short` -> 36 passed |
+| ARTIFACT-INTEGRITY-002 | completed | Add recursive consumer freshness for check_freshness and read_for_stage while preserving direct-only write-time and checkpoint-resume gates as the current checkpoint design | `src/mod_agent/artifacts/store.py`, `src/mod_agent/workflow/checkpointing.py`, `tests/unit/test_artifact_contract.py`; focused command: `python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short` -> 36 passed |
+| ARTIFACT-INTEGRITY-003 | completed | Preserve immutable per-write artifact revision files while maintaining read-validated compatible latest files for current dashboard/MCP views | `src/mod_agent/artifacts/store.py`, `tests/unit/test_artifact_store.py`, `tests/unit/test_controlled_agent_mcp_tools.py`; focused affected command: `python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_projection.py tests/unit/test_controlled_agent_mcp_tools.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py -q --tb=short` -> 67 passed |
 
 ## V1 Acceptance Audit Queue
 
@@ -503,10 +504,11 @@ Failure behavior: stale resume returns STALE_RESUME_REJECTED or existing exact c
 Out of scope: durable production checkpoint backend
 Dependencies: Q-015, R-005
 Conflict checks: checkpoint tests must not mutate Git history
-Known R-005 PASS_WITH_RISK follow-up gaps:
-  - Consumer freshness checks are recursive after ARTIFACT-INTEGRITY-002; write-time and checkpoint-resume gates remain direct-only until immutable revision storage closes the path-overwrite gap.
+Known R-005 follow-up status:
+  - Consumer freshness checks are recursive after ARTIFACT-INTEGRITY-002.
+  - Write-time and checkpoint-resume gates remain direct-only by design; immutable revisions now preserve historical refs after ARTIFACT-INTEGRITY-003.
   - ArtifactStore.read content hash recomputation is completed by ARTIFACT-INTEGRITY-001.
-  - Artifact paths are still one feature/type file and do not preserve immutable historical revision files.
+  - ArtifactStore.write now preserves immutable per-type revision files and maintains read-validated latest files for current views.
   - allow_stale_upstreams must remain audit/report-only and must not become an execution-input bypass.
 Completed evidence:
   - workflow_checkpoint payloads now include resume_binding with patch_proposal ref/hash, proposal_review ref/hash, and a sha256 diff_hash derived from patch_proposal.diff_intent.

@@ -144,7 +144,11 @@ def test_write_creates_parent_directories(tmp_path: Path) -> None:
     )
 
     assert Path(ref.path).exists()
-    assert Path(ref.path).parent.name == "feature_001"
+    assert Path(ref.path).parent.name == "request_planning_report"
+    assert Path(ref.path).parent.parent.name == "revisions"
+    assert (
+        tmp_path / "artifacts" / "features" / "feature_001" / "request_planning_report.json"
+    ).exists()
 
 
 def test_list_feature_artifacts_returns_refs(tmp_path: Path) -> None:
@@ -168,6 +172,55 @@ def test_list_feature_artifacts_returns_refs(tmp_path: Path) -> None:
         first.artifact_hash,
         second.artifact_hash,
     }
+
+
+def test_write_preserves_immutable_revisions_and_latest_pointer(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    first = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    second = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_changed_feature_payload(),
+    )
+
+    assert first.path != second.path
+    assert Path(first.path).exists()
+    assert Path(second.path).exists()
+    assert store.read(first)["artifact_hash"] == first.artifact_hash
+    latest_refs = store.list_feature_artifacts("feature_001")
+    assert len(latest_refs) == 1
+    assert latest_refs[0].artifact_hash == second.artifact_hash
+    assert Path(latest_refs[0].path).name == "feature_spec.json"
+
+
+def test_freshness_rejects_tampered_latest_pointer(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec],
+    )
+    latest_path = tmp_path / "artifacts" / "features" / "feature_001" / "feature_spec.json"
+    envelope = json.loads(latest_path.read_text(encoding="utf-8"))
+    envelope["data"]["message"] = "tampered latest"
+    latest_path.write_text(json.dumps(envelope), encoding="utf-8")
+
+    freshness = store.check_freshness(evidence_pack)
+
+    assert freshness.status == "stale"
+    assert freshness.stale_reasons == [
+        "feature_spec latest invalid: Artifact content hash mismatch"
+    ]
 
 
 def test_required_upstream_artifacts_are_enforced(tmp_path: Path) -> None:

@@ -111,17 +111,24 @@ class ArtifactStore:
             trace_refs=trace_refs or [],
         )
 
-        path = self._artifact_path(feature_id, artifact_type)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        serialized_envelope = (
             json.dumps(envelope.to_dict(), ensure_ascii=False, indent=2, sort_keys=True)
-            + "\n",
-            encoding="utf-8",
+            + "\n"
         )
+        revision_path = self._revision_artifact_path(
+            feature_id,
+            artifact_type,
+            artifact_hash,
+        )
+        revision_path.parent.mkdir(parents=True, exist_ok=True)
+        revision_path.write_text(serialized_envelope, encoding="utf-8")
+        latest_path = self._artifact_path(feature_id, artifact_type)
+        latest_path.parent.mkdir(parents=True, exist_ok=True)
+        latest_path.write_text(serialized_envelope, encoding="utf-8")
         return ArtifactRef(
             feature_id=feature_id,
             artifact_type=artifact_type,
-            path=str(path),
+            path=str(revision_path),
             artifact_hash=artifact_hash,
         )
 
@@ -196,6 +203,23 @@ class ArtifactStore:
                 )
                 self._append_stale_reason(stale_reasons, reason)
                 continue
+            try:
+                latest_hash = self._latest_artifact_hash(
+                    upstream_ref.feature_id,
+                    upstream_ref.artifact_type,
+                )
+            except ArtifactStoreError as exc:
+                self._append_stale_reason(
+                    stale_reasons,
+                    f"{upstream_ref.artifact_type} latest invalid: {exc}",
+                )
+                continue
+            if latest_hash is not None and latest_hash != upstream_ref.artifact_hash:
+                self._append_stale_reason(
+                    stale_reasons,
+                    f"{upstream_ref.artifact_type} hash changed",
+                )
+                continue
 
             upstream_key = (str(upstream_path), upstream_ref.artifact_hash)
             if upstream_key in seen:
@@ -262,6 +286,37 @@ class ArtifactStore:
         return self._guard_path(
             self.root / "features" / feature_id / f"{artifact_type}.json"
         )
+
+    def _revision_artifact_path(
+        self,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str,
+    ) -> Path:
+        return self._guard_path(
+            self.root
+            / "features"
+            / feature_id
+            / "revisions"
+            / artifact_type
+            / f"{artifact_hash}.json"
+        )
+
+    def _latest_artifact_hash(self, feature_id: str, artifact_type: str) -> str | None:
+        latest_path = self._artifact_path(feature_id, artifact_type)
+        if not latest_path.exists():
+            return None
+        envelope = json.loads(latest_path.read_text(encoding="utf-8"))
+        artifact_hash = envelope.get("artifact_hash")
+        if not isinstance(artifact_hash, str):
+            raise ArtifactStoreError("Latest artifact envelope missing artifact_hash")
+        latest_ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            path=str(latest_path),
+            artifact_hash=artifact_hash,
+        )
+        return str(self.read(latest_ref)["artifact_hash"])
 
     def _validate_upstream_refs(
         self,

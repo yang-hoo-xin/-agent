@@ -8,10 +8,10 @@ Last updated: 2026-07-07
 ## Current Queue
 
 ```text
-current_queue: Artifact Integrity Follow-up
-last_completed: ARTIFACT-INTEGRITY-002
-current_stabilization_task: close the next bounded artifact integrity, eval baseline, GameProfile onboarding, or historical evidence restoration checkpoint
-next_recommended_task: choose between MISS-R005D immutable artifact revisions, MISS-026 real runtime automation, eval baseline, GameProfile onboarding, or historical evidence restoration
+current_queue: Post Artifact Integrity Selection
+last_completed: ARTIFACT-INTEGRITY-003
+current_stabilization_task: choose the next bounded non-Skill implementation checkpoint
+next_recommended_task: choose between MISS-026 real runtime automation, eval baseline, GameProfile onboarding, or historical evidence restoration
 ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, and PLANNING-BRIEF-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
 next_stage_after_expert_split: choose a non-Skill implementation checkpoint; do not continue splitting process Skills by default
 ```
@@ -57,7 +57,8 @@ current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/
 current SKILL-SPLIT-CLOSURE-001 status: completed; all five process Skills validate, no template residue is present in HEAD for process Skill directories, E2E-001 evidence remains discoverable, and control docs preserve runtime/real-game/automation boundaries
 current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief-playbook/SKILL.md` created as a process-only Skill for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning options, selected_plan, and feature_spec handoff guidance
 current ARTIFACT-INTEGRITY-001 status: completed; ArtifactStore.read recomputes the stored envelope content hash, rejects tampered payload content even when the ArtifactRef hash still matches the stored artifact_hash, and rejects missing or unexpected envelope top-level fields; focused artifact tests passed
-current ARTIFACT-INTEGRITY-002 status: completed; ArtifactStore.check_freshness and read_for_stage now detect stale deep upstream artifacts through recursive dependency traversal, while write-time and checkpoint-resume gates intentionally remain direct-freshness checks until immutable artifact revisions close MISS-R005D; focused artifact/checkpoint tests passed
+current ARTIFACT-INTEGRITY-002 status: completed; ArtifactStore.check_freshness and read_for_stage now detect stale deep upstream artifacts through recursive dependency traversal, while write-time and checkpoint-resume gates intentionally remain direct-freshness checks; focused artifact/checkpoint tests passed
+current ARTIFACT-INTEGRITY-003 status: completed; ArtifactStore.write now preserves immutable revision files under per-type revision directories while maintaining read-validated latest artifact files for current dashboard/MCP views; focused artifact/dashboard/MCP/workflow/E2E tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -354,32 +355,34 @@ known broader-suite gaps:
 | E2E-001 controlled local proof may be mistaken for real game proof | High | E2E-001 only claims the controlled local source/build-artifact/runtime-probe chain; real GTFO launch, log collection, screenshot capture, DLL copy, and live gameplay verification remain outside this checkpoint |
 | Focused E2E tests may be mistaken for full-suite health | High | E2E-001 only claims the listed focused and affected tests passed; full unit baseline is not claimed green |
 | Optional platform capabilities may outrun the proven delivery chain | High | Keep real dense, full multimodal, dashboard polish, write MCP, automatic game operations, and large benchmarks as explicit opt-in work; expert Skills should be split from the tested E2E-001 path |
-| R-005 artifact integrity remains PASS_WITH_RISK | Medium | Track immutable revision files and audit/report-only allow_stale_upstreams policy as future artifact integrity / immutable revision / R-012 follow-up gaps; read-time envelope content hash recomputation is completed by ARTIFACT-INTEGRITY-001, and recursive consumer freshness is completed by ARTIFACT-INTEGRITY-002 |
+| Artifact integrity can regress when artifact semantics change | Medium | Keep revision-path, latest-pointer, read-time hash, recursive freshness, direct checkpoint freshness, and audit/report-only allow_stale_upstreams tests in scope for future artifact changes |
 | Retrieval authority and tokenizer changes can regress planning safety or ranking behavior | Medium | R-009-HARDENING-001 completed the authority default, deterministic authority grant, raw dict provenance, dashboard authority display, and shared tokenizer work; future retrieval changes must keep focused sparse/query and planning tests in scope |
 
 ## Latest Loop Summary
 
 ```text
-task: ARTIFACT-INTEGRITY-002
+task: ARTIFACT-INTEGRITY-003
 status: completed
 files_changed:
   src/mod_agent/artifacts/store.py
-  src/mod_agent/workflow/checkpointing.py
-  tests/unit/test_artifact_contract.py
+  tests/unit/test_artifact_store.py
+  tests/unit/test_controlled_agent_mcp_tools.py
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  ArtifactStore.check_freshness now recursively traverses upstream_artifacts and deduplicates stale reasons.
-  ArtifactStore.read_for_stage now blocks stale deep upstream artifacts through the recursive freshness path.
-  ArtifactStore.check_direct_freshness now preserves direct-only write-time and checkpoint-resume gates until immutable revision storage closes MISS-R005D.
-  This closes MISS-R005B for consumer freshness only; immutable historical revision files remain open as MISS-R005D.
+  ArtifactStore.write now writes immutable revision files at features/{feature_id}/revisions/{artifact_type}/{artifact_hash}.json.
+  ArtifactStore.write also maintains the compatible latest pointer at features/{feature_id}/{artifact_type}.json for current dashboard and MCP views.
+  Freshness checks validate the latest pointer through ArtifactStore.read so tampered latest files are reported as stale/invalid.
+  ArtifactRef returned from write points at the immutable revision file, so historical refs remain readable after later writes of the same artifact_type.
+  list_feature_artifacts continues to expose latest refs for current feature status views.
+  This closes MISS-R005D; richer persisted artifact revision UI remains separate from the storage guarantee.
 validation:
-  python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short -> 36 passed
+  python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_projection.py tests/unit/test_controlled_agent_mcp_tools.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py -q --tb=short -> 67 passed
 tests:
-  focused artifact integrity tests only; full unit baseline is not claimed green.
+  focused and affected artifact/dashboard/MCP/workflow/E2E tests only; full unit baseline is not claimed green.
 next:
-  Choose the next bounded non-Skill implementation checkpoint; MISS-R005D is the remaining artifact integrity path-overwrite gap.
+  Choose the next bounded non-Skill implementation checkpoint from MISS-026, eval baseline, GameProfile onboarding, or historical evidence restoration.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate

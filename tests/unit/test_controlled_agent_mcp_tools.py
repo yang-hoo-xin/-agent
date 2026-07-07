@@ -177,15 +177,20 @@ def test_get_job_status_blocks_ambiguous_multiple_job_refs(tmp_path, monkeypatch
 
 def test_get_artifact_returns_sanitized_projection_not_raw_body(tmp_path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
-    refs = _write_patch_proposal_chain(store)
+    _write_patch_proposal_chain(store)
 
     result = ControlledAgentMCPToolSurface(store).call_tool(
         "get_artifact",
         {"feature_id": "feature_001", "artifact_type": "patch_proposal"},
     )
 
+    latest_patch_ref = next(
+        ref
+        for ref in store.list_feature_artifacts("feature_001")
+        if ref.artifact_type == "patch_proposal"
+    )
     assert result["status"] == "available"
-    assert result["artifact_refs"] == [_artifact_ref_string(refs["patch_proposal"])]
+    assert result["artifact_refs"] == [_artifact_ref_string(latest_patch_ref)]
     artifact = result["structuredContent"]["artifact"]
     assert artifact["dashboard_projection"]["files"]["count"] == 1
     assert "diff_intent" not in artifact["dashboard_projection"]
