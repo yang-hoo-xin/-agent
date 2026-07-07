@@ -18,9 +18,9 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Expert Skill Decomposition
-last_completed: SKILL-SPLIT-002
-next_recommended_task: create hook-discovery-playbook as the next expert Skill split from the committed E2E-001 delivery chain
-Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, and SKILL-SPLIT-002 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
+last_completed: SKILL-SPLIT-003
+next_recommended_task: create repair-loop-playbook as the next expert Skill split from the committed E2E-001 delivery chain
+Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, and SKILL-SPLIT-003 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
 ```
 
 ## Evidence Provenance Policy
@@ -66,10 +66,14 @@ patch-review-playbook:
   Process-only expert Skill for patch proposal, diff, repair proposal, evidence binding, permission, path, risk, and handoff review procedure.
 runtime-diagnosis-playbook:
   Process-only expert Skill for build/runtime evidence diagnosis, runtime evidence mode classification, acceptance signal checks, claim boundary control, and repair or handoff routing.
+hook-discovery-playbook:
+  Process-only expert Skill for behavior decomposition, evidence-first hook discovery, hook option review, risk classification, and proposal/runtime diagnosis handoff.
 Boundary:
   Process playbooks must not replace auto-coder, store current state, duplicate interface schemas, or embed test results.
 Runtime Skill system boundary:
   Process playbooks do not implement a runtime Skill registry, Skill selector, Skill loader, LangGraph selected-skill node injection, or Skill output validator.
+Hook automation boundary:
+  Process playbooks do not implement an automatic hook scanner, decompiler integration, runtime patch executor, or game binary scanner.
 ```
 
 ## Post E2E-001 Optional Capability Policy
@@ -102,7 +106,8 @@ Allowed next:
 | SKILL-MCP-001 | completed | Create the first process-only Skill for the minimal delivery chain without replacing auto-coder or embedding current state, schema copies, or test results | `.agents/skills/mod-delivery-playbook/SKILL.md` |
 | SKILL-SPLIT-001 | completed | Split patch-review-playbook from the proven delivery chain without embedding current branch facts, schema copies, or test results | `.agents/skills/patch-review-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\patch-review-playbook` |
 | SKILL-SPLIT-002 | completed | Split runtime-diagnosis-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, or runtime Skill system behavior | `.agents/skills/runtime-diagnosis-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\runtime-diagnosis-playbook` |
-| SKILL-SPLIT-003 | queued | Split hook-discovery-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, or runtime Skill system behavior | New `.agents/skills/hook-discovery-playbook/SKILL.md` plus control-doc update |
+| SKILL-SPLIT-003 | completed | Split hook-discovery-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, runtime Skill system behavior, or automatic hook scanning behavior | `.agents/skills/hook-discovery-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\hook-discovery-playbook` |
+| SKILL-SPLIT-004 | queued | Split repair-loop-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, runtime Skill system behavior, or automatic repair execution | New `.agents/skills/repair-loop-playbook/SKILL.md` plus control-doc update |
 
 ## V1 Acceptance Audit Queue
 

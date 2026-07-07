@@ -1,0 +1,91 @@
+---
+name: hook-discovery-playbook
+description: "Process-only hook discovery playbook for the Controlled Mod Agent Platform. Use when turning a gameplay or mod behavior request into a verified hook discovery workflow: target behavior decomposition, evidence lookup, source/API/symbol/log review, hook option comparison, risk classification, proposal handoff, and runtime verification planning. Do not use as an automatic hook scanner, decompiler integration, runtime patch executor, runtime Skill registry, Skill selector, Skill loader, or source of product facts, schemas, current state, or test results."
+---
+
+# Hook Discovery Playbook
+
+## Boundary
+
+Use this skill to guide evidence-first hook discovery for a mod delivery workflow. Keep product facts, interface contracts, artifact payloads, queue state, current test results, source findings, and command output in `DEV_SPEC.md`, `docs/PROJECT_STATE.md`, `docs/IMPLEMENTATION_QUEUE.md`, `docs/SPEC_COVERAGE_MATRIX.md`, artifacts, source files, logs, and test output.
+
+Do not store current branch facts in this skill. Read current files before naming classes, methods, paths, fields, commands, artifact schemas, tests, hook points, or runtime markers.
+
+This skill is not an automatic hook discovery implementation. It does not implement a scanner, decompiler, runtime patch executor, Skill registry, Skill selector, Skill loader, LangGraph selected-skill node injection, or Skill output validator.
+
+## Discovery Inputs
+
+Before proposing a hook point, locate current evidence for the requested behavior:
+
+1. User request, feature specification, or repair reason.
+2. Target game or domain profile and risk constraints.
+3. Current source files, generated mod code, decompiled API notes, symbols, logs, artifacts, or restored historical records.
+4. Existing proposal, patch review, build evidence, or runtime diagnosis output.
+5. Acceptance criteria and runtime verification expectations.
+6. Forbidden paths, permission constraints, and explicit user approvals for high-risk work.
+
+If a class, method, symbol, hook point, path, field, marker, command, or schema is not present in current files or supplied evidence, mark it unknown and ask for evidence instead of guessing.
+
+## Discovery Procedure
+
+1. Decompose the requested behavior
+   - Identify the player-visible behavior, game state, event timing, data inputs, and expected acceptance signal.
+   - Separate UI/config changes from gameplay, networking, persistence, native, reflection-heavy, or runtime behavior changes.
+
+2. Gather current evidence
+   - Search current source, tests, artifacts, logs, and domain adapter information.
+   - Use restored history only as reconstruction support unless referenced files exist now and relevant checks were rerun.
+   - Record read-only evidence sources separately from possible edit targets.
+
+3. Identify hook options
+   - List hook options only when current evidence supports them.
+   - For each option, state the evidence source, expected interception point, expected input/output signal, and uncertainty.
+   - Treat unsupported names or inferred signatures as unknown, not as usable hook targets.
+
+4. Classify risk
+   - Classify each hook option by scope and runtime risk: config/UI-only, safe wrapper, game-hook, state mutation, native/interop/reflection-heavy, or unknown/block.
+   - Check forbidden paths, game directory writes, process control, and permission requirements.
+   - Prefer the narrowest hook point that can satisfy the acceptance criteria with observable evidence.
+
+5. Prepare handoff
+   - Hand supported hook options to implementation proposal with evidence links and verification expectations.
+   - Send risky or under-evidenced options to patch review before execution.
+   - Send runtime verification expectations to runtime diagnosis.
+   - Block when evidence cannot distinguish safe hook points from unsafe or unknown behavior.
+
+## Output Format
+
+Use this structure for hook discovery reports:
+
+```text
+Decision: ready_for_proposal | needs_more_evidence | blocked
+
+Behavior target:
+- Requested behavior and acceptance signal
+
+Evidence checked:
+- Current files, artifacts, logs, source/API notes, symbols, and historical records consulted
+
+Hook options:
+- Hook point | Evidence | Expected signal | Risk | Required verification
+
+Rejected options:
+- Hook point or approach | Reason rejected | Evidence gap or risk
+
+Verification boundary:
+- What this discovery proves
+- What it does not prove
+
+Next action:
+- proposal | patch review | runtime diagnosis | request evidence | stop
+```
+
+## Stop Conditions
+
+Stop and report clearly when:
+
+- The requested hook point depends on class names, method names, signatures, offsets, symbols, fields, paths, or markers that are not present in current files or supplied evidence.
+- The task requires running a decompiler, scanning game binaries, launching the game, copying a DLL, or controlling external processes without explicit approval.
+- The available evidence cannot separate a safe hook from native, interop, reflection-heavy, networking, persistence, or unknown runtime behavior.
+- The work turns into platform implementation from `DEV_SPEC.md`; use `auto-coder` for that work.
+- The request tries to treat this process Skill as an automatic hook scanner, decompiler integration, runtime patch executor, Skill registry, Skill selector, Skill loader, LangGraph selected-skill injection, or output validator.
