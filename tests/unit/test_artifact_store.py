@@ -330,3 +330,35 @@ def test_tampered_content_rejected_when_ref_hash_still_matches(tmp_path: Path) -
 
     with pytest.raises(ArtifactStoreError, match="content hash mismatch"):
         store.read(ref)
+
+
+def test_unexpected_envelope_field_rejected(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    ref = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    path = Path(ref.path)
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    envelope["metadata"] = {"source": "tampered"}
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+
+    with pytest.raises(ArtifactStoreError, match="unexpected fields"):
+        store.read(ref)
+
+
+def test_missing_envelope_field_rejected(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    ref = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    path = Path(ref.path)
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    del envelope["trace_refs"]
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+
+    with pytest.raises(ArtifactStoreError, match="missing fields"):
+        store.read(ref)

@@ -56,7 +56,7 @@ current SKILL-SPLIT-003 status: completed; `.agents/skills/hook-discovery-playbo
 current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/SKILL.md` created as a process-only expert Skill for failed gate classification, bounded repair eligibility, evidence-bound repair scope, review re-entry, and repair/handoff routing
 current SKILL-SPLIT-CLOSURE-001 status: completed; all five process Skills validate, no template residue is present in HEAD for process Skill directories, E2E-001 evidence remains discoverable, and control docs preserve runtime/real-game/automation boundaries
 current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief-playbook/SKILL.md` created as a process-only Skill for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning options, selected_plan, and feature_spec handoff guidance
-current ARTIFACT-INTEGRITY-001 status: completed; ArtifactStore.read recomputes the stored envelope content hash and rejects tampered payload content even when the ArtifactRef hash still matches the stored artifact_hash; focused artifact tests passed
+current ARTIFACT-INTEGRITY-001 status: completed; ArtifactStore.read recomputes the stored envelope content hash, rejects tampered payload content even when the ArtifactRef hash still matches the stored artifact_hash, and rejects missing or unexpected envelope top-level fields; focused artifact tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -370,9 +370,10 @@ files_changed:
 behavior:
   ArtifactStore.read now recomputes the stored envelope content hash from schema_version, artifact_type, feature_id, producer_stage, status, data, inputs, blockers, and trace_refs.
   A tampered artifact payload is rejected even when the ArtifactRef hash still matches the stored artifact_hash.
+  Missing or unexpected envelope top-level fields are rejected so future envelope field additions require an explicit hash/field policy update.
   This closes MISS-R005C only; transitive DAG freshness and immutable historical revision files remain open as MISS-R005B and MISS-R005D.
 validation:
-  python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short -> 33 passed
+  python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short -> 35 passed
 tests:
   focused artifact integrity tests only; full unit baseline is not claimed green.
 next:

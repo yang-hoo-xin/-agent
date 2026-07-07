@@ -14,6 +14,18 @@ from .registry import ArtifactContract, ArtifactRegistryError, ArtifactTypeRegis
 
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _ARTIFACT_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_ENVELOPE_HASH_FIELDS = (
+    "schema_version",
+    "artifact_type",
+    "feature_id",
+    "producer_stage",
+    "status",
+    "data",
+    "inputs",
+    "blockers",
+    "trace_refs",
+)
+_ENVELOPE_FIELDS = frozenset((*_ENVELOPE_HASH_FIELDS, "artifact_hash"))
 
 
 class ArtifactStoreError(ValueError):
@@ -74,19 +86,18 @@ class ArtifactStore:
                 for upstream in (upstream_refs or [])
             ]
         }
-        artifact_hash = self._stable_hash(
-            {
-                "schema_version": contract.schema_version,
-                "artifact_type": artifact_type,
-                "feature_id": feature_id,
-                "producer_stage": contract.producer_stage,
-                "status": status,
-                "data": data,
-                "inputs": inputs,
-                "blockers": blockers or [],
-                "trace_refs": trace_refs or [],
-            }
-        )
+        envelope_content = {
+            "schema_version": contract.schema_version,
+            "artifact_type": artifact_type,
+            "feature_id": feature_id,
+            "producer_stage": contract.producer_stage,
+            "status": status,
+            "data": data,
+            "inputs": inputs,
+            "blockers": blockers or [],
+            "trace_refs": trace_refs or [],
+        }
+        artifact_hash = self._stable_hash(self._envelope_content_for_hash(envelope_content))
         envelope = ArtifactEnvelope(
             schema_version=contract.schema_version,
             artifact_type=artifact_type,
@@ -123,6 +134,7 @@ class ArtifactStore:
         envelope = json.loads(path.read_text(encoding="utf-8"))
         if envelope.get("artifact_hash") != ref.artifact_hash:
             raise ArtifactStoreError("Artifact hash mismatch")
+        self._validate_envelope_fields(envelope)
         try:
             self.registry.validate_envelope(envelope)
         except ArtifactRegistryError as exc:
@@ -258,17 +270,17 @@ class ArtifactStore:
 
     @staticmethod
     def _envelope_content_for_hash(envelope: Mapping[str, Any]) -> dict[str, Any]:
-        return {
-            "schema_version": envelope["schema_version"],
-            "artifact_type": envelope["artifact_type"],
-            "feature_id": envelope["feature_id"],
-            "producer_stage": envelope["producer_stage"],
-            "status": envelope["status"],
-            "data": envelope["data"],
-            "inputs": envelope["inputs"],
-            "blockers": envelope["blockers"],
-            "trace_refs": envelope["trace_refs"],
-        }
+        return {field: envelope[field] for field in _ENVELOPE_HASH_FIELDS}
+
+    @staticmethod
+    def _validate_envelope_fields(envelope: Mapping[str, Any]) -> None:
+        fields = set(envelope)
+        missing = sorted(_ENVELOPE_FIELDS - fields)
+        if missing:
+            raise ArtifactStoreError(f"Artifact envelope missing fields: {missing}")
+        unexpected = sorted(fields - _ENVELOPE_FIELDS)
+        if unexpected:
+            raise ArtifactStoreError(f"Artifact envelope unexpected fields: {unexpected}")
 
     @staticmethod
     def _validate_feature_id(feature_id: str) -> None:
