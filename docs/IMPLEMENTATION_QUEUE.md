@@ -21,6 +21,7 @@ current_queue: Expert Skill Decomposition
 last_completed: SKILL-SPLIT-003
 next_recommended_task: create repair-loop-playbook as the next expert Skill split from the committed E2E-001 delivery chain
 Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, and SKILL-SPLIT-003 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
+next_stage_after_expert_split: PLANNING-BRIEF-001 create mod-planning-brief-playbook after SKILL-SPLIT-004 and a Skill split closure audit
 ```
 
 ## Evidence Provenance Policy
@@ -74,6 +75,8 @@ Runtime Skill system boundary:
   Process playbooks do not implement a runtime Skill registry, Skill selector, Skill loader, LangGraph selected-skill node injection, or Skill output validator.
 Hook automation boundary:
   Process playbooks do not implement an automatic hook scanner, decompiler integration, runtime patch executor, or game binary scanner.
+Planning brief boundary:
+  The planned mod-planning-brief-playbook is not implemented yet. It must not claim natural-language-to-RAG extraction, accumulated-experience retrieval, planning negotiation, feature_spec generation, or code-generation guidance is validated until a future checkpoint creates and verifies that Skill.
 ```
 
 ## Post E2E-001 Optional Capability Policy
@@ -108,6 +111,8 @@ Allowed next:
 | SKILL-SPLIT-002 | completed | Split runtime-diagnosis-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, or runtime Skill system behavior | `.agents/skills/runtime-diagnosis-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\runtime-diagnosis-playbook` |
 | SKILL-SPLIT-003 | completed | Split hook-discovery-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, runtime Skill system behavior, or automatic hook scanning behavior | `.agents/skills/hook-discovery-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\hook-discovery-playbook` |
 | SKILL-SPLIT-004 | queued | Split repair-loop-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, runtime Skill system behavior, or automatic repair execution | New `.agents/skills/repair-loop-playbook/SKILL.md` plus control-doc update |
+| SKILL-SPLIT-CLOSURE-001 | queued_after_SKILL-SPLIT-004 | Audit process Skills after repair-loop-playbook: validate every Skill, confirm no template residue, confirm E2E-001 evidence remains discoverable, and confirm docs do not claim runtime Skill system or real game automation | `quick_validate.py` for process Skills; `git ls-tree` over `.agents/skills`; control-doc overclaim scan |
+| PLANNING-BRIEF-001 | queued_after_skill_split_closure | Create mod-planning-brief-playbook for natural language mod idea negotiation, knowledge evidence lookup planning, accumulated experience use, planning brief output, and feature_spec/code-generation guidance | New `.agents/skills/mod-planning-brief-playbook/SKILL.md` plus control-doc update |
 
 ## V1 Acceptance Audit Queue
 

@@ -13,6 +13,7 @@ last_completed: SKILL-SPLIT-003
 current_stabilization_task: SKILL-SPLIT-004 split repair-loop-playbook after the hook discovery playbook checkpoint
 next_recommended_task: create repair-loop-playbook as the next process-only expert Skill, keeping current state, schema, and test evidence outside Skills
 ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, and SKILL-SPLIT-003 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
+next_stage_after_expert_split: PLANNING-BRIEF-001 create mod-planning-brief-playbook after SKILL-SPLIT-004 and a Skill split closure audit
 ```
 
 ## Current Baseline
@@ -53,6 +54,7 @@ current SKILL-SPLIT-001 status: completed; `.agents/skills/patch-review-playbook
 current SKILL-SPLIT-002 status: completed; `.agents/skills/runtime-diagnosis-playbook/SKILL.md` created as a process-only expert Skill for build/runtime evidence diagnosis, runtime evidence mode boundaries, acceptance markers, repair routing, and handoff readiness
 current SKILL-SPLIT-003 status: completed; `.agents/skills/hook-discovery-playbook/SKILL.md` created as a process-only expert Skill for behavior decomposition, evidence-first hook discovery, hook option review, risk classification, and proposal/runtime diagnosis handoff
 current SKILL-SPLIT-004 status: queued; next recommended expert Skill is repair-loop-playbook
+current PLANNING-BRIEF-001 status: queued_after_skill_split_closure; planned process-only Skill for turning natural language mod ideas into a planning brief using current knowledge evidence, historical experience records, user negotiation, and feature_spec/code-generation guidance
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -101,6 +103,25 @@ runtime_skill_system_boundary:
   No runtime Skill registry, Skill selector, Skill loader, LangGraph selected-skill node injection, or Skill output validator is implemented by SKILL-SPLIT-001, SKILL-SPLIT-002, or SKILL-SPLIT-003.
 hook_automation_boundary:
   No automatic hook scanner, decompiler integration, runtime patch executor, or game binary scanner is implemented by SKILL-SPLIT-003.
+```
+
+## Planning Brief And Knowledge Boundary
+
+```text
+planned_mod_planning_brief_playbook:
+  PLANNING-BRIEF-001 should add a process-only Skill named mod-planning-brief-playbook after SKILL-SPLIT-004 and a Skill split closure audit.
+purpose:
+  Turn natural language mod ideas into a negotiated planning brief that can feed feature_spec and later controlled code generation.
+inputs:
+  natural language user request, current knowledge evidence, source/API/log/artifact evidence, restored historical records, and accumulated mod-delivery lessons.
+outputs:
+  planning brief, evidence questions, knowledge lookup plan, acceptance intent, risk notes, open questions, and feature_spec guidance.
+boundary:
+  This is not implemented yet.
+  It must not claim natural-language-to-RAG extraction is implemented.
+  It must not claim automatic code generation guidance is validated.
+  It must keep product facts, current state, schemas, test results, and evidence payloads outside the Skill.
+  It must not replace auto-coder or the existing request_planning/feature_spec artifacts.
 ```
 
 ## Post E2E-001 Optional Capability Policy
