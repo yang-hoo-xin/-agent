@@ -9,10 +9,10 @@ Last updated: 2026-07-07
 
 ```text
 current_queue: Expert Skill Decomposition
-last_completed: E2E-001
-current_stabilization_task: SKILL-SPLIT-001 split the first expert playbook after the committed E2E-001 checkpoint
-next_recommended_task: create patch-review-playbook as the first expert Skill, keeping current state, schema, and test evidence outside Skills
-ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, and E2E-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
+last_completed: SKILL-SPLIT-001
+current_stabilization_task: SKILL-SPLIT-002 split runtime-diagnosis-playbook after the patch review playbook checkpoint
+next_recommended_task: create runtime-diagnosis-playbook as the next process-only expert Skill, keeping current state, schema, and test evidence outside Skills
+ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, and SKILL-SPLIT-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
 ```
 
 ## Current Baseline
@@ -49,7 +49,8 @@ current MISS-022 status: completed; focused and affected tests passed
 current STATE-001 status: completed; LOOP_HISTORY restored from rescue commit c43f4ec, evidence provenance refreshed, and E2E-001 scope boundary recorded
 current SKILL-MCP-001 status: completed; `.agents/skills/mod-delivery-playbook/SKILL.md` created as a process-only delivery Skill while preserving auto-coder as the DEV_SPEC.md-driven platform-development Skill
 current E2E-001 status: completed; minimal planning-to-handoff chain is current-branch verified by tests/unit/test_mod_delivery_e2e.py with controlled temporary BetterHitFeedback source, controlled local build artifact verification, and real local runtime probe evidence
-current SKILL-SPLIT-001 status: queued; first recommended expert Skill is patch-review-playbook
+current SKILL-SPLIT-001 status: completed; `.agents/skills/patch-review-playbook/SKILL.md` created as a process-only expert Skill for review of patch proposals, diffs, evidence binding, permissions, risk, and handoff readiness
+current SKILL-SPLIT-002 status: queued; next recommended expert Skill is runtime-diagnosis-playbook
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -86,8 +87,10 @@ auto_coder_scope:
   .agents/skills/auto-coder/SKILL.md remains the platform-development Skill for DEV_SPEC.md-driven controlled code generation.
 mod_delivery_playbook_scope:
   mod-delivery-playbook is planned as a user-facing delivery-process Skill for turning a mod request into feature_spec, evidence, proposal, review, build/runtime evidence, repair, and handoff artifacts.
+patch_review_playbook_scope:
+  patch-review-playbook is a process-only expert Skill for review procedure, evidence boundary checks, permission and path checks, runtime-risk review, and review output shape.
 boundary:
-  mod-delivery-playbook must not replace auto-coder, duplicate current product facts, copy interface schemas, embed test results, or become a second platform-development control plane.
+  process Skills must not replace auto-coder, duplicate current product facts, copy interface schemas, embed test results, or become a second platform-development control plane.
 ```
 
 ## Post E2E-001 Optional Capability Policy
@@ -269,30 +272,23 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: E2E-001
-status: completed; focused and affected tests passed; full unit baseline is not claimed green
+task: SKILL-SPLIT-001
+status: completed
 files_changed:
-  tests/unit/test_mod_delivery_e2e.py
-  DEV_SPEC.md
+  .agents/skills/patch-review-playbook/SKILL.md
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  Added a focused E2E-001 test that runs the full delivery chain from planning input through workflow_summary.
-  The test uses a controlled temporary BetterHitFeedback source file, deterministic symbol evidence, controlled local build artifact verification through an injected test build factory/runner, and a real local subprocess runtime probe.
-  The workflow produces request_planning_report, feature_spec, evidence_pack, implementation_plan, patch_proposal, proposal_review, dry_run_result, build_result, runtime_evidence, eval_report, and workflow_summary.
-  The path reaches final_status=accepted and claims real local build/runtime success only for the controlled local proof.
-  The test does not prove a real C# toolchain build, a real BepInEx plugin DLL, a game-loadable artifact, GTFO launch, DLL copy to a game directory, real game logs, real game screenshots, or live gameplay success.
+  Added patch-review-playbook as a process-only expert Skill.
+  The Skill describes patch proposal, diff, repair proposal, evidence binding, permission, path, risk, and handoff review procedure.
+  The Skill does not store current branch facts, interface schema copies, test results, artifact payloads, or queue state.
+validation:
+  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\patch-review-playbook -> Skill is valid!
 tests:
-  focused: .venv\Scripts\python.exe -m pytest tests/unit/test_mod_delivery_e2e.py -q --tb=short -> 1 passed
-  affected: .venv\Scripts\python.exe -m pytest tests/unit/test_mod_delivery_e2e.py tests/unit/test_workflow_graph.py tests/unit/test_runtime_probe.py tests/unit/test_runtime_evidence.py tests/unit/test_build_adapter.py tests/unit/test_artifact_contract.py -q --tb=short -> 56 passed
-  full_unit_baseline: not claimed green by this loop
+  not run; this loop changes Skill and control documents only.
 next:
-  Start SKILL-SPLIT-001 by creating patch-review-playbook as a process-only expert Skill.
-verification:
-  focused and affected Q-022 retrieval/config/artifact/dashboard/performance/knowledge tests: 88 passed
-  affected Q-022 workflow/planning/proposal tests: 32 passed
-next_recommended_task: V1-AUDIT-001 completed; continue to V1-AUDIT-002
+  Start SKILL-SPLIT-002 by creating runtime-diagnosis-playbook as a process-only expert Skill.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate

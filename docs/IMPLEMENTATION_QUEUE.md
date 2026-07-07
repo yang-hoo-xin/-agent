@@ -18,9 +18,9 @@ Do not close a task without updating every affected coverage row.
 
 ```text
 current_queue: Expert Skill Decomposition
-last_completed: E2E-001
-next_recommended_task: create patch-review-playbook as the first expert Skill split from the committed E2E-001 delivery chain
-Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, and E2E-001 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
+last_completed: SKILL-SPLIT-001
+next_recommended_task: create runtime-diagnosis-playbook as the next expert Skill split from the committed E2E-001 delivery chain
+Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, and SKILL-SPLIT-001 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
 ```
 
 ## Evidence Provenance Policy
@@ -62,8 +62,10 @@ auto-coder:
   .agents/skills/auto-coder/SKILL.md remains the DEV_SPEC.md-driven platform-development Skill.
 mod-delivery-playbook:
   Planned process-only Skill for the user-facing mod delivery chain.
+patch-review-playbook:
+  Process-only expert Skill for patch proposal, diff, repair proposal, evidence binding, permission, path, risk, and handoff review procedure.
 Boundary:
-  The delivery playbook must not replace auto-coder, store current state, duplicate interface schemas, or embed test results.
+  Process playbooks must not replace auto-coder, store current state, duplicate interface schemas, or embed test results.
 ```
 
 ## Post E2E-001 Optional Capability Policy
@@ -94,7 +96,8 @@ Allowed next:
 | STATE-001 | completed | Restore LOOP_HISTORY, distinguish current Git-verifiable evidence from historical records, and record E2E-001 scope control | `docs/audits/LOOP_HISTORY.md`, `docs/PROJECT_STATE.md`, `docs/IMPLEMENTATION_QUEUE.md`, `docs/SPEC_COVERAGE_MATRIX.md` |
 | E2E-001 | completed | Prove one minimal planning-to-handoff chain: user planning input, feature_spec, evidence lookup, patch proposal, review, build/runtime evidence, and handoff summary | `tests/unit/test_mod_delivery_e2e.py`; affected suite: workflow/build/runtime/artifact tests |
 | SKILL-MCP-001 | completed | Create the first process-only Skill for the minimal delivery chain without replacing auto-coder or embedding current state, schema copies, or test results | `.agents/skills/mod-delivery-playbook/SKILL.md` |
-| SKILL-SPLIT-001 | queued | Split patch-review-playbook from the proven delivery chain without embedding current branch facts, schema copies, or test results | New `.agents/skills/patch-review-playbook/SKILL.md` plus control-doc update |
+| SKILL-SPLIT-001 | completed | Split patch-review-playbook from the proven delivery chain without embedding current branch facts, schema copies, or test results | `.agents/skills/patch-review-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\patch-review-playbook` |
+| SKILL-SPLIT-002 | queued | Split runtime-diagnosis-playbook from the proven delivery chain without embedding current branch facts, schema copies, or test results | New `.agents/skills/runtime-diagnosis-playbook/SKILL.md` plus control-doc update |
 
 ## V1 Acceptance Audit Queue
 
