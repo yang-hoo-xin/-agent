@@ -8,10 +8,10 @@ Last updated: 2026-07-07
 ## Current Queue
 
 ```text
-current_queue: Post Planning Brief Selection
-last_completed: PLANNING-BRIEF-001
-current_stabilization_task: select the next non-Skill implementation checkpoint from the coverage matrix
-next_recommended_task: choose the next implementation task from MISS-026, artifact integrity, eval baseline, GameProfile onboarding, or historical evidence restoration before coding
+current_queue: Artifact Integrity Follow-up
+last_completed: ARTIFACT-INTEGRITY-001
+current_stabilization_task: close the next bounded artifact integrity, eval baseline, GameProfile onboarding, or historical evidence restoration checkpoint
+next_recommended_task: choose between MISS-R005B transitive freshness, MISS-R005D immutable artifact revisions, MISS-026 real runtime automation, eval baseline, GameProfile onboarding, or historical evidence restoration
 ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, and PLANNING-BRIEF-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
 next_stage_after_expert_split: choose a non-Skill implementation checkpoint; do not continue splitting process Skills by default
 ```
@@ -56,6 +56,7 @@ current SKILL-SPLIT-003 status: completed; `.agents/skills/hook-discovery-playbo
 current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/SKILL.md` created as a process-only expert Skill for failed gate classification, bounded repair eligibility, evidence-bound repair scope, review re-entry, and repair/handoff routing
 current SKILL-SPLIT-CLOSURE-001 status: completed; all five process Skills validate, no template residue is present in HEAD for process Skill directories, E2E-001 evidence remains discoverable, and control docs preserve runtime/real-game/automation boundaries
 current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief-playbook/SKILL.md` created as a process-only Skill for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning options, selected_plan, and feature_spec handoff guidance
+current ARTIFACT-INTEGRITY-001 status: completed; ArtifactStore.read recomputes the stored envelope content hash and rejects tampered payload content even when the ArtifactRef hash still matches the stored artifact_hash; focused artifact tests passed
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -352,29 +353,30 @@ known broader-suite gaps:
 | E2E-001 controlled local proof may be mistaken for real game proof | High | E2E-001 only claims the controlled local source/build-artifact/runtime-probe chain; real GTFO launch, log collection, screenshot capture, DLL copy, and live gameplay verification remain outside this checkpoint |
 | Focused E2E tests may be mistaken for full-suite health | High | E2E-001 only claims the listed focused and affected tests passed; full unit baseline is not claimed green |
 | Optional platform capabilities may outrun the proven delivery chain | High | Keep real dense, full multimodal, dashboard polish, write MCP, automatic game operations, and large benchmarks as explicit opt-in work; expert Skills should be split from the tested E2E-001 path |
-| R-005 artifact integrity remains PASS_WITH_RISK | Medium | Track transitive freshness, read-time envelope content hash recomputation, immutable revision files, and audit/report-only allow_stale_upstreams policy as future artifact integrity / immutable revision / R-012 follow-up gaps |
+| R-005 artifact integrity remains PASS_WITH_RISK | Medium | Track transitive freshness, immutable revision files, and audit/report-only allow_stale_upstreams policy as future artifact integrity / immutable revision / R-012 follow-up gaps; read-time envelope content hash recomputation is completed by ARTIFACT-INTEGRITY-001 |
 | Retrieval authority and tokenizer changes can regress planning safety or ranking behavior | Medium | R-009-HARDENING-001 completed the authority default, deterministic authority grant, raw dict provenance, dashboard authority display, and shared tokenizer work; future retrieval changes must keep focused sparse/query and planning tests in scope |
 
 ## Latest Loop Summary
 
 ```text
-task: PLANNING-BRIEF-001
+task: ARTIFACT-INTEGRITY-001
 status: completed
 files_changed:
-  .agents/skills/mod-planning-brief-playbook/SKILL.md
+  src/mod_agent/artifacts/store.py
+  tests/unit/test_artifact_store.py
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  Added mod-planning-brief-playbook as a process-only planning Skill.
-  The Skill describes natural language Mod planning intent extraction, request_type classification, knowledge_query_plan creation, retrieved_experience recording, planning options, selected_plan, and handoff guidance.
-  The Skill does not implement natural-language-to-RAG extraction, automated experience retrieval, feature_spec generation, code generation, runtime Skill system behavior, or real runtime validation.
+  ArtifactStore.read now recomputes the stored envelope content hash from schema_version, artifact_type, feature_id, producer_stage, status, data, inputs, blockers, and trace_refs.
+  A tampered artifact payload is rejected even when the ArtifactRef hash still matches the stored artifact_hash.
+  This closes MISS-R005C only; transitive DAG freshness and immutable historical revision files remain open as MISS-R005B and MISS-R005D.
 validation:
-  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\mod-planning-brief-playbook -> Skill is valid!
+  python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short -> 33 passed
 tests:
-  not run; this loop changes Skill and control documents only.
+  focused artifact integrity tests only; full unit baseline is not claimed green.
 next:
-  Select the next non-Skill implementation checkpoint from the coverage matrix before coding.
+  Choose the next bounded non-Skill implementation checkpoint from the remaining open coverage rows.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate

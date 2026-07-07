@@ -127,6 +127,9 @@ class ArtifactStore:
             self.registry.validate_envelope(envelope)
         except ArtifactRegistryError as exc:
             raise ArtifactStoreError(str(exc)) from exc
+        content_hash = self._stable_hash(self._envelope_content_for_hash(envelope))
+        if content_hash != envelope["artifact_hash"]:
+            raise ArtifactStoreError("Artifact content hash mismatch")
         return envelope
 
     def check_freshness(self, ref: ArtifactRef) -> FreshnessView:
@@ -252,6 +255,20 @@ class ArtifactStore:
     def _stable_hash(value: Mapping[str, Any]) -> str:
         serialized = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _envelope_content_for_hash(envelope: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "schema_version": envelope["schema_version"],
+            "artifact_type": envelope["artifact_type"],
+            "feature_id": envelope["feature_id"],
+            "producer_stage": envelope["producer_stage"],
+            "status": envelope["status"],
+            "data": envelope["data"],
+            "inputs": envelope["inputs"],
+            "blockers": envelope["blockers"],
+            "trace_refs": envelope["trace_refs"],
+        }
 
     @staticmethod
     def _validate_feature_id(feature_id: str) -> None:

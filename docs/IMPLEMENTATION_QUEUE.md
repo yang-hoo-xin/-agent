@@ -17,11 +17,11 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: Post Planning Brief Selection
-last_completed: PLANNING-BRIEF-001
-next_recommended_task: choose the next non-Skill implementation task from the coverage matrix before coding
-Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, and PLANNING-BRIEF-001 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
-next_stage_after_expert_split: select a non-Skill checkpoint; default options are MISS-026, artifact integrity, eval baseline, GameProfile onboarding, or historical evidence restoration
+current_queue: Artifact Integrity Follow-up
+last_completed: ARTIFACT-INTEGRITY-001
+next_recommended_task: choose the next bounded non-Skill implementation task from MISS-R005B, MISS-R005D, MISS-026, eval baseline, GameProfile onboarding, or historical evidence restoration
+Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, and ARTIFACT-INTEGRITY-001 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
+next_stage_after_expert_split: non-Skill implementation checkpoints are active; do not continue splitting process Skills by default
 ```
 
 ## Evidence Provenance Policy
@@ -121,6 +121,7 @@ Allowed next:
 | SKILL-SPLIT-004 | completed | Split repair-loop-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, runtime Skill system behavior, or automatic repair execution | `.agents/skills/repair-loop-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\repair-loop-playbook` |
 | SKILL-SPLIT-CLOSURE-001 | completed | Audit process Skills after repair-loop-playbook: validate every Skill, confirm no template residue, confirm E2E-001 evidence remains discoverable, and confirm docs do not claim runtime Skill system or real game automation | `quick_validate.py` for five process Skills; `git ls-tree` over process Skill directories; control-doc overclaim scan; mod-delivery-playbook frontmatter formatting fixed |
 | PLANNING-BRIEF-001 | completed | Create mod-planning-brief-playbook for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, risk and uncertainty review, user clarification or planning options, mod_planning_brief output shape, and feature_spec handoff guidance | `.agents/skills/mod-planning-brief-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\mod-planning-brief-playbook`; no claim that natural-language-to-RAG extraction, automated experience retrieval, feature_spec generation, or code-generation guidance is implemented |
+| ARTIFACT-INTEGRITY-001 | completed | Recompute stored envelope content hash on ArtifactStore.read and reject tampered artifact payload content even when the ArtifactRef hash still matches the stored artifact_hash | `src/mod_agent/artifacts/store.py`, `tests/unit/test_artifact_store.py`; focused command: `python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py -q --tb=short` -> 33 passed |
 
 ## V1 Acceptance Audit Queue
 
@@ -503,7 +504,7 @@ Dependencies: Q-015, R-005
 Conflict checks: checkpoint tests must not mutate Git history
 Known R-005 PASS_WITH_RISK follow-up gaps:
   - Freshness checks are direct-upstream only, not full transitive DAG freshness.
-  - ArtifactStore.read does not recompute envelope content hash; it compares envelope artifact_hash to ArtifactRef artifact_hash.
+  - ArtifactStore.read content hash recomputation is completed by ARTIFACT-INTEGRITY-001.
   - Artifact paths are still one feature/type file and do not preserve immutable historical revision files.
   - allow_stale_upstreams must remain audit/report-only and must not become an execution-input bypass.
 Completed evidence:

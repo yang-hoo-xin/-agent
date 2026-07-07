@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -313,3 +314,19 @@ def test_hash_mismatch_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ArtifactStoreError, match="hash mismatch"):
         store.read(tampered)
+
+
+def test_tampered_content_rejected_when_ref_hash_still_matches(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    ref = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    path = Path(ref.path)
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    envelope["data"]["message"] = "tampered"
+    path.write_text(json.dumps(envelope), encoding="utf-8")
+
+    with pytest.raises(ArtifactStoreError, match="content hash mismatch"):
+        store.read(ref)
