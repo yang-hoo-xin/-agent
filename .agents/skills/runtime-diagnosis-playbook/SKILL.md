@@ -1,0 +1,93 @@
+---
+name: runtime-diagnosis-playbook
+description: Process-only runtime diagnosis playbook for the Controlled Mod Agent Platform. Use when diagnosing build/runtime evidence, runtime probe output, logs, acceptance markers, fake/local/supplied/manual/real evidence boundaries, repair routing, or handoff readiness in a mod delivery workflow. Do not use as a runtime Skill registry, Skill selector, Skill loader, LangGraph selected-skill injection mechanism, output validator, or source of product facts, schemas, current state, or test results.
+---
+
+# Runtime Diagnosis Playbook
+
+## Boundary
+
+Use this skill to diagnose runtime evidence after a proposal, build, local probe, supplied output, manual check, or real runtime attempt. Keep product facts, interface contracts, artifact payloads, queue state, current test results, and command output in `DEV_SPEC.md`, `docs/PROJECT_STATE.md`, `docs/IMPLEMENTATION_QUEUE.md`, `docs/SPEC_COVERAGE_MATRIX.md`, artifacts, logs, and source files.
+
+Do not store current branch facts in this skill. Read current files before naming paths, fields, commands, artifact schemas, test names, evidence fields, or status values.
+
+This skill is not a runtime Skill system. It does not implement a Skill registry, Skill selector, Skill loader, LangGraph node injection for selected skills, or Skill output validator.
+
+## Diagnosis Inputs
+
+Before diagnosing, locate the current evidence for the specific run:
+
+1. User request, feature specification, or repair reason.
+2. Claimed build result and expected artifact evidence.
+3. Runtime evidence source: fake, local, supplied output, manual, or real.
+4. Logs, probe stdout/stderr, screenshots, supplied text, manual notes, or game runtime output.
+5. Acceptance criteria and runtime verification expectations from current artifacts or files.
+6. Proposal review result and any blocked or repair artifact.
+7. Commands that actually ran and their exit status.
+
+If any path, identifier, field, schema, marker, command, or test name is not present in current files or supplied evidence, mark it unknown and ask for evidence instead of guessing.
+
+## Diagnosis Procedure
+
+1. Classify evidence mode
+   - Identify whether evidence is fake, local, supplied output, manual, or real.
+   - Keep local subprocess probes separate from real game runtime evidence.
+   - Treat restored history as reconstruction support, not proof of the current run.
+
+2. Check build-to-runtime boundary
+   - Verify whether the build command actually ran and whether expected artifacts were checked.
+   - Do not infer runtime success from build success, file existence, or exit code alone.
+   - If the artifact is controlled local test output, state that it is not a game-loadable proof unless current evidence proves otherwise.
+
+3. Check runtime signals
+   - Match logs, probe output, supplied output, screenshots, or manual notes against the current acceptance criteria.
+   - Separate startup/load signals from gameplay behavior signals.
+   - Record missing, stale, ambiguous, or contradictory signals as blockers or repair inputs.
+
+4. Check claim strength
+   - Align the conclusion with the weakest evidence boundary.
+   - Use inconclusive when evidence exists but does not prove acceptance.
+   - Use blocked when required evidence is absent, untrusted, unsafe, or not approved to collect.
+
+5. Route next action
+   - Hand off when evidence is coherent and the claim boundary is explicit.
+   - Request repair when a bounded code or configuration change follows from failing evidence.
+   - Ask the user for evidence when real game logs, screenshots, process output, or manual observation are required but missing.
+   - Stop before real game launch, DLL copy, process control, or MCP write operations unless the user explicitly approves that work.
+
+## Output Format
+
+Use this structure for runtime diagnosis reports:
+
+```text
+Decision: accepted | inconclusive | repair_required | blocked
+
+Evidence mode:
+- fake | local | supplied_output | manual | real
+
+Signals checked:
+- Build artifact evidence
+- Startup/load evidence
+- Gameplay/behavior evidence
+- Acceptance marker evidence
+
+Findings:
+- Severity | Evidence | Issue | Required action
+
+Verification boundary:
+- What this diagnosis proves
+- What this diagnosis does not prove
+
+Next action:
+- handoff | repair | request evidence | stop
+```
+
+## Stop Conditions
+
+Stop and report clearly when:
+
+- The user asks for real game proof but only fake, local, supplied, or manual evidence exists.
+- The task requires launching the game, copying a DLL, collecting real game logs, taking screenshots, or controlling external processes without explicit approval.
+- Runtime acceptance depends on identifiers, paths, fields, schemas, markers, or commands that are not present in current files or supplied evidence.
+- The work turns into platform implementation from `DEV_SPEC.md`; use `auto-coder` for that work.
+- The request tries to treat this process Skill as a runtime Skill registry, selector, loader, LangGraph selected-skill injection, or output validator.
