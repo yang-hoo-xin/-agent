@@ -115,10 +115,60 @@ purpose:
 inputs:
   natural language user request, current knowledge evidence, source/API/log/artifact evidence, restored historical records, and accumulated mod-delivery lessons.
 outputs:
-  planning brief, evidence questions, knowledge lookup plan, acceptance intent, risk notes, open questions, and feature_spec guidance.
+  mod_planning_brief, evidence questions, knowledge lookup plan, acceptance intent, risk notes, open questions, and feature_spec guidance.
+required_responsibilities:
+  - extract Mod planning intent from natural language.
+  - classify request_type as config-only, UI feedback, gameplay behavior, runtime diagnostics, hook-required, or unknown / needs evidence.
+  - generate knowledge_query_plan before claiming design or implementation direction.
+  - retrieve historical experience and delivery lessons from current knowledge evidence, prior artifacts, restored history, and delivery lesson records.
+  - identify risk, uncertainty, unavailable evidence, and required acceptance signals.
+  - ask clarification questions or present selectable planning directions when the evidence is insufficient.
+  - output mod_planning_brief as the handoff artifact.
+  - hand mod_planning_brief to feature_spec generation without replacing feature_spec itself.
+planned_artifact_name:
+  mod_planning_brief
+planned_mod_planning_brief_shape:
+  user_intent:
+    raw_request:
+    normalized_goal:
+    target_game:
+    target_mod:
+    expected_user_visible_behavior:
+  knowledge_query_plan:
+    source_types:
+      - current_source
+      - game_profile
+      - prior_artifacts
+      - delivery_lessons
+      - symbol_search
+      - docs
+    queries:
+  retrieved_experience:
+    relevant_lessons:
+    failed_patterns:
+    reusable_patterns:
+    unavailable_evidence:
+  planning_options:
+    - option:
+      expected_complexity:
+      hook_likelihood:
+      risk:
+      required_evidence:
+      acceptance_signal:
+  selected_plan:
+    scope:
+    constraints:
+    non_goals:
+    user_confirmed:
+  handoff:
+    feature_spec_guidance:
+    hook_discovery_guidance:
+    patch_review_notes:
+    runtime_verification_expectations:
 boundary:
   This is not implemented yet.
   It must not claim natural-language-to-RAG extraction is implemented.
+  It must not claim historical experience retrieval, delivery lesson retrieval, planning negotiation, or mod_planning_brief validation is implemented.
   It must not claim automatic code generation guidance is validated.
   It must keep product facts, current state, schemas, test results, and evidence payloads outside the Skill.
   It must not replace auto-coder or the existing request_planning/feature_spec artifacts.
