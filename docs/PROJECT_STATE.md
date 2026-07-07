@@ -8,12 +8,12 @@ Last updated: 2026-07-07
 ## Current Queue
 
 ```text
-current_queue: Expert Skill Decomposition
-last_completed: SKILL-SPLIT-004
-current_stabilization_task: SKILL-SPLIT-CLOSURE-001 audit process Skills after repair-loop-playbook
-next_recommended_task: run Skill split closure audit before PLANNING-BRIEF-001
-ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, and SKILL-SPLIT-004 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
-next_stage_after_expert_split: PLANNING-BRIEF-001 create mod-planning-brief-playbook after SKILL-SPLIT-004 and a Skill split closure audit
+current_queue: Planning Brief
+last_completed: SKILL-SPLIT-CLOSURE-001
+current_stabilization_task: PLANNING-BRIEF-001 create mod-planning-brief-playbook after expert Skill closure
+next_recommended_task: create mod-planning-brief-playbook as a process-only planning brief Skill
+ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, and SKILL-SPLIT-CLOSURE-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
+next_stage_after_expert_split: PLANNING-BRIEF-001 create mod-planning-brief-playbook
 ```
 
 ## Current Baseline
@@ -54,8 +54,8 @@ current SKILL-SPLIT-001 status: completed; `.agents/skills/patch-review-playbook
 current SKILL-SPLIT-002 status: completed; `.agents/skills/runtime-diagnosis-playbook/SKILL.md` created as a process-only expert Skill for build/runtime evidence diagnosis, runtime evidence mode boundaries, acceptance markers, repair routing, and handoff readiness
 current SKILL-SPLIT-003 status: completed; `.agents/skills/hook-discovery-playbook/SKILL.md` created as a process-only expert Skill for behavior decomposition, evidence-first hook discovery, hook option review, risk classification, and proposal/runtime diagnosis handoff
 current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/SKILL.md` created as a process-only expert Skill for failed gate classification, bounded repair eligibility, evidence-bound repair scope, review re-entry, and repair/handoff routing
-current SKILL-SPLIT-CLOSURE-001 status: queued; next recommended task is closure audit for process Skills, template residue, E2E-001 discoverability, and overclaim boundaries
-current PLANNING-BRIEF-001 status: queued_after_skill_split_closure; planned process-only Skill for turning natural language mod ideas into a planning brief using current knowledge evidence, historical experience records, user negotiation, and feature_spec/code-generation guidance
+current SKILL-SPLIT-CLOSURE-001 status: completed; all five process Skills validate, no template residue is present in HEAD for process Skill directories, E2E-001 evidence remains discoverable, and control docs preserve runtime/real-game/automation boundaries
+current PLANNING-BRIEF-001 status: queued; planned process-only Skill for turning natural language mod ideas into a planning brief using current knowledge evidence, historical experience records, user negotiation, and feature_spec/code-generation guidance
 commit policy: manual commit after focused tests and status review
 ```
 
@@ -358,23 +358,30 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: SKILL-SPLIT-004
+task: SKILL-SPLIT-CLOSURE-001
 status: completed
 files_changed:
-  .agents/skills/repair-loop-playbook/SKILL.md
+  .agents/skills/mod-delivery-playbook/SKILL.md
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  Added repair-loop-playbook as a process-only expert Skill.
-  The Skill describes failed gate classification, repair eligibility, evidence-bound minimal repair scope, review re-entry, and repair/handoff routing.
-  The Skill does not store current branch facts, interface schema copies, test results, artifact payloads, queue state, runtime Skill system behavior, or automatic repair execution behavior.
+  Closed the expert Skill split audit after repair-loop-playbook.
+  Validated mod-delivery-playbook, patch-review-playbook, runtime-diagnosis-playbook, hook-discovery-playbook, and repair-loop-playbook.
+  Fixed mod-delivery-playbook frontmatter formatting so quick_validate.py can parse it.
+  Confirmed process Skill directories in HEAD contain only SKILL.md files and no init_skill.py template residue.
+  Confirmed E2E-001 remains discoverable as controlled local delivery-chain evidence, not real game proof.
 validation:
+  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\mod-delivery-playbook -> Skill is valid!
+  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\patch-review-playbook -> Skill is valid!
+  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\runtime-diagnosis-playbook -> Skill is valid!
+  python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\hook-discovery-playbook -> Skill is valid!
   python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\repair-loop-playbook -> Skill is valid!
+  git ls-tree -r --name-only HEAD .agents/skills/mod-delivery-playbook .agents/skills/patch-review-playbook .agents/skills/runtime-diagnosis-playbook .agents/skills/hook-discovery-playbook .agents/skills/repair-loop-playbook -> only SKILL.md files
 tests:
-  not run; this loop changes Skill and control documents only.
+  not run; this loop changes Skill frontmatter formatting and control documents only.
 next:
-  Run SKILL-SPLIT-CLOSURE-001 before PLANNING-BRIEF-001.
+  Start PLANNING-BRIEF-001 by creating mod-planning-brief-playbook as a process-only Skill.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate

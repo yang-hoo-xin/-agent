@@ -17,11 +17,11 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: Expert Skill Decomposition
-last_completed: SKILL-SPLIT-004
-next_recommended_task: run SKILL-SPLIT-CLOSURE-001 before PLANNING-BRIEF-001
-Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, and SKILL-SPLIT-004 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
-next_stage_after_expert_split: PLANNING-BRIEF-001 create mod-planning-brief-playbook after SKILL-SPLIT-004 and a Skill split closure audit
+current_queue: Planning Brief
+last_completed: SKILL-SPLIT-CLOSURE-001
+next_recommended_task: create mod-planning-brief-playbook as a process-only planning brief Skill
+Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, and SKILL-SPLIT-CLOSURE-001 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
+next_stage_after_expert_split: PLANNING-BRIEF-001 create mod-planning-brief-playbook
 ```
 
 ## Evidence Provenance Policy
@@ -119,8 +119,8 @@ Allowed next:
 | SKILL-SPLIT-002 | completed | Split runtime-diagnosis-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, or runtime Skill system behavior | `.agents/skills/runtime-diagnosis-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\runtime-diagnosis-playbook` |
 | SKILL-SPLIT-003 | completed | Split hook-discovery-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, runtime Skill system behavior, or automatic hook scanning behavior | `.agents/skills/hook-discovery-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\hook-discovery-playbook` |
 | SKILL-SPLIT-004 | completed | Split repair-loop-playbook from the proven delivery chain without embedding current branch facts, schema copies, test results, runtime Skill system behavior, or automatic repair execution | `.agents/skills/repair-loop-playbook/SKILL.md`; `python .agents\skills\skill-creator\scripts\quick_validate.py .agents\skills\repair-loop-playbook` |
-| SKILL-SPLIT-CLOSURE-001 | queued | Audit process Skills after repair-loop-playbook: validate every Skill, confirm no template residue, confirm E2E-001 evidence remains discoverable, and confirm docs do not claim runtime Skill system or real game automation | `quick_validate.py` for process Skills; `git ls-tree` over `.agents/skills`; control-doc overclaim scan |
-| PLANNING-BRIEF-001 | queued_after_skill_split_closure | Create mod-planning-brief-playbook for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan generation, historical experience and delivery lesson retrieval, risk and uncertainty review, user clarification or planning options, mod_planning_brief output, and feature_spec handoff guidance | New `.agents/skills/mod-planning-brief-playbook/SKILL.md` defining the process-only mod_planning_brief procedure and source_types `current_source`, `game_profile`, `prior_artifacts`, `delivery_lessons`, `symbol_search`, and `docs`; no implementation claim until created and verified |
+| SKILL-SPLIT-CLOSURE-001 | completed | Audit process Skills after repair-loop-playbook: validate every Skill, confirm no template residue, confirm E2E-001 evidence remains discoverable, and confirm docs do not claim runtime Skill system or real game automation | `quick_validate.py` for five process Skills; `git ls-tree` over process Skill directories; control-doc overclaim scan; mod-delivery-playbook frontmatter formatting fixed |
+| PLANNING-BRIEF-001 | queued | Create mod-planning-brief-playbook for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan generation, historical experience and delivery lesson retrieval, risk and uncertainty review, user clarification or planning options, mod_planning_brief output, and feature_spec handoff guidance | New `.agents/skills/mod-planning-brief-playbook/SKILL.md` defining the process-only mod_planning_brief procedure and source_types `current_source`, `game_profile`, `prior_artifacts`, `delivery_lessons`, `symbol_search`, and `docs`; no implementation claim until created and verified |
 
 ## V1 Acceptance Audit Queue
 

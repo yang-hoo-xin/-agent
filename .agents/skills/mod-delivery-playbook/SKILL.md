@@ -1,6 +1,6 @@
-﻿---
+---
 name: mod-delivery-playbook
-description: Process-only delivery playbook for this Controlled Mod Agent Platform. Use when the user wants to turn a mod idea, planning discussion, feature request, gameplay change, UX tweak, or maintenance request into a controlled delivery chain: feature_spec, evidence lookup, implementation proposal, review, build/runtime evidence, repair loop, and handoff summary. Do not use for autonomous platform-code development; use auto-coder for DEV_SPEC.md-driven implementation work.
+description: "Process-only delivery playbook for this Controlled Mod Agent Platform. Use when the user wants to turn a mod idea, planning discussion, feature request, gameplay change, UX tweak, or maintenance request into a controlled delivery chain: feature_spec, evidence lookup, implementation proposal, review, build/runtime evidence, repair loop, and handoff summary. Do not use for autonomous platform-code development; use auto-coder for DEV_SPEC.md-driven implementation work."
 ---
 
 # Mod Delivery Playbook
