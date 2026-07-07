@@ -65,6 +65,83 @@ Implementation rule:
 5. Never let old RAG product naming or QA-first workflows override the current
    vertical code generator goal.
 
+# 0.0C Skill, Spec, State, And Artifact Boundary
+
+Reusable procedures belong in Skills. Product facts, interface contracts,
+current branch state, queue status, test evidence, and artifact payloads remain
+outside Skills.
+
+Current boundaries:
+
+1. `.agents/skills/auto-coder/SKILL.md` remains the DEV_SPEC-driven platform
+   development Skill.
+2. `.agents/skills/mod-delivery-playbook/SKILL.md` is the user-facing mod
+   delivery process Skill. It runs the delivery chain from planning input to
+   handoff summary, but it must not store current state, duplicate schemas, copy
+   test results, or replace `auto-coder`.
+3. `DEV_SPEC.md` remains the product and architecture source of truth.
+4. `docs/PROJECT_STATE.md`, `docs/IMPLEMENTATION_QUEUE.md`, and
+   `docs/SPEC_COVERAGE_MATRIX.md` remain the current state, work queue, and
+   coverage ledgers.
+5. Artifact files and test output remain the source of delivery evidence.
+
+The first proven delivery chain is E2E-001:
+
+```text
+planning input -> feature_spec -> evidence_pack -> implementation_plan
+-> patch_proposal -> proposal_review -> dry_run_result -> build_result
+-> runtime_evidence -> eval_report -> workflow_summary
+```
+
+Current E2E-001 proof level:
+
+1. Current-branch evidence exists in `tests/unit/test_mod_delivery_e2e.py`
+   in the E2E-001 checkpoint.
+2. The test uses a controlled temporary BetterHitFeedback source file and
+   deterministic symbol evidence.
+3. The build path verifies an expected local artifact through `BuildAdapter`
+   using the controlled test build factory/runner. It does not prove a real C#
+   toolchain build, a real BepInEx plugin DLL, or a game-loadable artifact.
+4. The runtime path launches a real local subprocess probe through
+   `RuntimeProbeRunner`.
+5. The proof does not launch GTFO, collect real game logs, capture real game
+   screenshots, copy a DLL to a game directory, or prove gameplay success inside
+   a live game process.
+
+Future expert Skills may be split only after this delivery chain remains
+green and the E2E-001 checkpoint is present in branch history. Start with:
+
+```text
+patch-review-playbook
+runtime-diagnosis-playbook
+hook-discovery-playbook
+repair-loop-playbook
+```
+
+# 0.0D High-Risk Git And Queue Handling
+
+Before high-risk work, run a Git status check and name the files that will be
+changed. High-risk work includes confirmed writes, game directory operations,
+runtime launch/copy operations, broad refactors, schema migrations, history
+repair, and queue/spec rewrites.
+
+Rules:
+
+1. Do not reset, restore, clean, rebase, or overwrite user changes unless the
+   user explicitly asks for that operation.
+2. Do not treat restored historical records as current branch proof until the
+   referenced files exist and focused tests have been rerun.
+3. Do not commit automatically. Commit only when the user asks, after focused
+   tests and status review.
+4. If a task changes queue order, update `docs/IMPLEMENTATION_QUEUE.md` and
+   `docs/SPEC_COVERAGE_MATRIX.md` in the same loop.
+5. Review-repair tasks outrank ordinary Q work when an active P0/P1 finding is
+   present.
+6. Optional platform expansion remains explicit work, not the default next step
+   after E2E-001. This includes real dense retrieval, full multimodal
+   ingestion, dashboard polish, multi-MCP writes, automatic game launch/copy,
+   and large benchmark harnesses.
+
 # 0.1A LangGraph Control-Plane Clarification
 
 This clarification overrides older wording in this document wherever it is

@@ -3,15 +3,16 @@
 This file is the active state summary for the Controlled Mod Agent Platform.
 Historical loop details are archived in `docs/audits/LOOP_HISTORY.md`.
 
-Last updated: 2026-07-05
+Last updated: 2026-07-07
 
 ## Current Queue
 
 ```text
-current_queue: Post V1 Acceptance Handoff
-last_completed: MISS-026A
-next_recommended_task: continue MISS-026 if real game process launch, persistent log collection, and screenshot capture are the goal
-ordinary_queue_status: Q-022, MISS-022, and MISS-026A completed; real game runtime automation remains tracked as MISS-026
+current_queue: Expert Skill Decomposition
+last_completed: E2E-001
+current_stabilization_task: SKILL-SPLIT-001 split the first expert playbook after the committed E2E-001 checkpoint
+next_recommended_task: create patch-review-playbook as the first expert Skill, keeping current state, schema, and test evidence outside Skills
+ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, and E2E-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
 ```
 
 ## Current Baseline
@@ -45,7 +46,67 @@ current V1-AUDIT-003 status: completed; focused and affected tests passed
 current V1-AUDIT-004 status: completed; focused and affected tests passed
 current V1-AUDIT-005 status: completed; documentation consistency checks passed
 current MISS-022 status: completed; focused and affected tests passed
+current STATE-001 status: completed; LOOP_HISTORY restored from rescue commit c43f4ec, evidence provenance refreshed, and E2E-001 scope boundary recorded
+current SKILL-MCP-001 status: completed; `.agents/skills/mod-delivery-playbook/SKILL.md` created as a process-only delivery Skill while preserving auto-coder as the DEV_SPEC.md-driven platform-development Skill
+current E2E-001 status: completed; minimal planning-to-handoff chain is current-branch verified by tests/unit/test_mod_delivery_e2e.py with controlled temporary BetterHitFeedback source, controlled local build artifact verification, and real local runtime probe evidence
+current SKILL-SPLIT-001 status: queued; first recommended expert Skill is patch-review-playbook
 commit policy: manual commit after focused tests and status review
+```
+
+## Evidence Provenance Boundary
+
+```text
+history_restored:
+  docs/audits/LOOP_HISTORY.md was restored into the current branch from rescue/dirty-worktree-20260702-120029 commit c43f4ec.
+git_verifiable_current_branch:
+  Claims backed by files currently present in this branch plus focused command output remain current evidence.
+checkpoint_evidence:
+  E2E-001 evidence files are part of the E2E-001 checkpoint; future changes that modify this claim require focused tests to be rerun.
+historical_record_only:
+  Claims whose only detailed support is docs/audits/LOOP_HISTORY.md are useful for reconstruction but must not be presented as current branch test evidence until the referenced files exist and focused tests are rerun.
+known_current_branch_missing_references:
+  docs/EXECUTION_CONTROL_GUIDE.md
+  src/mod_agent/evaluation/agent_quality.py
+  src/mod_agent/evaluation/retrieval_regression.py
+  src/mod_agent/git/workflow_binding.py
+  src/mod_agent/mcp/jobs.py
+  tests/fixtures/evaluation/agent_quality_cases.json
+  tests/fixtures/retrieval/golden_queries.json
+  tests/unit/test_agent_quality_eval.py
+  tests/unit/test_mcp_async_jobs.py
+  tests/unit/test_retrieval_regression.py
+  tests/unit/test_runtime_screenshots.py
+  tests/unit/test_workflow_checkpointing.py
+```
+
+## Skill And Auto-Coder Boundary
+
+```text
+auto_coder_scope:
+  .agents/skills/auto-coder/SKILL.md remains the platform-development Skill for DEV_SPEC.md-driven controlled code generation.
+mod_delivery_playbook_scope:
+  mod-delivery-playbook is planned as a user-facing delivery-process Skill for turning a mod request into feature_spec, evidence, proposal, review, build/runtime evidence, repair, and handoff artifacts.
+boundary:
+  mod-delivery-playbook must not replace auto-coder, duplicate current product facts, copy interface schemas, embed test results, or become a second platform-development control plane.
+```
+
+## Post E2E-001 Optional Capability Policy
+
+```text
+Default-paused unless explicitly selected by the user:
+  - real dense retrieval provider
+  - full multimodal ingestion and caption pipeline
+  - dashboard polish beyond read-only summaries
+  - multi-MCP write operations
+  - automatic run_game or copy_to_game_directory operations
+  - large-scale benchmark harnesses
+
+Allowed next:
+  - restoring control documents
+  - fixing evidence provenance drift
+  - read-only/report-only MCP surfaces
+  - expert process Skills split from the proven delivery chain
+  - explicit user-directed platform development through auto-coder when selected by the user
 ```
 
 ## Unresolved R Gates
@@ -57,6 +118,18 @@ commit policy: manual commit after focused tests and status review
 ## Test Health
 
 ```text
+latest focused E2E-001 suite:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_mod_delivery_e2e.py -q --tb=short
+  result: 1 passed
+
+latest affected E2E-001 workflow/build/runtime/artifact suite:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_mod_delivery_e2e.py tests/unit/test_workflow_graph.py tests/unit/test_runtime_probe.py tests/unit/test_runtime_evidence.py tests/unit/test_build_adapter.py tests/unit/test_artifact_contract.py -q --tb=short
+  result: 56 passed
+
+E2E-001 test boundary:
+  Focused E2E/workflow/build/runtime/artifact tests pass.
+  Full unit baseline is not claimed green by the E2E-001 focused and affected test runs.
+
 latest focused R-005 suite:
   python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py -q
   result: 27 passed
@@ -186,37 +259,36 @@ known broader-suite gaps:
 | External review found P0/P1 structural issues after several Q loops | High | Review Repair Queue is completed through R-009-HARDENING-001; any new P0/P1 review finding still supersedes ordinary Q feature work |
 | PROJECT_STATE may overclaim because it is generated by the agent itself | High | Verify claims against git status, code, tests, artifacts, and command output |
 | Queue may become RAG-first despite capability-first spec direction | High | Prioritize runnable controlled loop and active repair gates before deeper optional Knowledge Hub expansion |
+| Historical evidence may be mistaken for current branch evidence | High | Use the Evidence Provenance Boundary: current claims require present files and rerun tests; LOOP_HISTORY is reconstruction support |
+| E2E-001 controlled local proof may be mistaken for real game proof | High | E2E-001 only claims the controlled local source/build-artifact/runtime-probe chain; real GTFO launch, log collection, screenshot capture, DLL copy, and live gameplay verification remain outside this checkpoint |
+| Focused E2E tests may be mistaken for full-suite health | High | E2E-001 only claims the listed focused and affected tests passed; full unit baseline is not claimed green |
+| Optional platform capabilities may outrun the proven delivery chain | High | Keep real dense, full multimodal, dashboard polish, write MCP, automatic game operations, and large benchmarks as explicit opt-in work; expert Skills should be split from the tested E2E-001 path |
 | R-005 artifact integrity remains PASS_WITH_RISK | Medium | Track transitive freshness, read-time envelope content hash recomputation, immutable revision files, and audit/report-only allow_stale_upstreams policy as future artifact integrity / immutable revision / R-012 follow-up gaps |
 | Retrieval authority and tokenizer changes can regress planning safety or ranking behavior | Medium | R-009-HARDENING-001 completed the authority default, deterministic authority grant, raw dict provenance, dashboard authority display, and shared tokenizer work; future retrieval changes must keep focused sparse/query and planning tests in scope |
 
 ## Latest Loop Summary
 
 ```text
-task: Q-022
-status: completed; focused and affected tests passed
+task: E2E-001
+status: completed; focused and affected tests passed; full unit baseline is not claimed green
 files_changed:
-  src/mod_agent/evidence/dense.py
-  src/mod_agent/evidence/__init__.py
-  src/mod_agent/evidence/retriever.py
-  src/mod_agent/evidence/models.py
-  src/mod_agent/artifacts/registry.py
-  src/mod_agent/knowledge/__init__.py
-  src/mod_agent/knowledge/models.py
-  src/core/settings.py
-  config/settings.yaml
-  tests/unit/test_evidence_retrieval.py
-  tests/unit/test_config_loading.py
+  tests/unit/test_mod_delivery_e2e.py
+  DEV_SPEC.md
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  Added a disabled-by-default dense retrieval provider contract with DisabledDenseRetrievalProvider and FakeDenseRetrievalProvider.
-  This is not production dense retrieval: FakeDenseRetrievalProvider returns configured chunk-id scores and no real embedding/vector database query is implemented.
-  V1-AUDIT-001 now gates fake dense provider settings behind load_settings(..., allow_test_providers=True), so normal runtime settings cannot silently enable fake dense retrieval.
-  Added a KnowledgeChunkRecord to ChunkRecord projection so persisted chunks expose text_for_embedding without changing the database schema.
-  Dense evidence remains legacy_rag_auxiliary and cannot approve can_generate_patch without BM25/symbol deterministic evidence.
-  Dense budget/cost accounting is serialized into evidence_pack budget_summary, and fake dense retrieval exposes retrieval.dense_started and retrieval.dense_finished trace refs.
-  config/settings.yaml explicitly keeps retrieval.dense_enabled false and retrieval.dense_provider disabled.
+  Added a focused E2E-001 test that runs the full delivery chain from planning input through workflow_summary.
+  The test uses a controlled temporary BetterHitFeedback source file, deterministic symbol evidence, controlled local build artifact verification through an injected test build factory/runner, and a real local subprocess runtime probe.
+  The workflow produces request_planning_report, feature_spec, evidence_pack, implementation_plan, patch_proposal, proposal_review, dry_run_result, build_result, runtime_evidence, eval_report, and workflow_summary.
+  The path reaches final_status=accepted and claims real local build/runtime success only for the controlled local proof.
+  The test does not prove a real C# toolchain build, a real BepInEx plugin DLL, a game-loadable artifact, GTFO launch, DLL copy to a game directory, real game logs, real game screenshots, or live gameplay success.
+tests:
+  focused: .venv\Scripts\python.exe -m pytest tests/unit/test_mod_delivery_e2e.py -q --tb=short -> 1 passed
+  affected: .venv\Scripts\python.exe -m pytest tests/unit/test_mod_delivery_e2e.py tests/unit/test_workflow_graph.py tests/unit/test_runtime_probe.py tests/unit/test_runtime_evidence.py tests/unit/test_build_adapter.py tests/unit/test_artifact_contract.py -q --tb=short -> 56 passed
+  full_unit_baseline: not claimed green by this loop
+next:
+  Start SKILL-SPLIT-001 by creating patch-review-playbook as a process-only expert Skill.
 verification:
   focused and affected Q-022 retrieval/config/artifact/dashboard/performance/knowledge tests: 88 passed
   affected Q-022 workflow/planning/proposal tests: 32 passed

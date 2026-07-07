@@ -17,11 +17,84 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: Post V1 Acceptance Handoff
-last_completed: MISS-026A
-next_recommended_task: continue MISS-026 if real game process launch, persistent log collection, and screenshot capture are the goal
-Q_queue_status: Q-022, MISS-022, and MISS-026A completed; real game runtime automation remains tracked as MISS-026
+current_queue: Expert Skill Decomposition
+last_completed: E2E-001
+next_recommended_task: create patch-review-playbook as the first expert Skill split from the committed E2E-001 delivery chain
+Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, and E2E-001 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
 ```
+
+## Evidence Provenance Policy
+
+```text
+Git-verifiable evidence:
+  A task is current-branch evidence only when its referenced source/test files exist in this branch and focused tests have been run in the current branch.
+
+Checkpoint evidence:
+  E2E-001 is current-branch evidence only when the checkpoint commit containing tests/unit/test_mod_delivery_e2e.py, DEV_SPEC.md, control docs, restored LOOP_HISTORY, and the delivery Skill is present in branch history.
+
+Test claim boundary:
+  E2E-001 only claims its focused and affected test commands passed.
+  Full unit baseline is not claimed green by E2E-001.
+
+Historical record evidence:
+  docs/audits/LOOP_HISTORY.md is restored from rescue commit c43f4ec and can explain Q-000B through Q-019 and R-001 through R-005 history.
+  Historical records do not replace current-branch file/test verification.
+
+Current known missing historical references:
+  docs/EXECUTION_CONTROL_GUIDE.md
+  src/mod_agent/evaluation/agent_quality.py
+  src/mod_agent/evaluation/retrieval_regression.py
+  src/mod_agent/git/workflow_binding.py
+  src/mod_agent/mcp/jobs.py
+  tests/fixtures/evaluation/agent_quality_cases.json
+  tests/fixtures/retrieval/golden_queries.json
+  tests/unit/test_agent_quality_eval.py
+  tests/unit/test_mcp_async_jobs.py
+  tests/unit/test_retrieval_regression.py
+  tests/unit/test_runtime_screenshots.py
+  tests/unit/test_workflow_checkpointing.py
+```
+
+## Skill And Auto-Coder Boundary
+
+```text
+auto-coder:
+  .agents/skills/auto-coder/SKILL.md remains the DEV_SPEC.md-driven platform-development Skill.
+mod-delivery-playbook:
+  Planned process-only Skill for the user-facing mod delivery chain.
+Boundary:
+  The delivery playbook must not replace auto-coder, store current state, duplicate interface schemas, or embed test results.
+```
+
+## Post E2E-001 Optional Capability Policy
+
+```text
+Policy purpose: keep optional platform expansion explicit after the first end-to-end delivery chain is repeatable.
+
+Default-paused items unless explicitly selected:
+  - real dense retrieval provider
+  - full multimodal ingestion and caption pipeline
+  - dashboard polish beyond read-only controlled-agent summaries
+  - multi-MCP write operations
+  - automatic run_game and copy_to_game_directory operations
+  - large-scale benchmark harnesses
+
+Allowed next:
+  - control-document recovery
+  - evidence provenance reconciliation
+  - read-only/report-only MCP inspection
+  - expert process Skills split from the proven E2E-001 chain after closure review
+  - explicit user-directed platform development through auto-coder
+```
+
+## Current Stabilization Queue
+
+| Task | Status | Scope | Evidence |
+| --- | --- | --- | --- |
+| STATE-001 | completed | Restore LOOP_HISTORY, distinguish current Git-verifiable evidence from historical records, and record E2E-001 scope control | `docs/audits/LOOP_HISTORY.md`, `docs/PROJECT_STATE.md`, `docs/IMPLEMENTATION_QUEUE.md`, `docs/SPEC_COVERAGE_MATRIX.md` |
+| E2E-001 | completed | Prove one minimal planning-to-handoff chain: user planning input, feature_spec, evidence lookup, patch proposal, review, build/runtime evidence, and handoff summary | `tests/unit/test_mod_delivery_e2e.py`; affected suite: workflow/build/runtime/artifact tests |
+| SKILL-MCP-001 | completed | Create the first process-only Skill for the minimal delivery chain without replacing auto-coder or embedding current state, schema copies, or test results | `.agents/skills/mod-delivery-playbook/SKILL.md` |
+| SKILL-SPLIT-001 | queued | Split patch-review-playbook from the proven delivery chain without embedding current branch facts, schema copies, or test results | New `.agents/skills/patch-review-playbook/SKILL.md` plus control-doc update |
 
 ## V1 Acceptance Audit Queue
 
