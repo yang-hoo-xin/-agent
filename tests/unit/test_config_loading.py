@@ -76,6 +76,7 @@ def test_load_settings_success(tmp_path: Path) -> None:
     assert settings.retrieval.rrf_k == 60
     assert settings.retrieval.dense_enabled is False
     assert settings.retrieval.dense_provider == "disabled"
+    assert settings.retrieval.dense_failure_policy == "degrade"
     assert settings.rerank.provider == "none"
     assert settings.evaluation.metrics == ["hit_rate", "mrr"]
     assert settings.observability.log_level == "INFO"
@@ -103,6 +104,7 @@ def test_retrieval_dense_provider_settings_are_explicit(tmp_path: Path) -> None:
     retrieval:
       dense_enabled: true
       dense_provider: fake
+      dense_failure_policy: block
       dense_top_k: 5
       sparse_top_k: 20
       fusion_top_k: 10
@@ -130,6 +132,57 @@ def test_retrieval_dense_provider_settings_are_explicit(tmp_path: Path) -> None:
 
     assert settings.retrieval.dense_enabled is True
     assert settings.retrieval.dense_provider == "fake"
+    assert settings.retrieval.dense_failure_policy == "block"
+    assert settings.retrieval.dense_top_k == 5
+
+
+def test_retrieval_vector_store_dense_provider_settings_are_allowed(
+    tmp_path: Path,
+) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_enabled: true
+      dense_provider: vector_store
+      dense_top_k: 5
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    settings = load_settings(settings_path)
+
+    assert settings.retrieval.dense_enabled is True
+    assert settings.retrieval.dense_provider == "vector_store"
     assert settings.retrieval.dense_top_k == 5
 
 
@@ -178,6 +231,172 @@ def test_retrieval_fake_dense_provider_requires_test_opt_in(tmp_path: Path) -> N
         load_settings(settings_path)
 
 
+def test_runtime_gtfo_settings_parse_explicit_real_automation_config(tmp_path: Path) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_top_k: 20
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    runtime:
+      gtfo:
+        enabled: true
+        game_executable: C:/Games/GTFO/GTFO.exe
+        working_directory: C:/Games/GTFO
+        launch_args:
+          - -screen-fullscreen
+          - "0"
+        log_paths:
+          - BepInEx/LogOutput.log
+        screenshot_directory: ./artifacts/runtime/screenshots
+        screenshot_timeout_seconds: 9
+        startup_markers:
+          - Chainloader
+        timeout_seconds: 180
+        poll_interval_seconds: 0.5
+        output_limit_chars: 4096
+        terminate_after_capture: true
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    settings = load_settings(settings_path)
+
+    assert settings.runtime is not None
+    assert settings.runtime.gtfo is not None
+    assert settings.runtime.gtfo.enabled is True
+    assert settings.runtime.gtfo.game_executable == "C:/Games/GTFO/GTFO.exe"
+    assert settings.runtime.gtfo.working_directory == "C:/Games/GTFO"
+    assert settings.runtime.gtfo.launch_args == ["-screen-fullscreen", "0"]
+    assert settings.runtime.gtfo.log_paths == ["BepInEx/LogOutput.log"]
+    assert settings.runtime.gtfo.screenshot_timeout_seconds == 9
+    assert settings.runtime.gtfo.startup_markers == ["Chainloader"]
+    assert settings.runtime.gtfo.timeout_seconds == 180
+    assert settings.runtime.gtfo.poll_interval_seconds == 0.5
+    assert settings.runtime.gtfo.output_limit_chars == 4096
+    assert settings.runtime.gtfo.terminate_after_capture is True
+
+
+def test_runtime_gtfo_settings_reject_invalid_poll_interval(tmp_path: Path) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_top_k: 20
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    runtime:
+      gtfo:
+        poll_interval_seconds: 0
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    with pytest.raises(SettingsError, match="runtime.gtfo.poll_interval_seconds"):
+        load_settings(settings_path)
+
+
+def test_runtime_gtfo_settings_reject_invalid_screenshot_timeout(tmp_path: Path) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_top_k: 20
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    runtime:
+      gtfo:
+        screenshot_timeout_seconds: 0
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    with pytest.raises(SettingsError, match="runtime.gtfo.screenshot_timeout_seconds"):
+        load_settings(settings_path)
+
+
 def test_retrieval_dense_provider_rejects_unknown_provider(tmp_path: Path) -> None:
     config = """
     llm:
@@ -219,6 +438,51 @@ def test_retrieval_dense_provider_rejects_unknown_provider(tmp_path: Path) -> No
     _write_yaml(settings_path, config)
 
     with pytest.raises(SettingsError, match="retrieval.dense_provider"):
+        load_settings(settings_path)
+
+
+def test_retrieval_dense_failure_policy_rejects_unknown_policy(tmp_path: Path) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_provider: vector_store
+      dense_failure_policy: ignore
+      dense_top_k: 5
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    with pytest.raises(SettingsError, match="retrieval.dense_failure_policy"):
         load_settings(settings_path)
 
 

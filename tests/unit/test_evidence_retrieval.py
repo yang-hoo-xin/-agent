@@ -7,6 +7,7 @@ from pathlib import Path
 from src.core.settings import Settings
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.evidence import (
+    DenseRetrievalReport,
     DeterministicEvidenceRetriever,
     EvidenceItem,
     EvidenceReadinessClassifier,
@@ -24,6 +25,23 @@ from src.mod_agent.knowledge import (
     SourceRegistry,
 )
 from src.mod_agent.performance import BudgetLimit, PerformanceBudgetPolicy
+
+
+class FailingDenseRetrievalProvider:
+    provider_name = "vector_store"
+
+    def retrieve(self, *, query, chunks, top_k):
+        return DenseRetrievalReport(
+            provider=self.provider_name,
+            enabled=True,
+            disabled_reason="Dense retrieval provider failed: vector backend unavailable",
+            trace_events=(
+                {
+                    "event": "retrieval.dense_failed",
+                    "provider": self.provider_name,
+                },
+            ),
+        )
 
 
 def _feature_payload() -> dict[str, object]:
@@ -378,6 +396,38 @@ def test_dense_provider_budget_block_degrades_to_existing_routes(
     assert pack.can_generate_patch is False
     assert "Dense retrieval budget blocked" in pack.disabled_modes["dense"]
     assert pack.budget_summary["dense_retrieval"]["budget_decision"]["status"] == "blocked"
+
+
+def test_required_dense_failure_blocks_even_when_deterministic_evidence_exists(
+    tmp_path: Path,
+) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    _index_chunk_collection(
+        db,
+        collection_id="knowledge_hub",
+        text="DenseOnly deterministic evidence lives in this chunk.",
+    )
+
+    pack = DeterministicEvidenceRetriever(
+        db,
+        dense_enabled=True,
+        dense_required=True,
+        dense_provider=FailingDenseRetrievalProvider(),
+    ).retrieve(
+        EvidenceRequest(
+            query="DenseOnly",
+            execution_path="quick_patch",
+            requires_hook_evidence=False,
+        )
+    )
+
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.blockers[-1]["code"] == "DENSE_RETRIEVAL_REQUIRED_FAILED"
+    assert pack.disabled_modes["dense"] == (
+        "Dense retrieval provider failed: vector backend unavailable"
+    )
+    assert "retrieval.dense_failed" in pack.trace_refs
 
 
 def test_missing_source_returns_insufficient_empty_pack(tmp_path: Path) -> None:

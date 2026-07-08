@@ -30,6 +30,7 @@ from .models import (
     EvidencePack,
     EvidenceRequest,
     LEGACY_RAG_AUXILIARY_AUTHORITY,
+    missing_evidence_from_blockers,
 )
 from .readiness import EvidenceReadinessClassifier
 
@@ -50,6 +51,7 @@ class DeterministicEvidenceRetriever:
         collection_resolver: CollectionResolver | None = None,
         dense_provider: DenseRetrievalProvider | None = None,
         dense_enabled: bool = False,
+        dense_required: bool = False,
         dense_top_k: int | None = None,
         performance_policy: PerformanceBudgetPolicy | None = None,
     ) -> None:
@@ -61,6 +63,7 @@ class DeterministicEvidenceRetriever:
         self.collection_id = resolution.collection_id
         self.dense_provider = dense_provider or DisabledDenseRetrievalProvider()
         self.dense_enabled = dense_enabled
+        self.dense_required = dense_required
         self.dense_top_k = dense_top_k
         self.performance_policy = performance_policy
 
@@ -96,6 +99,7 @@ class DeterministicEvidenceRetriever:
                 dense_disabled_reason=(
                     "Dense retrieval was not queried because the request had no searchable terms."
                 ),
+                dense_required=self.dense_required,
                 dense_budget_summary={},
                 dense_trace_refs=(),
             )
@@ -223,6 +227,7 @@ class DeterministicEvidenceRetriever:
             bm25_disabled_reason=bm25_disabled_reason,
             dense_ms=dense_ms,
             dense_disabled_reason=dense_disabled_reason,
+            dense_required=self.dense_required,
             dense_budget_summary=dense_budget_summary,
             dense_trace_refs=dense_trace_refs,
         )
@@ -647,6 +652,7 @@ class DeterministicEvidenceRetriever:
         bm25_disabled_reason: str,
         dense_ms: float,
         dense_disabled_reason: str,
+        dense_required: bool,
         dense_budget_summary: dict[str, object],
         dense_trace_refs: tuple[str, ...],
     ) -> EvidencePack:
@@ -679,7 +685,7 @@ class DeterministicEvidenceRetriever:
             disabled_modes["dense"] = dense_disabled_reason
         if bm25_disabled_reason:
             disabled_modes["bm25"] = bm25_disabled_reason
-        return replace(
+        next_pack = replace(
             pack,
             retrieval_methods_used=methods,
             disabled_modes=disabled_modes,
@@ -687,6 +693,25 @@ class DeterministicEvidenceRetriever:
             budget_summary=dense_budget_summary,
             trace_refs=tuple(dict.fromkeys((*pack.trace_refs, *dense_trace_refs))),
         )
+        if dense_required and dense_disabled_reason:
+            blocker = {
+                "code": "DENSE_RETRIEVAL_REQUIRED_FAILED",
+                "message": dense_disabled_reason,
+                "needed_evidence": ["dense vector retrieval result"],
+            }
+            blockers = (*next_pack.blockers, blocker)
+            return replace(
+                next_pack,
+                readiness="insufficient",
+                can_generate_patch=False,
+                gaps=tuple(dict.fromkeys((*next_pack.gaps, dense_disabled_reason))),
+                blockers=blockers,
+                missing_evidence=missing_evidence_from_blockers(blockers),
+                message=(
+                    "Dense retrieval is required but failed; evidence pack is blocked."
+                ),
+            )
+        return next_pack
 
 
 def _elapsed_ms(started: float) -> float:

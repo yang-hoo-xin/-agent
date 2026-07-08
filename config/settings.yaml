@@ -65,6 +65,25 @@ proposal:
     - ".env"
     - "secrets"
 
+runtime:
+  gtfo:
+    enabled: false
+    game_executable: ""
+    working_directory: ""
+    launch_args: []
+    log_paths:
+      - "BepInEx/LogOutput.log"
+      - "BepInEx/logs/LogOutput.log"
+    screenshot_directory: "./artifacts/runtime/screenshots"
+    screenshot_timeout_seconds: 15
+    startup_markers:
+      - "BepInEx"
+      - "Chainloader"
+    timeout_seconds: 120
+    poll_interval_seconds: 1.0
+    output_limit_chars: 20000
+    terminate_after_capture: false
+
 # =============================================================================
 # LLM Configuration
 # =============================================================================
@@ -122,7 +141,8 @@ vector_store:
 # =============================================================================
 retrieval:
   dense_enabled: false
-  dense_provider: "disabled"  # Options: disabled, fake (unit-test only)
+  dense_provider: "disabled"  # Options: disabled, vector_store, fake (unit-test only)
+  dense_failure_policy: "degrade"  # Options: degrade, block
   dense_top_k: 20
   sparse_top_k: 20
   fusion_top_k: 10

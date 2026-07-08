@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -88,9 +88,20 @@ def _optional_retrieval_provider(retrieval: Dict[str, Any]) -> str:
     value = retrieval.get("dense_provider", "disabled")
     if not isinstance(value, str) or not value.strip():
         raise SettingsError("Expected non-empty string for field: retrieval.dense_provider")
-    if value not in {"disabled", "fake"}:
+    if value not in {"disabled", "fake", "vector_store"}:
         raise SettingsError(
-            "Expected retrieval.dense_provider to be one of: disabled, fake"
+            "Expected retrieval.dense_provider to be one of: disabled, fake, vector_store"
+        )
+    return value
+
+
+def _optional_retrieval_dense_failure_policy(retrieval: Dict[str, Any]) -> str:
+    value = retrieval.get("dense_failure_policy", "degrade")
+    if not isinstance(value, str) or not value.strip():
+        raise SettingsError("Expected non-empty string for field: retrieval.dense_failure_policy")
+    if value not in {"degrade", "block"}:
+        raise SettingsError(
+            "Expected retrieval.dense_failure_policy to be one of: degrade, block"
         )
     return value
 
@@ -160,6 +171,7 @@ class RetrievalSettings:
     rrf_k: int
     dense_enabled: bool = False
     dense_provider: str = "disabled"
+    dense_failure_policy: str = "degrade"
 
 
 @dataclass(frozen=True)
@@ -215,6 +227,32 @@ class PerformanceSettings:
 
 
 @dataclass(frozen=True)
+class GTFORuntimeSettings:
+    enabled: bool = False
+    game_executable: str = ""
+    working_directory: str = ""
+    launch_args: List[str] = field(default_factory=list)
+    log_paths: List[str] = field(default_factory=list)
+    screenshot_directory: str = "./artifacts/runtime/screenshots"
+    screenshot_timeout_seconds: int = 15
+    startup_markers: List[str] = field(default_factory=list)
+    timeout_seconds: int = 120
+    poll_interval_seconds: float = 1.0
+    output_limit_chars: int = 20000
+    terminate_after_capture: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "launch_args", list(self.launch_args))
+        object.__setattr__(self, "log_paths", list(self.log_paths))
+        object.__setattr__(self, "startup_markers", list(self.startup_markers))
+
+
+@dataclass(frozen=True)
+class RuntimeAutomationSettings:
+    gtfo: Optional[GTFORuntimeSettings] = None
+
+
+@dataclass(frozen=True)
 class IngestionSettings:
     chunk_size: int
     chunk_overlap: int
@@ -236,6 +274,7 @@ class Settings:
     ingestion: Optional[IngestionSettings] = None
     vision_llm: Optional[VisionLLMSettings] = None
     performance: Optional[PerformanceSettings] = None
+    runtime: Optional[RuntimeAutomationSettings] = None
 
     @classmethod
     def from_dict(
@@ -313,6 +352,61 @@ class Settings:
                 )
             performance_settings = PerformanceSettings(operations=parsed_operations)
 
+        runtime_settings = None
+        if "runtime" in data:
+            runtime = _require_mapping(data, "runtime", "settings")
+            gtfo_settings = None
+            if "gtfo" in runtime:
+                gtfo = _require_mapping(runtime, "gtfo", "runtime")
+                gtfo_path = "runtime.gtfo"
+                timeout_seconds = _optional_int(gtfo, "timeout_seconds", gtfo_path) or 120
+                if timeout_seconds <= 0:
+                    raise SettingsError(
+                        "Expected positive integer for field: runtime.gtfo.timeout_seconds"
+                    )
+                output_limit_chars = (
+                    _optional_int(gtfo, "output_limit_chars", gtfo_path) or 20000
+                )
+                if output_limit_chars <= 0:
+                    raise SettingsError(
+                        "Expected positive integer for field: runtime.gtfo.output_limit_chars"
+                    )
+                poll_interval = gtfo.get("poll_interval_seconds", 1.0)
+                if not isinstance(poll_interval, (int, float)) or poll_interval <= 0:
+                    raise SettingsError(
+                        "Expected positive number for field: runtime.gtfo.poll_interval_seconds"
+                    )
+                screenshot_timeout_seconds = _optional_int(
+                    gtfo,
+                    "screenshot_timeout_seconds",
+                    gtfo_path,
+                )
+                if screenshot_timeout_seconds is None:
+                    screenshot_timeout_seconds = 15
+                if screenshot_timeout_seconds <= 0:
+                    raise SettingsError(
+                        "Expected positive integer for field: runtime.gtfo.screenshot_timeout_seconds"
+                    )
+                gtfo_settings = GTFORuntimeSettings(
+                    enabled=_optional_bool(gtfo, "enabled", gtfo_path) or False,
+                    game_executable=str(gtfo.get("game_executable", "")),
+                    working_directory=str(gtfo.get("working_directory", "")),
+                    launch_args=[str(item) for item in gtfo.get("launch_args", [])],
+                    log_paths=[str(item) for item in gtfo.get("log_paths", [])],
+                    screenshot_directory=str(
+                        gtfo.get("screenshot_directory", "./artifacts/runtime/screenshots")
+                    ),
+                    screenshot_timeout_seconds=screenshot_timeout_seconds,
+                    startup_markers=[str(item) for item in gtfo.get("startup_markers", [])],
+                    timeout_seconds=timeout_seconds,
+                    poll_interval_seconds=float(poll_interval),
+                    output_limit_chars=output_limit_chars,
+                    terminate_after_capture=(
+                        _optional_bool(gtfo, "terminate_after_capture", gtfo_path) or False
+                    ),
+                )
+            runtime_settings = RuntimeAutomationSettings(gtfo=gtfo_settings)
+
         settings = cls(
             llm=LLMSettings(
                 provider=_require_str(llm, "provider", "llm"),
@@ -347,6 +441,7 @@ class Settings:
                 rrf_k=_require_int(retrieval, "rrf_k", "retrieval"),
                 dense_enabled=_optional_bool(retrieval, "dense_enabled", "retrieval") or False,
                 dense_provider=_optional_retrieval_provider(retrieval),
+                dense_failure_policy=_optional_retrieval_dense_failure_policy(retrieval),
             ),
             rerank=RerankSettings(
                 enabled=_require_bool(rerank, "enabled", "rerank"),
@@ -368,6 +463,7 @@ class Settings:
             ingestion=ingestion_settings,
             vision_llm=vision_llm_settings,
             performance=performance_settings,
+            runtime=runtime_settings,
         )
 
         if (

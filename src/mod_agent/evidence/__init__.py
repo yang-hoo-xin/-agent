@@ -6,6 +6,8 @@ from .dense import (
     DenseRetrievalReport,
     DisabledDenseRetrievalProvider,
     FakeDenseRetrievalProvider,
+    VectorStoreDenseRetrievalProvider,
+    create_vector_store_dense_provider,
 )
 from .models import EvidenceItem, EvidencePack, EvidenceReadiness, EvidenceRequest
 from .readiness import EvidenceReadinessClassifier
@@ -23,4 +25,6 @@ __all__ = [
     "EvidenceReadinessClassifier",
     "EvidenceRequest",
     "FakeDenseRetrievalProvider",
+    "VectorStoreDenseRetrievalProvider",
+    "create_vector_store_dense_provider",
 ]
