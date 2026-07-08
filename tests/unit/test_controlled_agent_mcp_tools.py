@@ -214,6 +214,20 @@ def test_preview_tools_return_read_only_summaries(tmp_path) -> None:
     assert proposal["structuredContent"]["proposal"]["blocked"] is False
 
 
+def test_get_eval_report_exposes_evaluation_gate_status(tmp_path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    _write_eval_report_chain(store)
+
+    result = ControlledAgentMCPToolSurface(store).call_tool(
+        "get_eval_report",
+        {"feature_id": "feature_001"},
+    )
+
+    assert result["status"] == "inconclusive"
+    assert result["structuredContent"]["eval"]["evaluation_gate_status"] == "failed"
+    assert result["structuredContent"]["eval"]["evaluation_gate_failed"] == 1
+
+
 def _write_patch_proposal_chain(store: ArtifactStore) -> dict[str, ArtifactRef]:
     feature_ref = store.write(
         feature_id="feature_001",
@@ -304,14 +318,46 @@ def _write_patch_proposal_chain(store: ArtifactStore) -> dict[str, ArtifactRef]:
             "files": ["src/example.py"],
             "diff_intent": [
                 {
+                    "change_id": "chg_001",
                     "path": "src/example.py",
+                    "target_file": "src/example.py",
+                    "edit_target_path": "src/example.py",
+                    "evidence_refs": ["ev_001"],
+                    "rollback_hint": "revert patch",
                     "body": "raw diff body must not appear in MCP projection",
                 }
             ],
+            "change_units": [
+                {
+                    "change_unit_id": "chg_001",
+                    "change_type": None,
+                    "target_file": "src/example.py",
+                    "edit_target_path": "src/example.py",
+                    "target_symbol": None,
+                    "evidence_refs": ["ev_001"],
+                    "expected_validation": [],
+                    "rollback_hint": "revert patch",
+                }
+            ],
+            "context_pack": {
+                "feature_id": "feature_001",
+                "files": ["src/example.py"],
+                "evidence_refs": ["ev_001"],
+                "evidence_source_paths": ["src/example.py"],
+                "scope_boundary": ["marker branch only"],
+                "change_unit_ids": ["chg_001"],
+            },
             "evidence_refs": ["ev_001"],
             "scope_boundary": ["marker branch only"],
             "risk_assessment": {"level": "low"},
             "expected_tests": ["unit"],
+            "no_op_status": {"is_no_op": False, "reason": None},
+            "rollback_hints": [
+                {
+                    "change_unit_id": "chg_001",
+                    "rollback_hint": "revert patch",
+                }
+            ],
             "manual_review_notes": [],
             "blocked": False,
             "blockers": [],
@@ -324,6 +370,111 @@ def _write_patch_proposal_chain(store: ArtifactStore) -> dict[str, ArtifactRef]:
         "implementation_plan": plan_ref,
         "patch_proposal": proposal_ref,
     }
+
+
+def _write_eval_report_chain(store: ArtifactStore) -> dict[str, ArtifactRef]:
+    refs = _write_patch_proposal_chain(store)
+    review_ref = store.write(
+        feature_id="feature_001",
+        artifact_type="proposal_review",
+        payload={
+            "node_name": "review_proposal",
+            "stage": "proposal_review",
+            "message": "Proposal approved for dry-run.",
+            "decision": "approve_dry_run",
+            "findings": [],
+            "required_changes": [],
+            "allowed_next_stage": "dry_run_apply",
+            "checked_rules": [],
+            "trace_metrics": {"num_changes_checked": 1, "num_blocking_findings": 0},
+        },
+        upstream_refs=[refs["patch_proposal"]],
+    )
+    dry_run_ref = store.write(
+        feature_id="feature_001",
+        artifact_type="dry_run_result",
+        payload={
+            "node_name": "dry_run_apply",
+            "stage": "dry_run_apply",
+            "message": "Dry run completed.",
+        },
+        upstream_refs=[refs["patch_proposal"], review_ref],
+    )
+    build_ref = store.write(
+        feature_id="feature_001",
+        artifact_type="build_result",
+        payload={
+            "node_name": "build",
+            "stage": "build",
+            "message": "Fake build skipped.",
+            "feature_id": "feature_001",
+            "execution_mode": "fake",
+            "status": "skipped",
+            "command": [],
+            "exit_code": 0,
+            "stdout_path": None,
+            "stderr_path": None,
+            "errors": [],
+            "warnings": [],
+            "duration_ms": 0,
+            "error_class": "unknown",
+            "diagnostics": [],
+            "repair_handoff": {"allowed": False},
+            "expected_artifacts": [],
+            "verified_artifacts": [],
+            "artifact_verification": {"status": "skipped"},
+            "real_build_performed": False,
+            "claims_real_build_success": False,
+        },
+        status="skipped",
+        upstream_refs=[dry_run_ref],
+    )
+    eval_ref = store.write(
+        feature_id="feature_001",
+        artifact_type="eval_report",
+        payload={
+            "node_name": "evaluate",
+            "stage": "evaluation",
+            "message": "Evaluation gate failed.",
+            "execution_mode": "fake",
+            "workflow_completion_status": "fake_execution_completed",
+            "requested_behavior_status": "not_verified",
+            "verdict": "inconclusive",
+            "claims_real_success": False,
+            "checks": [],
+            "input_runtime_status": "inconclusive",
+            "input_acceptance_status": "inconclusive",
+            "input_acceptance_verified": False,
+            "acceptance_contract": {
+                "acceptance_criteria": [],
+                "runtime_verification_plan": [],
+            },
+            "evaluation_gate": {
+                "gate_name": "TRANSITION-001 Eval Gate",
+                "status": "failed",
+                "summary": {"total": 1, "passed": 0, "failed": 1},
+                "cases": [],
+                "blockers": [
+                    {
+                        "case_id": "example_failed_gate",
+                        "message": "Example failed evaluation gate.",
+                    }
+                ],
+            },
+            "v1_acceptance_status": "blocked",
+            "v1_acceptance_blockers": [],
+        },
+        upstream_refs=[build_ref],
+    )
+    refs.update(
+        {
+            "proposal_review": review_ref,
+            "dry_run_result": dry_run_ref,
+            "build_result": build_ref,
+            "eval_report": eval_ref,
+        }
+    )
+    return refs
 
 
 def _artifact_ref_string(ref: ArtifactRef) -> str:

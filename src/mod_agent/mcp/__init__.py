@@ -5,9 +5,15 @@ from src.mod_agent.mcp.tools import (
     CONTROLLED_AGENT_TOOL_NAMES,
     DANGEROUS_TOOL_NAMES,
 )
+from src.mod_agent.mcp.protocol import (
+    ControlledAgentJSONRPCErrorCodes,
+    ControlledAgentMCPJsonRpcAdapter,
+)
 
 __all__ = [
     "CONTROLLED_AGENT_TOOL_NAMES",
+    "ControlledAgentJSONRPCErrorCodes",
+    "ControlledAgentMCPJsonRpcAdapter",
     "DANGEROUS_TOOL_NAMES",
     "ControlledAgentMCPToolSurface",
 ]
