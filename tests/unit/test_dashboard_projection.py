@@ -20,6 +20,7 @@ def test_empty_feature_projection_reports_missing_artifacts(tmp_path: Path) -> N
     assert projection["artifacts"] == []
     assert "patch_proposal" in projection["missing_artifacts"]
     assert projection["build"]["status"] == "empty"
+    assert projection["git"]["status"] == "empty"
     assert "raw_artifacts" not in projection
 
 
@@ -33,6 +34,9 @@ def test_projection_exposes_summaries_without_raw_artifact_body(tmp_path: Path) 
     assert projection["status"] == "available"
     assert projection["proposal"]["proposal_id"] == "proposal_001"
     assert projection["proposal"]["change_count"] == 1
+    assert projection["proposal"]["change_unit_count"] == 1
+    assert projection["proposal"]["rollback_hint_count"] == 1
+    assert projection["proposal"]["no_op"] is False
     assert projection["proposal"]["review_decision"] == "approved"
     assert projection["evidence"]["readiness"] == "ready"
     assert projection["evidence"]["can_generate_patch"] is True
@@ -47,6 +51,10 @@ def test_projection_exposes_summaries_without_raw_artifact_body(tmp_path: Path) 
     assert projection["evaluation"]["requested_behavior_status"] == "not_verified"
     assert projection["evaluation"]["evaluation_gate_status"] == "passed"
     assert projection["evaluation"]["evaluation_gate_failed"] == 0
+    assert projection["git"]["status"] == "clean"
+    assert projection["git"]["base_revision"] == "a" * 40
+    assert projection["git"]["proposal_id"] == "proposal_001"
+    assert projection["git"]["blocks_proposal_binding"] is False
     assert "raw_supplied_output" not in rendered
     assert "SECRET_RUNTIME_OUTPUT" not in rendered
     assert "diff_intent" not in rendered
@@ -214,6 +222,12 @@ def _write_full_chain(store: ArtifactStore) -> None:
     )
     store.write(
         feature_id="feature_001",
+        artifact_type="git_change_record",
+        payload=_git_change_record_payload(),
+        upstream_refs=[proposal, review],
+    )
+    store.write(
+        feature_id="feature_001",
         artifact_type="workflow_summary",
         payload=_workflow_summary_payload(),
     )
@@ -299,11 +313,47 @@ def _patch_proposal_payload() -> dict[str, object]:
         "feature_id": "feature_001",
         "summary": "Update text safely.",
         "files": ["C:\\secret\\Project\\Plugin.cs"],
-        "diff_intent": [{"file": "C:\\secret\\Project\\Plugin.cs", "secret": "do not show"}],
+        "diff_intent": [
+            {
+                "change_id": "chg_001",
+                "target_file": "C:\\secret\\Project\\Plugin.cs",
+                "edit_target_path": "C:\\secret\\Project\\Plugin.cs",
+                "evidence_refs": ["evidence_001"],
+                "rollback_hint": "Restore previous behavior.",
+                "secret": "do not show",
+            }
+        ],
+        "change_units": [
+            {
+                "change_unit_id": "chg_001",
+                "change_type": None,
+                "target_file": "C:\\secret\\Project\\Plugin.cs",
+                "edit_target_path": "C:\\secret\\Project\\Plugin.cs",
+                "target_symbol": None,
+                "evidence_refs": ["evidence_001"],
+                "expected_validation": [],
+                "rollback_hint": "Restore previous behavior.",
+            }
+        ],
+        "context_pack": {
+            "feature_id": "feature_001",
+            "files": ["C:\\secret\\Project\\Plugin.cs"],
+            "evidence_refs": ["evidence_001"],
+            "evidence_source_paths": ["C:\\secret\\Project\\Plugin.cs"],
+            "scope_boundary": [],
+            "change_unit_ids": ["chg_001"],
+        },
         "evidence_refs": ["evidence_001"],
         "scope_boundary": [],
         "risk_assessment": {"risk_level": "medium"},
         "expected_tests": [],
+        "no_op_status": {"is_no_op": False, "reason": None},
+        "rollback_hints": [
+            {
+                "change_unit_id": "chg_001",
+                "rollback_hint": "Restore previous behavior.",
+            }
+        ],
         "manual_review_notes": [],
         "blocked": False,
         "blockers": [],
@@ -463,6 +513,60 @@ def _eval_report_payload() -> dict[str, object]:
             "cases": [],
             "blockers": [],
         },
+    }
+
+
+def _git_change_record_payload() -> dict[str, object]:
+    return {
+        "node_name": "git_change_recorder",
+        "stage": "git_audit",
+        "message": "Recorded Git commit aaaaaaa for workflow stage build.",
+        "record_id": "record_001",
+        "run_id": "run_001",
+        "feature_id": "feature_001",
+        "decision_artifact_ref": None,
+        "patch_artifact_ref": "features/feature_001/patch_proposal.json",
+        "base_revision": "a" * 40,
+        "commit_sha": "a" * 40,
+        "commit": {
+            "commit_sha": "a" * 40,
+            "short_sha": "aaaaaaa",
+            "branch": "main",
+            "subject": "add plugin skeleton",
+            "committed_at": "2026-06-27T12:00:00+08:00",
+            "author_name": "Controlled Agent",
+            "author_email": "agent@example.test",
+        },
+        "changed_files": ["plugin.cs"],
+        "diff_hash": "sha256:" + "1" * 64,
+        "commit_diff_hash": "sha256:" + "2" * 64,
+        "working_tree": {
+            "repo_root": "C:\\secret\\Project",
+            "base_revision": "a" * 40,
+            "branch": "main",
+            "is_dirty": False,
+            "status_entries": [],
+            "diff_hash": "sha256:" + "3" * 64,
+            "dirty_tree_policy": {
+                "status": "clean",
+                "blocks_proposal_binding": False,
+                "blockers": [],
+            },
+        },
+        "proposal_binding": {
+            "proposal_id": "proposal_001",
+            "proposal_artifact_ref": "features/feature_001/patch_proposal.json",
+            "proposal_artifact_hash": "hash_patch",
+            "base_revision": "a" * 40,
+            "diff_hash": "sha256:" + "1" * 64,
+        },
+        "dirty_tree_policy": {
+            "status": "clean",
+            "blocks_proposal_binding": False,
+            "blockers": [],
+        },
+        "replay_command": "git show --patch " + "a" * 40,
+        "rollback_hint": "git revert " + "a" * 40,
     }
 
 

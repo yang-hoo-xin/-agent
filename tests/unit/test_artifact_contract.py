@@ -79,10 +79,21 @@ def _patch_payload() -> dict[str, object]:
         "summary": "stub",
         "files": [],
         "diff_intent": [],
+        "change_units": [],
+        "context_pack": {
+            "feature_id": "feature_001",
+            "files": [],
+            "evidence_refs": [],
+            "evidence_source_paths": [],
+            "scope_boundary": [],
+            "change_unit_ids": [],
+        },
         "evidence_refs": [],
         "scope_boundary": [],
         "risk_assessment": {"risk_level": "blocked"},
         "expected_tests": [],
+        "no_op_status": {"is_no_op": True, "reason": "stub"},
+        "rollback_hints": [],
         "manual_review_notes": [],
         "blocked": True,
         "blockers": [],
@@ -168,9 +179,17 @@ def test_git_change_record_contract_supports_audit_and_replay() -> None:
     contract = registry.get("git_change_record")
 
     assert contract.producer_stage == "git_audit"
-    assert {"commit_sha", "replay_command", "rollback_hint"}.issubset(
-        contract.required_fields
-    )
+    assert {
+        "base_revision",
+        "commit_sha",
+        "diff_hash",
+        "commit_diff_hash",
+        "working_tree",
+        "proposal_binding",
+        "dirty_tree_policy",
+        "replay_command",
+        "rollback_hint",
+    }.issubset(contract.required_fields)
     assert "repair_plan" in contract.consumer_stages
     assert contract.dashboard_projection
 
@@ -354,9 +373,16 @@ def test_patch_and_review_contracts_require_review_gate_fields() -> None:
     patch = registry.get("patch_proposal")
     review = registry.get("proposal_review")
 
-    assert {"proposal_id", "diff_intent", "evidence_refs", "expected_tests"}.issubset(
-        patch.required_fields
-    )
+    assert {
+        "proposal_id",
+        "diff_intent",
+        "change_units",
+        "context_pack",
+        "evidence_refs",
+        "expected_tests",
+        "no_op_status",
+        "rollback_hints",
+    }.issubset(patch.required_fields)
     assert {"decision", "findings", "allowed_next_stage", "checked_rules"}.issubset(
         review.required_fields
     )

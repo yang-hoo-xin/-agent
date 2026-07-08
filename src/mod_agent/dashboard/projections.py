@@ -27,6 +27,7 @@ EXPECTED_ARTIFACT_TYPES = (
     "runtime_evidence",
     "repair_plan",
     "eval_report",
+    "git_change_record",
     "workflow_summary",
     "workflow_checkpoint",
     "resume_report",
@@ -79,6 +80,7 @@ class DashboardProjectionBuilder:
                 "runtime": self._empty_section("No runtime_evidence artifact found."),
                 "repair": self._empty_section("No repair_plan artifact found."),
                 "evaluation": self._empty_section("No eval_report artifact found."),
+                "git": self._empty_section("No git_change_record artifact found."),
                 "artifacts": [],
                 "artifact_dag": {"nodes": [], "edges": []},
                 "missing_artifacts": list(EXPECTED_ARTIFACT_TYPES),
@@ -119,6 +121,7 @@ class DashboardProjectionBuilder:
             "runtime": self._runtime_summary(artifact_by_type),
             "repair": self._repair_summary(artifact_by_type),
             "evaluation": self._evaluation_summary(artifact_by_type),
+            "git": self._git_summary(artifact_by_type),
             "artifacts": artifact_summaries,
             "artifact_dag": self._artifact_dag(envelopes),
             "missing_artifacts": missing,
@@ -320,8 +323,11 @@ class DashboardProjectionBuilder:
             "summary": _sanitize_value(proposal_data.get("summary"), key_path=("summary",)),
             "file_count": len(proposal_data.get("files") or []),
             "change_count": len(proposal_data.get("diff_intent") or []),
+            "change_unit_count": len(proposal_data.get("change_units") or []),
             "evidence_ref_count": len(proposal_data.get("evidence_refs") or []),
+            "rollback_hint_count": len(proposal_data.get("rollback_hints") or []),
             "blocked": proposal_data.get("blocked"),
+            "no_op": _dict_value(proposal_data.get("no_op_status"), "is_no_op"),
             "blocker_count": len(proposal_data.get("blockers") or []),
             "review_decision": review_data.get("decision"),
             "allowed_next_stage": review_data.get("allowed_next_stage"),
@@ -438,6 +444,44 @@ class DashboardProjectionBuilder:
             "check_count": len(data.get("checks") or []),
             "input_runtime_status": data.get("input_runtime_status"),
             "input_acceptance_status": data.get("input_acceptance_status"),
+        }
+
+    @staticmethod
+    def _git_summary(artifact_by_type: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        record = artifact_by_type.get("git_change_record")
+        if record is None:
+            return DashboardProjectionBuilder._empty_section(
+                "No git_change_record artifact found."
+            )
+        data = _data(record)
+        dirty_tree_policy = (
+            data.get("dirty_tree_policy")
+            if isinstance(data.get("dirty_tree_policy"), dict)
+            else {}
+        )
+        proposal_binding = (
+            data.get("proposal_binding")
+            if isinstance(data.get("proposal_binding"), dict)
+            else {}
+        )
+        working_tree = (
+            data.get("working_tree")
+            if isinstance(data.get("working_tree"), dict)
+            else {}
+        )
+        return {
+            "status": dirty_tree_policy.get("status") or "unknown",
+            "base_revision": data.get("base_revision"),
+            "commit_sha": data.get("commit_sha"),
+            "changed_file_count": len(data.get("changed_files") or []),
+            "diff_hash": data.get("diff_hash"),
+            "proposal_id": proposal_binding.get("proposal_id"),
+            "proposal_base_revision": proposal_binding.get("base_revision"),
+            "working_tree_dirty": working_tree.get("is_dirty"),
+            "blocks_proposal_binding": dirty_tree_policy.get(
+                "blocks_proposal_binding"
+            ),
+            "rollback_hint": data.get("rollback_hint"),
         }
 
     @staticmethod
