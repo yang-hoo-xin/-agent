@@ -8,12 +8,12 @@ Last updated: 2026-07-08
 ## Current Queue
 
 ```text
-current_queue: Planning Brief Graph Integration
-last_completed: E2E-002
-current_stabilization_task: select the next bounded non-Skill implementation checkpoint after graph-integrated planning brief handoff
-next_recommended_task: decide whether to add evidence-backed planning brief knowledge lookup, delivery lesson recording, or another small controlled delivery improvement; do not start real game automation unless MISS-026 is explicitly selected
-ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
-next_stage_after_expert_split: choose a non-Skill implementation checkpoint; do not continue splitting process Skills by default
+current_queue: V1_TO_V2_TRANSITION
+last_completed: TRANSITION-005 Runtime Evidence Binding
+current_stabilization_task: V1_TO_V2_TRANSITION gate closure active; current branch records tested runtime evidence build/run binding, GTFO runtime automation interface behavior, dense provider bridge behavior, and artifact inspection API behavior
+next_recommended_task: MISS-026 live GTFO gameplay validation if runtime automation is selected, otherwise choose one explicit recovery target from docs/V1_TO_V2_TRANSITION.md
+ordinary_queue_status: Q-022, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, TRANSITION-001, TRANSITION-002, TRANSITION-003, TRANSITION-004, TRANSITION-005, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; MISS-026 is the live GTFO gameplay validation execution track
+next_stage_after_expert_split: V1_TO_V2_TRANSITION checkpoints are active; prioritize capability work over further process Skill splitting
 ```
 
 ## Current Baseline
@@ -47,17 +47,24 @@ current V1-AUDIT-003 status: completed; focused and affected tests passed
 current V1-AUDIT-004 status: completed; focused and affected tests passed
 current V1-AUDIT-005 status: completed; documentation consistency checks passed
 current MISS-022 status: completed; focused and affected tests passed
+current RUNTIME-DENSE-API-BOUNDARY-001 status: completed; focused runtime/config/evidence/workflow/API tests passed and additional dashboard/runtime/smoke tests passed; broader `tests/unit` triage is the next quality-hardening track
+current TRANSITION-001 status: completed; eval_report artifact coverage and Eval Gate Hard Routing are implemented. Failed `evaluation_gate` now writes a blocked `eval_report`, records eval gate blockers on the envelope/state, routes `evaluate` to `blocked`, and prevents `workflow_summary` from being written on gate failure. The gate covers false-success, false-block, false-continue, review correctness, dry-run safety, build/runtime claim boundaries, insufficient_baseline, stale_evidence, and missing_required_metric; focused eval/workflow/artifact/dashboard tests passed
+current TRANSITION-002 status: completed; GitRepository now emits working tree snapshots, diff hashes, proposal/base revision binding metadata, dirty-tree policy, replay command, and rollback hint in git_change_record; dashboard consumes git_change_record; next upgrade is execution-layer proposal binding and dirty-tree stop/resume routing; focused git/artifact/dashboard/workflow/E2E tests passed
+current TRANSITION-003 status: completed; PatchProposal now carries explicit change_units, proposal metadata context_pack, no_op_status, and rollback_hints; ProposalReviewer blocks missing or inconsistent proposal context including context_pack change_unit_ids drift; next upgrade is source-snippet, symbol-signature, artifact-hash, and git-base binding for code-generation context; dashboard and downstream MCP/domain/repair checkpoint tests consume the upgraded contract
+current TRANSITION-004 status: completed; ControlledAgentMCPJsonRpcAdapter is a controlled-agent MCP JSON-RPC adapter for initialize, notifications/initialized, tools/list, and tools/call over the tool surface; it maps unknown or dangerous tool names to JSON-RPC method-not-found errors, preserves content/structuredContent/artifact_refs/trace_refs in tool results, and keeps confirmed_apply/run_game/copy_to_game_directory behind explicit approved routes; next upgrade is stdio/http transport integration, server process wiring, and approved write/runtime tool flows; focused MCP protocol/facade tests passed
+current TRANSITION-005 status: completed; runtime_evidence and manual_evidence contracts now carry run_id, build_artifact_ref, build_artifact_hash, plugin_marker_binding, screenshot_refs, and non_goal_preservation; collect_runtime_evidence binds runtime payloads to the graph run and upstream build artifact; eval gate blocks real runtime success claims when required build/run/acceptance marker binding is missing or supplied non-goal preservation evidence reports violations or non-preserved status; focused runtime/eval/workflow/artifact/dashboard tests passed
+current V1_TO_V2_TRANSITION status: completed for transition gates; next implementation should be a named recovery target, with MISS-026 live GTFO gameplay validation first if runtime automation is selected
 current STATE-001 status: completed; LOOP_HISTORY restored from rescue commit c43f4ec, evidence provenance refreshed, and E2E-001 scope boundary recorded
-current SKILL-MCP-001 status: completed; `.agents/skills/mod-delivery-playbook/SKILL.md` created as a process-only delivery Skill while preserving auto-coder as the DEV_SPEC.md-driven platform-development Skill
+current SKILL-MCP-001 status: completed; `.agents/skills/mod-delivery-playbook/SKILL.md` created as a delivery Skill that feeds the source/test/artifact/LangGraph product loop
 current E2E-001 status: completed; minimal planning-to-handoff chain is current-branch verified by tests/unit/test_mod_delivery_e2e.py with controlled temporary BetterHitFeedback source, controlled local build artifact verification, and real local runtime probe evidence
 current E2E-002 status: completed; the controlled graph now runs planning_brief between plan_request and draft_feature_spec, writes `mod_planning_brief`, records it as a feature_spec upstream artifact, and FeatureSpecBuilder consumes planning brief handoff evidence/runtime guidance; focused planning/workflow/E2E/artifact/dashboard tests passed
-current SKILL-SPLIT-001 status: completed; `.agents/skills/patch-review-playbook/SKILL.md` created as a process-only expert Skill for review of patch proposals, diffs, evidence binding, permissions, risk, and handoff readiness
-current SKILL-SPLIT-002 status: completed; `.agents/skills/runtime-diagnosis-playbook/SKILL.md` created as a process-only expert Skill for build/runtime evidence diagnosis, runtime evidence mode boundaries, acceptance markers, repair routing, and handoff readiness
-current SKILL-SPLIT-003 status: completed; `.agents/skills/hook-discovery-playbook/SKILL.md` created as a process-only expert Skill for behavior decomposition, evidence-first hook discovery, hook option review, risk classification, and proposal/runtime diagnosis handoff
-current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/SKILL.md` created as a process-only expert Skill for failed gate classification, bounded repair eligibility, evidence-bound repair scope, review re-entry, and repair/handoff routing
-current SKILL-SPLIT-CLOSURE-001 status: completed; all five process Skills validate, no template residue is present in HEAD for process Skill directories, E2E-001 evidence remains discoverable, and control docs preserve runtime/real-game/automation boundaries
-current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief-playbook/SKILL.md` created as a process-only Skill for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning options, selected_plan, and feature_spec handoff guidance
-current PLANNING-BRIEF-IMPL-001 status: completed; `mod_planning_brief` artifact contract and deterministic `ModPlanningBriefBuilder` now exist with focused tests for config-only, UI feedback, hook-required, and unknown / needs evidence handoffs; request_type classification is deterministic heuristic routing, not model understanding; E2E-002 now covers controlled graph integration and feature_spec handoff consumption; automated RAG retrieval, feature_spec generation, code generation, and real game runtime validation are not claimed
+current SKILL-SPLIT-001 status: completed; `.agents/skills/patch-review-playbook/SKILL.md` created as an expert review guide for patch proposals, diffs, evidence binding, permissions, risk, and handoff readiness
+current SKILL-SPLIT-002 status: completed; `.agents/skills/runtime-diagnosis-playbook/SKILL.md` created as an expert runtime diagnosis guide for build/runtime evidence, runtime evidence modes, acceptance markers, repair routing, and handoff readiness
+current SKILL-SPLIT-003 status: completed; `.agents/skills/hook-discovery-playbook/SKILL.md` created as an expert hook discovery guide for behavior decomposition, evidence-first hook discovery, hook option review, risk classification, and proposal/runtime diagnosis handoff
+current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/SKILL.md` created as an expert repair guide for failed gate classification, bounded repair eligibility, evidence-bound repair scope, review re-entry, and repair/handoff routing
+current SKILL-SPLIT-CLOSURE-001 status: completed; all five Skills validate, no template residue is present in HEAD for Skill directories, E2E-001 evidence remains discoverable, and the next step is using these guides to accelerate implementation rather than splitting more process
+current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief-playbook/SKILL.md` created for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning options, selected_plan, and feature_spec handoff guidance
+current PLANNING-BRIEF-IMPL-001 status: completed; `mod_planning_brief` artifact contract and deterministic `ModPlanningBriefBuilder` now exist with focused tests for config-only, UI feedback, hook-required, and unknown / needs evidence handoffs; E2E-002 covers controlled graph integration and feature_spec handoff consumption; next upgrade is automated RAG retrieval, feature_spec generation, code generation, and real game runtime validation
 current ARTIFACT-INTEGRITY-001 status: completed; ArtifactStore.read recomputes the stored envelope content hash, rejects tampered payload content even when the ArtifactRef hash still matches the stored artifact_hash, and rejects missing or unexpected envelope top-level fields; focused artifact tests passed
 current ARTIFACT-INTEGRITY-002 status: completed; ArtifactStore.check_freshness and read_for_stage now detect stale deep upstream artifacts through recursive dependency traversal, while write-time and checkpoint-resume gates intentionally remain direct-freshness checks; focused artifact/checkpoint tests passed
 current ARTIFACT-INTEGRITY-003 status: completed; ArtifactStore.write now preserves immutable revision files under per-type revision directories while maintaining read-validated latest artifact files for current dashboard/MCP views; focused artifact/dashboard/MCP/workflow/E2E tests passed
@@ -177,35 +184,31 @@ planned_mod_planning_brief_shape:
     hook_discovery_guidance:
     patch_review_notes:
     runtime_verification_expectations:
-boundary:
-  The process-only Skill is implemented and validated.
+implementation_status:
+  The planning Skill is implemented and validated.
   The `mod_planning_brief` artifact contract and deterministic builder are implemented and tested in PLANNING-BRIEF-IMPL-001.
-  The builder's request_type classification is deterministic heuristic routing, not model understanding.
-  It must not claim natural-language-to-RAG extraction is implemented.
-  It must not claim automated historical experience retrieval, automated delivery lesson retrieval, or runtime planning negotiation is implemented.
-  It may claim E2E-002 graph-integrated handoff only for deterministic `mod_planning_brief` fields consumed by FeatureSpecBuilder.
-  It must not claim automatic code generation guidance, automated RAG retrieval, runtime planning negotiation, or real game runtime validation is implemented.
-  It must keep product facts, current state, schemas, test results, and evidence payloads outside the Skill.
-  It must not replace auto-coder or the existing request_planning/feature_spec artifacts.
+  The builder's request_type classification gives the graph a stable handoff for later model-backed planning work.
+  Next upgrades are natural-language-to-RAG extraction, automated historical experience retrieval, automated delivery lesson retrieval, runtime planning negotiation, automatic code generation guidance, and real game runtime validation.
+  E2E-002 proves graph-integrated handoff for `mod_planning_brief` fields consumed by FeatureSpecBuilder.
+  Product facts, current state, schemas, test results, and evidence payloads stay in source, docs, tests, and artifacts where downstream consumers can inspect them.
 ```
 
 ## Post E2E-001 Optional Capability Policy
 
 ```text
-Default-paused unless explicitly selected by the user:
-  - real dense retrieval provider
+Capability recovery targets:
+  - production dense retrieval beyond the tested vector_store bridge
   - full multimodal ingestion and caption pipeline
-  - dashboard polish beyond read-only summaries
-  - multi-MCP write operations
-  - automatic run_game or copy_to_game_directory operations
+  - dashboard/API service work beyond local summaries
+  - MCP write/runtime operations with approval and rollback evidence
+  - run_game and copy_to_game_directory operations through the GTFO runtime automation interface
   - large-scale benchmark harnesses
 
-Allowed next:
-  - restoring control documents
-  - fixing evidence provenance drift
-  - read-only/report-only MCP surfaces
-  - expert process Skills split from the proven delivery chain
-  - explicit user-directed platform development through auto-coder when selected by the user
+Immediate recovery focus:
+  - bind runtime evidence to feature/build/run ids and live GTFO markers
+  - turn MCP inspection into approved write/runtime routes
+  - promote local artifact inspection API into service-ready dashboard/API work
+  - use expert Skills to accelerate implementation rather than split more process
 ```
 
 ## Unresolved R Gates
@@ -225,9 +228,9 @@ latest affected E2E-001 workflow/build/runtime/artifact suite:
   .venv\Scripts\python.exe -m pytest tests/unit/test_mod_delivery_e2e.py tests/unit/test_workflow_graph.py tests/unit/test_runtime_probe.py tests/unit/test_runtime_evidence.py tests/unit/test_build_adapter.py tests/unit/test_artifact_contract.py -q --tb=short
   result: 56 passed
 
-E2E-001 test boundary:
+E2E-001 test status:
   Focused E2E/workflow/build/runtime/artifact tests pass.
-  Full unit baseline is not claimed green by the E2E-001 focused and affected test runs.
+  Broader unit baseline triage remains a quality-hardening track after the focused chain.
 
 latest focused R-005 suite:
   python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py -q
@@ -352,50 +355,146 @@ known broader-suite gaps:
 | Spec detail coverage can be lost across many small loops | High | Use `docs/SPEC_COVERAGE_MATRIX.md` before selecting and closing tasks |
 | Imported RAG skeleton can dominate product direction | High | Treat RAG as Evidence Knowledge Subsystem only |
 | GTFO details can leak into generic platform | Medium | Put game-specific behavior behind domain adapters |
-| Dense/vector/multimodal features can block V1 | Medium | BM25/symbol/deterministic first; Q-022 is contract-only dense provider work with real embedding/vector retrieval deferred |
+| Dense/vector/multimodal features need production acceleration | Medium | BM25/symbol/deterministic are stable foundations; Q-022 and RUNTIME-DENSE-API-BOUNDARY-001 provide the vector_store bridge and dense failure policy; next track is production dense/RAG operation with eval evidence |
 | Claims can outrun implemented evidence | High | Completion levels require tests and artifacts |
-| Fake/local execution artifacts may be mistaken for real build/runtime success | High | Every artifact must include `execution_mode=fake|local|supplied_output|real`; reports must not claim real gameplay success from fake/local evidence |
+| Fake/local execution artifacts need upgrade routing | High | Every artifact includes `execution_mode=fake|local|supplied_output|real`; fake/local evidence should route into real build/runtime probes when the feature requires it |
 | External review found P0/P1 structural issues after several Q loops | High | Review Repair Queue is completed through R-009-HARDENING-001; any new P0/P1 review finding still supersedes ordinary Q feature work |
 | PROJECT_STATE may overclaim because it is generated by the agent itself | High | Verify claims against git status, code, tests, artifacts, and command output |
 | Queue may become RAG-first despite capability-first spec direction | High | Prioritize runnable controlled loop and active repair gates before deeper optional Knowledge Hub expansion |
 | Historical evidence may be mistaken for current branch evidence | High | Use the Evidence Provenance Boundary: current claims require present files and rerun tests; LOOP_HISTORY is reconstruction support |
-| E2E-001 controlled local proof may be mistaken for real game proof | High | E2E-001 only claims the controlled local source/build-artifact/runtime-probe chain; real GTFO launch, log collection, screenshot capture, DLL copy, and live gameplay verification remain outside this checkpoint |
-| Focused E2E tests may be mistaken for full-suite health | High | E2E-001 only claims the listed focused and affected tests passed; full unit baseline is not claimed green |
-| Optional platform capabilities may outrun the proven delivery chain | High | Keep real dense, full multimodal, dashboard polish, write MCP, automatic game operations, and large benchmarks as explicit opt-in work; expert Skills should be split from the tested E2E-001 path |
+| E2E-001 controlled local proof needs live-game recovery work | High | E2E-001 proves the controlled local source/build-artifact/runtime-probe chain; RUNTIME-DENSE-API-BOUNDARY-001 adds GTFO runtime automation interface tests; capability recovery target is live GTFO gameplay verification |
+| Focused E2E tests need full-suite hardening | High | E2E-001 focused and affected tests passed; broader unit baseline triage is an active quality-hardening track |
+| Platform capabilities need recovery work on the delivery chain | High | Production dense/RAG, full multimodal, dashboard/API polish, write MCP, automatic game operations with approval, and large benchmarks are capability recovery targets that should attach to the tested E2E-001 path |
 | Artifact integrity can regress when artifact semantics change | Medium | Keep revision-path, latest-pointer, read-time hash, recursive freshness, direct checkpoint freshness, and audit/report-only allow_stale_upstreams tests in scope for future artifact changes |
-| ArtifactStore is not a production-grade storage backend | Medium | Atomic same-directory temporary file replacement and manual pending-write recovery are implemented and tested by ARTIFACT-PROD-001A/B; track automatic startup/preflight recovery invocation, states without valid pending marker and revision, cross-process write locking, revision manifest/index files, historical revision query APIs, old-ref migration, and revision garbage collection as explicit future storage-hardening work |
+| ArtifactStore production storage hardening remains a recovery target | Medium | Atomic same-directory temporary file replacement and manual pending-write recovery are implemented and tested by ARTIFACT-PROD-001A/B; next storage-hardening work adds automatic startup/preflight recovery invocation, states without valid pending marker and revision, cross-process write locking, revision manifest/index files, historical revision query APIs, old-ref migration, and revision garbage collection |
 | Retrieval authority and tokenizer changes can regress planning safety or ranking behavior | Medium | R-009-HARDENING-001 completed the authority default, deterministic authority grant, raw dict provenance, dashboard authority display, and shared tokenizer work; future retrieval changes must keep focused sparse/query and planning tests in scope |
 
 ## Latest Loop Summary
 
 ```text
-task: E2E-002
+task: RUNTIME-DENSE-API-BOUNDARY-001
 status: completed
 files_changed:
+  config/settings.yaml
+  src/core/settings.py
+  src/mod_agent/api/http_server.py
+  src/mod_agent/evidence/dense.py
+  src/mod_agent/evidence/retriever.py
+  src/mod_agent/runtime/gtfo_automation.py
+  src/mod_agent/runtime/__init__.py
   src/mod_agent/workflow/graph.py
-  src/mod_agent/workflow/transitions.py
-  src/mod_agent/workflow/state.py
-  src/mod_agent/planning/feature_spec.py
-  src/mod_agent/dashboard/projections.py
-  tests/unit/test_planning.py
+  tests/unit/test_config_loading.py
+  tests/unit/test_evidence_retrieval.py
+  tests/unit/test_gtfo_runtime_automation.py
+  tests/unit/test_mod_agent_http_api.py
+  tests/unit/test_vector_store_dense_provider.py
   tests/unit/test_workflow_graph.py
-  tests/unit/test_mod_delivery_e2e.py
-  tests/unit/test_artifact_contract.py
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
+  docs/V1_ACCEPTANCE_AUDIT.md
 behavior:
-  The graph now inserts planning_brief between plan_request and draft_feature_spec.
-  planning_brief writes `mod_planning_brief` from the current request_planning_report and records request_planning_report as its upstream artifact.
-  draft_feature_spec reads `mod_planning_brief`, passes it to FeatureSpecBuilder, and writes feature_spec with request_planning_report and mod_planning_brief upstream refs.
-  FeatureSpecBuilder consumes planning brief handoff evidence_requirements and runtime_verification_expectations without replacing the existing FeatureSpec contract.
-  This does not implement automated RAG retrieval, accumulated-experience retrieval, natural-language model understanding, feature_spec generation by LLM, code generation, real game runtime validation, or production runtime automation.
+  GTFORealRuntimeAutomationRunner now provides a GTFO real runtime automation interface with explicit allow_game_launch gating, executable/working-directory/log-path validation, persistent log marker collection, screenshot capture with timeout, failure payload capture, and marker/liveness separation.
+  VectorStoreDenseRetrievalProvider bridges existing EmbeddingFactory and VectorStoreFactory, filters returned ids to known chunks, sorts by normalized score, and can be injected into the graph; dense_required can block evidence when a required dense route fails.
+  config/settings.yaml and Settings parse runtime.gtfo.screenshot_timeout_seconds plus retrieval.dense_failure_policy.
+  ModAgentHttpApi provides an artifact inspection API over ArtifactStore and DashboardProjectionBuilder, exposes health/features/artifacts/dashboard/status routes, returns required_approval for write/runtime POST routes, and rejects absolute artifact_root unless explicitly allowed.
+  This creates tested interface behavior for runtime/dense/API recovery work; real GTFO gameplay validation, production runtime automation, production RAG, production HTTP API, production auth, production dashboard, and cloud deployment remain capability recovery targets.
 validation:
-  python -m pytest tests/unit/test_planning.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py tests/unit/test_artifact_contract.py tests/unit/test_dashboard_projection.py -q --tb=short -> 57 passed
+  .venv\Scripts\python.exe -m pytest tests/unit/test_gtfo_runtime_automation.py tests/unit/test_config_loading.py tests/unit/test_evidence_retrieval.py tests/unit/test_vector_store_dense_provider.py tests/unit/test_workflow_graph.py tests/unit/test_mod_agent_http_api.py -q --tb=short -> 55 passed
+  .venv\Scripts\python.exe -m pytest tests/unit/test_dashboard_projection.py tests/unit/test_runtime_evidence.py tests/unit/test_runtime_probe.py tests/unit/test_smoke_imports.py -q --tb=short -> 36 passed, 1 warning
 tests:
-  focused planning/workflow/E2E/artifact/dashboard tests only; full unit baseline is not claimed green.
+  focused runtime/config/evidence/workflow/API tests and additional dashboard/runtime/smoke tests passed; broader `tests/unit` is not green.
+
+  Broader test result:
+  `.venv\Scripts\python.exe -m pytest tests/unit -q --tb=short --disable-warnings --maxfail=20` -> 20 failed, 1023 passed, 4 skipped, 2 warnings before maxfail stop.
+  First observed failure groups: `tests/unit/test_batch_processor.py` timing assertions, `tests/unit/test_embedding_providers_smoke.py` OpenAI/Azure embedding initialization expectations, `tests/unit/test_list_collections.py` include_stats call shape, `tests/unit/test_loader_pdf_contract.py` image metadata when PyMuPDF is unavailable, `tests/unit/test_protocol_handler.py` duplicate `query_knowledge_hub` registration, and `tests/unit/test_ragas_evaluator.py` missing `langchain_community.chat_models.vertexai`.
 next:
-  Select the next bounded non-Skill implementation checkpoint; evidence-backed planning brief knowledge lookup or delivery lesson recording are reasonable next mainline options, while MISS-026 real game automation remains explicit opt-in.
+  Triage the broader `tests/unit` failures as a quality-hardening track. Continue MISS-026 with exact GTFO paths, plugin-specific markers, feature/build/run binding, and explicit launch approval for production runtime automation.
+```
+
+## Eval Gate Hard Routing
+
+```text
+task: TRANSITION-001 Eval Gate Hard Routing
+status: completed
+coverage:
+  EVAL-003
+  EVAL-004
+source:
+  src/mod_agent/evaluation/gate.py
+  src/mod_agent/workflow/transitions.py
+  src/mod_agent/workflow/graph.py
+  tests/unit/test_transition_eval_gate.py
+  tests/unit/test_workflow_graph.py
+artifact_contract:
+  eval_report uses the existing contract and now writes envelope status `blocked` when `evaluation_gate.status` is `failed`.
+  evaluation_gate blockers are persisted on the eval_report envelope.
+LangGraph_routing:
+  evaluate now uses route_after_evaluate.
+  Failed evaluation_gate routes to blocked instead of done.
+  route_after_evaluate only treats stage=evaluation and EVAL_GATE_* blockers as blocking route inputs.
+  workflow_summary is not written when evaluation_gate fails.
+eval_cases:
+  false-success
+  false-block
+  false-continue
+  review correctness
+  dry-run safety
+  build/runtime claim boundaries
+  insufficient_baseline
+  stale_evidence
+  missing_required_metric
+validation:
+  .venv\Scripts\python.exe -m pytest tests/unit/test_transition_eval_gate.py tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py tests/unit/test_dashboard_projection.py -q --tb=short -> 52 passed
+acceptance:
+  Manual runtime evidence with acceptance_verified=True but execution_mode=manual fails the runtime claim boundary case, writes blocked eval_report, creates blocked_report, and does not write workflow_summary.
+  Injected evaluation_context baseline_status=insufficient_baseline fails the eval gate, writes blocked eval_report, creates blocked_report, and does not write workflow_summary.
+next:
+  Runtime Evidence Binding is completed by TRANSITION-005; next runtime track is MISS-026 live GTFO gameplay validation if selected.
+```
+
+## Runtime Evidence Binding
+
+```text
+task: TRANSITION-005 Runtime Evidence Binding
+status: completed
+commit: 04652a4 TRANSITION-005: bind runtime success claims to runtime evidence context
+coverage:
+  RUN / runtime evidence contract
+  WF / runtime evidence graph binding
+  EVAL / runtime success claim boundary
+source:
+  src/mod_agent/runtime/evidence.py
+  src/mod_agent/runtime/probe.py
+  src/mod_agent/runtime/__init__.py
+  src/mod_agent/workflow/graph.py
+  src/mod_agent/evaluation/gate.py
+  src/mod_agent/artifacts/registry.py
+  tests/unit/test_runtime_evidence.py
+  tests/unit/test_transition_eval_gate.py
+  tests/unit/test_workflow_graph.py
+  tests/unit/test_runtime_probe.py
+  tests/unit/test_artifact_contract.py
+  tests/unit/test_dashboard_projection.py
+artifact_contract:
+  runtime_evidence and manual_evidence require run_id, build_artifact_ref, build_artifact_hash, plugin_marker_binding, screenshot_refs, and non_goal_preservation.
+LangGraph_routing:
+  collect_runtime_evidence binds runtime payloads to state["run_id"] and the upstream build_result ArtifactRef before writing runtime_evidence.
+  Existing runtime acceptance routing remains: verified acceptance continues to evaluate; unverified evidence routes to repair.
+eval_boundary:
+  Real runtime success claims require execution_mode=real, real_runtime_performed=True, acceptance_verified=True, run_id, valid build_artifact_ref, matching build_artifact_hash, and observed plugin markers bound to acceptance_contract.acceptance_criteria.
+  Runtime success claims are blocked when supplied non_goal_preservation evidence reports violations or non-preserved status.
+validation:
+  .\.venv\Scripts\python.exe -m pytest tests/unit/test_runtime_evidence.py tests/unit/test_transition_eval_gate.py tests/unit/test_workflow_graph.py tests/unit/test_runtime_probe.py tests/unit/test_artifact_contract.py tests/unit/test_dashboard_projection.py -q --tb=short -> 65 passed
+allowed_claims:
+  Runtime evidence payloads now carry graph run and build artifact binding.
+  Eval gate consumes runtime binding fields before allowing real runtime success claims.
+forbidden_claims:
+  This does not prove live GTFO gameplay success.
+  This does not prove non-goal behavior is actively verified; it only consumes supplied non-goal preservation evidence.
+  This does not complete production runtime automation, dense/RAG production integration, API/dashboard service work, MCP transport, or baseline metric collection.
+next:
+  MISS-026 live GTFO gameplay validation if the user selects real runtime automation; otherwise select one explicit recovery target from docs/V1_TO_V2_TRANSITION.md.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate
@@ -420,8 +519,8 @@ files:
 behavior:
   load_settings() and Settings.from_dict() reject retrieval.dense_provider=fake by default.
   Tests that need FakeDenseRetrievalProvider through settings must call allow_test_providers=True.
-  The V1 audit records current status as implemented_with_known_gaps, not production-complete.
-  Real dense retrieval remains deferred; Q-022 remains a disabled-by-default contract task only.
+  The V1 audit records current status as implemented_with_upgrade_tracks.
+  Dense retrieval now has a bridge path from Q-022 contract work into vector_store provider hardening.
 verification:
   focused V1-AUDIT-001 retrieval/config tests: 19 passed
   affected V1-AUDIT-001 config/retrieval/budget/dashboard/MCP/artifact tests: 59 passed
@@ -457,9 +556,8 @@ verification:
   workflow/planning/runtime/artifact affected tests: 71 passed
   eval tests: 42 passed
   git diff --check: passed
-remaining:
-  Real/manual/supplied runtime acceptance E2E evidence remains unverified.
-  Do not claim V1 accepted until non-fake runtime acceptance evidence is tested.
+next:
+  Add real/manual/supplied runtime acceptance E2E evidence and feed it into V1 acceptance routing.
 next_recommended_task: V1-AUDIT-003 real/manual/supplied runtime acceptance evidence path
 ```
 
@@ -485,9 +583,8 @@ verification:
   affected runtime/workflow/artifact tests: 74 passed
   eval tests: 42 passed
   git diff --check: passed
-remaining:
-  Automated real runtime execution and real runtime evidence collection remain unimplemented.
-  Do not claim V1 accepted until the real runtime branch is either tested end-to-end or explicitly scoped out of V1 acceptance.
+next:
+  Implement automated real runtime execution and real runtime evidence collection on the tested branch.
 next_recommended_task: V1-AUDIT-004 real runtime branch E2E boundary decision
 ```
 
@@ -514,9 +611,8 @@ behavior:
 verification:
   focused workflow/artifact/dashboard tests: 34 passed
   affected runtime/workflow/repair/eval/artifact/dashboard tests: 105 passed
-remaining:
-  Automated real runtime execution and real runtime evidence collection remain unimplemented.
-  Do not claim real V1 runtime acceptance from fake/local, manual, or supplied fixture-style evidence alone.
+next:
+  Promote fake/local, manual, and supplied fixture-style evidence into automated real runtime execution where runtime acceptance is required.
 next_recommended_task: V1-AUDIT-005 final V1 acceptance verdict and queue handoff
 ```
 
@@ -532,9 +628,9 @@ files:
   docs/PROJECT_STATE.md
   docs/SPEC_COVERAGE_MATRIX.md
 verdict:
-  V1 contract path is accepted with known gaps.
-  Real runtime evidence branch was not accepted at V1-AUDIT-005 time; it is now closed by MISS-022.
-  The project must not claim production runtime automation until MISS-026 is closed by implementation and tests.
+  V1 contract path is verified for the current controlled contract path; V2 capability expansion remains gated by recovery targets.
+  Real runtime evidence branch is closed by MISS-022 and feeds MISS-026 live GTFO gameplay validation.
+  Production runtime automation proceeds through MISS-026 live GTFO gameplay validation with implementation and tests.
 architecture_note:
   v1_acceptance_status and v1_acceptance_blockers are V1 audit boundary fields.
   They are not generalized in this audit.

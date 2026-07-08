@@ -1,6 +1,6 @@
 # V1 Acceptance Audit
 
-Last updated: 2026-07-05
+Last updated: 2026-07-08
 
 This audit maps the current implementation back to the V1-related requirements in
 `DEV_SPEC.md`. It is not a replacement for `docs/SPEC_COVERAGE_MATRIX.md`.
@@ -21,8 +21,8 @@ DEV_SPEC.md 50.9  V1 implementation-level architecture reference
 ## Current Result
 
 ```text
-status: real_runtime_evidence_branch_accepted_with_known_gaps
-last_completed_queue_task: MISS-022
+status: v1_contract_path_verified_with_capability_recovery_targets
+last_completed_queue_task: RUNTIME-DENSE-API-BOUNDARY-001
 current_audit_task: none
 ```
 
@@ -31,38 +31,47 @@ deterministic evidence, review gates, dry-run/build/runtime contracts, repair,
 eval contracts, read-only/report-only MCP facade tools, dashboard projection,
 and performance budget contracts.
 
-V1 can now claim a tested real runtime evidence branch through an injected
-runtime_evidence_factory and explicit runtime probe payload. V1 still cannot
-claim production-grade runtime automation, production-grade dense retrieval,
-production frontend, wire-level MCP JSON-RPC compliance, real performance
-benchmarking, or full production runtime branch coverage.
+V1 has a tested real runtime evidence branch through an injected
+runtime_evidence_factory and explicit runtime probe payload. Current branch also
+has a GTFO runtime automation interface, a dense/vector provider bridge, and a
+local artifact inspection API. The unimplemented product capabilities remain
+capability recovery targets: live GTFO gameplay validation, production runtime
+automation, dense/RAG operation hardening, API/dashboard service work, MCP
+transport integration, and real benchmark evidence.
 
 ## Requirement Checks
 
-| Area | V1 audit result | Evidence | Remaining gap |
+| Area | V1 audit result | Evidence | Next capability step |
 | --- | --- | --- | --- |
-| Controlled workflow | contract covered for fake/local path, tested real runtime evidence path, and local subprocess probe path | Q-011 through Q-015, R-012, V1-AUDIT-002, V1-AUDIT-003, V1-AUDIT-004, MISS-022, MISS-026A, repair checkpoint smoke | real game launch, persistent log collection, and screenshot capture remain open |
-| Acceptance | contract linkage covered for fake/manual/supplied builders, injectable real runtime probe evidence, and local subprocess probe marker evidence | V1-AUDIT-002 carries FeatureSpec acceptance contract into runtime_evidence and eval_report with strict acceptance_verified routing; V1-AUDIT-003 verifies manual/supplied evidence must support every acceptance_criteria entry in acceptance_contract; V1-AUDIT-004 adds v1_acceptance_status and v1_acceptance_blockers to eval_report and workflow_summary; MISS-022 adds build_real_runtime_evidence_payload and a graph E2E test that reaches v1_acceptance_status=accepted with local build and real runtime probe evidence; MISS-026A verifies an explicitly approved local subprocess probe can feed runtime_evidence through the graph | real game launch, persistent log collection, and screenshot capture remain open |
-| Retrieval | V1 deterministic path covered | BM25/symbol/readiness rows RET-001 through RET-008 | RRF, rerank, and real dense provider remain future work |
-| Dense provider boundary | test-only fake provider gated | `load_settings(..., allow_test_providers=True)` is required for `retrieval.dense_provider=fake` | real provider index/query API remains deferred |
-| MCP | facade contract covered | Q-021 read-only/report-only tool surface | final JSON-RPC adapter must map unknown tool names to protocol error, tracked by MISS-020 |
-| Dashboard | projection covered | R-013 dashboard projection and Q-021/Q-022 summaries | production dashboard completeness is not a V1 claim |
-| Budget | contract covered | Q-020 budget policy and Q-022 dense budget summary | real batch orchestration and benchmark harness remain MISS-013 |
+| Controlled workflow | contract covered for fake/local path, tested real runtime evidence path, local subprocess probe path, and GTFO runtime automation interface | Q-011 through Q-015, R-012, V1-AUDIT-002, V1-AUDIT-003, V1-AUDIT-004, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, repair checkpoint smoke | Run live GTFO gameplay validation through the existing runtime evidence branch. |
+| Acceptance | contract linkage covered for fake/manual/supplied builders, injectable real runtime probe evidence, local subprocess probe marker evidence, and marker-based GTFO runtime evidence payloads | V1-AUDIT-002 carries FeatureSpec acceptance contract into runtime_evidence and eval_report with strict acceptance_verified routing; V1-AUDIT-003 verifies manual/supplied evidence supports every acceptance_criteria entry in acceptance_contract; V1-AUDIT-004 adds v1_acceptance_status and v1_acceptance_blockers to eval_report and workflow_summary; MISS-022 adds build_real_runtime_evidence_payload and a graph E2E test that reaches v1_acceptance_status=accepted with local build and real runtime probe evidence; MISS-026A verifies an explicitly approved local subprocess probe can feed runtime_evidence through the graph; RUNTIME-DENSE-API-BOUNDARY-001 adds explicit-approval GTFO automation interface tests, failure artifact capture, persistent log marker parsing, screenshot timeout, and marker/liveness separation | Bind real game path, plugin-specific markers, feature/build/run ids, and live gameplay evidence into the same acceptance contract. |
+| Retrieval | V1 deterministic path covered; dense/vector bridge is available for explicit graph injection | BM25/symbol/readiness rows RET-001 through RET-008; RUNTIME-DENSE-API-BOUNDARY-001 adds `VectorStoreDenseRetrievalProvider`, `retrieval.dense_provider=vector_store`, and `retrieval.dense_failure_policy` | Add RRF, rerank, embedding cache, production batching, and benchmarked dense retrieval. |
+| Dense provider bridge | test provider is gated; vector_store bridge is tested and can be made required by route policy | `load_settings(..., allow_test_providers=True)` is required for `retrieval.dense_provider=fake`; `VectorStoreDenseRetrievalProvider` embeds a query, calls the configured vector store, filters known chunk ids, sorts by normalized score, and can block when dense is required | Promote dense evidence from auxiliary signal to measured retrieval capability where eval and readiness cases support it. |
+| MCP | facade and JSON-RPC adapter contract covered | Q-021 read-only/report-only tool surface plus TRANSITION-004 JSON-RPC behavior | Wire stdio/http transport and approved write/runtime routes on top of the current adapter. |
+| Dashboard / API | projection and local artifact inspection API covered | R-013 dashboard projection and Q-021/Q-022 summaries; RUNTIME-DENSE-API-BOUNDARY-001 adds `/health`, `/features`, `/features/{feature_id}/artifacts`, `/features/{feature_id}/dashboard`, and `/features/{feature_id}/status` over ArtifactStore projections | Promote the local API into an authenticated API/dashboard service layer. |
+| Budget | contract covered | Q-020 budget policy and Q-022 dense budget summary | Add real batch orchestration, cache behavior, and benchmark harness integration. |
 
 ## Dense Retrieval Boundary
 
 Q-022 is a contract-level dense retrieval task only.
 
 ```text
-allowed claim: disabled-by-default dense retrieval provider contract exists
-allowed claim: fake provider supports unit-test contract verification
-forbidden claim: real embedding/vector database retrieval is implemented
-forbidden claim: dense retrieval can replace BM25/symbol V1 evidence gates
+current capability: dense retrieval provider contract exists
+current capability: fake provider supports unit-test contract verification
+current capability: vector_store dense provider bridge and graph injection are supported
+current capability: required dense failure can block evidence when `dense_required=True`
+next capability: production dense/RAG hardening through cache, batching, RRF, rerank, score thresholds, and eval evidence
+next capability: route-specific readiness can promote dense hits when deterministic and eval evidence support the route
 ```
 
 `FakeDenseRetrievalProvider` returns configured chunk-id scores. It is now
 blocked from normal settings loading unless the caller explicitly passes
 `allow_test_providers=True`.
+
+`VectorStoreDenseRetrievalProvider` is an explicit bridge over the existing
+EmbeddingFactory and VectorStoreFactory abstractions. It does not change the V1
+rule that dense evidence is auxiliary and cannot approve high-risk runtime work
+without deterministic source/API evidence.
 
 ## Real Runtime Boundary
 
@@ -73,11 +82,12 @@ boundary explicit in `eval_report` and `workflow_summary`.
 
 ```text
 fake/local requested_behavior_status: may be verified for the contract fixture
-fake/local v1_acceptance_status: blocked
-fake/local required blockers: REAL_BUILD_EVIDENCE_MISSING, REAL_RUNTIME_MODE_REQUIRED, REAL_RUNTIME_EVIDENCE_MISSING, and REAL_RUNTIME_SUCCESS_NOT_CLAIMED
-forbidden claim: fake/local workflow completion is real V1 runtime acceptance
-real runtime probe path: can reach v1_acceptance_status=accepted only when local build success is claimed and runtime evidence has execution_mode=real, real_runtime_performed=True, claims_real_runtime_success=True, and acceptance_verified=True
-real runtime evidence branch: not a production runtime launcher, persistent collector, or screenshot capture pipeline
+fake/local v1_acceptance_status: routes to evidence upgrade
+fake/local required upgrade fields: REAL_BUILD_EVIDENCE_MISSING, REAL_RUNTIME_MODE_REQUIRED, REAL_RUNTIME_EVIDENCE_MISSING, and REAL_RUNTIME_SUCCESS_NOT_CLAIMED
+upgrade path: fake/local workflow completion advances into real runtime probe or live GTFO evidence collection
+real runtime probe path: can reach v1_acceptance_status=accepted when local build success is claimed and runtime evidence has execution_mode=real, real_runtime_performed=True, claims_real_runtime_success=True, and acceptance_verified=True
+GTFO runtime automation interface: explicit approval, executable/working-directory/log-path validation, persistent log marker collection, screenshot capture with timeout, marker/liveness separation, and failed runtime evidence payloads are implemented
+real runtime evidence branch: capability recovery target is live GTFO gameplay evidence binding
 ```
 
 The `v1_acceptance_status` and `v1_acceptance_blockers` fields are V1 audit
@@ -88,11 +98,11 @@ result if the project needs multiple release tracks.
 ## Final Verdict
 
 ```text
-V1 contract path verdict: accepted with known gaps
-Real runtime evidence branch verdict: accepted with known gaps
+V1 contract path verdict: verified for the current controlled contract path
+Real runtime evidence branch verdict: verified for injected/local probe evidence only
 Reason: injectable local build plus real runtime probe evidence reaches v1_acceptance_status=accepted in graph tests.
-Allowed claim: controlled local contract path, injectable real runtime evidence branch, and local subprocess runtime probe/log collector are implemented and tested.
-Forbidden claim: the project has real game runtime automation, persistent game log collection, screenshot capture, or a production game process launcher.
+Current capability: controlled local contract path, injectable real runtime evidence branch, local subprocess runtime probe/log collector, GTFO real runtime automation interface with explicit approval and marker-based evidence, dense provider bridge with graph injection, and local artifact inspection API are implemented and tested.
+Capability recovery targets: live GTFO gameplay automation, production runtime automation, production dense/RAG, and API/dashboard service hardening.
 ```
 
 ## Queue Handoff
@@ -101,7 +111,9 @@ Forbidden claim: the project has real game runtime automation, persistent game l
 V1 audit queue: completed
 MISS-022 real runtime evidence branch: completed
 MISS-026A local subprocess runtime probe/log collector: completed
-If the next goal is production runtime automation: continue MISS-026 real game runtime launcher, persistent log collection, and screenshot capture.
+RUNTIME-DENSE-API-BOUNDARY-001: focused interface/bridge/API behavior is tested; production runtime, production RAG, and production API remain capability recovery targets.
+Focused runtime/config/evidence/workflow/API tests passed, and additional dashboard/runtime/smoke tests passed. Broader `tests/unit` is not green: `.venv\Scripts\python.exe -m pytest tests/unit -q --tb=short --disable-warnings --maxfail=20` stopped at 20 failed, 1023 passed, 4 skipped, 2 warnings.
+If the next goal is production runtime automation: continue MISS-026 real GTFO launch evidence with plugin-specific markers, feature/build/run binding, and live gameplay proof.
 If the next goal is feature expansion: select the next task from docs/SPEC_COVERAGE_MATRIX.md open gaps.
-Do not claim production runtime automation until MISS-026 is closed by implementation and tests.
+Production runtime automation recovery target: close MISS-026 by binding live GTFO gameplay validation to implementation and tests.
 ```

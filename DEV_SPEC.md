@@ -13,22 +13,24 @@ request -> feature_spec -> evidence_pack -> implementation_plan
 -> structured build_result -> runtime/manual evidence -> workflow_summary
 ```
 
-Audits, checkpoints, schemas, validators, and safety policies are gates and
-guardrails. They are not complete product phases by themselves.
+Audits, checkpoints, schemas, validators, and policy checks are implementation
+supports. They should unlock runnable capability, not become product phases by
+themselves.
 
 Implementation priority:
 
 1. Keep the main loop runnable.
 2. Wire existing adapters before adding new passive contracts.
-3. Use fake/local/supplied-output runners where real writes, real builds, or
-   real runtime automation would be unsafe.
-4. Label fake/stubbed artifacts honestly.
-5. Add focused tests around the runnable loop segment.
+3. Use fake/local/supplied-output runners as stepping stones toward real writes,
+   real builds, and real runtime automation.
+4. Label early artifacts by capability level so they can be upgraded without
+   re-litigating scope.
+5. Add focused tests around the runnable loop segment and then move to the next
+   capability-bearing step.
 
-Safety boundaries still matter, but they should create controlled execution
-paths instead of halting progress. Do not copy legacy source, mutate
-`generated_mods/`, perform confirmed apply, claim real gameplay success, or hide
-side effects.
+Implementation boundaries should be written as forward paths: what can run now,
+what evidence upgrades it, and what unlocks the next level. Avoid turning
+boundary work into a substitute for product progress.
 
 # 0.0B Current Product Direction Lock
 
@@ -45,16 +47,16 @@ exposure, and dashboard surfaces.
 The RAG subsystem's purpose changes from "answer user questions" to "ground
 controlled code generation decisions." It feeds planning, implementation plans,
 patch proposals, review gates, build repair, runtime repair, evaluation, and
-dashboard explanations. It must not own final edit decisions, approve writes,
-perform apply/build/runtime side effects, or replace the LangGraph workflow.
+dashboard explanations. Final edit, build, runtime, and release decisions should
+flow through the LangGraph product loop with artifact evidence.
 
 All non-RAG core modules must be upgraded toward the same engineering depth as
 the imported RAG spec. In practice, LangGraph workflow, artifact contract,
 planning, proposal, review, dry-run, build, runtime evidence, repair, memory,
-evaluation, dashboard, MCP/API/CLI, and demo packaging must each define goals,
-non-goals, named strategies, inputs/outputs, schemas, state transitions,
-failure paths, implementation classes, observability, tests, acceptance
-criteria, forbidden behaviors, phase breakdown, and ADR/trade-off notes.
+evaluation, dashboard, MCP/API/CLI, and demo packaging should each define goals,
+named strategies, inputs/outputs, schemas, state transitions, failure handling,
+implementation classes, observability, tests, acceptance criteria, implementation
+boundaries, phase breakdown, and ADR/trade-off notes.
 
 Implementation rule:
 
@@ -62,23 +64,23 @@ Implementation rule:
 2. Integrate it under `src/mod_agent/knowledge_hub/...` semantics.
 3. Make LangGraph controlled code generation the top-level product loop.
 4. Raise non-RAG specs and code to RAG-level rigor instead of simplifying RAG.
-5. Never let old RAG product naming or QA-first workflows override the current
+5. Keep old RAG product naming and QA-first workflows subordinate to the current
    vertical code generator goal.
 
-# 0.0C Skill, Spec, State, And Artifact Boundary
+# 0.0C Skill, Spec, State, And Artifact Roles
 
 Reusable procedures belong in Skills. Product facts, interface contracts,
 current branch state, queue status, test evidence, and artifact payloads remain
 outside Skills.
 
-Current boundaries:
+Current roles:
 
 1. `.agents/skills/auto-coder/SKILL.md` remains the DEV_SPEC-driven platform
    development Skill.
 2. `.agents/skills/mod-delivery-playbook/SKILL.md` is the user-facing mod
    delivery process Skill. It runs the delivery chain from planning input to
-   handoff summary, but it must not store current state, duplicate schemas, copy
-   test results, or replace `auto-coder`.
+   handoff summary while linking back to source code, artifacts, tests, and
+   current state documents for facts.
 3. `DEV_SPEC.md` remains the product and architecture source of truth.
 4. `docs/PROJECT_STATE.md`, `docs/IMPLEMENTATION_QUEUE.md`, and
    `docs/SPEC_COVERAGE_MATRIX.md` remain the current state, work queue, and
@@ -100,16 +102,17 @@ Current E2E-001 proof level:
 2. The test uses a controlled temporary BetterHitFeedback source file and
    deterministic symbol evidence.
 3. The build path verifies an expected local artifact through `BuildAdapter`
-   using the controlled test build factory/runner. It does not prove a real C#
-   toolchain build, a real BepInEx plugin DLL, or a game-loadable artifact.
+   using the controlled test build factory/runner, then provides a path toward a
+   real C# toolchain build and game-loadable artifact proof.
 4. The runtime path launches a real local subprocess probe through
-   `RuntimeProbeRunner`.
-5. The proof does not launch GTFO, collect real game logs, capture real game
-   screenshots, copy a DLL to a game directory, or prove gameplay success inside
-   a live game process.
+   `RuntimeProbeRunner`, then feeds the real GTFO runtime validation track.
+5. The next runtime capability step should connect GTFO launch, persistent game
+   logs, screenshots, plugin markers, and gameplay evidence under one verified
+   run record.
 
-Future expert Skills may be split only after this delivery chain remains
-green and the E2E-001 checkpoint is present in branch history. Start with:
+Expert Skills may be split when they help the delivery chain move faster and
+their outputs stay connected to source code, artifacts, tests, and LangGraph
+routing. Start with:
 
 ```text
 patch-review-playbook
@@ -127,52 +130,47 @@ repair, and queue/spec rewrites.
 
 Rules:
 
-1. Do not reset, restore, clean, rebase, or overwrite user changes unless the
-   user explicitly asks for that operation.
-2. Do not treat restored historical records as current branch proof until the
-   referenced files exist and focused tests have been rerun.
-3. Do not commit automatically. Commit only when the user asks, after focused
-   tests and status review.
+1. Preserve user changes while planning each edit against the current Git state.
+2. Convert restored historical records into current branch proof by restoring
+   the referenced files and rerunning focused tests.
+3. Keep commits user-directed and evidence-backed.
 4. If a task changes queue order, update `docs/IMPLEMENTATION_QUEUE.md` and
    `docs/SPEC_COVERAGE_MATRIX.md` in the same loop.
 5. Review-repair tasks outrank ordinary Q work when an active P0/P1 finding is
    present.
-6. Optional platform expansion remains explicit work, not the default next step
-   after E2E-001. This includes real dense retrieval, full multimodal
-   ingestion, dashboard polish, multi-MCP writes, automatic game launch/copy,
-   and large benchmark harnesses.
+6. Platform expansion should be selected by capability value. Strong near-term
+   tracks include real dense retrieval, multimodal evidence, dashboard/API
+   service work, MCP integration, game launch/copy automation with approval, and
+   benchmark harnesses.
 
 # 0.1A LangGraph Control-Plane Clarification
 
 This clarification overrides older wording in this document wherever it is
 ambiguous.
 
-LangGraph is the workflow runtime/control plane, not a decorative wrapper and
-not a future replacement for a custom runner. Business node behavior may be
-stubbed, fake, local, or supplied-output based during early phases, but the
-workflow runtime must be a real LangGraph `StateGraph`/compiled graph whenever
-the task is about graph execution, routing, interrupt/resume, checkpointing, or
-graph audit.
+LangGraph is the workflow runtime/control plane. Business node behavior may be
+stubbed, fake, local, supplied-output, or real during staged implementation, and
+the workflow runtime should use a real LangGraph `StateGraph`/compiled graph for
+graph execution, routing, interrupt/resume, checkpointing, and graph audit.
 
-Rules:
+Implementation rules:
 
-1. "Stub graph" means stubbed business nodes inside a real LangGraph graph. It
-   does not allow a hand-written stage loop to stand in for LangGraph.
+1. "Stub graph" means stubbed business nodes inside a real LangGraph graph.
 2. LangGraph conditional edges own routing. A route matrix may declare routes,
    and helper functions may compute route labels or validate transitions, but
-   helpers must not become the primary workflow runner.
+   helpers should remain supporting code around the primary workflow runner.
 3. `transitions.py` may contain route predicates, route labels, and transition
-   validation. It must not replace LangGraph `add_conditional_edges`.
+   validation, with LangGraph `add_conditional_edges` remaining the execution
+   wiring.
 4. A single route registry/source should feed both LangGraph edge construction
    and any audit/Mermaid exporter so visual output cannot drift from execution.
-5. `human_approval` in diagrams means a LangGraph interrupt/resume boundary,
-   not a normal node that silently returns `blocked`.
+5. `human_approval` in diagrams means a LangGraph interrupt/resume step that can
+   collect approval evidence and resume the product loop.
 6. LangGraph controls when artifact-producing nodes run. Nodes write artifacts
    through `ArtifactStore` and emit trace through trace wrappers/writers.
    LangGraph itself is not the artifact store.
 7. LangGraph checkpointing is the source of truth for resumable graph state.
-   Additional workflow run tables may index metadata, but must not replace the
-   LangGraph checkpointer.
+   Additional workflow run tables may index metadata for dashboard and API use.
 8. Use canonical names consistently:
 
 ```text
@@ -188,15 +186,14 @@ build_result, runtime_evidence, repair_plan, eval_report
 9. `ModAgentState` is runtime control state. Artifacts are the durable audit and
    state projection. State entries must reference artifacts by ref/hash; durable
    claims must be recoverable from artifacts/traces, not hidden state.
-10. CLI/API/MCP commands call graph commands or safe artifact readers. They must
-   not call individual workflow node handlers directly.
-11. Evidence RAG / Knowledge Hub is a subsystem that feeds evidence decisions.
-   It must not replace or outrank the LangGraph controlled workflow.
-12. Specialist nodes are implementation boundaries inside one LangGraph
-   orchestrator. Do not create free-running multi-agent workers or many
-   specialist nodes before the single controlled graph is mature.
-13. Interrupt/resume and checkpoint/resume are prerequisite LangGraph maturity
-   work before adding more fake build/runtime workflow branches.
+10. CLI/API/MCP commands should call graph commands or artifact readers so the
+    external interface follows the same product loop.
+11. Evidence RAG / Knowledge Hub feeds evidence decisions inside the LangGraph
+    controlled workflow.
+12. Specialist nodes are implementation roles inside one LangGraph orchestrator
+    and can grow as the single controlled graph matures.
+13. Interrupt/resume and checkpoint/resume should mature alongside real build
+    and runtime branches.
 
 If a later section conflicts with this clarification, follow this section.
 
@@ -204,27 +201,26 @@ If a later section conflicts with this clarification, follow this section.
 
 Use this ladder when reporting progress:
 
-| Level | Meaning | Allowed Claim | Not Allowed |
+| Level | Meaning | Current Signal | Next Capability |
 | --- | --- | --- | --- |
-| L0 | hand-written loop or pseudo graph | workflow skeleton only | LangGraph-backed |
-| L1 | real `StateGraph` invocation with compatibility wrapper | thin LangGraph migration | custom runtime fully replaced |
-| L2 | conditional edges own routing and route audit uses same registry | LangGraph routes decisions | Mermaid proves control plane |
+| L0 | hand-written loop or pseudo graph | workflow skeleton | LangGraph-backed routing |
+| L1 | real `StateGraph` invocation with compatibility wrapper | thin LangGraph migration | broader graph ownership |
+| L2 | conditional edges own routing and route audit uses same registry | LangGraph routes decisions | stronger audit and dashboard views |
 | L3 | interrupt/resume and checkpoint/resume are tested | mature local control plane | real build/runtime automation |
-| L4 | bounded repair/eval paths are artifact-backed | controlled fake/local loop | real mod capability |
+| L4 | bounded repair/eval paths are artifact-backed | controlled local loop | real mod capability |
 
 Reporting rules:
 
-1. Absence of `for stage in NORMAL_PATH` proves only that one loop was removed.
-   It does not prove LangGraph owns routing.
-2. Mermaid or graph audit output proves inspectability only when it is generated
-   from the same route registry used to construct LangGraph edges.
-3. A large dirty diff must be reported as accumulated work. Do not describe a
-   small task as complete if the working tree contains unrelated uncommitted
-   phase or packaging changes.
-4. Use the task id from `PROGRESS_TRACKING.md` and `06-schedule.md` exactly.
-   Do not relabel A/G/H tasks in summaries.
-5. Documentation updates should be minimal and tied to actual changed behavior,
-   except for explicit spec/skill cleanup tasks like this one.
+1. Report which part of routing is graph-owned and which part remains adapter
+   compatibility work.
+2. Generate Mermaid or graph audit output from the same route registry used to
+   construct LangGraph edges.
+3. Report large dirty diffs as accumulated work and separate them from the
+   current task summary.
+4. Use the task id from `PROGRESS_TRACKING.md` and `06-schedule.md` exactly when
+   those files are the active planning source.
+5. Documentation updates should help select and execute the next capability
+   step.
 
 > 版本：0.4  
 > 状态：Greenfield Developer Specification  
@@ -249,7 +245,7 @@ Reporting rules:
 ```text
 1. 能拆成可执行任务。
 2. 每个任务能生成或修改明确文件。
-3. 每个任务有测试、验收标准和禁止事项。
+3. 每个任务有测试、验收标准和实现边界。
 ```
 
 ## 0.2 与 `spec.md` 的关系
@@ -267,7 +263,7 @@ Reporting rules:
 - 每阶段最低测试要求；
 - agent 使用 `SKILL.md` 时的 prompt 和工作协议；
 - 第一天、第二天、第一周分别应该完成什么；
-- 不能为了展示效果而越过的安全边界。
+- Demo、验证和发布时需要保留的交付边界。
 
 ## 0.3 开发原则
 
@@ -303,7 +299,7 @@ Use structured artifacts, trace events, focused tests, safe fake runners, and si
 ```text
 Implement the next runnable loop segment.
 Prefer adapter wiring and fake/local execution paths over more schema-only work.
-Do not claim real patch/build/runtime success without artifact-backed evidence.
+Move real patch/build/runtime success claims forward by attaching artifact-backed evidence.
 ```
 
 ## 0.5 完成声明规则
@@ -320,7 +316,7 @@ What is still stubbed:
 Next recommended phase:
 ```
 
-不得使用以下不合格声明：
+避免使用以下低价值声明：
 
 ```text
 "应该可以"
@@ -346,7 +342,7 @@ Validation not run: <reason>
 愿景 -> 技术选型 -> 模块接口 -> 数据结构 -> 失败路径 -> 测试策略 -> 小阶段排期
 ```
 
-二号项目不能把这种深度只给 RAG。二号的核心是 controlled agentic code generation platform，因此以下模块必须都达到类似深度：
+二号项目应把这种深度扩展到 RAG 之外。二号的核心是 controlled agentic code generation platform，因此以下模块都应逐步达到类似深度：
 
 | 模块 | 必须达到的深度 |
 | --- | --- |
@@ -354,7 +350,7 @@ Validation not run: <reason>
 | Artifact Contract | envelope、schema、生命周期、stale detection、store interface |
 | Knowledge Base | source discovery、loader、metadata store、incremental index |
 | Evidence RAG | deterministic/symbol/vector/rerank/fusion/readiness/evidence pack |
-| Domain Adapter | risk taxonomy、forbidden paths、build profile、runtime evidence hints |
+| Domain Adapter | risk taxonomy、managed paths、build profile、runtime evidence hints |
 | Planning Layer | request route、feature spec、implementation plan、blocking uncertainty |
 | Patch Proposal | context builder、schema、diff plan、no-op detector、scope boundary |
 | Review Gate | evidence binding、scope check、risk check、permission check |
@@ -365,7 +361,7 @@ Validation not run: <reason>
 | Memory Compression | artifact index、context pack、token budget、critical constraint retention |
 | Evaluation Harness | golden cases、module metrics、regression report、dashboard summary |
 | Dashboard | workflow viewer、evidence browser、proposal viewer、eval dashboard |
-| MCP/API/CLI | external safe tools、schema、read-only/report-only defaults |
+| MCP/API/CLI | external tools、schema、local inspection、write/launch approval routes |
 
 判断某一章是否足够深，用下面的检查表：
 
@@ -406,7 +402,7 @@ Validation not run: <reason>
 9. Domain Adapter 设计  
 10. Planning Layer 设计  
 11. Patch Proposal 设计  
-12. Review Gate 与 Safety 设计  
+12. Review Gate 与 Delivery Confidence 设计
 13. Dry-run Apply 设计  
 14. Build Adapter 设计  
 15. Runtime Evidence 与 Multimodal 设计  
@@ -797,7 +793,7 @@ controlled-mod-agent/
 
         # `graph.py` owns StateGraph construction.
         # `transitions.py` owns route labels/predicates/validation only.
-        # It must not contain the primary workflow execution loop.
+        # Keep the primary workflow execution loop in graph.py.
 
       artifacts/
         store.py
@@ -1103,9 +1099,9 @@ blocked
 done
 ```
 
-`interrupt_resume_gate` is a LangGraph interrupt boundary. It is not a normal
-business node and must not silently convert a permission question into a fake
-success or generic blocked result.
+`interrupt_resume_gate` is a LangGraph interrupt/resume point. It collects
+permission evidence and returns a resumable graph decision instead of flattening
+the question into an opaque status.
 
 ## 5.4 Node 输入输出约定
 
@@ -1120,7 +1116,7 @@ success or generic blocked result.
 返回 state delta
 ```
 
-禁止：
+推荐推进方式：
 
 ```text
 直接修改 generated source
@@ -1185,8 +1181,8 @@ Ownership rule:
 
 ```text
 LangGraph checkpointer owns resumable graph state.
-Custom tables may index run metadata and audit summaries only.
-Custom tables must not replace LangGraph checkpoint/resume semantics.
+Custom tables may index run metadata and audit summaries for dashboard/API use
+while LangGraph checkpoint/resume remains the workflow state source.
 ```
 
 表结构：
@@ -1379,7 +1375,7 @@ class ArtifactStore:
 - 所有 artifact 写入必须经过 ArtifactStore；
 - artifact hash 稳定；
 - schema validation 可阻断 workflow；
-- stale artifact 不能进入 apply/build；
+- stale artifact routes to refresh / repair before apply/build；
 - dashboard 能按 feature_id 展示 artifact chain。
 
 ---
@@ -1995,9 +1991,9 @@ native/interop/reflection-heavy -> critical
 unknown -> unknown/block
 ```
 
-## 9.5 GTFO Forbidden Paths
+## 9.5 GTFO Managed Paths
 
-默认禁止：
+优先作为只读、受控修改或显式交付步骤处理：
 
 ```text
 BepInEx core dlls
@@ -2011,7 +2007,7 @@ artifacts from other feature_id
 
 ## 9.6 验收标准
 
-- 没有 adapter 时不能进入 patch proposal；
+- 没有 adapter 时先生成 adapter onboarding / evidence discovery 步骤；
 - adapter 能识别 safe_edit_roots；
 - adapter 能提供 knowledge sources；
 - adapter 能提供 build profile；
@@ -2090,7 +2086,7 @@ implementation_plan.json
   "feature_id": "...",
   "plan_id": "...",
   "target_files": [],
-  "forbidden_files": [],
+  "managed_files": [],
   "required_evidence": [],
   "selected_strategy": "...",
   "alternatives_considered": [],
@@ -2102,10 +2098,10 @@ implementation_plan.json
 
 ## 10.5 验收标准
 
-- vague request 不能进入 patch proposal；
+- vague request 应先进入 clarification / evidence discovery / planning brief；
 - non-goals 必须保留；
 - implementation plan 必须引用 evidence；
-- forbidden changes 必须明确；
+- implementation boundaries 必须明确；
 - acceptance contract 可被 runtime/eval 使用。
 
 ---
@@ -2131,7 +2127,7 @@ Patch Proposal 是 LLM 输出代码修改的唯一合法形式。
     "evidence_report": "..."
   },
   "target_files": [],
-  "forbidden_files": [],
+  "managed_files": [],
   "changes": [
     {
       "change_id": "change_001",
@@ -2197,17 +2193,17 @@ context_pack
 
 - proposal schema validates；
 - 每个 change 引用 evidence；
-- forbidden file 不能出现；
+- managed file 的处理方式应在 proposal 中说明；
 - no-op 不生成假 diff；
 - proposal 不直接写文件。
 
 ---
 
-# 12. Review Gate 与 Safety 设计
+# 12. Review Gate 与 Delivery Confidence 设计
 
 ## 12.1 目标
 
-Review Gate 是写入前的强制安全门。
+Review Gate 是写入前的质量、证据和交付信心提升环节。
 
 ## 12.2 Review Checks
 
@@ -2260,7 +2256,7 @@ report_only
 dry_run
 ```
 
-默认禁止：
+需要更高执行级别和显式意图的能力：
 
 ```text
 confirmed_write
@@ -2282,11 +2278,11 @@ class PathGuard:
 
 ## 12.6 验收标准
 
-- stale proposal block；
-- wrong target mod block；
-- semantic drift block；
-- forbidden path block；
-- unapproved confirmed write block；
+- stale proposal routes to refresh / repair；
+- wrong target mod routes to adapter/profile correction；
+- semantic drift routes to proposal revision；
+- managed path changes route to higher review；
+- confirmed write records approval and rollback metadata；
 - review result hash 必须匹配 proposal hash。
 
 ---
@@ -2478,7 +2474,7 @@ Repair Loop 根据失败证据生成修复计划，而不是盲目重试。
 
 - repair plan 引用失败证据；
 - repair proposal 仍需 review；
-- 不允许无限 repair loop；
+- repair loop 需要 attempt budget、stop condition 和下一步交付建议；
 - 每轮 repair 记录 attempt number；
 - regression guard 保留原 acceptance。
 
@@ -2753,7 +2749,7 @@ failed cases
 
 ## 20.1 目标
 
-CLI、API、MCP 都不能绕过 graph。
+CLI、API、MCP 都通过 graph commands 或 artifact readers 推进同一条产品链路。
 
 They invoke graph commands such as "start workflow", "resume workflow", or
 "read workflow status", or they read durable artifacts/traces. They do not call
@@ -2887,7 +2883,7 @@ evaluation:
 - 所有 provider 可配置；
 - 测试中可用 fake provider；
 - 缺配置时给出明确错误；
-- 配置不允许 silently fallback 到危险行为。
+- 配置应把 fallback、降级和升级路径写成显式结果。
 
 ---
 
@@ -3011,7 +3007,7 @@ jobs:
 
 ## 23.3 验收标准
 
-- PR 不能破坏 unit tests；
+- PR 应保持 unit tests 通过或附带明确 repair/eval 记录；
 - eval regression 需要报告；
 - CI 不调用真实 LLM；
 - CI 不需要游戏本体；
@@ -3133,7 +3129,7 @@ forbidden changes
 目标：
 
 ```text
-LLM 生成 proposal，但不能 apply。
+LLM 生成 proposal，apply 能力由 review、dry-run、approval 和 rollback metadata 推进。
 ```
 
 验收：
@@ -3216,14 +3212,14 @@ no dangerous tool exposure
 
 旧项目不是直接迁移对象，而是知识来源。
 
-禁止：
+推荐推进方式：
 
 ```text
-直接复制旧 src
-直接复制 generated_mods
-把旧 prompt 当当前 spec
-把旧 artifact 当当前成功证据
-让旧上下文决定新架构
+旧 src 进入 source review / reference extraction
+generated_mods 进入 fixture / build evidence / migration input
+旧 prompt 提炼为 prompt contract 或 eval case
+旧 artifact 作为 historical evidence，升级为当前 artifact 后再消费
+旧上下文提炼为 architecture note，再由当前架构吸收
 ```
 
 允许吸收：
@@ -3426,7 +3422,7 @@ main importable
 focused tests passing
 artifacts written through store
 trace events emitted
-dangerous side effects blocked by default
+side effects routed through explicit approval and rollback/evidence records
 README or docs updated when user-facing behavior changes
 ```
 
@@ -3436,7 +3432,7 @@ README or docs updated when user-facing behavior changes
 
 | 类型 | 说明 |
 | --- | --- |
-| Code | 真实模块、接口或 stub，不允许只写文档 |
+| Code | 真实模块、接口或 stub，文档更新应服务于可运行能力 |
 | Artifact | 该阶段产生的结构化输出 |
 | Test | 单元测试或集成测试 |
 | Trace | 可解释的事件记录，方便 dashboard 和 eval 复用 |
@@ -3447,7 +3443,7 @@ README or docs updated when user-facing behavior changes
 stub has same public interface as future real implementation
 stub writes the same artifact shape as future implementation
 stub exposes explicit status="stubbed"
-stub does not claim real evidence or success
+stub exposes the next evidence step toward real success
 ```
 
 ## 29.3 文件命名约定
@@ -3623,7 +3619,7 @@ pytest discovers tests
 README names project and first milestone
 ```
 
-禁止事项：
+交付边界：
 
 ```text
 不要复制旧项目 src
@@ -3731,8 +3727,8 @@ class PermissionDecision(TypedDict):
 
 ```text
 read_only is allowed
-confirmed_write is blocked by default
-external_side_effect is blocked by default
+confirmed_write records approval and rollback metadata
+external_side_effect records approval and runtime/build evidence
 decision includes reason
 ```
 
@@ -3766,12 +3762,12 @@ emit trace event
 return updated state
 ```
 
-禁止：
+推荐推进方式：
 
 ```text
-stub node 不得假装完成真实检索
-stub node 不得生成真实 patch
-stub node 不得写 generated mod source
+stub node reports capability_level and next_real_step
+stub node produces the same artifact shape as the future real node
+stub node connects to retrieval / patch / generated source work through explicit follow-up tasks
 ```
 
 ## 30.8 A6：Graph Transitions
@@ -3862,7 +3858,7 @@ stale_inputs
 
 ## 31.3 Stale Detection
 
-当上游 artifact 改变后，下游 artifact 不能继续被当成 fresh。
+当上游 artifact 改变后，下游 artifact 进入 refresh / repair 路由。
 
 推荐实现：
 
@@ -3877,7 +3873,7 @@ read artifact 时可检查 upstream sha256 是否变化
 
 ```text
 修改 feature_spec 后 implementation_plan 被识别 stale
-stale artifact 不能进入 patch proposal review
+stale artifact routes to refresh before patch proposal review
 dashboard 可以显示 stale reason
 ```
 
@@ -4048,8 +4044,8 @@ runtime_verification_plan
 反例：
 
 ```text
-"让体验更好" 不能直接进入 implementation plan
-"修一下那个问题" 没有上下文必须 blocked
+"让体验更好" 先进入 clarification / planning brief
+"修一下那个问题" 没有上下文时生成 clarification / evidence request
 ```
 
 ## 33.3 Implementation Plan
@@ -4075,7 +4071,7 @@ open_questions
 每个 proposed_change 至少绑定一个 evidence_ref
 每个 target_file 必须在允许范围内
 高风险计划必须声明 runtime verification
-open_questions 非空且 blocking=true 时不得继续 proposal
+open_questions 非空且 blocking=true 时先进入 clarification / evidence discovery
 ```
 
 ## 33.4 Patch Proposal
@@ -4097,7 +4093,7 @@ expected_tests
 manual_review_notes
 ```
 
-禁止：
+推荐推进方式：
 
 ```text
 不要在 proposal 阶段修改源文件
@@ -4268,7 +4264,7 @@ retry_budget
 stop_condition
 ```
 
-禁止：
+推荐推进方式：
 
 ```text
 不要无限 repair
@@ -4403,8 +4399,8 @@ delete_artifacts
 接口规则：
 
 ```text
-MCP/API 不得绕过 graph state
-MCP/API 不得直接写 source
+MCP/API 通过 graph state 推进
+MCP/API 写 source 走 proposal/review/dry-run/apply 链路
 所有 tool 输出都必须有 schema
 危险工具必须返回 required_approval 而不是执行
 ```
@@ -4456,18 +4452,18 @@ python -B -m pytest
 
 并在 README 或本文件相关位置更新验证命令。
 
-## 36.4 不允许的捷径
+## 36.4 高杠杆推进方式
 
 ```text
-不允许只写 README 不写代码
-不允许只写 prompt 不写 artifact schema
-不允许直接生成 patch 而没有 evidence
-不允许 review 前 apply
-不允许 dry-run 后宣称 runtime success
-不允许把旧项目目录当作新项目 source
-不允许为了 demo 把 blocked 改成 success
-不允许用自然语言 trace 替代结构化 trace
-不允许把 eval 放到最后才补
+README 更新应绑定代码、artifact、测试或 demo 入口。
+Prompt 工作应沉淀为 artifact schema、node contract 或 eval case。
+Patch 生成应尽快接入 evidence、review、dry-run、build/runtime 验证链。
+Apply 能力按 dry-run -> reviewed write -> rollback metadata 的顺序推进。
+Runtime success 应由 log、marker、screenshot、manual/probe evidence 逐步升级。
+旧项目目录作为 knowledge source、reference pattern、fixture 或 migration input 使用。
+Demo 状态应展示真实 workflow 状态，并把 blocked/repair 变成可操作下一步。
+Trace 优先结构化，同时允许 dashboard 生成可读摘要。
+Eval case 应和新能力同步补充，避免最后集中补课。
 ```
 
 ## 36.5 第一周完成定义
@@ -4501,7 +4497,7 @@ production MCP server
 multi-domain adapter
 ```
 
-不允许仍然 stub：
+第一周建议真实落地：
 
 ```text
 graph state
@@ -4559,7 +4555,7 @@ Knowledge ingestion
 
 | 设计亮点 | 策略名词 | 具体含义 |
 | --- | --- | --- |
-| 代码修改前先找证据 | Evidence-before-Edit | 没有源码/API/log/artifact 证据时，不允许生成高风险 patch |
+| 代码修改前先找证据 | Evidence-before-Edit | 高风险 patch 先补源码/API/log/artifact 证据 |
 | 多路召回 | Hybrid Retrieval | deterministic、symbol、BM25、dense vector 并行召回 |
 | 结果融合 | Reciprocal Rank Fusion | 用 RRF 融合 sparse/dense/symbol 结果，降低单一路径偏差 |
 | 重排优化 | Cross-Encoder / LLM Rerank | 对候选 evidence 做精排，提升 top evidence 可用性 |
@@ -5419,7 +5415,7 @@ Trace events:
 Tests:
 Acceptance criteria:
 Failure behavior:
-Out of scope:
+Next capability step:
 ```
 
 ## 42.4 Phase A 细化示例
@@ -5444,8 +5440,8 @@ Tests:
 Acceptance:
   import mod_agent succeeds
   CLI --help exits 0
-Out of scope:
-  downstream business-node behavior beyond import/CLI smoke
+Next capability step:
+  connect downstream business-node behavior after import/CLI smoke
 ```
 
 ```text
@@ -5472,7 +5468,7 @@ Tests:
   invalid artifact type rejected
 Acceptance:
   all writes go through ArtifactStore
-Out of scope:
+Next capability step:
   dashboard rendering
 ```
 
@@ -5482,7 +5478,7 @@ Out of scope:
 
 ## 43.1 新 Domain Adapter
 
-新增 domain adapter 只允许实现领域差异，不允许改 workflow 主干。
+新增 domain adapter 优先实现领域差异，并通过既有 workflow 主干接入。
 
 接口：
 
@@ -5506,7 +5502,7 @@ MelonLoaderAdapter
 
 ## 43.2 新 Retrieval Backend
 
-只允许通过 `VectorStore` / `SparseIndex` 抽象替换，不允许让业务层直接依赖 Chroma/Qdrant。
+通过 `VectorStore` / `SparseIndex` 抽象替换检索后端，业务层保持在稳定接口上演进。
 
 验收：
 
@@ -5526,8 +5522,8 @@ class ReviewRule(Protocol):
     def evaluate(self, proposal: PatchProposal, context: ReviewContext) -> ReviewFinding | None: ...
 ```
 
-禁止新增“散落在 proposal 生成器里的 if 判断”。  
-所有安全阻断都应出现在 review finding 中。
+新增 review rule 时优先沉淀为独立 rule。
+需要阻断、修复或升级的事项应出现在 review finding 中。
 
 ## 43.4 新 Dashboard 页面
 
@@ -5545,7 +5541,7 @@ User action forbidden:
 
 # 44. Confidence, Context, and Documentation Honesty
 
-本节专门回应一个现实问题：大文档能不能被 agent 稳定使用。
+本节专门回应一个现实问题：大文档如何被 agent 稳定使用。
 
 ## 44.1 200KB Markdown 是否难以读取
 
@@ -5568,9 +5564,9 @@ User action forbidden:
 需要测试时读 41。
 ```
 
-## 44.2 文档自信边界
+## 44.2 文档可执行深度
 
-以后不能因为文档变长就声称“已经达到一号水平”。必须按检查表判断：
+以后不按文档长度判断成熟度，而按检查表判断：
 
 ```text
 是否有设计策略名词？
@@ -5580,10 +5576,10 @@ User action forbidden:
 是否有测试方法？
 是否有验收标准？
 是否有失败路径？
-是否有禁止事项？
+是否有实现边界和下一步能力？
 ```
 
-少一项，就只能说“覆盖了主题”，不能说“达到可执行深度”。
+缺少关键项时，将该章标为“需要补齐执行深度”，并列出下一步。
 
 ## 44.3 后续文档收口标准
 
@@ -5656,7 +5652,7 @@ Dashboard
 | Evaluation | 证明 retrieval/review 不是凭感觉调 prompt |
 | MCP | 后续可作为外部 agent 的知识工具 |
 
-但不能照搬的部分：
+需要改造成二号项目形态的部分：
 
 | 一号能力 | 二号处理方式 |
 | --- | --- |
@@ -6050,13 +6046,13 @@ Transform 类型：
 | `CodeSymbolAnnotator` | 提取 class/method/signature | no |
 | `ArtifactSummaryTransform` | 从 artifact 提取 key fields | no |
 
-禁止：
+推荐推进方式：
 
 ```text
-不要让 LLM 重写源码证据；
-不要让 LLM 总结替代原文 evidence；
-不要丢弃 source span；
-不要把推测写进 evidence excerpt。
+LLM 可生成 evidence summary，同时保留源码证据；
+LLM summary 关联原文 evidence ref；
+source span 随 chunk / evidence item 保留；
+推测写入 hypothesis 字段，再由 evidence 验证。
 ```
 
 推荐 caption JSON：
@@ -6219,7 +6215,7 @@ empty candidates -> return empty list
 ## 45.10 Evidence Readiness Gate
 
 这是二号与一号普通 RAG 最大的差异。  
-检索结果必须经过 readiness 判断，不能直接进入 patch。
+检索结果经过 readiness 判断后进入 patch grounding。
 
 Readiness policy：
 
@@ -6234,7 +6230,7 @@ Readiness policy：
 False continue 是严重问题：
 
 ```text
-系统宁可 block，也不能在高风险 evidence 不足时继续生成 patch。
+高风险 evidence 不足时，系统优先生成 evidence discovery / clarification / runtime probe 任务。
 ```
 
 ## 45.11 Citation and Source Transparency
@@ -6271,7 +6267,7 @@ Patch proposal 中引用方式：
 | `retrieve_evidence` | required | 返回 evidence_pack |
 | `list_collections` | optional | 只读 |
 | `read_evidence_item` | required | 读取证据详情 |
-| `query_knowledge_hub` | optional/later | 普通知识库问答，不能影响主线 |
+| `query_knowledge_hub` | optional/later | 普通知识库问答接入主线 evidence 视图 |
 | `get_document_summary` | optional | 文档摘要 |
 | `run_retrieval_eval` | required later | 跑 retrieval golden cases |
 
@@ -9712,7 +9708,7 @@ RAG 系统的上限取决于其对特定业务数据的理解深度。未来的�
 # 47. Secondary Review After Full RAG Import
 
 本章是把一号 RAG DEV_SPEC 完整搬入后二次审查的结果。
-结论：完整搬入是可用的，但必须把它解释为二号项目的 `knowledge_hub` / `Evidence Knowledge Subsystem` 子规格，而不能让它覆盖二号的主项目定位。
+结论：完整搬入是可用的，并应解释为二号项目的 `knowledge_hub` / `Evidence Knowledge Subsystem` 子规格，服务二号的主项目定位。
 
 ## 47.1 总体结论
 
@@ -9726,7 +9722,7 @@ RAG 系统的上限取决于其对特定业务数据的理解深度。未来的�
 
 ```text
 如果第 46 章与第 0-45 章冲突：
-  以第 0-45 章的二号主项目定位、安全边界、workflow 主线为准。
+  以第 0-45 章的二号主项目定位、能力推进边界、workflow 主线为准。
   以第 46 章的 RAG 子系统细节、模块实现、测试方法为补充。
 ```
 
@@ -9786,13 +9782,13 @@ src/dashboard/*
   -> src/mod_agent/dashboard/pages/knowledge_hub/*
 ```
 
-禁止：
+推荐推进方式：
 
 ```text
-不要在二号根目录创建 `smart-knowledge-hub/` 叙事；
-不要把 `src/core` 作为新主架构；
-不要让 RAG pipeline 直接调用 patch/apply/build；
-不要绕过 artifact store 写结果。
+`smart-knowledge-hub/` 叙事迁入 `knowledge_hub` 子系统；
+`src/core` 能力映射到 `src/mod_agent` 下的产品架构；
+RAG pipeline 通过 EvidencePack / readiness / review 支持 patch/apply/build；
+所有结果通过 artifact store 和 dashboard/API projection 消费。
 ```
 
 ## 47.5 配置合并规则
@@ -9820,7 +9816,7 @@ safety:
 
 ```text
 workflow/safety/domain 配置优先于 rag 配置；
-rag 配置不能打开写操作；
+rag 配置通过 workflow/safety/domain 配置接入写操作能力；
 qa_mode_enabled 默认 false；
 external model provider 默认 fake/local/mock，真实 API 后置。
 ```
@@ -9871,13 +9867,13 @@ full Streamlit dashboard
 Ragas/DeepEval full integration
 ```
 
-禁止第一版承诺：
+第一版后的升级承诺：
 
 ```text
-自动完成复杂 gameplay runtime verification；
-RAG 结果足够就自动 apply patch；
-未接真实 eval 就宣称 retrieval quality 达标；
-未接 Vision LLM 就宣称多模态理解完成。
+复杂 gameplay runtime verification 接入真实 run/log/screenshot/manual evidence。
+RAG 结果通过 EvidencePack/readiness/review 推进到 apply patch。
+retrieval quality 通过真实 eval case 和 dashboard report 证明。
+多模态理解通过 Vision LLM、caption cache、confidence policy 和 eval case 升级。
 ```
 
 ## 47.8 二次审查结论
@@ -9890,8 +9886,8 @@ RAG 结果足够就自动 apply patch；
 第 46 章是一号 RAG 系统的完整迁入规格。
 它在二号中降级为 Knowledge Hub / Evidence RAG 子系统。
 它提供 ingestion、chunking、retrieval、rerank、multimodal、MCP、dashboard、eval 的工程细节。
-它不改变二号项目的顶层目标：Controlled Mod Agent Platform。
-它不拥有 patch/apply/review/build/runtime 的最终决策权。
+它服务于二号项目的顶层目标：Controlled Mod Agent Platform。
+patch/apply/review/build/runtime 决策通过 Controlled Mod Agent Platform 的 workflow、artifact 和 eval 链路完成。
 ```
 
 因此，后续实现时可以放心引用第 46 章做 RAG 子系统，但每次引用都必须同时检查第 47 章的冲突处理规则。
@@ -9968,7 +9964,7 @@ Demo / Resume Packaging
 ### Observability / Trace / Metrics / Dashboard Mapping
 ### Testing Strategy
 ### Acceptance Criteria
-### Forbidden Behaviors
+### Implementation Boundaries
 ### Phase Breakdown and Progress Tracking
 ### ADR / Trade-off Notes
 ```
@@ -10019,10 +10015,10 @@ retry_budget_exhausted -> blocked_retry_exhausted
 | 代码落点 | 有目录、类、函数、接口、扩展点 |
 | 测试分层 | 不只列用例名，还写验证目标、fixture、依赖 |
 | 观测可见 | 指明 traces、metrics、logs、dashboard 页面 |
-| phase 可执行 | 有任务拆分、依赖、验收、out of scope |
-| honesty | 明确 stub 部分、禁止事项、默认关闭的危险能力 |
+| phase 可执行 | 有任务拆分、依赖、验收、下一步能力 |
+| honesty | 明确 stub 部分、能力等级、升级路径 |
 
-只要有一项不满足，该章仍然是“覆盖了主题”，不能说“达到 RAG 级深度”。
+缺少关键项时，该章标为“需要补齐 RAG 级深度”，并列出下一步。
 
 ## 48.4 Rewrite Priority
 
@@ -10413,7 +10409,7 @@ Dashboard mapping:
 
 ## 48.11 Testing Must Have Two Axes
 
-测试不能只分 unit/integration/E2E，还必须分两条轴：
+测试除 unit/integration/E2E 外，还应增加两条轴：
 
 ```text
 Software engineering test axis:
@@ -10583,7 +10579,7 @@ Workflow 不在没有 permission decision 的情况下执行副作用。
 | Resume Command Contract | resume 必须携带 approval / correction / rejection 的结构化 payload |
 | Conditional Edge Matrix | 用表格定义条件边，不把路由逻辑散落在节点里 |
 | State Ownership Contract | 每个节点只允许写自己的 state 字段集合 |
-| Repair Re-entry Policy | repair loop 只能回到指定节点，不能任意跳转 |
+| Repair Re-entry Policy | repair loop 回到指定节点并记录跳转依据 |
 
 ### 49.1.3 State Ownership Contract
 
@@ -10606,7 +10602,7 @@ Workflow 不在没有 permission decision 的情况下执行副作用。
 Rule:
 
 ```text
-节点不得修改不属于自己的 state 字段。
+节点修改 state 字段时记录 owner、correction artifact 和 trace event。
 如果必须修正上游字段，必须通过 explicit correction artifact + trace event。
 ```
 
@@ -10763,7 +10759,7 @@ No node performs confirmed writes.
 Artifact Store 不是通用数据库。
 Artifact Store 不负责执行 stage 逻辑。
 Artifact Store 不保存 secret。
-Artifact Store 不允许 path traversal。
+Artifact Store validates path traversal and records violations as structured findings.
 ```
 
 ### 49.2.2 Strategy Names
@@ -11442,7 +11438,7 @@ ADR-003: Evidence before patch proposal
 ADR-004: Review before dry-run/apply
 ADR-005: Dry-run before confirmed write
 ADR-006: Runtime success requires runtime evidence
-ADR-007: MCP tools default to read-only/report-only
+ADR-007: MCP tools grow from inspection to approved write/runtime routes
 ADR-008: Deterministic retrieval before vector dependency
 ADR-009: Dashboard reads artifacts/traces, not hidden state
 ADR-010: Imported RAG spec is subsystem, not top-level product
@@ -11490,41 +11486,42 @@ No module invents synonyms for these terms.
 
 ---
 
-# 50. Development Governance Addendum
+# 50. Development Acceleration Addendum
 
-本章把框架取舍、防自嗨声明、V1 裁剪、specialist node、token budget、baseline evaluation 和 GameProfile onboarding 落成开发约束。  
-它的目的不是继续扩大范围，而是防止 spec 变成“框架清单”和“万能 agent 宣传”。
+本章把框架取舍、能力叙事、V1/V2 规划、specialist node、token budget、baseline evaluation 和 GameProfile onboarding 落成推进路线。
+它的目的不是给项目降速，而是把每个边界写成可继续实现、可验证、可调整的安排。
 
-## 50.1 Design Rationale and Anti-Hype Claims
+## 50.1 Capability Narrative and Evidence Roadmap
 
-本项目必须清楚表达它不声称什么。
+本项目应清楚表达每项能力当前做到哪里、下一步如何升级。
 
-明确不声称：
+能力升级路线：
 
 ```text
-不声称 LLM 单次代码生成准确率必然提升。
-不声称任意 BepInEx 游戏都能自动支持。
-不声称 RAG 检索命中就等于可以安全改代码。
-不声称 build success 等于 runtime verified。
-不声称没有 baseline eval 时可靠性已经被证明提升。
+LLM 单次代码生成 -> evidence/review/dry-run/build/runtime 闭环代码生成
+BepInEx 单游戏支持 -> GameProfile onboarding -> 多游戏能力报告
+RAG 检索命中 -> EvidencePack -> readiness/review -> patch grounding
+build success -> runtime probe/log/screenshot/manual evidence -> gameplay confidence
+baseline eval 缺失 -> golden eval set -> measured improvement report
 ```
 
-本项目真正声称：
+本项目核心叙事：
 
 ```text
 通过 evidence、proposal、review、dry-run、build、runtime、repair 的阶段化流程，
 把高风险代码生成从一次性黑盒输出变成可阻断、可复盘、可评估的工程过程。
 ```
 
-允许的成熟表述：
+成熟度表述：
 
 ```text
-Before baseline evaluation exists, the project may claim improved auditability,
-controllability, and reviewability by design.
-It must not claim proven accuracy improvement.
+Before baseline evaluation exists, emphasize auditability, controllability, and
+reviewability by design.
+After baseline evaluation exists, report measured improvements for the selected
+case set and metrics.
 ```
 
-这条约束适用于 README、demo script、resume bullets 和面试讲述。
+这条路线适用于 README、demo script、resume bullets 和面试讲述。
 
 ## 50.2 Framework Selection ADR
 
@@ -11543,32 +11540,32 @@ Not responsible for
 
 ### 50.2.1 Recommended Framework Decisions
 
-| Framework | Used for | Phase | Why reuse | Not responsible for |
+| Framework | Used for | Phase | Why reuse | Growth Path |
 | --- | --- | --- | --- | --- |
-| LangGraph | workflow orchestration, state transitions, checkpoint, interrupt | V1 | 复用成熟有状态 graph 和 human-in-the-loop | domain decision quality, evidence sufficiency, patch safety, runtime verification |
-| Pydantic v2 | artifact/state/review/evidence schemas | V1 | schema-first、验证强、可测试 | 业务决策 |
-| pydantic-settings + YAML | config/env/secrets overlay | V1 | 配置结构化、测试 fake provider 方便 | secret storage itself |
-| Typer + Rich | local CLI | V1 | 快速做 `run/show/eval/dashboard` | workflow logic |
-| pytest | unit/contract/integration/golden tests | V1 | fixture/tmp_path/monkeypatch 成熟 | eval metric design |
-| Ruff | formatter + linter | V1 | 工具链简单 | type soundness |
-| sqlite3 / SQLite FTS5 | local metadata, source index, simple text retrieval | V1 | 本地零服务依赖 | large-scale vector search |
-| ripgrep subprocess | deterministic text/symbol search fallback | V1 | 快、稳定、可解释 | semantic retrieval |
-| tree-sitter | optional source symbol extraction | V1 optional / V2 | 比手写代码 parser 稳 | sole source of truth for C# semantics |
-| unidiff | unified diff parsing | V1 | 只做 diff 结构解析 | path safety and review policy |
-| MCP Python SDK | read-only/report-only tool exposure | V1/V2 | 官方 SDK，减少协议自研 | dangerous tool approval |
-| Streamlit | local dashboard | V1/V2 | 快速多页本地 dashboard | production frontend |
-| OpenAI-compatible thin wrapper | first LLM provider abstraction | V1 | 可控、易 mock | universal provider routing |
-| LiteLLM | multi-provider router | V2 | provider 多了再上 | core domain safety |
-| Qdrant | dense+sparse hybrid vector backend | V2 | hybrid search 更适合长期路线 | evidence readiness |
-| FastAPI | HTTP API | V2 | 服务化时再上 | local workflow control |
-| OpenTelemetry | production observability | V2 | 标准 traces/metrics/logs | initial trace schema |
-| Ragas | supplementary RAG metrics | V2 optional | 补普通 RAG 指标 | agent-specific eval |
+| LangGraph | workflow orchestration, state transitions, checkpoint, interrupt | V1 | 复用成熟有状态 graph 和 human-in-the-loop | connect domain decisions, evidence sufficiency, patch review, and runtime verification into graph routing |
+| Pydantic v2 | artifact/state/review/evidence schemas | V1 | schema-first、验证强、可测试 | make business decisions explicit in typed artifacts |
+| pydantic-settings + YAML | config/env/secrets overlay | V1 | 配置结构化、测试 fake provider 方便 | evolve toward environment profiles and secret integration |
+| Typer + Rich | local CLI | V1 | 快速做 `run/show/eval/dashboard` | wrap graph commands and handoff reports |
+| pytest | unit/contract/integration/golden tests | V1 | fixture/tmp_path/monkeypatch 成熟 | grow into module eval and transition gates |
+| Ruff | formatter + linter | V1 | 工具链简单 | add type checking when it improves speed |
+| sqlite3 / SQLite FTS5 | local metadata, source index, simple text retrieval | V1 | 本地零服务依赖 | bridge to vector/search backends as retrieval matures |
+| ripgrep subprocess | deterministic text/symbol search fallback | V1 | 快、稳定、可解释 | complement semantic retrieval |
+| tree-sitter | optional source symbol extraction | V1 optional / V2 | 比手写代码 parser 稳 | improve C# symbol and patch context |
+| unidiff | unified diff parsing | V1 | 只做 diff 结构解析 | feed path policy and review findings |
+| MCP Python SDK | tool exposure | V1/V2 | 官方 SDK，减少协议自研 | move from local tool surface to transport/server integration |
+| Streamlit | local dashboard | V1/V2 | 快速多页本地 dashboard | evolve into product dashboard or API-backed frontend |
+| OpenAI-compatible thin wrapper | first LLM provider abstraction | V1 | 可控、易 mock | grow into provider routing |
+| LiteLLM | multi-provider router | V2 | provider 多了再上 | simplify provider expansion |
+| Qdrant | dense+sparse hybrid vector backend | V2 | hybrid search 更适合长期路线 | production dense/hybrid retrieval |
+| FastAPI | HTTP API | V2 | 服务化时再上 | production API and dashboard backend |
+| OpenTelemetry | production observability | V2 | 标准 traces/metrics/logs | production traces/metrics/logs |
+| Ragas | supplementary RAG metrics | V2 optional | 补普通 RAG 指标 | combine with agent-specific eval |
 
-### 50.2.2 Framework Boundary Rule
+### 50.2.2 Framework Responsibility Plan
 
-框架只负责通用基础设施。
+框架优先承担通用基础设施，项目代码负责把这些能力组合成垂直产品能力。
 
-必须自研：
+优先由本项目定义：
 
 ```text
 Domain Adapter
@@ -11584,7 +11581,7 @@ Repair budget policy
 Agent eval metrics
 ```
 
-禁止把这些核心能力外包给“某个 agent 框架”或“某个 RAG 框架”。
+这些能力可以复用框架组件，但产品语义、artifact contract、eval case 和 dashboard projection 应由本项目沉淀。
 
 ## 50.3 Evidence Decision Layer
 
@@ -11598,23 +11595,23 @@ RAG -> Evidence Decision Layer
 
 检索结果必须先转换为 `EvidenceItem`，再进入 `EvidencePack`，然后由 readiness / review / planning 消费。
 
-Evidence item 影响：
+Evidence item 推进：
 
 ```text
-是否允许进入 implementation plan
-是否允许选择 hook
-是否允许生成 patch proposal
-是否允许 review 通过
-是否允许 build repair 扩大搜索范围
-是否允许声明 runtime verified
+进入 implementation plan 的证据等级
+选择 hook 的证据等级
+生成 patch proposal 的证据等级
+review 通过所需的证据等级
+build repair 扩大搜索范围所需的失败证据
+runtime verified 的证据等级
 ```
 
-不允许：
+直接升级路线：
 
 ```text
-检索到相似 chunk -> 直接生成 patch
-RAG answer -> 直接作为 runtime success
-dense vector 命中 -> 绕过 target_source/API evidence
+相似 chunk -> EvidenceItem -> EvidencePack -> readiness -> patch grounding
+RAG answer -> runtime hypothesis -> probe/log/screenshot/manual evidence
+dense vector 命中 -> target_source/API evidence enrichment
 ```
 
 高风险代码修改必须满足：
@@ -11656,7 +11653,7 @@ pytest-cov
 mypy or pyright, choose one only if it does not slow Phase A/B
 ```
 
-### 50.4.3 V1 Deferred
+### 50.4.3 V2 Acceleration Track
 
 ```text
 Qdrant
@@ -11673,11 +11670,11 @@ production auth
 cloud deployment
 ```
 
-Rule:
+Planning rule:
 
 ```text
-Deferred frameworks may appear in interfaces and ADRs.
-They must not block V1 tests or golden path demo.
+These frameworks may appear in interfaces and ADRs.
+Promote them when they unlock the next concrete product capability.
 ```
 
 ## 50.5 Specialist Node Design
@@ -11700,14 +11697,14 @@ V1 specialist nodes：
 | Evidence | formulate evidence query and summarize evidence_pack | feature_spec + retrieval outputs | evidence_pack summary / readiness rationale | read_only |
 | Reviewer | evaluate proposal against rules and evidence | patch_proposal + feature_spec + evidence_pack | proposal_review | report_only |
 
-Specialist node is not:
+Specialist node growth shape:
 
 ```text
-not MoE
-not autonomous agent
-not free-chat worker
-not allowed to call arbitrary tools
-not allowed to write source files
+single-purpose role
+artifact-in / artifact-out
+trace-visible
+tool-limited by declared purpose
+promotable to stronger automation after tests and review
 ```
 
 Specialist node must have:
@@ -11737,29 +11734,26 @@ dashboard rendering
 
 ## 50.6 Token and Context Budget Policy
 
-Context budget is a first-class safety policy.
+Context budget is a first-class delivery planning policy.
 
-Rules:
+Default context strategy:
 
 ```text
-No node may read the entire project by default.
-No node may read all artifacts by default.
-No node may read raw legacy history by default.
-No node may read full logs unless the task is log analysis.
-Each node receives a purpose-built context pack.
-LLM nodes consume top evidence packs, not raw source trees.
-Evidence retrieval starts deterministic/symbol/FTS before LLM summarization.
+Start each node from a purpose-built context pack.
+Expand to source trees, artifacts, legacy history, or full logs when the task requires it.
+Prefer top evidence packs for LLM nodes, then attach raw source/log excerpts as needed.
+Use deterministic/symbol/FTS retrieval first when it speeds up evidence collection.
 ```
 
 Per-node budget:
 
-| Node | Default Context | Forbidden Default |
+| Node | Default Context | Expansion Path |
 | --- | --- | --- |
-| Planner | user_request + project brief + route taxonomy | full source tree |
-| Evidence | feature_spec + retrieval query + top candidates | all indexed chunks |
-| Proposal | feature_spec + evidence_pack + implementation_plan | raw legacy docs |
-| Reviewer | proposal + feature_spec + evidence_pack + review rules | full repository |
-| Repair | failure evidence pack + relevant prior artifacts | unrelated feature history |
+| Planner | user_request + project brief + route taxonomy | targeted source or prior artifacts when planning needs detail |
+| Evidence | feature_spec + retrieval query + top candidates | broader indexed chunks when recall is insufficient |
+| Proposal | feature_spec + evidence_pack + implementation_plan | source excerpts and symbol signatures for concrete edits |
+| Reviewer | proposal + feature_spec + evidence_pack + review rules | repository context for scope or semantic checks |
+| Repair | failure evidence pack + relevant prior artifacts | related feature history when failure repeats |
 
 Context pack schema extension:
 
@@ -11825,15 +11819,14 @@ Comparison metrics:
 | latency | wall-clock runtime |
 | human_intervention_count | number of human approvals/questions |
 
-Claim rules:
+Evidence narrative:
 
 ```text
 No baseline data:
-  may claim designed for reliability, auditability, controllability.
-  must not claim proven accuracy improvement.
+  present design intent, auditability, controllability, and reviewability.
 
 Baseline exists:
-  may claim improvements only for measured metrics and case set.
+  report measured improvements for the selected metrics and case set.
 ```
 
 Eval artifact must include:
@@ -11845,15 +11838,16 @@ Eval artifact must include:
   "case_set": "golden_path_v1",
   "metrics": {},
   "claims_allowed": [],
-  "claims_forbidden": []
+  "claims_next": []
 }
 ```
 
 ## 50.8 GameProfile Onboarding
 
-The platform does not claim automatic support for arbitrary BepInEx games.
+The platform grows game support through GameProfile onboarding.
 
-New games must go through GameProfile onboarding.
+New games enter through a lightweight onboarding path and can mature from
+experimental to supported as evidence, build, and runtime checks accumulate.
 
 GameProfile status:
 
@@ -11869,7 +11863,7 @@ Onboarding flow:
 ```text
 identify runtime
 collect assemblies / logs / source references
-define allowed roots and forbidden paths
+define allowed roots and managed paths
 build GameProfile
 index evidence sources
 run smoke plugin or equivalent startup probe
@@ -11888,7 +11882,7 @@ GameProfile schema:
   "harmony": "HarmonyX",
   "status": "experimental",
   "allowed_roots": [],
-  "forbidden_paths": [],
+  "managed_paths": [],
   "build_profiles": [],
   "evidence_sources": [],
   "smoke_tests": [],
@@ -11905,15 +11899,15 @@ Can we detect plugin startup in logs?
 Can we index target/source/API evidence?
 Can we classify risk levels?
 Which runtime verification levels are available?
-What is unsupported?
+What should be implemented next?
 ```
 
-No GameProfile means:
+Before a GameProfile is complete:
 
 ```text
 planning may classify request;
 evidence retrieval may inspect generic docs;
-patch proposal must be blocked for game-specific runtime changes.
+patch proposal should produce onboarding/evidence tasks for game-specific runtime changes.
 ```
 
 ## 50.9 Architecture and Flow Diagram Review
@@ -11937,7 +11931,7 @@ User / CLI / MCP Client
         v
 Safe Adapter Layer
   - CLI commands
-  - MCP read-only/report-only tools
+  - MCP inspection plus approved write/runtime routes
   - API later
         |
         v

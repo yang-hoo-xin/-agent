@@ -17,11 +17,11 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: Planning Brief Graph Integration
-last_completed: E2E-002
-next_recommended_task: choose the next bounded non-Skill implementation checkpoint; evidence-backed planning brief knowledge lookup or delivery lesson recording are reasonable mainline options
-Q_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; MISS-026 remains open and is explicit opt-in production runtime automation work
-next_stage_after_expert_split: non-Skill implementation checkpoints are active; do not continue splitting process Skills by default
+current_queue: V1_TO_V2_TRANSITION
+last_completed: TRANSITION-005 Runtime Evidence Binding
+next_recommended_task: MISS-026 live GTFO gameplay validation if runtime automation is selected; otherwise choose one explicit recovery target from docs/V1_TO_V2_TRANSITION.md
+Q_queue_status: Q-022, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, TRANSITION-001, TRANSITION-002, TRANSITION-003, TRANSITION-004, TRANSITION-005, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; MISS-026 live GTFO gameplay validation remains open and explicit opt-in production runtime automation work
+next_stage_after_expert_split: V1_TO_V2_TRANSITION checkpoints are active; do not continue splitting process Skills by default
 ```
 
 ## Evidence Provenance Policy
@@ -93,17 +93,18 @@ Planning brief boundary:
 Policy purpose: keep optional platform expansion explicit after the first end-to-end delivery chain is repeatable.
 
 Default-paused items unless explicitly selected:
-  - real dense retrieval provider
+  - production dense/RAG beyond the tested vector_store provider bridge
   - full multimodal ingestion and caption pipeline
-  - dashboard polish beyond read-only controlled-agent summaries
+  - dashboard/API polish beyond read-only controlled-agent summaries and local artifact inspection
   - multi-MCP write operations
-  - automatic run_game and copy_to_game_directory operations
+  - automatic run_game and copy_to_game_directory operations beyond explicit GTFO launch approval
   - large-scale benchmark harnesses
 
 Allowed next:
   - control-document recovery
   - evidence provenance reconciliation
   - read-only/report-only MCP inspection
+  - local read-only artifact inspection API for development use
   - expert process Skills split from the proven E2E-001 chain after closure review
   - explicit user-directed platform development through auto-coder
 ```
@@ -128,7 +129,25 @@ Allowed next:
 | ARTIFACT-INTEGRITY-003 | completed | Preserve immutable per-write artifact revision files while maintaining read-validated compatible latest files for current dashboard/MCP views | `src/mod_agent/artifacts/store.py`, `tests/unit/test_artifact_store.py`, `tests/unit/test_controlled_agent_mcp_tools.py`; focused affected command: `python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_projection.py tests/unit/test_controlled_agent_mcp_tools.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py -q --tb=short` -> 67 passed |
 | ARTIFACT-PROD-001A | completed | Write ArtifactStore revision and latest files through same-directory temporary files plus `os.replace`, and clean temporary files when replacement fails | `src/mod_agent/artifacts/store.py`, `tests/unit/test_artifact_store.py`; focused affected command: `python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_projection.py tests/unit/test_controlled_agent_mcp_tools.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py -q --tb=short` -> 69 passed |
 | ARTIFACT-PROD-001B | completed | Add pending-write markers and `recover_pending_writes()` so an interrupted revision-to-latest write can restore latest from a valid immutable revision | `src/mod_agent/artifacts/store.py`, `tests/unit/test_artifact_store.py`; focused affected command: `python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_projection.py tests/unit/test_controlled_agent_mcp_tools.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py -q --tb=short` -> 71 passed |
+| RUNTIME-DENSE-API-BOUNDARY-001 | completed | Add GTFO real runtime automation interface with explicit launch approval, marker-based evidence, screenshot timeout, failure evidence payloads, dense vector_store provider bridge with graph injection and required-failure policy, plus local read-only artifact inspection API | `src/mod_agent/runtime/gtfo_automation.py`, `src/mod_agent/evidence/dense.py`, `src/mod_agent/evidence/retriever.py`, `src/mod_agent/api/http_server.py`, `src/mod_agent/workflow/graph.py`, `src/core/settings.py`, `config/settings.yaml`, `tests/unit/test_gtfo_runtime_automation.py`, `tests/unit/test_vector_store_dense_provider.py`, `tests/unit/test_evidence_retrieval.py`, `tests/unit/test_mod_agent_http_api.py`, `tests/unit/test_config_loading.py`, `tests/unit/test_workflow_graph.py`; focused command -> 55 passed; additional dashboard/runtime/smoke command -> 36 passed, 1 warning; broader `tests/unit` command -> 20 failed, 1023 passed, 4 skipped, 2 warnings before maxfail stop; do not claim full unit baseline green; this does not claim real GTFO gameplay success, production runtime automation, production RAG, production HTTP API, production auth, or production dashboard |
 | ARTIFACT-PROD-001 | deferred | Remaining production-grade artifact storage hardening: automatic startup/preflight recovery invocation, recovery for states without a valid pending marker and revision, cross-process write locking, revision manifest/index files, historical revision query APIs, old-ref migration/backfill, and revision garbage collection | Tracked as future work in `docs/SPEC_COVERAGE_MATRIX.md`; do not claim ArtifactStore is production-grade; do not continue this by default before returning to the mod delivery mainline |
+
+## V1 To V2 Transition Queue
+
+```text
+Queue purpose: prepare for V2 expansion by reducing wrong-claim, unsafe-change,
+interface, and runtime-evidence ambiguity risks. This is not V2 feature
+expansion. Detailed module maturity boundaries live in
+docs/V1_TO_V2_TRANSITION.md.
+```
+
+| Task | Status | Scope | Evidence |
+| --- | --- | --- | --- |
+| TRANSITION-001 | completed | Eval Gate: add module eval cases, false-continue/false-block checks, claim-boundary tests, review correctness, dry-run safety, insufficient_baseline, stale_evidence, missing_required_metric, eval_report artifact coverage, and hard LangGraph routing | `evaluation_gate` is carried in `eval_report`; failed gates write blocked eval_report envelopes, persist eval gate blockers, route `evaluate` to `blocked`, and prevent `workflow_summary` from being written; focused eval/workflow/artifact/dashboard tests passed |
+| TRANSITION-002 | completed | Git Binding: add git state snapshot, diff hash, proposal/base revision binding metadata, rollback hint, and dirty-tree policy | `src/mod_agent/git/repository.py`, `src/mod_agent/artifacts/registry.py`, `src/mod_agent/dashboard/projections.py`, `tests/unit/test_git_repository.py`, `tests/unit/test_artifact_contract.py`, `tests/unit/test_dashboard_projection.py`; dirty-tree policy is audit metadata, not an execution-layer hard stop; focused command -> 51 passed, 6 skipped when run with TRANSITION-001 workflow/E2E tests |
+| TRANSITION-003 | completed | Proposal Context Pack: add Change Unit Model, evidence-backed proposal metadata context pack, scope boundary, no-op handling, and rollback hint propagation | `src/mod_agent/proposal/models.py`, `src/mod_agent/proposal/builder.py`, `src/mod_agent/proposal/reviewer.py`, `src/mod_agent/repair/planner.py`, `src/mod_agent/artifacts/registry.py`, `src/mod_agent/dashboard/projections.py`; reviewer blocks context_pack change_unit_ids drift; this is not a full source-snippet code-generation context pack; focused proposal/artifact/dashboard/domain/MCP/repair/workflow/E2E tests passed |
+| TRANSITION-004 | completed | MCP JSON-RPC Wire Boundary: add initialize, notifications/initialized, `tools/list`, `tools/call`, content, structuredContent, artifact_refs, trace_refs, JSON-RPC error behavior, and dangerous tool hidden/disabled policy | `src/mod_agent/mcp/protocol.py`, `src/mod_agent/mcp/__init__.py`, `tests/unit/test_controlled_agent_mcp_protocol.py`; dangerous tools remain hidden and wire-level calls to `run_game` return JSON-RPC method-not-found errors; this is not a full MCP server because stdio/http transport integration, server process wiring, and production deployment are not implemented; ToolAnnotations are schema hints, not the safety boundary |
+| TRANSITION-005 | completed | Runtime Evidence Binding: add `feature_id`, build artifact hash, run id, plugin-specific marker binding, screenshot refs, non-goal preservation fields, and runtime claim-boundary tests | `src/mod_agent/runtime/evidence.py`, `src/mod_agent/runtime/probe.py`, `src/mod_agent/runtime/__init__.py`, `src/mod_agent/workflow/graph.py`, `src/mod_agent/evaluation/gate.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_runtime_evidence.py`, `tests/unit/test_transition_eval_gate.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_runtime_probe.py`, `tests/unit/test_artifact_contract.py`, `tests/unit/test_dashboard_projection.py`; focused command -> 65 passed; this binds runtime success claims to graph/build/acceptance marker context and supplied non-goal preservation evidence, but does not prove live GTFO gameplay success |
 
 ## V1 Acceptance Audit Queue
 
@@ -634,13 +653,14 @@ Conflict checks: no network calls in unit tests
 Implementation evidence:
   - Added dense retrieval provider contract with DisabledDenseRetrievalProvider and FakeDenseRetrievalProvider.
   - Dense route is disabled by default through config/settings.yaml and Settings.retrieval.
-  - This is a contract-level dense retrieval closure only; it does not implement production embedding calls or vector database retrieval.
+  - This was a contract-level dense retrieval closure only. RUNTIME-DENSE-API-BOUNDARY-001 later adds a vector_store provider bridge, but production RAG remains incomplete.
   - FakeDenseRetrievalProvider is for unit-test contract verification, must not be presented as real semantic retrieval, and now requires allow_test_providers=True when loaded through settings.
   - Fake dense hits can return chunk ids from KnowledgeDatabase stable chunks through ChunkRecord.text_for_embedding projection.
   - Dense evidence remains legacy_rag_auxiliary, so it cannot approve can_generate_patch without BM25/symbol deterministic evidence.
   - EvidencePack now serializes budget_summary for dense retrieval cost/accounting.
   - focused and affected Q-022 retrieval/config/artifact/dashboard/performance/knowledge tests passed: 88 passed.
   - affected Q-022 workflow/planning/proposal tests passed: 32 passed.
+  - RUNTIME-DENSE-API-BOUNDARY-001 adds retrieval.dense_failure_policy and dense_required blocking behavior for callers that treat dense as a required route.
 ```
 
 
