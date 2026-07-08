@@ -7,7 +7,13 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from src.mod_agent.proposal import PatchProposal
-from src.mod_agent.proposal.models import stable_proposal_id
+from src.mod_agent.proposal.models import (
+    build_change_units,
+    build_context_pack,
+    build_no_op_status,
+    build_rollback_hints,
+    stable_proposal_id,
+)
 
 FailureSource = Literal["build", "runtime", "eval"]
 
@@ -315,10 +321,24 @@ class RepairPatchProposalBuilder:
                 summary="Repair proposal blocked.",
                 files=(),
                 diff_intent=(),
+                change_units=(),
+                context_pack=build_context_pack(
+                    feature_id=feature_id,
+                    files=(),
+                    evidence_refs=evidence_refs,
+                    evidence_source_paths=(),
+                    scope_boundary=(),
+                    change_units=(),
+                ),
                 evidence_refs=evidence_refs,
                 scope_boundary=(),
                 risk_assessment={"risk_level": "blocked", "requires_manual_review": True},
                 expected_tests=(),
+                no_op_status=build_no_op_status(
+                    is_no_op=True,
+                    reason="Repair plan is blocked before proposal review.",
+                ),
+                rollback_hints=(),
                 manual_review_notes=("Repair plan is blocked before proposal review.",),
                 blocked=True,
                 blockers=blockers,
@@ -349,10 +369,24 @@ class RepairPatchProposalBuilder:
                 summary="Repair proposal blocked.",
                 files=(),
                 diff_intent=(),
+                change_units=(),
+                context_pack=build_context_pack(
+                    feature_id=feature_id,
+                    files=(),
+                    evidence_refs=evidence_refs,
+                    evidence_source_paths=(),
+                    scope_boundary=(),
+                    change_units=(),
+                ),
                 evidence_refs=evidence_refs,
                 scope_boundary=(),
                 risk_assessment={"risk_level": "blocked", "requires_manual_review": True},
                 expected_tests=(),
+                no_op_status=build_no_op_status(
+                    is_no_op=True,
+                    reason="Repair plan has no scoped change intent.",
+                ),
+                rollback_hints=(),
                 manual_review_notes=("Repair plan has no scoped change intent.",),
                 blocked=True,
                 blockers=(
@@ -364,6 +398,8 @@ class RepairPatchProposalBuilder:
             )
 
         target_behavior = str(repair_plan.get("target_behavior") or feature_id)
+        change_units = build_change_units(diff_intent)
+        scope_boundary = tuple(repair_plan.get("forbidden_regressions") or ())
         return PatchProposal(
             proposal_id=stable_proposal_id(feature_id, evidence_refs),
             feature_id=feature_id,
@@ -373,8 +409,17 @@ class RepairPatchProposalBuilder:
             ),
             files=files,
             diff_intent=diff_intent,
+            change_units=change_units,
+            context_pack=build_context_pack(
+                feature_id=feature_id,
+                files=files,
+                evidence_refs=evidence_refs,
+                evidence_source_paths=files,
+                scope_boundary=scope_boundary,
+                change_units=change_units,
+            ),
             evidence_refs=evidence_refs,
-            scope_boundary=tuple(repair_plan.get("forbidden_regressions") or ()),
+            scope_boundary=scope_boundary,
             risk_assessment={
                 "risk_level": "medium",
                 "requires_manual_review": True,
@@ -388,6 +433,8 @@ class RepairPatchProposalBuilder:
                 "re-run build",
                 "preserve original acceptance criteria",
             ),
+            no_op_status=build_no_op_status(is_no_op=False, reason=None),
+            rollback_hints=build_rollback_hints(diff_intent),
             manual_review_notes=(
                 "Repair proposal must pass review before dry-run apply.",
                 str(repair_plan.get("stop_condition") or ""),

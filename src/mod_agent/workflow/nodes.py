@@ -299,6 +299,15 @@ class StubNodeRunner:
                     "summary": "Phase A stub proposal.",
                     "files": [],
                     "diff_intent": [],
+                    "change_units": [],
+                    "context_pack": {
+                        "feature_id": "stubbed_feature",
+                        "files": [],
+                        "evidence_refs": [],
+                        "evidence_source_paths": [],
+                        "scope_boundary": [],
+                        "change_unit_ids": [],
+                    },
                     "evidence_refs": [],
                     "scope_boundary": [],
                     "risk_assessment": {
@@ -306,6 +315,11 @@ class StubNodeRunner:
                         "requires_manual_review": True,
                     },
                     "expected_tests": [],
+                    "no_op_status": {
+                        "is_no_op": True,
+                        "reason": "Phase A stub did not generate patch intent.",
+                    },
+                    "rollback_hints": [],
                     "manual_review_notes": ["Phase A stub did not generate patch intent."],
                     "blocked": True,
                     "blockers": [

@@ -129,10 +129,32 @@ def _runtime_patch_proposal(
             {
                 "change_id": "chg_001",
                 "target_file": target_file,
+                "edit_target_path": target_file,
                 "rationale": "change runtime behavior",
                 "evidence_refs": ["ev_001"],
+                "rollback_hint": "Restore previous behavior.",
             }
         ],
+        "change_units": [
+            {
+                "change_unit_id": "chg_001",
+                "change_type": None,
+                "target_file": target_file,
+                "edit_target_path": target_file,
+                "target_symbol": None,
+                "evidence_refs": ["ev_001"],
+                "expected_validation": [],
+                "rollback_hint": "Restore previous behavior.",
+            }
+        ],
+        "context_pack": {
+            "feature_id": "feature_001",
+            "files": [target_file],
+            "evidence_refs": ["ev_001"],
+            "evidence_source_paths": [target_file],
+            "scope_boundary": [],
+            "change_unit_ids": ["chg_001"],
+        },
         "risk_assessment": {
             "risk_level": "high",
             "risk_tags": ["runtime_behavior_change"],
@@ -140,6 +162,13 @@ def _runtime_patch_proposal(
             "requires_manual_review": False,
         },
         "expected_tests": ["compile"],
+        "no_op_status": {"is_no_op": False, "reason": None},
+        "rollback_hints": [
+            {
+                "change_unit_id": "chg_001",
+                "rollback_hint": "Restore previous behavior.",
+            }
+        ],
     }
 
 
