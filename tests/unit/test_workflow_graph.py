@@ -305,6 +305,18 @@ def test_approved_path_writes_explicit_fake_execution_artifacts(tmp_path: Path) 
     assert evaluation["requested_behavior_status"] == "verified"
     assert evaluation["verdict"] == "inconclusive"
     assert evaluation["claims_real_success"] is False
+    assert evaluation["evaluation_gate"]["status"] == "passed"
+    assert {
+        case["case_id"] for case in evaluation["evaluation_gate"]["cases"]
+    } >= {
+        "claim_boundary_no_false_success",
+        "claim_boundary_no_false_block",
+        "false_continue_after_review",
+        "review_correctness",
+        "dry_run_safety",
+        "build_claim_boundary",
+        "runtime_claim_boundary",
+    }
     assert evaluation["v1_acceptance_status"] == "blocked"
     assert {
         blocker["code"] for blocker in evaluation["v1_acceptance_blockers"]
@@ -389,6 +401,7 @@ def test_real_runtime_evidence_path_can_accept_v1_boundary(tmp_path: Path) -> No
     assert runtime["acceptance_verified"] is True
     assert evaluation["v1_acceptance_status"] == "accepted"
     assert evaluation["v1_acceptance_blockers"] == []
+    assert evaluation["evaluation_gate"]["status"] == "passed"
     assert evaluation["workflow_completion_status"] == "real_runtime_acceptance_completed"
     assert evaluation["verdict"] == "accepted"
     assert evaluation["claims_real_success"] is True
@@ -447,13 +460,88 @@ def test_manual_runtime_evidence_does_not_accept_v1_boundary(tmp_path: Path) -> 
     runtime = _artifact_data(store, result, "runtime_evidence")
     evaluation = _artifact_data(store, result, "eval_report")
 
+    assert result["current_stage"] == "blocked"
+    assert "workflow_summary" not in result["artifacts"]
+    assert "blocked_report" in result["artifacts"]
+    eval_ref = _artifact_ref(store, result, "eval_report")
+    assert store.read(eval_ref)["status"] == "blocked"
     assert runtime["execution_mode"] == "manual"
     assert runtime["claims_real_runtime_success"] is True
     assert runtime["acceptance_verified"] is True
     assert evaluation["v1_acceptance_status"] == "blocked"
+    assert evaluation["evaluation_gate"]["status"] == "failed"
+    assert {
+        blocker["code"] for blocker in result["blockers"]
+    } == {
+        "EVAL_GATE_RUNTIME_CLAIM_BOUNDARY_EXECUTION_MODE_FAILED",
+    }
     assert {
         blocker["code"] for blocker in evaluation["v1_acceptance_blockers"]
     } == {"REAL_RUNTIME_MODE_REQUIRED", "REAL_RUNTIME_EVIDENCE_MISSING"}
+
+
+def test_eval_gate_insufficient_baseline_blocks_done(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    build_result_factory = _real_build_result_factory(tmp_path)
+
+    def runtime_evidence_factory(
+        feature_id: str,
+        build: dict[str, object],
+        feature_spec: dict[str, object],
+    ) -> dict[str, object]:
+        criteria = tuple(str(item) for item in feature_spec["acceptance_criteria"])
+        return build_real_runtime_evidence_payload(
+            feature_id=feature_id,
+            input_execution_mode=str(build["execution_mode"]),
+            evidence_items=(
+                RuntimeEvidenceItem(
+                    item_type="runtime_log",
+                    source="runtime_probe",
+                    locator="runtime://probe-001",
+                    supports_acceptance=criteria,
+                    confidence=1.0,
+                    raw_excerpt="Runtime probe observed the requested behavior.",
+                ),
+            ),
+            startup_loaded=True,
+            gameplay_behavior_verified=True,
+            verification_status="verified",
+            raw_runtime_output="Runtime probe observed the requested behavior.",
+            acceptance_criteria=criteria,
+            runtime_verification_plan=tuple(
+                str(item) for item in feature_spec["runtime_verification_plan"]
+            ),
+        )
+
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        build_result_factory=build_result_factory,
+        runtime_evidence_factory=runtime_evidence_factory,
+        evaluation_context_factory=lambda _: {
+            "baseline_status": "insufficient_baseline",
+        },
+    )
+    state = create_initial_state(
+        run_id="run_eval_baseline",
+        request_id="req_eval_baseline",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    evaluation = _artifact_data(store, result, "eval_report")
+    eval_ref = _artifact_ref(store, result, "eval_report")
+    assert result["current_stage"] == "blocked"
+    assert store.read(eval_ref)["status"] == "blocked"
+    assert evaluation["evaluation_gate"]["status"] == "failed"
+    assert "workflow_summary" not in result["artifacts"]
+    assert "blocked_report" in result["artifacts"]
+    assert any(
+        blocker["code"] == "EVAL_GATE_INSUFFICIENT_BASELINE_FAILED"
+        for blocker in result["blockers"]
+    )
 
 
 def test_real_runtime_without_success_claim_does_not_accept_v1_boundary(
@@ -638,9 +726,17 @@ def _artifact_data(
     result: dict[str, object],
     artifact_type: str,
 ) -> dict[str, object]:
+    return store.read(_artifact_ref(store, result, artifact_type))["data"]
+
+
+def _artifact_ref(
+    store: ArtifactStore,
+    result: dict[str, object],
+    artifact_type: str,
+):
     for ref in store.list_feature_artifacts(str(result["feature_id"])):
         if ref.artifact_type == artifact_type:
-            return store.read(ref)["data"]
+            return ref
     raise AssertionError(f"Missing artifact: {artifact_type}")
 
 

@@ -18,6 +18,7 @@ from src.mod_agent.domain import (
     UnsupportedDomainAdapter,
 )
 from src.mod_agent.evidence import DeterministicEvidenceRetriever, EvidenceRequest
+from src.mod_agent.evaluation import build_transition_eval_gate_report
 from src.mod_agent.knowledge import (
     CollectionResolutionError,
     CollectionResolver,
@@ -42,6 +43,7 @@ from .transitions import (
     continue_route,
     route_after_build,
     route_after_evidence,
+    route_after_evaluate,
     route_after_feature_spec,
     route_after_implementation_plan,
     route_after_patch_proposal,
@@ -56,6 +58,7 @@ from .transitions import (
 GraphNode = Callable[[ModAgentState], ModAgentState]
 BuildResultFactory = Callable[[str, str | None], BuildResult]
 RuntimeEvidenceFactory = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
+EvaluationContextFactory = Callable[[ModAgentState], dict[str, Any]]
 
 
 def build_graph(
@@ -67,6 +70,7 @@ def build_graph(
     domain_adapter_registry: DomainAdapterRegistry | None = None,
     build_result_factory: BuildResultFactory | None = None,
     runtime_evidence_factory: RuntimeEvidenceFactory | None = None,
+    evaluation_context_factory: EvaluationContextFactory | None = None,
     checkpointer: Any | None = None,
     interrupt_before: list[str] | None = None,
     interrupt_after: list[str] | None = None,
@@ -171,7 +175,11 @@ def build_graph(
         "evaluate",
         _make_real_graph_node(
             "evaluate",
-            lambda state: _run_fake_evaluate(state, artifact_store),
+            lambda state: _run_fake_evaluate(
+                state,
+                artifact_store,
+                evaluation_context_factory,
+            ),
         ),
     )
     graph.add_node(
@@ -252,7 +260,7 @@ def build_graph(
     ]:
         graph.add_conditional_edges(
             node_name,
-            continue_route,
+            route_after_evaluate,
             dict(registry[node_name]),
         )
     graph.add_edge("done", END)
@@ -780,7 +788,10 @@ def _run_runtime_evidence(
 def _run_fake_evaluate(
     state: ModAgentState,
     artifact_store: ArtifactStore,
+    evaluation_context_factory: EvaluationContextFactory | None = None,
 ) -> ModAgentState:
+    review = _read_artifact_data(state, artifact_store, "proposal_review")
+    dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
     build = _read_artifact_data(state, artifact_store, "build_result")
     runtime = _read_artifact_data(state, artifact_store, "runtime_evidence")
     feature_id = state["feature_id"] or state["request_id"]
@@ -792,6 +803,19 @@ def _run_fake_evaluate(
         "real_runtime_acceptance_completed"
         if v1_accepted
         else "fake_execution_completed"
+    )
+    evaluation_gate = build_transition_eval_gate_report(
+        review=review,
+        dry_run=dry_run,
+        build=build,
+        runtime=runtime,
+        v1_boundary=v1_boundary,
+        claims_real_success=v1_accepted,
+        evaluation_context=(
+            evaluation_context_factory(state)
+            if evaluation_context_factory is not None
+            else None
+        ),
     )
     payload = {
         "node_name": "evaluate",
@@ -831,13 +855,17 @@ def _run_fake_evaluate(
         "input_acceptance_status": runtime.get("acceptance_status"),
         "input_acceptance_verified": acceptance_verified,
         "acceptance_contract": runtime.get("acceptance_contract"),
+        "evaluation_gate": evaluation_gate,
         **v1_boundary,
     }
+    gate_failed = evaluation_gate.get("status") == "failed"
+    gate_blockers = list(evaluation_gate.get("blockers") or [])
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
         artifact_type="eval_report",
         payload=payload,
-        status="success",
+        status="blocked" if gate_failed else "success",
+        blockers=gate_blockers,
         upstream_refs=[
             _artifact_ref_from_state(state, "build_result"),
             _artifact_ref_from_state(state, "runtime_evidence"),
@@ -846,6 +874,16 @@ def _run_fake_evaluate(
     next_state = _copy_state(state)
     next_state["current_stage"] = "evaluation"
     _record_artifact(next_state, "eval_report", artifact_ref)
+    if gate_failed:
+        next_state["blockers"].extend(
+            {
+                "stage": "evaluation",
+                "code": blocker.get("code", "EVAL_GATE_FAILED"),
+                "message": blocker.get("message", "Evaluation gate failed."),
+            }
+            for blocker in gate_blockers
+            if isinstance(blocker, dict)
+        )
     return next_state
 
 

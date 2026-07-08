@@ -88,6 +88,14 @@ def route_after_runtime_evidence(state: ModAgentState) -> str:
     return "repair"
 
 
+def route_after_evaluate(state: ModAgentState) -> str:
+    """Stop when evaluation gate blockers are present."""
+
+    if any(_is_eval_gate_blocker(blocker) for blocker in state["blockers"]):
+        return "blocked"
+    return "continue"
+
+
 def route_after_repair_plan(state: ModAgentState) -> str:
     """Route repair plans back through proposal review or block exhausted loops."""
 
@@ -141,7 +149,10 @@ def route_registry() -> RouteRegistry:
             "blocked": "blocked",
             "continue": "generate_patch_proposal",
         },
-        "evaluate": {"continue": "done"},
+        "evaluate": {
+            "blocked": "blocked",
+            "continue": "done",
+        },
     }
 
 
@@ -149,3 +160,12 @@ def continue_route(_: ModAgentState) -> str:
     """Route label for unconditional Phase A transitions."""
 
     return "continue"
+
+
+def _is_eval_gate_blocker(blocker: object) -> bool:
+    if not isinstance(blocker, Mapping):
+        return False
+    code = blocker.get("code")
+    return blocker.get("stage") == "evaluation" and isinstance(code, str) and code.startswith(
+        "EVAL_GATE_"
+    )
