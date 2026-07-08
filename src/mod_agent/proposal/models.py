@@ -25,10 +25,14 @@ class PatchProposal:
     summary: str
     files: tuple[str, ...]
     diff_intent: tuple[dict[str, Any], ...]
+    change_units: tuple[dict[str, Any], ...]
+    context_pack: dict[str, Any]
     evidence_refs: tuple[str, ...]
     scope_boundary: tuple[str, ...]
     risk_assessment: dict[str, Any]
     expected_tests: tuple[str, ...]
+    no_op_status: dict[str, Any]
+    rollback_hints: tuple[dict[str, Any], ...]
     manual_review_notes: tuple[str, ...] = ()
     blocked: bool = False
     blockers: tuple[dict[str, Any], ...] = ()
@@ -49,10 +53,14 @@ class PatchProposal:
             "summary": self.summary,
             "files": list(self.files),
             "diff_intent": list(self.diff_intent),
+            "change_units": list(self.change_units),
+            "context_pack": self.context_pack,
             "evidence_refs": list(self.evidence_refs),
             "scope_boundary": list(self.scope_boundary),
             "risk_assessment": self.risk_assessment,
             "expected_tests": list(self.expected_tests),
+            "no_op_status": self.no_op_status,
+            "rollback_hints": list(self.rollback_hints),
             "manual_review_notes": list(self.manual_review_notes),
             "blocked": self.blocked,
             "blockers": list(self.blockers),
@@ -113,3 +121,74 @@ def stable_proposal_id(feature_id: str, evidence_refs: tuple[str, ...]) -> str:
 
     seed = f"{feature_id}:{','.join(evidence_refs)}"
     return "proposal_" + hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+
+
+def build_change_units(diff_intent: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+    """Create explicit change-unit metadata from reviewable diff intent."""
+
+    return tuple(
+        {
+            "change_unit_id": str(change.get("change_id") or f"change_{index:03d}"),
+            "change_type": change.get("change_type"),
+            "target_file": change.get("target_file") or change.get("edit_target_path"),
+            "edit_target_path": change.get("edit_target_path") or change.get("target_file"),
+            "target_symbol": change.get("target_symbol"),
+            "evidence_refs": list(change.get("evidence_refs") or []),
+            "expected_validation": list(change.get("expected_validation") or []),
+            "rollback_hint": change.get("rollback_hint"),
+        }
+        for index, change in enumerate(diff_intent, start=1)
+    )
+
+
+def build_context_pack(
+    *,
+    feature_id: str,
+    files: tuple[str, ...],
+    evidence_refs: tuple[str, ...],
+    evidence_source_paths: tuple[str, ...],
+    scope_boundary: tuple[str, ...],
+    change_units: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    """Create proposal context consumed by review, dashboard, and repair."""
+
+    return {
+        "feature_id": feature_id,
+        "files": list(files),
+        "evidence_refs": list(evidence_refs),
+        "evidence_source_paths": list(evidence_source_paths),
+        "scope_boundary": list(scope_boundary),
+        "change_unit_ids": [
+            str(unit.get("change_unit_id"))
+            for unit in change_units
+            if unit.get("change_unit_id")
+        ],
+    }
+
+
+def build_no_op_status(
+    *,
+    is_no_op: bool,
+    reason: str | None,
+) -> dict[str, Any]:
+    """Create explicit no-op status for proposal gate decisions."""
+
+    return {
+        "is_no_op": is_no_op,
+        "reason": reason,
+    }
+
+
+def build_rollback_hints(
+    diff_intent: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    """Collect rollback hints per change unit."""
+
+    return tuple(
+        {
+            "change_unit_id": str(change.get("change_id") or f"change_{index:03d}"),
+            "rollback_hint": change.get("rollback_hint"),
+        }
+        for index, change in enumerate(diff_intent, start=1)
+        if change.get("rollback_hint")
+    )

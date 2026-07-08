@@ -11,6 +11,7 @@ from .models import ProposalReview, ReviewFinding
 
 CHECKED_RULES = (
     "schema_validity",
+    "context_pack",
     "evidence_binding",
     "scope_boundary",
     "target_alignment",
@@ -40,6 +41,17 @@ class ProposalReviewer:
 
         findings: list[ReviewFinding] = []
         diff_intent = list(proposal.get("diff_intent") or [])
+        change_units = list(proposal.get("change_units") or [])
+        context_pack = (
+            proposal.get("context_pack")
+            if isinstance(proposal.get("context_pack"), dict)
+            else {}
+        )
+        no_op_status = (
+            proposal.get("no_op_status")
+            if isinstance(proposal.get("no_op_status"), dict)
+            else {}
+        )
         evidence_ids = self._evidence_ids(evidence_pack, repair_plan)
         proposal_evidence_refs = set(proposal.get("evidence_refs") or [])
         allowed_files = set(proposal.get("files") or [])
@@ -59,6 +71,79 @@ class ProposalReviewer:
                     rule_id="no_op_detection",
                     level="blocking",
                     message="Proposal has no change intent and would be a no-op.",
+                )
+            )
+
+        if not context_pack:
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message="Proposal context_pack is missing or malformed.",
+                )
+            )
+
+        if diff_intent and not change_units:
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message="Proposal change_units are missing for diff intent.",
+                )
+            )
+
+        if context_pack and set(context_pack.get("files") or []) != allowed_files:
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message="Proposal context_pack files do not match proposal files.",
+                )
+            )
+
+        if context_pack and set(context_pack.get("evidence_refs") or []) != proposal_evidence_refs:
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message=(
+                        "Proposal context_pack evidence refs do not match proposal "
+                        "evidence refs."
+                    ),
+                )
+            )
+
+        if self._change_unit_ids(diff_intent) != self._declared_change_unit_ids(change_units):
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message="Proposal change_units do not match diff_intent change ids.",
+                )
+            )
+
+        if (
+            context_pack
+            and self._context_change_unit_ids(context_pack)
+            != self._declared_change_unit_ids(change_units)
+        ):
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message=(
+                        "Proposal context_pack change_unit_ids do not match "
+                        "proposal change_units."
+                    ),
+                )
+            )
+
+        if no_op_status.get("is_no_op") is True and diff_intent:
+            findings.append(
+                ReviewFinding(
+                    rule_id="no_op_detection",
+                    level="blocking",
+                    message="Proposal declares no-op status while carrying diff intent.",
                 )
             )
 
@@ -249,6 +334,25 @@ class ProposalReviewer:
             ]
         ).lower()
         return any(token in haystack for token in target.split() if len(token) > 3)
+
+    @staticmethod
+    def _change_unit_ids(diff_intent: list[dict[str, Any]]) -> set[str]:
+        return {
+            str(change.get("change_id") or f"change_{index:03d}")
+            for index, change in enumerate(diff_intent, start=1)
+        }
+
+    @staticmethod
+    def _declared_change_unit_ids(change_units: list[Any]) -> set[str]:
+        return {
+            str(unit.get("change_unit_id"))
+            for unit in change_units
+            if isinstance(unit, dict) and unit.get("change_unit_id")
+        }
+
+    @staticmethod
+    def _context_change_unit_ids(context_pack: dict[str, Any]) -> set[str]:
+        return {str(value) for value in context_pack.get("change_unit_ids") or []}
 
     @staticmethod
     def _is_forbidden_path(path: str) -> bool:

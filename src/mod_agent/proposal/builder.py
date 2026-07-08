@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from .models import PatchProposal, stable_proposal_id
+from .models import (
+    PatchProposal,
+    build_change_units,
+    build_context_pack,
+    build_no_op_status,
+    build_rollback_hints,
+    stable_proposal_id,
+)
 
 
 class PatchProposalBuilder:
@@ -62,6 +69,18 @@ class PatchProposalBuilder:
 
         expected_tests = tuple(implementation_plan.get("test_plan") or ())
         diff_intent = tuple(self._change_intent(change) for change in proposed_changes)
+        change_units = build_change_units(diff_intent)
+        scope_boundary = tuple(implementation_plan.get("side_effect_boundaries") or ())
+        context_pack = build_context_pack(
+            feature_id=feature_id,
+            files=files,
+            evidence_refs=evidence_refs,
+            evidence_source_paths=tuple(
+                implementation_plan.get("evidence_source_paths") or ()
+            ),
+            scope_boundary=scope_boundary,
+            change_units=change_units,
+        )
         risk_tags = sorted(
             {
                 risk
@@ -77,14 +96,18 @@ class PatchProposalBuilder:
             summary=f"Proposal for {feature_id} with {len(diff_intent)} change unit(s).",
             files=files,
             diff_intent=diff_intent,
+            change_units=change_units,
+            context_pack=context_pack,
             evidence_refs=evidence_refs,
-            scope_boundary=tuple(implementation_plan.get("side_effect_boundaries") or ()),
+            scope_boundary=scope_boundary,
             risk_assessment={
                 "risk_tags": risk_tags,
                 "risk_level": self._risk_level(risk_tags),
                 "requires_manual_review": "high" in risk_tags,
             },
             expected_tests=expected_tests,
+            no_op_status=build_no_op_status(is_no_op=False, reason=None),
+            rollback_hints=build_rollback_hints(diff_intent),
             manual_review_notes=tuple(
                 "High-risk proposal requires human review before real apply."
                 for _ in [0]
@@ -124,17 +147,29 @@ class PatchProposalBuilder:
         evidence_refs: tuple[str, ...],
         blockers: tuple[dict[str, Any], ...],
         note: str,
-    ) -> PatchProposal:
+        ) -> PatchProposal:
+        no_op = note == "No change units were present."
         return PatchProposal(
             proposal_id=stable_proposal_id(feature_id, evidence_refs),
             feature_id=feature_id,
             summary="Patch proposal blocked.",
             files=(),
             diff_intent=(),
+            change_units=(),
+            context_pack=build_context_pack(
+                feature_id=feature_id,
+                files=(),
+                evidence_refs=evidence_refs,
+                evidence_source_paths=(),
+                scope_boundary=(),
+                change_units=(),
+            ),
             evidence_refs=evidence_refs,
             scope_boundary=(),
             risk_assessment={"risk_level": "blocked", "requires_manual_review": True},
             expected_tests=(),
+            no_op_status=build_no_op_status(is_no_op=no_op, reason=note),
+            rollback_hints=(),
             manual_review_notes=(note,),
             blocked=True,
             blockers=blockers,

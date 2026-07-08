@@ -78,6 +78,22 @@ def test_patch_proposal_builder_converts_implementation_plan_to_reviewable_inten
         "mods/BetterHitFeedback/Plugin.cs"
     )
     assert proposal.diff_intent[0]["evidence_refs"] == ["ev_001"]
+    assert proposal.change_units[0]["change_unit_id"] == "chg_001"
+    assert proposal.change_units[0]["target_file"] == (
+        "mods/BetterHitFeedback/Plugin.cs"
+    )
+    assert proposal.context_pack["feature_id"] == "feature_001"
+    assert proposal.context_pack["evidence_source_paths"] == [
+        "mods/BetterHitFeedback/Plugin.cs"
+    ]
+    assert proposal.context_pack["change_unit_ids"] == ["chg_001"]
+    assert proposal.no_op_status == {"is_no_op": False, "reason": None}
+    assert proposal.rollback_hints == (
+        {
+            "change_unit_id": "chg_001",
+            "rollback_hint": "Restore previous behavior.",
+        },
+    )
     assert proposal.expected_tests == ("compile",)
 
 
@@ -89,6 +105,7 @@ def test_patch_proposal_builder_blocks_no_op_plan() -> None:
 
     assert proposal.blocked is True
     assert proposal.blockers[0]["code"] == "NO_OP_PROPOSAL"
+    assert proposal.no_op_status["is_no_op"] is True
 
 
 def test_patch_proposal_builder_blocks_unresolved_edit_target() -> None:
@@ -148,6 +165,55 @@ def test_reviewer_blocks_unbound_change() -> None:
     assert review.decision == "blocked_insufficient_evidence"
     assert review.allowed_next_stage is None
     assert review.findings[0].rule_id == "evidence_binding"
+
+
+def test_reviewer_blocks_missing_context_pack() -> None:
+    proposal = PatchProposalBuilder().build(_implementation_payload()).to_artifact_payload()
+    proposal.pop("context_pack")
+
+    review = ProposalReviewer().review(
+        proposal,
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+    )
+
+    assert review.decision == "revise_proposal"
+    assert review.allowed_next_stage is None
+    assert any(finding.rule_id == "context_pack" for finding in review.findings)
+
+
+def test_reviewer_blocks_change_unit_mismatch() -> None:
+    proposal = PatchProposalBuilder().build(_implementation_payload()).to_artifact_payload()
+    proposal["change_units"][0]["change_unit_id"] = "different_change"
+
+    review = ProposalReviewer().review(
+        proposal,
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+    )
+
+    assert review.decision == "revise_proposal"
+    assert review.allowed_next_stage is None
+    assert any(finding.rule_id == "context_pack" for finding in review.findings)
+
+
+def test_reviewer_blocks_context_pack_change_unit_id_drift() -> None:
+    proposal = PatchProposalBuilder().build(_implementation_payload()).to_artifact_payload()
+    proposal["context_pack"]["change_unit_ids"] = ["different_change"]
+
+    review = ProposalReviewer().review(
+        proposal,
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+    )
+
+    assert review.decision == "revise_proposal"
+    assert review.allowed_next_stage is None
+    assert any(
+        finding.message
+        == "Proposal context_pack change_unit_ids do not match proposal change_units."
+        for finding in review.findings
+    )
 
 
 def test_reviewer_blocks_forbidden_path() -> None:
