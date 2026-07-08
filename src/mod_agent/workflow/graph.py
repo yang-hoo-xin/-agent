@@ -27,6 +27,7 @@ from src.mod_agent.planning import (
     FeatureSpec,
     FeatureSpecBuilder,
     ImplementationPlanner,
+    ModPlanningBriefBuilder,
     RequestPlan,
     RequestPlanner,
     Uncertainty,
@@ -44,6 +45,7 @@ from .transitions import (
     route_after_feature_spec,
     route_after_implementation_plan,
     route_after_patch_proposal,
+    route_after_planning_brief,
     route_after_plan_request,
     route_after_repair_plan,
     route_after_review,
@@ -92,6 +94,13 @@ def build_graph(
         _make_real_graph_node(
             "draft_feature_spec",
             lambda state: _run_draft_feature_spec(state, artifact_store),
+        ),
+    )
+    graph.add_node(
+        "planning_brief",
+        _make_real_graph_node(
+            "planning_brief",
+            lambda state: _run_planning_brief(state, artifact_store),
         ),
     )
     graph.add_node(
@@ -187,6 +196,11 @@ def build_graph(
         "plan_request",
         route_after_plan_request,
         dict(registry["plan_request"]),
+    )
+    graph.add_conditional_edges(
+        "planning_brief",
+        route_after_planning_brief,
+        dict(registry["planning_brief"]),
     )
     graph.add_conditional_edges(
         "draft_feature_spec",
@@ -342,13 +356,20 @@ def _run_draft_feature_spec(
 ) -> ModAgentState:
     plan_data = _read_artifact_data(state, artifact_store, "request_planning_report")
     plan = _request_plan_from_payload(plan_data)
-    feature_spec = FeatureSpecBuilder().build(plan)
+    planning_brief = _read_artifact_data(state, artifact_store, "mod_planning_brief")
+    feature_spec = FeatureSpecBuilder().build(
+        plan,
+        planning_brief=planning_brief,
+    )
     artifact_ref = artifact_store.write(
         feature_id=feature_spec.feature_id,
         artifact_type="feature_spec",
         payload=feature_spec.to_artifact_payload(),
         status="blocked" if feature_spec.blocked else "success",
-        upstream_refs=[_artifact_ref_from_state(state, "request_planning_report")],
+        upstream_refs=[
+            _artifact_ref_from_state(state, "request_planning_report"),
+            _artifact_ref_from_state(state, "mod_planning_brief"),
+        ],
     )
     next_state = _copy_state(state)
     next_state["current_stage"] = "feature_spec"
@@ -882,6 +903,31 @@ def _run_workflow_summary(
     return next_state
 
 
+def _run_planning_brief(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+) -> ModAgentState:
+    plan_data = _read_artifact_data(state, artifact_store, "request_planning_report")
+    plan = _request_plan_from_payload(plan_data)
+    planning_brief = ModPlanningBriefBuilder().build(
+        plan,
+        target_game=state["target_domain"],
+    )
+    artifact_ref = artifact_store.write(
+        feature_id=planning_brief.feature_id,
+        artifact_type="mod_planning_brief",
+        payload=planning_brief.to_artifact_payload(),
+        status="blocked" if planning_brief.blocked else "success",
+        upstream_refs=[_artifact_ref_from_state(state, "request_planning_report")],
+    )
+    next_state = _copy_state(state)
+    next_state["current_stage"] = "planning_brief"
+    _record_artifact(next_state, "mod_planning_brief", artifact_ref)
+    if planning_brief.blocked:
+        next_state["blockers"].extend(planning_brief.blockers)
+    return next_state
+
+
 def _v1_acceptance_boundary(
     *,
     build: dict[str, Any],
@@ -1021,6 +1067,7 @@ def _node_status(state: ModAgentState, node_name: str) -> str:
 def _node_artifact_refs(state: ModAgentState, node_name: str) -> list[str]:
     artifact_by_node = {
         "plan_request": "request_planning_report",
+        "planning_brief": "mod_planning_brief",
         "draft_feature_spec": "feature_spec",
         "retrieve_evidence": "evidence_pack",
         "create_implementation_plan": "implementation_plan",

@@ -140,6 +140,7 @@ def test_every_workflow_artifact_type_is_registered() -> None:
 
     assert {
         "request_planning_report",
+        "mod_planning_brief",
         "feature_spec",
         "evidence_pack",
         "implementation_plan",

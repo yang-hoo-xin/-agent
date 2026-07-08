@@ -6,6 +6,7 @@ from typing import Any, Literal, Mapping, TypedDict
 
 StageName = Literal[
     "request_planning",
+    "planning_brief",
     "feature_spec",
     "evidence_retrieval",
     "implementation_plan",

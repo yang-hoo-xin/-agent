@@ -75,6 +75,20 @@ def test_feature_spec_builder_creates_verifiable_contract() -> None:
     assert spec.non_goals
 
 
+def test_feature_spec_builder_consumes_planning_brief_handoff() -> None:
+    plan = RequestPlanner().plan(
+        "make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+    brief_payload = ModPlanningBriefBuilder().build(plan).to_artifact_payload()
+
+    spec = FeatureSpecBuilder().build(plan, planning_brief=brief_payload)
+
+    assert "log marker or startup evidence" in spec.evidence_requirements
+    assert "startup_loaded" in spec.runtime_verification_plan
+    assert "diagnostic marker observed" in spec.runtime_verification_plan
+
+
 def test_feature_spec_builder_preserves_blocking_uncertainty() -> None:
     plan = RequestPlanner().plan("test")
 
@@ -240,7 +254,10 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
     plan = RequestPlanner().plan("make Load enable diagnostics")
     brief = ModPlanningBriefBuilder().build(plan, target_game="GTFO")
-    spec = FeatureSpecBuilder().build(plan)
+    spec = FeatureSpecBuilder().build(
+        plan,
+        planning_brief=brief.to_artifact_payload(),
+    )
     implementation = ImplementationPlanner().build(
         feature_spec=spec,
         evidence_pack={
@@ -268,6 +285,7 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
         feature_id=plan.feature_id,
         artifact_type="feature_spec",
         payload=spec.to_artifact_payload(),
+        upstream_refs=[request_ref, brief_ref],
     )
     evidence_ref = store.write(
         feature_id=plan.feature_id,
@@ -303,6 +321,11 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
 
     assert store.read(request_ref)["data"]["route"] == plan.route
     assert store.read(brief_ref)["data"]["request_type"]["value"] == "runtime diagnostics"
+    feature_inputs = store.read(feature_ref)["inputs"]["upstream_artifacts"]
+    assert {item["artifact_type"] for item in feature_inputs} == {
+        "request_planning_report",
+        "mod_planning_brief",
+    }
     assert store.read(feature_ref)["data"]["target_behavior"] == plan.user_request
     assert store.read(implementation_ref)["data"]["evidence_refs"] == ["ev_001"]
 

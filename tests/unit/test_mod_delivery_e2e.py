@@ -24,7 +24,11 @@ EXPECTED_ACCEPTANCE_CRITERIA = (
     "Every proposed change is bound to evidence.",
     "Validation output is reported with real command or artifact evidence.",
 )
-EXPECTED_RUNTIME_PLAN = ("compile or static validation",)
+EXPECTED_RUNTIME_PLAN_WITH_BRIEF = (
+    "compile or static validation",
+    "startup_loaded",
+    "diagnostic marker observed",
+)
 
 
 def test_e2e_001_minimal_mod_delivery_chain_reaches_handoff_with_current_evidence(
@@ -56,6 +60,7 @@ def test_e2e_001_minimal_mod_delivery_chain_reaches_handoff_with_current_evidenc
     assert "blocked_report" not in result["artifacts"]
     assert tuple(result["artifacts"]) == (
         "request_planning_report",
+        "mod_planning_brief",
         "feature_spec",
         "evidence_pack",
         "implementation_plan",
@@ -68,7 +73,9 @@ def test_e2e_001_minimal_mod_delivery_chain_reaches_handoff_with_current_evidenc
         "workflow_summary",
     )
 
+    planning_brief = _artifact_data(store, result, "mod_planning_brief")
     feature_spec = _artifact_data(store, result, "feature_spec")
+    feature_spec_envelope = _artifact_envelope(store, result, "feature_spec")
     evidence_pack = _artifact_data(store, result, "evidence_pack")
     implementation_plan = _artifact_data(store, result, "implementation_plan")
     patch_proposal = _artifact_data(store, result, "patch_proposal")
@@ -79,10 +86,23 @@ def test_e2e_001_minimal_mod_delivery_chain_reaches_handoff_with_current_evidenc
     eval_report = _artifact_data(store, result, "eval_report")
     workflow_summary = _artifact_data(store, result, "workflow_summary")
 
+    assert planning_brief["decision"] == "ready_for_feature_spec"
+    assert planning_brief["request_type"]["value"] == "runtime diagnostics"
+    assert planning_brief["next_action"] == "feature_spec"
+    assert planning_brief["blocked"] is False
+
+    feature_spec_upstreams = {
+        upstream["artifact_type"]
+        for upstream in feature_spec_envelope["inputs"]["upstream_artifacts"]
+    }
+    assert feature_spec_upstreams == {
+        "request_planning_report",
+        "mod_planning_brief",
+    }
     assert feature_spec["target_behavior"] == REQUESTED_BEHAVIOR
     assert feature_spec["target_mod"] == TARGET_MOD
     assert tuple(feature_spec["acceptance_criteria"]) == EXPECTED_ACCEPTANCE_CRITERIA
-    assert tuple(feature_spec["runtime_verification_plan"]) == EXPECTED_RUNTIME_PLAN
+    assert tuple(feature_spec["runtime_verification_plan"]) == EXPECTED_RUNTIME_PLAN_WITH_BRIEF
 
     assert evidence_pack["readiness"] == "sufficient"
     assert evidence_pack["can_generate_patch"] is True
@@ -128,7 +148,7 @@ def test_e2e_001_minimal_mod_delivery_chain_reaches_handoff_with_current_evidenc
     assert runtime_evidence["claims_real_runtime_success"] is True
     assert runtime_evidence["acceptance_contract"] == {
         "acceptance_criteria": list(EXPECTED_ACCEPTANCE_CRITERIA),
-        "runtime_verification_plan": list(EXPECTED_RUNTIME_PLAN),
+        "runtime_verification_plan": list(EXPECTED_RUNTIME_PLAN_WITH_BRIEF),
     }
 
     assert eval_report["v1_acceptance_status"] == "accepted"
@@ -234,7 +254,15 @@ def _artifact_data(
     result: dict[str, object],
     artifact_type: str,
 ) -> dict[str, object]:
+    return _artifact_envelope(store, result, artifact_type)["data"]
+
+
+def _artifact_envelope(
+    store: ArtifactStore,
+    result: dict[str, object],
+    artifact_type: str,
+) -> dict[str, object]:
     for ref in store.list_feature_artifacts(str(result["feature_id"])):
         if ref.artifact_type == artifact_type:
-            return store.read(ref)["data"]
+            return store.read(ref)
     raise AssertionError(f"Missing artifact: {artifact_type}")

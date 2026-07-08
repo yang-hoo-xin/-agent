@@ -32,6 +32,14 @@ def route_after_feature_spec(state: ModAgentState) -> str:
     return "continue"
 
 
+def route_after_planning_brief(state: ModAgentState) -> str:
+    """Stop when planning brief handoff is blocked."""
+
+    if state["blockers"]:
+        return "blocked"
+    return "continue"
+
+
 def route_after_evidence(state: ModAgentState) -> str:
     """Stop when evidence is not sufficient for patch generation."""
 
@@ -93,6 +101,10 @@ def route_registry() -> RouteRegistry:
 
     return {
         "plan_request": {
+            "blocked": "blocked",
+            "continue": "planning_brief",
+        },
+        "planning_brief": {
             "blocked": "blocked",
             "continue": "draft_feature_spec",
         },

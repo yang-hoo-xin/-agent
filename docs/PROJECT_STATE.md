@@ -8,11 +8,11 @@ Last updated: 2026-07-08
 ## Current Queue
 
 ```text
-current_queue: Planning Brief Implementation
-last_completed: PLANNING-BRIEF-IMPL-001
-current_stabilization_task: decide whether to integrate mod_planning_brief into the graph or continue another bounded non-Skill implementation checkpoint
-next_recommended_task: E2E-002 can integrate mod_planning_brief into the controlled delivery chain, but should not claim real game delivery or automated RAG retrieval
-ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
+current_queue: Planning Brief Graph Integration
+last_completed: E2E-002
+current_stabilization_task: select the next bounded non-Skill implementation checkpoint after graph-integrated planning brief handoff
+next_recommended_task: decide whether to add evidence-backed planning brief knowledge lookup, delivery lesson recording, or another small controlled delivery improvement; do not start real game automation unless MISS-026 is explicitly selected
+ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
 next_stage_after_expert_split: choose a non-Skill implementation checkpoint; do not continue splitting process Skills by default
 ```
 
@@ -50,13 +50,14 @@ current MISS-022 status: completed; focused and affected tests passed
 current STATE-001 status: completed; LOOP_HISTORY restored from rescue commit c43f4ec, evidence provenance refreshed, and E2E-001 scope boundary recorded
 current SKILL-MCP-001 status: completed; `.agents/skills/mod-delivery-playbook/SKILL.md` created as a process-only delivery Skill while preserving auto-coder as the DEV_SPEC.md-driven platform-development Skill
 current E2E-001 status: completed; minimal planning-to-handoff chain is current-branch verified by tests/unit/test_mod_delivery_e2e.py with controlled temporary BetterHitFeedback source, controlled local build artifact verification, and real local runtime probe evidence
+current E2E-002 status: completed; the controlled graph now runs planning_brief between plan_request and draft_feature_spec, writes `mod_planning_brief`, records it as a feature_spec upstream artifact, and FeatureSpecBuilder consumes planning brief handoff evidence/runtime guidance; focused planning/workflow/E2E/artifact/dashboard tests passed
 current SKILL-SPLIT-001 status: completed; `.agents/skills/patch-review-playbook/SKILL.md` created as a process-only expert Skill for review of patch proposals, diffs, evidence binding, permissions, risk, and handoff readiness
 current SKILL-SPLIT-002 status: completed; `.agents/skills/runtime-diagnosis-playbook/SKILL.md` created as a process-only expert Skill for build/runtime evidence diagnosis, runtime evidence mode boundaries, acceptance markers, repair routing, and handoff readiness
 current SKILL-SPLIT-003 status: completed; `.agents/skills/hook-discovery-playbook/SKILL.md` created as a process-only expert Skill for behavior decomposition, evidence-first hook discovery, hook option review, risk classification, and proposal/runtime diagnosis handoff
 current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/SKILL.md` created as a process-only expert Skill for failed gate classification, bounded repair eligibility, evidence-bound repair scope, review re-entry, and repair/handoff routing
 current SKILL-SPLIT-CLOSURE-001 status: completed; all five process Skills validate, no template residue is present in HEAD for process Skill directories, E2E-001 evidence remains discoverable, and control docs preserve runtime/real-game/automation boundaries
 current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief-playbook/SKILL.md` created as a process-only Skill for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning options, selected_plan, and feature_spec handoff guidance
-current PLANNING-BRIEF-IMPL-001 status: completed; `mod_planning_brief` artifact contract and deterministic `ModPlanningBriefBuilder` now exist with focused tests for config-only, UI feedback, hook-required, and unknown / needs evidence handoffs; request_type classification is deterministic heuristic routing, not model understanding; feature_spec does not yet consume `mod_planning_brief`; graph integration, automated RAG retrieval, feature_spec generation, code generation, and runtime validation are not claimed
+current PLANNING-BRIEF-IMPL-001 status: completed; `mod_planning_brief` artifact contract and deterministic `ModPlanningBriefBuilder` now exist with focused tests for config-only, UI feedback, hook-required, and unknown / needs evidence handoffs; request_type classification is deterministic heuristic routing, not model understanding; E2E-002 now covers controlled graph integration and feature_spec handoff consumption; automated RAG retrieval, feature_spec generation, code generation, and real game runtime validation are not claimed
 current ARTIFACT-INTEGRITY-001 status: completed; ArtifactStore.read recomputes the stored envelope content hash, rejects tampered payload content even when the ArtifactRef hash still matches the stored artifact_hash, and rejects missing or unexpected envelope top-level fields; focused artifact tests passed
 current ARTIFACT-INTEGRITY-002 status: completed; ArtifactStore.check_freshness and read_for_stage now detect stale deep upstream artifacts through recursive dependency traversal, while write-time and checkpoint-resume gates intentionally remain direct-freshness checks; focused artifact/checkpoint tests passed
 current ARTIFACT-INTEGRITY-003 status: completed; ArtifactStore.write now preserves immutable revision files under per-type revision directories while maintaining read-validated latest artifact files for current dashboard/MCP views; focused artifact/dashboard/MCP/workflow/E2E tests passed
@@ -182,7 +183,8 @@ boundary:
   The builder's request_type classification is deterministic heuristic routing, not model understanding.
   It must not claim natural-language-to-RAG extraction is implemented.
   It must not claim automated historical experience retrieval, automated delivery lesson retrieval, or runtime planning negotiation is implemented.
-  It must not claim that feature_spec consumes `mod_planning_brief`, graph integration, automatic code generation guidance, or runtime validation is implemented.
+  It may claim E2E-002 graph-integrated handoff only for deterministic `mod_planning_brief` fields consumed by FeatureSpecBuilder.
+  It must not claim automatic code generation guidance, automated RAG retrieval, runtime planning negotiation, or real game runtime validation is implemented.
   It must keep product facts, current state, schemas, test results, and evidence payloads outside the Skill.
   It must not replace auto-coder or the existing request_planning/feature_spec artifacts.
 ```
@@ -367,28 +369,33 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: PLANNING-BRIEF-IMPL-001
+task: E2E-002
 status: completed
 files_changed:
-  src/mod_agent/artifacts/registry.py
-  src/mod_agent/planning/models.py
-  src/mod_agent/planning/planning_brief.py
-  src/mod_agent/planning/__init__.py
+  src/mod_agent/workflow/graph.py
+  src/mod_agent/workflow/transitions.py
+  src/mod_agent/workflow/state.py
+  src/mod_agent/planning/feature_spec.py
+  src/mod_agent/dashboard/projections.py
   tests/unit/test_planning.py
+  tests/unit/test_workflow_graph.py
+  tests/unit/test_mod_delivery_e2e.py
+  tests/unit/test_artifact_contract.py
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  The `mod_planning_brief` artifact contract is registered with required handoff fields and a request_planning_report upstream requirement.
-  `ModPlanningBriefBuilder` creates deterministic planning briefs with heuristic request_type classification, knowledge_query_plan, retrieved_experience placeholders, planning_options, selected_plan, and handoff guidance.
-  Focused tests cover config-only, UI feedback, hook-required, and unknown / needs evidence request handling plus ArtifactStore contract validation.
-  This does not integrate mod_planning_brief into the workflow graph, does not make feature_spec consume mod_planning_brief, and does not implement automated RAG retrieval, accumulated-experience retrieval, feature_spec generation, code generation, or runtime validation.
+  The graph now inserts planning_brief between plan_request and draft_feature_spec.
+  planning_brief writes `mod_planning_brief` from the current request_planning_report and records request_planning_report as its upstream artifact.
+  draft_feature_spec reads `mod_planning_brief`, passes it to FeatureSpecBuilder, and writes feature_spec with request_planning_report and mod_planning_brief upstream refs.
+  FeatureSpecBuilder consumes planning brief handoff evidence_requirements and runtime_verification_expectations without replacing the existing FeatureSpec contract.
+  This does not implement automated RAG retrieval, accumulated-experience retrieval, natural-language model understanding, feature_spec generation by LLM, code generation, real game runtime validation, or production runtime automation.
 validation:
-  python -m pytest tests/unit/test_planning.py tests/unit/test_artifact_contract.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py tests/unit/test_dashboard_projection.py -q --tb=short -> 56 passed
+  python -m pytest tests/unit/test_planning.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py tests/unit/test_artifact_contract.py tests/unit/test_dashboard_projection.py -q --tb=short -> 57 passed
 tests:
-  focused planning/artifact/workflow/E2E/dashboard tests only; full unit baseline is not claimed green.
+  focused planning/workflow/E2E/artifact/dashboard tests only; full unit baseline is not claimed green.
 next:
-  Decide whether to integrate mod_planning_brief into the controlled delivery graph as E2E-002, without claiming real game delivery or automated RAG retrieval.
+  Select the next bounded non-Skill implementation checkpoint; evidence-backed planning brief knowledge lookup or delivery lesson recording are reasonable next mainline options, while MISS-026 real game automation remains explicit opt-in.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate

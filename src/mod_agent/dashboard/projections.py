@@ -16,6 +16,7 @@ from src.mod_agent.artifacts import (
 
 EXPECTED_ARTIFACT_TYPES = (
     "request_planning_report",
+    "mod_planning_brief",
     "feature_spec",
     "evidence_pack",
     "implementation_plan",
