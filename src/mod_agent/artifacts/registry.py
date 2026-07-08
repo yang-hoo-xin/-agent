@@ -134,9 +134,42 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 }
             ),
             producer_stage="request_planning",
-            consumer_stages=frozenset({"draft_feature_spec", "blocked", "dashboard"}),
+            consumer_stages=frozenset(
+                {"planning_brief", "draft_feature_spec", "blocked", "dashboard"}
+            ),
             allowed_statuses=statuses,
             dashboard_projection=("message", "route", "risk_level", "blocked"),
+        ),
+        ArtifactContract(
+            artifact_type="mod_planning_brief",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "feature_id",
+                    "decision",
+                    "user_intent",
+                    "request_type",
+                    "knowledge_query_plan",
+                    "retrieved_experience",
+                    "planning_options",
+                    "selected_plan",
+                    "handoff",
+                    "verification_boundary",
+                    "next_action",
+                    "blocked",
+                    "blockers",
+                }
+            ),
+            producer_stage="planning_brief",
+            consumer_stages=frozenset(
+                {"draft_feature_spec", "retrieve_evidence", "dashboard"}
+            ),
+            allowed_statuses=statuses,
+            required_upstream_artifacts=frozenset({"request_planning_report"}),
+            dashboard_projection=("message", "decision", "request_type", "next_action"),
         ),
         ArtifactContract(
             artifact_type="feature_spec",

@@ -8,11 +8,11 @@ Last updated: 2026-07-08
 ## Current Queue
 
 ```text
-current_queue: Post Artifact Integrity Selection
-last_completed: ARTIFACT-PROD-001B
-current_stabilization_task: choose the next bounded non-Skill implementation checkpoint
-next_recommended_task: choose between remaining artifact production storage hardening, MISS-026 real runtime automation, eval baseline, GameProfile onboarding, or historical evidence restoration
-ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, and ARTIFACT-PROD-001B completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
+current_queue: Planning Brief Implementation
+last_completed: PLANNING-BRIEF-IMPL-001
+current_stabilization_task: decide whether to integrate mod_planning_brief into the graph or continue another bounded non-Skill implementation checkpoint
+next_recommended_task: E2E-002 can integrate mod_planning_brief into the controlled delivery chain, but should not claim real game delivery or automated RAG retrieval
+ordinary_queue_status: Q-022, MISS-022, MISS-026A, STATE-001, SKILL-MCP-001, E2E-001, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; real game runtime automation remains tracked as MISS-026 and is explicit opt-in work
 next_stage_after_expert_split: choose a non-Skill implementation checkpoint; do not continue splitting process Skills by default
 ```
 
@@ -56,6 +56,7 @@ current SKILL-SPLIT-003 status: completed; `.agents/skills/hook-discovery-playbo
 current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/SKILL.md` created as a process-only expert Skill for failed gate classification, bounded repair eligibility, evidence-bound repair scope, review re-entry, and repair/handoff routing
 current SKILL-SPLIT-CLOSURE-001 status: completed; all five process Skills validate, no template residue is present in HEAD for process Skill directories, E2E-001 evidence remains discoverable, and control docs preserve runtime/real-game/automation boundaries
 current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief-playbook/SKILL.md` created as a process-only Skill for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning options, selected_plan, and feature_spec handoff guidance
+current PLANNING-BRIEF-IMPL-001 status: completed; `mod_planning_brief` artifact contract and deterministic `ModPlanningBriefBuilder` now exist with focused tests for config-only, UI feedback, hook-required, and unknown / needs evidence handoffs; graph integration, automated RAG retrieval, feature_spec generation, code generation, and runtime validation are not claimed
 current ARTIFACT-INTEGRITY-001 status: completed; ArtifactStore.read recomputes the stored envelope content hash, rejects tampered payload content even when the ArtifactRef hash still matches the stored artifact_hash, and rejects missing or unexpected envelope top-level fields; focused artifact tests passed
 current ARTIFACT-INTEGRITY-002 status: completed; ArtifactStore.check_freshness and read_for_stage now detect stale deep upstream artifacts through recursive dependency traversal, while write-time and checkpoint-resume gates intentionally remain direct-freshness checks; focused artifact/checkpoint tests passed
 current ARTIFACT-INTEGRITY-003 status: completed; ArtifactStore.write now preserves immutable revision files under per-type revision directories while maintaining read-validated latest artifact files for current dashboard/MCP views; focused artifact/dashboard/MCP/workflow/E2E tests passed
@@ -177,9 +178,10 @@ planned_mod_planning_brief_shape:
     runtime_verification_expectations:
 boundary:
   The process-only Skill is implemented and validated.
+  The `mod_planning_brief` artifact contract and deterministic builder are implemented and tested in PLANNING-BRIEF-IMPL-001.
   It must not claim natural-language-to-RAG extraction is implemented.
-  It must not claim automated historical experience retrieval, automated delivery lesson retrieval, runtime planning negotiation, or mod_planning_brief artifact validation is implemented.
-  It must not claim automatic code generation guidance is validated.
+  It must not claim automated historical experience retrieval, automated delivery lesson retrieval, or runtime planning negotiation is implemented.
+  It must not claim graph integration, automatic code generation guidance, or runtime validation is implemented.
   It must keep product facts, current state, schemas, test results, and evidence payloads outside the Skill.
   It must not replace auto-coder or the existing request_planning/feature_spec artifacts.
 ```
@@ -364,25 +366,28 @@ known broader-suite gaps:
 ## Latest Loop Summary
 
 ```text
-task: ARTIFACT-PROD-001B
+task: PLANNING-BRIEF-IMPL-001
 status: completed
 files_changed:
-  src/mod_agent/artifacts/store.py
-  tests/unit/test_artifact_store.py
+  src/mod_agent/artifacts/registry.py
+  src/mod_agent/planning/models.py
+  src/mod_agent/planning/planning_brief.py
+  src/mod_agent/planning/__init__.py
+  tests/unit/test_planning.py
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
-  ArtifactStore.write now records a pending-write marker before revision/latest replacement and removes it after latest is current.
-  If latest replacement fails after the immutable revision is written, the pending marker remains for recovery.
-  ArtifactStore.recover_pending_writes scans pending markers and restores latest from the matching validated immutable revision.
-  This closes the manual pending-marker recovery slice only; automatic startup/preflight recovery invocation, states without a valid pending marker and revision, cross-process write locking, manifest/index files, historical revision query APIs, old-ref migration, and revision garbage collection remain open under ARTIFACT-PROD-001.
+  The `mod_planning_brief` artifact contract is registered with required handoff fields and a request_planning_report upstream requirement.
+  `ModPlanningBriefBuilder` creates deterministic planning briefs with request_type classification, knowledge_query_plan, retrieved_experience placeholders, planning_options, selected_plan, and handoff guidance.
+  Focused tests cover config-only, UI feedback, hook-required, and unknown / needs evidence request handling plus ArtifactStore contract validation.
+  This does not integrate mod_planning_brief into the workflow graph and does not implement automated RAG retrieval, accumulated-experience retrieval, feature_spec generation, code generation, or runtime validation.
 validation:
-  python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_projection.py tests/unit/test_controlled_agent_mcp_tools.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py -q --tb=short -> 71 passed
+  python -m pytest tests/unit/test_planning.py tests/unit/test_artifact_contract.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py tests/unit/test_dashboard_projection.py -q --tb=short -> 56 passed
 tests:
-  focused and affected artifact/dashboard/MCP/workflow/E2E tests only; full unit baseline is not claimed green.
+  focused planning/artifact/workflow/E2E/dashboard tests only; full unit baseline is not claimed green.
 next:
-  Choose the next bounded non-Skill implementation checkpoint from remaining artifact production storage hardening, MISS-026, eval baseline, GameProfile onboarding, or historical evidence restoration.
+  Decide whether to integrate mod_planning_brief into the controlled delivery graph as E2E-002, without claiming real game delivery or automated RAG retrieval.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate

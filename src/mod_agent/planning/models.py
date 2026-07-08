@@ -104,6 +104,52 @@ class FeatureSpec:
 
 
 @dataclass(frozen=True)
+class ModPlanningBrief:
+    """Negotiated planning handoff before feature specification."""
+
+    feature_id: str
+    decision: str
+    user_intent: dict[str, Any]
+    request_type: dict[str, Any]
+    knowledge_query_plan: dict[str, Any]
+    retrieved_experience: dict[str, Any]
+    planning_options: tuple[dict[str, Any], ...]
+    selected_plan: dict[str, Any]
+    handoff: dict[str, Any]
+    verification_boundary: tuple[str, ...]
+    next_action: str
+    blockers: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def blocked(self) -> bool:
+        return self.decision in {"needs_clarification", "needs_evidence", "blocked"}
+
+    def to_artifact_payload(self) -> dict[str, Any]:
+        return {
+            "node_name": "build_mod_planning_brief",
+            "stage": "planning_brief",
+            "message": (
+                "Planning brief is ready for feature specification."
+                if not self.blocked
+                else "Planning brief needs clarification or evidence before handoff."
+            ),
+            "feature_id": self.feature_id,
+            "decision": self.decision,
+            "user_intent": self.user_intent,
+            "request_type": self.request_type,
+            "knowledge_query_plan": self.knowledge_query_plan,
+            "retrieved_experience": self.retrieved_experience,
+            "planning_options": list(self.planning_options),
+            "selected_plan": self.selected_plan,
+            "handoff": self.handoff,
+            "verification_boundary": list(self.verification_boundary),
+            "next_action": self.next_action,
+            "blocked": self.blocked,
+            "blockers": list(self.blockers),
+        }
+
+
+@dataclass(frozen=True)
 class ImplementationPlan:
     """Evidence-bound plan for how code should change, without patch content."""
 

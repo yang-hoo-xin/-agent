@@ -7,6 +7,7 @@ from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERS
 from src.mod_agent.planning import (
     FeatureSpecBuilder,
     ImplementationPlanner,
+    ModPlanningBriefBuilder,
     RequestPlanner,
 )
 
@@ -81,6 +82,74 @@ def test_feature_spec_builder_preserves_blocking_uncertainty() -> None:
 
     assert spec.blocked is True
     assert spec.blockers[0]["code"] == "AMBIGUOUS_USER_REQUEST"
+
+
+def test_mod_planning_brief_classifies_config_only_request() -> None:
+    plan = RequestPlanner().plan(
+        "default config EnableLogging false",
+        target_mod="BetterHitFeedback",
+    )
+
+    brief = ModPlanningBriefBuilder().build(plan, target_game="GTFO")
+    payload = brief.to_artifact_payload()
+
+    assert payload["decision"] == "ready_for_feature_spec"
+    assert payload["request_type"]["value"] == "config-only"
+    assert payload["user_intent"]["target_game"] == "GTFO"
+    assert payload["user_intent"]["target_mod"] == "BetterHitFeedback"
+    assert "config schema or settings reference" in (
+        payload["planning_options"][0]["required_evidence"]
+    )
+    assert payload["next_action"] == "feature_spec"
+    assert payload["blocked"] is False
+
+
+def test_mod_planning_brief_classifies_ui_feedback_request() -> None:
+    plan = RequestPlanner().plan(
+        "show reload progress in HUD",
+        target_mod="BetterHitFeedback",
+    )
+
+    payload = ModPlanningBriefBuilder().build(plan).to_artifact_payload()
+
+    assert payload["request_type"]["value"] == "UI feedback"
+    assert "game_profile" in payload["knowledge_query_plan"]["source_types"]
+    assert "UI or feedback surface evidence" in (
+        payload["planning_options"][0]["required_evidence"]
+    )
+    assert payload["handoff"]["runtime_verification_expectations"] == [
+        "compile or static validation",
+        "user-visible feedback evidence",
+    ]
+
+
+def test_mod_planning_brief_classifies_hook_required_request() -> None:
+    plan = RequestPlanner().plan(
+        "hook enemy damage method for BetterHitFeedback"
+    )
+
+    payload = ModPlanningBriefBuilder().build(plan).to_artifact_payload()
+
+    assert payload["request_type"]["value"] == "hook-required"
+    assert payload["planning_options"][0]["hook_likelihood"] == "high"
+    assert "symbol_search" in payload["knowledge_query_plan"]["source_types"]
+    assert "target symbol evidence" in payload["planning_options"][0]["required_evidence"]
+    assert payload["handoff"]["hook_discovery_guidance"] == (
+        "Run hook discovery before implementation planning."
+    )
+
+
+def test_mod_planning_brief_blocks_unclear_request() -> None:
+    plan = RequestPlanner().plan("fix it")
+
+    payload = ModPlanningBriefBuilder().build(plan).to_artifact_payload()
+
+    assert payload["decision"] == "needs_clarification"
+    assert payload["request_type"]["value"] == "unknown / needs evidence"
+    assert payload["selected_plan"]["scope"] == ""
+    assert payload["next_action"] == "ask user"
+    assert payload["blocked"] is True
+    assert payload["blockers"][0]["code"] == "AMBIGUOUS_USER_REQUEST"
 
 
 def test_implementation_plan_blocks_when_evidence_is_not_sufficient() -> None:
@@ -170,6 +239,7 @@ def test_implementation_plan_blocks_when_evidence_source_is_not_editable() -> No
 def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
     plan = RequestPlanner().plan("make Load enable diagnostics")
+    brief = ModPlanningBriefBuilder().build(plan, target_game="GTFO")
     spec = FeatureSpecBuilder().build(plan)
     implementation = ImplementationPlanner().build(
         feature_spec=spec,
@@ -187,6 +257,12 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
         feature_id=plan.feature_id,
         artifact_type="request_planning_report",
         payload=plan.to_artifact_payload(),
+    )
+    brief_ref = store.write(
+        feature_id=plan.feature_id,
+        artifact_type="mod_planning_brief",
+        payload=brief.to_artifact_payload(),
+        upstream_refs=[request_ref],
     )
     feature_ref = store.write(
         feature_id=plan.feature_id,
@@ -226,6 +302,7 @@ def test_planning_payloads_validate_against_artifact_contract(tmp_path) -> None:
     )
 
     assert store.read(request_ref)["data"]["route"] == plan.route
+    assert store.read(brief_ref)["data"]["request_type"]["value"] == "runtime diagnostics"
     assert store.read(feature_ref)["data"]["target_behavior"] == plan.user_request
     assert store.read(implementation_ref)["data"]["evidence_refs"] == ["ev_001"]
 
