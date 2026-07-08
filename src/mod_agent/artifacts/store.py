@@ -28,6 +28,18 @@ _ENVELOPE_HASH_FIELDS = (
     "trace_refs",
 )
 _ENVELOPE_FIELDS = frozenset((*_ENVELOPE_HASH_FIELDS, "artifact_hash"))
+_PENDING_WRITE_FIELDS = frozenset(
+    (
+        "schema_version",
+        "feature_id",
+        "artifact_type",
+        "artifact_hash",
+        "revision_path",
+        "latest_path",
+        "status",
+    )
+)
+_PENDING_WRITE_STATUS = "pending_latest_replace"
 
 
 class ArtifactStoreError(ValueError):
@@ -122,9 +134,31 @@ class ArtifactStore:
             artifact_type,
             artifact_hash,
         )
-        self._write_text_atomic(revision_path, serialized_envelope)
         latest_path = self._artifact_path(feature_id, artifact_type)
-        self._write_text_atomic(latest_path, serialized_envelope)
+        pending_path = self._pending_write_path(
+            feature_id,
+            artifact_type,
+            artifact_hash,
+        )
+        self._write_text_atomic(
+            pending_path,
+            self._serialize_pending_write(
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                artifact_hash=artifact_hash,
+                revision_path=revision_path,
+                latest_path=latest_path,
+            ),
+        )
+        try:
+            self._write_text_atomic(revision_path, serialized_envelope)
+            self._write_text_atomic(latest_path, serialized_envelope)
+        except Exception:
+            if not revision_path.exists():
+                self._unlink_if_exists(pending_path)
+            raise
+        else:
+            self._unlink_if_exists(pending_path)
         return ArtifactRef(
             feature_id=feature_id,
             artifact_type=artifact_type,
@@ -274,6 +308,18 @@ class ArtifactStore:
             return []
         return sorted(path.name for path in features_dir.iterdir() if path.is_dir())
 
+    def recover_pending_writes(self) -> list[dict[str, str]]:
+        """Complete pending revision-to-latest writes after an interrupted write."""
+
+        features_dir = self._guard_path(self.root / "features")
+        if not features_dir.exists():
+            return []
+
+        results: list[dict[str, str]] = []
+        for marker_path in sorted(features_dir.glob("*/pending_writes/*/*.json")):
+            results.append(self._recover_pending_write(marker_path))
+        return results
+
     def exists(self, ref: ArtifactRef) -> bool:
         """Return whether a guarded artifact reference exists."""
 
@@ -298,6 +344,21 @@ class ArtifactStore:
             / "features"
             / feature_id
             / "revisions"
+            / artifact_type
+            / f"{artifact_hash}.json"
+        )
+
+    def _pending_write_path(
+        self,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str,
+    ) -> Path:
+        return self._guard_path(
+            self.root
+            / "features"
+            / feature_id
+            / "pending_writes"
             / artifact_type
             / f"{artifact_hash}.json"
         )
@@ -333,6 +394,121 @@ class ArtifactStore:
         finally:
             if temp_path.exists():
                 temp_path.unlink()
+
+    def _recover_pending_write(self, marker_path: Path) -> dict[str, str]:
+        guarded_marker_path = self._guard_path(marker_path)
+        marker = json.loads(guarded_marker_path.read_text(encoding="utf-8"))
+        self._validate_pending_write_marker(marker)
+
+        feature_id = str(marker["feature_id"])
+        artifact_type = str(marker["artifact_type"])
+        artifact_hash = str(marker["artifact_hash"])
+        revision_path = self._revision_artifact_path(
+            feature_id,
+            artifact_type,
+            artifact_hash,
+        )
+        latest_path = self._artifact_path(feature_id, artifact_type)
+        expected_marker_path = self._pending_write_path(
+            feature_id,
+            artifact_type,
+            artifact_hash,
+        )
+        if guarded_marker_path != expected_marker_path:
+            raise ArtifactStoreError("Pending write marker path mismatch")
+        if str(revision_path) != marker["revision_path"]:
+            raise ArtifactStoreError("Pending write revision_path mismatch")
+        if str(latest_path) != marker["latest_path"]:
+            raise ArtifactStoreError("Pending write latest_path mismatch")
+
+        ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            path=str(revision_path),
+            artifact_hash=artifact_hash,
+        )
+        if not revision_path.exists():
+            return self._pending_write_result(marker, status="blocked", reason="revision_missing")
+        try:
+            self.read(ref)
+        except ArtifactStoreError as exc:
+            return self._pending_write_result(marker, status="blocked", reason=str(exc))
+
+        latest_needs_restore = True
+        if latest_path.exists():
+            try:
+                latest_hash = self._latest_artifact_hash(feature_id, artifact_type)
+            except ArtifactStoreError:
+                latest_needs_restore = True
+            else:
+                latest_needs_restore = latest_hash != artifact_hash
+
+        if latest_needs_restore:
+            self._write_text_atomic(
+                latest_path,
+                revision_path.read_text(encoding="utf-8"),
+            )
+            status = "recovered"
+        else:
+            status = "already_current"
+        self._unlink_if_exists(guarded_marker_path)
+        return self._pending_write_result(marker, status=status, reason="")
+
+    def _serialize_pending_write(
+        self,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str,
+        revision_path: Path,
+        latest_path: Path,
+    ) -> str:
+        marker = {
+            "schema_version": "1.0",
+            "feature_id": feature_id,
+            "artifact_type": artifact_type,
+            "artifact_hash": artifact_hash,
+            "revision_path": str(revision_path),
+            "latest_path": str(latest_path),
+            "status": _PENDING_WRITE_STATUS,
+        }
+        return json.dumps(marker, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+    @staticmethod
+    def _pending_write_result(
+        marker: Mapping[str, Any],
+        *,
+        status: str,
+        reason: str,
+    ) -> dict[str, str]:
+        result = {
+            "feature_id": str(marker["feature_id"]),
+            "artifact_type": str(marker["artifact_type"]),
+            "artifact_hash": str(marker["artifact_hash"]),
+            "status": status,
+        }
+        if reason:
+            result["reason"] = reason
+        return result
+
+    @staticmethod
+    def _validate_pending_write_marker(marker: Mapping[str, Any]) -> None:
+        fields = set(marker)
+        missing = sorted(_PENDING_WRITE_FIELDS - fields)
+        if missing:
+            raise ArtifactStoreError(f"Pending write marker missing fields: {missing}")
+        unexpected = sorted(fields - _PENDING_WRITE_FIELDS)
+        if unexpected:
+            raise ArtifactStoreError(f"Pending write marker unexpected fields: {unexpected}")
+        if marker["schema_version"] != "1.0":
+            raise ArtifactStoreError("Pending write marker schema_version mismatch")
+        if marker["status"] != _PENDING_WRITE_STATUS:
+            raise ArtifactStoreError("Pending write marker status mismatch")
+
+    @staticmethod
+    def _unlink_if_exists(path: Path) -> None:
+        if path.exists():
+            path.unlink()
 
     def _validate_upstream_refs(
         self,

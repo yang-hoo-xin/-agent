@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import src.mod_agent.artifacts.store as artifact_store_module
 from src.mod_agent.artifacts import (
     ArtifactRef,
     ArtifactStore,
@@ -163,6 +164,21 @@ def test_write_leaves_no_atomic_temp_files(tmp_path: Path) -> None:
     assert list((tmp_path / "artifacts").rglob(".tmp-*")) == []
 
 
+def test_write_removes_pending_marker_after_success(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+
+    store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    pending_dir = (
+        tmp_path / "artifacts" / "features" / "feature_001" / "pending_writes"
+    )
+    assert list(pending_dir.rglob("*.json")) == []
+
+
 def test_write_cleans_atomic_temp_file_when_replace_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -182,6 +198,63 @@ def test_write_cleans_atomic_temp_file_when_replace_fails(
         )
 
     assert list((tmp_path / "artifacts").rglob(".tmp-*")) == []
+
+
+def test_recover_pending_write_restores_latest_from_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    original_replace = artifact_store_module.os.replace
+
+    def fail_latest_replace(source: Path, destination: Path) -> None:
+        if Path(destination).name == "feature_spec.json":
+            raise OSError("latest replace failed")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(artifact_store_module.os, "replace", fail_latest_replace)
+
+    with pytest.raises(OSError, match="latest replace failed"):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="feature_spec",
+            payload=_feature_payload(),
+        )
+
+    pending_dir = (
+        tmp_path / "artifacts" / "features" / "feature_001" / "pending_writes"
+    )
+    pending_markers = list(pending_dir.rglob("*.json"))
+    assert len(pending_markers) == 1
+    revision_files = list(
+        (
+            tmp_path
+            / "artifacts"
+            / "features"
+            / "feature_001"
+            / "revisions"
+            / "feature_spec"
+        ).glob("*.json")
+    )
+    assert len(revision_files) == 1
+    latest_path = tmp_path / "artifacts" / "features" / "feature_001" / "feature_spec.json"
+    assert not latest_path.exists()
+
+    revision_envelope = json.loads(revision_files[0].read_text(encoding="utf-8"))
+    monkeypatch.setattr(artifact_store_module.os, "replace", original_replace)
+
+    recovery = store.recover_pending_writes()
+
+    assert recovery == [
+        {
+            "feature_id": "feature_001",
+            "artifact_type": "feature_spec",
+            "artifact_hash": revision_envelope["artifact_hash"],
+            "status": "recovered",
+        }
+    ]
+    assert json.loads(latest_path.read_text(encoding="utf-8")) == revision_envelope
+    assert list(pending_dir.rglob("*.json")) == []
 
 
 def test_list_feature_artifacts_returns_refs(tmp_path: Path) -> None:
