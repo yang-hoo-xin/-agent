@@ -210,6 +210,18 @@ def _payload_from_command_result(
         limitations=limitations,
         acceptance_criteria=acceptance_criteria,
         runtime_verification_plan=runtime_verification_plan,
+        plugin_marker_binding={
+            "marker_source": "runtime_probe",
+            "markers": [
+                {
+                    "acceptance_criterion": criterion,
+                    "marker": profile.acceptance_markers[criterion],
+                    "observed": criterion in supported_criteria,
+                }
+                for criterion in acceptance_criteria
+                if criterion in profile.acceptance_markers
+            ],
+        },
     )
 
 

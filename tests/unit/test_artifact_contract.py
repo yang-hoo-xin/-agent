@@ -183,8 +183,13 @@ def test_runtime_evidence_contract_requires_acceptance_fields() -> None:
 
     required = {
         "feature_id",
+        "run_id",
+        "build_artifact_ref",
+        "build_artifact_hash",
         "execution_mode",
         "evidence_source",
+        "plugin_marker_binding",
+        "screenshot_refs",
         "startup_loaded",
         "gameplay_behavior_verified",
         "evidence_items",
@@ -195,6 +200,7 @@ def test_runtime_evidence_contract_requires_acceptance_fields() -> None:
         "raw_supplied_output",
         "sources",
         "non_goals_checked",
+        "non_goal_preservation",
         "limitations",
         "real_runtime_performed",
         "claims_real_runtime_success",

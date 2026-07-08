@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any
 
 
 class RuntimeEvidenceError(ValueError):
@@ -40,6 +41,12 @@ def build_fake_runtime_evidence_payload(
     input_execution_mode: str | None,
     acceptance_criteria: Iterable[str] = (),
     runtime_verification_plan: Iterable[str] = (),
+    run_id: str | None = None,
+    build_artifact_ref: Mapping[str, Any] | None = None,
+    build_artifact_hash: str | None = None,
+    plugin_marker_binding: Mapping[str, Any] | None = None,
+    screenshot_refs: Iterable[Mapping[str, Any]] = (),
+    non_goal_preservation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build fake runtime evidence that explicitly evaluates the acceptance contract."""
 
@@ -78,6 +85,12 @@ def build_fake_runtime_evidence_payload(
         input_execution_mode=input_execution_mode,
         acceptance_criteria=criteria,
         runtime_verification_plan=tuple(runtime_verification_plan),
+        run_id=run_id,
+        build_artifact_ref=build_artifact_ref,
+        build_artifact_hash=build_artifact_hash,
+        plugin_marker_binding=plugin_marker_binding,
+        screenshot_refs=tuple(screenshot_refs),
+        non_goal_preservation=non_goal_preservation,
     )
 
 
@@ -93,6 +106,12 @@ def build_supplied_runtime_evidence_payload(
     limitations: Iterable[str] = (),
     acceptance_criteria: Iterable[str] = (),
     runtime_verification_plan: Iterable[str] = (),
+    run_id: str | None = None,
+    build_artifact_ref: Mapping[str, Any] | None = None,
+    build_artifact_hash: str | None = None,
+    plugin_marker_binding: Mapping[str, Any] | None = None,
+    screenshot_refs: Iterable[Mapping[str, Any]] = (),
+    non_goal_preservation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build runtime evidence from user-supplied logs or observations."""
 
@@ -114,6 +133,12 @@ def build_supplied_runtime_evidence_payload(
         input_execution_mode=None,
         acceptance_criteria=tuple(acceptance_criteria),
         runtime_verification_plan=tuple(runtime_verification_plan),
+        run_id=run_id,
+        build_artifact_ref=build_artifact_ref,
+        build_artifact_hash=build_artifact_hash,
+        plugin_marker_binding=plugin_marker_binding,
+        screenshot_refs=tuple(screenshot_refs),
+        non_goal_preservation=non_goal_preservation,
     )
 
 
@@ -130,6 +155,12 @@ def build_real_runtime_evidence_payload(
     limitations: Iterable[str] = (),
     acceptance_criteria: Iterable[str] = (),
     runtime_verification_plan: Iterable[str] = (),
+    run_id: str | None = None,
+    build_artifact_ref: Mapping[str, Any] | None = None,
+    build_artifact_hash: str | None = None,
+    plugin_marker_binding: Mapping[str, Any] | None = None,
+    screenshot_refs: Iterable[Mapping[str, Any]] = (),
+    non_goal_preservation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build runtime evidence from an explicitly executed runtime probe."""
 
@@ -151,6 +182,12 @@ def build_real_runtime_evidence_payload(
         input_execution_mode=input_execution_mode,
         acceptance_criteria=tuple(acceptance_criteria),
         runtime_verification_plan=tuple(runtime_verification_plan),
+        run_id=run_id,
+        build_artifact_ref=build_artifact_ref,
+        build_artifact_hash=build_artifact_hash,
+        plugin_marker_binding=plugin_marker_binding,
+        screenshot_refs=tuple(screenshot_refs),
+        non_goal_preservation=non_goal_preservation,
     )
 
 
@@ -165,6 +202,12 @@ def build_manual_runtime_evidence_payload(
     limitations: Iterable[str] = (),
     acceptance_criteria: Iterable[str] = (),
     runtime_verification_plan: Iterable[str] = (),
+    run_id: str | None = None,
+    build_artifact_ref: Mapping[str, Any] | None = None,
+    build_artifact_hash: str | None = None,
+    plugin_marker_binding: Mapping[str, Any] | None = None,
+    screenshot_refs: Iterable[Mapping[str, Any]] = (),
+    non_goal_preservation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build runtime evidence from explicit manual verification notes."""
 
@@ -186,7 +229,38 @@ def build_manual_runtime_evidence_payload(
         input_execution_mode=None,
         acceptance_criteria=tuple(acceptance_criteria),
         runtime_verification_plan=tuple(runtime_verification_plan),
+        run_id=run_id,
+        build_artifact_ref=build_artifact_ref,
+        build_artifact_hash=build_artifact_hash,
+        plugin_marker_binding=plugin_marker_binding,
+        screenshot_refs=tuple(screenshot_refs),
+        non_goal_preservation=non_goal_preservation,
     )
+
+
+def bind_runtime_evidence_context(
+    payload: Mapping[str, Any],
+    *,
+    run_id: str,
+    build_artifact_ref: Any,
+) -> dict[str, Any]:
+    """Bind runtime evidence to the graph run and upstream build artifact."""
+
+    bound = dict(payload)
+    ref_payload = _artifact_ref_payload(build_artifact_ref)
+    if not bound.get("run_id"):
+        bound["run_id"] = run_id
+    if bound.get("build_artifact_ref") is None:
+        bound["build_artifact_ref"] = ref_payload
+    if not bound.get("build_artifact_hash") and ref_payload is not None:
+        bound["build_artifact_hash"] = ref_payload["artifact_hash"]
+    bound.setdefault("plugin_marker_binding", {})
+    bound.setdefault("screenshot_refs", [])
+    bound.setdefault(
+        "non_goal_preservation",
+        _non_goal_preservation(bound.get("non_goals_checked") or ()),
+    )
+    return bound
 
 
 def _build_runtime_payload(
@@ -207,8 +281,16 @@ def _build_runtime_payload(
     input_execution_mode: str | None,
     acceptance_criteria: Iterable[str],
     runtime_verification_plan: Iterable[str],
+    run_id: str | None,
+    build_artifact_ref: Mapping[str, Any] | None,
+    build_artifact_hash: str | None,
+    plugin_marker_binding: Mapping[str, Any] | None,
+    screenshot_refs: Iterable[Mapping[str, Any]],
+    non_goal_preservation: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     items = tuple(evidence_items)
+    marker_binding = dict(plugin_marker_binding or {})
+    non_goals = tuple(non_goals_checked)
     _validate_verification(
         verification_status=verification_status,
         startup_loaded=startup_loaded,
@@ -228,8 +310,13 @@ def _build_runtime_payload(
         "stage": "runtime_evidence",
         "message": message,
         "feature_id": feature_id,
+        "run_id": run_id,
+        "build_artifact_ref": dict(build_artifact_ref) if build_artifact_ref else None,
+        "build_artifact_hash": build_artifact_hash,
         "execution_mode": execution_mode,
         "evidence_source": evidence_source,
+        "plugin_marker_binding": marker_binding,
+        "screenshot_refs": [dict(item) for item in screenshot_refs],
         "startup_loaded": startup_loaded,
         "gameplay_behavior_verified": gameplay_behavior_verified,
         "evidence_items": [item.to_dict() for item in items],
@@ -243,7 +330,10 @@ def _build_runtime_payload(
         "runtime_status": verification_status,
         "raw_supplied_output": raw_supplied_output,
         "sources": list(sources),
-        "non_goals_checked": [dict(item) for item in non_goals_checked],
+        "non_goals_checked": [dict(item) for item in non_goals],
+        "non_goal_preservation": dict(
+            non_goal_preservation or _non_goal_preservation(non_goals)
+        ),
         "limitations": list(limitations),
         "real_runtime_performed": execution_mode == "real",
         "manual_evidence_required": verification_status != "verified",
@@ -312,3 +402,42 @@ def _sources_from_items(
         }
         for item in evidence_items
     ]
+
+
+def _artifact_ref_payload(ref: Any) -> dict[str, str] | None:
+    if ref is None:
+        return None
+    feature_id = getattr(ref, "feature_id", None)
+    artifact_type = getattr(ref, "artifact_type", None)
+    path = getattr(ref, "path", None)
+    artifact_hash = getattr(ref, "artifact_hash", None)
+    if not all(isinstance(item, str) for item in (feature_id, artifact_type, path, artifact_hash)):
+        return None
+    return {
+        "feature_id": feature_id,
+        "artifact_type": artifact_type,
+        "path": path,
+        "artifact_hash": artifact_hash,
+    }
+
+
+def _non_goal_preservation(
+    non_goals_checked: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    checked = [dict(item) for item in non_goals_checked]
+    violations = [
+        item
+        for item in checked
+        if item.get("preserved") is False or item.get("status") == "violated"
+    ]
+    if violations:
+        status = "violated"
+    elif checked:
+        status = "preserved"
+    else:
+        status = "not_checked"
+    return {
+        "status": status,
+        "checked": checked,
+        "violations": violations,
+    }

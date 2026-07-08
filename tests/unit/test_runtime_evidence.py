@@ -4,18 +4,38 @@ from __future__ import annotations
 
 import pytest
 
+from src.mod_agent.artifacts import ArtifactRef
 from src.mod_agent.runtime import (
     RuntimeEvidenceError,
     RuntimeEvidenceItem,
     build_manual_runtime_evidence_payload,
     build_real_runtime_evidence_payload,
     build_supplied_runtime_evidence_payload,
+    bind_runtime_evidence_context,
 )
 
 
 ACCEPTANCE_CRITERION = "Requested behavior is implemented: make Load enable diagnostics"
 SECOND_ACCEPTANCE_CRITERION = "Diagnostic toggle keeps unrelated markers unchanged"
 RUNTIME_PLAN_STEP = "acceptance_evidence_observed"
+RUN_ID = "run_001"
+BUILD_ARTIFACT_HASH = "sha256:build-artifact"
+BUILD_ARTIFACT_REF = {
+    "feature_id": "feature_001",
+    "artifact_type": "build_result",
+    "path": "features/feature_001/build_result.json",
+    "artifact_hash": BUILD_ARTIFACT_HASH,
+}
+PLUGIN_MARKER_BINDING = {
+    "marker_source": "runtime_probe",
+    "markers": [
+        {
+            "marker": "BETTER_HIT_FEEDBACK_ACCEPTANCE_OK",
+            "acceptance_criterion": ACCEPTANCE_CRITERION,
+            "observed": True,
+        }
+    ],
+}
 
 
 def test_manual_runtime_evidence_verifies_matching_acceptance_contract() -> None:
@@ -46,6 +66,11 @@ def test_manual_runtime_evidence_verifies_matching_acceptance_contract() -> None
         "acceptance_criteria": [ACCEPTANCE_CRITERION],
         "runtime_verification_plan": [RUNTIME_PLAN_STEP],
     }
+    assert payload["run_id"] is None
+    assert payload["build_artifact_hash"] is None
+    assert payload["plugin_marker_binding"] == {}
+    assert payload["screenshot_refs"] == []
+    assert payload["non_goal_preservation"]["status"] == "not_checked"
 
 
 def test_supplied_runtime_evidence_rejects_unmatched_acceptance_contract() -> None:
@@ -136,6 +161,23 @@ def test_real_runtime_evidence_can_verify_full_acceptance_contract() -> None:
         raw_runtime_output="Runtime probe observed the diagnostic behavior.",
         acceptance_criteria=(ACCEPTANCE_CRITERION,),
         runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        run_id=RUN_ID,
+        build_artifact_ref=BUILD_ARTIFACT_REF,
+        build_artifact_hash=BUILD_ARTIFACT_HASH,
+        plugin_marker_binding=PLUGIN_MARKER_BINDING,
+        screenshot_refs=(
+            {
+                "screenshot_id": "shot_001",
+                "artifact_ref": "screenshots/shot_001.png",
+                "content_hash": "sha256:screenshot",
+            },
+        ),
+        non_goals_checked=(
+            {
+                "non_goal": SECOND_ACCEPTANCE_CRITERION,
+                "preserved": True,
+            },
+        ),
     )
 
     assert payload["execution_mode"] == "real"
@@ -143,3 +185,88 @@ def test_real_runtime_evidence_can_verify_full_acceptance_contract() -> None:
     assert payload["real_runtime_performed"] is True
     assert payload["claims_real_runtime_success"] is True
     assert payload["acceptance_verified"] is True
+    assert payload["run_id"] == RUN_ID
+    assert payload["build_artifact_ref"] == BUILD_ARTIFACT_REF
+    assert payload["build_artifact_hash"] == BUILD_ARTIFACT_HASH
+    assert payload["plugin_marker_binding"] == PLUGIN_MARKER_BINDING
+    assert payload["screenshot_refs"] == [
+        {
+            "screenshot_id": "shot_001",
+            "artifact_ref": "screenshots/shot_001.png",
+            "content_hash": "sha256:screenshot",
+        }
+    ]
+    assert payload["non_goal_preservation"] == {
+        "status": "preserved",
+        "checked": [
+            {
+                "non_goal": SECOND_ACCEPTANCE_CRITERION,
+                "preserved": True,
+            }
+        ],
+        "violations": [],
+    }
+
+
+def test_real_runtime_evidence_can_be_built_before_graph_binding() -> None:
+    payload = build_real_runtime_evidence_payload(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        evidence_items=(
+            RuntimeEvidenceItem(
+                item_type="runtime_log",
+                source="runtime_probe",
+                locator="runtime://probe-001",
+                supports_acceptance=(ACCEPTANCE_CRITERION,),
+                confidence=1.0,
+            ),
+        ),
+        startup_loaded=True,
+        gameplay_behavior_verified=True,
+        verification_status="verified",
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+    )
+
+    assert payload["claims_real_runtime_success"] is True
+    assert payload["run_id"] is None
+    assert payload["build_artifact_hash"] is None
+    assert payload["plugin_marker_binding"] == {}
+
+
+def test_bind_runtime_evidence_context_records_run_and_build_artifact() -> None:
+    payload = build_real_runtime_evidence_payload(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        evidence_items=(
+            RuntimeEvidenceItem(
+                item_type="runtime_log",
+                source="runtime_probe",
+                locator="runtime://probe-001",
+                supports_acceptance=(ACCEPTANCE_CRITERION,),
+                confidence=1.0,
+            ),
+        ),
+        startup_loaded=True,
+        gameplay_behavior_verified=True,
+        verification_status="verified",
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        plugin_marker_binding=PLUGIN_MARKER_BINDING,
+    )
+    build_ref = ArtifactRef(
+        feature_id="feature_001",
+        artifact_type="build_result",
+        path="features/feature_001/build_result.json",
+        artifact_hash=BUILD_ARTIFACT_HASH,
+    )
+
+    bound = bind_runtime_evidence_context(
+        payload,
+        run_id=RUN_ID,
+        build_artifact_ref=build_ref,
+    )
+
+    assert bound["run_id"] == RUN_ID
+    assert bound["build_artifact_ref"] == BUILD_ARTIFACT_REF
+    assert bound["build_artifact_hash"] == BUILD_ARTIFACT_HASH

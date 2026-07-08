@@ -7,6 +7,7 @@ from .evidence import (
     build_manual_runtime_evidence_payload,
     build_real_runtime_evidence_payload,
     build_supplied_runtime_evidence_payload,
+    bind_runtime_evidence_context,
 )
 from .probe import (
     RuntimeProbeCommandResult,
@@ -38,6 +39,7 @@ __all__ = [
     "build_screenshot_metadata",
     "build_screenshot_registry_payload",
     "build_supplied_runtime_evidence_payload",
+    "bind_runtime_evidence_context",
     "make_runtime_probe_evidence_factory",
     "screenshot_registry_to_runtime_item",
 ]

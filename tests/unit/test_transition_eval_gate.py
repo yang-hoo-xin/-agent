@@ -128,6 +128,80 @@ def test_transition_eval_gate_detects_runtime_claim_without_real_mode() -> None:
     assert _case_status(report, "runtime_claim_boundary_execution_mode") == "failed"
 
 
+def test_transition_eval_gate_detects_runtime_claim_without_binding() -> None:
+    runtime = {
+        **_real_runtime(),
+        "run_id": "run_001",
+        "build_artifact_ref": None,
+        "build_artifact_hash": None,
+        "plugin_marker_binding": {},
+    }
+
+    report = build_transition_eval_gate_report(
+        review=_review(),
+        dry_run=_dry_run(),
+        build=_fake_build(),
+        runtime=runtime,
+        v1_boundary={"v1_acceptance_status": "blocked"},
+        claims_real_success=False,
+    )
+
+    assert report["status"] == "failed"
+    assert _case_status(report, "runtime_claim_boundary_binding") == "failed"
+
+
+def test_transition_eval_gate_requires_acceptance_marker_binding() -> None:
+    runtime = {
+        **_real_runtime(),
+        "plugin_marker_binding": {
+            "markers": [
+                {
+                    "marker": "BETTER_HIT_FEEDBACK_STARTUP_OK",
+                    "observed": True,
+                }
+            ]
+        },
+    }
+
+    report = build_transition_eval_gate_report(
+        review=_review(),
+        dry_run=_dry_run(),
+        build=_fake_build(),
+        runtime=runtime,
+        v1_boundary={"v1_acceptance_status": "blocked"},
+        claims_real_success=False,
+    )
+
+    assert report["status"] == "failed"
+    assert _case_status(report, "runtime_claim_boundary_binding") == "failed"
+
+
+def test_transition_eval_gate_detects_unpreserved_non_goals() -> None:
+    runtime = {
+        **_real_runtime(),
+        "non_goal_preservation": {
+            "status": "violated",
+            "checked": [{"non_goal": "Do not alter recoil.", "preserved": False}],
+            "violations": [{"non_goal": "Do not alter recoil.", "preserved": False}],
+        },
+    }
+
+    report = build_transition_eval_gate_report(
+        review=_review(),
+        dry_run=_dry_run(),
+        build=_fake_build(),
+        runtime=runtime,
+        v1_boundary={"v1_acceptance_status": "blocked"},
+        claims_real_success=False,
+    )
+
+    assert report["status"] == "failed"
+    assert (
+        _case_status(report, "runtime_claim_boundary_non_goal_preservation")
+        == "failed"
+    )
+
+
 def test_transition_eval_gate_detects_insufficient_baseline() -> None:
     report = build_transition_eval_gate_report(
         review=_review(),
@@ -268,4 +342,30 @@ def _real_runtime() -> dict[str, object]:
         "real_runtime_performed": True,
         "acceptance_verified": True,
         "claims_real_runtime_success": True,
+        "run_id": "run_001",
+        "build_artifact_ref": {
+            "feature_id": "feature_001",
+            "artifact_type": "build_result",
+            "path": "features/feature_001/build_result.json",
+            "artifact_hash": "sha256:build-artifact",
+        },
+        "build_artifact_hash": "sha256:build-artifact",
+        "acceptance_contract": {
+            "acceptance_criteria": ["Requested behavior is implemented."],
+            "runtime_verification_plan": ["manual"],
+        },
+        "plugin_marker_binding": {
+            "markers": [
+                {
+                    "marker": "BETTER_HIT_FEEDBACK_ACCEPTANCE_OK",
+                    "acceptance_criterion": "Requested behavior is implemented.",
+                    "observed": True,
+                }
+            ]
+        },
+        "non_goal_preservation": {
+            "status": "not_checked",
+            "checked": [],
+            "violations": [],
+        },
     }

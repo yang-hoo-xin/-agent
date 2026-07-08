@@ -36,6 +36,7 @@ from src.mod_agent.planning import (
 from src.mod_agent.proposal import PatchProposalBuilder, ProposalReviewer
 from src.mod_agent.repair import RepairPatchProposalBuilder, RepairPlanner
 from src.mod_agent.runtime import build_fake_runtime_evidence_payload
+from src.mod_agent.runtime.evidence import bind_runtime_evidence_context
 
 from .nodes import StubNodeRunner
 from .state import ModAgentState
@@ -745,6 +746,7 @@ def _run_runtime_evidence(
     build = _read_artifact_data(state, artifact_store, "build_result")
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
     feature_id = state["feature_id"] or state["request_id"]
+    build_artifact_ref = _artifact_ref_from_state(state, "build_result")
     payload = (
         runtime_evidence_factory(feature_id, build, feature_spec)
         if runtime_evidence_factory is not None
@@ -757,6 +759,11 @@ def _run_runtime_evidence(
             ),
         )
     )
+    payload = bind_runtime_evidence_context(
+        payload,
+        run_id=state["run_id"],
+        build_artifact_ref=build_artifact_ref,
+    )
     acceptance_verified = bool(payload["acceptance_verified"])
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
@@ -764,7 +771,7 @@ def _run_runtime_evidence(
         payload=payload,
         status="success" if acceptance_verified else "blocked",
         upstream_refs=[
-            _artifact_ref_from_state(state, "build_result"),
+            build_artifact_ref,
             _artifact_ref_from_state(state, "feature_spec"),
         ],
     )
@@ -780,6 +787,11 @@ def _run_runtime_evidence(
         "acceptance_verified": acceptance_verified,
         "acceptance_contract": payload["acceptance_contract"],
         "claims_real_runtime_success": payload["claims_real_runtime_success"],
+        "run_id": payload["run_id"],
+        "build_artifact_hash": payload["build_artifact_hash"],
+        "plugin_marker_binding": payload["plugin_marker_binding"],
+        "screenshot_refs": payload["screenshot_refs"],
+        "non_goal_preservation": payload["non_goal_preservation"],
     }
     _record_artifact(next_state, "runtime_evidence", artifact_ref)
     return next_state

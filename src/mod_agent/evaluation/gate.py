@@ -235,6 +235,22 @@ def _runtime_claim_boundary_case(runtime: Mapping[str, Any]) -> dict[str, str]:
             "claim_boundary",
             "Runtime claims real success without acceptance_verified=True.",
         )
+    missing_binding = _missing_runtime_success_binding(runtime)
+    if missing_binding:
+        return _failed(
+            "runtime_claim_boundary_binding",
+            "claim_boundary",
+            "Runtime claims real success without required binding fields: "
+            + ", ".join(missing_binding)
+            + ".",
+        )
+    non_goal_failure = _non_goal_preservation_failure(runtime)
+    if non_goal_failure:
+        return _failed(
+            "runtime_claim_boundary_non_goal_preservation",
+            "claim_boundary",
+            non_goal_failure,
+        )
     return _passed(
         "runtime_claim_boundary",
         "claim_boundary",
@@ -314,3 +330,94 @@ def _string_tuple(value: Any) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
     return tuple(str(item) for item in value)
+
+
+def _missing_runtime_success_binding(runtime: Mapping[str, Any]) -> tuple[str, ...]:
+    missing: list[str] = []
+    if not runtime.get("run_id"):
+        missing.append("run_id")
+    build_artifact_ref = runtime.get("build_artifact_ref")
+    if not _valid_build_artifact_ref(build_artifact_ref):
+        missing.append("build_artifact_ref")
+    build_artifact_hash = runtime.get("build_artifact_hash")
+    if not build_artifact_hash:
+        missing.append("build_artifact_hash")
+    elif (
+        isinstance(build_artifact_ref, Mapping)
+        and build_artifact_ref.get("artifact_hash") != build_artifact_hash
+    ):
+        missing.append("build_artifact_hash")
+    if not _has_observed_acceptance_plugin_markers(
+        runtime.get("plugin_marker_binding"),
+        _acceptance_criteria(runtime),
+    ):
+        missing.append("plugin_marker_binding")
+    return tuple(missing)
+
+
+def _valid_build_artifact_ref(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    return all(
+        isinstance(value.get(field), str) and bool(value.get(field))
+        for field in ("feature_id", "artifact_type", "path", "artifact_hash")
+    )
+
+
+def _acceptance_criteria(runtime: Mapping[str, Any]) -> tuple[str, ...]:
+    contract = runtime.get("acceptance_contract")
+    if not isinstance(contract, Mapping):
+        return ()
+    return _string_tuple(contract.get("acceptance_criteria"))
+
+
+def _has_observed_acceptance_plugin_markers(
+    value: Any,
+    acceptance_criteria: tuple[str, ...],
+) -> bool:
+    observed_acceptance = _observed_acceptance_marker_criteria(value)
+    if acceptance_criteria:
+        return set(acceptance_criteria).issubset(observed_acceptance)
+    return bool(observed_acceptance)
+
+
+def _observed_acceptance_marker_criteria(value: Any) -> set[str]:
+    if not isinstance(value, Mapping):
+        return set()
+    observed: set[str] = set()
+    _add_observed_acceptance_marker(observed, value)
+    markers = value.get("markers") or value.get("acceptance_markers") or ()
+    if not isinstance(markers, (list, tuple)):
+        return observed
+    for marker in markers:
+        if isinstance(marker, Mapping):
+            _add_observed_acceptance_marker(observed, marker)
+    return observed
+
+
+def _add_observed_acceptance_marker(
+    observed: set[str],
+    marker: Mapping[str, Any],
+) -> None:
+    acceptance_criterion = marker.get("acceptance_criterion")
+    if marker.get("observed") is True and isinstance(acceptance_criterion, str):
+        observed.add(acceptance_criterion)
+
+
+def _non_goal_preservation_failure(runtime: Mapping[str, Any]) -> str | None:
+    preservation = runtime.get("non_goal_preservation")
+    if not isinstance(preservation, Mapping):
+        return "Runtime claims real success without non_goal_preservation."
+    status = preservation.get("status")
+    violations = preservation.get("violations")
+    if status == "violated":
+        return "Runtime claims real success with non-goal preservation violations."
+    if isinstance(violations, (list, tuple)) and violations:
+        return "Runtime claims real success with non-goal preservation violations."
+    checked = preservation.get("checked")
+    if isinstance(checked, (list, tuple)) and checked and status != "preserved":
+        return "Runtime claims real success without preserved non-goal status."
+    non_goals_checked = runtime.get("non_goals_checked")
+    if isinstance(non_goals_checked, (list, tuple)) and non_goals_checked and status != "preserved":
+        return "Runtime claims real success without preserved non-goal status."
+    return None

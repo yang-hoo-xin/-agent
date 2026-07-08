@@ -53,6 +53,20 @@ public class Plugin
     return db
 
 
+def _plugin_marker_binding(criteria: tuple[str, ...]) -> dict[str, object]:
+    return {
+        "marker_source": "runtime_probe",
+        "markers": [
+            {
+                "acceptance_criterion": criterion,
+                "marker": f"MARKER_{index}",
+                "observed": True,
+            }
+            for index, criterion in enumerate(criteria, start=1)
+        ],
+    }
+
+
 def _real_build_result_factory(tmp_path: Path):
     build_root = tmp_path / "build"
     expected_artifact = build_root / "bin" / "Debug" / "BetterHitFeedback.dll"
@@ -370,6 +384,7 @@ def test_real_runtime_evidence_path_can_accept_v1_boundary(tmp_path: Path) -> No
             runtime_verification_plan=tuple(
                 str(item) for item in feature_spec["runtime_verification_plan"]
             ),
+            plugin_marker_binding=_plugin_marker_binding(criteria),
         )
 
     graph = build_graph(
@@ -399,6 +414,10 @@ def test_real_runtime_evidence_path_can_accept_v1_boundary(tmp_path: Path) -> No
     assert runtime["real_runtime_performed"] is True
     assert runtime["claims_real_runtime_success"] is True
     assert runtime["acceptance_verified"] is True
+    assert runtime["run_id"] == "run_real_runtime"
+    assert runtime["build_artifact_ref"]["artifact_type"] == "build_result"
+    assert runtime["build_artifact_hash"] == result["artifact_hashes"]["build_result"]
+    assert runtime["plugin_marker_binding"]["markers"]
     assert evaluation["v1_acceptance_status"] == "accepted"
     assert evaluation["v1_acceptance_blockers"] == []
     assert evaluation["evaluation_gate"]["status"] == "passed"
@@ -440,6 +459,7 @@ def test_manual_runtime_evidence_does_not_accept_v1_boundary(tmp_path: Path) -> 
             runtime_verification_plan=tuple(
                 str(item) for item in feature_spec["runtime_verification_plan"]
             ),
+            plugin_marker_binding=_plugin_marker_binding(criteria),
         )
 
     graph = build_graph(
@@ -511,6 +531,7 @@ def test_eval_gate_insufficient_baseline_blocks_done(tmp_path: Path) -> None:
             runtime_verification_plan=tuple(
                 str(item) for item in feature_spec["runtime_verification_plan"]
             ),
+            plugin_marker_binding=_plugin_marker_binding(criteria),
         )
 
     graph = build_graph(
@@ -667,6 +688,9 @@ def test_runtime_probe_factory_can_accept_v1_boundary(tmp_path: Path) -> None:
     assert runtime["acceptance_verified"] is True
     assert runtime["claims_real_runtime_success"] is True
     assert runtime["raw_supplied_output"] is not None
+    assert runtime["run_id"] == "run_runtime_probe"
+    assert runtime["build_artifact_hash"] == result["artifact_hashes"]["build_result"]
+    assert len(runtime["plugin_marker_binding"]["markers"]) == len(acceptance_criteria)
     assert evaluation["v1_acceptance_status"] == "accepted"
     assert evaluation["v1_acceptance_blockers"] == []
 
