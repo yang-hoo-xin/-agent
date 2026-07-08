@@ -220,6 +220,7 @@ def test_eval_and_workflow_summary_contracts_separate_completion_from_success() 
         "input_acceptance_status",
         "input_acceptance_verified",
         "acceptance_contract",
+        "evaluation_gate",
     }
 
     assert eval_required.issubset(eval_contract.required_fields)

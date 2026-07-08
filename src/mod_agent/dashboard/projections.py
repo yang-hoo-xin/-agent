@@ -416,6 +416,16 @@ class DashboardProjectionBuilder:
         if evaluation is None:
             return DashboardProjectionBuilder._empty_section("No eval_report artifact found.")
         data = _data(evaluation)
+        evaluation_gate = (
+            data.get("evaluation_gate")
+            if isinstance(data.get("evaluation_gate"), dict)
+            else {}
+        )
+        gate_summary = (
+            evaluation_gate.get("summary")
+            if isinstance(evaluation_gate.get("summary"), dict)
+            else {}
+        )
         return {
             "status": data.get("verdict"),
             "execution_mode": data.get("execution_mode"),
@@ -423,6 +433,8 @@ class DashboardProjectionBuilder:
             "requested_behavior_status": data.get("requested_behavior_status"),
             "verdict": data.get("verdict"),
             "claims_real_success": data.get("claims_real_success"),
+            "evaluation_gate_status": evaluation_gate.get("status"),
+            "evaluation_gate_failed": gate_summary.get("failed"),
             "check_count": len(data.get("checks") or []),
             "input_runtime_status": data.get("input_runtime_status"),
             "input_acceptance_status": data.get("input_acceptance_status"),

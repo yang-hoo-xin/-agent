@@ -45,6 +45,8 @@ def test_projection_exposes_summaries_without_raw_artifact_body(tmp_path: Path) 
     assert projection["runtime"]["claims_real_runtime_success"] is False
     assert projection["repair"]["failure_source"] == "build"
     assert projection["evaluation"]["requested_behavior_status"] == "not_verified"
+    assert projection["evaluation"]["evaluation_gate_status"] == "passed"
+    assert projection["evaluation"]["evaluation_gate_failed"] == 0
     assert "raw_supplied_output" not in rendered
     assert "SECRET_RUNTIME_OUTPUT" not in rendered
     assert "diff_intent" not in rendered
@@ -439,6 +441,13 @@ def _eval_report_payload() -> dict[str, object]:
                 "message": "V1 acceptance requires real runtime execution evidence.",
             }
         ],
+        "evaluation_gate": {
+            "gate_name": "TRANSITION-001 Eval Gate",
+            "status": "passed",
+            "summary": {"total": 1, "passed": 1, "failed": 0},
+            "cases": [],
+            "blockers": [],
+        },
     }
 
 
