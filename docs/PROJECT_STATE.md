@@ -56,7 +56,7 @@ current SKILL-SPLIT-003 status: completed; `.agents/skills/hook-discovery-playbo
 current SKILL-SPLIT-004 status: completed; `.agents/skills/repair-loop-playbook/SKILL.md` created as a process-only expert Skill for failed gate classification, bounded repair eligibility, evidence-bound repair scope, review re-entry, and repair/handoff routing
 current SKILL-SPLIT-CLOSURE-001 status: completed; all five process Skills validate, no template residue is present in HEAD for process Skill directories, E2E-001 evidence remains discoverable, and control docs preserve runtime/real-game/automation boundaries
 current PLANNING-BRIEF-001 status: completed; `.agents/skills/mod-planning-brief-playbook/SKILL.md` created as a process-only Skill for natural language Mod planning intent extraction, request_type classification, knowledge_query_plan planning, retrieved_experience recording, planning options, selected_plan, and feature_spec handoff guidance
-current PLANNING-BRIEF-IMPL-001 status: completed; `mod_planning_brief` artifact contract and deterministic `ModPlanningBriefBuilder` now exist with focused tests for config-only, UI feedback, hook-required, and unknown / needs evidence handoffs; graph integration, automated RAG retrieval, feature_spec generation, code generation, and runtime validation are not claimed
+current PLANNING-BRIEF-IMPL-001 status: completed; `mod_planning_brief` artifact contract and deterministic `ModPlanningBriefBuilder` now exist with focused tests for config-only, UI feedback, hook-required, and unknown / needs evidence handoffs; request_type classification is deterministic heuristic routing, not model understanding; feature_spec does not yet consume `mod_planning_brief`; graph integration, automated RAG retrieval, feature_spec generation, code generation, and runtime validation are not claimed
 current ARTIFACT-INTEGRITY-001 status: completed; ArtifactStore.read recomputes the stored envelope content hash, rejects tampered payload content even when the ArtifactRef hash still matches the stored artifact_hash, and rejects missing or unexpected envelope top-level fields; focused artifact tests passed
 current ARTIFACT-INTEGRITY-002 status: completed; ArtifactStore.check_freshness and read_for_stage now detect stale deep upstream artifacts through recursive dependency traversal, while write-time and checkpoint-resume gates intentionally remain direct-freshness checks; focused artifact/checkpoint tests passed
 current ARTIFACT-INTEGRITY-003 status: completed; ArtifactStore.write now preserves immutable revision files under per-type revision directories while maintaining read-validated latest artifact files for current dashboard/MCP views; focused artifact/dashboard/MCP/workflow/E2E tests passed
@@ -179,9 +179,10 @@ planned_mod_planning_brief_shape:
 boundary:
   The process-only Skill is implemented and validated.
   The `mod_planning_brief` artifact contract and deterministic builder are implemented and tested in PLANNING-BRIEF-IMPL-001.
+  The builder's request_type classification is deterministic heuristic routing, not model understanding.
   It must not claim natural-language-to-RAG extraction is implemented.
   It must not claim automated historical experience retrieval, automated delivery lesson retrieval, or runtime planning negotiation is implemented.
-  It must not claim graph integration, automatic code generation guidance, or runtime validation is implemented.
+  It must not claim that feature_spec consumes `mod_planning_brief`, graph integration, automatic code generation guidance, or runtime validation is implemented.
   It must keep product facts, current state, schemas, test results, and evidence payloads outside the Skill.
   It must not replace auto-coder or the existing request_planning/feature_spec artifacts.
 ```
@@ -379,9 +380,9 @@ files_changed:
   docs/SPEC_COVERAGE_MATRIX.md
 behavior:
   The `mod_planning_brief` artifact contract is registered with required handoff fields and a request_planning_report upstream requirement.
-  `ModPlanningBriefBuilder` creates deterministic planning briefs with request_type classification, knowledge_query_plan, retrieved_experience placeholders, planning_options, selected_plan, and handoff guidance.
+  `ModPlanningBriefBuilder` creates deterministic planning briefs with heuristic request_type classification, knowledge_query_plan, retrieved_experience placeholders, planning_options, selected_plan, and handoff guidance.
   Focused tests cover config-only, UI feedback, hook-required, and unknown / needs evidence request handling plus ArtifactStore contract validation.
-  This does not integrate mod_planning_brief into the workflow graph and does not implement automated RAG retrieval, accumulated-experience retrieval, feature_spec generation, code generation, or runtime validation.
+  This does not integrate mod_planning_brief into the workflow graph, does not make feature_spec consume mod_planning_brief, and does not implement automated RAG retrieval, accumulated-experience retrieval, feature_spec generation, code generation, or runtime validation.
 validation:
   python -m pytest tests/unit/test_planning.py tests/unit/test_artifact_contract.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py tests/unit/test_dashboard_projection.py -q --tb=short -> 56 passed
 tests:
