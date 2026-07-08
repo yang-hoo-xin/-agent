@@ -7,11 +7,15 @@ from pathlib import Path
 
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
+from src.mod_agent.evidence import FakeDenseRetrievalProvider
 from src.mod_agent.knowledge import (
+    BM25Indexer,
+    Chunk,
     CollectionResolver,
     IncrementalIndexer,
     KnowledgeDatabase,
     SourceDefinition,
+    SourceRecord,
     SourceRegistry,
 )
 from src.mod_agent.runtime import (
@@ -65,6 +69,56 @@ def _plugin_marker_binding(criteria: tuple[str, ...]) -> dict[str, object]:
             for index, criterion in enumerate(criteria, start=1)
         ],
     }
+
+
+def _knowledge_with_dense_chunk(tmp_path: Path) -> KnowledgeDatabase:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    collection_id = "knowledge_hub"
+    index_version = "v1"
+    document_id = "knowledge_hub_doc_001"
+    chunk_id = "knowledge_hub_chunk_001"
+    db.upsert_source(
+        SourceRecord(
+            source_id="target_mod",
+            source_type="target_source",
+            root_path=collection_id,
+        )
+    )
+    db.start_index_version(
+        collection_id=collection_id,
+        index_version=index_version,
+        source_count=1,
+        chunk_count=1,
+    )
+    db.upsert_chunk(
+        Chunk(
+            chunk_id=chunk_id,
+            document_id=document_id,
+            text="Dense-only runtime hook evidence lives in this chunk.",
+            text_for_retrieval="Dense-only runtime hook evidence lives in this chunk.",
+            metadata={
+                "chunk_id": chunk_id,
+                "document_id": document_id,
+                "source_ref": document_id,
+                "content_hash": "knowledge_hub_chunk_hash",
+                "file_hash": "knowledge_hub_file_hash",
+                "source_hash": "knowledge_hub_file_hash",
+                "doc_hash": "knowledge_hub_doc_hash",
+                "source_id": "target_mod",
+                "source_type": "target_source",
+                "source_path": "knowledge_hub/runtime.json",
+            },
+        ),
+        collection_id=collection_id,
+        index_version=index_version,
+    )
+    BM25Indexer(db).index(collection_id=collection_id, index_version=index_version)
+    db.set_index_version_status(
+        collection_id=collection_id,
+        index_version=index_version,
+        status="stable",
+    )
+    return db
 
 
 def _real_build_result_factory(tmp_path: Path):
@@ -275,6 +329,38 @@ def test_graph_writes_artifacts_through_store(tmp_path: Path) -> None:
     assert "feature_spec" in artifact_types
     assert "workflow_summary" in artifact_types
     assert set(result["artifacts"]).issubset(artifact_types)
+
+
+def test_graph_retrieve_evidence_can_use_injected_dense_provider(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    knowledge_database = _knowledge_with_dense_chunk(tmp_path)
+    stable_version = knowledge_database.stable_index_version("knowledge_hub")
+    assert stable_version is not None
+    chunks = knowledge_database.list_chunks(
+        collection_id="knowledge_hub",
+        index_version=stable_version.index_version,
+    )
+    assert chunks
+    graph = build_graph(
+        store,
+        knowledge_database=knowledge_database,
+        dense_enabled=True,
+        dense_provider=FakeDenseRetrievalProvider({chunks[0].chunk_id: 0.88}),
+        dense_top_k=1,
+    )
+    state = create_initial_state(
+        run_id="run_001",
+        request_id="req_001",
+        user_request="make MissingDenseOnly enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    evidence_pack = _artifact_data(store, result, "evidence_pack")
+    assert "dense" in evidence_pack["retrieval_methods_used"]
+    assert evidence_pack["items"][0]["retrieval_method"] == "dense"
+    assert evidence_pack["items"][0]["chunk_id"] == chunks[0].chunk_id
 
 
 def test_approved_path_writes_explicit_fake_execution_artifacts(tmp_path: Path) -> None:

@@ -17,7 +17,11 @@ from src.mod_agent.domain import (
     GTFOAdapter,
     UnsupportedDomainAdapter,
 )
-from src.mod_agent.evidence import DeterministicEvidenceRetriever, EvidenceRequest
+from src.mod_agent.evidence import (
+    DenseRetrievalProvider,
+    DeterministicEvidenceRetriever,
+    EvidenceRequest,
+)
 from src.mod_agent.evaluation import build_transition_eval_gate_report
 from src.mod_agent.knowledge import (
     CollectionResolutionError,
@@ -68,6 +72,10 @@ def build_graph(
     knowledge_database: KnowledgeDatabase | None = None,
     collection_id: str | None = None,
     collection_resolver: CollectionResolver | None = None,
+    dense_provider: DenseRetrievalProvider | None = None,
+    dense_enabled: bool = False,
+    dense_required: bool = False,
+    dense_top_k: int | None = None,
     domain_adapter_registry: DomainAdapterRegistry | None = None,
     build_result_factory: BuildResultFactory | None = None,
     runtime_evidence_factory: RuntimeEvidenceFactory | None = None,
@@ -118,6 +126,10 @@ def build_graph(
                 knowledge_database,
                 collection_id,
                 collection_resolver,
+                dense_provider,
+                dense_enabled,
+                dense_required,
+                dense_top_k,
             ),
         ),
     )
@@ -394,6 +406,10 @@ def _run_retrieve_evidence(
     knowledge_database: KnowledgeDatabase | None,
     collection_id: str | None,
     collection_resolver: CollectionResolver | None,
+    dense_provider: DenseRetrievalProvider | None,
+    dense_enabled: bool,
+    dense_required: bool,
+    dense_top_k: int | None,
 ) -> ModAgentState:
     feature_data = _read_artifact_data(state, artifact_store, "feature_spec")
     if knowledge_database is None:
@@ -416,6 +432,10 @@ def _run_retrieve_evidence(
                 knowledge_database,
                 collection_id=collection_id,
                 collection_resolver=collection_resolver,
+                dense_provider=dense_provider,
+                dense_enabled=dense_enabled,
+                dense_required=dense_required,
+                dense_top_k=dense_top_k,
             ).retrieve(request)
         except CollectionResolutionError as exc:
             from src.mod_agent.evidence import EvidencePack
