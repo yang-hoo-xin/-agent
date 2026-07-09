@@ -429,6 +429,11 @@ def _runtime_evidence_payload() -> dict[str, object]:
         "evidence_source": "fake",
         "plugin_marker_binding": {},
         "screenshot_refs": [],
+        "runtime_trust_binding": {
+            "status": "not_applicable",
+            "checks": {},
+            "blockers": [],
+        },
         "startup_loaded": False,
         "gameplay_behavior_verified": False,
         "evidence_items": [],

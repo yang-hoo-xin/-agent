@@ -42,7 +42,10 @@ from src.mod_agent.planning import (
 )
 from src.mod_agent.proposal import PatchProposalBuilder, ProposalReviewer
 from src.mod_agent.repair import RepairPatchProposalBuilder, RepairPlanner
-from src.mod_agent.runtime import build_fake_runtime_evidence_payload
+from src.mod_agent.runtime import (
+    build_fake_runtime_evidence_payload,
+    make_gtfo_runtime_evidence_factory_from_settings,
+)
 from src.mod_agent.runtime.evidence import bind_runtime_evidence_context
 
 from .checkpointing import WorkflowCheckpointStore
@@ -70,11 +73,13 @@ GraphNode = Callable[[ModAgentState], ModAgentState]
 BuildResultFactory = Callable[[str, str | None], BuildResult]
 RuntimeEvidenceFactory = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
 EvaluationContextFactory = Callable[[ModAgentState], dict[str, Any]]
+ProposalGitBindingFactory = Callable[[], dict[str, Any]]
 
 
 def build_graph(
     artifact_store: ArtifactStore,
     *,
+    settings: Any | None = None,
     knowledge_database: KnowledgeDatabase | None = None,
     collection_id: str | None = None,
     collection_resolver: CollectionResolver | None = None,
@@ -85,6 +90,8 @@ def build_graph(
     domain_adapter_registry: DomainAdapterRegistry | None = None,
     build_result_factory: BuildResultFactory | None = None,
     runtime_evidence_factory: RuntimeEvidenceFactory | None = None,
+    allow_game_launch: bool = False,
+    proposal_git_binding_factory: ProposalGitBindingFactory | None = None,
     evaluation_context_factory: EvaluationContextFactory | None = None,
     require_review_approval_for_dry_run: bool = False,
     enable_dynamic_review_interrupt: bool = False,
@@ -104,6 +111,13 @@ def build_graph(
 
     stub_runner = StubNodeRunner(artifact_store)
     effective_domain_registry = domain_adapter_registry or _default_domain_adapter_registry()
+    effective_runtime_evidence_factory = (
+        runtime_evidence_factory
+        or _runtime_evidence_factory_from_settings(
+            settings,
+            allow_game_launch=allow_game_launch,
+        )
+    )
     graph = StateGraph(ModAgentState)
 
     graph.add_node(
@@ -203,7 +217,7 @@ def build_graph(
             lambda state: _run_runtime_evidence(
                 state,
                 artifact_store,
-                runtime_evidence_factory,
+                effective_runtime_evidence_factory,
             ),
         ),
     )
@@ -764,6 +778,23 @@ def _default_domain_adapter_registry() -> DomainAdapterRegistry:
     return DomainAdapterRegistry((GTFOAdapter(), UnsupportedDomainAdapter()))
 
 
+def _runtime_evidence_factory_from_settings(
+    settings: Any | None,
+    *,
+    allow_game_launch: bool,
+) -> RuntimeEvidenceFactory | None:
+    if settings is None:
+        return None
+    runtime = getattr(settings, "runtime", None)
+    gtfo = getattr(runtime, "gtfo", None)
+    if gtfo is not None and getattr(gtfo, "enabled", False):
+        return make_gtfo_runtime_evidence_factory_from_settings(
+            settings,
+            allow_game_launch=allow_game_launch,
+        )
+    return None
+
+
 def _run_fake_dry_run_apply(
     state: ModAgentState,
     artifact_store: ArtifactStore,
@@ -968,6 +999,7 @@ def _run_runtime_evidence(
         "build_artifact_hash": payload["build_artifact_hash"],
         "plugin_marker_binding": payload["plugin_marker_binding"],
         "screenshot_refs": payload["screenshot_refs"],
+        "runtime_trust_binding": payload["runtime_trust_binding"],
         "non_goal_preservation": payload["non_goal_preservation"],
     }
     _record_artifact(next_state, "runtime_evidence", artifact_ref)
@@ -1196,10 +1228,30 @@ def _v1_acceptance_boundary(
                 "message": "V1 acceptance requires verified runtime acceptance evidence.",
             }
         )
+    if (
+        runtime.get("evidence_source") == "gtfo_real_runtime_automation"
+        and _runtime_trust_binding_status(runtime) != "trusted"
+    ):
+        blockers.append(
+            {
+                "code": "GTFO_RUNTIME_TRUST_BINDING_MISSING",
+                "message": (
+                    "V1 acceptance for GTFO automation requires trusted current-run "
+                    "log, process, marker, build, and screenshot binding."
+                ),
+            }
+        )
     return {
         "v1_acceptance_status": "blocked" if blockers else "accepted",
         "v1_acceptance_blockers": blockers,
     }
+
+
+def _runtime_trust_binding_status(runtime: dict[str, Any]) -> str | None:
+    binding = runtime.get("runtime_trust_binding")
+    if not isinstance(binding, dict):
+        return None
+    return binding.get("status")
 
 
 def _request_plan_from_payload(data: dict[str, Any]) -> RequestPlan:

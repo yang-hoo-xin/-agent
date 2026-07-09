@@ -209,6 +209,7 @@ def test_runtime_evidence_contract_requires_acceptance_fields() -> None:
         "evidence_source",
         "plugin_marker_binding",
         "screenshot_refs",
+        "runtime_trust_binding",
         "startup_loaded",
         "gameplay_behavior_verified",
         "evidence_items",

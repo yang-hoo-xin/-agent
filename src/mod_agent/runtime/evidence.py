@@ -46,6 +46,7 @@ def build_fake_runtime_evidence_payload(
     build_artifact_hash: str | None = None,
     plugin_marker_binding: Mapping[str, Any] | None = None,
     screenshot_refs: Iterable[Mapping[str, Any]] = (),
+    runtime_trust_binding: Mapping[str, Any] | None = None,
     non_goal_preservation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build fake runtime evidence that explicitly evaluates the acceptance contract."""
@@ -90,6 +91,7 @@ def build_fake_runtime_evidence_payload(
         build_artifact_hash=build_artifact_hash,
         plugin_marker_binding=plugin_marker_binding,
         screenshot_refs=tuple(screenshot_refs),
+        runtime_trust_binding=runtime_trust_binding,
         non_goal_preservation=non_goal_preservation,
     )
 
@@ -111,6 +113,7 @@ def build_supplied_runtime_evidence_payload(
     build_artifact_hash: str | None = None,
     plugin_marker_binding: Mapping[str, Any] | None = None,
     screenshot_refs: Iterable[Mapping[str, Any]] = (),
+    runtime_trust_binding: Mapping[str, Any] | None = None,
     non_goal_preservation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build runtime evidence from user-supplied logs or observations."""
@@ -138,6 +141,7 @@ def build_supplied_runtime_evidence_payload(
         build_artifact_hash=build_artifact_hash,
         plugin_marker_binding=plugin_marker_binding,
         screenshot_refs=tuple(screenshot_refs),
+        runtime_trust_binding=runtime_trust_binding,
         non_goal_preservation=non_goal_preservation,
     )
 
@@ -160,6 +164,7 @@ def build_real_runtime_evidence_payload(
     build_artifact_hash: str | None = None,
     plugin_marker_binding: Mapping[str, Any] | None = None,
     screenshot_refs: Iterable[Mapping[str, Any]] = (),
+    runtime_trust_binding: Mapping[str, Any] | None = None,
     non_goal_preservation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build runtime evidence from an explicitly executed runtime probe."""
@@ -187,6 +192,7 @@ def build_real_runtime_evidence_payload(
         build_artifact_hash=build_artifact_hash,
         plugin_marker_binding=plugin_marker_binding,
         screenshot_refs=tuple(screenshot_refs),
+        runtime_trust_binding=runtime_trust_binding,
         non_goal_preservation=non_goal_preservation,
     )
 
@@ -207,6 +213,7 @@ def build_manual_runtime_evidence_payload(
     build_artifact_hash: str | None = None,
     plugin_marker_binding: Mapping[str, Any] | None = None,
     screenshot_refs: Iterable[Mapping[str, Any]] = (),
+    runtime_trust_binding: Mapping[str, Any] | None = None,
     non_goal_preservation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build runtime evidence from explicit manual verification notes."""
@@ -234,6 +241,7 @@ def build_manual_runtime_evidence_payload(
         build_artifact_hash=build_artifact_hash,
         plugin_marker_binding=plugin_marker_binding,
         screenshot_refs=tuple(screenshot_refs),
+        runtime_trust_binding=runtime_trust_binding,
         non_goal_preservation=non_goal_preservation,
     )
 
@@ -256,6 +264,12 @@ def bind_runtime_evidence_context(
         bound["build_artifact_hash"] = ref_payload["artifact_hash"]
     bound.setdefault("plugin_marker_binding", {})
     bound.setdefault("screenshot_refs", [])
+    bound["runtime_trust_binding"] = _bind_runtime_trust_binding(
+        bound.get("runtime_trust_binding"),
+        run_id=bound.get("run_id"),
+        build_artifact_ref=ref_payload,
+        build_artifact_hash=bound.get("build_artifact_hash"),
+    )
     bound.setdefault(
         "non_goal_preservation",
         _non_goal_preservation(bound.get("non_goals_checked") or ()),
@@ -286,6 +300,7 @@ def _build_runtime_payload(
     build_artifact_hash: str | None,
     plugin_marker_binding: Mapping[str, Any] | None,
     screenshot_refs: Iterable[Mapping[str, Any]],
+    runtime_trust_binding: Mapping[str, Any] | None,
     non_goal_preservation: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     items = tuple(evidence_items)
@@ -317,6 +332,9 @@ def _build_runtime_payload(
         "evidence_source": evidence_source,
         "plugin_marker_binding": marker_binding,
         "screenshot_refs": [dict(item) for item in screenshot_refs],
+        "runtime_trust_binding": dict(
+            runtime_trust_binding or _default_runtime_trust_binding()
+        ),
         "startup_loaded": startup_loaded,
         "gameplay_behavior_verified": gameplay_behavior_verified,
         "evidence_items": [item.to_dict() for item in items],
@@ -419,6 +437,67 @@ def _artifact_ref_payload(ref: Any) -> dict[str, str] | None:
         "path": path,
         "artifact_hash": artifact_hash,
     }
+
+
+def _default_runtime_trust_binding() -> dict[str, Any]:
+    return {
+        "status": "not_applicable",
+        "checks": {},
+        "blockers": [],
+    }
+
+
+def _bind_runtime_trust_binding(
+    value: Any,
+    *,
+    run_id: Any,
+    build_artifact_ref: Mapping[str, Any] | None,
+    build_artifact_hash: Any,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping) or value.get("status") == "not_applicable":
+        return _default_runtime_trust_binding()
+    binding = {
+        "status": str(value.get("status") or "blocked"),
+        "checks": dict(value.get("checks") or {}),
+        "blockers": list(value.get("blockers") or []),
+    }
+    if "profile_id" in value:
+        binding["profile_id"] = value["profile_id"]
+    if "evidence_source" in value:
+        binding["evidence_source"] = value["evidence_source"]
+    checks = binding["checks"]
+    checks["run_id"] = {
+        "status": "passed" if isinstance(run_id, str) and bool(run_id) else "blocked",
+        "run_id": run_id,
+    }
+    artifact_hash = None
+    if isinstance(build_artifact_ref, Mapping):
+        artifact_hash = build_artifact_ref.get("artifact_hash")
+    checks["build_artifact_hash"] = {
+        "status": (
+            "passed"
+            if isinstance(build_artifact_hash, str)
+            and bool(build_artifact_hash)
+            and build_artifact_hash == artifact_hash
+            else "blocked"
+        ),
+        "build_artifact_hash": build_artifact_hash,
+        "build_artifact_ref_hash": artifact_hash,
+    }
+    binding["blockers"] = _runtime_trust_blockers(checks)
+    binding["status"] = "trusted" if not binding["blockers"] else "blocked"
+    return binding
+
+
+def _runtime_trust_blockers(checks: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    for check_name, check in checks.items():
+        if not isinstance(check, Mapping):
+            blockers.append(f"{check_name} is missing structured trust check data")
+            continue
+        if check.get("status") != "passed":
+            blockers.append(f"{check_name} trust check did not pass")
+    return blockers
 
 
 def _non_goal_preservation(

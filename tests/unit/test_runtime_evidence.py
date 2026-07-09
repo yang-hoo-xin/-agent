@@ -70,6 +70,11 @@ def test_manual_runtime_evidence_verifies_matching_acceptance_contract() -> None
     assert payload["build_artifact_hash"] is None
     assert payload["plugin_marker_binding"] == {}
     assert payload["screenshot_refs"] == []
+    assert payload["runtime_trust_binding"] == {
+        "status": "not_applicable",
+        "checks": {},
+        "blockers": [],
+    }
     assert payload["non_goal_preservation"]["status"] == "not_checked"
 
 
@@ -172,6 +177,11 @@ def test_real_runtime_evidence_can_verify_full_acceptance_contract() -> None:
                 "content_hash": "sha256:screenshot",
             },
         ),
+        runtime_trust_binding={
+            "status": "trusted",
+            "checks": {"runtime_process_identity": {"status": "passed"}},
+            "blockers": [],
+        },
         non_goals_checked=(
             {
                 "non_goal": SECOND_ACCEPTANCE_CRITERION,
@@ -196,6 +206,11 @@ def test_real_runtime_evidence_can_verify_full_acceptance_contract() -> None:
             "content_hash": "sha256:screenshot",
         }
     ]
+    assert payload["runtime_trust_binding"] == {
+        "status": "trusted",
+        "checks": {"runtime_process_identity": {"status": "passed"}},
+        "blockers": [],
+    }
     assert payload["non_goal_preservation"] == {
         "status": "preserved",
         "checked": [
@@ -232,6 +247,7 @@ def test_real_runtime_evidence_can_be_built_before_graph_binding() -> None:
     assert payload["run_id"] is None
     assert payload["build_artifact_hash"] is None
     assert payload["plugin_marker_binding"] == {}
+    assert payload["runtime_trust_binding"]["status"] == "not_applicable"
 
 
 def test_bind_runtime_evidence_context_records_run_and_build_artifact() -> None:
@@ -270,3 +286,60 @@ def test_bind_runtime_evidence_context_records_run_and_build_artifact() -> None:
     assert bound["run_id"] == RUN_ID
     assert bound["build_artifact_ref"] == BUILD_ARTIFACT_REF
     assert bound["build_artifact_hash"] == BUILD_ARTIFACT_HASH
+
+
+def test_bind_runtime_evidence_context_completes_trust_binding() -> None:
+    payload = build_real_runtime_evidence_payload(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        evidence_items=(
+            RuntimeEvidenceItem(
+                item_type="runtime_log",
+                source="runtime_probe",
+                locator="runtime://probe-001",
+                supports_acceptance=(ACCEPTANCE_CRITERION,),
+                confidence=1.0,
+            ),
+        ),
+        startup_loaded=True,
+        gameplay_behavior_verified=True,
+        verification_status="verified",
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        plugin_marker_binding=PLUGIN_MARKER_BINDING,
+        runtime_trust_binding={
+            "status": "pending_graph_binding",
+            "checks": {
+                "feature_id": {"status": "passed"},
+                "runtime_process_identity": {"status": "passed"},
+                "current_run_logs": {"status": "passed"},
+                "plugin_load_marker": {"status": "passed"},
+                "acceptance_markers": {"status": "passed"},
+                "screenshot_runtime_artifact_linkage": {"status": "passed"},
+            },
+            "blockers": [],
+        },
+    )
+    build_ref = ArtifactRef(
+        feature_id="feature_001",
+        artifact_type="build_result",
+        path="features/feature_001/build_result.json",
+        artifact_hash=BUILD_ARTIFACT_HASH,
+    )
+
+    bound = bind_runtime_evidence_context(
+        payload,
+        run_id=RUN_ID,
+        build_artifact_ref=build_ref,
+    )
+
+    assert bound["runtime_trust_binding"]["status"] == "trusted"
+    assert bound["runtime_trust_binding"]["checks"]["run_id"] == {
+        "status": "passed",
+        "run_id": RUN_ID,
+    }
+    assert bound["runtime_trust_binding"]["checks"]["build_artifact_hash"] == {
+        "status": "passed",
+        "build_artifact_hash": BUILD_ARTIFACT_HASH,
+        "build_artifact_ref_hash": BUILD_ARTIFACT_HASH,
+    }

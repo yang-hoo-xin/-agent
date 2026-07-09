@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
@@ -21,10 +22,14 @@ from src.mod_agent.knowledge import (
     SourceRegistry,
 )
 from src.mod_agent.runtime import (
+    GTFOLogSnapshot,
+    GTFOProcessHandle,
     RuntimeEvidenceItem,
     RuntimeProbeProfile,
     build_manual_runtime_evidence_payload,
     build_real_runtime_evidence_payload,
+    build_screenshot_metadata,
+    make_gtfo_runtime_evidence_factory_from_settings,
     make_runtime_probe_evidence_factory,
 )
 from src.mod_agent.workflow import (
@@ -135,7 +140,7 @@ def _real_build_result_factory(tmp_path: Path):
 
     def build_result_factory(feature_id: str, input_execution_mode: str | None):
         def runner(_: BuildProfile) -> BuildCommandResult:
-            expected_artifact.parent.mkdir(parents=True)
+            expected_artifact.parent.mkdir(parents=True, exist_ok=True)
             expected_artifact.write_bytes(b"verified runtime build")
             return BuildCommandResult(exit_code=0, stdout="Build succeeded", duration_ms=8)
 
@@ -958,6 +963,391 @@ def test_real_runtime_evidence_path_can_accept_v1_boundary(tmp_path: Path) -> No
     assert summary["claims_real_mod_success"] is True
     assert summary["claims_real_build_success"] is True
     assert summary["claims_real_runtime_success"] is True
+
+
+def test_gtfo_runtime_factory_from_settings_can_feed_graph_runtime_branch(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    build_result_factory = _real_build_result_factory(tmp_path)
+    requested_behavior = "make Load enable diagnostics"
+    acceptance_criteria = (
+        f"Requested behavior is implemented: {requested_behavior}",
+        "Every proposed change is bound to evidence.",
+        "Validation output is reported with real command or artifact evidence.",
+    )
+    executable = tmp_path / "GTFO.exe"
+    executable.write_bytes(b"fake exe for path validation")
+    acceptance_markers = {
+        acceptance_criteria[0]: "GTFO_ACCEPTANCE_BEHAVIOR",
+        acceptance_criteria[1]: "GTFO_ACCEPTANCE_EVIDENCE",
+        acceptance_criteria[2]: "GTFO_ACCEPTANCE_VALIDATION",
+    }
+    settings = SimpleNamespace(
+        runtime=SimpleNamespace(
+            gtfo=SimpleNamespace(
+                enabled=True,
+                game_executable=str(executable),
+                working_directory=str(tmp_path),
+                launch_args=[],
+                log_paths=["BepInEx/LogOutput.log"],
+                screenshot_directory=str(tmp_path / "screenshots"),
+                screenshot_timeout_seconds=5,
+                startup_markers=["BEPINEX_CHAINLOADER_READY"],
+                acceptance_markers=acceptance_markers,
+                timeout_seconds=10,
+                poll_interval_seconds=0.01,
+                output_limit_chars=4096,
+                terminate_after_capture=False,
+            )
+        )
+    )
+
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        build_result_factory=build_result_factory,
+        runtime_evidence_factory=make_gtfo_runtime_evidence_factory_from_settings(
+            settings,
+            allow_game_launch=True,
+            process_launcher=lambda _: GTFOProcessHandle(pid=4242),
+            log_collector=lambda _, __: GTFOLogSnapshot(
+                content=(
+                    "BEPINEX_CHAINLOADER_READY\n"
+                    "GTFO_ACCEPTANCE_BEHAVIOR\n"
+                    "GTFO_ACCEPTANCE_EVIDENCE\n"
+                    "GTFO_ACCEPTANCE_VALIDATION\n"
+                ),
+                sources=(str(tmp_path / "BepInEx" / "LogOutput.log"),),
+            ),
+            screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+                screenshot_id="gtfo_graph_shot",
+                feature_id=feature_id,
+                file_path=str(tmp_path / "screenshots" / "feature_001.png"),
+                source="desktop_screenshot",
+                content_hash="hash_gtfo_graph_shot",
+            ),
+        ),
+    )
+    state = create_initial_state(
+        run_id="run_gtfo_runtime_settings",
+        request_id="req_gtfo_runtime_settings",
+        user_request=requested_behavior,
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    runtime = _artifact_data(store, result, "runtime_evidence")
+    evaluation = _artifact_data(store, result, "eval_report")
+    summary = _artifact_data(store, result, "workflow_summary")
+
+    assert result["current_stage"] == "done"
+    assert runtime["execution_mode"] == "real"
+    assert runtime["evidence_source"] == "gtfo_real_runtime_automation"
+    assert runtime["real_runtime_performed"] is True
+    assert runtime["acceptance_verified"] is True
+    assert runtime["claims_real_runtime_success"] is True
+    assert runtime["run_id"] == "run_gtfo_runtime_settings"
+    assert runtime["build_artifact_hash"] == result["artifact_hashes"]["build_result"]
+    assert runtime["screenshot_refs"] == [runtime["screenshot"]]
+    assert runtime["runtime_trust_binding"]["status"] == "trusted"
+    assert runtime["runtime_trust_binding"]["checks"]["run_id"] == {
+        "status": "passed",
+        "run_id": "run_gtfo_runtime_settings",
+    }
+    assert runtime["runtime_trust_binding"]["checks"]["build_artifact_hash"] == {
+        "status": "passed",
+        "build_artifact_hash": result["artifact_hashes"]["build_result"],
+        "build_artifact_ref_hash": result["artifact_hashes"]["build_result"],
+    }
+    assert runtime["runtime_process"] == {
+        "profile_id": "gtfo_real_runtime",
+        "pid": 4242,
+        "launched": True,
+        "liveness_observed": True,
+    }
+    assert runtime["gtfo_capability_report"]["status"] == "ready"
+    assert runtime["plugin_marker_binding"]["markers"] == [
+        {
+            "acceptance_criterion": criterion,
+            "marker": acceptance_markers[criterion],
+            "observed": True,
+        }
+        for criterion in acceptance_criteria
+    ]
+    assert evaluation["v1_acceptance_status"] == "accepted"
+    assert summary["final_status"] == "accepted"
+
+
+def test_gtfo_runtime_factory_from_settings_without_launch_approval_blocks_graph_acceptance(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    build_result_factory = _real_build_result_factory(tmp_path)
+    requested_behavior = "make Load enable diagnostics"
+    acceptance_criteria = (
+        f"Requested behavior is implemented: {requested_behavior}",
+        "Every proposed change is bound to evidence.",
+        "Validation output is reported with real command or artifact evidence.",
+    )
+    executable = tmp_path / "GTFO.exe"
+    executable.write_bytes(b"fake exe for path validation")
+    acceptance_markers = {
+        acceptance_criteria[0]: "GTFO_ACCEPTANCE_BEHAVIOR",
+        acceptance_criteria[1]: "GTFO_ACCEPTANCE_EVIDENCE",
+        acceptance_criteria[2]: "GTFO_ACCEPTANCE_VALIDATION",
+    }
+    settings = SimpleNamespace(
+        runtime=SimpleNamespace(
+            gtfo=SimpleNamespace(
+                enabled=True,
+                game_executable=str(executable),
+                working_directory=str(tmp_path),
+                launch_args=[],
+                log_paths=["BepInEx/LogOutput.log"],
+                screenshot_directory=str(tmp_path / "screenshots"),
+                screenshot_timeout_seconds=5,
+                startup_markers=["BEPINEX_CHAINLOADER_READY"],
+                acceptance_markers=acceptance_markers,
+                timeout_seconds=10,
+                poll_interval_seconds=0.01,
+                output_limit_chars=4096,
+                terminate_after_capture=False,
+            )
+        )
+    )
+    called = {"launcher": False, "collector": False, "capturer": False}
+
+    def launcher(_: object) -> GTFOProcessHandle:
+        called["launcher"] = True
+        return GTFOProcessHandle(pid=4242)
+
+    def collector(_: object, __: tuple[str, ...]) -> GTFOLogSnapshot:
+        called["collector"] = True
+        return GTFOLogSnapshot(
+            content=(
+                "BEPINEX_CHAINLOADER_READY\n"
+                "GTFO_ACCEPTANCE_BEHAVIOR\n"
+                "GTFO_ACCEPTANCE_EVIDENCE\n"
+                "GTFO_ACCEPTANCE_VALIDATION\n"
+            ),
+            sources=(str(tmp_path / "BepInEx" / "LogOutput.log"),),
+        )
+
+    def capturer(_: object, feature_id: str):
+        called["capturer"] = True
+        return build_screenshot_metadata(
+            screenshot_id="gtfo_graph_shot",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "screenshots" / "feature_001.png"),
+            source="desktop_screenshot",
+            content_hash="hash_gtfo_graph_shot",
+        )
+
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        build_result_factory=build_result_factory,
+        runtime_evidence_factory=make_gtfo_runtime_evidence_factory_from_settings(
+            settings,
+            allow_game_launch=False,
+            process_launcher=launcher,
+            log_collector=collector,
+            screenshot_capturer=capturer,
+        ),
+    )
+    state = create_initial_state(
+        run_id="run_gtfo_runtime_settings_blocked",
+        request_id="req_gtfo_runtime_settings_blocked",
+        user_request=requested_behavior,
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    runtime = _artifact_data(store, result, "runtime_evidence")
+
+    assert called == {"launcher": False, "collector": False, "capturer": False}
+    assert "workflow_summary" not in result["artifacts"]
+    assert result["current_stage"] == "blocked"
+    assert runtime["execution_mode"] == "real"
+    assert runtime["evidence_source"] == "gtfo_real_runtime_automation"
+    assert runtime["real_runtime_performed"] is False
+    assert runtime["acceptance_verified"] is False
+    assert runtime["claims_real_runtime_success"] is False
+    assert runtime["runtime_process"]["launched"] is False
+    assert runtime["runtime_trust_binding"]["status"] == "blocked"
+    assert runtime["gtfo_capability_report"]["status"] == "blocked"
+    assert runtime["gtfo_capability_report"]["checks"]["explicit_launch_approval"] == {
+        "status": "blocked",
+        "required": True,
+        "allow_game_launch": False,
+    }
+    assert runtime["failure"]["type"] == "GTFORuntimeAutomationError"
+
+
+def test_build_graph_uses_gtfo_runtime_factory_from_enabled_settings(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    build_result_factory = _real_build_result_factory(tmp_path)
+    requested_behavior = "make Load enable diagnostics"
+    acceptance_criteria = (
+        f"Requested behavior is implemented: {requested_behavior}",
+        "Every proposed change is bound to evidence.",
+        "Validation output is reported with real command or artifact evidence.",
+    )
+    executable = tmp_path / "GTFO.exe"
+    executable.write_bytes(b"fake exe for path validation")
+    settings = SimpleNamespace(
+        runtime=SimpleNamespace(
+            gtfo=SimpleNamespace(
+                enabled=True,
+                game_executable=str(executable),
+                working_directory=str(tmp_path),
+                launch_args=[],
+                log_paths=["BepInEx/LogOutput.log"],
+                screenshot_directory=str(tmp_path / "screenshots"),
+                screenshot_timeout_seconds=5,
+                startup_markers=["BEPINEX_CHAINLOADER_READY"],
+                acceptance_markers={
+                    acceptance_criteria[0]: "GTFO_ACCEPTANCE_BEHAVIOR",
+                    acceptance_criteria[1]: "GTFO_ACCEPTANCE_EVIDENCE",
+                    acceptance_criteria[2]: "GTFO_ACCEPTANCE_VALIDATION",
+                },
+                timeout_seconds=10,
+                poll_interval_seconds=0.01,
+                output_limit_chars=4096,
+                terminate_after_capture=False,
+            )
+        )
+    )
+
+    graph = build_graph(
+        store,
+        settings=settings,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        build_result_factory=build_result_factory,
+        allow_game_launch=False,
+    )
+    state = create_initial_state(
+        run_id="run_gtfo_runtime_settings_auto_blocked",
+        request_id="req_gtfo_runtime_settings_auto_blocked",
+        user_request=requested_behavior,
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    runtime = _artifact_data(store, result, "runtime_evidence")
+
+    assert result["current_stage"] == "blocked"
+    assert "workflow_summary" not in result["artifacts"]
+    assert runtime["evidence_source"] == "gtfo_real_runtime_automation"
+    assert runtime["real_runtime_performed"] is False
+    assert runtime["acceptance_verified"] is False
+    assert runtime["claims_real_runtime_success"] is False
+    assert runtime["runtime_process"]["launched"] is False
+    assert runtime["runtime_trust_binding"]["status"] == "blocked"
+    assert runtime["gtfo_capability_report"]["status"] == "blocked"
+    assert runtime["gtfo_capability_report"]["checks"]["explicit_launch_approval"] == {
+        "status": "blocked",
+        "required": True,
+        "allow_game_launch": False,
+    }
+
+
+def test_gtfo_runtime_missing_screenshot_trust_binding_blocks_graph_acceptance(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    build_result_factory = _real_build_result_factory(tmp_path)
+    requested_behavior = "make Load enable diagnostics"
+    acceptance_criteria = (
+        f"Requested behavior is implemented: {requested_behavior}",
+        "Every proposed change is bound to evidence.",
+        "Validation output is reported with real command or artifact evidence.",
+    )
+    executable = tmp_path / "GTFO.exe"
+    executable.write_bytes(b"fake exe for path validation")
+    acceptance_markers = {
+        acceptance_criteria[0]: "GTFO_ACCEPTANCE_BEHAVIOR",
+        acceptance_criteria[1]: "GTFO_ACCEPTANCE_EVIDENCE",
+        acceptance_criteria[2]: "GTFO_ACCEPTANCE_VALIDATION",
+    }
+    settings = SimpleNamespace(
+        runtime=SimpleNamespace(
+            gtfo=SimpleNamespace(
+                enabled=True,
+                game_executable=str(executable),
+                working_directory=str(tmp_path),
+                launch_args=[],
+                log_paths=["BepInEx/LogOutput.log"],
+                screenshot_directory=str(tmp_path / "screenshots"),
+                screenshot_timeout_seconds=5,
+                startup_markers=["BEPINEX_CHAINLOADER_READY"],
+                acceptance_markers=acceptance_markers,
+                timeout_seconds=10,
+                poll_interval_seconds=0.01,
+                output_limit_chars=4096,
+                terminate_after_capture=False,
+            )
+        )
+    )
+
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        build_result_factory=build_result_factory,
+        runtime_evidence_factory=make_gtfo_runtime_evidence_factory_from_settings(
+            settings,
+            allow_game_launch=True,
+            process_launcher=lambda _: GTFOProcessHandle(pid=4242),
+            log_collector=lambda _, __: GTFOLogSnapshot(
+                content=(
+                    "BEPINEX_CHAINLOADER_READY\n"
+                    "GTFO_ACCEPTANCE_BEHAVIOR\n"
+                    "GTFO_ACCEPTANCE_EVIDENCE\n"
+                    "GTFO_ACCEPTANCE_VALIDATION\n"
+                ),
+                sources=(str(tmp_path / "BepInEx" / "LogOutput.log"),),
+            ),
+            screenshot_capturer=lambda _, __: None,
+        ),
+    )
+    state = create_initial_state(
+        run_id="run_gtfo_runtime_missing_screenshot",
+        request_id="req_gtfo_runtime_missing_screenshot",
+        user_request=requested_behavior,
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    runtime = _artifact_data(store, result, "runtime_evidence")
+    evaluation = _artifact_data(store, result, "eval_report")
+
+    assert runtime["acceptance_verified"] is True
+    assert runtime["claims_real_runtime_success"] is True
+    assert runtime["screenshot_refs"] == []
+    assert runtime["runtime_trust_binding"]["status"] == "blocked"
+    assert (
+        runtime["runtime_trust_binding"]["checks"]["screenshot_runtime_artifact_linkage"][
+            "status"
+        ]
+        == "blocked"
+    )
+    assert result["current_stage"] == "blocked"
+    assert "workflow_summary" not in result["artifacts"]
+    assert evaluation["v1_acceptance_status"] == "blocked"
+    assert {
+        "code": "GTFO_RUNTIME_TRUST_BINDING_MISSING",
+        "message": (
+            "V1 acceptance for GTFO automation requires trusted current-run log, "
+            "process, marker, build, and screenshot binding."
+        ),
+    } in evaluation["v1_acceptance_blockers"]
 
 
 def test_manual_runtime_evidence_does_not_accept_v1_boundary(tmp_path: Path) -> None:

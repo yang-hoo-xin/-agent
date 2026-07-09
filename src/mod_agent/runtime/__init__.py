@@ -17,6 +17,7 @@ from .gtfo_automation import (
     GTFORuntimeAutomationError,
     build_gtfo_runtime_capability_report,
     make_gtfo_runtime_evidence_factory,
+    make_gtfo_runtime_evidence_factory_from_settings,
     profile_from_settings,
 )
 from .probe import (
@@ -57,6 +58,7 @@ __all__ = [
     "build_supplied_runtime_evidence_payload",
     "bind_runtime_evidence_context",
     "make_gtfo_runtime_evidence_factory",
+    "make_gtfo_runtime_evidence_factory_from_settings",
     "make_runtime_probe_evidence_factory",
     "profile_from_settings",
     "screenshot_registry_to_runtime_item",

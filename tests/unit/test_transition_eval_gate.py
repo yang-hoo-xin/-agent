@@ -176,6 +176,34 @@ def test_transition_eval_gate_requires_acceptance_marker_binding() -> None:
     assert _case_status(report, "runtime_claim_boundary_binding") == "failed"
 
 
+def test_transition_eval_gate_requires_gtfo_runtime_trust_binding() -> None:
+    runtime = {
+        **_real_runtime(),
+        "evidence_source": "gtfo_real_runtime_automation",
+        "runtime_trust_binding": {
+            "status": "blocked",
+            "checks": {
+                "screenshot_runtime_artifact_linkage": {"status": "blocked"},
+            },
+            "blockers": [
+                "screenshot_runtime_artifact_linkage trust check did not pass"
+            ],
+        },
+    }
+
+    report = build_transition_eval_gate_report(
+        review=_review(),
+        dry_run=_dry_run(),
+        build=_fake_build(),
+        runtime=runtime,
+        v1_boundary={"v1_acceptance_status": "blocked"},
+        claims_real_success=False,
+    )
+
+    assert report["status"] == "failed"
+    assert _case_status(report, "runtime_claim_boundary_binding") == "failed"
+
+
 def test_transition_eval_gate_detects_unpreserved_non_goals() -> None:
     runtime = {
         **_real_runtime(),
@@ -362,6 +390,11 @@ def _real_runtime() -> dict[str, object]:
                     "observed": True,
                 }
             ]
+        },
+        "runtime_trust_binding": {
+            "status": "not_applicable",
+            "checks": {},
+            "blockers": [],
         },
         "non_goal_preservation": {
             "status": "not_checked",

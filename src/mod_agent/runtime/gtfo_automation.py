@@ -293,6 +293,12 @@ def profile_from_settings(
     gtfo = getattr(runtime, "gtfo", None)
     if gtfo is None or not getattr(gtfo, "enabled", False):
         raise GTFORuntimeAutomationError("runtime.gtfo.enabled is false or missing")
+    configured_acceptance_markers = getattr(gtfo, "acceptance_markers", {})
+    effective_acceptance_markers = (
+        configured_acceptance_markers
+        if acceptance_markers is None
+        else acceptance_markers
+    )
     return GTFORealRuntimeProfile(
         profile_id="gtfo_real_runtime",
         game_executable=gtfo.game_executable,
@@ -302,7 +308,7 @@ def profile_from_settings(
         screenshot_directory=gtfo.screenshot_directory,
         screenshot_timeout_seconds=gtfo.screenshot_timeout_seconds,
         startup_markers=tuple(gtfo.startup_markers),
-        acceptance_markers=dict(acceptance_markers or {}),
+        acceptance_markers=dict(effective_acceptance_markers),
         timeout_seconds=gtfo.timeout_seconds,
         poll_interval_seconds=gtfo.poll_interval_seconds,
         output_limit_chars=gtfo.output_limit_chars,
@@ -348,6 +354,29 @@ def make_gtfo_runtime_evidence_factory(
         )
 
     return runtime_evidence_factory
+
+
+def make_gtfo_runtime_evidence_factory_from_settings(
+    settings: Any,
+    *,
+    allow_game_launch: bool,
+    acceptance_markers: Mapping[str, str] | None = None,
+    process_launcher: ProcessLauncher | None = None,
+    log_collector: LogCollector | None = None,
+    screenshot_capturer: ScreenshotCapturer | None = None,
+) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
+    """Build a graph-compatible GTFO runtime evidence factory from settings."""
+
+    return make_gtfo_runtime_evidence_factory(
+        profile=profile_from_settings(
+            settings,
+            acceptance_markers=acceptance_markers,
+        ),
+        allow_game_launch=allow_game_launch,
+        process_launcher=process_launcher,
+        log_collector=log_collector,
+        screenshot_capturer=screenshot_capturer,
+    )
 
 
 def _validate_real_profile(profile: GTFORealRuntimeProfile) -> None:
@@ -535,6 +564,25 @@ def _payload_from_runtime_observations(
         acceptance_markers=profile.acceptance_markers,
         supported_criteria=supported_criteria,
     )
+    screenshot_ref = screenshot.to_dict() if screenshot is not None else None
+    runtime_process = {
+        "profile_id": profile.profile_id,
+        "pid": process_handle.pid,
+        "launched": True,
+        "liveness_observed": _process_liveness_observed(process_handle),
+    }
+    runtime_trust_binding = _runtime_trust_binding(
+        feature_id=feature_id,
+        profile=profile,
+        process_handle=process_handle,
+        runtime_process=runtime_process,
+        log_snapshot=log_snapshot,
+        screenshot=screenshot,
+        startup_loaded=startup_loaded,
+        missing_marker_config=missing_marker_config,
+        missing_observations=missing_observations,
+        plugin_marker_binding=plugin_marker_binding,
+    )
     payload = build_real_runtime_evidence_payload(
         feature_id=feature_id,
         input_execution_mode=input_execution_mode,
@@ -548,6 +596,8 @@ def _payload_from_runtime_observations(
         acceptance_criteria=acceptance_criteria,
         runtime_verification_plan=runtime_verification_plan,
         plugin_marker_binding=plugin_marker_binding,
+        screenshot_refs=(screenshot_ref,) if screenshot_ref is not None else (),
+        runtime_trust_binding=runtime_trust_binding,
     )
     payload["evidence_source"] = "gtfo_real_runtime_automation"
     payload["sources"] = [
@@ -565,12 +615,7 @@ def _payload_from_runtime_observations(
             else []
         ),
     ]
-    payload["runtime_process"] = {
-        "profile_id": profile.profile_id,
-        "pid": process_handle.pid,
-        "launched": True,
-        "liveness_observed": _process_liveness_observed(process_handle),
-    }
+    payload["runtime_process"] = runtime_process
     payload["gtfo_markers"] = {
         "startup_markers": list(profile.startup_markers),
         "startup_loaded": startup_loaded,
@@ -590,7 +635,7 @@ def _payload_from_runtime_observations(
             for criterion in sorted(supported_criteria)
         ],
     }
-    payload["screenshot"] = screenshot.to_dict() if screenshot is not None else None
+    payload["screenshot"] = screenshot_ref
     payload["gtfo_capability_report"] = dict(capability_report)
     return payload
 
@@ -650,6 +695,46 @@ def _payload_from_runtime_failure(
         "acceptance_markers_observed": [],
     }
     payload["screenshot"] = None
+    payload["runtime_trust_binding"] = {
+        "profile_id": profile.profile_id,
+        "evidence_source": "gtfo_real_runtime_automation",
+        "status": "blocked",
+        "checks": {
+            "runtime_process_identity": {
+                "status": "blocked",
+                "profile_id": profile.profile_id,
+                "pid": process_handle.pid if process_handle is not None else None,
+                "launched": process_handle is not None,
+                "liveness_observed": (
+                    _process_liveness_observed(process_handle)
+                    if process_handle is not None
+                    else False
+                ),
+            },
+            "current_run_logs": {
+                "status": "blocked",
+                "sources": [],
+                "collected_after_process_start": process_handle is not None,
+            },
+            "plugin_load_marker": {
+                "status": "blocked",
+                "startup_markers": list(profile.startup_markers),
+                "startup_loaded": False,
+            },
+            "acceptance_markers": {
+                "status": "blocked",
+                "marker_source": "gtfo_persistent_log",
+                "markers": [],
+            },
+            "screenshot_runtime_artifact_linkage": {
+                "status": "blocked",
+                "screenshot_ref": None,
+            },
+        },
+        "blockers": [
+            "GTFO runtime automation failed before current-run trust binding completed."
+        ],
+    }
     payload["failure"] = {
         "type": failure_type,
         "message": failure_message,
@@ -702,6 +787,103 @@ def _plugin_marker_binding(
             for criterion in acceptance_criteria
             if criterion in acceptance_markers
         ],
+    }
+
+
+def _runtime_trust_binding(
+    *,
+    feature_id: str,
+    profile: GTFORealRuntimeProfile,
+    process_handle: GTFOProcessHandle,
+    runtime_process: Mapping[str, Any],
+    log_snapshot: GTFOLogSnapshot,
+    screenshot: ScreenshotMetadata | None,
+    startup_loaded: bool,
+    missing_marker_config: list[str],
+    missing_observations: list[str],
+    plugin_marker_binding: Mapping[str, Any],
+) -> dict[str, Any]:
+    screenshot_ref = screenshot.to_dict() if screenshot is not None else None
+    screenshot_feature_id = (
+        screenshot_ref.get("feature_id") if isinstance(screenshot_ref, Mapping) else None
+    )
+    checks: dict[str, Any] = {
+        "feature_id": {
+            "status": (
+                "passed"
+                if feature_id
+                and (
+                    screenshot_feature_id is None
+                    or screenshot_feature_id == feature_id
+                )
+                else "blocked"
+            ),
+            "feature_id": feature_id,
+            "screenshot_feature_id": screenshot_feature_id,
+        },
+        "runtime_process_identity": {
+            "status": (
+                "passed"
+                if runtime_process.get("launched") is True
+                and runtime_process.get("liveness_observed") is True
+                and isinstance(runtime_process.get("pid"), int)
+                and runtime_process.get("pid") > 0
+                else "blocked"
+            ),
+            **dict(runtime_process),
+        },
+        "current_run_logs": {
+            "status": (
+                "passed"
+                if process_handle.pid > 0 and bool(log_snapshot.sources)
+                else "blocked"
+            ),
+            "marker_source": "gtfo_persistent_log",
+            "sources": list(log_snapshot.sources),
+            "collected_after_process_start": True,
+            "process_pid": process_handle.pid,
+            "truncated": log_snapshot.truncated,
+        },
+        "plugin_load_marker": {
+            "status": "passed" if startup_loaded else "blocked",
+            "startup_markers": list(profile.startup_markers),
+            "startup_loaded": startup_loaded,
+        },
+        "acceptance_markers": {
+            "status": (
+                "passed"
+                if not missing_marker_config and not missing_observations
+                else "blocked"
+            ),
+            "marker_source": "gtfo_persistent_log",
+            "missing_marker_config": list(missing_marker_config),
+            "missing_observations": list(missing_observations),
+            "markers": list(plugin_marker_binding.get("markers") or []),
+        },
+        "screenshot_runtime_artifact_linkage": {
+            "status": (
+                "passed"
+                if screenshot_ref is not None
+                and screenshot_ref.get("feature_id") == feature_id
+                and bool(screenshot_ref.get("file_path"))
+                and bool(screenshot_ref.get("content_hash"))
+                else "blocked"
+            ),
+            "screenshot_ref": screenshot_ref,
+            "feature_id": feature_id,
+        },
+    }
+    blockers = [
+        f"{name} trust check did not pass"
+        for name, check in checks.items()
+        if check.get("status") != "passed"
+    ]
+    return {
+        "profile_id": profile.profile_id,
+        "evidence_source": "gtfo_real_runtime_automation",
+        "status": "pending_graph_binding" if not blockers else "blocked",
+        "checks": checks,
+        "blockers": blockers,
     }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,8 @@ from src.mod_agent.runtime import (
     build_gtfo_runtime_capability_report,
     build_screenshot_metadata,
     make_gtfo_runtime_evidence_factory,
+    make_gtfo_runtime_evidence_factory_from_settings,
+    profile_from_settings,
 )
 
 
@@ -249,6 +252,7 @@ def test_gtfo_runtime_logs_and_screenshot_can_verify_acceptance(tmp_path: Path) 
         }
     ]
     assert payload["screenshot"]["source"] == "desktop_screenshot"
+    assert payload["screenshot_refs"] == [payload["screenshot"]]
     assert payload["evidence_items"][0]["source"] == "gtfo_persistent_log"
     assert payload["evidence_items"][0]["supports_acceptance"] == [ACCEPTANCE_CRITERION]
     assert payload["gtfo_capability_report"]["status"] == "ready"
@@ -263,6 +267,24 @@ def test_gtfo_runtime_logs_and_screenshot_can_verify_acceptance(tmp_path: Path) 
             }
         ],
     }
+    assert payload["runtime_trust_binding"]["status"] == "pending_graph_binding"
+    assert payload["runtime_trust_binding"]["checks"]["runtime_process_identity"] == {
+        "status": "passed",
+        "profile_id": "gtfo_real_runtime",
+        "pid": 4242,
+        "launched": True,
+        "liveness_observed": True,
+    }
+    assert (
+        payload["runtime_trust_binding"]["checks"]["current_run_logs"]["status"]
+        == "passed"
+    )
+    assert (
+        payload["runtime_trust_binding"]["checks"]["screenshot_runtime_artifact_linkage"][
+            "status"
+        ]
+        == "passed"
+    )
 
 
 def test_gtfo_runtime_missing_acceptance_marker_is_inconclusive(tmp_path: Path) -> None:
@@ -293,6 +315,17 @@ def test_gtfo_runtime_missing_acceptance_marker_is_inconclusive(tmp_path: Path) 
         "limitations"
     ]
     assert "GTFO runtime screenshot was not captured." in payload["limitations"]
+    assert payload["runtime_trust_binding"]["status"] == "blocked"
+    assert (
+        payload["runtime_trust_binding"]["checks"]["acceptance_markers"]["status"]
+        == "blocked"
+    )
+    assert (
+        payload["runtime_trust_binding"]["checks"]["screenshot_runtime_artifact_linkage"][
+            "status"
+        ]
+        == "blocked"
+    )
 
 
 def test_gtfo_runtime_missing_acceptance_marker_blocks_before_launch(
@@ -363,6 +396,7 @@ def test_gtfo_runtime_launcher_exception_becomes_failed_payload(tmp_path: Path) 
         "message": "process launch denied",
     }
     assert payload["gtfo_markers"]["acceptance_markers_observed"] == []
+    assert payload["runtime_trust_binding"]["status"] == "blocked"
 
 
 def test_gtfo_runtime_collector_failure_preserves_launched_process(tmp_path: Path) -> None:
@@ -397,6 +431,7 @@ def test_gtfo_runtime_collector_failure_preserves_launched_process(tmp_path: Pat
         "type": "PermissionError",
         "message": "log access denied",
     }
+    assert payload["runtime_trust_binding"]["status"] == "blocked"
 
 
 def test_gtfo_runtime_factory_is_graph_compatible(tmp_path: Path) -> None:
@@ -428,3 +463,71 @@ def test_gtfo_runtime_factory_is_graph_compatible(tmp_path: Path) -> None:
     )
 
     assert payload["acceptance_verified"] is True
+
+
+def test_gtfo_runtime_factory_from_settings_uses_configured_markers(
+    tmp_path: Path,
+) -> None:
+    profile = _profile(tmp_path)
+    settings = SimpleNamespace(
+        runtime=SimpleNamespace(
+            gtfo=SimpleNamespace(
+                enabled=True,
+                game_executable=profile.game_executable,
+                working_directory=profile.working_directory,
+                launch_args=[],
+                log_paths=list(profile.log_paths),
+                screenshot_directory=profile.screenshot_directory,
+                screenshot_timeout_seconds=profile.screenshot_timeout_seconds,
+                startup_markers=list(profile.startup_markers),
+                acceptance_markers={ACCEPTANCE_CRITERION: ACCEPTANCE_MARKER},
+                timeout_seconds=profile.timeout_seconds,
+                poll_interval_seconds=profile.poll_interval_seconds,
+                output_limit_chars=profile.output_limit_chars,
+                terminate_after_capture=profile.terminate_after_capture,
+            )
+        )
+    )
+
+    runtime_profile = profile_from_settings(settings)
+    factory = make_gtfo_runtime_evidence_factory_from_settings(
+        settings,
+        allow_game_launch=True,
+        process_launcher=lambda _: GTFOProcessHandle(pid=4242),
+        log_collector=lambda _, __: GTFOLogSnapshot(
+            content=f"{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
+            sources=(str(tmp_path / "BepInEx" / "LogOutput.log"),),
+        ),
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_001",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_001",
+        ),
+    )
+
+    payload = factory(
+        "feature_001",
+        {"execution_mode": "local"},
+        {
+            "acceptance_criteria": [ACCEPTANCE_CRITERION],
+            "runtime_verification_plan": [RUNTIME_PLAN_STEP],
+        },
+    )
+
+    assert runtime_profile.acceptance_markers == {
+        ACCEPTANCE_CRITERION: ACCEPTANCE_MARKER
+    }
+    assert payload["acceptance_verified"] is True
+    assert payload["plugin_marker_binding"] == {
+        "marker_source": "gtfo_persistent_log",
+        "markers": [
+            {
+                "acceptance_criterion": ACCEPTANCE_CRITERION,
+                "marker": ACCEPTANCE_MARKER,
+                "observed": True,
+            }
+        ],
+    }
+    assert payload["runtime_trust_binding"]["status"] == "pending_graph_binding"

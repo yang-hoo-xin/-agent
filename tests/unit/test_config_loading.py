@@ -280,6 +280,8 @@ def test_runtime_gtfo_settings_parse_explicit_real_automation_config(tmp_path: P
         screenshot_timeout_seconds: 9
         startup_markers:
           - Chainloader
+        acceptance_markers:
+          "Requested behavior is implemented: make Load enable diagnostics": BETTER_HIT_FEEDBACK_ACCEPTANCE_OK
         timeout_seconds: 180
         poll_interval_seconds: 0.5
         output_limit_chars: 4096
@@ -299,6 +301,11 @@ def test_runtime_gtfo_settings_parse_explicit_real_automation_config(tmp_path: P
     assert settings.runtime.gtfo.log_paths == ["BepInEx/LogOutput.log"]
     assert settings.runtime.gtfo.screenshot_timeout_seconds == 9
     assert settings.runtime.gtfo.startup_markers == ["Chainloader"]
+    assert settings.runtime.gtfo.acceptance_markers == {
+        "Requested behavior is implemented: make Load enable diagnostics": (
+            "BETTER_HIT_FEEDBACK_ACCEPTANCE_OK"
+        )
+    }
     assert settings.runtime.gtfo.timeout_seconds == 180
     assert settings.runtime.gtfo.poll_interval_seconds == 0.5
     assert settings.runtime.gtfo.output_limit_chars == 4096
@@ -394,6 +401,53 @@ def test_runtime_gtfo_settings_reject_invalid_screenshot_timeout(tmp_path: Path)
     _write_yaml(settings_path, config)
 
     with pytest.raises(SettingsError, match="runtime.gtfo.screenshot_timeout_seconds"):
+        load_settings(settings_path)
+
+
+def test_runtime_gtfo_settings_reject_invalid_acceptance_markers(tmp_path: Path) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_top_k: 20
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    runtime:
+      gtfo:
+        acceptance_markers:
+          - not-a-mapping
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    with pytest.raises(SettingsError, match="runtime.gtfo.acceptance_markers"):
         load_settings(settings_path)
 
 

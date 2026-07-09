@@ -79,6 +79,7 @@ runtime:
     startup_markers:
       - "BepInEx"
       - "Chainloader"
+    acceptance_markers: {}
     timeout_seconds: 120
     poll_interval_seconds: 1.0
     output_limit_chars: 20000

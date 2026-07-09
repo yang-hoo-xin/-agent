@@ -352,6 +352,10 @@ def _missing_runtime_success_binding(runtime: Mapping[str, Any]) -> tuple[str, .
         _acceptance_criteria(runtime),
     ):
         missing.append("plugin_marker_binding")
+    if _requires_runtime_trust_binding(runtime) and not _has_trusted_runtime_binding(
+        runtime.get("runtime_trust_binding")
+    ):
+        missing.append("runtime_trust_binding")
     return tuple(missing)
 
 
@@ -421,3 +425,32 @@ def _non_goal_preservation_failure(runtime: Mapping[str, Any]) -> str | None:
     if isinstance(non_goals_checked, (list, tuple)) and non_goals_checked and status != "preserved":
         return "Runtime claims real success without preserved non-goal status."
     return None
+
+
+def _requires_runtime_trust_binding(runtime: Mapping[str, Any]) -> bool:
+    return runtime.get("evidence_source") == "gtfo_real_runtime_automation"
+
+
+def _has_trusted_runtime_binding(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    if value.get("status") != "trusted":
+        return False
+    checks = value.get("checks")
+    if not isinstance(checks, Mapping):
+        return False
+    required_checks = {
+        "run_id",
+        "feature_id",
+        "build_artifact_hash",
+        "runtime_process_identity",
+        "current_run_logs",
+        "plugin_load_marker",
+        "acceptance_markers",
+        "screenshot_runtime_artifact_linkage",
+    }
+    return all(
+        isinstance(checks.get(check_name), Mapping)
+        and checks[check_name].get("status") == "passed"
+        for check_name in required_checks
+    )

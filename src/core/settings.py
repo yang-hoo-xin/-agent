@@ -236,6 +236,7 @@ class GTFORuntimeSettings:
     screenshot_directory: str = "./artifacts/runtime/screenshots"
     screenshot_timeout_seconds: int = 15
     startup_markers: List[str] = field(default_factory=list)
+    acceptance_markers: Dict[str, str] = field(default_factory=dict)
     timeout_seconds: int = 120
     poll_interval_seconds: float = 1.0
     output_limit_chars: int = 20000
@@ -245,6 +246,7 @@ class GTFORuntimeSettings:
         object.__setattr__(self, "launch_args", list(self.launch_args))
         object.__setattr__(self, "log_paths", list(self.log_paths))
         object.__setattr__(self, "startup_markers", list(self.startup_markers))
+        object.__setattr__(self, "acceptance_markers", dict(self.acceptance_markers))
 
 
 @dataclass(frozen=True)
@@ -387,6 +389,11 @@ class Settings:
                     raise SettingsError(
                         "Expected positive integer for field: runtime.gtfo.screenshot_timeout_seconds"
                     )
+                acceptance_markers_raw = gtfo.get("acceptance_markers", {})
+                if not isinstance(acceptance_markers_raw, dict):
+                    raise SettingsError(
+                        "Expected mapping for field: runtime.gtfo.acceptance_markers"
+                    )
                 gtfo_settings = GTFORuntimeSettings(
                     enabled=_optional_bool(gtfo, "enabled", gtfo_path) or False,
                     game_executable=str(gtfo.get("game_executable", "")),
@@ -398,6 +405,10 @@ class Settings:
                     ),
                     screenshot_timeout_seconds=screenshot_timeout_seconds,
                     startup_markers=[str(item) for item in gtfo.get("startup_markers", [])],
+                    acceptance_markers={
+                        str(key): str(value)
+                        for key, value in acceptance_markers_raw.items()
+                    },
                     timeout_seconds=timeout_seconds,
                     poll_interval_seconds=float(poll_interval),
                     output_limit_chars=output_limit_chars,
