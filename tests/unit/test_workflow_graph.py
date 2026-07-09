@@ -157,6 +157,18 @@ def _real_build_result_factory(tmp_path: Path):
     return build_result_factory
 
 
+def _revision_count(tmp_path: Path, feature_id: str, artifact_type: str) -> int:
+    revision_dir = (
+        tmp_path
+        / "artifacts"
+        / "features"
+        / feature_id
+        / "revisions"
+        / artifact_type
+    )
+    return len(list(revision_dir.glob("*.json"))) if revision_dir.exists() else 0
+
+
 def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
     graph = build_graph(
@@ -401,6 +413,215 @@ def test_langgraph_artifact_loop_blocks_success_after_human_review_rejection(
     assert resume_report["decision"] == "reject"
     assert resume_report["applied_updates"]["decision"] == "reject"
     assert any(blocker["code"] == "REVIEW_NOT_APPROVED" for blocker in result["blockers"])
+
+
+def test_langgraph_dynamic_review_interrupt_resumes_with_command_after_approval(
+    tmp_path: Path,
+) -> None:
+    from langgraph.types import Command
+
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+        enable_dynamic_review_interrupt=True,
+        require_review_approval_for_dry_run=True,
+    )
+    config = {"configurable": {"thread_id": "gtfo_vslice_001a_dynamic_review"}}
+    state = create_initial_state(
+        run_id="run_gtfo_vslice_001a_dynamic_review",
+        request_id="req_gtfo_vslice_001a_dynamic_review",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    interrupted = graph.invoke(state, config)
+
+    assert "__interrupt__" in interrupted
+    assert interrupted["current_stage"] == "proposal_review"
+    assert "proposal_review" in interrupted["artifacts"]
+    assert "dry_run_result" not in interrupted["artifacts"]
+    request = interrupted["__interrupt__"][0].value
+    assert request["stage"] == "proposal_review"
+    assert request["reason"] == "proposal review requires human approval before dry run"
+    assert request["resume_allowed_fields"] == ["approvals.review"]
+    assert request["payload"]["node_name"] == "human_review_gate"
+    assert request["payload"]["resume_binding"]["diff_hash"].startswith("sha256:")
+    assert "dry_run_result" not in request["artifact_refs"]
+    assert _revision_count(tmp_path, request["feature_id"], "workflow_checkpoint") == 0
+    assert _revision_count(tmp_path, request["feature_id"], "resume_report") == 0
+    assert _revision_count(tmp_path, request["feature_id"], "dry_run_result") == 0
+    snapshot = graph.get_state(config)
+    assert snapshot.next == ("human_review_gate",)
+
+    result = graph.invoke(
+        Command(
+            resume={
+                "resume_id": "resume_gtfo_vslice_001a_dynamic_review",
+                "run_id": "run_gtfo_vslice_001a_dynamic_review",
+                "stage": "proposal_review",
+                "decision": "approve",
+                "approved_by": "human",
+                "approved_at": "2026-07-09T00:00:00Z",
+                "artifact_refs": request["artifact_refs"],
+                "diff_hash": request["payload"]["resume_binding"]["diff_hash"],
+                "notes": "Approve dynamic interrupt path before controlled dry run.",
+            }
+        ),
+        config,
+    )
+
+    assert result["current_stage"] == "done"
+    assert result["approvals"]["review"] is True
+    assert "workflow_checkpoint" in result["artifacts"]
+    assert "resume_report" in result["artifacts"]
+    assert "dry_run_result" in result["artifacts"]
+    assert "workflow_summary" in result["artifacts"]
+
+    checkpoint = _artifact_data(store, result, "workflow_checkpoint")
+    resume_report = _artifact_data(store, result, "resume_report")
+    dry_run = _artifact_data(store, result, "dry_run_result")
+    summary = _artifact_data(store, result, "workflow_summary")
+
+    assert checkpoint["checkpoint_stage"] == "proposal_review"
+    assert checkpoint["resume_binding"]["diff_hash"] == request["payload"]["resume_binding"]["diff_hash"]
+    assert resume_report["allowed"] is True
+    assert resume_report["decision"] == "approve"
+    assert resume_report["applied_updates"]["approvals"] == {"review": True}
+    assert dry_run["human_approval_required"] is True
+    assert dry_run["approved_by_human"] is True
+    assert summary["artifact_refs"]["resume_report"] == result["artifacts"]["resume_report"]
+    assert _revision_count(tmp_path, result["feature_id"], "workflow_checkpoint") == 1
+    assert _revision_count(tmp_path, result["feature_id"], "resume_report") == 1
+    assert _revision_count(tmp_path, result["feature_id"], "dry_run_result") == 1
+
+
+def test_langgraph_dynamic_review_interrupt_rejection_blocks_success_artifacts(
+    tmp_path: Path,
+) -> None:
+    from langgraph.types import Command
+
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+        enable_dynamic_review_interrupt=True,
+        require_review_approval_for_dry_run=True,
+    )
+    config = {"configurable": {"thread_id": "gtfo_vslice_001a_dynamic_reject"}}
+    state = create_initial_state(
+        run_id="run_gtfo_vslice_001a_dynamic_reject",
+        request_id="req_gtfo_vslice_001a_dynamic_reject",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    interrupted = graph.invoke(state, config)
+    request = interrupted["__interrupt__"][0].value
+    result = graph.invoke(
+        Command(
+            resume={
+                "resume_id": "resume_gtfo_vslice_001a_dynamic_reject",
+                "run_id": "run_gtfo_vslice_001a_dynamic_reject",
+                "stage": "proposal_review",
+                "decision": "reject",
+                "approved_by": "human",
+                "approved_at": "2026-07-09T00:00:00Z",
+                "artifact_refs": request["artifact_refs"],
+                "diff_hash": request["payload"]["resume_binding"]["diff_hash"],
+                "notes": "Reject dynamic interrupt path before controlled dry run.",
+            }
+        ),
+        config,
+    )
+
+    assert result["current_stage"] == "blocked"
+    assert "review" not in result["approvals"]
+    assert "workflow_checkpoint" in result["artifacts"]
+    assert "resume_report" in result["artifacts"]
+    assert "dry_run_result" in result["artifacts"]
+    assert "build_result" not in result["artifacts"]
+    assert "runtime_evidence" not in result["artifacts"]
+    assert "eval_report" not in result["artifacts"]
+    assert "workflow_summary" not in result["artifacts"]
+
+    resume_report = _artifact_data(store, result, "resume_report")
+    dry_run = _artifact_data(store, result, "dry_run_result")
+
+    assert resume_report["allowed"] is True
+    assert resume_report["decision"] == "reject"
+    assert resume_report["applied_updates"]["decision"] == "reject"
+    assert dry_run["human_approval_required"] is True
+    assert dry_run["approved_by_human"] is False
+    assert any(blocker["code"] == "REVIEW_NOT_APPROVED" for blocker in result["blockers"])
+
+
+def test_langgraph_dynamic_review_interrupt_wrong_thread_id_cannot_resume_original(
+    tmp_path: Path,
+) -> None:
+    from langgraph.types import Command
+
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+        enable_dynamic_review_interrupt=True,
+        require_review_approval_for_dry_run=True,
+    )
+    original_config = {"configurable": {"thread_id": "gtfo_vslice_001a_dynamic_original"}}
+    wrong_config = {"configurable": {"thread_id": "gtfo_vslice_001a_dynamic_wrong"}}
+    state = create_initial_state(
+        run_id="run_gtfo_vslice_001a_dynamic_wrong_thread",
+        request_id="req_gtfo_vslice_001a_dynamic_wrong_thread",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    interrupted = graph.invoke(state, original_config)
+    request = interrupted["__interrupt__"][0].value
+
+    try:
+        wrong_result = graph.invoke(
+            Command(
+                resume={
+                    "resume_id": "resume_gtfo_vslice_001a_dynamic_wrong_thread",
+                    "run_id": "run_gtfo_vslice_001a_dynamic_wrong_thread",
+                    "stage": "proposal_review",
+                    "decision": "approve",
+                    "approved_by": "human",
+                    "approved_at": "2026-07-09T00:00:00Z",
+                    "artifact_refs": request["artifact_refs"],
+                    "diff_hash": request["payload"]["resume_binding"]["diff_hash"],
+                    "notes": "Attempt to resume with a different thread id.",
+                }
+            ),
+            wrong_config,
+        )
+    except KeyError as exc:
+        assert exc.args == ("run_id",)
+        wrong_result = None
+
+    original_snapshot = graph.get_state(original_config)
+    wrong_snapshot = graph.get_state(wrong_config)
+
+    assert original_snapshot.next == ("human_review_gate",)
+    assert wrong_snapshot.next == ("plan_request",)
+    if wrong_result is not None:
+        assert "dry_run_result" not in wrong_result.get("artifacts", {})
+        assert "build_result" not in wrong_result.get("artifacts", {})
+        assert "runtime_evidence" not in wrong_result.get("artifacts", {})
+        assert "eval_report" not in wrong_result.get("artifacts", {})
+        assert "workflow_summary" not in wrong_result.get("artifacts", {})
+    assert _revision_count(tmp_path, request["feature_id"], "workflow_checkpoint") == 0
+    assert _revision_count(tmp_path, request["feature_id"], "resume_report") == 0
+    assert _revision_count(tmp_path, request["feature_id"], "dry_run_result") == 0
+    assert _revision_count(tmp_path, request["feature_id"], "build_result") == 0
+    assert _revision_count(tmp_path, request["feature_id"], "runtime_evidence") == 0
+    assert _revision_count(tmp_path, request["feature_id"], "eval_report") == 0
+    assert _revision_count(tmp_path, request["feature_id"], "workflow_summary") == 0
 
 
 def test_missing_knowledge_routes_to_blocked_after_evidence(tmp_path: Path) -> None:

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.build import BuildResult, build_fake_build_result
@@ -42,6 +45,8 @@ from src.mod_agent.repair import RepairPatchProposalBuilder, RepairPlanner
 from src.mod_agent.runtime import build_fake_runtime_evidence_payload
 from src.mod_agent.runtime.evidence import bind_runtime_evidence_context
 
+from .checkpointing import WorkflowCheckpointStore
+from .interrupts import InterruptRequest, ResumePayload
 from .nodes import StubNodeRunner
 from .state import ModAgentState
 from .transitions import (
@@ -50,6 +55,7 @@ from .transitions import (
     route_after_evidence,
     route_after_evaluate,
     route_after_feature_spec,
+    route_after_human_review_gate,
     route_after_implementation_plan,
     route_after_patch_proposal,
     route_after_planning_brief,
@@ -81,6 +87,7 @@ def build_graph(
     runtime_evidence_factory: RuntimeEvidenceFactory | None = None,
     evaluation_context_factory: EvaluationContextFactory | None = None,
     require_review_approval_for_dry_run: bool = False,
+    enable_dynamic_review_interrupt: bool = False,
     checkpointer: Any | None = None,
     interrupt_before: list[str] | None = None,
     interrupt_after: list[str] | None = None,
@@ -91,6 +98,9 @@ def build_graph(
     review are real controlled nodes. Dry-run remains fake; build and runtime
     evidence can be injected for controlled contract tests.
     """
+
+    if enable_dynamic_review_interrupt and checkpointer is None:
+        raise ValueError("Dynamic review interrupt requires a LangGraph checkpointer.")
 
     stub_runner = StubNodeRunner(artifact_store)
     effective_domain_registry = domain_adapter_registry or _default_domain_adapter_registry()
@@ -159,6 +169,14 @@ def build_graph(
             ),
         ),
     )
+    if enable_dynamic_review_interrupt:
+        graph.add_node(
+            "human_review_gate",
+            _make_real_graph_node(
+                "human_review_gate",
+                lambda state: _run_dynamic_human_review_gate(state, artifact_store),
+            ),
+        )
 
     graph.add_node(
         "dry_run_apply",
@@ -251,8 +269,17 @@ def build_graph(
     graph.add_conditional_edges(
         "review_proposal",
         route_after_review,
-        dict(registry["review_proposal"]),
+        _review_route_map(
+            registry["review_proposal"],
+            enable_dynamic_review_interrupt=enable_dynamic_review_interrupt,
+        ),
     )
+    if enable_dynamic_review_interrupt:
+        graph.add_conditional_edges(
+            "human_review_gate",
+            route_after_human_review_gate,
+            dict(registry["human_review_gate"]),
+        )
     graph.add_conditional_edges(
         "dry_run_apply",
         route_after_dry_run,
@@ -288,6 +315,17 @@ def build_graph(
         interrupt_before=interrupt_before,
         interrupt_after=interrupt_after,
     )
+
+
+def _review_route_map(
+    route_map: dict[str, str] | Any,
+    *,
+    enable_dynamic_review_interrupt: bool,
+) -> dict[str, str]:
+    mapped = dict(route_map)
+    if enable_dynamic_review_interrupt:
+        mapped["continue"] = "human_review_gate"
+    return mapped
 
 
 def _make_real_graph_node(node_name: str, run: GraphNode) -> GraphNode:
@@ -612,6 +650,112 @@ def _domain_review_policy_from_state(
         adapter = UnsupportedDomainAdapter()
 
     return adapter.identify_project(".").review_policy()
+
+
+def _run_dynamic_human_review_gate(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+) -> ModAgentState:
+    review = _read_artifact_data(state, artifact_store, "proposal_review")
+    if review.get("allowed_next_stage") != "dry_run_apply":
+        return _copy_state(state)
+    if state["approvals"].get("review") is True:
+        return _copy_state(state)
+
+    request = _dynamic_review_interrupt_request(state, artifact_store)
+    resume_value = interrupt(request.to_dict())
+
+    checkpoint_store = WorkflowCheckpointStore(artifact_store)
+    checkpoint_ref = checkpoint_store.create_checkpoint(
+        state,
+        interrupt_reason=request.reason,
+        resume_allowed_fields=("approvals.review",),
+    )
+    checkpoint = artifact_store.read(checkpoint_ref)["data"]
+    payload = _resume_payload_from_dynamic_value(
+        resume_value,
+        state=state,
+        checkpoint=checkpoint,
+    )
+    decision, resume_report_ref = checkpoint_store.resume(checkpoint_ref, payload)
+
+    next_state = _copy_state(state)
+    _record_artifact(next_state, "workflow_checkpoint", checkpoint_ref)
+    _record_artifact(next_state, "resume_report", resume_report_ref)
+    approvals = decision.applied_updates.get("approvals")
+    if isinstance(approvals, dict):
+        next_state["approvals"] = {
+            **dict(next_state["approvals"]),
+            **approvals,
+        }
+    if not decision.allowed:
+        next_state["blockers"].extend(decision.blockers)
+    return next_state
+
+
+def _dynamic_review_interrupt_request(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+) -> InterruptRequest:
+    feature_id = state["feature_id"] or state["request_id"]
+    return InterruptRequest(
+        interrupt_id=f"interrupt_{uuid4().hex}",
+        run_id=state["run_id"],
+        feature_id=feature_id,
+        stage="proposal_review",
+        reason="proposal review requires human approval before dry run",
+        payload={
+            "node_name": "human_review_gate",
+            "stage": "proposal_review",
+            "required_decision": ["approve", "reject"],
+            "resume_binding": _dynamic_review_resume_binding(state, artifact_store),
+            "artifact_hashes": dict(state["artifact_hashes"]),
+        },
+        resume_allowed_fields=("approvals.review",),
+        artifact_refs=tuple(state["artifacts"].values()),
+    )
+
+
+def _dynamic_review_resume_binding(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+) -> dict[str, Any]:
+    proposal_ref = _artifact_ref_from_state(state, "patch_proposal")
+    review_ref = _artifact_ref_from_state(state, "proposal_review")
+    proposal_payload = artifact_store.read(proposal_ref)["data"]
+    serialized = json.dumps(
+        proposal_payload.get("diff_intent") or [],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return {
+        "patch_proposal_ref": proposal_ref.path,
+        "patch_proposal_hash": proposal_ref.artifact_hash,
+        "proposal_review_ref": review_ref.path,
+        "proposal_review_hash": review_ref.artifact_hash,
+        "diff_hash": "sha256:" + hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+    }
+
+
+def _resume_payload_from_dynamic_value(
+    resume_value: Any,
+    *,
+    state: ModAgentState,
+    checkpoint: dict[str, Any],
+) -> ResumePayload:
+    value = resume_value if isinstance(resume_value, dict) else {}
+    return ResumePayload(
+        resume_id=str(value.get("resume_id") or f"resume_{uuid4().hex}"),
+        run_id=str(value.get("run_id") or state["run_id"]),
+        stage=str(value.get("stage") or checkpoint.get("checkpoint_stage") or state["current_stage"]),
+        decision=str(value.get("decision") or "reject"),
+        approved_by=str(value.get("approved_by") or ""),
+        approved_at=str(value.get("approved_at") or ""),
+        artifact_refs=tuple(value.get("artifact_refs") or ()),
+        diff_hash=value.get("diff_hash"),
+        notes=str(value.get("notes") or ""),
+    )
 
 
 def _default_domain_adapter_registry() -> DomainAdapterRegistry:
@@ -1156,6 +1300,7 @@ def _node_artifact_refs(state: ModAgentState, node_name: str) -> list[str]:
         "create_implementation_plan": "implementation_plan",
         "generate_patch_proposal": "patch_proposal",
         "review_proposal": "proposal_review",
+        "human_review_gate": "resume_report",
         "dry_run_apply": "dry_run_result",
         "build": "build_result",
         "collect_runtime_evidence": "runtime_evidence",

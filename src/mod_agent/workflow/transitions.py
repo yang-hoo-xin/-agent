@@ -72,6 +72,14 @@ def route_after_review(state: ModAgentState) -> str:
     return "blocked"
 
 
+def route_after_human_review_gate(state: ModAgentState) -> str:
+    """Stop only when the human review gate records validation blockers."""
+
+    if state["blockers"]:
+        return "blocked"
+    return "continue"
+
+
 def route_after_dry_run(state: ModAgentState) -> str:
     """Stop when dry-run is blocked by missing or rejected approval."""
 
@@ -141,6 +149,10 @@ def route_registry() -> RouteRegistry:
             "continue": "review_proposal",
         },
         "review_proposal": {
+            "blocked": "blocked",
+            "continue": "dry_run_apply",
+        },
+        "human_review_gate": {
             "blocked": "blocked",
             "continue": "dry_run_apply",
         },
