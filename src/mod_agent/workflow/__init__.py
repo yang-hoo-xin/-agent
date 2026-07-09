@@ -5,6 +5,7 @@ from .checkpointing import (
     ResumeReport,
     WorkflowCheckpoint,
     WorkflowCheckpointStore,
+    resumed_state_from_decision,
 )
 from .interrupts import InterruptRequest, ResumeDecision, ResumePayload, ResumeValidator
 from .nodes import (
@@ -55,4 +56,5 @@ __all__ = [
     "WorkflowCheckpointStore",
     "build_graph",
     "create_initial_state",
+    "resumed_state_from_decision",
 ]

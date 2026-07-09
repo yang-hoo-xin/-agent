@@ -21,6 +21,7 @@ class CheckpointPolicy:
     """Local checkpoint policy for human-controlled workflow boundaries."""
 
     interrupt_stages: tuple[str, ...] = (
+        "proposal_review",
         "review_proposal",
         "dry_run_apply",
         "collect_runtime_evidence",
@@ -117,6 +118,37 @@ class ResumeReport:
             "stale_reasons": list(self.stale_reasons),
             "blockers": list(self.blockers),
         }
+
+
+def resumed_state_from_decision(
+    decision: ResumeDecision,
+    *,
+    resume_report_ref: ArtifactRef | None = None,
+) -> ModAgentState:
+    """Build a graph-resumable state from an accepted resume decision."""
+
+    if not decision.allowed:
+        raise ValueError("Cannot build graph state from a blocked resume decision.")
+    restored_state = decision.applied_updates.get("restored_state")
+    if not isinstance(restored_state, dict):
+        raise ValueError("Accepted resume decision does not contain restored_state.")
+    state = ModAgentState(**restored_state)
+    approvals = decision.applied_updates.get("approvals")
+    if isinstance(approvals, dict):
+        state["approvals"] = {
+            **dict(state["approvals"]),
+            **approvals,
+        }
+    if resume_report_ref is not None:
+        state["artifacts"] = {
+            **dict(state["artifacts"]),
+            "resume_report": resume_report_ref.path,
+        }
+        state["artifact_hashes"] = {
+            **dict(state["artifact_hashes"]),
+            "resume_report": resume_report_ref.artifact_hash,
+        }
+    return state
 
 
 class WorkflowCheckpointStore:
@@ -251,15 +283,24 @@ class WorkflowCheckpointStore:
             "run_id": state["run_id"],
             "request_id": state["request_id"],
             "feature_id": state["feature_id"],
-            "current_stage": state["current_stage"],
-            "next_stage": state["next_stage"],
-            "execution_path": state["execution_path"],
-            "risk_level": state["risk_level"],
+            "user_request": state["user_request"],
             "target_domain": state["target_domain"],
             "target_mod": state["target_mod"],
-            "retry_count": state["retry_count"],
+            "execution_path": state["execution_path"],
+            "risk_level": state["risk_level"],
+            "current_stage": state["current_stage"],
+            "next_stage": state["next_stage"],
             "artifacts": dict(state["artifacts"]),
             "artifact_hashes": dict(state["artifact_hashes"]),
+            "approvals": dict(state["approvals"]),
+            "blockers": list(state["blockers"]),
+            "warnings": list(state["warnings"]),
+            "evidence_summary": dict(state["evidence_summary"]),
+            "review_summary": dict(state["review_summary"]),
+            "build_summary": dict(state["build_summary"]),
+            "runtime_summary": dict(state["runtime_summary"]),
+            "trace_events": list(state["trace_events"]),
+            "retry_count": state["retry_count"],
         }
 
     def _resume_binding_from_state(self, state: ModAgentState) -> dict[str, Any]:

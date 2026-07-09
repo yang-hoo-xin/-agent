@@ -72,6 +72,14 @@ def route_after_review(state: ModAgentState) -> str:
     return "blocked"
 
 
+def route_after_dry_run(state: ModAgentState) -> str:
+    """Stop when dry-run is blocked by missing or rejected approval."""
+
+    if state["blockers"]:
+        return "blocked"
+    return "continue"
+
+
 def route_after_build(state: ModAgentState) -> str:
     """Route failed builds to repair planning."""
 
@@ -136,7 +144,10 @@ def route_registry() -> RouteRegistry:
             "blocked": "blocked",
             "continue": "dry_run_apply",
         },
-        "dry_run_apply": {"continue": "build"},
+        "dry_run_apply": {
+            "blocked": "blocked",
+            "continue": "build",
+        },
         "build": {
             "continue": "collect_runtime_evidence",
             "repair": "create_repair_plan",

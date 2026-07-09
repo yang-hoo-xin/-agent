@@ -45,8 +45,8 @@ from src.mod_agent.runtime.evidence import bind_runtime_evidence_context
 from .nodes import StubNodeRunner
 from .state import ModAgentState
 from .transitions import (
-    continue_route,
     route_after_build,
+    route_after_dry_run,
     route_after_evidence,
     route_after_evaluate,
     route_after_feature_spec,
@@ -80,6 +80,7 @@ def build_graph(
     build_result_factory: BuildResultFactory | None = None,
     runtime_evidence_factory: RuntimeEvidenceFactory | None = None,
     evaluation_context_factory: EvaluationContextFactory | None = None,
+    require_review_approval_for_dry_run: bool = False,
     checkpointer: Any | None = None,
     interrupt_before: list[str] | None = None,
     interrupt_after: list[str] | None = None,
@@ -163,7 +164,11 @@ def build_graph(
         "dry_run_apply",
         _make_real_graph_node(
             "dry_run_apply",
-            lambda state: _run_fake_dry_run_apply(state, artifact_store),
+            lambda state: _run_fake_dry_run_apply(
+                state,
+                artifact_store,
+                require_review_approval=require_review_approval_for_dry_run,
+            ),
         ),
     )
     graph.add_node(
@@ -250,7 +255,7 @@ def build_graph(
     )
     graph.add_conditional_edges(
         "dry_run_apply",
-        continue_route,
+        route_after_dry_run,
         dict(registry["dry_run_apply"]),
     )
     graph.add_conditional_edges(
@@ -618,10 +623,16 @@ def _default_domain_adapter_registry() -> DomainAdapterRegistry:
 def _run_fake_dry_run_apply(
     state: ModAgentState,
     artifact_store: ArtifactStore,
+    *,
+    require_review_approval: bool = False,
 ) -> ModAgentState:
     proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
     review = _read_artifact_data(state, artifact_store, "proposal_review")
-    approved = review.get("allowed_next_stage") == "dry_run_apply"
+    approved_by_review = review.get("allowed_next_stage") == "dry_run_apply"
+    approved_by_human = state["approvals"].get("review") is True
+    approved = approved_by_review and (
+        not require_review_approval or approved_by_human
+    )
     changed_files = list(proposal.get("files") or [])
     diff_intent = list(proposal.get("diff_intent") or [])
     payload = {
@@ -634,7 +645,9 @@ def _run_fake_dry_run_apply(
         "execution_mode": "fake",
         "actual_write_performed": False,
         "real_patch_applied": False,
-        "approved_by_review": approved,
+        "approved_by_review": approved_by_review,
+        "human_approval_required": require_review_approval,
+        "approved_by_human": approved_by_human,
         "proposal_id": proposal.get("proposal_id"),
         "review_decision": review.get("decision"),
         "would_write": bool(diff_intent),

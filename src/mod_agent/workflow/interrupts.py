@@ -95,6 +95,7 @@ class ResumeValidator:
 
     RESUME_ALLOWED_FIELDS: dict[str, tuple[str, ...]] = {
         "plan_request": ("user_request", "target_mod"),
+        "proposal_review": ("approvals.review",),
         "review_proposal": ("approvals.review",),
         "dry_run_apply": ("approvals.dry_run",),
         "confirmed_apply": ("approvals.confirmed_write",),
@@ -184,7 +185,10 @@ class ResumeValidator:
     ) -> dict[str, Any]:
         allowed_fields = self.RESUME_ALLOWED_FIELDS.get(payload.stage, ())
         restored_state = dict(checkpoint.get("state_snapshot", {}))
-        if payload.decision == "approve" and payload.stage == "review_proposal":
+        if payload.decision == "approve" and payload.stage in {
+            "proposal_review",
+            "review_proposal",
+        }:
             return {
                 "approvals": {"review": True},
                 "allowed_fields": list(allowed_fields),

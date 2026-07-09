@@ -6086,7 +6086,7 @@ Not responsible for
 
 | Framework | Used for | Phase | Why reuse | Growth Path |
 | --- | --- | --- | --- | --- |
-| LangGraph | workflow orchestration, state transitions, checkpoint, interrupt | V1 | 复用成熟有状态 graph 和 human-in-the-loop | connect domain decisions, evidence sufficiency, patch review, and runtime verification into graph routing |
+| LangGraph | workflow orchestration, state transitions, checkpoint, interrupt | V1 | 复用成熟有状态 graph 和 human approval/checkpoint contracts；production HITL still requires dynamic interrupt/Command(resume) path | connect domain decisions, evidence sufficiency, patch review, and runtime verification into graph routing |
 | Pydantic v2 | artifact/state/review/evidence schemas | V1 | schema-first、验证强、可测试 | make business decisions explicit in typed artifacts |
 | pydantic-settings + YAML | config/env/secrets overlay | V1 | 配置结构化、测试 fake provider 方便 | evolve toward environment profiles and secret integration |
 | Typer + Rich | local CLI | V1 | 快速做 `run/show/eval/dashboard` | wrap graph commands and handoff reports |

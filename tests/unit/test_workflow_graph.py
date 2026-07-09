@@ -12,6 +12,8 @@ from src.mod_agent.knowledge import (
     BM25Indexer,
     Chunk,
     CollectionResolver,
+    IDENTITY_FIELD_MAPPING,
+    IDENTITY_SCHEMA_VERSION,
     IncrementalIndexer,
     KnowledgeDatabase,
     SourceDefinition,
@@ -25,7 +27,13 @@ from src.mod_agent.runtime import (
     build_real_runtime_evidence_payload,
     make_runtime_probe_evidence_factory,
 )
-from src.mod_agent.workflow import build_graph, create_initial_state
+from src.mod_agent.workflow import (
+    ResumePayload,
+    WorkflowCheckpointStore,
+    build_graph,
+    create_initial_state,
+    resumed_state_from_decision,
+)
 
 
 def _knowledge_with_load_symbol(tmp_path: Path, *, root_name: str = "source") -> KnowledgeDatabase:
@@ -178,6 +186,221 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     assert result["runtime_summary"]["status"] == "verified"
     assert result["runtime_summary"]["acceptance_verified"] is True
     assert result["runtime_summary"]["claims_real_runtime_success"] is False
+
+
+def test_langgraph_artifact_loop_can_resume_after_human_review_approval(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    checkpoint_store = WorkflowCheckpointStore(store)
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+        interrupt_after=["review_proposal"],
+        require_review_approval_for_dry_run=True,
+    )
+    config = {"configurable": {"thread_id": "gtfo_vslice_001a_review_resume"}}
+    state = create_initial_state(
+        run_id="run_gtfo_vslice_001a_review_resume",
+        request_id="req_gtfo_vslice_001a_review_resume",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    interrupted = graph.invoke(state, config)
+
+    assert interrupted["current_stage"] == "proposal_review"
+    assert interrupted["review_summary"]["allowed_next_stage"] == "dry_run_apply"
+    assert interrupted["approvals"] == {}
+    assert "evidence_pack" in interrupted["artifacts"]
+    assert "implementation_plan" in interrupted["artifacts"]
+    assert "patch_proposal" in interrupted["artifacts"]
+    assert "proposal_review" in interrupted["artifacts"]
+    assert "dry_run_result" not in interrupted["artifacts"]
+    assert "workflow_summary" not in interrupted["artifacts"]
+    graph_snapshot = graph.get_state(config)
+    assert graph_snapshot.next == ("dry_run_apply",)
+
+    checkpoint_ref = checkpoint_store.create_checkpoint(
+        interrupted,
+        interrupt_reason="proposal review requires human approval before dry run",
+        resume_allowed_fields=("approvals.review",),
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    payload = ResumePayload(
+        resume_id="resume_gtfo_vslice_001a_review",
+        run_id="run_gtfo_vslice_001a_review_resume",
+        stage="proposal_review",
+        decision="approve",
+        approved_by="human",
+        approved_at="2026-07-09T00:00:00Z",
+        artifact_refs=tuple(interrupted["artifacts"].values()),
+        diff_hash=checkpoint["resume_binding"]["diff_hash"],
+        notes="Approve evidence-bound proposal for controlled dry run.",
+    )
+
+    decision, resume_report_ref = checkpoint_store.resume(checkpoint_ref, payload)
+    resumed_state = resumed_state_from_decision(
+        decision,
+        resume_report_ref=resume_report_ref,
+    )
+    resume_config = graph.update_state(
+        config,
+        resumed_state,
+        as_node="review_proposal",
+    )
+    result = graph.invoke(None, resume_config)
+
+    assert decision.allowed is True
+    assert resumed_state["approvals"]["review"] is True
+    assert resumed_state["artifacts"]["resume_report"] == resume_report_ref.path
+    assert result["current_stage"] == "done"
+    assert result["approvals"]["review"] is True
+    assert "resume_report" in result["artifacts"]
+    assert "dry_run_result" in result["artifacts"]
+    assert "build_result" in result["artifacts"]
+    assert "runtime_evidence" in result["artifacts"]
+    assert "eval_report" in result["artifacts"]
+    assert "workflow_summary" in result["artifacts"]
+    assert result["evidence_summary"]["can_generate_patch"] is True
+    assert result["review_summary"]["allowed_next_stage"] == "dry_run_apply"
+
+    evidence_pack = _artifact_data(store, result, "evidence_pack")
+    dry_run = _artifact_data(store, result, "dry_run_result")
+    summary = _artifact_data(store, result, "workflow_summary")
+    resume_report = store.read(resume_report_ref)["data"]
+
+    assert evidence_pack["readiness"] == "sufficient"
+    assert evidence_pack["can_generate_patch"] is True
+    assert evidence_pack["authoritative_for_patch"] is True
+    assert evidence_pack["identity_schema_version"] == IDENTITY_SCHEMA_VERSION
+    assert evidence_pack["identity_field_mapping"] == dict(IDENTITY_FIELD_MAPPING)
+    assert evidence_pack["items"][0]["source_type"] == "target_source"
+    assert evidence_pack["items"][0]["retrieval_method"] == "symbol_exact"
+    assert evidence_pack["items"][0]["authority"] == "mod_agent_deterministic"
+    assert evidence_pack["items"][0]["symbol"] == "Load"
+    assert dry_run["approved_by_review"] is True
+    assert dry_run["human_approval_required"] is True
+    assert dry_run["approved_by_human"] is True
+    assert summary["artifact_refs"]["resume_report"] == resume_report_ref.path
+    assert summary["artifact_refs"]["evidence_pack"] == result["artifacts"]["evidence_pack"]
+    assert resume_report["allowed"] is True
+    assert resume_report["applied_updates"]["approvals"] == {"review": True}
+
+
+def test_langgraph_artifact_loop_blocks_dry_run_without_human_review_approval(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        require_review_approval_for_dry_run=True,
+    )
+    state = create_initial_state(
+        run_id="run_gtfo_vslice_001a_missing_review_approval",
+        request_id="req_gtfo_vslice_001a_missing_review_approval",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    assert result["current_stage"] == "blocked"
+    assert result["approvals"] == {}
+    assert "evidence_pack" in result["artifacts"]
+    assert "implementation_plan" in result["artifacts"]
+    assert "patch_proposal" in result["artifacts"]
+    assert "proposal_review" in result["artifacts"]
+    assert "dry_run_result" in result["artifacts"]
+    assert "build_result" not in result["artifacts"]
+    assert "runtime_evidence" not in result["artifacts"]
+    assert "eval_report" not in result["artifacts"]
+    assert "workflow_summary" not in result["artifacts"]
+
+    dry_run_envelope = store.read(_artifact_ref(store, result, "dry_run_result"))
+    dry_run = dry_run_envelope["data"]
+
+    assert dry_run_envelope["status"] == "blocked"
+    assert dry_run["approved_by_review"] is True
+    assert dry_run["human_approval_required"] is True
+    assert dry_run["approved_by_human"] is False
+    assert any(blocker["code"] == "REVIEW_NOT_APPROVED" for blocker in result["blockers"])
+
+
+def test_langgraph_artifact_loop_blocks_success_after_human_review_rejection(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    checkpoint_store = WorkflowCheckpointStore(store)
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+        interrupt_after=["review_proposal"],
+        require_review_approval_for_dry_run=True,
+    )
+    config = {"configurable": {"thread_id": "gtfo_vslice_001a_review_reject"}}
+    state = create_initial_state(
+        run_id="run_gtfo_vslice_001a_review_reject",
+        request_id="req_gtfo_vslice_001a_review_reject",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+    interrupted = graph.invoke(state, config)
+    checkpoint_ref = checkpoint_store.create_checkpoint(
+        interrupted,
+        interrupt_reason="proposal review requires human approval before dry run",
+        resume_allowed_fields=("approvals.review",),
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    payload = ResumePayload(
+        resume_id="resume_gtfo_vslice_001a_reject",
+        run_id="run_gtfo_vslice_001a_review_reject",
+        stage="proposal_review",
+        decision="reject",
+        approved_by="human",
+        approved_at="2026-07-09T00:00:00Z",
+        artifact_refs=tuple(interrupted["artifacts"].values()),
+        diff_hash=checkpoint["resume_binding"]["diff_hash"],
+        notes="Reject evidence-bound proposal before controlled dry run.",
+    )
+
+    decision, resume_report_ref = checkpoint_store.resume(checkpoint_ref, payload)
+    resumed_state = resumed_state_from_decision(
+        decision,
+        resume_report_ref=resume_report_ref,
+    )
+    resume_config = graph.update_state(
+        config,
+        resumed_state,
+        as_node="review_proposal",
+    )
+    result = graph.invoke(None, resume_config)
+
+    assert decision.allowed is True
+    assert "review" not in resumed_state["approvals"]
+    assert result["current_stage"] == "blocked"
+    assert "resume_report" in result["artifacts"]
+    assert "dry_run_result" in result["artifacts"]
+    assert "build_result" not in result["artifacts"]
+    assert "runtime_evidence" not in result["artifacts"]
+    assert "eval_report" not in result["artifacts"]
+    assert "workflow_summary" not in result["artifacts"]
+
+    dry_run_envelope = store.read(_artifact_ref(store, result, "dry_run_result"))
+    dry_run = dry_run_envelope["data"]
+    resume_report = store.read(resume_report_ref)["data"]
+
+    assert dry_run_envelope["status"] == "blocked"
+    assert dry_run["approved_by_review"] is True
+    assert dry_run["human_approval_required"] is True
+    assert dry_run["approved_by_human"] is False
+    assert resume_report["allowed"] is True
+    assert resume_report["decision"] == "reject"
+    assert resume_report["applied_updates"]["decision"] == "reject"
+    assert any(blocker["code"] == "REVIEW_NOT_APPROVED" for blocker in result["blockers"])
 
 
 def test_missing_knowledge_routes_to_blocked_after_evidence(tmp_path: Path) -> None:
