@@ -8,10 +8,10 @@ Last updated: 2026-07-09
 ## Current Queue
 
 ```text
-current_queue: GTFO-VSLICE-001A
-last_completed: GTFO-VSLICE-001A working-tree dynamic review interrupt path
-current_stabilization_task: GTFO-VSLICE-001A now has working-tree tests for the evidence retrieval identity path inside a LangGraph artifact loop, including checkpoint/static interrupt resume and dynamic interrupt/Command(resume) review approval before dry-run. In the dynamic path, LangGraph checkpointer drives interrupt resume; the project artifact layer records workflow_checkpoint/resume_report after resume for audit binding. Wrong thread_id resume cannot recover the original interrupted graph, and dynamic resume writes workflow_checkpoint, resume_report, and dry_run_result once. Persistent checkpoint backend work remains open
-next_recommended_task: V2-PROP-001A deepen proposal context only where it supports GTFO-VSLICE-001B evidence binding; then bind hook discovery and implementation_plan to evidence refs/source spans
+current_queue: GTFO-VSLICE-001B
+last_completed: V2-PROP-001A proposal context pack deepening
+current_stabilization_task: GTFO-VSLICE-001A now has working-tree tests for the evidence retrieval identity path inside a LangGraph artifact loop, including checkpoint/static interrupt resume and dynamic interrupt/Command(resume) review approval before dry-run. V2-PROP-001A deepens patch_proposal.context_pack with source snippets, target symbol signatures, upstream artifact hashes, implementation_plan hash, context budget metadata, omission blockers, and optional proposal-time Git base revision binding. ProposalReviewer blocks missing or drifting deep context, while ordinary workflow execution does not depend on ambient Git availability unless a proposal_git_binding_factory is explicitly supplied
+next_recommended_task: GTFO-VSLICE-001B bind hook discovery and implementation_plan to evidence refs/source spans, then prove those refs survive through proposal_review and repair eligibility
 ordinary_queue_status: Q-022, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, TRANSITION-001, TRANSITION-002, TRANSITION-003, TRANSITION-004, TRANSITION-005, MISS-026D, MISS-026E, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; approved GTFO launch and real gameplay evidence remain explicit opt-in production runtime automation work
 next_stage_after_expert_split: V2 platform expansion is active; prioritize platform capability work over further process Skill splitting
 V3_deferred_runtime_track: approved GTFO launch smoke, game directory copy, and real gameplay evidence are V3 or explicit opt-in runtime validation work

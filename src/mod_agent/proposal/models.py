@@ -149,6 +149,14 @@ def build_context_pack(
     evidence_source_paths: tuple[str, ...],
     scope_boundary: tuple[str, ...],
     change_units: tuple[dict[str, Any], ...],
+    source_snippets: tuple[dict[str, Any], ...] = (),
+    target_symbol_signatures: tuple[dict[str, Any], ...] = (),
+    artifact_hashes: dict[str, str] | None = None,
+    implementation_plan_hash: str | None = None,
+    git_binding: dict[str, Any] | None = None,
+    git_binding_required: bool = False,
+    context_budget: dict[str, Any] | None = None,
+    omission_blockers: tuple[dict[str, Any], ...] = (),
 ) -> dict[str, Any]:
     """Create proposal context consumed by review, dashboard, and repair."""
 
@@ -163,6 +171,25 @@ def build_context_pack(
             for unit in change_units
             if unit.get("change_unit_id")
         ],
+        "source_snippets": [dict(snippet) for snippet in source_snippets],
+        "target_symbol_signatures": [
+            dict(signature) for signature in target_symbol_signatures
+        ],
+        "artifact_hashes": dict(artifact_hashes or {}),
+        "implementation_plan_hash": implementation_plan_hash,
+        "git_binding": dict(git_binding or {}),
+        "git_binding_required": git_binding_required,
+        "context_budget": dict(context_budget or _empty_context_budget()),
+        "omission_blockers": [dict(blocker) for blocker in omission_blockers],
+    }
+
+
+def _empty_context_budget() -> dict[str, Any]:
+    return {
+        "source_snippet_count": 0,
+        "source_snippet_chars": 0,
+        "source_snippet_char_limit": 0,
+        "omitted_source_snippet_count": 0,
     }
 
 

@@ -154,6 +154,35 @@ def _runtime_patch_proposal(
             "evidence_source_paths": [target_file],
             "scope_boundary": [],
             "change_unit_ids": ["chg_001"],
+            "source_snippets": [
+                {
+                    "evidence_id": "ev_001",
+                    "source_path": "mods/BetterHitFeedback/Plugin.cs",
+                    "source_type": "target_source",
+                    "symbol": None,
+                    "span": None,
+                    "retrieval_method": "symbol_exact",
+                    "excerpt": "runtime behavior evidence",
+                }
+            ],
+            "target_symbol_signatures": [],
+            "artifact_hashes": {
+                "evidence_pack": "sha256:evidence",
+                "implementation_plan": "sha256:implementation",
+            },
+            "implementation_plan_hash": "sha256:implementation",
+            "git_binding": {
+                "status": "not_configured",
+                "base_revision": None,
+            },
+            "git_binding_required": False,
+            "context_budget": {
+                "source_snippet_count": 1,
+                "source_snippet_chars": 25,
+                "source_snippet_char_limit": 6000,
+                "omitted_source_snippet_count": 0,
+            },
+            "omission_blockers": [],
         },
         "risk_assessment": {
             "risk_level": "high",

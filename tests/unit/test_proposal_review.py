@@ -49,9 +49,51 @@ def _evidence_pack() -> dict[str, object]:
                 "source_type": "target_source",
                 "source_path": "mods/BetterHitFeedback/Plugin.cs",
                 "symbol": "Load",
+                "span": {"start_line": 10, "end_line": 18},
+                "retrieval_method": "symbol_exact",
+                "excerpt": "public void Load() { /* existing behavior */ }",
+                "chunk_id": "chunk_001",
+                "document_id": "doc_001",
+                "source_ref": "source_001",
+                "source_hash": "sha256:source",
+                "file_hash": "sha256:file",
+                "doc_hash": "sha256:doc",
             }
         ]
     }
+
+
+def _artifact_hashes() -> dict[str, str]:
+    return {
+        "feature_spec": "sha256:feature",
+        "evidence_pack": "sha256:evidence",
+        "implementation_plan": "sha256:implementation",
+    }
+
+
+def _git_binding() -> dict[str, object]:
+    return {
+        "status": "available",
+        "base_revision": "a" * 40,
+        "branch": "codex/test",
+        "is_dirty": False,
+        "diff_hash": "sha256:gitdiff",
+        "dirty_tree_policy": {
+            "status": "clean",
+            "blocks_proposal_binding": False,
+            "blockers": [],
+        },
+    }
+
+
+def _proposal_payload() -> dict[str, object]:
+    return PatchProposalBuilder().build(
+        _implementation_payload(),
+        evidence_pack=_evidence_pack(),
+        artifact_hashes=_artifact_hashes(),
+        git_binding=_git_binding(),
+        require_git_binding=True,
+    ).to_artifact_payload()
 
 
 def _feature_spec() -> dict[str, object]:
@@ -61,7 +103,13 @@ def _feature_spec() -> dict[str, object]:
 
 
 def test_patch_proposal_builder_converts_implementation_plan_to_reviewable_intent() -> None:
-    proposal = PatchProposalBuilder().build(_implementation_payload())
+    proposal = PatchProposalBuilder().build(
+        _implementation_payload(),
+        evidence_pack=_evidence_pack(),
+        artifact_hashes=_artifact_hashes(),
+        git_binding=_git_binding(),
+        require_git_binding=True,
+    )
 
     assert proposal.blocked is False
     assert proposal.feature_id == "feature_001"
@@ -87,6 +135,21 @@ def test_patch_proposal_builder_converts_implementation_plan_to_reviewable_inten
         "mods/BetterHitFeedback/Plugin.cs"
     ]
     assert proposal.context_pack["change_unit_ids"] == ["chg_001"]
+    assert proposal.context_pack["source_snippets"][0]["evidence_id"] == "ev_001"
+    assert proposal.context_pack["source_snippets"][0]["span"] == {
+        "start_line": 10,
+        "end_line": 18,
+    }
+    assert proposal.context_pack["target_symbol_signatures"][0]["symbol"] == "Load"
+    assert proposal.context_pack["artifact_hashes"]["evidence_pack"] == (
+        "sha256:evidence"
+    )
+    assert proposal.context_pack["implementation_plan_hash"] == (
+        "sha256:implementation"
+    )
+    assert proposal.context_pack["git_binding"]["base_revision"] == "a" * 40
+    assert proposal.context_pack["context_budget"]["source_snippet_count"] == 1
+    assert proposal.context_pack["omission_blockers"] == []
     assert proposal.no_op_status == {"is_no_op": False, "reason": None}
     assert proposal.rollback_hints == (
         {
@@ -120,12 +183,11 @@ def test_patch_proposal_builder_blocks_unresolved_edit_target() -> None:
 
 
 def test_reviewer_approves_evidence_bound_dry_run_proposal() -> None:
-    proposal = PatchProposalBuilder().build(_implementation_payload())
-
     review = ProposalReviewer().review(
-        proposal.to_artifact_payload(),
+        _proposal_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
         permission_level="dry_run_write",
     )
 
@@ -136,11 +198,10 @@ def test_reviewer_approves_evidence_bound_dry_run_proposal() -> None:
 
 
 def test_reviewer_blocks_evidence_bound_proposal_without_evidence_pack() -> None:
-    proposal = PatchProposalBuilder().build(_implementation_payload())
-
     review = ProposalReviewer().review(
-        proposal.to_artifact_payload(),
+        _proposal_payload(),
         feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
         permission_level="dry_run_write",
     )
 
@@ -153,7 +214,7 @@ def test_reviewer_blocks_evidence_bound_proposal_without_evidence_pack() -> None
 
 
 def test_reviewer_blocks_unbound_change() -> None:
-    proposal = PatchProposalBuilder().build(_implementation_payload()).to_artifact_payload()
+    proposal = _proposal_payload()
     proposal["diff_intent"][0]["evidence_refs"] = []
 
     review = ProposalReviewer().review(
@@ -168,7 +229,7 @@ def test_reviewer_blocks_unbound_change() -> None:
 
 
 def test_reviewer_blocks_missing_context_pack() -> None:
-    proposal = PatchProposalBuilder().build(_implementation_payload()).to_artifact_payload()
+    proposal = _proposal_payload()
     proposal.pop("context_pack")
 
     review = ProposalReviewer().review(
@@ -183,7 +244,7 @@ def test_reviewer_blocks_missing_context_pack() -> None:
 
 
 def test_reviewer_blocks_change_unit_mismatch() -> None:
-    proposal = PatchProposalBuilder().build(_implementation_payload()).to_artifact_payload()
+    proposal = _proposal_payload()
     proposal["change_units"][0]["change_unit_id"] = "different_change"
 
     review = ProposalReviewer().review(
@@ -198,7 +259,7 @@ def test_reviewer_blocks_change_unit_mismatch() -> None:
 
 
 def test_reviewer_blocks_context_pack_change_unit_id_drift() -> None:
-    proposal = PatchProposalBuilder().build(_implementation_payload()).to_artifact_payload()
+    proposal = _proposal_payload()
     proposal["context_pack"]["change_unit_ids"] = ["different_change"]
 
     review = ProposalReviewer().review(
@@ -216,8 +277,55 @@ def test_reviewer_blocks_context_pack_change_unit_id_drift() -> None:
     )
 
 
+def test_reviewer_blocks_missing_deep_context_bindings() -> None:
+    proposal = _proposal_payload()
+    proposal["context_pack"]["source_snippets"] = []
+    proposal["context_pack"]["artifact_hashes"].pop("implementation_plan")
+    proposal["context_pack"]["implementation_plan_hash"] = None
+    proposal["context_pack"]["git_binding"] = {}
+
+    review = ProposalReviewer().review(
+        proposal,
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+    )
+
+    messages = {finding.message for finding in review.findings}
+    assert review.decision == "revise_proposal"
+    assert (
+        "Proposal context_pack source_snippets do not cover proposal evidence refs."
+        in messages
+    )
+    assert (
+        "Proposal context_pack is missing required upstream artifact hash: implementation_plan."
+        in messages
+    )
+    assert "Proposal context_pack implementation_plan_hash is not bound." in messages
+    assert "Proposal context_pack is missing Git base revision binding." in messages
+
+
+def test_reviewer_blocks_artifact_hash_drift() -> None:
+    proposal = _proposal_payload()
+    proposal["context_pack"]["artifact_hashes"]["evidence_pack"] = "sha256:stale"
+
+    review = ProposalReviewer().review(
+        proposal,
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+    )
+
+    assert review.decision == "revise_proposal"
+    assert any(
+        finding.message
+        == "Proposal context_pack upstream artifact hash drifted: evidence_pack."
+        for finding in review.findings
+    )
+
+
 def test_reviewer_blocks_forbidden_path() -> None:
-    proposal = PatchProposalBuilder().build(_implementation_payload()).to_artifact_payload()
+    proposal = _proposal_payload()
     proposal["files"] = [".git/config"]
     proposal["diff_intent"][0]["target_file"] = ".git/config"
 
@@ -232,12 +340,13 @@ def test_reviewer_blocks_forbidden_path() -> None:
 
 
 def test_reviewer_blocks_wrong_permission_level() -> None:
-    proposal = PatchProposalBuilder().build(_implementation_payload()).to_artifact_payload()
+    proposal = _proposal_payload()
 
     review = ProposalReviewer().review(
         proposal,
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
         permission_level="confirmed_write",
     )
 
@@ -247,11 +356,18 @@ def test_reviewer_blocks_wrong_permission_level() -> None:
 
 def test_proposal_payloads_validate_against_artifact_contract(tmp_path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
-    proposal = PatchProposalBuilder().build(_implementation_payload())
+    proposal = PatchProposalBuilder().build(
+        _implementation_payload(),
+        evidence_pack=_evidence_pack(),
+        artifact_hashes=_artifact_hashes(),
+        git_binding=_git_binding(),
+        require_git_binding=True,
+    )
     review = ProposalReviewer().review(
         proposal.to_artifact_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
     )
 
     feature_ref = store.write(

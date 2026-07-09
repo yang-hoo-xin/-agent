@@ -205,6 +205,53 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     assert result["runtime_summary"]["claims_real_runtime_success"] is False
 
 
+def test_graph_patch_proposal_context_can_require_git_binding(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        proposal_git_binding_factory=lambda: {
+            "status": "available",
+            "base_revision": "a" * 40,
+            "branch": "codex/test",
+            "is_dirty": False,
+            "diff_hash": "sha256:gitdiff",
+            "dirty_tree_policy": {
+                "status": "clean",
+                "blocks_proposal_binding": False,
+                "blockers": [],
+            },
+        },
+    )
+    state = create_initial_state(
+        run_id="run_git_bound_context",
+        request_id="req_git_bound_context",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    proposal = _artifact_data(store, result, "patch_proposal")
+    review = _artifact_data(store, result, "proposal_review")
+
+    assert result["current_stage"] == "done"
+    assert proposal["context_pack"]["git_binding_required"] is True
+    assert proposal["context_pack"]["git_binding"]["base_revision"] == "a" * 40
+    assert proposal["context_pack"]["artifact_hashes"]["evidence_pack"] == (
+        result["artifact_hashes"]["evidence_pack"]
+    )
+    assert proposal["context_pack"]["implementation_plan_hash"] == (
+        result["artifact_hashes"]["implementation_plan"]
+    )
+    assert proposal["context_pack"]["source_snippets"][0]["evidence_id"] in (
+        proposal["evidence_refs"]
+    )
+    assert review["decision"] == "approve_dry_run"
+
+
 def test_langgraph_artifact_loop_can_resume_after_human_review_approval(
     tmp_path: Path,
 ) -> None:

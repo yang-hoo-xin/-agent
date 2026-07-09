@@ -34,6 +34,7 @@ class ProposalReviewer:
         evidence_pack: dict[str, Any] | None = None,
         repair_plan: dict[str, Any] | None = None,
         feature_spec: dict[str, Any] | None = None,
+        artifact_hashes: dict[str, str] | None = None,
         domain_policy: DomainReviewPolicy | None = None,
         permission_level: str = "dry_run_write",
     ) -> ProposalReview:
@@ -137,6 +138,16 @@ class ProposalReviewer:
                     ),
                 )
             )
+
+        findings.extend(
+            self._review_context_pack_depth(
+                proposal=proposal,
+                context_pack=context_pack,
+                evidence_pack=evidence_pack,
+                repair_plan=repair_plan,
+                artifact_hashes=artifact_hashes,
+            )
+        )
 
         if no_op_status.get("is_no_op") is True and diff_intent:
             findings.append(
@@ -353,6 +364,161 @@ class ProposalReviewer:
     @staticmethod
     def _context_change_unit_ids(context_pack: dict[str, Any]) -> set[str]:
         return {str(value) for value in context_pack.get("change_unit_ids") or []}
+
+    def _review_context_pack_depth(
+        self,
+        *,
+        proposal: dict[str, Any],
+        context_pack: dict[str, Any],
+        evidence_pack: dict[str, Any] | None,
+        repair_plan: dict[str, Any] | None,
+        artifact_hashes: dict[str, str] | None,
+    ) -> tuple[ReviewFinding, ...]:
+        if not context_pack or proposal.get("blocked"):
+            return ()
+        if repair_plan is not None:
+            return ()
+        findings: list[ReviewFinding] = []
+        proposal_evidence_refs = {str(ref) for ref in proposal.get("evidence_refs") or []}
+        snippets = [
+            item
+            for item in context_pack.get("source_snippets") or []
+            if isinstance(item, dict)
+        ]
+        snippet_refs = {
+            str(item.get("evidence_id"))
+            for item in snippets
+            if item.get("evidence_id")
+        }
+        if not proposal_evidence_refs or not proposal_evidence_refs.issubset(snippet_refs):
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message=(
+                        "Proposal context_pack source_snippets do not cover proposal "
+                        "evidence refs."
+                    ),
+                )
+            )
+        evidence_ids = self._evidence_ids(evidence_pack, None)
+        if evidence_ids and not snippet_refs.issubset(evidence_ids):
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message="Proposal context_pack source_snippets reference unknown evidence.",
+                )
+            )
+
+        target_symbols = {
+            str(change.get("target_symbol"))
+            for change in proposal.get("diff_intent") or []
+            if isinstance(change, dict) and change.get("target_symbol")
+        }
+        signatures = [
+            item
+            for item in context_pack.get("target_symbol_signatures") or []
+            if isinstance(item, dict)
+        ]
+        signature_symbols = {
+            str(item.get("symbol")) for item in signatures if item.get("symbol")
+        }
+        if target_symbols and not target_symbols.issubset(signature_symbols):
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message=(
+                        "Proposal context_pack target_symbol_signatures do not cover "
+                        "diff_intent target symbols."
+                    ),
+                )
+            )
+
+        context_artifact_hashes = context_pack.get("artifact_hashes")
+        if not isinstance(context_artifact_hashes, dict):
+            context_artifact_hashes = {}
+        for artifact_type in ("evidence_pack", "implementation_plan"):
+            if not context_artifact_hashes.get(artifact_type):
+                findings.append(
+                    ReviewFinding(
+                        rule_id="context_pack",
+                        level="blocking",
+                        message=(
+                            "Proposal context_pack is missing required upstream "
+                            f"artifact hash: {artifact_type}."
+                        ),
+                    )
+                )
+            elif artifact_hashes is not None and (
+                context_artifact_hashes.get(artifact_type)
+                != artifact_hashes.get(artifact_type)
+            ):
+                findings.append(
+                    ReviewFinding(
+                        rule_id="context_pack",
+                        level="blocking",
+                        message=(
+                            "Proposal context_pack upstream artifact hash drifted: "
+                            f"{artifact_type}."
+                        ),
+                    )
+                )
+        if not context_pack.get("implementation_plan_hash") or (
+            context_pack.get("implementation_plan_hash")
+            != context_artifact_hashes.get("implementation_plan")
+        ):
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message="Proposal context_pack implementation_plan_hash is not bound.",
+                )
+            )
+
+        git_binding = context_pack.get("git_binding")
+        if context_pack.get("git_binding_required") is True and (
+            not isinstance(git_binding, dict) or not git_binding.get("base_revision")
+        ):
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message="Proposal context_pack is missing Git base revision binding.",
+                )
+            )
+
+        budget = context_pack.get("context_budget")
+        if not isinstance(budget, dict) or not isinstance(
+            budget.get("source_snippet_char_limit"), int
+        ):
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message="Proposal context_pack is missing context budget metadata.",
+                )
+            )
+
+        omission_blockers = [
+            blocker
+            for blocker in context_pack.get("omission_blockers") or []
+            if isinstance(blocker, dict)
+        ]
+        for blocker in omission_blockers:
+            findings.append(
+                ReviewFinding(
+                    rule_id="context_pack",
+                    level="blocking",
+                    message=str(
+                        blocker.get("message")
+                        or blocker.get("code")
+                        or "Proposal context omission blocker is present."
+                    ),
+                )
+            )
+        return tuple(findings)
 
     @staticmethod
     def _is_forbidden_path(path: str) -> bool:

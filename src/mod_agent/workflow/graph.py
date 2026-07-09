@@ -169,7 +169,11 @@ def build_graph(
         "generate_patch_proposal",
         _make_real_graph_node(
             "generate_patch_proposal",
-            lambda state: _run_generate_patch_proposal(state, artifact_store),
+            lambda state: _run_generate_patch_proposal(
+                state,
+                artifact_store,
+                proposal_git_binding_factory=proposal_git_binding_factory,
+            ),
         ),
     )
     graph.add_node(
@@ -559,6 +563,8 @@ def _run_create_implementation_plan(
 def _run_generate_patch_proposal(
     state: ModAgentState,
     artifact_store: ArtifactStore,
+    *,
+    proposal_git_binding_factory: ProposalGitBindingFactory | None = None,
 ) -> ModAgentState:
     if state["current_stage"] == "repair_plan" and "repair_plan" in state["artifacts"]:
         repair_plan = _read_artifact_data(state, artifact_store, "repair_plan")
@@ -570,7 +576,17 @@ def _run_generate_patch_proposal(
         ]
     else:
         implementation = _read_artifact_data(state, artifact_store, "implementation_plan")
-        proposal = PatchProposalBuilder().build(implementation)
+        proposal = PatchProposalBuilder().build(
+            implementation,
+            evidence_pack=_read_artifact_data(state, artifact_store, "evidence_pack"),
+            artifact_hashes=dict(state["artifact_hashes"]),
+            git_binding=(
+                proposal_git_binding_factory()
+                if proposal_git_binding_factory is not None
+                else None
+            ),
+            require_git_binding=proposal_git_binding_factory is not None,
+        )
         upstream_refs = [
             _artifact_ref_from_state(state, "implementation_plan"),
             _artifact_ref_from_state(state, "evidence_pack"),
@@ -609,6 +625,7 @@ def _run_review_proposal(
         evidence_pack=evidence_pack,
         repair_plan=repair_plan,
         feature_spec=feature_spec,
+        artifact_hashes=dict(state["artifact_hashes"]),
         domain_policy=_domain_review_policy_from_state(
             state,
             domain_adapter_registry,

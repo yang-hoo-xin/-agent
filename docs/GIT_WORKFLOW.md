@@ -9,6 +9,12 @@ This repository uses Git as the rollback and audit layer for the Controlled Mod 
   - `feat/phase-b-artifact-contract`
   - `feat/graph-routing`
   - `fix/proposal-review-gate`
+- Use `codex/` branches for Codex-owned V2 platform tasks unless the user asks
+  for a different prefix:
+  - `codex/v2-prop-context-pack`
+  - `codex/v2-dashboard-projection`
+  - `codex/v2-mcp-approved-routes`
+  - `codex/v2-eval-quality-gate`
 - Do not force-push `main`.
 - Prefer `git revert` over history rewrites after a commit has been pushed.
 
@@ -34,6 +40,36 @@ Use these common commit types:
 - `test`: test-only change.
 - `docs`: documentation-only change.
 - `chore`: repository, tooling, or baseline setup.
+
+## V2 Git Binding Policy
+
+V2 work treats Git as part of the controlled code-generation evidence chain,
+not just as a storage backend.
+
+For `V2-PROP-001` and later proposal/review work, `patch_proposal.context_pack`
+should bind proposal context to Git state before review:
+
+```text
+base_revision
+working_tree_status
+diff_hash or empty_diff_hash
+artifact_hashes used by the proposal
+source_snippet provenance
+symbol_signature provenance
+rollback_hint
+```
+
+Rules:
+
+- Do not infer Git identifiers from branch names or paths. Read them from Git
+  commands or `git_change_record` artifacts.
+- Dirty tree policy remains audit metadata until a task explicitly implements
+  execution-layer stop/resume behavior.
+- Do not reset, restore, rebase, or discard user changes unless the user
+  explicitly requests that operation.
+- V3 runtime validation commits may include GTFO launch evidence summaries, but
+  game outputs, screenshots, logs, DLLs, and local runtime artifacts must stay
+  out of Git unless a task defines a safe artifact fixture.
 
 ## Verification Before Push
 
