@@ -17,11 +17,38 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: V1_TO_V2_TRANSITION
-last_completed: TRANSITION-005 Runtime Evidence Binding
-next_recommended_task: MISS-026 live GTFO gameplay validation if runtime automation is selected; otherwise choose one explicit recovery target from docs/V1_TO_V2_TRANSITION.md
-Q_queue_status: Q-022, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, TRANSITION-001, TRANSITION-002, TRANSITION-003, TRANSITION-004, TRANSITION-005, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; MISS-026 live GTFO gameplay validation remains open and explicit opt-in production runtime automation work
-next_stage_after_expert_split: V1_TO_V2_TRANSITION checkpoints are active; do not continue splitting process Skills by default
+current_queue: GTFO-VSLICE-001A
+last_completed: MISS-026E GTFO runtime trust binding
+next_recommended_task: GTFO-VSLICE-001A define and test the first Evidence-Controlled GTFO vertical-slice contract using current target_source/symbol/BM25 evidence; V2-PROP-001A follows as the required proposal context-pack support task
+Q_queue_status: Q-022, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, TRANSITION-001, TRANSITION-002, TRANSITION-003, TRANSITION-004, TRANSITION-005, MISS-026D, MISS-026E, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; approved GTFO launch and real gameplay evidence remain explicit opt-in production runtime automation work
+next_stage_after_expert_split: V2 platform expansion is active; do not continue splitting process Skills by default
+V3_deferred_runtime_track: approved GTFO launch smoke, real gameplay evidence, and production runtime automation remain V3 or explicit opt-in work after V2 platform surfaces mature
+career_oriented_progression: select tasks that improve interview-visible production Agent platform depth, not tasks that only expand schemas or documentation
+```
+
+## RAG/MCP Spec Anchors
+
+```text
+DEV_SPEC.md remains the root control-plane spec.
+EVIDENCE_RAG_MCP_SPEC.md is the Evidence RAG / MCP subsystem spec.
+
+Read order for RAG/MCP tasks:
+  1. DEV_SPEC.md for product boundary, LangGraph artifact loop, safety gates,
+     review/runtime/eval authority, and queue discipline.
+  2. EVIDENCE_RAG_MCP_SPEC.md sections 1-3 for project-specific overlay:
+     read order, integration rules, source authority, phase placement, and
+     controlled-agent MCP surface.
+  3. EVIDENCE_RAG_MCP_SPEC.md section 4 for the imported technical blueprint:
+     ingestion, chunking, retrieval, rerank, trace, eval, dashboard, multimodal,
+     and MCP protocol detail.
+
+If DEV_SPEC.md and EVIDENCE_RAG_MCP_SPEC.md conflict, DEV_SPEC.md wins for
+product identity, LangGraph/artifact authority, safety, review, runtime, eval,
+permission, and rollback. The RAG/MCP sub-spec wins only for RAG/MCP subsystem
+technical detail inside those boundaries.
+
+RAG/MCP tasks must not create an independent RAG product or independent MCP
+execution entrypoint. They must feed the controlled LangGraph artifact loop.
 ```
 
 ## Evidence Provenance Policy
@@ -101,13 +128,117 @@ Default-paused items unless explicitly selected:
   - large-scale benchmark harnesses
 
 Allowed next:
-  - control-document recovery
-  - evidence provenance reconciliation
-  - read-only/report-only MCP inspection
-  - local read-only artifact inspection API for development use
-  - expert process Skills split from the proven E2E-001 chain after closure review
+  - V2 proposal context pack deepening
+  - V2 curated reference mod and community note loaders when they feed proposal/review evidence
+  - V2 GTFO vertical slice evidence binding through hook discovery, implementation_plan, proposal, review, and repair context
+  - V2 dashboard/API projection work
+  - V2 MCP approved-route design and tests
+  - V2 agent decision-quality eval recovery
+  - control-document recovery when it directly supports V2 delivery
   - explicit user-directed platform development through auto-coder
 ```
+
+## V2 Platform Expansion Queue
+
+```text
+V2 purpose:
+  Strengthen the project as a vertical controlled code-generation Agent platform.
+  The main story is not natural-language-to-Mod generation. The main story is
+  artifact-backed planning, evidence-bound patch proposals, review gates,
+  safe external interfaces, dashboard projections, and decision-quality eval.
+
+Career-oriented task filter:
+  V2 tasks should create evidence that a professional reviewer can recognize as
+  production Agent platform work: durable workflow control, evidence-grounded
+  code generation, safe MCP/API/tool integration, observability, evaluation,
+  artifact lineage, runtime feedback, rollback/approval policy, and retrieval
+  quality. Do not choose schema-only work unless it directly unlocks a runnable
+  vertical slice or a tested production constraint.
+
+V3 deferred:
+  Real GTFO launch smoke, game directory copy, and gameplay evidence remain
+  explicit opt-in runtime validation work. They should not block V2 platform
+  architecture work.
+
+RAG placement:
+  V1 keeps Knowledge Base and Evidence RAG basics: local source, artifacts, logs,
+  domain docs, SourceRegistry metadata, incremental hashes, deterministic
+  retrieval, symbol retrieval, BM25, EvidencePack, and readiness gates.
+  V2 adds curated local reference sources and proves that retrieved evidence
+  controls vertical code-generation decisions.
+  V3 upgrades dense/hybrid retrieval, RRF, citation/source span evaluation,
+  allowlisted GitHub importing, Discord export importing, and broader community
+  importers. These are not V2 blockers.
+
+V1 code check:
+  Current source provides SourceRegistry, SourceDiscovery, Document, Chunk,
+  ChunkRecord, stable source identity, content_hash/file_hash identity,
+  incremental indexing, symbol extraction/search, BM25 indexing/query,
+  EvidenceItem, EvidencePack, retrieval_methods_used, disabled_modes, timing,
+  trace_refs, identity_schema_version, identity_field_mapping, and readiness
+  blocking for auxiliary-only evidence. The focused tests run in this check
+  cover registry/indexing, document/chunk identity, symbol retrieval, BM25-backed
+  evidence retrieval, collection resolution, evidence artifact contracts, dense
+  auxiliary blocking, and auxiliary-only readiness blocking; they do not
+  exhaustively cover every SourceDiscovery classification branch.
+  Current source and tests do not implement ReferenceModLoader metadata,
+  CommunityNoteLoader / Extractor, RRF fusion in the controlled-agent retriever,
+  rerank in the controlled-agent retriever, citation/source-span retrieval eval,
+  GitHubRepoImporter, DiscordExportImporter, Thunderstore/Nexus/forum importers,
+  or a general community crawler.
+```
+
+## V2 Execution Order
+
+```text
+V2 centerline:
+  Prove one controlled vertical code-generation slice before expanding optional
+  retrieval, importers, dashboard polish, or MCP write/runtime routes.
+
+Execution rule:
+  A task may pull a supporting task forward only when it directly unblocks
+  GTFO-VSLICE-001 acceptance. Schema deepening, external knowledge, dashboard,
+  MCP, eval, and dense retrieval work must attach to the vertical slice rather
+  than becoming standalone workstreams.
+```
+
+| Order | Task | Purpose | Concrete First Implementation | Acceptance |
+| --- | --- | --- | --- | --- |
+| 1 | GTFO-VSLICE-001A | Define the vertical-slice contract and prove current Evidence RAG can gate a GTFO feature path with target source / symbol / BM25 evidence | Add or update a focused vertical-slice test around `retrieve_evidence -> create_implementation_plan -> create_patch_proposal -> review_proposal`; use existing `src/mod_agent/knowledge/`, `src/mod_agent/evidence/`, `src/mod_agent/workflow/graph.py`, and `tests/unit/test_mod_delivery_e2e.py` patterns | Test proves no implementation/proposal/review path proceeds without EvidencePack identity, source authority, and readiness; no real GTFO launch |
+| 2 | V2-PROP-001A | Make proposal context auditable enough for code-generation review | Extend `patch_proposal.context_pack` with source snippets, target symbol signatures, evidence artifact hashes, implementation_plan hash, proposal-time git base revision, context budget metadata, and omission blockers | Proposal review blocks missing/drifting context; focused proposal/artifact/workflow/dashboard tests pass |
+| 3 | GTFO-VSLICE-001B | Bind hook discovery and implementation_plan to retrieved evidence instead of only schema fields | Ensure planning/hook-discovery handoff, implementation_plan target symbols, proposal change units, and review findings all consume the same evidence refs and source spans | End-to-end test proves evidence refs survive from retrieval through proposal_review and repair eligibility |
+| 4 | V2-KB-REF-001 | Add curated local reference mods as supporting implementation-pattern evidence | Implement ReferenceModLoader metadata contract for local curated `.cs`, `.csproj`, README, LICENSE, release notes with `repo_url`, `commit_sha`, `license`, `imported_at`, `usage_permission` | Reference evidence defaults `authoritative_for_patch=false` and cannot unlock patch authority alone |
+| 5 | V2-KB-COMM-001 | Add curated community notes without letting raw chat enter patch context | Implement curated note loader/extractor for `claim`, `claim_type`, `source_locator`, `timestamp`, `confidence`, `requires_verification` | Raw chat remains `raw_only`; curated notes remain planning-only until verified by target/API/runtime evidence |
+| 6 | GTFO-VSLICE-001C | Finish the V2 vertical slice with review and repair context | Connect evidence-bound proposal_review blockers and repair_context for the selected GTFO path | One GTFO slice demonstrates hook discovery, implementation_plan, patch_proposal, review gate, and repair context end to end |
+| 7 | V2-EVAL-001 | Make the slice measurable | Add agent decision-quality eval cases for evidence sufficiency, proposal context completeness, review correctness, false-success, and false-block | Eval report blocks unsafe completion and provides interview-visible reliability evidence |
+| 8 | V2-DASH-001 | Make the slice inspectable | Upgrade dashboard/API projections for artifact DAG, proposal context, review findings, eval gate status, and blocked reasons | Human can inspect why evidence allowed or blocked the path without reading raw artifacts |
+| 9 | V2-MCP-001 | Expose controlled external tool growth safely | Model approved write/runtime route contracts as LangGraph-backed approval artifacts without executing dangerous actions directly | MCP remains read/report-first; write/runtime routes return approval/rollback requirements |
+| 10 | V2-RET-001 | Evaluate production retrieval hardening only after consumers can use evidence identity | Add retrieval-quality evaluation around controlled-agent evidence identity; keep dense/vector auxiliary until authority is proven | Dense/RRF/rerank cannot bypass target_source/decompiled_api/review/eval gates |
+
+## Knowledge Source Implementation Phase Table
+
+| Project | Phase |
+| --- | --- |
+| artifact/log/domain-doc loader deepening | V2 supporting item |
+| ReferenceModLoader metadata contract | V2 |
+| CommunityNoteLoader / Extractor | V2 |
+| controlled-agent RRF/rerank | V3 |
+| citation/source-span retrieval eval | V3 |
+| GitHubRepoImporter | V3 |
+| DiscordExportImporter | V3/V3+ |
+| Thunderstore/Nexus/forum importer | V3+ |
+| general community crawling | V3+ / deferred |
+
+| Task | Status | Scope | Evidence Plan |
+| --- | --- | --- | --- |
+| GTFO-VSLICE-001 | queued parent | Parent vertical-slice track. Execute `GTFO-VSLICE-001A`, `V2-PROP-001A`, `GTFO-VSLICE-001B`, then `GTFO-VSLICE-001C`; keep real GTFO launch and gameplay evidence out of scope unless explicitly approved | domain/hook discovery evidence, `src/mod_agent/evidence/`, `src/mod_agent/planning/`, `src/mod_agent/proposal/`, review/eval tests; success requires an end-to-end controlled-agent path, not only schema expansion |
+| V2-PROP-001 | queued support | Parent proposal-context track. Execute `V2-PROP-001A` only as needed by `GTFO-VSLICE-001A/B/C`, deepening `patch_proposal.context_pack` with source snippets, symbol signatures, artifact hashes, git base revision binding, context budget metadata, and omission blockers before review | `src/mod_agent/proposal/models.py`, `src/mod_agent/proposal/builder.py`, `src/mod_agent/proposal/reviewer.py`, `src/mod_agent/git/repository.py` if needed, `tests/unit/test_proposal_review.py`, `tests/unit/test_artifact_contract.py`, affected workflow/dashboard tests |
+| V2-KB-REF-001 | queued | Add curated local `reference_mod` knowledge sources and a ReferenceModLoader for small, manually selected public mod projects; load `.cs`, `.csproj`, README, LICENSE, and release notes while recording `repo_url`, `commit_sha`, `license`, `imported_at`, and `usage_permission` | `src/mod_agent/knowledge/`, knowledge model/loader tests, artifact contract tests; default `authoritative_for_patch=false` and use only for implementation patterns, hook hints, and build hints |
+| V2-KB-COMM-001 | queued | Add curated `community_note` and `community_hint` sources from already organized notes, not full raw Discord chat; require `claim`, `claim_type`, `source_locator`, `timestamp`, `confidence`, and `requires_verification` | `src/mod_agent/knowledge/`, loader/extractor tests, evidence readiness tests; raw chat remains `raw_only`, curated notes remain `planning_only` and `authoritative_for_patch=false` |
+| V2-DASH-001 | queued | Upgrade dashboard/API projection for workflow, artifact DAG, proposal context, review findings, eval gate status, and blocked reasons as platform demonstration surfaces | `src/mod_agent/dashboard/projections.py`, `src/mod_agent/api/http_server.py`, dashboard/API tests |
+| V2-MCP-001 | queued | Define approved write/runtime route contract without executing dangerous actions directly; keep read-only/report-only tools safe and route future writes through LangGraph artifacts and approval records | `src/mod_agent/mcp/protocol.py`, `src/mod_agent/mcp/tools.py`, MCP protocol/tool tests |
+| V2-EVAL-001 | queued | Recover agent decision-quality eval around false-success, false-block, review correctness, retrieval sufficiency, and proposal context completeness | `src/mod_agent/evaluation/`, eval fixtures, `tests/unit/test_transition_eval_gate.py`, new focused eval tests |
+| V2-RET-001 | queued | Evaluate retrieval production path only after proposal/review context can consume evidence identity; keep dense/vector evidence auxiliary until readiness and eval checks prove authority | `src/mod_agent/evidence/`, `src/mod_agent/knowledge/`, retrieval/evidence tests |
 
 ## Current Stabilization Queue
 
@@ -130,6 +261,8 @@ Allowed next:
 | ARTIFACT-PROD-001A | completed | Write ArtifactStore revision and latest files through same-directory temporary files plus `os.replace`, and clean temporary files when replacement fails | `src/mod_agent/artifacts/store.py`, `tests/unit/test_artifact_store.py`; focused affected command: `python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_projection.py tests/unit/test_controlled_agent_mcp_tools.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py -q --tb=short` -> 69 passed |
 | ARTIFACT-PROD-001B | completed | Add pending-write markers and `recover_pending_writes()` so an interrupted revision-to-latest write can restore latest from a valid immutable revision | `src/mod_agent/artifacts/store.py`, `tests/unit/test_artifact_store.py`; focused affected command: `python -m pytest tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_dashboard_projection.py tests/unit/test_controlled_agent_mcp_tools.py tests/unit/test_workflow_graph.py tests/unit/test_mod_delivery_e2e.py -q --tb=short` -> 71 passed |
 | RUNTIME-DENSE-API-BOUNDARY-001 | completed | Add GTFO real runtime automation interface with explicit launch approval, marker-based evidence, screenshot timeout, failure evidence payloads, dense vector_store provider bridge with graph injection and required-failure policy, plus local read-only artifact inspection API | `src/mod_agent/runtime/gtfo_automation.py`, `src/mod_agent/evidence/dense.py`, `src/mod_agent/evidence/retriever.py`, `src/mod_agent/api/http_server.py`, `src/mod_agent/workflow/graph.py`, `src/core/settings.py`, `config/settings.yaml`, `tests/unit/test_gtfo_runtime_automation.py`, `tests/unit/test_vector_store_dense_provider.py`, `tests/unit/test_evidence_retrieval.py`, `tests/unit/test_mod_agent_http_api.py`, `tests/unit/test_config_loading.py`, `tests/unit/test_workflow_graph.py`; focused command -> 55 passed; additional dashboard/runtime/smoke command -> 36 passed, 1 warning; broader `tests/unit` command -> 20 failed, 1023 passed, 4 skipped, 2 warnings before maxfail stop; do not claim full unit baseline green; this does not claim real GTFO gameplay success, production runtime automation, production RAG, production HTTP API, production auth, or production dashboard |
+| MISS-026D | completed | Wire `runtime.gtfo.acceptance_markers` through settings, create a settings-driven GTFO runtime factory helper, and let `build_graph(settings=..., allow_game_launch=...)` select GTFO runtime evidence automatically when `runtime.gtfo.enabled` is true and no explicit `runtime_evidence_factory` is supplied | `src/core/settings.py`, `config/settings.yaml`, `src/mod_agent/runtime/gtfo_automation.py`, `src/mod_agent/runtime/__init__.py`, `src/mod_agent/workflow/graph.py`, `tests/unit/test_config_loading.py`, `tests/unit/test_gtfo_runtime_automation.py`, `tests/unit/test_workflow_graph.py`; focused affected command -> 89 passed; settings-driven GTFO runtime graph selection is tested without launching GTFO; unauthorized graph path does not call launcher/log/screenshot hooks, does not write `workflow_summary`, and blocks accepted final status; GTFO marker trust binding is closed by MISS-026E |
+| MISS-026E | completed | Add `runtime_trust_binding` to runtime evidence, bind GTFO automation claims to current-run logs, `feature_id`, graph `run_id`, build artifact hash, plugin load marker, acceptance markers, runtime process identity, and screenshot/runtime artifact linkage, and block V1 accepted status when GTFO trust binding is missing | `src/mod_agent/runtime/evidence.py`, `src/mod_agent/runtime/gtfo_automation.py`, `src/mod_agent/evaluation/gate.py`, `src/mod_agent/workflow/graph.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_runtime_evidence.py`, `tests/unit/test_gtfo_runtime_automation.py`, `tests/unit/test_transition_eval_gate.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_artifact_contract.py`, `tests/unit/test_dashboard_projection.py`; focused affected command -> 86 passed; dashboard/MCP/E2E/runtime-probe affected command -> 18 passed; this does not claim a real GTFO launch or gameplay success |
 | ARTIFACT-PROD-001 | deferred | Remaining production-grade artifact storage hardening: automatic startup/preflight recovery invocation, recovery for states without a valid pending marker and revision, cross-process write locking, revision manifest/index files, historical revision query APIs, old-ref migration/backfill, and revision garbage collection | Tracked as future work in `docs/SPEC_COVERAGE_MATRIX.md`; do not claim ArtifactStore is production-grade; do not continue this by default before returning to the mod delivery mainline |
 
 ## V1 To V2 Transition Queue
@@ -147,7 +280,7 @@ docs/V1_TO_V2_TRANSITION.md.
 | TRANSITION-002 | completed | Git Binding: add git state snapshot, diff hash, proposal/base revision binding metadata, rollback hint, and dirty-tree policy | `src/mod_agent/git/repository.py`, `src/mod_agent/artifacts/registry.py`, `src/mod_agent/dashboard/projections.py`, `tests/unit/test_git_repository.py`, `tests/unit/test_artifact_contract.py`, `tests/unit/test_dashboard_projection.py`; dirty-tree policy is audit metadata, not an execution-layer hard stop; focused command -> 51 passed, 6 skipped when run with TRANSITION-001 workflow/E2E tests |
 | TRANSITION-003 | completed | Proposal Context Pack: add Change Unit Model, evidence-backed proposal metadata context pack, scope boundary, no-op handling, and rollback hint propagation | `src/mod_agent/proposal/models.py`, `src/mod_agent/proposal/builder.py`, `src/mod_agent/proposal/reviewer.py`, `src/mod_agent/repair/planner.py`, `src/mod_agent/artifacts/registry.py`, `src/mod_agent/dashboard/projections.py`; reviewer blocks context_pack change_unit_ids drift; this is not a full source-snippet code-generation context pack; focused proposal/artifact/dashboard/domain/MCP/repair/workflow/E2E tests passed |
 | TRANSITION-004 | completed | MCP JSON-RPC Wire Boundary: add initialize, notifications/initialized, `tools/list`, `tools/call`, content, structuredContent, artifact_refs, trace_refs, JSON-RPC error behavior, and dangerous tool hidden/disabled policy | `src/mod_agent/mcp/protocol.py`, `src/mod_agent/mcp/__init__.py`, `tests/unit/test_controlled_agent_mcp_protocol.py`; dangerous tools remain hidden and wire-level calls to `run_game` return JSON-RPC method-not-found errors; this is not a full MCP server because stdio/http transport integration, server process wiring, and production deployment are not implemented; ToolAnnotations are schema hints, not the safety boundary |
-| TRANSITION-005 | completed | Runtime Evidence Binding: add `feature_id`, build artifact hash, run id, plugin-specific marker binding, screenshot refs, non-goal preservation fields, and runtime claim-boundary tests | `src/mod_agent/runtime/evidence.py`, `src/mod_agent/runtime/probe.py`, `src/mod_agent/runtime/__init__.py`, `src/mod_agent/workflow/graph.py`, `src/mod_agent/evaluation/gate.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_runtime_evidence.py`, `tests/unit/test_transition_eval_gate.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_runtime_probe.py`, `tests/unit/test_artifact_contract.py`, `tests/unit/test_dashboard_projection.py`; focused command -> 65 passed; this binds runtime success claims to graph/build/acceptance marker context and supplied non-goal preservation evidence, but does not prove live GTFO gameplay success |
+| TRANSITION-005 | completed | Runtime Evidence Binding: add `feature_id`, build artifact hash, run id, plugin-specific marker binding, screenshot refs, non-goal preservation fields, and runtime claim-boundary tests | `src/mod_agent/runtime/evidence.py`, `src/mod_agent/runtime/probe.py`, `src/mod_agent/runtime/__init__.py`, `src/mod_agent/workflow/graph.py`, `src/mod_agent/evaluation/gate.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_runtime_evidence.py`, `tests/unit/test_transition_eval_gate.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_runtime_probe.py`, `tests/unit/test_artifact_contract.py`, `tests/unit/test_dashboard_projection.py`; focused command -> 65 passed; this binds runtime success claims to graph/build/acceptance marker context and supplied non-goal preservation evidence; GTFO-specific marker trust binding is closed by MISS-026E |
 
 ## V1 Acceptance Audit Queue
 
