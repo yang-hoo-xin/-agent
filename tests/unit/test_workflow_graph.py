@@ -39,6 +39,10 @@ from src.mod_agent.workflow import (
     create_initial_state,
     resumed_state_from_decision,
 )
+from src.mod_agent.workflow.graph import (
+    _PROJECT_ROOT,
+    _default_proposal_git_binding_factory,
+)
 
 
 def _knowledge_with_load_symbol(tmp_path: Path, *, root_name: str = "source") -> KnowledgeDatabase:
@@ -68,6 +72,21 @@ public class Plugin
     )
     IncrementalIndexer(database=db, source_registry=registry).index_source("target_mod")
     return db
+
+
+def _available_proposal_git_binding() -> dict[str, object]:
+    return {
+        "status": "available",
+        "base_revision": "a" * 40,
+        "branch": "codex/test",
+        "is_dirty": False,
+        "diff_hash": "sha256:gitdiff",
+        "dirty_tree_policy": {
+            "status": "clean",
+            "blocks_proposal_binding": False,
+            "blockers": [],
+        },
+    }
 
 
 def _plugin_marker_binding(criteria: tuple[str, ...]) -> dict[str, object]:
@@ -179,6 +198,7 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     graph = build_graph(
         store,
         knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        proposal_git_binding_factory=_available_proposal_git_binding,
     )
     state = create_initial_state(
         run_id="run_001",
@@ -203,6 +223,77 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     assert result["runtime_summary"]["status"] == "verified"
     assert result["runtime_summary"]["acceptance_verified"] is True
     assert result["runtime_summary"]["claims_real_runtime_success"] is False
+    proposal = _artifact_data(store, result, "patch_proposal")
+    assert proposal["context_pack"]["git_binding_required"] is True
+    assert proposal["context_pack"]["git_binding"]["status"] == "available"
+    assert proposal["context_pack"]["git_binding"]["base_revision"]
+    assert proposal["context_pack"]["git_binding"]["diff_hash"].startswith("sha256:")
+    assert isinstance(
+        proposal["context_pack"]["git_binding"]["dirty_tree_policy"],
+        dict,
+    )
+
+
+def test_default_proposal_git_binding_uses_project_root_when_cwd_moves(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    seen: list[dict[str, object]] = []
+
+    class FakeGitRepository:
+        def __init__(
+            self,
+            root: str | Path,
+            git_executable: str | tuple[str, ...] | None = None,
+        ) -> None:
+            self.git_command = ("git",)
+            seen.append(
+                {
+                    "root": Path(root),
+                    "git_executable": git_executable,
+                }
+            )
+
+        def working_tree_snapshot(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                base_revision="b" * 40,
+                branch="codex/default-binding",
+                is_dirty=False,
+                diff_hash="sha256:defaultgit",
+                dirty_tree_policy={
+                    "status": "clean",
+                    "blocks_proposal_binding": False,
+                    "blockers": [],
+                },
+            )
+
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.graph.GitRepository",
+        FakeGitRepository,
+    )
+    monkeypatch.chdir(tmp_path)
+
+    binding = _default_proposal_git_binding_factory()
+
+    assert binding["status"] == "available", binding
+    assert binding["base_revision"] == "b" * 40
+    assert binding["diff_hash"].startswith("sha256:")
+    assert seen == [
+        {
+            "root": _PROJECT_ROOT,
+            "git_executable": None,
+        },
+        {
+            "root": _PROJECT_ROOT,
+            "git_executable": (
+                "git",
+                "--git-dir",
+                str(_PROJECT_ROOT / ".git"),
+                "--work-tree",
+                str(_PROJECT_ROOT),
+            ),
+        },
+    ]
 
 
 def test_graph_patch_proposal_context_can_require_git_binding(
@@ -250,6 +341,44 @@ def test_graph_patch_proposal_context_can_require_git_binding(
         proposal["evidence_refs"]
     )
     assert review["decision"] == "approve_dry_run"
+
+
+def test_graph_blocks_proposal_review_when_default_git_binding_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        proposal_git_binding_factory=lambda: {
+            "status": "unavailable",
+            "base_revision": None,
+            "error": "not inside a Git working tree",
+        },
+    )
+    state = create_initial_state(
+        run_id="run_git_binding_unavailable",
+        request_id="req_git_binding_unavailable",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    proposal = _artifact_data(store, result, "patch_proposal")
+    review = _artifact_data(store, result, "proposal_review")
+
+    assert result["current_stage"] == "blocked"
+    assert "dry_run_result" not in result["artifacts"]
+    assert "workflow_summary" not in result["artifacts"]
+    assert proposal["context_pack"]["git_binding_required"] is True
+    assert proposal["context_pack"]["git_binding"]["status"] == "unavailable"
+    assert review["decision"] == "revise_proposal"
+    assert any(
+        finding["message"]
+        == "Proposal context_pack is missing Git base revision binding."
+        for finding in review["findings"]
+    )
 
 
 def test_langgraph_artifact_loop_can_resume_after_human_review_approval(

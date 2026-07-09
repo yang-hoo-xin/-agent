@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -26,6 +27,7 @@ from src.mod_agent.evidence import (
     EvidenceRequest,
 )
 from src.mod_agent.evaluation import build_transition_eval_gate_report
+from src.mod_agent.git import GitCommandError, GitRepository
 from src.mod_agent.knowledge import (
     CollectionResolutionError,
     CollectionResolver,
@@ -74,6 +76,7 @@ BuildResultFactory = Callable[[str, str | None], BuildResult]
 RuntimeEvidenceFactory = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
 EvaluationContextFactory = Callable[[ModAgentState], dict[str, Any]]
 ProposalGitBindingFactory = Callable[[], dict[str, Any]]
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def build_graph(
@@ -117,6 +120,9 @@ def build_graph(
             settings,
             allow_game_launch=allow_game_launch,
         )
+    )
+    effective_proposal_git_binding_factory = (
+        proposal_git_binding_factory or _default_proposal_git_binding_factory
     )
     graph = StateGraph(ModAgentState)
 
@@ -172,7 +178,7 @@ def build_graph(
             lambda state: _run_generate_patch_proposal(
                 state,
                 artifact_store,
-                proposal_git_binding_factory=proposal_git_binding_factory,
+                proposal_git_binding_factory=effective_proposal_git_binding_factory,
             ),
         ),
     )
@@ -604,6 +610,40 @@ def _run_generate_patch_proposal(
     if proposal.blocked:
         next_state["blockers"].extend(proposal.blockers)
     return next_state
+
+
+def _default_proposal_git_binding_factory() -> dict[str, Any]:
+    try:
+        snapshot = _project_git_repository().working_tree_snapshot()
+    except GitCommandError as exc:
+        return {
+            "status": "unavailable",
+            "base_revision": None,
+            "error": str(exc),
+        }
+    return {
+        "status": "available",
+        "base_revision": snapshot.base_revision,
+        "branch": snapshot.branch,
+        "is_dirty": snapshot.is_dirty,
+        "diff_hash": snapshot.diff_hash,
+        "dirty_tree_policy": snapshot.dirty_tree_policy,
+    }
+
+
+def _project_git_repository() -> GitRepository:
+    base_repository = GitRepository(_PROJECT_ROOT)
+    git_dir = _PROJECT_ROOT / ".git"
+    return GitRepository(
+        _PROJECT_ROOT,
+        git_executable=(
+            *base_repository.git_command,
+            "--git-dir",
+            str(git_dir),
+            "--work-tree",
+            str(_PROJECT_ROOT),
+        ),
+    )
 
 
 def _run_review_proposal(
