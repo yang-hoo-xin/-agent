@@ -228,17 +228,25 @@ class ImplementationPlanner:
                 evidence_source_paths=evidence_source_paths,
             )
 
+        edit_bindings = tuple(
+            self._edit_binding(index=index, item=item)
+            for index, item in enumerate(editable_items, start=1)
+        )
+        supporting_bindings = tuple(
+            self._supporting_binding(item=item) for item in planning_items
+        )
+        binding_registry = self._binding_registry(
+            edit_bindings=edit_bindings,
+            supporting_bindings=supporting_bindings,
+        )
         proposed_changes = tuple(
             {
                 "change_id": f"chg_{index:03d}",
                 "change_type": "modify_behavior",
-                "evidence_source_path": item.get("source_path"),
-                "edit_target_path": item.get("source_path"),
-                "target_file": item.get("source_path"),
-                "target_symbol": item.get("symbol"),
+                "edit_binding_id": f"edit_binding_{index:03d}",
+                "supporting_binding_ids": [],
                 "operation": "minimal_evidence_bound_change",
                 "rationale": feature_spec.target_behavior,
-                "evidence_refs": [item["evidence_id"]],
                 "risk_tags": [feature_spec.risk_level],
                 "expected_validation": list(feature_spec.runtime_verification_plan),
                 "rollback_hint": "Revert this change unit or restore previous behavior.",
@@ -261,7 +269,69 @@ class ImplementationPlanner:
             open_questions=(),
             blocking=False,
             evidence_source_paths=evidence_source_paths,
+            binding_registry=binding_registry,
         )
+
+    @staticmethod
+    def _edit_binding(
+        *,
+        index: int,
+        item: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "binding_id": f"edit_binding_{index:03d}",
+            "evidence_id": item.get("evidence_id"),
+            "canonical_target_path": item.get("source_path"),
+            "source_type": item.get("source_type"),
+            "target_symbol": item.get("symbol"),
+            "target_span": item.get("span"),
+            "retrieval_method": item.get("retrieval_method"),
+            "claim_supported": item.get("claim_supported"),
+            "authority": item.get("authority"),
+            "usage": "edit_target_scope",
+        }
+
+    @staticmethod
+    def _supporting_binding(*, item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "binding_id": f"support_binding_{item.get('evidence_id')}",
+            "evidence_id": item.get("evidence_id"),
+            "source_path": item.get("source_path"),
+            "source_type": item.get("source_type"),
+            "target_symbol": item.get("symbol"),
+            "target_span": item.get("span"),
+            "retrieval_method": item.get("retrieval_method"),
+            "claim_supported": item.get("claim_supported"),
+            "authority": item.get("authority"),
+            "usage": (
+                "edit_source_evidence"
+                if item.get("source_type") in EDITABLE_EVIDENCE_SOURCE_TYPES
+                else "hook_target_or_supporting_evidence"
+            ),
+        }
+
+    @staticmethod
+    def _binding_registry(
+        *,
+        edit_bindings: tuple[dict[str, Any], ...],
+        supporting_bindings: tuple[dict[str, Any], ...],
+    ) -> dict[str, Any]:
+        edit_evidence_ids = {
+            str(binding["evidence_id"])
+            for binding in edit_bindings
+            if binding.get("evidence_id")
+        }
+        return {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [dict(binding) for binding in edit_bindings],
+            "supporting_bindings": [
+                dict(binding)
+                for binding in supporting_bindings
+                if binding.get("evidence_id")
+                and str(binding["evidence_id"]) not in edit_evidence_ids
+            ],
+        }
 
     @staticmethod
     def _blocked(

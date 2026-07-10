@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import FakeDenseRetrievalProvider
@@ -74,19 +76,42 @@ public class Plugin
     return db
 
 
-def _available_proposal_git_binding() -> dict[str, object]:
-    return {
-        "status": "available",
-        "base_revision": "a" * 40,
-        "branch": "codex/test",
-        "is_dirty": False,
-        "diff_hash": "sha256:gitdiff",
-        "dirty_tree_policy": {
-            "status": "clean",
-            "blocks_proposal_binding": False,
-            "blockers": [],
-        },
-    }
+@pytest.fixture(autouse=True)
+def _default_proposal_git_repository(monkeypatch) -> list[dict[str, object]]:
+    calls: list[dict[str, object]] = []
+
+    class FakeGitRepository:
+        def __init__(
+            self,
+            root: str | Path,
+            git_executable: str | tuple[str, ...] | None = None,
+        ) -> None:
+            self.git_command = ("git",)
+            calls.append(
+                {
+                    "root": Path(root),
+                    "git_executable": git_executable,
+                }
+            )
+
+        def working_tree_snapshot(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                base_revision="b" * 40,
+                branch="codex/default-binding",
+                is_dirty=False,
+                diff_hash="sha256:defaultgit",
+                dirty_tree_policy={
+                    "status": "clean",
+                    "blocks_proposal_binding": False,
+                    "blockers": [],
+                },
+            )
+
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.graph.GitRepository",
+        FakeGitRepository,
+    )
+    return calls
 
 
 def _plugin_marker_binding(criteria: tuple[str, ...]) -> dict[str, object]:
@@ -198,7 +223,6 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     graph = build_graph(
         store,
         knowledge_database=_knowledge_with_load_symbol(tmp_path),
-        proposal_git_binding_factory=_available_proposal_git_binding,
     )
     state = create_initial_state(
         run_id="run_001",
@@ -223,7 +247,22 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     assert result["runtime_summary"]["status"] == "verified"
     assert result["runtime_summary"]["acceptance_verified"] is True
     assert result["runtime_summary"]["claims_real_runtime_success"] is False
+    implementation = _artifact_data(store, result, "implementation_plan")
     proposal = _artifact_data(store, result, "patch_proposal")
+    edit_binding = implementation["binding_registry"]["edit_bindings"][0]
+    assert edit_binding["evidence_id"] in (
+        implementation["evidence_refs"]
+    )
+    assert edit_binding["target_span"] == (
+        proposal["context_pack"]["source_snippets"][0]["span"]
+    )
+    assert proposal["context_pack"]["binding_registry_ref"]["artifact_hash"] == (
+        result["artifact_hashes"]["implementation_plan"]
+    )
+    assert proposal["context_pack"]["allowed_edit_binding_ids"] == ["edit_binding_001"]
+    assert proposal["context_pack"]["display_fields_authority"] == (
+        "derived_non_authoritative"
+    )
     assert proposal["context_pack"]["git_binding_required"] is True
     assert proposal["context_pack"]["git_binding"]["status"] == "available"
     assert proposal["context_pack"]["git_binding"]["base_revision"]
@@ -237,40 +276,8 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
 def test_default_proposal_git_binding_uses_project_root_when_cwd_moves(
     tmp_path: Path,
     monkeypatch,
+    _default_proposal_git_repository: list[dict[str, object]],
 ) -> None:
-    seen: list[dict[str, object]] = []
-
-    class FakeGitRepository:
-        def __init__(
-            self,
-            root: str | Path,
-            git_executable: str | tuple[str, ...] | None = None,
-        ) -> None:
-            self.git_command = ("git",)
-            seen.append(
-                {
-                    "root": Path(root),
-                    "git_executable": git_executable,
-                }
-            )
-
-        def working_tree_snapshot(self) -> SimpleNamespace:
-            return SimpleNamespace(
-                base_revision="b" * 40,
-                branch="codex/default-binding",
-                is_dirty=False,
-                diff_hash="sha256:defaultgit",
-                dirty_tree_policy={
-                    "status": "clean",
-                    "blocks_proposal_binding": False,
-                    "blockers": [],
-                },
-            )
-
-    monkeypatch.setattr(
-        "src.mod_agent.workflow.graph.GitRepository",
-        FakeGitRepository,
-    )
     monkeypatch.chdir(tmp_path)
 
     binding = _default_proposal_git_binding_factory()
@@ -278,7 +285,7 @@ def test_default_proposal_git_binding_uses_project_root_when_cwd_moves(
     assert binding["status"] == "available", binding
     assert binding["base_revision"] == "b" * 40
     assert binding["diff_hash"].startswith("sha256:")
-    assert seen == [
+    assert _default_proposal_git_repository == [
         {
             "root": _PROJECT_ROOT,
             "git_executable": None,

@@ -17,6 +17,8 @@ class ArtifactContract:
     consumer_stages: frozenset[str]
     allowed_statuses: frozenset[str]
     required_upstream_artifacts: frozenset[str] = frozenset()
+    required_exact_revision_upstream_artifacts: frozenset[str] = frozenset()
+    required_one_of_upstream_artifact_groups: tuple[frozenset[str], ...] = ()
     dashboard_projection: tuple[str, ...] = ()
     eval_visibility: bool = True
 
@@ -61,6 +63,7 @@ class ArtifactTypeRegistry:
             raise ArtifactRegistryError(
                 f"Artifact {artifact_type!r} missing required fields: {missing}"
             )
+        self._validate_payload_contract(artifact_type, payload)
         return contract
 
     def validate_envelope(self, envelope: dict[str, Any]) -> ArtifactContract:
@@ -93,6 +96,7 @@ class ArtifactTypeRegistry:
             raise ArtifactRegistryError(
                 f"Artifact {artifact_type!r} missing required fields: {missing}"
             )
+        self._validate_payload_contract(artifact_type, data)
         return contract
 
     def validate_consumer(self, artifact_type: str, consumer_stage: str) -> None:
@@ -108,6 +112,61 @@ class ArtifactTypeRegistry:
         """Return registered artifact type names."""
 
         return frozenset(self._contracts)
+
+    def _validate_payload_contract(
+        self,
+        artifact_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if artifact_type == "implementation_plan":
+            _validate_implementation_plan_binding_registry(payload)
+
+
+def _validate_implementation_plan_binding_registry(payload: dict[str, Any]) -> None:
+    if payload.get("blocking") is True:
+        return
+    registry = payload.get("binding_registry")
+    if not isinstance(registry, dict):
+        raise ArtifactRegistryError(
+            "Non-blocking implementation_plan requires binding_registry"
+        )
+    if registry.get("schema_version") != "binding_registry_v1":
+        raise ArtifactRegistryError(
+            "Non-blocking implementation_plan binding_registry schema_version must be binding_registry_v1"
+        )
+    edit_bindings = registry.get("edit_bindings")
+    if not isinstance(edit_bindings, list) or not edit_bindings:
+        raise ArtifactRegistryError(
+            "Non-blocking implementation_plan requires at least one edit binding"
+        )
+    edit_binding_ids = {
+        str(binding.get("binding_id"))
+        for binding in edit_bindings
+        if isinstance(binding, dict) and binding.get("binding_id")
+    }
+    if not edit_binding_ids:
+        raise ArtifactRegistryError(
+            "Non-blocking implementation_plan edit bindings require binding_id"
+        )
+    proposed_changes = payload.get("proposed_changes")
+    if not isinstance(proposed_changes, list) or not proposed_changes:
+        raise ArtifactRegistryError(
+            "Non-blocking implementation_plan requires proposed_changes"
+        )
+    for change in proposed_changes:
+        if not isinstance(change, dict):
+            raise ArtifactRegistryError(
+                "Non-blocking implementation_plan proposed_changes must be mappings"
+            )
+        binding_id = change.get("edit_binding_id")
+        if not binding_id:
+            raise ArtifactRegistryError(
+                "Non-blocking implementation_plan proposed_changes require edit_binding_id"
+            )
+        if str(binding_id) not in edit_binding_ids:
+            raise ArtifactRegistryError(
+                "Non-blocking implementation_plan proposed_changes edit_binding_id must resolve in binding_registry"
+            )
 
 
 def default_artifact_contracts() -> list[ArtifactContract]:
@@ -510,6 +569,10 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             producer_stage="repair_plan",
             consumer_stages=frozenset({"generate_patch_proposal", "dashboard"}),
             allowed_statuses=statuses,
+            required_exact_revision_upstream_artifacts=frozenset({"patch_proposal"}),
+            required_one_of_upstream_artifact_groups=(
+                frozenset({"build_result", "runtime_evidence"}),
+            ),
             dashboard_projection=(
                 "message",
                 "failure_source",

@@ -55,11 +55,32 @@ def _implementation_payload() -> dict[str, object]:
         "stage": "implementation_plan",
         "message": "stub",
         "feature_id": "feature_001",
-        "evidence_source_paths": [],
-        "target_files": [],
-        "target_symbols": [],
-        "evidence_refs": [],
-        "proposed_changes": [],
+        "evidence_source_paths": ["Plugin.cs"],
+        "target_files": ["Plugin.cs"],
+        "target_symbols": ["Load"],
+        "evidence_refs": ["ev_001"],
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "ev_001",
+                    "canonical_target_path": "Plugin.cs",
+                    "source_type": "target_source",
+                    "target_symbol": "Load",
+                    "target_span": {"start_line": 1, "end_line": 10},
+                }
+            ],
+            "supporting_bindings": [],
+        },
+        "proposed_changes": [
+            {
+                "change_id": "chg_001",
+                "edit_binding_id": "edit_binding_001",
+                "supporting_binding_ids": [],
+            }
+        ],
         "side_effect_boundaries": [],
         "test_plan": [],
         "rollback_plan": [],
@@ -111,6 +132,68 @@ def _review_payload() -> dict[str, object]:
         "allowed_next_stage": None,
         "checked_rules": [],
         "trace_metrics": {"num_changes_checked": 0, "num_blocking_findings": 0},
+    }
+
+
+def _dry_run_payload() -> dict[str, object]:
+    return {
+        "node_name": "dry_run_apply",
+        "stage": "dry_run_apply",
+        "message": "dry run",
+    }
+
+
+def _build_payload() -> dict[str, object]:
+    return {
+        "node_name": "build",
+        "stage": "build",
+        "message": "failed build",
+        "feature_id": "feature_001",
+        "execution_mode": "supplied",
+        "status": "failed",
+        "command": ["dotnet", "build"],
+        "exit_code": 1,
+        "stdout_path": None,
+        "stderr_path": None,
+        "errors": [],
+        "warnings": [],
+        "duration_ms": 0,
+        "error_class": "compile_error",
+        "diagnostics": [],
+        "repair_handoff": {},
+        "expected_artifacts": [],
+        "verified_artifacts": [],
+        "artifact_verification": {},
+        "real_build_performed": False,
+        "claims_real_build_success": False,
+    }
+
+
+def _repair_payload() -> dict[str, object]:
+    return {
+        "node_name": "create_repair_plan",
+        "stage": "repair_plan",
+        "message": "repair",
+        "repair_id": "repair_001",
+        "feature_id": "feature_001",
+        "failure_source": "build",
+        "failure_class": "compile_error",
+        "failure_evidence": {"summary": "compiler error"},
+        "evidence_refs": [],
+        "root_cause_hypotheses": [],
+        "hypothesis": "compiler error",
+        "recommended_fix_strategy": "repair scoped proposal",
+        "minimal_changes": [],
+        "retry_count": 1,
+        "retry_budget": 2,
+        "retry_budget_remaining": 1,
+        "retry_exhausted": False,
+        "scope_expansion_allowed": False,
+        "stop_condition": "stop after repair",
+        "forbidden_regressions": [],
+        "requires_new_evidence": False,
+        "allowed_next_stage": "generate_patch_proposal",
+        "blockers": [],
     }
 
 
@@ -332,6 +415,12 @@ def test_repair_plan_contract_requires_retry_and_evidence_fields() -> None:
         "blockers",
     }.issubset(contract.required_fields)
     assert "generate_patch_proposal" in contract.consumer_stages
+    assert contract.required_exact_revision_upstream_artifacts == frozenset(
+        {"patch_proposal"}
+    )
+    assert contract.required_one_of_upstream_artifact_groups == (
+        frozenset({"build_result", "runtime_evidence"}),
+    )
 
 
 def test_dashboard_projection_contract_is_present() -> None:
@@ -411,6 +500,96 @@ def test_schema_validation_blocks_missing_required_field(tmp_path: Path) -> None
             feature_id="feature_001",
             artifact_type="feature_spec",
             payload={"node_name": "draft_feature_spec", "stage": "feature_spec"},
+        )
+
+
+def test_non_blocking_implementation_plan_requires_binding_registry(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec],
+    )
+    payload = _implementation_payload()
+    payload.pop("binding_registry")
+
+    with pytest.raises(ArtifactStoreError, match="requires binding_registry"):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="implementation_plan",
+            payload=payload,
+            upstream_refs=[feature_spec, evidence_pack],
+        )
+
+
+def test_non_blocking_repair_plan_requires_exact_source_proposal_lineage(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec],
+    )
+    implementation_plan = store.write(
+        feature_id="feature_001",
+        artifact_type="implementation_plan",
+        payload=_implementation_payload(),
+        upstream_refs=[feature_spec, evidence_pack],
+    )
+    patch_proposal = store.write(
+        feature_id="feature_001",
+        artifact_type="patch_proposal",
+        payload=_patch_payload(),
+        upstream_refs=[implementation_plan, evidence_pack],
+    )
+    proposal_review = store.write(
+        feature_id="feature_001",
+        artifact_type="proposal_review",
+        payload=_review_payload(),
+        upstream_refs=[patch_proposal],
+    )
+    dry_run = store.write(
+        feature_id="feature_001",
+        artifact_type="dry_run_result",
+        payload=_dry_run_payload(),
+        upstream_refs=[patch_proposal, proposal_review],
+    )
+    build_result = store.write(
+        feature_id="feature_001",
+        artifact_type="build_result",
+        payload=_build_payload(),
+        status="blocked",
+        upstream_refs=[dry_run],
+    )
+
+    with pytest.raises(ArtifactStoreError, match="missing required exact upstream"):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="repair_plan",
+            payload=_repair_payload(),
+            upstream_refs=[build_result],
+        )
+    with pytest.raises(ArtifactStoreError, match="requires exact revision upstream"):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="repair_plan",
+            payload=_repair_payload(),
+            upstream_refs=[build_result, patch_proposal],
         )
 
 

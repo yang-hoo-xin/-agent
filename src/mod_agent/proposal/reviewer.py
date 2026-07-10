@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 from typing import Any
 
+from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.domain import DomainReviewPolicy
 
 from .models import ProposalReview, ReviewFinding
@@ -33,6 +34,7 @@ class ProposalReviewer:
         *,
         evidence_pack: dict[str, Any] | None = None,
         repair_plan: dict[str, Any] | None = None,
+        implementation_plan: dict[str, Any] | None = None,
         feature_spec: dict[str, Any] | None = None,
         artifact_hashes: dict[str, str] | None = None,
         domain_policy: DomainReviewPolicy | None = None,
@@ -145,7 +147,9 @@ class ProposalReviewer:
                 context_pack=context_pack,
                 evidence_pack=evidence_pack,
                 repair_plan=repair_plan,
+                implementation_plan=implementation_plan,
                 artifact_hashes=artifact_hashes,
+                domain_policy=domain_policy,
             )
         )
 
@@ -211,16 +215,17 @@ class ProposalReviewer:
             change_id = change.get("change_id")
             refs = tuple(change.get("evidence_refs") or ())
             target_file = change.get("target_file")
-            if not refs:
+            binding_id = change.get("edit_binding_id")
+            if not refs and not binding_id:
                 findings.append(
                     ReviewFinding(
                         rule_id="evidence_binding",
                         level="blocking",
-                        message="Change unit has no evidence refs.",
+                        message="Change unit has no evidence refs or edit binding id.",
                         change_id=change_id,
                     )
                 )
-            elif not evidence_ids:
+            elif refs and not evidence_ids:
                 findings.append(
                     ReviewFinding(
                         rule_id="evidence_binding",
@@ -233,7 +238,7 @@ class ProposalReviewer:
                         evidence_refs=refs,
                     )
                 )
-            elif evidence_ids and not set(refs).issubset(evidence_ids):
+            elif refs and evidence_ids and not set(refs).issubset(evidence_ids):
                 findings.append(
                     ReviewFinding(
                         rule_id="evidence_binding",
@@ -246,7 +251,7 @@ class ProposalReviewer:
                         evidence_refs=refs,
                     )
                 )
-            elif not set(refs).issubset(proposal_evidence_refs):
+            elif refs and not set(refs).issubset(proposal_evidence_refs):
                 findings.append(
                     ReviewFinding(
                         rule_id="evidence_binding",
@@ -257,7 +262,7 @@ class ProposalReviewer:
                     )
                 )
 
-            if target_file not in allowed_files:
+            if target_file and target_file not in allowed_files:
                 findings.append(
                     ReviewFinding(
                         rule_id="scope_boundary",
@@ -372,12 +377,20 @@ class ProposalReviewer:
         context_pack: dict[str, Any],
         evidence_pack: dict[str, Any] | None,
         repair_plan: dict[str, Any] | None,
+        implementation_plan: dict[str, Any] | None,
         artifact_hashes: dict[str, str] | None,
+        domain_policy: DomainReviewPolicy | None,
     ) -> tuple[ReviewFinding, ...]:
         if not context_pack or proposal.get("blocked"):
             return ()
         if repair_plan is not None:
-            return ()
+            return self._review_repair_context_pack(
+                proposal=proposal,
+                context_pack=context_pack,
+                repair_plan=repair_plan,
+                implementation_plan=implementation_plan,
+                evidence_pack=evidence_pack,
+            )
         findings: list[ReviewFinding] = []
         proposal_evidence_refs = {str(ref) for ref in proposal.get("evidence_refs") or []}
         snippets = [
@@ -411,30 +424,36 @@ class ProposalReviewer:
                 )
             )
 
-        target_symbols = {
-            str(change.get("target_symbol"))
-            for change in proposal.get("diff_intent") or []
-            if isinstance(change, dict) and change.get("target_symbol")
-        }
-        signatures = [
-            item
-            for item in context_pack.get("target_symbol_signatures") or []
-            if isinstance(item, dict)
-        ]
-        signature_symbols = {
-            str(item.get("symbol")) for item in signatures if item.get("symbol")
-        }
-        if target_symbols and not target_symbols.issubset(signature_symbols):
-            findings.append(
-                ReviewFinding(
-                    rule_id="context_pack",
-                    level="blocking",
-                    message=(
-                        "Proposal context_pack target_symbol_signatures do not cover "
-                        "diff_intent target symbols."
-                    ),
+        resolver = BindingResolver.from_implementation_plan(
+            implementation_plan,
+            evidence_pack=evidence_pack,
+        )
+        for blocker in resolver.validate_registry_against_evidence().blockers:
+            findings.append(_binding_finding(blocker))
+        for blocker in resolver.validate_proposal_changes(proposal).blockers:
+            findings.append(_binding_finding(blocker))
+        for binding in resolver.edit_bindings.values():
+            canonical_path = binding.get("canonical_target_path")
+            if not canonical_path:
+                continue
+            if self._is_forbidden_path(str(canonical_path)):
+                findings.append(
+                    ReviewFinding(
+                        rule_id="forbidden_paths",
+                        level="blocking",
+                        message="Edit binding targets a forbidden or unsafe path.",
+                    )
                 )
-            )
+            if domain_policy is not None:
+                domain_path = domain_policy.review_path(str(canonical_path))
+                if not domain_path.allowed:
+                    findings.append(
+                        ReviewFinding(
+                            rule_id=domain_path.rule_id or "forbidden_paths",
+                            level="blocking",
+                            message=domain_path.reason,
+                        )
+                    )
 
         context_artifact_hashes = context_pack.get("artifact_hashes")
         if not isinstance(context_artifact_hashes, dict):
@@ -520,6 +539,31 @@ class ProposalReviewer:
             )
         return tuple(findings)
 
+    def _review_repair_context_pack(
+        self,
+        *,
+        proposal: dict[str, Any],
+        context_pack: dict[str, Any],
+        repair_plan: dict[str, Any],
+        implementation_plan: dict[str, Any] | None,
+        evidence_pack: dict[str, Any] | None,
+    ) -> tuple[ReviewFinding, ...]:
+        findings: list[ReviewFinding] = []
+        resolver = BindingResolver.from_implementation_plan(
+            implementation_plan,
+            evidence_pack=evidence_pack,
+        )
+        for blocker in resolver.validate_registry_against_evidence().blockers:
+            findings.append(_binding_finding(blocker))
+        for blocker in resolver.validate_proposal_changes(proposal).blockers:
+            findings.append(_binding_finding(blocker))
+        for blocker in resolver.validate_repair_subset(
+            repair_plan=repair_plan,
+            proposal=proposal,
+        ).blockers:
+            findings.append(_binding_finding(blocker))
+        return tuple(findings)
+
     @staticmethod
     def _is_forbidden_path(path: str) -> bool:
         normalized = path.replace("\\", "/")
@@ -559,3 +603,21 @@ class ProposalReviewer:
         if "permission_level" in rule_ids or "risk_policy" in rule_ids:
             return "blocked_requires_human"
         return "revise_proposal"
+
+
+def _binding_finding(blocker: dict[str, Any]) -> ReviewFinding:
+    return ReviewFinding(
+        rule_id="binding_registry",
+        level="blocking",
+        message=str(blocker.get("message") or blocker.get("code") or "Binding failed."),
+        change_id=(
+            str(blocker["change_id"])
+            if blocker.get("change_id") is not None
+            else None
+        ),
+        evidence_refs=(
+            (str(blocker["evidence_id"]),)
+            if blocker.get("evidence_id") is not None
+            else ()
+        ),
+    )

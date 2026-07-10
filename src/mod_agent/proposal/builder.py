@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.mod_agent.bindings import BindingResolver
+
 from .models import (
     PatchProposal,
     build_change_units,
@@ -61,12 +63,22 @@ class PatchProposalBuilder:
                 note="No change units were present.",
             )
 
-        files = tuple(dict.fromkeys(implementation_plan.get("target_files") or ()))
         unresolved_changes = [
             change
             for change in proposed_changes
-            if not change.get("edit_target_path")
+            if not change.get("edit_binding_id")
         ]
+        resolver = BindingResolver.from_implementation_plan(
+            implementation_plan,
+            evidence_pack=evidence_pack,
+        )
+        edit_binding_ids = [
+            str(change["edit_binding_id"])
+            for change in proposed_changes
+            if change.get("edit_binding_id")
+        ]
+        display_files = tuple(resolver.display_files_for_edit_ids(edit_binding_ids))
+        files = display_files
         if not files or unresolved_changes:
             return self._blocked(
                 feature_id=feature_id,
@@ -75,7 +87,7 @@ class PatchProposalBuilder:
                     {
                         "code": "EDIT_TARGET_UNRESOLVED",
                         "message": (
-                            "Patch proposal requires implementation_plan edit_target_path "
+                            "Patch proposal requires implementation_plan edit_binding_id "
                             "values resolved before review."
                         ),
                     },
@@ -94,8 +106,7 @@ class PatchProposalBuilder:
             char_limit=source_snippet_char_limit,
         )
         symbol_signatures, symbol_blockers = self._target_symbol_signatures(
-            diff_intent=diff_intent,
-            evidence_items=evidence_items,
+            implementation_plan=implementation_plan,
         )
         effective_artifact_hashes = dict(artifact_hashes or {})
         omission_blockers = (
@@ -115,6 +126,13 @@ class PatchProposalBuilder:
             change_units=change_units,
             source_snippets=source_snippets,
             target_symbol_signatures=symbol_signatures,
+            binding_registry_ref={
+                "artifact_type": "implementation_plan",
+                "artifact_hash": effective_artifact_hashes.get("implementation_plan"),
+                "schema_version": "binding_registry_v1",
+            },
+            display_files=display_files,
+            allowed_edit_binding_ids=tuple(edit_binding_ids),
             artifact_hashes={
                 key: value
                 for key, value in effective_artifact_hashes.items()
@@ -168,10 +186,8 @@ class PatchProposalBuilder:
         return {
             "change_id": change.get("change_id"),
             "change_type": change.get("change_type"),
-            "target_file": change.get("edit_target_path"),
-            "edit_target_path": change.get("edit_target_path"),
-            "evidence_source_path": change.get("evidence_source_path"),
-            "target_symbol": change.get("target_symbol"),
+            "edit_binding_id": change.get("edit_binding_id"),
+            "supporting_binding_ids": list(change.get("supporting_binding_ids") or []),
             "operation": change.get("operation"),
             "rationale": change.get("rationale"),
             "evidence_refs": list(change.get("evidence_refs") or []),
@@ -256,58 +272,30 @@ class PatchProposalBuilder:
     @staticmethod
     def _target_symbol_signatures(
         *,
-        diff_intent: tuple[dict[str, Any], ...],
-        evidence_items: dict[str, dict[str, Any]],
+        implementation_plan: dict[str, Any],
     ) -> tuple[tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
         signatures: list[dict[str, Any]] = []
-        blockers: list[dict[str, Any]] = []
-        seen: set[tuple[str, str]] = set()
-        for change in diff_intent:
-            target_symbol = change.get("target_symbol")
-            target_file = change.get("target_file")
-            if not target_symbol:
-                blockers.append(
-                    {
-                        "code": "TARGET_SYMBOL_SIGNATURE_MISSING",
-                        "message": "Proposal context requires target symbol signatures for review.",
-                        "change_id": change.get("change_id"),
-                    }
-                )
+        registry = implementation_plan.get("binding_registry")
+        if not isinstance(registry, dict):
+            return (), (
+                {
+                    "code": "BINDING_REGISTRY_MISSING",
+                    "message": "Proposal context requires implementation_plan binding_registry.",
+                },
+            )
+        for binding in registry.get("edit_bindings") or []:
+            if not isinstance(binding, dict) or not binding.get("target_symbol"):
                 continue
-            matching_items = [
-                evidence_items[evidence_ref]
-                for evidence_ref in change.get("evidence_refs") or []
-                if evidence_ref in evidence_items
-            ]
-            if not matching_items:
-                blockers.append(
-                    {
-                        "code": "TARGET_SYMBOL_SIGNATURE_MISSING",
-                        "message": "Proposal context cannot bind target symbol to evidence.",
-                        "change_id": change.get("change_id"),
-                        "target_symbol": target_symbol,
-                    }
-                )
-                continue
-            for item in matching_items:
-                key = (str(target_symbol), str(target_file or item.get("source_path")))
-                if key in seen:
-                    continue
-                seen.add(key)
-                signatures.append(
-                    {
-                        "symbol": str(target_symbol),
-                        "source_path": target_file or item.get("source_path"),
-                        "signature": item.get("symbol") or target_symbol,
-                        "signature_source": "evidence_symbol",
-                        "evidence_ids": [
-                            evidence_ref
-                            for evidence_ref in change.get("evidence_refs") or []
-                            if evidence_ref in evidence_items
-                        ],
-                    }
-                )
-        return tuple(signatures), tuple(blockers)
+            signatures.append(
+                {
+                    "symbol": str(binding["target_symbol"]),
+                    "binding_id": binding.get("binding_id"),
+                    "signature": binding.get("target_symbol"),
+                    "signature_source": "binding_registry",
+                    "evidence_ids": [binding.get("evidence_id")],
+                }
+            )
+        return tuple(signatures), ()
 
     @staticmethod
     def _artifact_hash_blockers(

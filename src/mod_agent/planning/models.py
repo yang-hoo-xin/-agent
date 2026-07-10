@@ -165,6 +165,7 @@ class ImplementationPlan:
     blocking: bool = False
     blockers: tuple[dict[str, Any], ...] = ()
     evidence_source_paths: tuple[str, ...] = ()
+    binding_registry: dict[str, Any] | None = None
 
     def to_artifact_payload(self) -> dict[str, Any]:
         return {
@@ -180,6 +181,7 @@ class ImplementationPlan:
             "target_files": list(self.target_files),
             "target_symbols": list(self.target_symbols),
             "evidence_refs": list(self.evidence_refs),
+            "binding_registry": dict(self.binding_registry or {}),
             "proposed_changes": list(self.proposed_changes),
             "side_effect_boundaries": list(self.side_effect_boundaries),
             "test_plan": list(self.test_plan),

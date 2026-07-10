@@ -98,11 +98,32 @@ def _implementation_payload() -> dict[str, object]:
         "stage": "implementation_plan",
         "message": "stub",
         "feature_id": "feature_001",
-        "evidence_source_paths": [],
-        "target_files": [],
-        "target_symbols": [],
-        "evidence_refs": [],
-        "proposed_changes": [],
+        "evidence_source_paths": ["Plugin.cs"],
+        "target_files": ["Plugin.cs"],
+        "target_symbols": ["Load"],
+        "evidence_refs": ["ev_001"],
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "ev_001",
+                    "canonical_target_path": "Plugin.cs",
+                    "source_type": "target_source",
+                    "target_symbol": "Load",
+                    "target_span": {"start_line": 1, "end_line": 10},
+                }
+            ],
+            "supporting_bindings": [],
+        },
+        "proposed_changes": [
+            {
+                "change_id": "chg_001",
+                "edit_binding_id": "edit_binding_001",
+                "supporting_binding_ids": [],
+            }
+        ],
         "side_effect_boundaries": [],
         "test_plan": [],
         "rollback_plan": [],
@@ -361,8 +382,170 @@ def test_required_upstream_artifacts_are_recorded(tmp_path: Path) -> None:
             "artifact_type": "feature_spec",
             "path": feature_spec.path,
             "artifact_hash": feature_spec.artifact_hash,
+            "require_latest": True,
         }
     ]
+
+
+def test_exact_revision_upstream_is_not_stale_when_latest_pointer_advances(
+    tmp_path: Path,
+) -> None:
+    def patch_proposal_payload(message: str) -> dict[str, object]:
+        return {
+            "node_name": "draft_patch_proposal",
+            "stage": "patch_proposal",
+            "message": message,
+            "proposal_id": message.replace(" ", "_"),
+            "feature_id": "feature_001",
+            "summary": message,
+            "files": [],
+            "evidence_refs": [],
+            "diff_intent": [],
+            "change_units": [],
+            "context_pack": {},
+            "scope_boundary": {
+                "allowed_files": [],
+                "forbidden_files": [],
+                "max_files_changed": 0,
+            },
+            "risk_assessment": {},
+            "expected_tests": [],
+            "no_op_status": {"is_no_op": False},
+            "rollback_hints": [],
+            "manual_review_notes": [],
+            "blocked": False,
+            "blockers": [],
+        }
+
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec],
+    )
+    implementation_plan = store.write(
+        feature_id="feature_001",
+        artifact_type="implementation_plan",
+        payload=_implementation_payload(),
+        upstream_refs=[feature_spec, evidence_pack],
+    )
+    patch_proposal_v1 = store.write(
+        feature_id="feature_001",
+        artifact_type="patch_proposal",
+        payload=patch_proposal_payload("proposal v1"),
+        upstream_refs=[feature_spec, evidence_pack, implementation_plan],
+    )
+    proposal_review = store.write(
+        feature_id="feature_001",
+        artifact_type="proposal_review",
+        payload={
+            "node_name": "review_proposal",
+            "stage": "proposal_review",
+            "message": "review",
+            "decision": "approve_dry_run",
+            "findings": [],
+            "required_changes": [],
+            "allowed_next_stage": "dry_run_apply",
+            "checked_rules": [],
+            "trace_metrics": {
+                "num_changes_checked": 1,
+                "num_blocking_findings": 0,
+            },
+        },
+        upstream_refs=[patch_proposal_v1],
+    )
+    dry_run_result = store.write(
+        feature_id="feature_001",
+        artifact_type="dry_run_result",
+        payload={
+            "node_name": "dry_run_apply",
+            "stage": "dry_run_apply",
+            "message": "dry run",
+        },
+        upstream_refs=[patch_proposal_v1, proposal_review],
+    )
+    build_result = store.write(
+        feature_id="feature_001",
+        artifact_type="build_result",
+        payload={
+            "node_name": "build",
+            "stage": "build",
+            "message": "failed build",
+            "feature_id": "feature_001",
+            "execution_mode": "supplied",
+            "status": "failed",
+            "command": ["dotnet", "build"],
+            "exit_code": 1,
+            "stdout_path": None,
+            "stderr_path": None,
+            "errors": [],
+            "warnings": [],
+            "duration_ms": 0,
+            "error_class": "compile_error",
+            "diagnostics": [],
+            "repair_handoff": {},
+            "expected_artifacts": [],
+            "verified_artifacts": [],
+            "artifact_verification": {},
+            "real_build_performed": False,
+            "claims_real_build_success": False,
+        },
+        status="blocked",
+        upstream_refs=[dry_run_result],
+    )
+    repair_plan = store.write(
+        feature_id="feature_001",
+        artifact_type="repair_plan",
+        payload={
+            "node_name": "create_repair_plan",
+            "stage": "repair_plan",
+            "message": "repair",
+            "repair_id": "repair_001",
+            "feature_id": "feature_001",
+            "failure_source": "build_result",
+            "failure_class": "compile_error",
+            "failure_evidence": {"summary": "compiler error"},
+            "evidence_refs": [],
+            "root_cause_hypotheses": [],
+            "hypothesis": "compiler error",
+            "recommended_fix_strategy": "repair scoped proposal",
+            "minimal_changes": [],
+            "retry_count": 1,
+            "retry_budget": 1,
+            "retry_budget_remaining": 0,
+            "retry_exhausted": False,
+            "scope_expansion_allowed": False,
+            "stop_condition": "stop after repair",
+            "forbidden_regressions": [],
+            "requires_new_evidence": False,
+            "allowed_next_stage": "generate_patch_proposal",
+            "blockers": [],
+        },
+        upstream_refs=[build_result, patch_proposal_v1],
+        exact_revision_upstream_types={"patch_proposal"},
+    )
+
+    store.write(
+        feature_id="feature_001",
+        artifact_type="patch_proposal",
+        payload=patch_proposal_payload("proposal v2"),
+        upstream_refs=[feature_spec, evidence_pack, implementation_plan],
+    )
+
+    envelope = store.read(repair_plan)
+    patch_upstreams = [
+        upstream
+        for upstream in envelope["inputs"]["upstream_artifacts"]
+        if upstream["artifact_type"] == "patch_proposal"
+    ]
+    assert patch_upstreams[0]["require_latest"] is False
+    assert store.check_direct_freshness(repair_plan).status == "fresh"
 
 
 def test_cross_feature_upstream_rejected(tmp_path: Path) -> None:

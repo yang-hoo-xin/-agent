@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from src.mod_agent.artifacts import ArtifactStore
@@ -22,14 +23,80 @@ from src.mod_agent.workflow.transitions import (
 )
 
 
+def _proposal_git_binding() -> dict[str, object]:
+    return {
+        "status": "available",
+        "base_revision": "a" * 40,
+        "branch": "codex/test",
+        "is_dirty": False,
+        "diff_hash": "sha256:gitdiff",
+        "dirty_tree_policy": {
+            "status": "clean",
+            "blocks_proposal_binding": False,
+            "blockers": [],
+        },
+    }
+
+
+def _proposal_context_pack(target_file: str = "mods/BetterHitFeedback/Plugin.cs") -> dict[str, object]:
+    return {
+        "feature_id": "feature_001",
+        "files": [target_file],
+        "evidence_refs": ["ev_001"],
+        "evidence_source_paths": [target_file],
+        "scope_boundary": ["Do not refactor unrelated files."],
+        "change_unit_ids": ["chg_001"],
+        "allowed_edit_binding_ids": ["edit_binding_001"],
+    }
+
+
+def _implementation_plan_payload(target_file: str = "mods/BetterHitFeedback/Plugin.cs") -> dict[str, object]:
+    return {
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "ev_001",
+                    "canonical_target_path": target_file,
+                    "source_type": "target_source",
+                    "target_symbol": "Load",
+                    "target_span": {"start_line": 10, "end_line": 18},
+                }
+            ],
+            "supporting_bindings": [],
+        },
+    }
+
+
+def _evidence_pack(target_file: str = "mods/BetterHitFeedback/Plugin.cs") -> dict[str, object]:
+    return {
+        "items": [
+            {
+                "evidence_id": "ev_001",
+                "source_type": "target_source",
+                "source_path": target_file,
+                "symbol": "Load",
+                "span": {"start_line": 10, "end_line": 18},
+            }
+        ]
+    }
+
+
 def test_failed_build_creates_evidence_bound_repair_plan() -> None:
-    build_result = _failed_build_result("feature_001").to_artifact_payload()
+    build_result = _failed_build_result(
+        "feature_001",
+        diagnostic_file="mods/BetterHitFeedback/Plugin.cs",
+    ).to_artifact_payload()
 
     plan = RepairPlanner(retry_budget=2).from_build_failure(
         build_result=build_result,
         build_result_ref="artifacts/features/feature_001/build_result.json",
         retry_count=0,
         target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=_implementation_plan_payload(),
     )
     payload = plan.to_artifact_payload()
 
@@ -37,7 +104,9 @@ def test_failed_build_creates_evidence_bound_repair_plan() -> None:
     assert payload["failure_class"] == "missing_reference"
     assert payload["evidence_refs"]
     assert "artifacts/features/feature_001/build_result.json" in payload["evidence_refs"]
-    assert payload["minimal_changes"][0]["target_file"] == "Plugin.cs"
+    assert payload["minimal_changes"][0]["edit_binding_id"] == "edit_binding_001"
+    assert payload["allowed_edit_binding_ids"] == ["edit_binding_001"]
+    assert payload["display_files"] == ["mods/BetterHitFeedback/Plugin.cs"]
     assert payload["retry_count"] == 1
     assert payload["retry_budget"] == 2
     assert payload["retry_exhausted"] is False
@@ -62,23 +131,61 @@ def test_retry_budget_exhaustion_blocks_repair_loop() -> None:
 
 def test_repair_proposal_reenters_review_gate() -> None:
     plan = RepairPlanner(retry_budget=2).from_build_failure(
-        build_result=_failed_build_result("feature_001").to_artifact_payload(),
+        build_result=_failed_build_result(
+            "feature_001",
+            diagnostic_file="mods/BetterHitFeedback/Plugin.cs",
+        ).to_artifact_payload(),
         build_result_ref="artifacts/features/feature_001/build_result.json",
         retry_count=0,
         target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=_implementation_plan_payload(),
     ).to_artifact_payload()
 
     proposal = RepairPatchProposalBuilder().build(plan).to_artifact_payload()
     review = ProposalReviewer().review(
         proposal,
         repair_plan=plan,
+        implementation_plan=_implementation_plan_payload(),
+        evidence_pack=_evidence_pack(),
         feature_spec={"target_behavior": "make Load enable diagnostics"},
         permission_level="dry_run_write",
     )
 
     assert proposal["blocked"] is False
+    assert proposal["diff_intent"][0]["edit_binding_id"] == "edit_binding_001"
     assert review.allowed_next_stage == "dry_run_apply"
     assert review.trace_metrics["num_changes_checked"] == 1
+
+
+def test_repair_plan_blocks_scope_outside_original_proposal_context() -> None:
+    plan = RepairPlanner(retry_budget=2).from_build_failure(
+        build_result=_failed_build_result("feature_001").to_artifact_payload(),
+        build_result_ref="artifacts/features/feature_001/build_result.json",
+        retry_count=0,
+        target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack("mods/OtherMod/OtherPlugin.cs"),
+        implementation_plan=_implementation_plan_payload("mods/OtherMod/OtherPlugin.cs"),
+    ).to_artifact_payload()
+
+    assert plan["allowed_next_stage"] is None
+    assert plan["minimal_changes"] == []
+    assert plan["blockers"][0]["code"] == "REPAIR_SCOPE_UNRESOLVED"
+
+
+def test_repair_plan_blocks_short_filename_scope_guess() -> None:
+    plan = RepairPlanner(retry_budget=2).from_build_failure(
+        build_result=_failed_build_result("feature_001").to_artifact_payload(),
+        build_result_ref="artifacts/features/feature_001/build_result.json",
+        retry_count=0,
+        target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=_implementation_plan_payload(),
+    ).to_artifact_payload()
+
+    assert plan["allowed_next_stage"] is None
+    assert plan["minimal_changes"] == []
+    assert plan["blockers"][0]["code"] == "REPAIR_SCOPE_UNRESOLVED"
 
 
 def test_repair_routes_are_explicit() -> None:
@@ -120,10 +227,23 @@ def test_repair_routes_are_explicit() -> None:
 
 def test_graph_failed_build_enters_repair_and_stops_at_retry_budget(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
+    diagnostic_file = str(tmp_path / "source" / "Plugin.cs")
+
+    def build_result_factory(
+        feature_id: str,
+        input_execution_mode: str | None = None,
+    ) -> BuildResult:
+        return _failed_build_result(
+            feature_id,
+            input_execution_mode=input_execution_mode,
+            diagnostic_file=diagnostic_file,
+        )
+
     graph = build_graph(
         store,
         knowledge_database=_knowledge_with_load_symbol(tmp_path),
-        build_result_factory=_failed_build_result,
+        build_result_factory=build_result_factory,
+        proposal_git_binding_factory=_proposal_git_binding,
     )
     state = create_initial_state(
         run_id="run_001",
@@ -134,11 +254,26 @@ def test_graph_failed_build_enters_repair_and_stops_at_retry_budget(tmp_path: Pa
 
     result = graph.invoke(state)
     repair_plan = _artifact_data(store, result, "repair_plan")
+    repair_envelope = json.loads(
+        Path(result["artifacts"]["repair_plan"]).read_text(encoding="utf-8")
+    )
+    patch_upstreams = [
+        upstream
+        for upstream in repair_envelope["inputs"]["upstream_artifacts"]
+        if upstream["artifact_type"] == "patch_proposal"
+    ]
 
     assert result["current_stage"] == "blocked"
     assert "repair_plan" in result["artifacts"]
     assert repair_plan["failure_source"] == "build"
     assert repair_plan["retry_exhausted"] is True
+    assert repair_plan["source_proposal"]["ref"] == (
+        result["artifacts"]["patch_proposal"]
+    )
+    assert len(patch_upstreams) == 1
+    assert patch_upstreams[0]["require_latest"] is False
+    assert patch_upstreams[0]["path"] == repair_plan["source_proposal"]["ref"]
+    assert patch_upstreams[0]["artifact_hash"] == repair_plan["source_proposal"]["hash"]
     assert result["retry_count"] == 2
     assert any(
         event["node_name"] == "create_repair_plan"
@@ -151,6 +286,7 @@ def test_graph_failed_build_enters_repair_and_stops_at_retry_budget(tmp_path: Pa
 def _failed_build_result(
     feature_id: str,
     input_execution_mode: str | None = None,
+    diagnostic_file: str = "Plugin.cs",
 ) -> BuildResult:
     profile = BuildProfile(
         profile_id="test_profile",
@@ -164,7 +300,10 @@ def _failed_build_result(
         feature_id=feature_id,
         profile=profile,
         exit_code=1,
-        stderr="Plugin.cs(12,7): error CS0246: The type or namespace name 'Foo' could not be found",
+        stderr=(
+            f"{diagnostic_file}(12,7): error CS0246: "
+            "The type or namespace name 'Foo' could not be found"
+        ),
     )
     if input_execution_mode is None:
         return result

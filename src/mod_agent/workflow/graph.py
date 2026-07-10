@@ -653,6 +653,11 @@ def _run_review_proposal(
     domain_adapter_registry: DomainAdapterRegistry | None = None,
 ) -> ModAgentState:
     proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
+    implementation_plan = _read_artifact_data(
+        state,
+        artifact_store,
+        "implementation_plan",
+    )
     evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
     repair_plan = (
@@ -664,6 +669,7 @@ def _run_review_proposal(
         proposal,
         evidence_pack=evidence_pack,
         repair_plan=repair_plan,
+        implementation_plan=implementation_plan,
         feature_spec=feature_spec,
         artifact_hashes=dict(state["artifact_hashes"]),
         domain_policy=_domain_review_policy_from_state(
@@ -963,6 +969,21 @@ def _run_create_repair_plan(
     artifact_store: ArtifactStore,
 ) -> ModAgentState:
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
+    proposal_ref = _artifact_ref_from_state(state, "patch_proposal")
+    proposal_context_pack = _read_artifact_data(
+        state,
+        artifact_store,
+        "patch_proposal",
+    ).get("context_pack")
+    proposal_context_for_repair = (
+        {
+            **proposal_context_pack,
+            "source_patch_proposal_ref": proposal_ref.path,
+            "source_patch_proposal_hash": proposal_ref.artifact_hash,
+        }
+        if isinstance(proposal_context_pack, dict)
+        else None
+    )
     planner = RepairPlanner()
     feature_id = state["feature_id"] or state["request_id"]
     if state["build_summary"].get("status") == "failed":
@@ -972,8 +993,14 @@ def _run_create_repair_plan(
             build_result_ref=build_ref.path,
             retry_count=state["retry_count"],
             target_behavior=str(feature_spec.get("target_behavior") or ""),
+            proposal_context_pack=proposal_context_for_repair,
+            implementation_plan=_read_artifact_data(
+                state,
+                artifact_store,
+                "implementation_plan",
+            ),
         )
-        upstream_refs = [build_ref]
+        upstream_refs = [build_ref, proposal_ref]
     else:
         runtime_ref = _artifact_ref_from_state(state, "runtime_evidence")
         plan = planner.from_runtime_failure(
@@ -985,14 +1012,21 @@ def _run_create_repair_plan(
             runtime_evidence_ref=runtime_ref.path,
             retry_count=state["retry_count"],
             target_behavior=str(feature_spec.get("target_behavior") or ""),
+            proposal_context_pack=proposal_context_for_repair,
+            implementation_plan=_read_artifact_data(
+                state,
+                artifact_store,
+                "implementation_plan",
+            ),
         )
-        upstream_refs = [runtime_ref]
+        upstream_refs = [runtime_ref, proposal_ref]
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
         artifact_type="repair_plan",
         payload=plan.to_artifact_payload(),
         status="blocked" if plan.blockers else "success",
         upstream_refs=upstream_refs,
+        exact_revision_upstream_types={"patch_proposal"},
     )
     next_state = _copy_state(state)
     next_state["current_stage"] = "repair_plan"

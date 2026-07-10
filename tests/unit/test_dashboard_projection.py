@@ -213,6 +213,8 @@ def _write_full_chain(store: ArtifactStore) -> None:
         feature_id="feature_001",
         artifact_type="repair_plan",
         payload=_repair_plan_payload(),
+        upstream_refs=[build, proposal],
+        exact_revision_upstream_types={"patch_proposal"},
     )
     store.write(
         feature_id="feature_001",
@@ -290,11 +292,32 @@ def _implementation_plan_payload() -> dict[str, object]:
         "stage": "implementation_plan",
         "message": "Implementation plan ready.",
         "feature_id": "feature_001",
-        "evidence_source_paths": [],
+        "evidence_source_paths": ["C:\\secret\\Project\\Plugin.cs"],
         "target_files": ["C:\\secret\\Project\\Plugin.cs"],
-        "target_symbols": [],
-        "evidence_refs": [],
-        "proposed_changes": [],
+        "target_symbols": ["Plugin.Load"],
+        "evidence_refs": ["evidence_001"],
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "evidence_001",
+                    "canonical_target_path": "C:\\secret\\Project\\Plugin.cs",
+                    "source_type": "target_source",
+                    "target_symbol": "Plugin.Load",
+                    "target_span": {"start_line": 1, "end_line": 10},
+                }
+            ],
+            "supporting_bindings": [],
+        },
+        "proposed_changes": [
+            {
+                "change_id": "chg_001",
+                "edit_binding_id": "edit_binding_001",
+                "supporting_binding_ids": [],
+            }
+        ],
         "side_effect_boundaries": [],
         "test_plan": [],
         "rollback_plan": [],

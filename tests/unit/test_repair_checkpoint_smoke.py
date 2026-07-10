@@ -218,10 +218,11 @@ def _repair_review_state(
         payload=implementation_payload,
         upstream_refs=[feature_ref, evidence_ref],
     )
+    original_proposal_payload = _patch_payload()
     original_proposal_ref = store.write(
         feature_id=feature_id,
         artifact_type="patch_proposal",
-        payload=_patch_payload(),
+        payload=original_proposal_payload,
         upstream_refs=[implementation_ref, evidence_ref],
     )
     original_review_ref = store.write(
@@ -249,12 +250,15 @@ def _repair_review_state(
         build_result_ref=build_ref.path,
         retry_count=0,
         target_behavior=str(feature_payload["target_behavior"]),
+        proposal_context_pack=original_proposal_payload["context_pack"],
+        implementation_plan=implementation_payload,
     ).to_artifact_payload()
     repair_ref = store.write(
         feature_id=feature_id,
         artifact_type="repair_plan",
         payload=repair_payload,
-        upstream_refs=[build_ref],
+        upstream_refs=[build_ref, original_proposal_ref],
+        exact_revision_upstream_types={"patch_proposal"},
     )
     proposal_payload = RepairPatchProposalBuilder().build(
         repair_payload
@@ -269,6 +273,7 @@ def _repair_review_state(
         proposal_payload,
         evidence_pack=evidence_payload,
         repair_plan=repair_payload,
+        implementation_plan=implementation_payload,
         feature_spec=feature_payload,
         permission_level="dry_run_write",
     ).to_artifact_payload()
@@ -355,6 +360,10 @@ def _evidence_payload() -> dict[str, object]:
         "items": [
             {
                 "evidence_id": "build_diag:0:CS0246:Plugin.cs:12",
+                "source_type": "target_source",
+                "source_path": "Plugin.cs",
+                "symbol": "Plugin.Load",
+                "span": {"start_line": 12, "end_line": 12},
                 "source": "Plugin.cs",
                 "locator": "Plugin.cs:12",
                 "snippet": "error CS0246",
@@ -382,7 +391,28 @@ def _implementation_payload() -> dict[str, object]:
         "target_files": ["Plugin.cs"],
         "target_symbols": ["Plugin.Load"],
         "evidence_refs": ["Plugin.cs:12"],
-        "proposed_changes": [],
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "build_diag:0:CS0246:Plugin.cs:12",
+                    "canonical_target_path": "Plugin.cs",
+                    "source_type": "target_source",
+                    "target_symbol": "Plugin.Load",
+                    "target_span": {"start_line": 12, "end_line": 12},
+                }
+            ],
+            "supporting_bindings": [],
+        },
+        "proposed_changes": [
+            {
+                "change_id": "chg_001",
+                "edit_binding_id": "edit_binding_001",
+                "supporting_binding_ids": [],
+            }
+        ],
         "side_effect_boundaries": [],
         "test_plan": [],
         "rollback_plan": [],
@@ -410,6 +440,7 @@ def _patch_payload() -> dict[str, object]:
             "evidence_source_paths": [],
             "scope_boundary": [],
             "change_unit_ids": [],
+            "allowed_edit_binding_ids": ["edit_binding_001"],
         },
         "evidence_refs": ["Plugin.cs:12"],
         "scope_boundary": [],

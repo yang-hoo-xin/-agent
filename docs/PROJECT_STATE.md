@@ -8,10 +8,10 @@ Last updated: 2026-07-09
 ## Current Queue
 
 ```text
-current_queue: GTFO-VSLICE-001B
-last_completed: V2-PROP-001A proposal context pack deepening
-current_stabilization_task: GTFO-VSLICE-001A now has working-tree tests for the evidence retrieval identity path inside a LangGraph artifact loop, including checkpoint/static interrupt resume and dynamic interrupt/Command(resume) review approval before dry-run. V2-PROP-001A deepens patch_proposal.context_pack with source snippets, target symbol signatures, upstream artifact hashes, implementation_plan hash, context budget metadata, omission blockers, and proposal-time Git base revision binding. The default build_graph() path now attempts project-root Git binding for proposal context; ProposalReviewer blocks missing or drifting deep context and blocks missing Git base_revision. Execution-layer dirty-tree stop/resume remains separate work
-next_recommended_task: GTFO-VSLICE-001B bind hook discovery and implementation_plan to evidence refs/source spans, then prove those refs survive through proposal_review and repair eligibility
+current_queue: GTFO-VSLICE-001C
+last_completed: GTFO-VSLICE-001B implementation_plan Binding Registry through proposal_review and repair proposal
+current_stabilization_task: GTFO-VSLICE-001B now uses `implementation_plan.binding_registry` as the only authoritative Binding Registry. `PatchProposalBuilder` and repair proposals reference `edit_binding_id` / `supporting_binding_ids` only, while `patch_proposal.context_pack.allowed_edit_binding_ids` seeds repair scope. `BindingResolver` validates edit and supporting registry evidence identity, proposal binding references, repair subset scope, forbidden paths, domain policy paths, and fail-closed exact-path repair diagnostics without basename guessing. `ArtifactStore` enforces non-blocking implementation_plan registry contracts and non-blocking repair_plan source-proposal exact lineage. This is not a complete production hook discovery engine, real GTFO runtime proof, or workspace-aware canonical path resolver.
+next_recommended_task: GTFO-VSLICE-001C tighten the selected GTFO path around concrete hook-target evidence, review blocker quality, and repair decision quality beyond the now-tested scope binding loop
 ordinary_queue_status: Q-022, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, TRANSITION-001, TRANSITION-002, TRANSITION-003, TRANSITION-004, TRANSITION-005, MISS-026D, MISS-026E, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; approved GTFO launch and real gameplay evidence remain explicit opt-in production runtime automation work
 next_stage_after_expert_split: V2 platform expansion is active; prioritize platform capability work over further process Skill splitting
 V3_deferred_runtime_track: approved GTFO launch smoke, game directory copy, and real gameplay evidence are V3 or explicit opt-in runtime validation work
@@ -87,9 +87,9 @@ Why first:
 Immediate execution order:
   1. GTFO-VSLICE-001A: prove current evidence retrieval identity gates the first GTFO slice path inside a LangGraph artifact loop.
   2. V2-PROP-001A: deepen patch_proposal.context_pack only where needed by the slice.
-  3. GTFO-VSLICE-001B: bind hook discovery and implementation_plan to evidence refs and source spans.
-  4. V2-KB-REF-001 and V2-KB-COMM-001: add curated supporting sources after target evidence path works.
-  5. GTFO-VSLICE-001C: complete review and repair context.
+  3. GTFO-VSLICE-001B: bind implementation_plan/proposal/review/repair to edit evidence refs, hook/supporting evidence, and source spans. Completed as the tested `implementation_plan.binding_registry` / `edit_binding_id` / `allowed_edit_binding_ids` sub-loop.
+  4. GTFO-VSLICE-001C: tighten concrete GTFO hook-target evidence, review blocker quality, and repair decision quality.
+  5. V2-KB-REF-001 and V2-KB-COMM-001: add curated supporting sources after target evidence path works.
   6. V2-EVAL-001, V2-DASH-001, V2-MCP-001, then V2-RET-001.
 ```
 

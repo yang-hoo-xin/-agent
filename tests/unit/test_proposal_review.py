@@ -16,17 +16,33 @@ def _implementation_payload() -> dict[str, object]:
         "target_files": ["mods/BetterHitFeedback/Plugin.cs"],
         "target_symbols": ["Load"],
         "evidence_refs": ["ev_001"],
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "ev_001",
+                    "canonical_target_path": "mods/BetterHitFeedback/Plugin.cs",
+                    "source_type": "target_source",
+                    "target_symbol": "Load",
+                    "target_span": {"start_line": 10, "end_line": 18},
+                    "retrieval_method": "symbol_exact",
+                    "claim_supported": "Symbol Load exists.",
+                    "authority": "mod_agent_deterministic",
+                    "usage": "edit_target_scope",
+                }
+            ],
+            "supporting_bindings": [],
+        },
         "proposed_changes": [
             {
                 "change_id": "chg_001",
                 "change_type": "modify_behavior",
-                "evidence_source_path": "mods/BetterHitFeedback/Plugin.cs",
-                "edit_target_path": "mods/BetterHitFeedback/Plugin.cs",
-                "target_file": "mods/BetterHitFeedback/Plugin.cs",
-                "target_symbol": "Load",
+                "edit_binding_id": "edit_binding_001",
+                "supporting_binding_ids": [],
                 "operation": "minimal_evidence_bound_change",
                 "rationale": "make Load enable diagnostics",
-                "evidence_refs": ["ev_001"],
                 "risk_tags": ["medium"],
                 "expected_validation": ["compile"],
                 "rollback_hint": "Restore previous behavior.",
@@ -116,20 +132,12 @@ def test_patch_proposal_builder_converts_implementation_plan_to_reviewable_inten
     assert proposal.files == ("mods/BetterHitFeedback/Plugin.cs",)
     assert proposal.evidence_refs == ("ev_001",)
     assert proposal.diff_intent[0]["change_id"] == "chg_001"
-    assert proposal.diff_intent[0]["evidence_source_path"] == (
-        "mods/BetterHitFeedback/Plugin.cs"
-    )
-    assert proposal.diff_intent[0]["edit_target_path"] == (
-        "mods/BetterHitFeedback/Plugin.cs"
-    )
-    assert proposal.diff_intent[0]["target_file"] == (
-        "mods/BetterHitFeedback/Plugin.cs"
-    )
-    assert proposal.diff_intent[0]["evidence_refs"] == ["ev_001"]
+    assert proposal.diff_intent[0]["edit_binding_id"] == "edit_binding_001"
+    assert "target_file" not in proposal.diff_intent[0]
+    assert "target_symbol" not in proposal.diff_intent[0]
+    assert "source_span" not in proposal.diff_intent[0]
     assert proposal.change_units[0]["change_unit_id"] == "chg_001"
-    assert proposal.change_units[0]["target_file"] == (
-        "mods/BetterHitFeedback/Plugin.cs"
-    )
+    assert proposal.change_units[0]["edit_binding_id"] == "edit_binding_001"
     assert proposal.context_pack["feature_id"] == "feature_001"
     assert proposal.context_pack["evidence_source_paths"] == [
         "mods/BetterHitFeedback/Plugin.cs"
@@ -141,6 +149,18 @@ def test_patch_proposal_builder_converts_implementation_plan_to_reviewable_inten
         "end_line": 18,
     }
     assert proposal.context_pack["target_symbol_signatures"][0]["symbol"] == "Load"
+    assert proposal.context_pack["binding_registry_ref"] == {
+        "artifact_type": "implementation_plan",
+        "artifact_hash": "sha256:implementation",
+        "schema_version": "binding_registry_v1",
+    }
+    assert proposal.context_pack["display_fields_authority"] == (
+        "derived_non_authoritative"
+    )
+    assert proposal.context_pack["display_files"] == [
+        "mods/BetterHitFeedback/Plugin.cs"
+    ]
+    assert proposal.context_pack["allowed_edit_binding_ids"] == ["edit_binding_001"]
     assert proposal.context_pack["artifact_hashes"]["evidence_pack"] == (
         "sha256:evidence"
     )
@@ -174,7 +194,7 @@ def test_patch_proposal_builder_blocks_no_op_plan() -> None:
 def test_patch_proposal_builder_blocks_unresolved_edit_target() -> None:
     payload = _implementation_payload()
     payload["target_files"] = []
-    payload["proposed_changes"][0].pop("edit_target_path")
+    payload["proposed_changes"][0].pop("edit_binding_id")
 
     proposal = PatchProposalBuilder().build(payload)
 
@@ -182,9 +202,23 @@ def test_patch_proposal_builder_blocks_unresolved_edit_target() -> None:
     assert proposal.blockers[0]["code"] == "EDIT_TARGET_UNRESOLVED"
 
 
+def test_patch_proposal_builder_derives_files_from_binding_registry() -> None:
+    payload = _implementation_payload()
+    payload["target_files"] = ["wrong/Displayed.cs"]
+
+    proposal = PatchProposalBuilder().build(payload)
+
+    assert proposal.blocked is False
+    assert proposal.files == ("mods/BetterHitFeedback/Plugin.cs",)
+    assert proposal.context_pack["display_files"] == [
+        "mods/BetterHitFeedback/Plugin.cs"
+    ]
+
+
 def test_reviewer_approves_evidence_bound_dry_run_proposal() -> None:
     review = ProposalReviewer().review(
         _proposal_payload(),
+        implementation_plan=_implementation_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
         artifact_hashes=_artifact_hashes(),
@@ -200,32 +234,178 @@ def test_reviewer_approves_evidence_bound_dry_run_proposal() -> None:
 def test_reviewer_blocks_evidence_bound_proposal_without_evidence_pack() -> None:
     review = ProposalReviewer().review(
         _proposal_payload(),
+        implementation_plan=_implementation_payload(),
         feature_spec=_feature_spec(),
         artifact_hashes=_artifact_hashes(),
         permission_level="dry_run_write",
     )
 
-    assert review.decision == "blocked_insufficient_evidence"
+    assert review.decision == "revise_proposal"
     assert review.allowed_next_stage is None
-    assert any(finding.rule_id == "evidence_binding" for finding in review.findings)
-    assert review.required_changes == (
-        "Change unit evidence refs cannot be validated without an evidence pack or repair plan.",
+    assert any(finding.rule_id == "binding_registry" for finding in review.findings)
+    assert (
+        "Edit binding evidence_id is not present in evidence_pack."
+        in review.required_changes
     )
 
 
 def test_reviewer_blocks_unbound_change() -> None:
     proposal = _proposal_payload()
-    proposal["diff_intent"][0]["evidence_refs"] = []
+    proposal["diff_intent"][0].pop("edit_binding_id")
 
     review = ProposalReviewer().review(
         proposal,
+        implementation_plan=_implementation_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
     )
 
     assert review.decision == "blocked_insufficient_evidence"
     assert review.allowed_next_stage is None
-    assert review.findings[0].rule_id == "evidence_binding"
+    assert any(finding.rule_id == "binding_registry" for finding in review.findings)
+
+
+def test_reviewer_blocks_binding_registry_source_span_drift() -> None:
+    proposal = _proposal_payload()
+    implementation_plan = _implementation_payload()
+    implementation_plan["binding_registry"]["edit_bindings"][0]["target_span"] = None
+
+    review = ProposalReviewer().review(
+        proposal,
+        implementation_plan=implementation_plan,
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+    )
+
+    assert review.decision == "revise_proposal"
+    assert any(
+        finding.message
+        == "Edit binding span does not match evidence_pack."
+        for finding in review.findings
+    )
+
+
+def test_reviewer_blocks_proposal_copying_authoritative_binding_fields() -> None:
+    proposal = _proposal_payload()
+    proposal["diff_intent"][0]["target_symbol"] = "DifferentSymbol"
+
+    review = ProposalReviewer().review(
+        proposal,
+        implementation_plan=_implementation_payload(),
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+    )
+
+    assert review.decision == "revise_proposal"
+    assert any(
+        finding.message
+        == "Proposal changes must reference binding IDs instead of copying path, symbol, or span fields."
+        for finding in review.findings
+    )
+
+
+def test_reviewer_allows_mixed_evidence_without_edit_binding_for_every_ref() -> None:
+    payload = _implementation_payload()
+    payload["evidence_source_paths"].append("decompiled/EnemyAgent.cs")
+    payload["evidence_refs"].append("ev_api_001")
+    payload["binding_registry"]["supporting_bindings"].append(
+        {
+            "binding_id": "support_binding_ev_api_001",
+            "evidence_id": "ev_api_001",
+            "source_path": "decompiled/EnemyAgent.cs",
+            "source_type": "decompiled_api",
+            "target_symbol": "EnemyAgent.Damage",
+            "target_span": {"start_line": 100, "end_line": 120},
+            "retrieval_method": "symbol_exact",
+            "claim_supported": "EnemyAgent.Damage is the game hook target.",
+            "authority": "mod_agent_deterministic",
+            "usage": "hook_target_or_supporting_evidence",
+        }
+    )
+    payload["proposed_changes"][0]["supporting_binding_ids"].append(
+        "support_binding_ev_api_001"
+    )
+    evidence_pack = _evidence_pack()
+    evidence_pack["items"].append(
+        {
+            "evidence_id": "ev_api_001",
+            "source_type": "decompiled_api",
+            "source_path": "decompiled/EnemyAgent.cs",
+            "symbol": "EnemyAgent.Damage",
+            "span": {"start_line": 100, "end_line": 120},
+            "retrieval_method": "symbol_exact",
+            "excerpt": "public void Damage(float amount) { }",
+            "chunk_id": "chunk_api_001",
+            "document_id": "doc_api_001",
+            "source_ref": "source_api_001",
+            "source_hash": "sha256:source_api",
+            "file_hash": "sha256:file_api",
+            "doc_hash": "sha256:doc_api",
+        }
+    )
+    proposal = PatchProposalBuilder().build(
+        payload,
+        evidence_pack=evidence_pack,
+        artifact_hashes=_artifact_hashes(),
+        git_binding=_git_binding(),
+        require_git_binding=True,
+    ).to_artifact_payload()
+
+    review = ProposalReviewer().review(
+        proposal,
+        implementation_plan=payload,
+        evidence_pack=evidence_pack,
+        feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+    )
+
+    assert proposal["evidence_refs"] == ["ev_001", "ev_api_001"]
+    assert proposal["diff_intent"][0]["supporting_binding_ids"] == [
+        "support_binding_ev_api_001"
+    ]
+    assert review.allowed_next_stage == "dry_run_apply"
+
+
+def test_reviewer_blocks_forged_supporting_binding() -> None:
+    payload = _implementation_payload()
+    payload["binding_registry"]["supporting_bindings"].append(
+        {
+            "binding_id": "support_binding_forged",
+            "evidence_id": "missing",
+            "source_path": "forged.cs",
+            "source_type": "decompiled_api",
+            "target_symbol": "Forged",
+            "target_span": {"start_line": 1, "end_line": 2},
+            "usage": "hook_target_or_supporting_evidence",
+        }
+    )
+    payload["proposed_changes"][0]["supporting_binding_ids"].append(
+        "support_binding_forged"
+    )
+    proposal = PatchProposalBuilder().build(
+        payload,
+        evidence_pack=_evidence_pack(),
+        artifact_hashes=_artifact_hashes(),
+        git_binding=_git_binding(),
+        require_git_binding=True,
+    ).to_artifact_payload()
+
+    review = ProposalReviewer().review(
+        proposal,
+        implementation_plan=payload,
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+    )
+
+    assert review.allowed_next_stage is None
+    assert any(
+        finding.rule_id == "binding_registry"
+        and "Supporting binding evidence_id is not present" in finding.message
+        for finding in review.findings
+    )
 
 
 def test_reviewer_blocks_missing_context_pack() -> None:
@@ -234,6 +414,7 @@ def test_reviewer_blocks_missing_context_pack() -> None:
 
     review = ProposalReviewer().review(
         proposal,
+        implementation_plan=_implementation_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
     )
@@ -249,6 +430,7 @@ def test_reviewer_blocks_change_unit_mismatch() -> None:
 
     review = ProposalReviewer().review(
         proposal,
+        implementation_plan=_implementation_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
     )
@@ -264,6 +446,7 @@ def test_reviewer_blocks_context_pack_change_unit_id_drift() -> None:
 
     review = ProposalReviewer().review(
         proposal,
+        implementation_plan=_implementation_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
     )
@@ -286,6 +469,7 @@ def test_reviewer_blocks_missing_deep_context_bindings() -> None:
 
     review = ProposalReviewer().review(
         proposal,
+        implementation_plan=_implementation_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
         artifact_hashes=_artifact_hashes(),
@@ -311,6 +495,7 @@ def test_reviewer_blocks_artifact_hash_drift() -> None:
 
     review = ProposalReviewer().review(
         proposal,
+        implementation_plan=_implementation_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
         artifact_hashes=_artifact_hashes(),
@@ -331,6 +516,7 @@ def test_reviewer_blocks_forbidden_path() -> None:
 
     review = ProposalReviewer().review(
         proposal,
+        implementation_plan=_implementation_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
     )
@@ -344,6 +530,7 @@ def test_reviewer_blocks_wrong_permission_level() -> None:
 
     review = ProposalReviewer().review(
         proposal,
+        implementation_plan=_implementation_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
         artifact_hashes=_artifact_hashes(),
@@ -365,6 +552,7 @@ def test_proposal_payloads_validate_against_artifact_contract(tmp_path) -> None:
     )
     review = ProposalReviewer().review(
         proposal.to_artifact_payload(),
+        implementation_plan=_implementation_payload(),
         evidence_pack=_evidence_pack(),
         feature_spec=_feature_spec(),
         artifact_hashes=_artifact_hashes(),

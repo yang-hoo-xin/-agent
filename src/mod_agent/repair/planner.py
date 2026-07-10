@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.proposal import PatchProposal
 from src.mod_agent.proposal.models import (
     build_change_units,
@@ -40,6 +41,9 @@ class RepairPlan:
     allowed_next_stage: str | None
     blockers: tuple[dict[str, Any], ...] = ()
     target_behavior: str | None = None
+    allowed_edit_binding_ids: tuple[str, ...] = ()
+    source_proposal: dict[str, Any] | None = None
+    display_files: tuple[str, ...] = ()
 
     def to_artifact_payload(self) -> dict[str, Any]:
         """Return payload compatible with the repair_plan artifact contract."""
@@ -73,6 +77,9 @@ class RepairPlan:
             "allowed_next_stage": self.allowed_next_stage,
             "blockers": list(self.blockers),
             "target_behavior": self.target_behavior,
+            "allowed_edit_binding_ids": list(self.allowed_edit_binding_ids),
+            "source_proposal": dict(self.source_proposal or {}),
+            "display_files": list(self.display_files),
         }
 
     def _recommended_fix_strategy(self) -> str:
@@ -98,6 +105,8 @@ class RepairPlanner:
         build_result_ref: str,
         retry_count: int,
         target_behavior: str | None = None,
+        proposal_context_pack: dict[str, Any] | None = None,
+        implementation_plan: dict[str, Any] | None = None,
     ) -> RepairPlan:
         """Create a repair plan from a failed build_result artifact."""
 
@@ -110,8 +119,18 @@ class RepairPlanner:
                 *self._diagnostic_refs(build_result),
             ]
         )
+        allowed_binding_ids = _allowed_binding_ids_from_context(proposal_context_pack)
+        resolver = BindingResolver.from_implementation_plan(implementation_plan)
         exhausted = retry_count >= self.retry_budget
-        minimal_changes = () if exhausted else self._minimal_build_changes(build_result)
+        minimal_changes = (
+            ()
+            if exhausted
+            else self._minimal_build_changes(
+                build_result,
+                resolver=resolver,
+                allowed_binding_ids=allowed_binding_ids,
+            )
+        )
         blockers = self._blockers(
             exhausted=exhausted,
             evidence_refs=evidence_refs,
@@ -146,6 +165,9 @@ class RepairPlanner:
             allowed_next_stage=None if exhausted or blockers else "generate_patch_proposal",
             blockers=blockers,
             target_behavior=target_behavior,
+            allowed_edit_binding_ids=tuple(sorted(allowed_binding_ids)),
+            source_proposal=_source_proposal_from_context(proposal_context_pack),
+            display_files=tuple(resolver.display_files_for_edit_ids(tuple(sorted(allowed_binding_ids)))),
         )
 
     def from_runtime_failure(
@@ -155,6 +177,8 @@ class RepairPlanner:
         runtime_evidence_ref: str,
         retry_count: int,
         target_behavior: str | None = None,
+        proposal_context_pack: dict[str, Any] | None = None,
+        implementation_plan: dict[str, Any] | None = None,
     ) -> RepairPlan:
         """Create a repair plan from failed runtime evidence."""
 
@@ -174,8 +198,18 @@ class RepairPlanner:
                 ),
             ]
         )
+        allowed_binding_ids = _allowed_binding_ids_from_context(proposal_context_pack)
+        resolver = BindingResolver.from_implementation_plan(implementation_plan)
         exhausted = retry_count >= self.retry_budget
-        minimal_changes = () if exhausted else self._minimal_runtime_changes(runtime_evidence)
+        minimal_changes = (
+            ()
+            if exhausted
+            else self._minimal_runtime_changes(
+                runtime_evidence,
+                resolver=resolver,
+                allowed_binding_ids=allowed_binding_ids,
+            )
+        )
         blockers = self._blockers(
             exhausted=exhausted,
             evidence_refs=evidence_refs,
@@ -210,6 +244,9 @@ class RepairPlanner:
             allowed_next_stage=None if exhausted or blockers else "generate_patch_proposal",
             blockers=blockers,
             target_behavior=target_behavior,
+            allowed_edit_binding_ids=tuple(sorted(allowed_binding_ids)),
+            source_proposal=_source_proposal_from_context(proposal_context_pack),
+            display_files=tuple(resolver.display_files_for_edit_ids(tuple(sorted(allowed_binding_ids)))),
         )
 
     @staticmethod
@@ -225,7 +262,12 @@ class RepairPlanner:
         return tuple(refs)
 
     @staticmethod
-    def _minimal_build_changes(build_result: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    def _minimal_build_changes(
+        build_result: dict[str, Any],
+        *,
+        resolver: BindingResolver,
+        allowed_binding_ids: set[str],
+    ) -> tuple[dict[str, Any], ...]:
         changes = []
         diagnostics = list(build_result.get("diagnostics", []))
         for index, diagnostic in enumerate(diagnostics):
@@ -234,10 +276,16 @@ class RepairPlanner:
             target_file = diagnostic.get("file")
             if not target_file:
                 continue
+            binding_id, error = resolver.resolve_edit_binding_for_path(
+                str(target_file),
+                allowed_binding_ids=allowed_binding_ids,
+            )
+            if error is not None or binding_id is None:
+                continue
             changes.append(
                 {
                     "change_id": f"repair_build_{index}",
-                    "target_file": target_file,
+                    "edit_binding_id": binding_id,
                     "intent": (
                         "Repair the compiler diagnostic using the referenced "
                         "failure evidence."
@@ -251,6 +299,9 @@ class RepairPlanner:
     @staticmethod
     def _minimal_runtime_changes(
         runtime_evidence: dict[str, Any],
+        *,
+        resolver: BindingResolver,
+        allowed_binding_ids: set[str],
     ) -> tuple[dict[str, Any], ...]:
         source = next(
             (
@@ -260,10 +311,16 @@ class RepairPlanner:
             ),
             "runtime_evidence",
         )
+        binding_id, error = resolver.resolve_edit_binding_for_path(
+            source,
+            allowed_binding_ids=allowed_binding_ids,
+        )
+        if error is not None or binding_id is None:
+            return ()
         return (
             {
                 "change_id": "repair_runtime_0",
-                "target_file": source,
+                "edit_binding_id": binding_id,
                 "intent": "Adjust implementation so runtime evidence can satisfy acceptance.",
                 "failure_code": runtime_evidence.get("acceptance_status"),
                 "failure_message": runtime_evidence.get("message"),
@@ -329,6 +386,10 @@ class RepairPatchProposalBuilder:
                     evidence_source_paths=(),
                     scope_boundary=(),
                     change_units=(),
+                    display_files=tuple(repair_plan.get("display_files") or ()),
+                    allowed_edit_binding_ids=tuple(
+                        repair_plan.get("allowed_edit_binding_ids") or ()
+                    ),
                 ),
                 evidence_refs=evidence_refs,
                 scope_boundary=(),
@@ -346,11 +407,7 @@ class RepairPatchProposalBuilder:
 
         minimal_changes = list(repair_plan.get("minimal_changes") or [])
         files = tuple(
-            dict.fromkeys(
-                str(change["target_file"])
-                for change in minimal_changes
-                if isinstance(change, dict) and change.get("target_file")
-            )
+            dict.fromkeys(str(path) for path in repair_plan.get("display_files") or [])
         )
         diff_intent = tuple(
             self._repair_change_intent(
@@ -360,7 +417,7 @@ class RepairPatchProposalBuilder:
                 evidence_refs=evidence_refs,
             )
             for index, change in enumerate(minimal_changes)
-            if isinstance(change, dict) and change.get("target_file")
+            if isinstance(change, dict) and change.get("edit_binding_id")
         )
         if not files or not diff_intent:
             return PatchProposal(
@@ -377,6 +434,10 @@ class RepairPatchProposalBuilder:
                     evidence_source_paths=(),
                     scope_boundary=(),
                     change_units=(),
+                    display_files=tuple(repair_plan.get("display_files") or ()),
+                    allowed_edit_binding_ids=tuple(
+                        repair_plan.get("allowed_edit_binding_ids") or ()
+                    ),
                 ),
                 evidence_refs=evidence_refs,
                 scope_boundary=(),
@@ -417,6 +478,10 @@ class RepairPatchProposalBuilder:
                 evidence_source_paths=files,
                 scope_boundary=scope_boundary,
                 change_units=change_units,
+                display_files=files,
+                allowed_edit_binding_ids=tuple(
+                    repair_plan.get("allowed_edit_binding_ids") or ()
+                ),
             ),
             evidence_refs=evidence_refs,
             scope_boundary=scope_boundary,
@@ -453,8 +518,8 @@ class RepairPatchProposalBuilder:
         return {
             "change_id": change.get("change_id") or f"repair_change_{index}",
             "change_type": "repair",
-            "target_file": change.get("target_file"),
-            "target_symbol": change.get("target_symbol"),
+            "edit_binding_id": change.get("edit_binding_id"),
+            "supporting_binding_ids": list(change.get("supporting_binding_ids") or []),
             "operation": "modify",
             "rationale": (
                 f"{repair_plan.get('hypothesis')} "
@@ -514,3 +579,27 @@ def _unique_strings(values: list[Any]) -> tuple[str, ...]:
         if text and text not in result:
             result.append(text)
     return tuple(result)
+
+
+def _allowed_binding_ids_from_context(
+    proposal_context_pack: dict[str, Any] | None,
+) -> set[str]:
+    if not isinstance(proposal_context_pack, dict):
+        return set()
+    ids = proposal_context_pack.get("allowed_edit_binding_ids")
+    if isinstance(ids, list):
+        return {str(value) for value in ids}
+    return set()
+
+
+def _source_proposal_from_context(
+    proposal_context_pack: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(proposal_context_pack, dict):
+        return {}
+    result: dict[str, Any] = {}
+    if proposal_context_pack.get("source_patch_proposal_ref"):
+        result["ref"] = proposal_context_pack.get("source_patch_proposal_ref")
+    if proposal_context_pack.get("source_patch_proposal_hash"):
+        result["hash"] = proposal_context_pack.get("source_patch_proposal_hash")
+    return result

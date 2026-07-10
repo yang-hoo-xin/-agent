@@ -59,7 +59,8 @@ def test_unknown_profile_blocks_game_specific_runtime_patch() -> None:
 
     review = ProposalReviewer().review(
         proposal,
-        evidence_pack=_evidence_pack(),
+        implementation_plan=_implementation_plan(target_file="mods/BetterHitFeedback/Plugin.cs"),
+        evidence_pack=_evidence_pack(target_file="mods/BetterHitFeedback/Plugin.cs"),
         feature_spec={"target_behavior": "change runtime behavior"},
         domain_policy=profile.review_policy(),
     )
@@ -75,7 +76,8 @@ def test_gtfo_domain_policy_blocks_forbidden_paths() -> None:
 
     review = ProposalReviewer().review(
         proposal,
-        evidence_pack=_evidence_pack(),
+        implementation_plan=_implementation_plan(target_file="interop/GTFO.API.dll"),
+        evidence_pack=_evidence_pack(target_file="interop/GTFO.API.dll"),
         feature_spec={"target_behavior": "change runtime behavior"},
         domain_policy=profile.review_policy(),
     )
@@ -90,7 +92,8 @@ def test_gtfo_domain_policy_allows_safe_root_for_dry_run_review() -> None:
 
     review = ProposalReviewer().review(
         proposal,
-        evidence_pack=_evidence_pack(),
+        implementation_plan=_implementation_plan(target_file="mods/BetterHitFeedback/Plugin.cs"),
+        evidence_pack=_evidence_pack(target_file="mods/BetterHitFeedback/Plugin.cs"),
         feature_spec={"target_behavior": "change runtime behavior"},
         domain_policy=profile.review_policy(),
     )
@@ -128,10 +131,8 @@ def _runtime_patch_proposal(
         "diff_intent": [
             {
                 "change_id": "chg_001",
-                "target_file": target_file,
-                "edit_target_path": target_file,
+                "edit_binding_id": "edit_binding_001",
                 "rationale": "change runtime behavior",
-                "evidence_refs": ["ev_001"],
                 "rollback_hint": "Restore previous behavior.",
             }
         ],
@@ -139,10 +140,12 @@ def _runtime_patch_proposal(
             {
                 "change_unit_id": "chg_001",
                 "change_type": None,
-                "target_file": target_file,
-                "edit_target_path": target_file,
+                "edit_binding_id": "edit_binding_001",
+                "supporting_binding_ids": [],
+                "target_file": None,
+                "edit_target_path": None,
                 "target_symbol": None,
-                "evidence_refs": ["ev_001"],
+                "evidence_refs": [],
                 "expected_validation": [],
                 "rollback_hint": "Restore previous behavior.",
             }
@@ -160,12 +163,20 @@ def _runtime_patch_proposal(
                     "source_path": "mods/BetterHitFeedback/Plugin.cs",
                     "source_type": "target_source",
                     "symbol": None,
-                    "span": None,
+                    "span": {"start_line": 1, "end_line": 1},
                     "retrieval_method": "symbol_exact",
                     "excerpt": "runtime behavior evidence",
                 }
             ],
             "target_symbol_signatures": [],
+            "binding_registry_ref": {
+                "artifact_type": "implementation_plan",
+                "artifact_hash": "sha256:implementation",
+                "schema_version": "binding_registry_v1",
+            },
+            "display_files": [target_file],
+            "display_fields_authority": "derived_non_authoritative",
+            "allowed_edit_binding_ids": ["edit_binding_001"],
             "artifact_hashes": {
                 "evidence_pack": "sha256:evidence",
                 "implementation_plan": "sha256:implementation",
@@ -201,12 +212,41 @@ def _runtime_patch_proposal(
     }
 
 
-def _evidence_pack() -> dict[str, object]:
+def _evidence_pack(
+    *,
+    target_file: str = "mods/BetterHitFeedback/Plugin.cs",
+) -> dict[str, object]:
     return {
         "items": [
             {
                 "evidence_id": "ev_001",
-                "source_path": "mods/BetterHitFeedback/Plugin.cs",
+                "source_path": target_file,
+                "source_type": "target_source",
+                "symbol": None,
+                "span": {"start_line": 1, "end_line": 1},
             }
         ]
+    }
+
+
+def _implementation_plan(
+    *,
+    target_file: str,
+) -> dict[str, object]:
+    return {
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "ev_001",
+                    "canonical_target_path": target_file,
+                    "source_type": "target_source",
+                    "target_symbol": None,
+                    "target_span": {"start_line": 1, "end_line": 1},
+                }
+            ],
+            "supporting_bindings": [],
+        }
     }

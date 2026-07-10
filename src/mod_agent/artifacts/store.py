@@ -46,6 +46,21 @@ class ArtifactStoreError(ValueError):
     """Raised when artifact storage validation fails."""
 
 
+def _requires_conditional_upstream_contract(
+    *,
+    artifact_type: str,
+    payload: Mapping[str, Any],
+    status: str,
+) -> bool:
+    if artifact_type != "repair_plan":
+        return False
+    return (
+        status != "blocked"
+        and not payload.get("blockers")
+        and payload.get("allowed_next_stage") is not None
+    )
+
+
 class ArtifactStore:
     """Write and read feature-scoped artifacts through one guarded interface."""
 
@@ -68,6 +83,7 @@ class ArtifactStore:
         trace_refs: list[str] | None = None,
         upstream_refs: list[ArtifactRef] | None = None,
         allow_stale_upstreams: bool = False,
+        exact_revision_upstream_types: set[str] | None = None,
     ) -> ArtifactRef:
         """Wrap payload in an envelope and write it to disk."""
 
@@ -83,12 +99,16 @@ class ArtifactStore:
         except ArtifactRegistryError as exc:
             raise ArtifactStoreError(str(exc)) from exc
         upstream_refs = list(upstream_refs or [])
+        exact_revision_upstream_types = set(exact_revision_upstream_types or set())
         self._validate_upstream_refs(
             feature_id=feature_id,
             artifact_type=artifact_type,
             contract=contract,
+            payload=data,
+            status=status,
             upstream_refs=upstream_refs,
             allow_stale_upstreams=allow_stale_upstreams,
+            exact_revision_upstream_types=exact_revision_upstream_types,
         )
         inputs = {
             "upstream_artifacts": [
@@ -96,6 +116,9 @@ class ArtifactStore:
                     "artifact_type": upstream.artifact_type,
                     "path": upstream.path,
                     "artifact_hash": upstream.artifact_hash,
+                    "require_latest": (
+                        upstream.artifact_type not in exact_revision_upstream_types
+                    ),
                 }
                 for upstream in (upstream_refs or [])
             ]
@@ -248,7 +271,11 @@ class ArtifactStore:
                     f"{upstream_ref.artifact_type} latest invalid: {exc}",
                 )
                 continue
-            if latest_hash is not None and latest_hash != upstream_ref.artifact_hash:
+            if (
+                upstream.get("require_latest", True) is not False
+                and latest_hash is not None
+                and latest_hash != upstream_ref.artifact_hash
+            ):
                 self._append_stale_reason(
                     stale_reasons,
                     f"{upstream_ref.artifact_type} hash changed",
@@ -516,8 +543,11 @@ class ArtifactStore:
         feature_id: str,
         artifact_type: str,
         contract: ArtifactContract,
+        payload: Mapping[str, Any],
+        status: str,
         upstream_refs: list[ArtifactRef],
         allow_stale_upstreams: bool,
+        exact_revision_upstream_types: set[str],
     ) -> None:
         provided_types = {ref.artifact_type for ref in upstream_refs}
         missing = sorted(contract.required_upstream_artifacts - provided_types)
@@ -525,6 +555,32 @@ class ArtifactStore:
             raise ArtifactStoreError(
                 f"Artifact {artifact_type!r} missing required upstream artifacts: {missing}"
             )
+        if _requires_conditional_upstream_contract(
+            artifact_type=artifact_type,
+            payload=payload,
+            status=status,
+        ):
+            for group in contract.required_one_of_upstream_artifact_groups:
+                if not provided_types.intersection(group):
+                    raise ArtifactStoreError(
+                        f"Artifact {artifact_type!r} missing one of required upstream artifacts: {sorted(group)}"
+                    )
+            missing_exact = sorted(
+                contract.required_exact_revision_upstream_artifacts - provided_types
+            )
+            if missing_exact:
+                raise ArtifactStoreError(
+                    f"Artifact {artifact_type!r} missing required exact upstream artifacts: {missing_exact}"
+                )
+            not_exact = sorted(
+                artifact_type
+                for artifact_type in contract.required_exact_revision_upstream_artifacts
+                if artifact_type not in exact_revision_upstream_types
+            )
+            if not_exact:
+                raise ArtifactStoreError(
+                    f"Artifact {artifact_type!r} requires exact revision upstream artifacts: {not_exact}"
+                )
 
         for upstream in upstream_refs:
             if upstream.feature_id != feature_id:
@@ -542,9 +598,31 @@ class ArtifactStore:
                     f"Upstream artifact_type mismatch for {upstream.artifact_type!r}"
                 )
 
-            freshness = self.check_direct_freshness(upstream)
+            freshness = self._check_upstream_write_freshness(
+                upstream,
+                require_latest=upstream.artifact_type not in exact_revision_upstream_types,
+            )
             if not freshness.is_fresh and not allow_stale_upstreams:
                 raise StaleArtifactError("; ".join(freshness.stale_reasons))
+
+    def _check_upstream_write_freshness(
+        self,
+        ref: ArtifactRef,
+        *,
+        require_latest: bool,
+    ) -> FreshnessView:
+        if require_latest:
+            return self.check_direct_freshness(ref)
+        try:
+            self.read(ref)
+        except ArtifactStoreError as exc:
+            reason = (
+                f"{ref.artifact_type} hash changed"
+                if str(exc) == "Artifact hash mismatch"
+                else f"{ref.artifact_type} invalid: {exc}"
+            )
+            return FreshnessView(status="stale", stale_reasons=[reason])
+        return FreshnessView(status="fresh", stale_reasons=[])
 
     def _guard_path(self, path: Path) -> Path:
         resolved = path.resolve()

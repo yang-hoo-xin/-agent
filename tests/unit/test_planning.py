@@ -25,6 +25,9 @@ def _authoritative_item(**overrides: object) -> dict[str, object]:
         "source_type": "target_source",
         "source_path": "mods/BetterHitFeedback/Plugin.cs",
         "symbol": "Load",
+        "span": {"start_line": 10, "end_line": 20},
+        "retrieval_method": "symbol_exact",
+        "claim_supported": "Symbol Load exists.",
         "authority": "mod_agent_deterministic",
         "chunk_id": "chunk_001",
         "document_id": "doc_001",
@@ -208,14 +211,83 @@ def test_implementation_plan_binds_every_change_to_evidence() -> None:
     assert implementation.target_files == ("mods/BetterHitFeedback/Plugin.cs",)
     assert implementation.target_symbols == ("Load",)
     assert implementation.evidence_refs == ("ev_001",)
-    assert implementation.proposed_changes[0]["evidence_source_path"] == (
-        "mods/BetterHitFeedback/Plugin.cs"
+    assert implementation.proposed_changes[0]["edit_binding_id"] == (
+        "edit_binding_001"
     )
-    assert implementation.proposed_changes[0]["edit_target_path"] == (
-        "mods/BetterHitFeedback/Plugin.cs"
-    )
-    assert implementation.proposed_changes[0]["evidence_refs"] == ["ev_001"]
+    assert implementation.proposed_changes[0]["supporting_binding_ids"] == []
+    assert "target_file" not in implementation.proposed_changes[0]
+    edit_binding = implementation.binding_registry["edit_bindings"][0]
+    assert edit_binding["evidence_id"] == "ev_001"
+    assert edit_binding["canonical_target_path"] == "mods/BetterHitFeedback/Plugin.cs"
+    assert edit_binding["target_span"] == {"start_line": 10, "end_line": 20}
+    assert implementation.binding_registry["supporting_bindings"] == []
     assert implementation.rollback_plan
+
+
+def test_implementation_plan_allows_mixed_evidence_without_editing_every_source() -> None:
+    plan = RequestPlanner().plan("hook enemy damage method for BetterHitFeedback")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(),
+            _authoritative_item(
+                evidence_id="ev_api_001",
+                source_type="decompiled_api",
+                source_path="decompiled/EnemyAgent.cs",
+                symbol="EnemyAgent.Damage",
+                span={"start_line": 100, "end_line": 120},
+                claim_supported="EnemyAgent.Damage is the game hook target.",
+                chunk_id="chunk_api_001",
+                document_id="doc_api_001",
+                source_ref="doc_api_001",
+                source_hash="file_hash_api_001",
+                file_hash="file_hash_api_001",
+                doc_hash="doc_hash_api_001",
+            ),
+            _authoritative_item(
+                evidence_id="ev_runtime_001",
+                source_type="runtime_evidence",
+                source_path="logs/gtfo/BepInEx.log",
+                symbol="BetterHitFeedback.Load",
+                span={"start_line": 1, "end_line": 4},
+                claim_supported="Runtime log proves plugin load marker.",
+                chunk_id="chunk_runtime_001",
+                document_id="doc_runtime_001",
+                source_ref="doc_runtime_001",
+                source_hash="file_hash_runtime_001",
+                file_hash="file_hash_runtime_001",
+                doc_hash="doc_hash_runtime_001",
+            ),
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is False
+    assert implementation.target_files == ("mods/BetterHitFeedback/Plugin.cs",)
+    assert implementation.evidence_refs == (
+        "ev_001",
+        "ev_api_001",
+        "ev_runtime_001",
+    )
+    assert [
+        item["evidence_id"]
+        for item in implementation.binding_registry["edit_bindings"]
+    ] == [
+        "ev_001"
+    ]
+    assert {item["evidence_id"] for item in implementation.binding_registry["supporting_bindings"]} == {
+        "ev_api_001",
+        "ev_runtime_001",
+    }
 
 
 def test_implementation_plan_blocks_when_evidence_source_is_not_editable() -> None:
