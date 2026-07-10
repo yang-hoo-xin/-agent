@@ -344,6 +344,12 @@ class DeterministicEvidenceRetriever:
             ),
             excerpt=excerpt,
             **identity,
+            usage=_optional_str(entry.metadata.get("usage")),
+            declaring_type=_optional_str(entry.metadata.get("declaring_type")),
+            method_name=_optional_str(entry.metadata.get("method_name")),
+            parameter_types=_optional_str_tuple(entry.metadata.get("parameter_types")),
+            return_type=_optional_str(entry.metadata.get("return_type")),
+            method_kind=_optional_str(entry.metadata.get("method_kind")),
             authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
             risk_notes=(),
         )
@@ -725,3 +731,13 @@ def _dense_trace_refs(report: object) -> tuple[str, ...]:
         if isinstance(event, dict) and isinstance(event.get("event"), str):
             refs.append(str(event["event"]))
     return tuple(refs)
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _optional_str_tuple(value: object) -> tuple[str, ...] | None:
+    if not isinstance(value, (list, tuple)):
+        return None
+    return tuple(str(item) for item in value if isinstance(item, str))

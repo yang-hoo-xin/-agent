@@ -40,6 +40,9 @@ class RequestPlan:
     target_mod: str | None
     requires_hook_evidence: bool
     requires_runtime_evidence: bool
+    hook_requirement: dict[str, Any] = field(
+        default_factory=lambda: {"required": False, "reason": "not_required"}
+    )
     uncertainties: tuple[Uncertainty, ...] = ()
     blocked: bool = False
 
@@ -59,6 +62,7 @@ class RequestPlan:
             "target_mod": self.target_mod,
             "requires_hook_evidence": self.requires_hook_evidence,
             "requires_runtime_evidence": self.requires_runtime_evidence,
+            "hook_requirement": dict(self.hook_requirement),
             "uncertainties": [uncertainty.to_dict() for uncertainty in self.uncertainties],
             "blocked": self.blocked,
         }
@@ -77,6 +81,9 @@ class FeatureSpec:
     acceptance_criteria: tuple[str, ...]
     evidence_requirements: tuple[str, ...]
     runtime_verification_plan: tuple[str, ...]
+    hook_requirement: dict[str, Any] = field(
+        default_factory=lambda: {"required": False, "reason": "not_required"}
+    )
     blocked: bool = False
     blockers: tuple[dict[str, Any], ...] = ()
 
@@ -98,6 +105,7 @@ class FeatureSpec:
             "acceptance_criteria": list(self.acceptance_criteria),
             "evidence_requirements": list(self.evidence_requirements),
             "runtime_verification_plan": list(self.runtime_verification_plan),
+            "hook_requirement": dict(self.hook_requirement),
             "blocked": self.blocked,
             "blockers": list(self.blockers),
         }

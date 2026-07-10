@@ -112,9 +112,16 @@ class BindingResolver:
                 ("target_symbol", "symbol", "symbol"),
                 ("target_span", "span", "span"),
                 ("source_type", "source_type", "source_type"),
+                ("declaring_type", "declaring_type", "declaring_type"),
+                ("method_name", "method_name", "method_name"),
+                ("parameter_types", "parameter_types", "parameter_types"),
+                ("return_type", "return_type", "return_type"),
+                ("method_kind", "method_kind", "method_kind"),
             )
             for binding_key, evidence_key, label in checks:
-                if binding.get(binding_key) != item.get(evidence_key):
+                if _normalized_value(binding.get(binding_key)) != _normalized_value(
+                    item.get(evidence_key)
+                ):
                     blockers.append(
                         _blocker(
                             "SUPPORTING_BINDING_EVIDENCE_DRIFT",
@@ -197,6 +204,19 @@ class BindingResolver:
                             "binding_id": support_id,
                         }
                     )
+            hook_target_binding_id = change.get("hook_target_binding_id")
+            if hook_target_binding_id and str(hook_target_binding_id) not in self.supporting_bindings:
+                blockers.append(
+                    {
+                        "code": "HOOK_TARGET_BINDING_UNKNOWN",
+                        "message": (
+                            "Change unit hook_target_binding_id is not in "
+                            "binding_registry supporting_bindings."
+                        ),
+                        "change_id": change_id,
+                        "binding_id": str(hook_target_binding_id),
+                    }
+                )
         return BindingValidationResult(allowed=not blockers, blockers=tuple(blockers))
 
     def validate_repair_subset(
@@ -267,6 +287,12 @@ def _normalize_path(path: str) -> str:
     return str(PurePosixPath(path.replace("\\", "/"))).strip("/")
 
 
+def _normalized_value(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return list(value)
+    return value
+
+
 def _supporting_usage_matches_source_type(
     binding: dict[str, Any],
     item: dict[str, Any],
@@ -275,4 +301,6 @@ def _supporting_usage_matches_source_type(
     source_type = item.get("source_type")
     if source_type == "target_source":
         return usage in {"edit_source_evidence", "hook_target_or_supporting_evidence"}
+    if source_type == "decompiled_api":
+        return usage in {"hook_target", "hook_target_or_supporting_evidence"}
     return usage == "hook_target_or_supporting_evidence"

@@ -187,6 +187,7 @@ class PatchProposalBuilder:
             "change_id": change.get("change_id"),
             "change_type": change.get("change_type"),
             "edit_binding_id": change.get("edit_binding_id"),
+            "hook_target_binding_id": change.get("hook_target_binding_id"),
             "supporting_binding_ids": list(change.get("supporting_binding_ids") or []),
             "operation": change.get("operation"),
             "rationale": change.get("rationale"),

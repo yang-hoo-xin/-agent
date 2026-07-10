@@ -131,6 +131,7 @@ def build_change_units(diff_intent: tuple[dict[str, Any], ...]) -> tuple[dict[st
             "change_unit_id": str(change.get("change_id") or f"change_{index:03d}"),
             "change_type": change.get("change_type"),
             "edit_binding_id": change.get("edit_binding_id"),
+            "hook_target_binding_id": change.get("hook_target_binding_id"),
             "supporting_binding_ids": list(change.get("supporting_binding_ids") or []),
             "target_file": change.get("display_file"),
             "edit_target_path": change.get("display_file"),

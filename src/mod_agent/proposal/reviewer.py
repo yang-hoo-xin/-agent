@@ -14,6 +14,7 @@ CHECKED_RULES = (
     "schema_validity",
     "context_pack",
     "evidence_binding",
+    "hook_target_binding",
     "scope_boundary",
     "target_alignment",
     "risk_policy",
@@ -150,6 +151,14 @@ class ProposalReviewer:
                 implementation_plan=implementation_plan,
                 artifact_hashes=artifact_hashes,
                 domain_policy=domain_policy,
+            )
+        )
+        findings.extend(
+            self._review_hook_target_bindings(
+                diff_intent=diff_intent,
+                implementation_plan=implementation_plan,
+                evidence_pack=evidence_pack,
+                feature_spec=feature_spec,
             )
         )
 
@@ -564,6 +573,84 @@ class ProposalReviewer:
             findings.append(_binding_finding(blocker))
         return tuple(findings)
 
+    def _review_hook_target_bindings(
+        self,
+        *,
+        diff_intent: list[dict[str, Any]],
+        implementation_plan: dict[str, Any] | None,
+        evidence_pack: dict[str, Any] | None,
+        feature_spec: dict[str, Any] | None,
+    ) -> tuple[ReviewFinding, ...]:
+        if not isinstance(feature_spec, dict):
+            return ()
+        if not _hook_target_required(feature_spec):
+            return ()
+        resolver = BindingResolver.from_implementation_plan(
+            implementation_plan,
+            evidence_pack=evidence_pack,
+        )
+        planned_changes = _planned_changes_by_id(implementation_plan)
+        findings: list[ReviewFinding] = []
+        for change in diff_intent:
+            if not isinstance(change, dict):
+                continue
+            change_id = (
+                str(change["change_id"])
+                if change.get("change_id") is not None
+                else None
+            )
+            hook_target_binding_id = change.get("hook_target_binding_id")
+            if not hook_target_binding_id:
+                findings.append(
+                    ReviewFinding(
+                        rule_id="hook_target_binding",
+                        level="blocking",
+                        message=(
+                            "Hook-required change unit is missing "
+                            "hook_target_binding_id."
+                        ),
+                        change_id=change_id,
+                    )
+                )
+                continue
+            binding_id = str(hook_target_binding_id)
+            binding = resolver.supporting_bindings.get(binding_id)
+            if binding is None:
+                findings.append(
+                    ReviewFinding(
+                        rule_id="hook_target_binding",
+                        level="blocking",
+                        message="Hook target binding id is not in binding_registry.",
+                        change_id=change_id,
+                    )
+                )
+                continue
+            if not _is_complete_hook_target_binding(binding):
+                findings.append(
+                    ReviewFinding(
+                        rule_id="hook_target_binding",
+                        level="blocking",
+                        message="Hook target binding identity is incomplete.",
+                        change_id=change_id,
+                    )
+                )
+            planned_change = planned_changes.get(change_id or "")
+            if not planned_change or str(
+                planned_change.get("hook_target_binding_id") or ""
+            ) != binding_id:
+                findings.append(
+                    ReviewFinding(
+                        rule_id="hook_target_binding",
+                        level="blocking",
+                        message=(
+                            "Hook target binding id was not selected by the "
+                            "implementation_plan change unit."
+                        ),
+                        change_id=change_id,
+                    )
+                )
+        return tuple(findings)
+
     @staticmethod
     def _is_forbidden_path(path: str) -> bool:
         normalized = path.replace("\\", "/")
@@ -621,3 +708,34 @@ def _binding_finding(blocker: dict[str, Any]) -> ReviewFinding:
             else ()
         ),
     )
+
+
+def _hook_target_required(feature_spec: dict[str, Any]) -> bool:
+    hook_requirement = feature_spec.get("hook_requirement")
+    return isinstance(hook_requirement, dict) and hook_requirement.get("required") is True
+
+
+def _is_complete_hook_target_binding(binding: dict[str, Any]) -> bool:
+    return (
+        binding.get("source_type") == "decompiled_api"
+        and binding.get("usage") == "hook_target"
+        and bool(binding.get("target_symbol"))
+        and bool(binding.get("target_span"))
+        and bool(binding.get("declaring_type"))
+        and bool(binding.get("method_name"))
+        and isinstance(binding.get("parameter_types"), list)
+        and bool(binding.get("return_type"))
+        and bool(binding.get("method_kind"))
+    )
+
+
+def _planned_changes_by_id(
+    implementation_plan: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(implementation_plan, dict):
+        return {}
+    return {
+        str(change["change_id"]): change
+        for change in implementation_plan.get("proposed_changes") or []
+        if isinstance(change, dict) and change.get("change_id")
+    }

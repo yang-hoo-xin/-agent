@@ -12,6 +12,7 @@ from .models import (
 )
 
 HOOK_SOURCE_TYPES = frozenset({"target_source", "reference_mod", "decompiled_api"})
+CONCRETE_HOOK_TARGET_SOURCE_TYPES = frozenset({"decompiled_api"})
 HOOK_METHODS = frozenset({"symbol", "symbol_exact", "symbol_substring"})
 AUTHORITATIVE_ITEM_AUTHORITY = DETERMINISTIC_EVIDENCE_AUTHORITY
 
@@ -113,6 +114,34 @@ class EvidenceReadinessClassifier:
                 missing_evidence=missing_evidence_from_blockers(blockers),
             )
 
+        if self._hook_target_required(request) and not self._has_concrete_hook_target(
+            authoritative_items
+        ):
+            blockers = (
+                {
+                    "code": "MISSING_CONCRETE_HOOK_TARGET_EVIDENCE",
+                    "message": (
+                        "Requested gameplay hook behavior requires concrete "
+                        "decompiled API evidence for the hook target."
+                    ),
+                    "needed_evidence": [
+                        "decompiled API hook target symbol",
+                        "hook target source span",
+                        "claim explaining why the hook target is relevant",
+                    ],
+                },
+            )
+            return EvidencePack(
+                query=request.query,
+                readiness="partial",
+                can_generate_patch=False,
+                items=tuple(items),
+                excluded=tuple(excluded or []),
+                gaps=("No concrete decompiled API hook target evidence was found.",),
+                blockers=blockers,
+                missing_evidence=missing_evidence_from_blockers(blockers),
+            )
+
         return self._pack(
             request=request,
             readiness="sufficient",
@@ -129,6 +158,30 @@ class EvidenceReadinessClassifier:
             and item.symbol
             for item in items
         )
+
+    @staticmethod
+    def _has_concrete_hook_target(items: list[EvidenceItem]) -> bool:
+        return any(
+            item.source_type in CONCRETE_HOOK_TARGET_SOURCE_TYPES
+            and item.retrieval_method in HOOK_METHODS
+            and item.usage == "hook_target"
+            and item.symbol
+            and item.span
+            and item.claim_supported
+            and item.declaring_type
+            and item.method_name
+            and item.parameter_types is not None
+            and item.return_type
+            and item.method_kind
+            for item in items
+        )
+
+    @staticmethod
+    def _hook_target_required(request: EvidenceRequest) -> bool:
+        hook_requirement = request.hook_requirement
+        if isinstance(hook_requirement, dict):
+            return hook_requirement.get("required") is True
+        return False
 
     @staticmethod
     def _pack(

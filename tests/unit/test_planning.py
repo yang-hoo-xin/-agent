@@ -40,6 +40,37 @@ def _authoritative_item(**overrides: object) -> dict[str, object]:
     return item
 
 
+def _hook_target_item(**overrides: object) -> dict[str, object]:
+    item = _authoritative_item(
+        evidence_id="ev_api_001",
+        source_type="decompiled_api",
+        source_path="decompiled/CrosshairGuiLayer.cs",
+        symbol="CrosshairGuiLayer.ShowHitIndicator",
+        span={"start_line": 100, "end_line": 120},
+        retrieval_method="symbol_exact",
+        claim_supported="ShowHitIndicator is the hook target.",
+        usage="hook_target",
+        declaring_type="CrosshairGuiLayer",
+        method_name="ShowHitIndicator",
+        parameter_types=[
+            "UnityEngine.Vector3",
+            "System.Boolean",
+            "System.Boolean",
+            "System.Boolean",
+        ],
+        return_type="System.Void",
+        method_kind="instance_method",
+        chunk_id="chunk_api_001",
+        document_id="doc_api_001",
+        source_ref="doc_api_001",
+        source_hash="file_hash_api_001",
+        file_hash="file_hash_api_001",
+        doc_hash="doc_hash_api_001",
+    )
+    item.update(overrides)
+    return item
+
+
 def test_request_planner_blocks_ambiguous_request() -> None:
     plan = RequestPlanner().plan("fix it")
 
@@ -60,6 +91,10 @@ def test_request_planner_classifies_runtime_feature_as_high_risk() -> None:
     assert plan.target_mod == "BetterHitFeedback"
     assert plan.requires_hook_evidence is True
     assert plan.requires_runtime_evidence is True
+    assert plan.hook_requirement == {
+        "required": True,
+        "reason": "gameplay_method_interception",
+    }
 
 
 def test_feature_spec_builder_creates_verifiable_contract() -> None:
@@ -73,6 +108,7 @@ def test_feature_spec_builder_creates_verifiable_contract() -> None:
     assert spec.blocked is False
     assert spec.feature_id == plan.feature_id
     assert spec.target_behavior == plan.user_request
+    assert spec.hook_requirement == {"required": False, "reason": "not_required"}
     assert "config or text evidence" in spec.evidence_requirements
     assert spec.acceptance_criteria
     assert spec.non_goals
@@ -235,20 +271,7 @@ def test_implementation_plan_allows_mixed_evidence_without_editing_every_source(
         **_identity_schema_payload(),
         "items": [
             _authoritative_item(),
-            _authoritative_item(
-                evidence_id="ev_api_001",
-                source_type="decompiled_api",
-                source_path="decompiled/EnemyAgent.cs",
-                symbol="EnemyAgent.Damage",
-                span={"start_line": 100, "end_line": 120},
-                claim_supported="EnemyAgent.Damage is the game hook target.",
-                chunk_id="chunk_api_001",
-                document_id="doc_api_001",
-                source_ref="doc_api_001",
-                source_hash="file_hash_api_001",
-                file_hash="file_hash_api_001",
-                doc_hash="doc_hash_api_001",
-            ),
+            _hook_target_item(),
             _authoritative_item(
                 evidence_id="ev_runtime_001",
                 source_type="runtime_evidence",
@@ -288,6 +311,85 @@ def test_implementation_plan_allows_mixed_evidence_without_editing_every_source(
         "ev_api_001",
         "ev_runtime_001",
     }
+    assert implementation.proposed_changes[0]["supporting_binding_ids"] == []
+    assert implementation.proposed_changes[0]["hook_target_binding_id"] == (
+        "hook_target_001"
+    )
+
+
+def test_implementation_plan_blocks_ambiguous_hook_target_selection() -> None:
+    plan = RequestPlanner().plan("hook enemy damage method for BetterHitFeedback")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(),
+            _hook_target_item(),
+            _hook_target_item(
+                evidence_id="ev_api_002",
+                symbol="EnemyAgent.Damage",
+                source_path="decompiled/EnemyAgent.cs",
+                declaring_type="EnemyAgent",
+                method_name="Damage",
+                parameter_types=["System.Single"],
+                chunk_id="chunk_api_002",
+                document_id="doc_api_002",
+                source_ref="doc_api_002",
+                source_hash="file_hash_api_002",
+                file_hash="file_hash_api_002",
+                doc_hash="doc_hash_api_002",
+            ),
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.blockers[0]["code"] == "AMBIGUOUS_HOOK_TARGET"
+    assert implementation.proposed_changes == ()
+
+
+def test_implementation_plan_selects_complete_hook_target_signature() -> None:
+    plan = RequestPlanner().plan("hook enemy damage method for BetterHitFeedback")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(),
+            _hook_target_item(),
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is False
+    hook_binding = implementation.binding_registry["supporting_bindings"][0]
+    assert hook_binding["binding_id"] == "hook_target_001"
+    assert hook_binding["declaring_type"] == "CrosshairGuiLayer"
+    assert hook_binding["method_name"] == "ShowHitIndicator"
+    assert hook_binding["parameter_types"] == [
+        "UnityEngine.Vector3",
+        "System.Boolean",
+        "System.Boolean",
+        "System.Boolean",
+    ]
+    assert implementation.proposed_changes[0]["hook_target_binding_id"] == (
+        "hook_target_001"
+    )
 
 
 def test_implementation_plan_blocks_when_evidence_source_is_not_editable() -> None:

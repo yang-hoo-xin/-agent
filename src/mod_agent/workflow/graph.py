@@ -493,6 +493,7 @@ def _run_retrieve_evidence(
             requires_hook_evidence=(
                 "target method" in feature_data.get("evidence_requirements", [])
             ),
+            hook_requirement=_hook_requirement_from_payload(feature_data),
         )
         try:
             pack = DeterministicEvidenceRetriever(
@@ -1354,6 +1355,7 @@ def _request_plan_from_payload(data: dict[str, Any]) -> RequestPlan:
         target_mod=data.get("target_mod"),
         requires_hook_evidence=bool(data["requires_hook_evidence"]),
         requires_runtime_evidence=bool(data["requires_runtime_evidence"]),
+        hook_requirement=_hook_requirement_from_payload(data),
         uncertainties=tuple(
             Uncertainty(
                 uncertainty_id=item["uncertainty_id"],
@@ -1379,9 +1381,20 @@ def _feature_spec_from_payload(data: dict[str, Any]) -> FeatureSpec:
         acceptance_criteria=tuple(data["acceptance_criteria"]),
         evidence_requirements=tuple(data["evidence_requirements"]),
         runtime_verification_plan=tuple(data["runtime_verification_plan"]),
+        hook_requirement=_hook_requirement_from_payload(data),
         blocked=bool(data["blocked"]),
         blockers=tuple(data.get("blockers", [])),
     )
+
+
+def _hook_requirement_from_payload(data: dict[str, Any]) -> dict[str, Any]:
+    hook_requirement = data.get("hook_requirement")
+    if isinstance(hook_requirement, dict):
+        return {
+            "required": hook_requirement.get("required") is True,
+            "reason": str(hook_requirement.get("reason") or "not_required"),
+        }
+    return {"required": False, "reason": "not_required"}
 
 
 def _read_artifact_data(

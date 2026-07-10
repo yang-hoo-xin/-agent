@@ -34,6 +34,7 @@ class FeatureSpecBuilder:
                 acceptance_criteria=(),
                 evidence_requirements=(),
                 runtime_verification_plan=(),
+                hook_requirement=dict(plan.hook_requirement),
                 blocked=True,
                 blockers=tuple(
                     {
@@ -47,6 +48,8 @@ class FeatureSpecBuilder:
         evidence_requirements = ["target source or API evidence"]
         if plan.requires_hook_evidence:
             evidence_requirements.extend(["target method", "call timing", "side effect boundary"])
+        if plan.hook_requirement.get("required") is True:
+            evidence_requirements.append("concrete hook target method identity")
         if plan.route == "quick_patch":
             evidence_requirements.append("config or text evidence")
         evidence_requirements = self._merge_unique(
@@ -87,6 +90,7 @@ class FeatureSpecBuilder:
             ),
             evidence_requirements=tuple(evidence_requirements),
             runtime_verification_plan=tuple(runtime_verification),
+            hook_requirement=dict(plan.hook_requirement),
             blocked=False,
         )
 

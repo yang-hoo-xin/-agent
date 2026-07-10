@@ -21,6 +21,9 @@ class EvidenceRequest:
     query: str
     execution_path: str = "standard_feature"
     requires_hook_evidence: bool = True
+    hook_requirement: dict[str, Any] = field(
+        default_factory=lambda: {"required": False, "reason": "not_required"}
+    )
     source_ids: tuple[str, ...] = ()
     max_items: int = 10
 
@@ -44,6 +47,12 @@ class EvidenceItem:
     source_hash: str | None = None
     file_hash: str | None = None
     doc_hash: str | None = None
+    usage: str | None = None
+    declaring_type: str | None = None
+    method_name: str | None = None
+    parameter_types: tuple[str, ...] | None = None
+    return_type: str | None = None
+    method_kind: str | None = None
     authority: EvidenceAuthority = LEGACY_RAG_AUXILIARY_AUTHORITY
     risk_notes: tuple[str, ...] = ()
 
@@ -66,6 +75,16 @@ class EvidenceItem:
             "source_hash": self.source_hash,
             "file_hash": self.file_hash,
             "doc_hash": self.doc_hash,
+            "usage": self.usage,
+            "declaring_type": self.declaring_type,
+            "method_name": self.method_name,
+            "parameter_types": (
+                list(self.parameter_types)
+                if self.parameter_types is not None
+                else None
+            ),
+            "return_type": self.return_type,
+            "method_kind": self.method_kind,
             "authority": self.authority,
             "risk_notes": list(self.risk_notes),
         }

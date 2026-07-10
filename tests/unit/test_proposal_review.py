@@ -115,6 +115,71 @@ def _proposal_payload() -> dict[str, object]:
 def _feature_spec() -> dict[str, object]:
     return {
         "target_behavior": "make Load enable diagnostics",
+        "hook_requirement": {"required": False, "reason": "not_required"},
+    }
+
+
+def _hook_feature_spec() -> dict[str, object]:
+    return {
+        "target_behavior": "hook enemy damage method for BetterHitFeedback",
+        "hook_requirement": {
+            "required": True,
+            "reason": "gameplay_method_interception",
+        },
+    }
+
+
+def _hook_target_binding() -> dict[str, object]:
+    return {
+        "binding_id": "hook_target_001",
+        "evidence_id": "ev_api_001",
+        "source_path": "decompiled/CrosshairGuiLayer.cs",
+        "source_type": "decompiled_api",
+        "target_symbol": "CrosshairGuiLayer.ShowHitIndicator",
+        "target_span": {"start_line": 100, "end_line": 120},
+        "declaring_type": "CrosshairGuiLayer",
+        "method_name": "ShowHitIndicator",
+        "parameter_types": [
+            "UnityEngine.Vector3",
+            "System.Boolean",
+            "System.Boolean",
+            "System.Boolean",
+        ],
+        "return_type": "System.Void",
+        "method_kind": "instance_method",
+        "retrieval_method": "symbol_exact",
+        "claim_supported": "ShowHitIndicator is the hook target.",
+        "authority": "mod_agent_deterministic",
+        "usage": "hook_target",
+    }
+
+
+def _hook_target_evidence_item() -> dict[str, object]:
+    return {
+        "evidence_id": "ev_api_001",
+        "source_type": "decompiled_api",
+        "source_path": "decompiled/CrosshairGuiLayer.cs",
+        "symbol": "CrosshairGuiLayer.ShowHitIndicator",
+        "span": {"start_line": 100, "end_line": 120},
+        "declaring_type": "CrosshairGuiLayer",
+        "method_name": "ShowHitIndicator",
+        "parameter_types": [
+            "UnityEngine.Vector3",
+            "System.Boolean",
+            "System.Boolean",
+            "System.Boolean",
+        ],
+        "return_type": "System.Void",
+        "method_kind": "instance_method",
+        "retrieval_method": "symbol_exact",
+        "excerpt": "public void ShowHitIndicator(Vector3 pos, bool a, bool b, bool c) { }",
+        "chunk_id": "chunk_api_001",
+        "document_id": "doc_api_001",
+        "source_ref": "source_api_001",
+        "source_hash": "sha256:source_api",
+        "file_hash": "sha256:file_api",
+        "doc_hash": "sha256:doc_api",
+        "usage": "hook_target",
     }
 
 
@@ -366,6 +431,103 @@ def test_reviewer_allows_mixed_evidence_without_edit_binding_for_every_ref() -> 
         "support_binding_ev_api_001"
     ]
     assert review.allowed_next_stage == "dry_run_apply"
+
+
+def test_reviewer_blocks_hook_change_without_hook_target_binding() -> None:
+    payload = _implementation_payload()
+    payload["evidence_source_paths"].append("decompiled/CrosshairGuiLayer.cs")
+    payload["evidence_refs"].append("ev_api_001")
+    payload["binding_registry"]["supporting_bindings"].append(_hook_target_binding())
+    evidence_pack = _evidence_pack()
+    evidence_pack["items"].append(_hook_target_evidence_item())
+    proposal = PatchProposalBuilder().build(
+        payload,
+        evidence_pack=evidence_pack,
+        artifact_hashes=_artifact_hashes(),
+        git_binding=_git_binding(),
+        require_git_binding=True,
+    ).to_artifact_payload()
+
+    review = ProposalReviewer().review(
+        proposal,
+        implementation_plan=payload,
+        evidence_pack=evidence_pack,
+        feature_spec=_hook_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+    )
+
+    assert review.allowed_next_stage is None
+    assert any(
+        finding.rule_id == "hook_target_binding"
+        and finding.change_id == "chg_001"
+        for finding in review.findings
+    )
+
+
+def test_reviewer_approves_selected_hook_target_binding() -> None:
+    payload = _implementation_payload()
+    payload["evidence_source_paths"].append("decompiled/CrosshairGuiLayer.cs")
+    payload["evidence_refs"].append("ev_api_001")
+    payload["binding_registry"]["supporting_bindings"].append(_hook_target_binding())
+    payload["proposed_changes"][0]["hook_target_binding_id"] = "hook_target_001"
+    payload["proposed_changes"][0]["rationale"] = (
+        "hook enemy damage method for BetterHitFeedback"
+    )
+    evidence_pack = _evidence_pack()
+    evidence_pack["items"].append(_hook_target_evidence_item())
+    proposal = PatchProposalBuilder().build(
+        payload,
+        evidence_pack=evidence_pack,
+        artifact_hashes=_artifact_hashes(),
+        git_binding=_git_binding(),
+        require_git_binding=True,
+    ).to_artifact_payload()
+
+    review = ProposalReviewer().review(
+        proposal,
+        implementation_plan=payload,
+        evidence_pack=evidence_pack,
+        feature_spec=_hook_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+    )
+
+    assert proposal["diff_intent"][0]["hook_target_binding_id"] == "hook_target_001"
+    assert review.allowed_next_stage == "dry_run_apply"
+
+
+def test_reviewer_blocks_hook_target_not_selected_by_plan() -> None:
+    payload = _implementation_payload()
+    payload["evidence_source_paths"].append("decompiled/CrosshairGuiLayer.cs")
+    payload["evidence_refs"].append("ev_api_001")
+    payload["binding_registry"]["supporting_bindings"].append(_hook_target_binding())
+    payload["proposed_changes"][0]["rationale"] = (
+        "hook enemy damage method for BetterHitFeedback"
+    )
+    evidence_pack = _evidence_pack()
+    evidence_pack["items"].append(_hook_target_evidence_item())
+    proposal = PatchProposalBuilder().build(
+        payload,
+        evidence_pack=evidence_pack,
+        artifact_hashes=_artifact_hashes(),
+        git_binding=_git_binding(),
+        require_git_binding=True,
+    ).to_artifact_payload()
+    proposal["diff_intent"][0]["hook_target_binding_id"] = "hook_target_001"
+
+    review = ProposalReviewer().review(
+        proposal,
+        implementation_plan=payload,
+        evidence_pack=evidence_pack,
+        feature_spec=_hook_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+    )
+
+    assert review.allowed_next_stage is None
+    assert any(
+        finding.rule_id == "hook_target_binding"
+        and "was not selected" in finding.message
+        for finding in review.findings
+    )
 
 
 def test_reviewer_blocks_forged_supporting_binding() -> None:

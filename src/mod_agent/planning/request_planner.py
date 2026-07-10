@@ -42,6 +42,10 @@ class RequestPlanner:
                 target_mod=target_mod,
                 requires_hook_evidence=True,
                 requires_runtime_evidence=False,
+                hook_requirement={
+                    "required": False,
+                    "reason": "blocked_ambiguous_request",
+                },
                 uncertainties=tuple(uncertainties),
                 blocked=True,
             )
@@ -55,6 +59,14 @@ class RequestPlanner:
         runtime_terms = ("enemy", "damage", "hook", "harmony", "il2cpp", "runtime", "gameplay")
         requires_runtime = any(keyword in lowered for keyword in runtime_terms)
         requires_hook = requires_runtime and not quick_patch
+        hook_requirement = {
+            "required": requires_hook,
+            "reason": (
+                "gameplay_method_interception"
+                if requires_hook
+                else "not_required"
+            ),
+        }
         route = "quick_patch" if quick_patch and not requires_hook else "standard_feature"
         risk_level = "high" if requires_runtime else ("low" if quick_patch else "medium")
 
@@ -76,6 +88,7 @@ class RequestPlanner:
             target_mod=resolved_target_mod,
             requires_hook_evidence=requires_hook,
             requires_runtime_evidence=requires_runtime,
+            hook_requirement=hook_requirement,
             uncertainties=tuple(uncertainties),
             blocked=False,
         )

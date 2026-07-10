@@ -14,6 +14,8 @@ from src.mod_agent.evidence.models import (
 from .models import FeatureSpec, ImplementationPlan
 
 EDITABLE_EVIDENCE_SOURCE_TYPES = frozenset({"target_source"})
+HOOK_TARGET_SOURCE_TYPE = "decompiled_api"
+HOOK_TARGET_USAGE = "hook_target"
 AUTHORITATIVE_EVIDENCE_PACK = EVIDENCE_PACK_AUTHORITY
 AUTHORITATIVE_ITEM_AUTHORITY = DETERMINISTIC_EVIDENCE_AUTHORITY
 EVIDENCE_ITEM_PROVENANCE_FIELDS = frozenset(
@@ -232,25 +234,28 @@ class ImplementationPlanner:
             self._edit_binding(index=index, item=item)
             for index, item in enumerate(editable_items, start=1)
         )
-        supporting_bindings = tuple(
-            self._supporting_binding(item=item) for item in planning_items
-        )
+        supporting_bindings = self._supporting_bindings(planning_items)
         binding_registry = self._binding_registry(
             edit_bindings=edit_bindings,
             supporting_bindings=supporting_bindings,
         )
+        hook_target_binding_id, hook_target_blocker = self._select_hook_target_binding(
+            feature_spec=feature_spec,
+            binding_registry=binding_registry,
+        )
+        if hook_target_blocker is not None:
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(hook_target_blocker,),
+                open_questions=(hook_target_blocker["message"],),
+                evidence_source_paths=evidence_source_paths,
+            )
         proposed_changes = tuple(
-            {
-                "change_id": f"chg_{index:03d}",
-                "change_type": "modify_behavior",
-                "edit_binding_id": f"edit_binding_{index:03d}",
-                "supporting_binding_ids": [],
-                "operation": "minimal_evidence_bound_change",
-                "rationale": feature_spec.target_behavior,
-                "risk_tags": [feature_spec.risk_level],
-                "expected_validation": list(feature_spec.runtime_verification_plan),
-                "rollback_hint": "Revert this change unit or restore previous behavior.",
-            }
+            self._proposed_change(
+                index=index,
+                feature_spec=feature_spec,
+                hook_target_binding_id=hook_target_binding_id,
+            )
             for index, item in enumerate(editable_items, start=1)
         )
 
@@ -291,21 +296,59 @@ class ImplementationPlanner:
             "usage": "edit_target_scope",
         }
 
+    @classmethod
+    def _supporting_bindings(
+        cls,
+        items: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], ...]:
+        bindings: list[dict[str, Any]] = []
+        hook_target_index = 1
+        for item in items:
+            is_hook_target = (
+                item.get("source_type") == HOOK_TARGET_SOURCE_TYPE
+                and item.get("usage") == HOOK_TARGET_USAGE
+            )
+            binding_id = (
+                f"hook_target_{hook_target_index:03d}"
+                if is_hook_target
+                else f"support_binding_{item.get('evidence_id')}"
+            )
+            if is_hook_target:
+                hook_target_index += 1
+            bindings.append(cls._supporting_binding(item=item, binding_id=binding_id))
+        return tuple(bindings)
+
     @staticmethod
-    def _supporting_binding(*, item: dict[str, Any]) -> dict[str, Any]:
+    def _supporting_binding(
+        *,
+        item: dict[str, Any],
+        binding_id: str,
+    ) -> dict[str, Any]:
         return {
-            "binding_id": f"support_binding_{item.get('evidence_id')}",
+            "binding_id": binding_id,
             "evidence_id": item.get("evidence_id"),
             "source_path": item.get("source_path"),
             "source_type": item.get("source_type"),
             "target_symbol": item.get("symbol"),
             "target_span": item.get("span"),
+            "declaring_type": item.get("declaring_type"),
+            "method_name": item.get("method_name"),
+            "parameter_types": (
+                list(item["parameter_types"])
+                if isinstance(item.get("parameter_types"), (list, tuple))
+                else None
+            ),
+            "return_type": item.get("return_type"),
+            "method_kind": item.get("method_kind"),
             "retrieval_method": item.get("retrieval_method"),
             "claim_supported": item.get("claim_supported"),
             "authority": item.get("authority"),
             "usage": (
                 "edit_source_evidence"
                 if item.get("source_type") in EDITABLE_EVIDENCE_SOURCE_TYPES
+                else HOOK_TARGET_USAGE
+                if item.get("source_type") == HOOK_TARGET_SOURCE_TYPE
+                and item.get("usage") == HOOK_TARGET_USAGE
                 else "hook_target_or_supporting_evidence"
             ),
         }
@@ -332,6 +375,81 @@ class ImplementationPlanner:
                 and str(binding["evidence_id"]) not in edit_evidence_ids
             ],
         }
+
+    @classmethod
+    def _select_hook_target_binding(
+        cls,
+        *,
+        feature_spec: FeatureSpec,
+        binding_registry: dict[str, Any],
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        if feature_spec.hook_requirement.get("required") is not True:
+            return None, None
+        hook_bindings = [
+            binding
+            for binding in binding_registry.get("supporting_bindings") or []
+            if isinstance(binding, dict)
+            and binding.get("usage") == HOOK_TARGET_USAGE
+        ]
+        complete_bindings = [
+            binding for binding in hook_bindings if cls._has_complete_hook_target_identity(binding)
+        ]
+        if len(complete_bindings) == 1:
+            return str(complete_bindings[0]["binding_id"]), None
+        if len(complete_bindings) > 1:
+            return None, {
+                "code": "AMBIGUOUS_HOOK_TARGET",
+                "message": (
+                    "Hook-required planning found multiple complete hook targets "
+                    "and no single selected target."
+                ),
+                "binding_ids": [
+                    str(binding["binding_id"]) for binding in complete_bindings
+                ],
+            }
+        return None, {
+            "code": "MISSING_CONCRETE_HOOK_TARGET_EVIDENCE",
+            "message": (
+                "Hook-required planning requires one selected decompiled API "
+                "method with complete target identity."
+            ),
+        }
+
+    @staticmethod
+    def _has_complete_hook_target_identity(binding: dict[str, Any]) -> bool:
+        return (
+            binding.get("source_type") == HOOK_TARGET_SOURCE_TYPE
+            and binding.get("usage") == HOOK_TARGET_USAGE
+            and bool(binding.get("target_symbol"))
+            and bool(binding.get("target_span"))
+            and bool(binding.get("declaring_type"))
+            and bool(binding.get("method_name"))
+            and isinstance(binding.get("parameter_types"), list)
+            and bool(binding.get("return_type"))
+            and bool(binding.get("method_kind"))
+        )
+
+    @staticmethod
+    def _proposed_change(
+        *,
+        index: int,
+        feature_spec: FeatureSpec,
+        hook_target_binding_id: str | None,
+    ) -> dict[str, Any]:
+        change = {
+            "change_id": f"chg_{index:03d}",
+            "change_type": "modify_behavior",
+            "edit_binding_id": f"edit_binding_{index:03d}",
+            "supporting_binding_ids": [],
+            "operation": "minimal_evidence_bound_change",
+            "rationale": feature_spec.target_behavior,
+            "risk_tags": [feature_spec.risk_level],
+            "expected_validation": list(feature_spec.runtime_verification_plan),
+            "rollback_hint": "Revert this change unit or restore previous behavior.",
+        }
+        if hook_target_binding_id is not None:
+            change["hook_target_binding_id"] = hook_target_binding_id
+        return change
 
     @staticmethod
     def _blocked(

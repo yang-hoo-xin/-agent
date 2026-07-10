@@ -23,7 +23,9 @@ from src.mod_agent.knowledge import (
     SourceDefinition,
     SourceRecord,
     SourceRegistry,
+    SymbolIndexer,
 )
+from src.mod_agent.planning import FeatureSpecBuilder, ImplementationPlanner, RequestPlanner
 from src.mod_agent.performance import BudgetLimit, PerformanceBudgetPolicy
 
 
@@ -164,6 +166,101 @@ def _index_chunk_collection(
     )
 
 
+def _index_hook_target_collection(db: KnowledgeDatabase, *, collection_id: str) -> None:
+    index_version = "v1"
+    db.upsert_source(
+        SourceRecord(
+            source_id="target_mod",
+            source_type="target_source",
+            root_path="mods/BetterHitFeedback",
+        )
+    )
+    db.upsert_source(
+        SourceRecord(
+            source_id="decompiled_api",
+            source_type="decompiled_api",
+            root_path="decompiled",
+        )
+    )
+    chunks = [
+        Chunk(
+            chunk_id=f"{collection_id}_plugin_load",
+            document_id=f"{collection_id}_plugin_doc",
+            text="public void Load() { }",
+            text_for_retrieval="Load BetterHitFeedback plugin source",
+            metadata={
+                "chunk_id": f"{collection_id}_plugin_load",
+                "document_id": f"{collection_id}_plugin_doc",
+                "source_ref": f"{collection_id}_plugin_doc",
+                "content_hash": f"{collection_id}_plugin_chunk_hash",
+                "file_hash": f"{collection_id}_plugin_file_hash",
+                "source_hash": f"{collection_id}_plugin_file_hash",
+                "doc_hash": f"{collection_id}_plugin_doc_hash",
+                "source_id": "target_mod",
+                "source_type": "target_source",
+                "source_path": "mods/BetterHitFeedback/Plugin.cs",
+                "start_line": 10,
+                "end_line": 20,
+                "symbols": ["Load"],
+                "chunk_type": "method",
+            },
+        ),
+        Chunk(
+            chunk_id=f"{collection_id}_crosshair_hook",
+            document_id=f"{collection_id}_crosshair_doc",
+            text="public void ShowHitIndicator() { }",
+            text_for_retrieval=(
+                "ShowHitIndicator hook target CrosshairGuiLayer hit indicator"
+            ),
+            metadata={
+                "chunk_id": f"{collection_id}_crosshair_hook",
+                "document_id": f"{collection_id}_crosshair_doc",
+                "source_ref": f"{collection_id}_crosshair_doc",
+                "content_hash": f"{collection_id}_crosshair_chunk_hash",
+                "file_hash": f"{collection_id}_crosshair_file_hash",
+                "source_hash": f"{collection_id}_crosshair_file_hash",
+                "doc_hash": f"{collection_id}_crosshair_doc_hash",
+                "source_id": "decompiled_api",
+                "source_type": "decompiled_api",
+                "source_path": "decompiled/CrosshairGuiLayer.cs",
+                "start_line": 100,
+                "end_line": 120,
+                "symbols": ["ShowHitIndicator"],
+                "chunk_type": "method",
+                "usage": "hook_target",
+                "declaring_type": "CrosshairGuiLayer",
+                "method_name": "ShowHitIndicator",
+                "parameter_types": [],
+                "return_type": "System.Void",
+                "method_kind": "instance_method",
+            },
+        ),
+    ]
+    db.start_index_version(
+        collection_id=collection_id,
+        index_version=index_version,
+        source_count=2,
+        chunk_count=len(chunks),
+    )
+    for chunk in chunks:
+        db.upsert_chunk(
+            chunk,
+            collection_id=collection_id,
+            index_version=index_version,
+        )
+    SymbolIndexer().index_chunks(
+        db,
+        collection_id=collection_id,
+        index_version=index_version,
+    )
+    BM25Indexer(db).index(collection_id=collection_id, index_version=index_version)
+    db.set_index_version_status(
+        collection_id=collection_id,
+        index_version=index_version,
+        status="stable",
+    )
+
+
 def _index_source(
     tmp_path: Path,
     files: dict[str, str],
@@ -215,6 +312,255 @@ public class Plugin
     assert pack.items[0].source_type == "target_source"
     assert pack.items[0].retrieval_method == "symbol_exact"
     assert pack.items[0].authority == "mod_agent_deterministic"
+
+
+def test_concrete_hook_request_requires_decompiled_api_hook_target() -> None:
+    item = EvidenceItem(
+        evidence_id="ev_001",
+        source_type="target_source",
+        source_path="mods/BetterHitFeedback/Plugin.cs",
+        symbol="Damage",
+        span={"start_line": 10, "end_line": 20},
+        retrieval_method="symbol_exact",
+        score=1.0,
+        claim_supported="Target mod source mentions Damage.",
+        excerpt="public void Damage() {}",
+        authority="mod_agent_deterministic",
+    )
+
+    pack = EvidenceReadinessClassifier().classify(
+        request=EvidenceRequest(
+            query="hook enemy damage method for BetterHitFeedback",
+            requires_hook_evidence=True,
+            hook_requirement={
+                "required": True,
+                "reason": "gameplay_method_interception",
+            },
+        ),
+        items=[item],
+    )
+
+    assert pack.readiness == "partial"
+    assert pack.can_generate_patch is False
+    assert pack.blockers[0]["code"] == "MISSING_CONCRETE_HOOK_TARGET_EVIDENCE"
+    assert pack.missing_evidence[0]["needed_evidence"] == (
+        "decompiled API hook target symbol"
+    )
+
+
+def test_hook_request_rejects_unrelated_decompiled_api_method() -> None:
+    items = [
+        EvidenceItem(
+            evidence_id="ev_001",
+            source_type="target_source",
+            source_path="mods/BetterHitFeedback/Plugin.cs",
+            symbol="Load",
+            span={"start_line": 10, "end_line": 20},
+            retrieval_method="symbol_exact",
+            score=1.0,
+            claim_supported="Target mod source contains Load.",
+            excerpt="public void Load() {}",
+            authority="mod_agent_deterministic",
+        ),
+        EvidenceItem(
+            evidence_id="ev_api_001",
+            source_type="decompiled_api",
+            source_path="decompiled/CrosshairGuiLayer.cs",
+            symbol="CrosshairGuiLayer.Render",
+            span={"start_line": 100, "end_line": 120},
+            retrieval_method="symbol_exact",
+            score=1.0,
+            claim_supported="Unrelated rendering method exists.",
+            excerpt="public void Render() {}",
+            authority="mod_agent_deterministic",
+            declaring_type="CrosshairGuiLayer",
+            method_name="Render",
+            parameter_types=("System.Single",),
+            return_type="System.Void",
+            method_kind="instance_method",
+        ),
+    ]
+
+    pack = EvidenceReadinessClassifier().classify(
+        request=EvidenceRequest(
+            query="hook enemy damage method for BetterHitFeedback",
+            requires_hook_evidence=True,
+            hook_requirement={
+                "required": True,
+                "reason": "gameplay_method_interception",
+            },
+        ),
+        items=items,
+    )
+
+    assert pack.readiness == "partial"
+    assert pack.blockers[0]["code"] == "MISSING_CONCRETE_HOOK_TARGET_EVIDENCE"
+
+
+def test_hook_target_overload_requires_parameter_types() -> None:
+    items = [
+        EvidenceItem(
+            evidence_id="ev_001",
+            source_type="target_source",
+            source_path="mods/BetterHitFeedback/Plugin.cs",
+            symbol="Load",
+            span={"start_line": 10, "end_line": 20},
+            retrieval_method="symbol_exact",
+            score=1.0,
+            claim_supported="Target mod source contains Load.",
+            excerpt="public void Load() {}",
+            authority="mod_agent_deterministic",
+        ),
+        EvidenceItem(
+            evidence_id="ev_api_001",
+            source_type="decompiled_api",
+            source_path="decompiled/CrosshairGuiLayer.cs",
+            symbol="CrosshairGuiLayer.ShowHitIndicator",
+            span={"start_line": 100, "end_line": 120},
+            retrieval_method="symbol_exact",
+            score=1.0,
+            claim_supported="ShowHitIndicator is the hook target.",
+            excerpt="public void ShowHitIndicator(Vector3 pos) {}",
+            authority="mod_agent_deterministic",
+            usage="hook_target",
+            declaring_type="CrosshairGuiLayer",
+            method_name="ShowHitIndicator",
+            return_type="System.Void",
+            method_kind="instance_method",
+        ),
+    ]
+
+    pack = EvidenceReadinessClassifier().classify(
+        request=EvidenceRequest(
+            query="hook hit indicator method for BetterHitFeedback",
+            requires_hook_evidence=True,
+            hook_requirement={
+                "required": True,
+                "reason": "gameplay_method_interception",
+            },
+        ),
+        items=items,
+    )
+
+    assert pack.readiness == "partial"
+    assert pack.blockers[0]["code"] == "MISSING_CONCRETE_HOOK_TARGET_EVIDENCE"
+
+
+def test_concrete_hook_request_accepts_decompiled_api_hook_target() -> None:
+    items = [
+        EvidenceItem(
+            evidence_id="ev_001",
+            source_type="target_source",
+            source_path="mods/BetterHitFeedback/Plugin.cs",
+            symbol="Load",
+            span={"start_line": 10, "end_line": 20},
+            retrieval_method="symbol_exact",
+            score=1.0,
+            claim_supported="Target mod source contains Load.",
+            excerpt="public void Load() {}",
+            authority="mod_agent_deterministic",
+        ),
+        EvidenceItem(
+            evidence_id="ev_api_001",
+            source_type="decompiled_api",
+            source_path="decompiled/EnemyAgent.cs",
+            symbol="EnemyAgent.Damage",
+            span={"start_line": 100, "end_line": 120},
+            retrieval_method="symbol_exact",
+            score=1.0,
+            claim_supported="EnemyAgent.Damage is the game hook target.",
+            excerpt="public void Damage(float amount) {}",
+            authority="mod_agent_deterministic",
+            usage="hook_target",
+            declaring_type="EnemyAgent",
+            method_name="Damage",
+            parameter_types=("System.Single",),
+            return_type="System.Void",
+            method_kind="instance_method",
+        ),
+    ]
+
+    pack = EvidenceReadinessClassifier().classify(
+        request=EvidenceRequest(
+            query="hook enemy damage method for BetterHitFeedback",
+            requires_hook_evidence=True,
+            hook_requirement={
+                "required": True,
+                "reason": "gameplay_method_interception",
+            },
+        ),
+        items=items,
+    )
+
+    assert pack.readiness == "sufficient"
+    assert pack.can_generate_patch is True
+    assert [item.evidence_id for item in pack.items] == ["ev_001", "ev_api_001"]
+
+
+def test_retriever_projects_hook_target_method_identity_from_symbol_index(
+    tmp_path: Path,
+) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    _index_hook_target_collection(db, collection_id="knowledge_hub")
+
+    pack = DeterministicEvidenceRetriever(db).retrieve(
+        EvidenceRequest(
+            query="Load ShowHitIndicator hook target",
+            requires_hook_evidence=True,
+            hook_requirement={
+                "required": True,
+                "reason": "gameplay_method_interception",
+            },
+        )
+    )
+
+    hook_item = next(
+        item for item in pack.items if item.source_type == "decompiled_api"
+    )
+    assert pack.readiness == "sufficient"
+    assert hook_item.usage == "hook_target"
+    assert hook_item.declaring_type == "CrosshairGuiLayer"
+    assert hook_item.method_name == "ShowHitIndicator"
+    assert hook_item.parameter_types == ()
+    assert hook_item.return_type == "System.Void"
+    assert hook_item.method_kind == "instance_method"
+    assert hook_item.span == {"start_line": 100, "end_line": 120}
+
+
+def test_retriever_hook_target_identity_flows_into_implementation_plan(
+    tmp_path: Path,
+) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    _index_hook_target_collection(db, collection_id="knowledge_hub")
+    pack = DeterministicEvidenceRetriever(db).retrieve(
+        EvidenceRequest(
+            query="Load ShowHitIndicator hook target",
+            requires_hook_evidence=True,
+            hook_requirement={
+                "required": True,
+                "reason": "gameplay_method_interception",
+            },
+        )
+    )
+    request_plan = RequestPlanner().plan(
+        "hook ShowHitIndicator method for BetterHitFeedback"
+    )
+    feature_spec = FeatureSpecBuilder().build(request_plan)
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=feature_spec,
+        evidence_pack=pack.to_artifact_payload(),
+    )
+
+    assert implementation.blocking is False
+    hook_binding = implementation.binding_registry["supporting_bindings"][0]
+    assert hook_binding["binding_id"] == "hook_target_001"
+    assert hook_binding["declaring_type"] == "CrosshairGuiLayer"
+    assert hook_binding["method_name"] == "ShowHitIndicator"
+    assert hook_binding["parameter_types"] == []
+    assert implementation.proposed_changes[0]["hook_target_binding_id"] == (
+        "hook_target_001"
+    )
 
 
 def test_deterministic_retriever_uses_configured_collection_default(

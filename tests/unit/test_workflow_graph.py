@@ -47,7 +47,11 @@ from src.mod_agent.workflow.graph import (
 )
 
 
-def _knowledge_with_load_symbol(tmp_path: Path, *, root_name: str = "source") -> KnowledgeDatabase:
+def _knowledge_with_load_symbol(
+    tmp_path: Path,
+    *,
+    root_name: str = "source",
+) -> KnowledgeDatabase:
     db = KnowledgeDatabase(tmp_path / "knowledge.db")
     root = tmp_path / root_name
     root.mkdir()
@@ -326,7 +330,7 @@ def test_graph_patch_proposal_context_can_require_git_binding(
     state = create_initial_state(
         run_id="run_git_bound_context",
         request_id="req_git_bound_context",
-        user_request="make Load enable diagnostics",
+        user_request="default config Load runtime diagnostics",
         target_mod="BetterHitFeedback",
     )
 
@@ -1831,7 +1835,7 @@ def test_default_graph_uses_domain_policy_for_unsupported_domain(tmp_path: Path)
     state = create_initial_state(
         run_id="run_domain_policy",
         request_id="req_domain_policy",
-        user_request="make Load change runtime behavior",
+        user_request="default config Load runtime diagnostics",
         target_domain="unsupported",
         target_mod="BetterHitFeedback",
     )
@@ -1841,6 +1845,20 @@ def test_default_graph_uses_domain_policy_for_unsupported_domain(tmp_path: Path)
     assert result["current_stage"] == "blocked"
     assert "proposal_review" in result["artifacts"]
     assert "dry_run_result" not in result["artifacts"]
+    request_plan = _artifact_data(store, result, "request_planning_report")
+    feature_spec = _artifact_data(store, result, "feature_spec")
+    proposal = _artifact_data(store, result, "patch_proposal")
+    assert request_plan["route"] == "quick_patch"
+    assert request_plan["requires_hook_evidence"] is False
+    assert request_plan["hook_requirement"] == {
+        "required": False,
+        "reason": "not_required",
+    }
+    assert feature_spec["hook_requirement"] == {
+        "required": False,
+        "reason": "not_required",
+    }
+    assert proposal["risk_assessment"]["risk_level"] == "high"
     assert result["review_summary"]["allowed_next_stage"] is None
     assert any(blocker["code"] == "DOMAIN_PROFILE" for blocker in result["blockers"])
     review = _artifact_data(store, result, "proposal_review")
