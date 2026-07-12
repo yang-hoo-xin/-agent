@@ -1,0 +1,53 @@
+{
+  "audit_schema_version": "arm_a_pre_run_audit_v1",
+  "audit_scope": "design_only_no_retrieval_execution",
+  "dataset_version": "v2_ret_001a_arm_a_held_out_v1",
+  "review_status": "ready_for_external_pre_run_review",
+  "formal_arm_a_authorized": false,
+  "input_hashes": {
+    "dataset_file_sha256": "sha256:dd0dbf56cd64b6dfe939d67ff4f523e68b4313aedcf2b0ea353977a56f510dda",
+    "dataset_canonical_sha256": "sha256:a716c3a23fdf9d8c730e7de45297a0e834830c7e6a6f8d772b39370626681bc3",
+    "judgment_sha256": "sha256:925430da05344246c76a172a7188d494315fab6c3437e80ca10f9856afb14005",
+    "protocol_file_sha256": "sha256:53d084fd71f54165ea9ced743631c5eeb64a0594efdc47e4238457cf2ba44c73",
+    "quality_policy_file_sha256": "sha256:917abc8cda5a33358b17acf3ae921017aa82ab9f20407a666e6076ee0861e974",
+    "quality_policy_canonical_sha256": "sha256:c3ac03f2f48c9bc80aad4191fdaa9a6ff7ab2c1a23228a2a0e7ce80933b664f3",
+    "community_corpus_file_sha256": "sha256:eade3cf6dcd84e9db88ba02e56da36125984bf8ac323ae59c72bb62fadf39f72"
+  },
+  "checks": [
+    {"check_id": "held_out_scope", "status": "pass", "detail": "benchmark_scope=held_out; promotion_eligible=True"},
+    {"check_id": "protocol_case_coverage", "status": "pass", "detail": "dataset_cases=20; protocol_cases=20"},
+    {"check_id": "stratum_population", "status": "pass", "detail": "5 exact_code_lookup; 5 structural_hook_discovery; 5 vague_semantic_intent; 5 community_history_dependent"},
+    {"check_id": "zero_relevant_population", "status": "pass", "detail": "hoa-exact-absent-community-loader"},
+    {"check_id": "multi_relevant_population", "status": "pass", "detail": "multi_relevant_case_count=9"},
+    {"check_id": "ambiguity_controls", "status": "pass", "detail": "cases_with_forbidden_files=14"},
+    {"check_id": "community_authority_boundary", "status": "pass", "detail": "community_bound_cases=5; authority=planning_hint_only"},
+    {"check_id": "mutation_protocol", "status": "pass", "detail": "all 7 preregistered mutation scenario IDs are present and case-bound"},
+    {"check_id": "smoke_case_exclusion", "status": "pass", "detail": "case IDs, queries, relevant-file sets and exact patterns are disjoint from formal smoke v3/v5 inputs"},
+    {"check_id": "source_span_integrity", "status": "pass", "detail": "all source spans resolve"},
+    {"check_id": "community_note_integrity", "status": "pass", "detail": "note_count=5; authority=planning_hint_only"},
+    {"check_id": "policy_contract", "status": "pass", "detail": "positive retrieval metrics plus no_relevant_result_accuracy are frozen"},
+    {"check_id": "pre_result_freeze", "status": "pass", "detail": "matching_result_files=[]"},
+    {"check_id": "full_protocol_hash_binding", "status": "pass", "detail": "runner binds the exact protocol document SHA-256 into evaluation_protocol_sha256"}
+  ],
+  "verification_commands": [
+    ".\\.venv\\Scripts\\python.exe scripts\\audit_arm_a_benchmark_design.py",
+    ".\\.venv\\Scripts\\python.exe -m pytest tests/unit/test_agent_quality_eval.py tests/unit/test_arm_a_baseline.py tests/unit/test_arm_a_held_out_design.py tests/unit/test_retrieval_regression.py tests/unit/test_controlled_agent_eval_cli.py -q --tb=short",
+    ".\\.venv\\Scripts\\python.exe -m ruff check src/mod_agent/evaluation/agent_quality.py src/mod_agent/evaluation/arm_a.py scripts/run_arm_a_baseline.py scripts/audit_arm_a_benchmark_design.py tests/unit/test_agent_quality_eval.py tests/unit/test_arm_a_baseline.py tests/unit/test_arm_a_held_out_design.py"
+  ],
+  "verification_results": {
+    "audit_exit_code": 0,
+    "focused_tests": "34 passed in 1.24s",
+    "changed_path_ruff": "All checks passed"
+  },
+  "conclusions_allowed": [
+    "The held-out dataset and protocol satisfy the recorded internal design checks.",
+    "The formal Arm A runner can bind the complete preregistered protocol document hash.",
+    "No formal observation for this dataset version existed when the audit ran."
+  ],
+  "conclusions_forbidden": [
+    "Arm A retrieval quality is established.",
+    "Any BM25, structural, dense, fusion or Agentic route is better than Arm A.",
+    "Any H1-H5 hypothesis passes or fails."
+  ],
+  "next_gate": "external_pre_run_review_must_approve_the_exact_hashes_before_formal_arm_a"
+}

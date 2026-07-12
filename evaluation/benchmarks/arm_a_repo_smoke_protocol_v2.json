@@ -1,0 +1,12 @@
+{
+  "protocol_schema_version": "arm_a_protocol_v2",
+  "dataset_version": "v2_ret_001a_arm_a_repo_smoke_v1",
+  "top_k": 10,
+  "search_roots": ["src"],
+  "search_patterns": {
+    "quality_policy_contract": ["class QualityGatePolicy"],
+    "external_evaluation_switch": ["require_external_evaluation: bool = False"],
+    "observation_envelope_hash": ["\"observation_envelope_sha256\": self.observation_envelope_sha256"],
+    "binding_registry_guard": ["Non-blocking implementation_plan requires binding_registry"]
+  }
+}

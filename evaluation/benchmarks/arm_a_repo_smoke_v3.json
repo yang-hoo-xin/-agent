@@ -1,0 +1,65 @@
+{
+  "dataset_schema_version": "1",
+  "dataset_version": "v2_ret_001a_arm_a_repo_smoke_v3",
+  "dataset_kind": "benchmark",
+  "quality_gate_eligible": true,
+  "benchmark_scope": "smoke",
+  "claim_scope": "execution_plumbing_only",
+  "promotion_eligible": false,
+  "description": "Repository-backed formal-attestation smoke benchmark. It validates execution plumbing only and is not the held-out H1-H5 benchmark.",
+  "dataset_sha256": "sha256:bf9c55968c09369a0d229b2d6225bb047aff1d86b72e11a8ad87b858a319a5c1",
+  "cases": [
+    {
+      "case_id": "quality_policy_contract",
+      "stratum": "exact_code_lookup",
+      "query": "Find the implementation of the versioned QualityGatePolicy contract.",
+      "expected_relevant_ids": ["file:src/mod_agent/evaluation/quality_policy.py"],
+      "expected_hook_ids": [],
+      "expected_target_files": [],
+      "forbidden_files": [],
+      "expected_readiness": "blocked",
+      "expected_control_action": "block",
+      "task_success_eligible": false,
+      "expected_task_success": null
+    },
+    {
+      "case_id": "external_evaluation_switch",
+      "stratum": "exact_code_lookup",
+      "query": "Find the LangGraph switch that makes external evaluation mandatory.",
+      "expected_relevant_ids": ["file:src/mod_agent/workflow/graph.py"],
+      "expected_hook_ids": [],
+      "expected_target_files": [],
+      "forbidden_files": [],
+      "expected_readiness": "blocked",
+      "expected_control_action": "block",
+      "task_success_eligible": false,
+      "expected_task_success": null
+    },
+    {
+      "case_id": "observation_envelope_hash",
+      "stratum": "exact_code_lookup",
+      "query": "Find the report field that binds the raw observation envelope hash.",
+      "expected_relevant_ids": ["file:src/mod_agent/evaluation/agent_quality.py"],
+      "expected_hook_ids": [],
+      "expected_target_files": [],
+      "forbidden_files": [],
+      "expected_readiness": "blocked",
+      "expected_control_action": "block",
+      "task_success_eligible": false,
+      "expected_task_success": null
+    },
+    {
+      "case_id": "binding_registry_guard",
+      "stratum": "exact_code_lookup",
+      "query": "Find the artifact guard that requires a binding_registry on a non-blocking implementation plan.",
+      "expected_relevant_ids": ["file:src/mod_agent/artifacts/registry.py"],
+      "expected_hook_ids": [],
+      "expected_target_files": [],
+      "forbidden_files": [],
+      "expected_readiness": "blocked",
+      "expected_control_action": "block",
+      "task_success_eligible": false,
+      "expected_task_success": null
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "dataset_schema_version": "1",
+  "dataset_version": "retrieval_ablation_v1",
+  "dataset_kind": "benchmark",
+  "quality_gate_eligible": true,
+  "description": "Initial schema-valid golden cases for V2-RET-001. Ground-truth identifiers are controlled fixtures and must be replaced or supplemented with held-out repository tasks before interview-grade claims.",
+  "cases": [
+    {
+      "case_id": "rg_exact_identifier",
+      "stratum": "exact_code_lookup",
+      "query": "Locate BetterHitFeedbackPlugin.Load exactly.",
+      "expected_relevant_ids": ["source:BetterHitFeedbackPlugin:Load"],
+      "expected_hook_ids": [],
+      "expected_target_files": ["mods/BetterHitFeedback/Plugin.cs"],
+      "forbidden_files": [],
+      "expected_readiness": "sufficient",
+      "expected_control_action": "continue",
+      "task_success_eligible": true,
+      "expected_task_success": true
+    },
+    {
+      "case_id": "symbol_hook_overload",
+      "stratum": "structural_hook_discovery",
+      "query": "Find the exact overload used for the damage Hook.",
+      "expected_relevant_ids": ["hook:Dam_PlayerDamageBase:ReceiveBulletDamage"],
+      "expected_hook_ids": ["Dam_PlayerDamageBase.ReceiveBulletDamage(System.Single)"],
+      "expected_target_files": ["mods/BetterHitFeedback/Plugin.cs"],
+      "forbidden_files": ["game/GTFO/GameData/Dam_PlayerDamageBase.cs"],
+      "expected_readiness": "sufficient",
+      "expected_control_action": "continue",
+      "task_success_eligible": true,
+      "expected_task_success": true
+    },
+    {
+      "case_id": "semantic_behavior_without_symbol",
+      "stratum": "vague_semantic_intent",
+      "query": "Improve the feeling when a valid hit is registered.",
+      "expected_relevant_ids": ["source:Plugin.cs:hit_feedback"],
+      "expected_hook_ids": ["Dam_PlayerDamageBase.ReceiveBulletDamage(System.Single)"],
+      "expected_target_files": ["mods/BetterHitFeedback/Plugin.cs"],
+      "forbidden_files": [],
+      "expected_readiness": "sufficient",
+      "expected_control_action": "continue",
+      "task_success_eligible": true,
+      "expected_task_success": true
+    },
+    {
+      "case_id": "community_claim_requires_source",
+      "stratum": "community_history_dependent",
+      "query": "Check a community damage Hook claim against current source.",
+      "expected_relevant_ids": [
+        "community:hint:damage_hook",
+        "source:Plugin.cs:verified_hook"
+      ],
+      "expected_hook_ids": ["Dam_PlayerDamageBase.ReceiveBulletDamage(System.Single)"],
+      "expected_target_files": ["mods/BetterHitFeedback/Plugin.cs"],
+      "forbidden_files": ["mods/LegacyHitFeedback/Plugin.cs"],
+      "expected_readiness": "partial",
+      "expected_control_action": "block",
+      "task_success_eligible": false,
+      "expected_task_success": false
+    }
+  ]
+}

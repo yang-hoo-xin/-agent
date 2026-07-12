@@ -1,0 +1,116 @@
+{
+  "protocol_schema_version": "arm_a_protocol_v3",
+  "protocol_version": "v2_ret_001a_arm_a_held_out_protocol_v1",
+  "dataset_version": "v2_ret_001a_arm_a_held_out_v1",
+  "phase": "frozen_pre_result",
+  "top_k": 10,
+  "search_roots": ["src"],
+  "query_translation_rule": "Patterns are preregistered literals derived from request terminology and public contract names. They must not be changed after any formal observation is collected; changes require a new protocol version.",
+  "ranking_rule": "One result per canonical file, ordered by ripgrep JSON match emission; first match binds the live-read line and file hash.",
+  "negative_case_rule": "Cases with expected_result_mode=no_relevant are excluded from positive recall, precision and MRR populations and scored only by no_relevant_result_accuracy.",
+  "search_patterns": {
+    "hoa-exact-collection-resolution": ["collection_name", "Missing required field: vector_store.collection_name"],
+    "hoa-exact-fake-dense-provider-guard": ["retrieval.dense_provider=fake", "allow_test_providers=True"],
+    "hoa-exact-pending-write-status": ["pending_latest_replace"],
+    "hoa-exact-unsupported-domain-build-error": ["Unsupported domain has no build profile"],
+    "hoa-exact-absent-community-loader": ["class CommunityNoteLoader"],
+    "hoa-structural-recover-pending-writes": ["def recover_pending_writes", "def _recover_pending_write"],
+    "hoa-structural-auxiliary-readiness-gate": ["class EvidenceReadinessClassifier", "Only auxiliary retrieval output was available"],
+    "hoa-structural-hook-target-review": ["def _review_hook_target_bindings"],
+    "hoa-structural-repair-subset": ["def validate_repair_subset"],
+    "hoa-structural-language-symbol-extractors": ["def _extract_csharp", "def _extract_python"],
+    "hoa-vague-block-stale-artifact-consumption": ["read_for_stage", "StaleArtifactError"],
+    "hoa-vague-classify-missing-type-build": ["CS0246", "missing_reference"],
+    "hoa-vague-bind-runtime-to-build": ["_bind_runtime_trust_binding", "build_artifact_hash"],
+    "hoa-vague-hide-dangerous-external-tools": ["dangerous_tools_exposed", "dry_run_write", "confirmed_write"],
+    "hoa-vague-dense-remains-auxiliary": ["Only auxiliary retrieval output was available", "dense output remains auxiliary"],
+    "hoa-community-stale-cache-claim": ["read_for_stage", "changed before finalization"],
+    "hoa-community-dense-authority-claim": ["Only auxiliary retrieval output was available", "dense output remains auxiliary"],
+    "hoa-community-direct-mcp-write-claim": ["dangerous_tools_exposed", "confirmed_write"],
+    "hoa-community-launch-without-approval-claim": ["allow_game_launch", "would_launch"],
+    "hoa-community-compiler-hint-claim": ["CS0246", "missing_reference"]
+  },
+  "stratum_requirements": {
+    "exact_code_lookup": {
+      "minimum_cases": 5,
+      "required_features": ["config", "error", "path_or_marker", "multi_relevant", "zero_relevant"]
+    },
+    "structural_hook_discovery": {
+      "minimum_cases": 5,
+      "required_features": ["method_identity", "private_callee", "multiple_hooks", "ambiguous_neighbor"]
+    },
+    "vague_semantic_intent": {
+      "minimum_cases": 5,
+      "required_features": ["no_repository_terminology", "authority", "runtime_binding", "error_routing", "external_tool_boundary"]
+    },
+    "community_history_dependent": {
+      "minimum_cases": 5,
+      "required_features": ["planning_hint_only", "verified_claim", "rejected_claim", "current_source_verifier"]
+    }
+  },
+  "mutation_scenarios": [
+    {
+      "scenario_id": "mut-edit-method-body",
+      "operation": "edit_method_body_without_rename",
+      "expected_arm_a_behavior": "before_after corpus binding differs and the run stops as stale",
+      "index_arm_requirement": "detect stale result or refresh, then live revalidate"
+    },
+    {
+      "scenario_id": "mut-rename-file",
+      "operation": "rename_relevant_file",
+      "expected_arm_a_behavior": "canonical corpus identity changes and the run stops as stale",
+      "index_arm_requirement": "old path cannot reach readiness and live retrieval fallback is recorded"
+    },
+    {
+      "scenario_id": "mut-rename-symbol",
+      "operation": "rename_relevant_symbol",
+      "expected_arm_a_behavior": "canonical corpus identity changes and the run stops as stale",
+      "index_arm_requirement": "old symbol identity cannot reach readiness"
+    },
+    {
+      "scenario_id": "mut-delete-file",
+      "operation": "delete_relevant_file",
+      "expected_arm_a_behavior": "canonical corpus identity changes and the run stops as stale",
+      "index_arm_requirement": "deleted path cannot reach readiness"
+    },
+    {
+      "scenario_id": "mut-branch-worktree-namespace",
+      "operation": "switch_branch_or_worktree_namespace",
+      "expected_arm_a_behavior": "repository or worktree binding differs and the run stops as stale",
+      "index_arm_requirement": "results from another namespace are rejected"
+    },
+    {
+      "scenario_id": "mut-concurrent-consumption-change",
+      "operation": "change_returned_file_between_retrieval_and_consumption",
+      "expected_arm_a_behavior": "final returned-file rehash rejects the observation",
+      "index_arm_requirement": "live revalidation rejects the changed file before readiness"
+    },
+    {
+      "scenario_id": "mut-intentional-stale-result",
+      "operation": "inject_known_stale_index_result",
+      "expected_arm_a_behavior": "not applicable to the live-only provider; recorded as an indexed-arm control",
+      "index_arm_requirement": "stale result is detected, cannot grant patch authority, and fallback is recorded"
+    }
+  ],
+  "exclusion_rules": [
+    "Exclude every case_id, query, expected relevant file set and exact search pattern from arm_a_repo_smoke_v3.",
+    "Exclude generated_mods, virtual environments, caches, data/evaluation/runs and prior observations from the canonical search corpus.",
+    "Do not remove a case after result collection; invalid cases remain reported with a preregistered exclusion reason.",
+    "Do not change judgments, patterns, top_k, thresholds or mutation expectations after result collection; create a new version instead."
+  ],
+  "stopping_rules": [
+    "Stop and invalidate the run if repository, worktree, corpus, dataset, policy or protocol identity changes during collection.",
+    "Stop if any returned file fails final live rehash.",
+    "Stop if ripgrep identity, argv, normalized environment or command traces are absent.",
+    "Stop any indexed arm if stale or non-authoritative evidence reaches readiness, proposal or review.",
+    "Do not emit H1-H5 verdicts from Arm A alone."
+  ],
+  "result_handling": {
+    "formal_run_id_prefix": "arm_a_held_out_v1_",
+    "ledger_required": true,
+    "persist_exact_bytes_hash": true,
+    "raw_observations_required": true,
+    "command_traces_required": true,
+    "formal_run_before_external_audit": false
+  }
+}

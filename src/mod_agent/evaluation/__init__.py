@@ -1,5 +1,74 @@
-"""Evaluation gate helpers for controlled mod-agent workflows."""
+"""Evaluation helpers for controlled code-generation Agent workflows."""
 
+from .agent_quality import (
+    EVALUATOR_SCHEMA_VERSION,
+    METRIC_SCHEMA_VERSION,
+    REQUIRED_RETRIEVAL_METRICS,
+    AgentDecisionObservation,
+    AgentQualityCase,
+    AgentQualityEvaluator,
+    AgentQualityReport,
+    CaseObservation,
+    RankedRetrievalResult,
+    RetrievalObservation,
+    RunManifest,
+)
+from .arm_a import (
+    ARM_A_OBSERVATION_SCHEMA_VERSION,
+    ARM_A_PROVIDER_ID,
+    ARM_A_PROVIDER_VERSION,
+    ArmARunResult,
+    ArmATestHarness,
+    CanonicalCorpusSnapshot,
+    CollectedRunManifest,
+    OfficialArmAExecutionAttestation,
+    OfficialArmARunner,
+    RgLiveReadProvider,
+    RunBindingSnapshot,
+    RunManifestCollector,
+)
 from .gate import build_transition_eval_gate_report
+from .quality_policy import QualityGatePolicy, evaluate_quality_policy
+from .retrieval_regression import (
+    RetrievalRegressionRunner,
+    VersionedAgentQualityCases,
+    VersionedObservations,
+    compare_reports,
+    load_agent_quality_cases,
+    load_observations,
+)
 
-__all__ = ["build_transition_eval_gate_report"]
+__all__ = [
+    "EVALUATOR_SCHEMA_VERSION",
+    "METRIC_SCHEMA_VERSION",
+    "REQUIRED_RETRIEVAL_METRICS",
+    "AgentDecisionObservation",
+    "AgentQualityCase",
+    "AgentQualityEvaluator",
+    "AgentQualityReport",
+    "ARM_A_OBSERVATION_SCHEMA_VERSION",
+    "ARM_A_PROVIDER_ID",
+    "ARM_A_PROVIDER_VERSION",
+    "ArmARunResult",
+    "ArmATestHarness",
+    "CanonicalCorpusSnapshot",
+    "CaseObservation",
+    "CollectedRunManifest",
+    "OfficialArmAExecutionAttestation",
+    "OfficialArmARunner",
+    "RetrievalObservation",
+    "RankedRetrievalResult",
+    "RetrievalRegressionRunner",
+    "RgLiveReadProvider",
+    "RunBindingSnapshot",
+    "RunManifestCollector",
+    "QualityGatePolicy",
+    "RunManifest",
+    "VersionedAgentQualityCases",
+    "VersionedObservations",
+    "build_transition_eval_gate_report",
+    "compare_reports",
+    "load_agent_quality_cases",
+    "load_observations",
+    "evaluate_quality_policy",
+]

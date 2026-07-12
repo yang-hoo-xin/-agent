@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+import math
+from collections.abc import Mapping
+from typing import Any
+
+from .agent_quality import METRIC_DIRECTIONS, REQUIRED_RETRIEVAL_METRICS
+from .quality_policy import QualityGatePolicy, evaluate_quality_policy
 
 
 def build_transition_eval_gate_report(
@@ -14,6 +19,7 @@ def build_transition_eval_gate_report(
     v1_boundary: Mapping[str, Any],
     claims_real_success: bool,
     evaluation_context: Mapping[str, Any] | None = None,
+    evaluation_required: bool = False,
 ) -> dict[str, Any]:
     """Build the TRANSITION-001 eval gate report."""
 
@@ -36,6 +42,9 @@ def build_transition_eval_gate_report(
         _stale_evidence_case(context),
         _missing_required_metric_case(context),
     ]
+    required = evaluation_required or context.get("evaluation_required") is True
+    if required:
+        cases.extend(_required_evaluation_contract_cases(evaluation_context))
     blockers = [
         {
             "code": _blocker_code(case["case_id"]),
@@ -302,6 +311,114 @@ def _missing_required_metric_case(context: Mapping[str, Any]) -> dict[str, str]:
         "metric_completeness",
         "All required evaluation metrics are present.",
     )
+
+
+def _required_evaluation_contract_cases(
+    context: Mapping[str, Any] | None,
+) -> list[dict[str, str]]:
+    if context is None:
+        return [
+            _failed(
+                "required_evaluation_context",
+                "evaluation_contract",
+                "Evaluation is required but evaluation_context is missing.",
+            )
+        ]
+    cases: list[dict[str, str]] = []
+    required_values = {
+        "evaluation_mode": "benchmark",
+        "completeness_status": "complete",
+        "execution_status": "completed",
+        "evidence_status": "fresh",
+        "quality_gate_status": "pass",
+        "gate_eligible": True,
+    }
+    for field, expected in required_values.items():
+        actual = context.get(field)
+        if actual != expected:
+            cases.append(
+                _failed(
+                    f"required_{field}",
+                    "evaluation_contract",
+                    f"Required evaluation expects {field}={expected!r}; got {actual!r}.",
+                )
+            )
+        else:
+            cases.append(
+                _passed(
+                    f"required_{field}",
+                    "evaluation_contract",
+                    f"Required evaluation field {field} is valid.",
+                )
+            )
+    required_metrics = _string_tuple(context.get("required_metrics"))
+    metrics = context.get("metrics")
+    invalid_metrics: list[str] = []
+    if not required_metrics:
+        invalid_metrics.append("required_metrics")
+    if not isinstance(metrics, Mapping):
+        invalid_metrics.append("metrics")
+    else:
+        for metric in required_metrics:
+            value = metrics.get(metric)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or not 0.0 <= float(value) <= 1.0
+            ):
+                invalid_metrics.append(metric)
+    if invalid_metrics:
+        cases.append(
+            _failed(
+                "required_metric_values",
+                "evaluation_contract",
+                "Required evaluation has missing or invalid metric values: "
+                + ", ".join(invalid_metrics)
+                + ".",
+            )
+        )
+    else:
+        cases.append(
+            _passed(
+                "required_metric_values",
+                "evaluation_contract",
+                "Required evaluation metric values are finite and within [0, 1].",
+            )
+        )
+    policy_value = context.get("quality_policy")
+    try:
+        if not isinstance(policy_value, Mapping):
+            raise ValueError("quality_policy is missing")
+        policy = QualityGatePolicy.from_mapping(policy_value)
+        if not set(REQUIRED_RETRIEVAL_METRICS) <= set(policy.required_metric_names):
+            raise ValueError("quality_policy does not cover required retrieval metrics")
+        if any(float(policy.thresholds[name]) <= 0 for name in REQUIRED_RETRIEVAL_METRICS):
+            raise ValueError("required retrieval metric thresholds must be greater than zero")
+        if not isinstance(metrics, Mapping):
+            raise ValueError("metrics is missing")
+        recomputed = evaluate_quality_policy(policy, metrics, METRIC_DIRECTIONS)
+        if recomputed != "pass":
+            raise ValueError("quality policy recomputation did not pass")
+        if context.get("quality_gate_status") != recomputed:
+            raise ValueError("reported quality_gate_status does not match recomputation")
+    except ValueError as exc:
+        cases.append(
+            _failed(
+                "required_quality_policy",
+                "evaluation_contract",
+                f"Required evaluation quality policy is invalid: {exc}.",
+            )
+        )
+    else:
+        cases.append(
+            _passed(
+                "required_quality_policy",
+                "evaluation_contract",
+                "Quality policy is versioned and independently recomputes to pass.",
+            )
+        )
+    return cases
 
 
 def _passed(case_id: str, category: str, message: str) -> dict[str, str]:

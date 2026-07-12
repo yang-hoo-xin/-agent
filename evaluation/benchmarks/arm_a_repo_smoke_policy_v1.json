@@ -1,0 +1,16 @@
+{
+  "policy_schema_version": "quality_gate_policy_v1",
+  "policy_id": "arm_a_repo_smoke_quality_v1",
+  "required_metric_names": [
+    "recall_at_k",
+    "precision_at_k",
+    "precision_at_returned",
+    "mrr_at_k"
+  ],
+  "thresholds": {
+    "recall_at_k": 1.0,
+    "precision_at_k": 0.1,
+    "precision_at_returned": 1.0,
+    "mrr_at_k": 1.0
+  }
+}

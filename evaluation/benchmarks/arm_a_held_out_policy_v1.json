@@ -1,0 +1,18 @@
+{
+  "policy_schema_version": "quality_gate_policy_v1",
+  "policy_id": "v2_ret_001a_arm_a_held_out_quality_v1",
+  "required_metric_names": [
+    "recall_at_k",
+    "precision_at_k",
+    "precision_at_returned",
+    "mrr_at_k",
+    "no_relevant_result_accuracy"
+  ],
+  "thresholds": {
+    "recall_at_k": 0.5,
+    "precision_at_k": 0.05,
+    "precision_at_returned": 0.5,
+    "mrr_at_k": 0.4,
+    "no_relevant_result_accuracy": 1.0
+  }
+}

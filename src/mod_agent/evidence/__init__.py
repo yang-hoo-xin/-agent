@@ -12,12 +12,14 @@ from .dense import (
 from .models import EvidenceItem, EvidencePack, EvidenceReadiness, EvidenceRequest
 from .readiness import EvidenceReadinessClassifier
 from .retriever import DeterministicEvidenceRetriever
+from .rg_live import RgLiveEvidenceProvider
 
 __all__ = [
     "DenseRetrievalHit",
     "DenseRetrievalProvider",
     "DenseRetrievalReport",
     "DeterministicEvidenceRetriever",
+    "RgLiveEvidenceProvider",
     "DisabledDenseRetrievalProvider",
     "EvidenceItem",
     "EvidencePack",

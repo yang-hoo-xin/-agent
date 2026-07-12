@@ -1,0 +1,25 @@
+Command:
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_agent_quality_eval.py tests/unit/test_arm_a_baseline.py tests/unit/test_arm_a_held_out_design.py tests/unit/test_retrieval_regression.py tests/unit/test_controlled_agent_eval_cli.py -q --tb=short
+
+Result:
+============================= test session starts =============================
+platform win32 -- Python 3.10.20, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\10160\Desktop\ai_learn\MODULAR-RAG-MCP-SERVER-main
+configfile: pyproject.toml
+plugins: anyio-4.14.1, langsmith-0.9.4, asyncio-1.4.0, cov-7.1.0, mock-3.15.1
+asyncio: mode=strict, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 34 items
+
+tests\unit\test_agent_quality_eval.py .........                          [ 26%]
+tests\unit\test_arm_a_baseline.py ...........                            [ 58%]
+tests\unit\test_arm_a_held_out_design.py .                               [ 61%]
+tests\unit\test_retrieval_regression.py .........                        [ 88%]
+tests\unit\test_controlled_agent_eval_cli.py ....                        [100%]
+
+============================= 34 passed in 1.24s ==============================
+
+Command:
+.\.venv\Scripts\python.exe -m ruff check src/mod_agent/evaluation/agent_quality.py src/mod_agent/evaluation/arm_a.py scripts/run_arm_a_baseline.py scripts/audit_arm_a_benchmark_design.py tests/unit/test_agent_quality_eval.py tests/unit/test_arm_a_baseline.py tests/unit/test_arm_a_held_out_design.py
+
+Result:
+All checks passed!

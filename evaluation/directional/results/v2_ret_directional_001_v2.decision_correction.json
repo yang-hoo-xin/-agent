@@ -1,0 +1,13 @@
+{
+  "correction_schema_version": "directional_decision_correction_v1",
+  "run_id": "v2_ret_directional_001_v2",
+  "result_path": "evaluation/directional/results/v2_ret_directional_001_v2_1e0ded1a0d1ff91cbcc6fbd7876330c4927736b394924036805528a5cd87ffb4.json",
+  "result_sha256": "sha256:1e0ded1a0d1ff91cbcc6fbd7876330c4927736b394924036805528a5cd87ffb4",
+  "measurement_status": "valid",
+  "superseded_field": "recommendation",
+  "original_choice": "retain_rg_plus_live_read",
+  "corrected_choice": "insufficient_evidence_retain_rg_no_expansion",
+  "reason": "The frozen decision rule assigns insufficient evidence when missing authentic community data prevents the applicable D comparison. Arm B improved only one current-SymbolIndexer case, below its two-case threshold, while Arm D used synthetic_plumbing_only notes.",
+  "raw_measurements_changed": false,
+  "cases_or_ground_truth_changed": false
+}

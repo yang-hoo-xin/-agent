@@ -1,0 +1,145 @@
+{
+  "dataset_schema_version": "1",
+  "dataset_version": "v2_eval_001_fixture_v2",
+  "dataset_kind": "calibration",
+  "quality_gate_eligible": false,
+  "description": "Evaluator calibration only; not measured retrieval evidence.",
+  "observation_schema_version": "1",
+  "dataset_sha256": "sha256:a5daf6aaf96bc02a9429a4a08a7318dc3df2aadaba0337b7d51b785a4cf8d95d",
+  "cases": [
+    {
+      "case_id": "exact_code_load",
+      "stratum": "exact_code_lookup",
+      "query": "Find the current BetterHitFeedback Load implementation.",
+      "expected_relevant_ids": ["source:Plugin.cs:Load"],
+      "expected_hook_ids": [],
+      "expected_target_files": ["mods/BetterHitFeedback/Plugin.cs"],
+      "forbidden_files": ["mods/OtherMod/Plugin.cs"],
+      "expected_readiness": "sufficient",
+      "expected_control_action": "continue",
+      "task_success_eligible": true,
+      "expected_task_success": true
+    },
+    {
+      "case_id": "structural_hook_damage",
+      "stratum": "structural_hook_discovery",
+      "query": "Select the verified damage Hook target for hit feedback.",
+      "expected_relevant_ids": ["hook:Dam_PlayerDamageBase:ReceiveBulletDamage"],
+      "expected_hook_ids": ["Dam_PlayerDamageBase.ReceiveBulletDamage(System.Single)"],
+      "expected_target_files": ["mods/BetterHitFeedback/Plugin.cs"],
+      "forbidden_files": ["game/GTFO/GameData/Dam_PlayerDamageBase.cs"],
+      "expected_readiness": "sufficient",
+      "expected_control_action": "continue",
+      "task_success_eligible": true,
+      "expected_task_success": true
+    },
+    {
+      "case_id": "vague_missing_source",
+      "stratum": "vague_semantic_intent",
+      "query": "Change an unspecified combat behavior without a verified target.",
+      "expected_relevant_ids": ["blocker:missing_target_source"],
+      "expected_hook_ids": [],
+      "expected_target_files": [],
+      "forbidden_files": ["mods/BetterHitFeedback/Plugin.cs"],
+      "expected_readiness": "blocked",
+      "expected_control_action": "block",
+      "task_success_eligible": false,
+      "expected_task_success": null
+    },
+    {
+      "case_id": "community_hint_conflict",
+      "stratum": "community_history_dependent",
+      "query": "Use a community Hook hint but verify it against current source.",
+      "expected_relevant_ids": ["community:hint:damage_hook", "source:Plugin.cs:verified_hook"],
+      "expected_hook_ids": ["Dam_PlayerDamageBase.ReceiveBulletDamage(System.Single)"],
+      "expected_target_files": ["mods/BetterHitFeedback/Plugin.cs"],
+      "forbidden_files": ["mods/LegacyHitFeedback/Plugin.cs"],
+      "expected_readiness": "partial",
+      "expected_control_action": "block",
+      "task_success_eligible": false,
+      "expected_task_success": null
+    }
+  ],
+  "observations": [
+    {
+      "case_id": "exact_code_load",
+      "retrieval": {
+        "retrieved_ids": ["source:Plugin.cs:Load", "source:Plugin.cs:Unload"],
+        "retrieved_hook_ids": [],
+        "latency_ms": 12.0,
+        "api_calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "monetary_cost": 0.0
+      },
+      "decision": {
+        "selected_hook_id": null,
+        "supporting_hook_ids": [],
+        "proposed_files": ["mods/BetterHitFeedback/Plugin.cs"],
+        "readiness": "sufficient",
+        "can_generate_patch": true,
+        "task_success": true
+      }
+    },
+    {
+      "case_id": "structural_hook_damage",
+      "retrieval": {
+        "retrieved_ids": ["source:Plugin.cs:unrelated", "hook:Dam_PlayerDamageBase:ReceiveBulletDamage"],
+        "retrieved_hook_ids": ["Dam_PlayerDamageBase.ReceiveBulletDamage(System.Single)"],
+        "latency_ms": 18.0,
+        "api_calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "monetary_cost": 0.0
+      },
+      "decision": {
+        "selected_hook_id": "Dam_PlayerDamageBase.ReceiveBulletDamage(System.Single)",
+        "supporting_hook_ids": ["Dam_PlayerDamageBase.ReceiveBulletDamage(System.Single)"],
+        "proposed_files": ["mods/BetterHitFeedback/Plugin.cs"],
+        "readiness": "sufficient",
+        "can_generate_patch": true,
+        "task_success": true
+      }
+    },
+    {
+      "case_id": "vague_missing_source",
+      "retrieval": {
+        "retrieved_ids": [],
+        "retrieved_hook_ids": [],
+        "latency_ms": 8.0,
+        "api_calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "monetary_cost": 0.0
+      },
+      "decision": {
+        "selected_hook_id": null,
+        "supporting_hook_ids": [],
+        "proposed_files": [],
+        "readiness": "blocked",
+        "can_generate_patch": false,
+        "task_success": null
+      }
+    },
+    {
+      "case_id": "community_hint_conflict",
+      "retrieval": {
+        "retrieved_ids": ["community:hint:damage_hook", "source:LegacyPlugin.cs:stale_hook"],
+        "retrieved_hook_ids": ["LegacyDamageHandler.ApplyDamage(System.Single)"],
+        "latency_ms": 25.0,
+        "api_calls": 1,
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "monetary_cost": 0.002
+      },
+      "decision": {
+        "selected_hook_id": "LegacyDamageHandler.ApplyDamage(System.Single)",
+        "supporting_hook_ids": ["LegacyDamageHandler.ApplyDamage(System.Single)"],
+        "proposed_files": ["mods/LegacyHitFeedback/Plugin.cs"],
+        "readiness": "sufficient",
+        "can_generate_patch": true,
+        "task_success": null
+      }
+    }
+  ]
+}

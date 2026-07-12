@@ -1,0 +1,13 @@
+{
+  "invalidation_schema_version": "directional_result_invalidation_v1",
+  "run_id": "v2_ret_directional_001_v1",
+  "result_path": "evaluation/directional/results/v2_ret_directional_001_v1_7bb88127582e02ff9a9764cc7f00093ba28da7b49188dd3e864d44ace5e6df8d.json",
+  "result_sha256": "sha256:7bb88127582e02ff9a9764cc7f00093ba28da7b49188dd3e864d44ace5e6df8d",
+  "status": "invalid_for_latency_and_final_directional_report",
+  "preserved": true,
+  "dataset_version": "v2_ret_directional_001_cases_v1",
+  "dataset_file_sha256": "sha256:f9ad279a3ccf2e52a80d2fa9928a2449fa75e825b7cc1ae9f44df7fcaabf6790",
+  "reason": "Arm B reused the Arm A observations but recorded only SymbolIndexer query time. Because Arm B is defined as Arm A plus current SymbolIndexer, its per-case latency must include the corresponding Arm A rg/live-read latency.",
+  "case_or_ground_truth_changed": false,
+  "repair_scope": "Add the already-recorded Arm A latency to each Arm B per-case latency and rerun the same frozen dataset."
+}

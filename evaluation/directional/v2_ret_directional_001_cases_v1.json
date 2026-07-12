@@ -1,0 +1,140 @@
+{
+  "directional_schema_version": "directional_cases_v1",
+  "dataset_version": "v2_ret_directional_001_cases_v1",
+  "claim_scope": "local_directional_decision_only",
+  "top_k": 5,
+  "repository_search_roots": ["src"],
+  "smoke_case_reuse": false,
+  "freeze_rule": "Do not edit queries, ground truth, or arm inputs after the first result collection. Retain an invalid version and create a new version when a case defect is found.",
+  "decision_rule": {
+    "deepen_current_symbol_retrieval": "Choose only if B adds correct file or symbol findings on at least two current_symbol_indexer cases over A without adding more than one irrelevant returned file in that stratum.",
+    "build_minimal_authentic_community_bm25": "Choose only if an authentic traceable corpus is available and D adds at least two current-source-verified or rejected useful hints. Synthetic plumbing results are ineligible.",
+    "retain_rg_live_read": "Choose when neither eligible treatment reaches its directional threshold and the cases remain valid.",
+    "insufficient_evidence": "Choose when case validity, missing authentic data, or execution failure prevents the applicable comparison; retain rg and do not expand retrieval infrastructure."
+  },
+  "code_cases": [
+    {
+      "case_id": "dir-exact-fake-dense-provider-guard",
+      "stratum": "exact_code_lookup",
+      "query": "Locate the settings guard for the fake dense provider test-only boundary.",
+      "a_patterns": ["retrieval.dense_provider=fake", "allow_test_providers=True"],
+      "symbol_queries": [],
+      "expected_files": ["src/core/settings.py"],
+      "expected_symbols": [],
+      "ground_truth_spans": ["src/core/settings.py:481-486"]
+    },
+    {
+      "case_id": "dir-exact-pending-write-marker",
+      "stratum": "exact_code_lookup",
+      "query": "Locate the pending_latest_replace artifact marker implementation.",
+      "a_patterns": ["pending_latest_replace"],
+      "symbol_queries": [],
+      "expected_files": ["src/mod_agent/artifacts/store.py"],
+      "expected_symbols": [],
+      "ground_truth_spans": ["src/mod_agent/artifacts/store.py:42-42"]
+    },
+    {
+      "case_id": "dir-exact-unsupported-domain-build-error",
+      "stratum": "exact_code_lookup",
+      "query": "Locate the unsupported-domain build-profile failure.",
+      "a_patterns": ["Unsupported domain has no build profile"],
+      "symbol_queries": [],
+      "expected_files": ["src/mod_agent/domain/unsupported.py"],
+      "expected_symbols": [],
+      "ground_truth_spans": ["src/mod_agent/domain/unsupported.py:71-72"]
+    },
+    {
+      "case_id": "dir-symbol-recover-pending-writes",
+      "stratum": "current_symbol_indexer",
+      "query": "Find the ArtifactStore recover_pending_writes symbol.",
+      "a_patterns": ["def recover_pending_writes"],
+      "symbol_queries": ["recover_pending_writes"],
+      "expected_files": ["src/mod_agent/artifacts/store.py"],
+      "expected_symbols": ["recover_pending_writes"],
+      "ground_truth_spans": ["src/mod_agent/artifacts/store.py:338-347"]
+    },
+    {
+      "case_id": "dir-symbol-readiness-classifier",
+      "stratum": "current_symbol_indexer",
+      "query": "Find the EvidenceReadinessClassifier class and classify method.",
+      "a_patterns": ["class EvidenceReadinessClassifier", "def classify"],
+      "symbol_queries": ["EvidenceReadinessClassifier", "classify"],
+      "expected_files": ["src/mod_agent/evidence/readiness.py"],
+      "expected_symbols": ["EvidenceReadinessClassifier", "classify"],
+      "ground_truth_spans": ["src/mod_agent/evidence/readiness.py:20-23"]
+    },
+    {
+      "case_id": "dir-symbol-hook-target-review",
+      "stratum": "current_symbol_indexer",
+      "query": "Find the ProposalReviewer _review_hook_target_bindings method.",
+      "a_patterns": ["def _review_hook_target_bindings"],
+      "symbol_queries": ["_review_hook_target_bindings"],
+      "expected_files": ["src/mod_agent/proposal/reviewer.py"],
+      "expected_symbols": ["_review_hook_target_bindings"],
+      "ground_truth_spans": ["src/mod_agent/proposal/reviewer.py:576-654"]
+    },
+    {
+      "case_id": "dir-symbol-repair-subset",
+      "stratum": "current_symbol_indexer",
+      "query": "Find the BindingResolver validate_repair_subset method.",
+      "a_patterns": ["def validate_repair_subset"],
+      "symbol_queries": ["validate_repair_subset"],
+      "expected_files": ["src/mod_agent/bindings/resolver.py"],
+      "expected_symbols": ["validate_repair_subset"],
+      "ground_truth_spans": ["src/mod_agent/bindings/resolver.py:222-244"]
+    },
+    {
+      "case_id": "dir-symbol-language-extractors",
+      "stratum": "current_symbol_indexer",
+      "query": "Find the SymbolIndexer _extract_csharp and _extract_python methods.",
+      "a_patterns": ["def _extract_csharp", "def _extract_python"],
+      "symbol_queries": ["_extract_csharp", "_extract_python"],
+      "expected_files": ["src/mod_agent/knowledge/symbol_indexer.py"],
+      "expected_symbols": ["_extract_csharp", "_extract_python"],
+      "ground_truth_spans": ["src/mod_agent/knowledge/symbol_indexer.py:145-227"]
+    }
+  ],
+  "community_cases": [
+    {
+      "case_id": "dir-community-stale-cache",
+      "stratum": "community_history",
+      "query": "Is a cached code result still safe after its source file changes?",
+      "expected_note_ids": ["community_note:held_out_v1:stale_cache_safe"],
+      "verifier_patterns": ["changed before finalization"],
+      "expected_verifier_files": ["src/mod_agent/evaluation/arm_a.py"],
+      "manual_verdict": "rejected"
+    },
+    {
+      "case_id": "dir-community-dense-authority",
+      "stratum": "community_history",
+      "query": "Can a high-scoring dense result authorize a patch without current source evidence?",
+      "expected_note_ids": ["community_note:held_out_v1:dense_patch_authority"],
+      "verifier_patterns": ["dense output remains auxiliary"],
+      "expected_verifier_files": ["src/mod_agent/evidence/retriever.py"],
+      "manual_verdict": "rejected"
+    },
+    {
+      "case_id": "dir-community-direct-mcp-write",
+      "stratum": "community_history",
+      "query": "Are direct write and runtime tools exposed by the controlled-agent MCP adapter?",
+      "expected_note_ids": ["community_note:held_out_v1:direct_mcp_write"],
+      "verifier_patterns": ["dangerous_tools_exposed"],
+      "expected_verifier_files": ["src/mod_agent/mcp/protocol.py"],
+      "manual_verdict": "rejected"
+    },
+    {
+      "case_id": "dir-community-launch-approval",
+      "stratum": "community_history",
+      "query": "Should GTFO launch automatically whenever build artifacts exist?",
+      "expected_note_ids": ["community_note:held_out_v1:launch_without_approval"],
+      "verifier_patterns": ["if not allow_game_launch"],
+      "expected_verifier_files": ["src/mod_agent/runtime/gtfo_automation.py"],
+      "manual_verdict": "rejected"
+    }
+  ],
+  "community_corpus": {
+    "path": "evaluation/benchmarks/arm_a_held_out_community_v1.json",
+    "kind": "synthetic_plumbing_only",
+    "authentic_product_value_claim_allowed": false
+  }
+}
