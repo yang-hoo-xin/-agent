@@ -1,4 +1,4 @@
-"""Workflow primitives for the Controlled Mod Agent platform."""
+"""Workflow primitives for the Evidence-Grounded Controlled Code Generation Agent Platform."""
 
 from .checkpointing import (
     CheckpointPolicy,

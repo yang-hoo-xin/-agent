@@ -194,6 +194,8 @@ class PatchProposalBuilder:
             "evidence_refs": list(change.get("evidence_refs") or []),
             "expected_validation": list(change.get("expected_validation") or []),
             "rollback_hint": change.get("rollback_hint"),
+            "patch": dict(change.get("patch") or {}),
+            "generation": dict(change.get("generation") or {}),
         }
 
     @staticmethod

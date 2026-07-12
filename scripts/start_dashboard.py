@@ -1,4 +1,4 @@
-"""Convenience launcher for the Modular RAG Dashboard.
+"""Convenience launcher for the Evidence-Grounded Controlled Code Generation Agent Platform dashboard.
 
 Usage::
 
@@ -15,7 +15,9 @@ from pathlib import Path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Start the Modular RAG Dashboard")
+    parser = argparse.ArgumentParser(
+        description="Start the Evidence-Grounded Controlled Code Generation Agent Platform dashboard"
+    )
     parser.add_argument("--port", type=int, default=8501, help="Port to serve the dashboard on")
     parser.add_argument("--host", type=str, default="localhost", help="Host to bind to")
     args = parser.parse_args()

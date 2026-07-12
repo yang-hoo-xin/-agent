@@ -12,11 +12,11 @@ from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import FakeDenseRetrievalProvider
 from src.mod_agent.knowledge import (
+    IDENTITY_FIELD_MAPPING,
+    IDENTITY_SCHEMA_VERSION,
     BM25Indexer,
     Chunk,
     CollectionResolver,
-    IDENTITY_FIELD_MAPPING,
-    IDENTITY_SCHEMA_VERSION,
     IncrementalIndexer,
     KnowledgeDatabase,
     SourceDefinition,
@@ -45,6 +45,14 @@ from src.mod_agent.workflow.graph import (
     _PROJECT_ROOT,
     _default_proposal_git_binding_factory,
 )
+
+
+def test_external_evaluation_requirement_requires_factory(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="evaluation_context_factory"):
+        build_graph(
+            ArtifactStore(tmp_path / "artifacts"),
+            require_external_evaluation=True,
+        )
 
 
 def _knowledge_with_load_symbol(

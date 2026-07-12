@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
@@ -258,8 +258,8 @@ class GitRepository:
         run_id: str,
         feature_id: str,
         stage: str,
-        decision_artifact_ref: "ArtifactRef | None" = None,
-        patch_artifact_ref: "ArtifactRef | None" = None,
+        decision_artifact_ref: ArtifactRef | None = None,
+        patch_artifact_ref: ArtifactRef | None = None,
         patch_proposal_payload: dict[str, Any] | None = None,
         commit_ref: str = "HEAD",
     ) -> GitChangeRecord:
@@ -322,15 +322,15 @@ class GitRepository:
 
     def write_change_record(
         self,
-        artifact_store: "ArtifactStore",
+        artifact_store: ArtifactStore,
         *,
         run_id: str,
         feature_id: str,
         stage: str,
-        decision_artifact_ref: "ArtifactRef | None" = None,
-        patch_artifact_ref: "ArtifactRef | None" = None,
+        decision_artifact_ref: ArtifactRef | None = None,
+        patch_artifact_ref: ArtifactRef | None = None,
         commit_ref: str = "HEAD",
-    ) -> "ArtifactRef":
+    ) -> ArtifactRef:
         """Persist a git_change_record artifact for dashboard, eval, and replay."""
 
         patch_proposal_payload = None
@@ -380,8 +380,9 @@ class GitRepository:
                 command,
                 cwd=self.root,
                 text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                encoding="utf-8",
+                errors="surrogateescape",
+                capture_output=True,
                 check=False,
             )
         except FileNotFoundError:
@@ -401,11 +402,11 @@ class GitRepository:
         return result
 
     @staticmethod
-    def _artifact_path(ref: "ArtifactRef | None") -> str | None:
+    def _artifact_path(ref: ArtifactRef | None) -> str | None:
         return None if ref is None else ref.path
 
     @staticmethod
-    def _artifact_hash(ref: "ArtifactRef | None") -> str | None:
+    def _artifact_hash(ref: ArtifactRef | None) -> str | None:
         return None if ref is None else ref.artifact_hash
 
     @staticmethod
@@ -449,7 +450,7 @@ class GitRepository:
     def _proposal_binding(
         self,
         *,
-        patch_artifact_ref: "ArtifactRef | None",
+        patch_artifact_ref: ArtifactRef | None,
         patch_proposal_payload: dict[str, Any] | None,
         base_revision: str,
     ) -> dict[str, Any] | None:

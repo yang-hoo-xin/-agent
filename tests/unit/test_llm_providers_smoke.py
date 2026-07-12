@@ -60,6 +60,7 @@ class MockLLMSettings:
     model: str = "gpt-4o-mini"
     temperature: float = 0.0
     max_tokens: int = 1024
+    base_url: str | None = None
 
 
 @dataclass
@@ -209,6 +210,14 @@ class TestOpenAILLM:
         settings = MockSettings()
         llm = OpenAILLM(settings, api_key="test-key", base_url="https://custom.api.com")
         assert llm.base_url == "https://custom.api.com"
+
+    def test_configured_base_url(self):
+        """Should use the OpenAI-compatible endpoint from settings."""
+        settings = MockSettings(
+            llm=MockLLMSettings(base_url="https://compatible.example/v1")
+        )
+        llm = OpenAILLM(settings, api_key="test-key")
+        assert llm.base_url == "https://compatible.example/v1"
     
     def test_chat_success(self):
         """Should return ChatResponse on successful API call."""

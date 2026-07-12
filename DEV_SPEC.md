@@ -1,4 +1,62 @@
-# Controlled Mod Agent Platform DEV_SPEC
+# Evidence-Grounded Controlled Code Generation Agent Platform DEV_SPEC
+
+# 0.0A Validation-First Specification Authority
+
+This section is the highest-priority specification rule. It supersedes older
+roadmaps, imported blueprints, phase tables, and addenda when they prescribe a
+technology before the project has measured its effect.
+
+The product is an evidence-grounded controlled code-generation Agent platform.
+Its implementation order is determined by measurable delivery capability, not
+by the number of modules described in this file.
+
+Current normative progression:
+
+```text
+stable controlled GTFO vertical slice
+-> agent decision-quality evaluation baseline
+-> retrieval ablation and freshness evaluation
+-> measured production retrieval decision
+-> dashboard/MCP projection of proven behavior
+```
+
+Normative supporting documents:
+
+- `docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md` records accepted retrieval
+  boundaries, known gaps, source-specific architecture, and unproven claims.
+- `docs/RETRIEVAL_VALIDATION_PLAN.md` defines H1-H5, experimental arms,
+  metrics, freshness tests, and promotion/stopping rules.
+- `EVIDENCE_RAG_MCP_SPEC.md` defines the Evidence Retrieval / Knowledge / MCP
+  subsystem only inside this product boundary.
+- `docs/IMPLEMENTATION_QUEUE.md`, `docs/PROJECT_STATE.md`, and
+  `docs/SPEC_COVERAGE_MATRIX.md` record executable work, current verified state,
+  and implementation coverage.
+
+Technology promotion rules:
+
+1. `rg` plus live file reads is the code-retrieval freshness baseline.
+2. Symbol/AST/LSP/call-graph indexes are disposable navigation aids until their
+   Hook-recall and stale-result behavior pass the registered evaluation.
+3. BM25 is evaluated separately for persistent community/history sources and
+   current code; success in one source class does not prove success in another.
+4. Dense retrieval, RRF, reranking, multi-hop retrieval, and Agentic retries are
+   experimental until the registered ablations demonstrate downstream benefit.
+5. Retrieval relevance never grants patch authority. Current source/API/runtime
+   verification, EvidencePack readiness, proposal review, permission, build,
+   runtime, and eval gates retain authority.
+6. Imported or legacy technical blueprints are reference material. They cannot
+   add implementation work or override this section without a recorded decision
+   backed by evaluation evidence.
+
+Specification restructuring rule:
+
+- Keep the normative product contract concise and executable.
+- Move imported, superseded, or generic material to `docs/references/` in a
+  later mechanical extraction step without treating that move as a capability.
+- Preserve completed implementation evidence in state, matrix, queue history,
+  and audit documents rather than repeating it throughout this specification.
+- Do not report an architectural mechanism as a project advantage until its
+  registered metric and downstream effect have been measured.
 
 # 0.0 Capability-First Execution Override
 
@@ -80,8 +138,10 @@ boundaries, phase breakdown, and ADR/trade-off notes.
 
 Implementation rule:
 
-1. Preserve the RAG skeleton and mature RAG spec as subsystem material.
-2. Integrate it under `src/mod_agent/knowledge_hub/...` semantics.
+1. Preserve useful implemented retrieval components and legacy design material,
+   but promote only the parts justified by current requirements and evaluation.
+2. Integrate accepted behavior under the current controlled-agent knowledge and
+   evidence modules; read source before naming an implementation path.
 3. Make LangGraph controlled code generation the top-level product loop.
 4. Raise non-RAG specs and code to RAG-level rigor instead of simplifying RAG.
 5. Keep old RAG product naming and QA-first workflows subordinate to the current
@@ -95,8 +155,8 @@ outside Skills.
 
 Current roles:
 
-1. `.agents/skills/auto-coder/SKILL.md` remains the DEV_SPEC-driven platform
-   development Skill.
+1. `.agents/skills/auto-coder/SKILL.md` is frozen as `SKILL.md.frozen`. It is
+   retained for historical review and is not an active development authority.
 2. `.agents/skills/mod-delivery-playbook/SKILL.md` is the user-facing mod
    delivery process Skill. It runs the delivery chain from planning input to
    handoff summary while linking back to source code, artifacts, tests, and
@@ -402,7 +462,7 @@ Validation not run: <reason>
 
 > 版本：0.3  
 > 状态：Greenfield Technical Specification  
-> 项目类型：LangGraph-based Controlled Code Generation Agent Platform  
+> 项目类型：Evidence-Grounded Controlled Code Generation Agent Platform
 > 初始领域：GTFO / BepInEx / Unity IL2CPP / HarmonyX Mod Development  
 > 核心能力：LangGraph Workflow、Knowledge Base、Evidence RAG、Patch Proposal、Review Gate、Build/Runtime Feedback、Evaluation Harness、Dashboard、MCP/API  
 > 目标：把自然语言 Mod 需求转化为可追踪、可评估、可审查、可回滚的受控代码生成流程。
@@ -443,7 +503,7 @@ Validation not run: <reason>
 
 # 1. 项目概述
 
-Controlled Mod Agent Platform 是一个用于游戏 Mod 开发的受控代码生成 Agent 平台。
+Evidence-Grounded Controlled Code Generation Agent Platform 是一个用于游戏 Mod 开发的受控代码生成 Agent 平台。
 
 它不只是一个“让 LLM 写代码”的工具，而是一套完整的工程化系统：
 

@@ -1,4 +1,4 @@
-"""Phase A smoke tests for the Controlled Mod Agent CLI."""
+"""Phase A smoke tests for the Evidence-Grounded Controlled Code Generation Agent Platform CLI."""
 
 from __future__ import annotations
 
@@ -50,3 +50,55 @@ def test_cli_confirmed_apply_is_blocked(capsys: pytest.CaptureFixture[str]) -> N
     assert payload["status"] == "BLOCKED"
     assert payload["command"] == "apply-patch"
     assert payload["confirmed"] is True
+
+
+def test_cli_run_request_blocks_before_target_access_without_source_disclosure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(
+        [
+            "run-request",
+            "change local source",
+            "--target-project",
+            "missing-target",
+            "--confirm-isolated-write",
+            "--allow-build",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["status"] == "BLOCKED"
+    assert "--allow-source-disclosure" in payload["reason"]
+
+
+def test_cli_does_not_treat_non_real_success_status_as_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "src.mod_agent.cli.run_local_request",
+        lambda **_: {
+            "build_summary": {
+                "status": "success",
+                "claims_real_build_success": False,
+            }
+        },
+    )
+
+    exit_code = main(
+        [
+            "run-request",
+            "change local source",
+            "--target-project",
+            "target",
+            "--allow-source-disclosure",
+            "--confirm-isolated-write",
+            "--allow-build",
+        ]
+    )
+
+    assert exit_code == 1
+    assert json.loads(capsys.readouterr().out)["build_summary"][
+        "claims_real_build_success"
+    ] is False

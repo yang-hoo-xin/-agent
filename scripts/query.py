@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Query script for the Modular RAG MCP Server.
+"""Query script for the Evidence-Grounded Controlled Code Generation Agent Platform.
 
 This script provides a command-line interface for querying the knowledge hub
 using HybridSearch (Dense + Sparse + RRF) with optional reranking.
@@ -58,7 +58,7 @@ logger = get_logger(__name__)
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Query documents from the Modular RAG knowledge hub.",
+        description="Query documents from the Evidence-Grounded Controlled Code Generation Agent Platform knowledge hub.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -254,7 +254,7 @@ def main() -> int:
         print(f"[FAIL] Failed to load configuration: {e}")
         return 2
 
-    print("[*] Modular RAG Query Script")
+    print("[*] Evidence-Grounded Controlled Code Generation Agent Platform Query")
     print("=" * 60)
     print(f"Collection: {args.collection}")
 

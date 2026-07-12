@@ -1,4 +1,4 @@
-"""Controlled Mod Agent platform package."""
+"""Evidence-Grounded Controlled Code Generation Agent Platform package."""
 
 __all__ = [
     "__version__",

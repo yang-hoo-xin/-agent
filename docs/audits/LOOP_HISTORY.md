@@ -10,7 +10,7 @@ Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTAT
 
 # Project State
 
-This file is the durable progress ledger for the Controlled Mod Agent Platform.
+This file is the durable progress ledger for the Evidence-Grounded Controlled Code Generation Agent Platform.
 
 Last updated: 2026-06-30
 

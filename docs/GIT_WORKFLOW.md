@@ -1,6 +1,6 @@
 # Git Workflow
 
-This repository uses Git as the rollback and audit layer for the Controlled Mod Agent Platform.
+This repository uses Git as the rollback and audit layer for the Evidence-Grounded Controlled Code Generation Agent Platform.
 
 ## Branch Policy
 

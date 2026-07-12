@@ -1,5 +1,5 @@
 """
-Modular RAG MCP Server - Main Entry Point
+Evidence-Grounded Controlled Code Generation Agent Platform - Main Entry Point
 
 This is the entry point for the MCP Server. It initializes the configuration,
 sets up logging, and starts the server.
@@ -19,7 +19,7 @@ def main() -> int:
     Returns:
         int: Exit code (0 for success, non-zero for failure)
     """
-    print("Modular RAG MCP Server - Starting...")
+    print("Evidence-Grounded Controlled Code Generation Agent Platform - Starting...")
 
     settings_path = Path("config/settings.yaml")
     try:

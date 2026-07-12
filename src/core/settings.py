@@ -1,4 +1,4 @@
-"""Configuration loading and validation for the Modular RAG MCP Server."""
+"""Configuration loading and validation for the Evidence-Grounded Controlled Code Generation Agent Platform."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def resolve_path(relative: Union[str, Path]) -> Path:
     it is resolved against :data:`REPO_ROOT`.
 
     >>> resolve_path("config/settings.yaml")  # doctest: +SKIP
-    PosixPath('/home/user/Modular-RAG-MCP-Server/config/settings.yaml')
+    PosixPath('/home/user/evidence-grounded-controlled-code-generation-agent-platform/config/settings.yaml')
     """
     p = Path(relative)
     if p.is_absolute():

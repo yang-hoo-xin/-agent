@@ -1,1 +1,1 @@
-# Tests package for Modular RAG MCP Server
+# Tests package for Evidence-Grounded Controlled Code Generation Agent Platform

@@ -1,22 +1,101 @@
 # Project State
 
-This file is the active state summary for the Controlled Mod Agent Platform.
+This file is the active state summary for the Evidence-Grounded Controlled Code Generation Agent Platform.
 Historical loop details are archived in `docs/audits/LOOP_HISTORY.md`.
 
-Last updated: 2026-07-09
+Last updated: 2026-07-11
 
 ## Current Queue
 
 ```text
-current_queue: GTFO-VSLICE-001C
-last_completed: GTFO-VSLICE-001B implementation_plan Binding Registry through proposal_review and repair proposal
-current_stabilization_task: GTFO-VSLICE-001C is active. 001C-A now uses `hook_requirement` for structured Hook Target Selection while retaining `requires_hook_evidence` as the broad legacy evidence gate, requires Hook targets to carry complete method identity, makes `ImplementationPlanner` select exactly one `hook_target_binding_id` per Hook-required change, blocks `AMBIGUOUS_HOOK_TARGET`, and makes proposal_review verify the selected target against `implementation_plan.binding_registry` and the EvidencePack. Current boundary remains evidence/review semantics only: no real GTFO launch, no production hook discovery engine, and no workspace-aware canonical path resolver.
-next_recommended_task: Continue GTFO-VSLICE-001C with repair decision quality for the selected GTFO path, using the same evidence-bound artifact loop rather than adding standalone schema work.
+current_queue: None; awaiting the next concrete product capability or real Mod request
+last_completed: targeted request-to-build code review hardening
+current_stabilization_task: None. The directional report retained rg plus live reads and prohibited retrieval-infrastructure expansion from the current evidence. The control-plane slice, evaluator contract, proposal context, binding registry, review gate, and repair-decision taxonomy are frozen for reuse rather than further generalization.
+next_recommended_task: Select one concrete product capability or real Mod request. Reuse the completed request-to-build loop and add infrastructure only for a failure observed in that request.
+directional_sequence: Completed. Frozen cases and raw A/B/D results are preserved in evaluation/directional; the bounded decision is to retain rg plus live reads, defer SymbolIndexer deepening until repeated structural-navigation failures, and defer community BM25 until authentic traceable material exists.
+formal_validation_track: V2-RET-001A/B/C and H1-H5 remain a conditional long-term roadmap. Start the relevant formal measurement only when a concrete product decision requires a promotion-grade claim; they are not consecutive V2 blockers.
 ordinary_queue_status: Q-022, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, TRANSITION-001, TRANSITION-002, TRANSITION-003, TRANSITION-004, TRANSITION-005, MISS-026D, MISS-026E, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; approved GTFO launch and real gameplay evidence remain explicit opt-in production runtime automation work
+known_failures_unattributed: evaluator/workflow/dashboard pre-Arm-A focused suite passed 75 tests. Arm A/Git focused tests pass and changed-path Ruff passes. The earlier full unit run on 2026-07-11 produced 1502 passed, 7 skipped, and 32 failures across timing, MCP fixture binding, embedding settings mocks, collection calling convention, optional PDF image extraction, delivery E2E environment, duplicate MCP registration, and unavailable/incompatible Ragas dependencies. Without a pre-change run on the same revision and environment, causal attribution is unverified; none occurs in the focused Arm A paths.
 next_stage_after_expert_split: V2 platform expansion is active; prioritize platform capability work over further process Skill splitting
 V3_deferred_runtime_track: approved GTFO launch smoke, game directory copy, and real gameplay evidence are V3 or explicit opt-in runtime validation work
 career_oriented_progression: V2/V3 tasks must improve interview-visible production Agent platform depth: vertical slice evidence, safe tool integration, observability, evaluation, artifact lineage, runtime feedback, and retrieval quality
-current_spec_split_status: EVIDENCE_RAG_MCP_SPEC.md split completed in working tree; DEV_SPEC.md remains root control-plane spec; RAG/MCP is a subsystem spec and must feed the LangGraph artifact loop, not an independent RAG product or MCP execution entrypoint
+current_spec_split_status: Validation-first normative overrides now exist in DEV_SPEC.md and EVIDENCE_RAG_MCP_SPEC.md; imported/legacy RAG material is reference-only pending later mechanical extraction; docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md holds current architecture decisions and docs/RETRIEVAL_VALIDATION_PLAN.md records the completed directional pilot separately from the conditional H1-H5 formal-validation roadmap.
+```
+
+## V2-CODEGEN-REAL-001 Completion — 2026-07-11
+
+```text
+run_id: 0dca9c33
+request: Change the kill marker color to pink without changing damage feedback behavior.
+target_provenance: externally produced BetterHitFeedback directory, read-only input
+retrieval: rg plus live file read selected Patches/HitFeedbackBehaviorPatch.cs and KillMarkerColor
+generation: qwen3.6-plus produced one exact_text_replace bound to edit_binding_001
+review: approve_dry_run, zero findings, executable_patch checked
+dry_run: one occurrence in one file, no write
+isolated_apply: one occurrence in one file, write confined to the run workspace
+external_source_sha256: 92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a unchanged
+isolated_source_sha256: f844bd3a61f93cf8e5a1580ad5f7f8acd7027afafe09bb4ebf91af1659a49e97
+baseline_build: exit 0, DLL sha256 06537b1a16740e961e9e3894caf51a88830d93aa94635412719a3955d5269c4d
+post_change_build: exit 0, verified DLL sha256 b7cf588842bf7f08488cbafa269dd22846271161dbd8c9ef6a428afc6b7588c2
+scope_limit: proves one local request-to-compile loop only; no GTFO launch, gameplay behavior, cross-project, automatic repair, or production promotion claim
+observed_next_gap: isolated-write approval was supplied before the exact diff existed; EXEC-002 must bind approval to the preserved dry-run diff hash
+```
+
+## EXEC-002 Completion — 2026-07-12
+
+```text
+run_id: d189434f
+dry_run_diff_hash: sha256:7c1bd14edc5f2febfd62d91445b855553e1e964346db47ab37355cca56ae5646
+dry_run_write: false
+user_approved_hash: sha256:7c1bd14edc5f2febfd62d91445b855553e1e964346db47ab37355cca56ae5646
+apply_recomputed_hash: sha256:7c1bd14edc5f2febfd62d91445b855553e1e964346db47ab37355cca56ae5646
+exact_diff_approved: true
+isolated_apply: one exact occurrence in one file
+external_source_sha256: 92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a unchanged
+isolated_source_sha256: 659f0ecc4e0004e7f762b46952ea30d0c11486b705ed71cb945da160a262957d
+build: exit 0, verified DLL sha256 4b1e43ccd78a904705a501d34d7fb55cb3ce23b382899367551ae32e20501661
+verification: 85 affected tests passed; changed-path Ruff passed
+scope_limit: same-process interactive approval only; no persistent cross-process resume and no gameplay claim
+observed_next_gap: local source disclosure to the external LLM required conversation/sandbox approval but run-request has no explicit product consent or disclosure audit field
+```
+
+## LLM-SOURCE-DISCLOSURE-001 Completion — 2026-07-12
+
+```text
+run_id: be7104b7
+consent: explicit --allow-source-disclosure, this_run_only
+disclosed_data_classes: natural_language_request, retrieved_local_source_excerpts, binding_registry, side_effect_boundaries
+destination: configured openai-compatible qwen3.6-plus Alibaba Cloud endpoint
+api_key_value_persisted: false
+dry_run_diff_hash: sha256:17b81cc3e74c7cfe191e348fcb5e78ba0a1fe958d8328712be093a093f673bfe
+exact_diff_approved: true
+isolated_apply: one exact occurrence in one file
+external_source_sha256: 92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a unchanged
+isolated_source_sha256: f844bd3a61f93cf8e5a1580ad5f7f8acd7027afafe09bb4ebf91af1659a49e97
+build: exit 0, verified DLL sha256 dc736fbe8272f9e2e5acc34e09dedc8af18406c9aeab1fa275991a0f3d7702f2
+verification: missing-consent pre-access block tested; 45 focused tests passed; changed-path Ruff passed
+scope_limit: no GTFO launch, gameplay behavior, cross-project, or production promotion claim
+next: stop infrastructure expansion and select the next concrete product capability or real Mod request
+```
+
+## Targeted Request-To-Build Code Review — 2026-07-12
+
+```text
+review_scope: patch_apply, local_entry, CLI, code generation, rg live evidence, graph success semantics
+confirmed_existing_behavior: apply rereads live source and recomputes the approval hash before every write
+rejected_finding: approved dry-run hash did not permit post-approval source drift; a new regression test proves drift blocks with zero platform write
+hardening_completed:
+  - approval hash now binds canonical proposal payload, implementation_plan payload, evidence artifact hash, live source snapshot, path, before text, and after text
+  - persisted endpoint metadata strips URL userinfo, query, and fragment
+  - requested disclosure data classes must be a subset of explicitly approved data classes before the LLM call
+  - BepInEx build references are copied into the run workspace before baseline/build
+  - expected DLL name is read from the exact csproj AssemblyName instead of BetterHitFeedback.dll hardcoding
+  - CLI success exit requires claims_real_build_success=true rather than status=success alone
+verification: 105 affected tests passed; changed-path Ruff passed
+deferred_by_evidence_rule:
+  - full ModProjectAdapter abstraction waits for a second real project or incompatible build contract
+  - OS-level dotnet sandboxing remains an explicit limitation; the project build is user-authorized code
+  - no MCP, Dense, Agent memory, evaluator, or additional graph-node expansion
 ```
 
 ## Current Spec Split State
@@ -32,11 +111,13 @@ Root spec:
   rollback, dashboard boundaries, and delivery queue discipline.
 
 Subsystem spec:
-  EVIDENCE_RAG_MCP_SPEC.md owns RAG/MCP technical detail inside the DEV_SPEC.md
-  boundaries. Sections 1-3 define read order, integration overlay, source
-  authority, phase placement, and controlled-agent MCP boundaries. Section 4 is
-  the imported technical blueprint for ingestion, chunking, retrieval, rerank,
-  trace, eval, dashboard, multimodal evidence, and MCP protocol detail.
+  EVIDENCE_RAG_MCP_SPEC.md sections 0-3 own normative RAG/MCP direction inside
+  the DEV_SPEC.md boundaries. docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md owns the
+  recorded three-layer architecture and open gaps.
+  docs/RETRIEVAL_VALIDATION_PLAN.md owns the time-boxed directional experiment
+  contract and the separate conditional H1-H5 formal-validation roadmap.
+  Section 4 and later imported material is reference-only pending later
+  mechanical extraction.
 
 Conflict rule:
   If the two specs conflict on product boundary, workflow authority, safety,
@@ -66,12 +147,12 @@ DEV_SPEC basis:
   symbol retrieval, BM25, EvidencePack, and readiness gates. Dedicated
   artifact/log/domain-doc loaders remain partial unless current source and
   focused tests prove the specific loader path.
-  V2 may add curated local reference mods and curated community notes as
-  supporting evidence sources, but raw community chat and broad crawlers remain
-  outside patch authority.
-  V3 owns dense/hybrid/RRF hardening, citation/source-span retrieval eval,
-  allowlisted GitHub importing, Discord export importing, and broader community
-  importers.
+  V2 uses bounded decision experiments when a concrete product choice is
+  uncertain. The completed one-day A/B/D directional pilot retained rg plus
+  live reads and made no promotion-grade claim. Curated reference/community material may
+  enter only as a minimal authentic fixture and remains outside patch authority.
+  Dense, RRF, reranking, Agentic routing, the complete H1-H5 program, and broader
+  importers are conditional follow-up work rather than consecutive V2 blockers.
 
 Selected first V2 task:
   GTFO-VSLICE-001 Evidence-Controlled GTFO Vertical Slice.
@@ -88,20 +169,96 @@ Immediate execution order:
   1. GTFO-VSLICE-001A: prove current evidence retrieval identity gates the first GTFO slice path inside a LangGraph artifact loop.
   2. V2-PROP-001A: deepen patch_proposal.context_pack only where needed by the slice.
   3. GTFO-VSLICE-001B: bind implementation_plan/proposal/review/repair to edit evidence refs, hook/supporting evidence, and source spans. Completed as the tested `implementation_plan.binding_registry` / `edit_binding_id` / `allowed_edit_binding_ids` sub-loop.
-  4. GTFO-VSLICE-001C: tighten concrete GTFO hook-target evidence, review blocker quality, and repair decision quality.
-  5. V2-KB-REF-001 and V2-KB-COMM-001: add curated supporting sources after target evidence path works.
-  6. V2-EVAL-001, V2-DASH-001, V2-MCP-001, then V2-RET-001.
+  4. GTFO-VSLICE-001C: tighten concrete GTFO hook-target evidence, review blocker quality, and repair decision quality. 001C-A and the first 001C-B review-blocker repair-context closure are implemented and tested.
+  5. V2-EVAL-001: completed at the evaluator-contract boundary; reuse it without
+     further generalization unless a real experiment cannot run correctly.
+  6. V2-RET-DIRECTIONAL-001: completed; the bounded result retains rg plus live
+     reads and does not justify retrieval-infrastructure expansion.
+  7. V2-CODEGEN-REAL-001: completed one narrow real BetterHitFeedback request
+     through live source reads, Qwen-generated exact patch, existing review,
+     dry-run, isolated application, and real dotnet build.
+  8. EXEC-002: completed; dry-run displays an exact diff hash and isolated apply
+     recomputes and requires the same explicitly entered hash.
+  9. LLM-SOURCE-DISCLOSURE-001: completed; run-request blocks before target
+     access without per-run consent and records destination/data scope without the API key value.
+  10. Select the next concrete product capability or real Mod request. Trigger only the relevant part of
+     V2-RET-001A/B/C when a later product decision needs a formal H1-H5 claim.
+  11. Promote community ingestion, dense, RRF, rerank, Dashboard, or MCP expansion
+     only when product need and recorded evidence justify that specific path.
+```
+
+## Directional Evaluation Decision
+
+```text
+Purpose:
+  Obtain enough local evidence to choose the next retrieval investment without
+  building a reusable research-grade evaluation and certification platform.
+
+Completed scope:
+  A: rg plus live file reads.
+  B: A plus the current SymbolIndexer and live result revalidation.
+  D: authentic community/history BM25 hints plus current-source verification.
+
+Claim boundary:
+  Results apply only to the frozen directional cases and recorded repository
+  revision. They may select the next experiment or retain A. They do not close
+  H1-H5, prove cross-project superiority, measure wrong-file modification or
+  final Agent success, or authorize production promotion.
+
+Stop rule:
+  Stop after one working day, when raw A/B/D results and limitations are saved,
+  or when an arm requires a new platform/schema/product subsystem to run. Return
+  to product delivery after the decision report; collect downstream outcomes in
+  real product tasks and open another bounded experiment only when needed.
+
+Decision:
+  Evidence was insufficient to expand retrieval infrastructure. A found every
+  applicable correct file; B added one symbol finding on one of five structural
+  cases, below the frozen investment threshold; D had synthetic plumbing data
+  only. Retain rg plus live reads and return to product delivery.
+```
+
+## V2 Queue Necessity Review
+
+```text
+Review date: 2026-07-11
+Review rule: a near-term task must directly unlock one real request -> patch ->
+review -> isolated apply -> build loop, or repair a failure observed in that loop.
+
+Direct now:
+  None until a concrete product capability or real Mod request is selected.
+  LLM-SOURCE-DISCLOSURE-001 completed the last failure observed in the narrow
+  request-to-build loop. Do not manufacture another infrastructure task from the
+  roadmap alone. The external BetterHitFeedback directory remains read-only input
+  produced outside this project.
+
+Freeze and reuse:
+  GTFO-VSLICE-001A/B/C, V2-PROP-001A, V2-EVAL-001 and follow-up,
+  PLANNING-BRIEF-IMPL-001, E2E-001/002, TRANSITION-001..005,
+  ARTIFACT-INTEGRITY-001..003, ARTIFACT-PROD-001A/B, and the existing
+  runtime/dense/API boundary. These already protect or observe the loop; they do
+  not need more schema, audit, or taxonomy work before a real patch exists.
+
+Trigger only from a recorded product failure or use:
+  V2-KB-REF-001, V2-KB-COMM-001, V2-DASH-001, V2-MCP-001,
+  ARTIFACT-PROD-001, workspace-aware path resolution, automatic repair,
+  persistent checkpoints, and execution-layer Git stop/resume.
+
+Formal/V3 only:
+  V2-RET-001A/B/C, Arms A-G, H1-H5, Dense/RRF/Agentic promotion work,
+  broad importers, production Dashboard/MCP deployment, approved GTFO launch,
+  game-directory copy, and real gameplay certification.
 ```
 
 ## Knowledge Source Implementation Phase Table
 
 | Project | Phase |
 | --- | --- |
-| artifact/log/domain-doc loader deepening | V2 supporting item |
-| ReferenceModLoader metadata contract | V2 |
-| CommunityNoteLoader / Extractor | V2 |
-| controlled-agent RRF/rerank | V3 |
-| citation/source-span retrieval eval | V3 |
+| artifact/log/domain-doc loader deepening | Validation-gated supporting item |
+| ReferenceModLoader metadata contract | After relevant validation cases justify it |
+| CommunityNoteLoader / Extractor | Minimal H1 fixture first; production after H1 decision |
+| controlled-agent RRF/rerank | V2 experiment; production adoption decided by H4/H5 |
+| citation/source-span retrieval eval | V2-EVAL-001 / V2-RET-001 |
 | GitHubRepoImporter | V3 |
 | DiscordExportImporter | V3/V3+ |
 | Thunderstore/Nexus/forum importer | V3+ |
@@ -254,15 +411,9 @@ historical_record_only:
   Claims whose only detailed support is docs/audits/LOOP_HISTORY.md are useful for reconstruction but must not be presented as current branch test evidence until the referenced files exist and focused tests are rerun.
 known_current_branch_missing_references:
   docs/EXECUTION_CONTROL_GUIDE.md
-  src/mod_agent/evaluation/agent_quality.py
-  src/mod_agent/evaluation/retrieval_regression.py
   src/mod_agent/git/workflow_binding.py
   src/mod_agent/mcp/jobs.py
-  tests/fixtures/evaluation/agent_quality_cases.json
-  tests/fixtures/retrieval/golden_queries.json
-  tests/unit/test_agent_quality_eval.py
   tests/unit/test_mcp_async_jobs.py
-  tests/unit/test_retrieval_regression.py
   tests/unit/test_runtime_screenshots.py
   tests/unit/test_workflow_checkpointing.py
 ```
@@ -271,7 +422,8 @@ known_current_branch_missing_references:
 
 ```text
 auto_coder_scope:
-  .agents/skills/auto-coder/SKILL.md remains the platform-development Skill for DEV_SPEC.md-driven controlled code generation.
+  .agents/skills/auto-coder/SKILL.md is frozen as SKILL.md.frozen. It is retained
+  for historical review and is not an active platform-development authority.
 mod_delivery_playbook_scope:
   mod-delivery-playbook is planned as a user-facing delivery-process Skill for turning a mod request into feature_spec, evidence, proposal, review, build/runtime evidence, repair, and handoff artifacts.
 patch_review_playbook_scope:
@@ -283,7 +435,9 @@ hook_discovery_playbook_scope:
 repair_loop_playbook_scope:
   repair-loop-playbook is a process-only expert Skill for failed gate classification, repair eligibility checks, evidence-bound minimal repair scope, review re-entry, and repair or handoff routing.
 boundary:
-  process Skills must not replace auto-coder, duplicate current product facts, copy interface schemas, embed test results, or become a second platform-development control plane.
+  process Skills must not replace DEV_SPEC.md, source/tests, current product facts,
+  interface contracts, artifacts, or LangGraph routing; they must not become a
+  second platform-development control plane.
 runtime_skill_system_boundary:
   No runtime Skill registry, Skill selector, Skill loader, LangGraph selected-skill node injection, or Skill output validator is implemented by SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, or SKILL-SPLIT-004.
 hook_automation_boundary:

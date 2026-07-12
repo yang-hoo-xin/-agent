@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "controlled-mod-agent-platform"
+name = "evidence-grounded-controlled-code-generation-agent-platform"
 version = "0.1.0"
-description = "A controlled vertical code development agent platform with evidence-grounded workflow"
+description = "An evidence-grounded controlled code generation agent platform"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

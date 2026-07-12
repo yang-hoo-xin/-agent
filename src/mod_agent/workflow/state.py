@@ -1,4 +1,4 @@
-"""Runtime control state for the Controlled Mod Agent workflow."""
+"""Runtime control state for the Evidence-Grounded Controlled Code Generation Agent Platform workflow."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ StageName = Literal[
     "patch_proposal",
     "proposal_review",
     "dry_run_apply",
+    "isolated_apply",
     "build",
     "runtime_evidence",
     "repair_plan",
@@ -83,7 +84,7 @@ class StateOwnershipPolicy:
         "next_stage": frozenset({"transition_router"}),
         "artifacts": frozenset({"artifact_producing_node"}),
         "artifact_hashes": frozenset({"artifact_store"}),
-        "approvals": frozenset({"interrupt_resume_handler"}),
+        "approvals": frozenset({"state_initializer", "interrupt_resume_handler"}),
         "blockers": frozenset({"workflow_node", "transition_router", "review_proposal"}),
         "warnings": frozenset({"workflow_node", "review_proposal"}),
         "evidence_summary": frozenset({"retrieve_evidence"}),
@@ -117,6 +118,7 @@ def create_initial_state(
     user_request: str,
     target_domain: str | None = None,
     target_mod: str | None = None,
+    confirmed_isolated_write: bool = False,
 ) -> ModAgentState:
     """Create the minimal initial state for a workflow run."""
 
@@ -133,7 +135,7 @@ def create_initial_state(
         next_stage=None,
         artifacts={},
         artifact_hashes={},
-        approvals={},
+        approvals={"confirmed_write": True} if confirmed_isolated_write else {},
         blockers=[],
         warnings=[],
         evidence_summary={},

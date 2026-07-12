@@ -18,6 +18,107 @@ def test_transition_eval_gate_passes_controlled_fake_path() -> None:
     assert report["summary"]["failed"] == 0
 
 
+def test_required_evaluation_fails_closed_without_context() -> None:
+    report = build_transition_eval_gate_report(
+        review=_review(),
+        dry_run=_dry_run(),
+        build=_fake_build(),
+        runtime=_fake_runtime(),
+        v1_boundary={"v1_acceptance_status": "blocked"},
+        claims_real_success=False,
+        evaluation_required=True,
+    )
+
+    assert report["status"] == "failed"
+    assert _case_status(report, "required_evaluation_context") == "failed"
+
+
+def test_required_evaluation_rejects_calibration_and_invalid_metrics() -> None:
+    report = build_transition_eval_gate_report(
+        review=_review(),
+        dry_run=_dry_run(),
+        build=_fake_build(),
+        runtime=_fake_runtime(),
+        v1_boundary={"v1_acceptance_status": "blocked"},
+        claims_real_success=False,
+        evaluation_required=True,
+        evaluation_context={
+            "evaluation_mode": "calibration",
+            "completeness_status": "complete",
+            "execution_status": "completed",
+            "evidence_status": "unknown",
+            "quality_gate_status": "not_evaluated",
+            "gate_eligible": False,
+            "required_metrics": ["recall_at_k"],
+            "metrics": {"recall_at_k": None},
+        },
+    )
+
+    assert report["status"] == "failed"
+    assert _case_status(report, "required_evaluation_mode") == "failed"
+    assert _case_status(report, "required_metric_values") == "failed"
+
+
+def test_required_evaluation_accepts_explicit_valid_benchmark_context() -> None:
+    required = ["recall_at_k", "precision_at_k", "precision_at_returned", "mrr_at_k"]
+    policy = {
+        "policy_schema_version": "quality_gate_policy_v1",
+        "policy_id": "retrieval_quality_v1",
+        "required_metric_names": required,
+        "thresholds": {name: 0.5 for name in required},
+    }
+    from src.mod_agent.evaluation import QualityGatePolicy
+
+    policy = QualityGatePolicy.from_mapping(policy).to_dict()
+    report = build_transition_eval_gate_report(
+        review=_review(),
+        dry_run=_dry_run(),
+        build=_fake_build(),
+        runtime=_fake_runtime(),
+        v1_boundary={"v1_acceptance_status": "blocked"},
+        claims_real_success=False,
+        evaluation_required=True,
+        evaluation_context={
+            "evaluation_mode": "benchmark",
+            "completeness_status": "complete",
+            "execution_status": "completed",
+            "evidence_status": "fresh",
+            "quality_gate_status": "pass",
+            "gate_eligible": True,
+            "required_metrics": required,
+            "metrics": {name: 0.8 for name in required},
+            "quality_policy": policy,
+        },
+    )
+
+    assert report["status"] == "passed"
+
+
+def test_required_evaluation_recomputes_policy_instead_of_trusting_pass() -> None:
+    required = ["recall_at_k", "precision_at_k", "precision_at_returned", "mrr_at_k"]
+    from src.mod_agent.evaluation import QualityGatePolicy
+
+    policy = QualityGatePolicy(
+        policy_schema_version="quality_gate_policy_v1",
+        policy_id="retrieval_quality_v1",
+        required_metric_names=tuple(required),
+        thresholds={name: 0.8 for name in required},
+    ).to_dict()
+    report = build_transition_eval_gate_report(
+        review=_review(), dry_run=_dry_run(), build=_fake_build(), runtime=_fake_runtime(),
+        v1_boundary={"v1_acceptance_status": "blocked"}, claims_real_success=False,
+        evaluation_required=True,
+        evaluation_context={
+            "evaluation_mode": "benchmark", "completeness_status": "complete",
+            "execution_status": "completed", "evidence_status": "fresh",
+            "quality_gate_status": "pass", "gate_eligible": True,
+            "required_metrics": required, "metrics": {name: 0.2 for name in required},
+            "quality_policy": policy,
+        },
+    )
+    assert _case_status(report, "required_quality_policy") == "failed"
+
+
 def test_transition_eval_gate_detects_false_success_claim() -> None:
     report = build_transition_eval_gate_report(
         review=_review(),

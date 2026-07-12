@@ -10,6 +10,16 @@ _TERM_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 _TARGET_MOD_RE = re.compile(r"\b([A-Z][A-Za-z0-9_]{3,})\b")
 
 
+def requested_scope_text(user_request: str) -> str:
+    """Return the requested behavior before explicit non-goal clauses."""
+
+    return re.split(
+        r"\b(?:without|do not|don't|must not)\b",
+        user_request.lower(),
+        maxsplit=1,
+    )[0].strip()
+
+
 class RequestPlanner:
     """Turn natural language into a route decision without writing code."""
 
@@ -52,12 +62,13 @@ class RequestPlanner:
 
         resolved_target_mod = target_mod or self._extract_target_mod(request)
         lowered = request.lower()
+        requested_scope = requested_scope_text(request)
         quick_patch = any(
             keyword in lowered
             for keyword in ("config", "configuration", "default", "json", "yaml", "logging")
         )
         runtime_terms = ("enemy", "damage", "hook", "harmony", "il2cpp", "runtime", "gameplay")
-        requires_runtime = any(keyword in lowered for keyword in runtime_terms)
+        requires_runtime = any(keyword in requested_scope for keyword in runtime_terms)
         requires_hook = requires_runtime and not quick_patch
         hook_requirement = {
             "required": requires_hook,

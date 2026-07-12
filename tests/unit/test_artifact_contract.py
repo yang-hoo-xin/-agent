@@ -419,7 +419,7 @@ def test_repair_plan_contract_requires_retry_and_evidence_fields() -> None:
         {"patch_proposal"}
     )
     assert contract.required_one_of_upstream_artifact_groups == (
-        frozenset({"build_result", "runtime_evidence"}),
+        frozenset({"build_result", "runtime_evidence", "proposal_review"}),
     )
 
 

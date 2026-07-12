@@ -23,6 +23,7 @@ CHECKED_RULES = (
     "permission_level",
     "test_plan_presence",
     "no_op_detection",
+    "executable_patch",
 )
 
 
@@ -40,6 +41,7 @@ class ProposalReviewer:
         artifact_hashes: dict[str, str] | None = None,
         domain_policy: DomainReviewPolicy | None = None,
         permission_level: str = "dry_run_write",
+        require_executable_patch: bool = False,
     ) -> ProposalReview:
         """Return a composite review decision."""
 
@@ -189,6 +191,9 @@ class ProposalReviewer:
                 )
             )
 
+        if require_executable_patch:
+            findings.extend(self._review_executable_patch(diff_intent))
+
         if feature_spec and not self._target_aligned(proposal, feature_spec):
             findings.append(
                 ReviewFinding(
@@ -328,6 +333,35 @@ class ProposalReviewer:
                 "num_blocking_findings": 0,
             },
         )
+
+    @staticmethod
+    def _review_executable_patch(
+        diff_intent: list[dict[str, Any]],
+    ) -> list[ReviewFinding]:
+        findings: list[ReviewFinding] = []
+        for index, change in enumerate(diff_intent, start=1):
+            patch = change.get("patch")
+            before = patch.get("before_text") if isinstance(patch, dict) else None
+            after = patch.get("after_text") if isinstance(patch, dict) else None
+            if (
+                not isinstance(patch, dict)
+                or patch.get("kind") != "exact_text_replace"
+                or not isinstance(before, str)
+                or not before
+                or not isinstance(after, str)
+                or not after
+                or before == after
+                or patch.get("expected_occurrences") != 1
+            ):
+                findings.append(
+                    ReviewFinding(
+                        rule_id="executable_patch",
+                        level="blocking",
+                        message=f"Change {index} has invalid or no-op executable patch data.",
+                        change_id=change.get("change_id"),
+                    )
+                )
+        return findings
 
     @staticmethod
     def _evidence_ids(

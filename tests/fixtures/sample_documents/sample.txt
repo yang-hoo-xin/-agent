@@ -1,4 +1,4 @@
-This is a sample document for testing the Modular RAG MCP Server.
+This is a sample document for testing the Evidence-Grounded Controlled Code Generation Agent Platform.
 
 It contains multiple paragraphs to test text splitting functionality.
 

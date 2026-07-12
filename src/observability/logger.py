@@ -26,7 +26,10 @@ _DEFAULT_TRACES_PATH = resolve_path("logs/traces.jsonl")
 # ── Human-readable logger (existing) ────────────────────────────────
 
 
-def get_logger(name: str = "modular-rag", log_level: Optional[str] = None) -> logging.Logger:
+def get_logger(
+    name: str = "evidence-grounded-controlled-code-generation-agent-platform",
+    log_level: Optional[str] = None,
+) -> logging.Logger:
     """Get a configured logger.
 
     Args:
@@ -107,7 +110,7 @@ class JSONFormatter(logging.Formatter):
 def get_trace_logger(
     traces_path: str | Path = _DEFAULT_TRACES_PATH,
     *,
-    name: str = "modular-rag.trace",
+    name: str = "evidence-grounded-controlled-code-generation-agent-platform.trace",
 ) -> logging.Logger:
     """Return a logger that writes JSON Lines to *traces_path*.
 

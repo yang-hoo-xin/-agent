@@ -1,32 +1,65 @@
 # Evidence RAG / MCP Sub-Spec
 
-This file defines how the professional RAG/MCP technical blueprint is used inside the Controlled Mod Agent Platform.
+This file defines the Evidence Retrieval, Knowledge, and MCP subsystem inside
+the Evidence-Grounded Controlled Code Generation Agent Platform.
 
-It has three layers:
+## 0. Validation-First Normative Override
 
-1. Integration rules: how this subsystem attaches to `DEV_SPEC.md`, LangGraph, artifacts, review gates, runtime gates, eval, and dashboard.
-2. Execution overlay: naming, authority, phase, source, MCP, and current-code mapping for this project.
-3. Imported technical blueprint: the detailed RAG/MCP engineering design moved from `DEV_SPEC.md`. This is the primary technical design source for RAG/MCP internals.
+This section and sections 1-3 are the normative subsystem specification. They
+supersede imported, repeated, legacy, or generic RAG material later in this
+file whenever that material prescribes a product, implementation phase, or
+technology choice.
 
-The imported blueprint is not treated as weaker material. It is the main source for ingestion, chunking, retrieval, rerank, trace, eval, dashboard, multimodal handling, and MCP protocol detail. The overlay only changes product semantics and execution authority so the blueprint serves vertical code generation instead of becoming a separate general knowledge-QA product.
+The imported technical blueprint beginning at section 4 is reference-only. It
+may supply implementation patterns after a current requirement and experiment
+justify them. It is not an execution plan and does not establish that the
+project needs dense retrieval, hybrid fusion, RRF, reranking, multimodal
+ingestion, generic question answering, a separate RAG dashboard, or a separate
+RAG product.
+
+Current decision sources:
+
+1. `DEV_SPEC.md` section 0.0A for product-level validation-first authority.
+2. `docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md` for the three-layer architecture,
+   source authority, known gaps, and external patterns to study.
+3. `docs/RETRIEVAL_VALIDATION_PLAN.md` for H1-H5, experimental arms, metrics,
+   freshness tests, and promotion/stopping rules.
+4. Current source and focused tests for exact implemented identifiers and
+   behavior.
+5. Current state, queue, and coverage documents for execution status.
+
+Normative retrieval baseline:
+
+- current code: `rg` plus live reads, with disposable symbol/AST navigation and
+  mandatory live revalidation;
+- community/history: persistent BM25/FTS with provenance, time/session filters,
+  and planning-only authority until cross-verified;
+- dense/RRF/rerank: experimental auxiliary paths;
+- LangGraph, EvidencePack readiness, proposal review, build/runtime evidence,
+  and eval gates retain control authority.
 
 ## 1. Reading Order And Authority
 
 For RAG/MCP implementation work, read in this order:
 
 1. `DEV_SPEC.md` for parent product control: LangGraph workflow, artifact contracts, evidence-before-edit, review, dry-run, build, runtime, repair, eval, dashboard, permission, and rollback.
-2. This file, sections 1-3, for integration rules and project-specific execution overlay.
-3. This file, section 4, for the detailed imported RAG/MCP technical blueprint.
-4. Current source and tests for exact identifiers, schemas, behavior, and already-implemented boundaries.
-5. `docs/IMPLEMENTATION_QUEUE.md`, `docs/SPEC_COVERAGE_MATRIX.md`, and `docs/PROJECT_STATE.md` for active task selection and coverage status.
+2. This file, sections 0-3, for normative subsystem rules.
+3. `docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md` and
+   `docs/RETRIEVAL_VALIDATION_PLAN.md` for architecture and experiments.
+4. Current source and tests for exact identifiers, schemas, behavior, and
+   already-implemented boundaries.
+5. `docs/IMPLEMENTATION_QUEUE.md`, `docs/SPEC_COVERAGE_MATRIX.md`, and
+   `docs/PROJECT_STATE.md` for active task selection and coverage status.
+6. Section 4 and later imported material only for non-normative implementation
+   reference after the preceding authorities justify the work.
 
 Authority split:
 
 | Area | Primary authority | Notes |
 | --- | --- | --- |
-| Product identity and delivery loop | `DEV_SPEC.md` | Controlled Mod Agent Platform remains the product. |
-| RAG/MCP internal engineering | Section 4 imported blueprint | Prefer the detailed generic design for loaders, pipeline, retrieval, rerank, eval, trace, dashboard, and MCP protocol. |
-| Mapping into controlled code generation | Sections 1-3 of this file | Converts generic RAG outputs into EvidencePack, proposal/review inputs, and safe MCP surfaces. |
+| Product identity and delivery loop | `DEV_SPEC.md` | Evidence-Grounded Controlled Code Generation Agent Platform remains the product. |
+| RAG/MCP normative architecture | Sections 0-3 plus the architecture and validation documents | Defines source-specific retrieval, authority, freshness, EvidencePack, experiments, and controlled MCP boundaries. |
+| Imported implementation patterns | Section 4 and later legacy material | Reference-only; use a pattern only after a current requirement and validation decision justify it. |
 | Exact names and behavior | Current source/tests | Do not guess identifiers; read code and tests. |
 | Task execution order | docs queue/state/matrix | This file defines capability direction, not a second queue. |
 
@@ -34,16 +67,21 @@ Conflict resolution:
 
 1. Source code and focused tests decide exact implemented identifiers and contracts.
 2. `DEV_SPEC.md` decides product boundary and safety gates.
-3. Section 4 decides RAG/MCP technical implementation detail.
-4. Sections 1-3 decide how section 4 is renamed, staged, and routed into this project.
+3. Sections 0-3 plus the architecture and validation documents decide RAG/MCP
+   technical direction.
+4. Section 4 and later imported material may suggest implementation patterns but
+   cannot decide scope, phase, or technology adoption.
 
-This order is intentional: the imported blueprint is technically stronger, but it was originally written for a general RAG/MCP product path. The overlay prevents product drift without weakening the RAG/MCP engineering.
+This order is intentional: detail volume is not execution authority. Generic
+blueprints remain useful references, but project-specific evidence and
+validation decide what is built.
 
 ## 2. Integration Rules
 
-### 2.1 Preserve The Generic RAG/MCP Architecture
+### 2.1 Reuse Applicable RAG/MCP Patterns
 
-Keep the imported blueprint's professional engineering structure where it applies:
+Reuse the imported blueprint's engineering patterns only where a current
+requirement and validation result justify them:
 
 - loader, parser, splitter, transform, encoder, store, retriever, fusion, rerank, response assembly, trace, eval, and dashboard pipeline structure;
 - provider abstractions for LLM, embedding, vector store, splitter, reranker, evaluator, vision model, and MCP transport;
@@ -51,7 +89,9 @@ Keep the imported blueprint's professional engineering structure where it applie
 - JSON-RPC/MCP lifecycle, stdio cleanliness, `tools/list`, `tools/call`, `content`, `structuredContent`, error mapping, and client simulation tests;
 - multimodal image-to-text strategy as an evidence enhancement path, not as proof by itself.
 
-可插拔架构应被保留。它解决组件替换和工程扩展问题；它不自动解决 patch 权限、证据权威、workflow 控制权、runtime 风险、以及 MCP 是否能执行写操作的问题。
+Pluggability helps component replacement and engineering extension. It does not
+solve patch authority, evidence authority, workflow control, runtime risk, or
+whether an MCP route may perform writes.
 
 ### 2.2 Product-Semantics Rewrite
 
@@ -115,14 +155,17 @@ The RAG/MCP subsystem should demonstrate vertical code-generation agent depth:
 | Knowledge Base foundation | V1 / Phase C | Local source, artifact, log, and domain-doc indexing; SourceRegistry; metadata; incremental hash. Foundation only, not complete RAG. |
 | Evidence RAG foundation | V1 / Phase D | Deterministic retrieval, symbol retrieval, BM25, EvidencePack, readiness gate, evidence-before-edit. |
 | RAG-M0/M1 contracts and local retrieval | V1 | Document / Chunk / EvidenceItem / EvidencePack / Retriever contracts; exact/symbol/BM25 local retrieval; no embedding required. |
-| artifact/log/domain-doc loader deepening | V2 supporting item | Improve loaders only where it supports controlled-agent evidence flow. |
-| Curated GitHub reference mods | V2 | Hand-curated local public mod projects enter as `reference_mod`; default `authoritative_for_patch=false`. |
-| ReferenceModLoader metadata contract | V2 | Must record `repo_url`, `commit_sha`, `license`, `imported_at`, and `usage_permission`. |
-| Curated Discord community notes | V2 | Curated `community_note` / `community_hint` only; raw chat remains raw-only. |
-| CommunityNoteLoader / Extractor | V2 | Process curated notes, not full Discord raw chat. Must keep claim metadata and verification state. |
+| artifact/log/domain-doc loader deepening | Validation-gated supporting item | Improve loaders only where a registered case requires the source and the result supports controlled-agent evidence flow. |
+| Curated GitHub reference mods | After relevant validation cases justify ingestion | Hand-curated local public mod projects enter as `reference_mod`; default `authoritative_for_patch=false`. |
+| ReferenceModLoader metadata contract | Validation-gated | Must record `repo_url`, `commit_sha`, `license`, `imported_at`, and `usage_permission`. |
+| Curated community notes | H1 fixture first; production after H1 decision | Curated `community_note` / `community_hint` only; raw chat remains raw-only. |
+| CommunityNoteLoader / Extractor | Validation-gated | Process the minimum curated notes required by H1, not full raw chat. Keep claim metadata and verification state. |
 | RAG support for GTFO-VSLICE-001 | V2 | Evidence RAG must support hook discovery, implementation_plan, proposal evidence binding, review gate, and repair context. |
-| RAG-M2 hybrid / RRF / dense hardening | V3 | Dense + sparse + symbol + RRF; dense remains subordinate to source/review gates. |
-| Citation / source-span / retrieval eval | V3 | Retrieval trace, golden retrieval eval, false-continue and false-block metrics. |
+| Retrieval evaluation baseline | V2-EVAL-001 | Versioned golden cases, Hook/file correctness, false-continue/false-block, latency, and cost metrics. |
+| Deterministic/source-aware ablation | V2-RET-001A | Arms A-D and H1/H2/H4; no authority promotion by score. |
+| Dense auxiliary ablation | V2-RET-001B | Arm E and H3 only after deterministic benchmark stability. |
+| RRF / Agentic routing ablation | V2-RET-001C | Arms F/G and H5; production adoption depends on measured downstream benefit. |
+| Citation / source-span retrieval eval | V2-EVAL-001 / V2-RET-001 | Retrieval trace, golden retrieval eval, citation accuracy, false-continue, and false-block metrics. |
 | GitHubRepoImporter | V3 | Allowlisted, license-aware, source-attributed repo import with commit-hash incremental update. |
 | DiscordExportImporter | V3 / V3+ | Extract curated notes from exported Discord data; raw chat still does not enter patch context. |
 | Thunderstore / Nexus / forum importer | V3+ | Optional external source expansion with ToS, rate limit, attribution, copyright, and data-quality controls. |
@@ -219,14 +262,20 @@ Known alignment gaps for V2/V3:
 
 - `ReferenceModLoader` and `CommunityNoteLoader / Extractor` are not the current V1 foundation; they belong to V2.
 - Artifact/log/domain-doc loader deepening is a V2 supporting item unless existing focused tests prove a specific loader is already complete.
-- Hybrid/RRF/rerank authority, citation/source-span retrieval eval, GitHub repo import, Discord export import, and broader importers remain V3 or later.
+- Hybrid/RRF/Agentic routing are V2 experiments under the registered validation
+  plan; rerank and production adoption remain validation-gated. GitHub repo
+  import, Discord export import, and broader importers remain later work.
 - The legacy/general `src/mcp_server/...` knowledge-query server path still exists. It can remain as imported RAG/MCP reference material or optional knowledge browsing surface, but controlled-agent work must prefer `src/mod_agent/mcp/...` for graph/artifact-aware MCP behavior.
 
 ---
 
 # 4. Imported Technical Blueprint
 
-This section is the main technical blueprint for RAG/MCP internals. It is detailed, professional, and intentionally preserved. Apply sections 1-3 only as an integration overlay for product semantics, execution authority, phase selection, and current-code mapping.
+This section is an imported technical reference for RAG/MCP internals. It is
+intentionally preserved for pattern lookup, but it is not normative and is not
+an execution plan. Sections 0-3, the architecture decision record, the
+validation plan, current source/tests, and the active queue decide whether any
+pattern below enters the product.
 
 # 7. Knowledge Base 设计
 
@@ -1197,7 +1246,7 @@ retrieval.readiness_classified
 
 ```yaml
 project:
-  name: controlled-mod-agent-platform
+  name: evidence-grounded-controlled-code-generation-agent-platform
   artifact_root: artifacts
   data_root: data
 
@@ -2480,7 +2529,7 @@ cross-encoder rerank
 
 > Source: C:/Users/10160/Desktop/ai学习/DEV_SPEC.md  
 > Import mode: full verbatim integration for RAG subsystem reference.  
-> Scope: this imported document is a sub-spec for the Knowledge Hub / Evidence RAG subsystem. It does not override the Controlled Mod Agent Platform top-level workflow, safety policy, or artifact contract.
+> Scope: this imported document is a sub-spec for the Knowledge Hub / Evidence RAG subsystem. It does not override the Evidence-Grounded Controlled Code Generation Agent Platform top-level workflow, safety policy, or artifact contract.
 
 <!-- Dev specification skeleton for the project. Fill sections with details later. -->
 # Developer Specification (DEV_SPEC)
@@ -5725,7 +5774,7 @@ RAG 系统的上限取决于其对特定业务数据的理解深度。未来的�
 
 | 冲突点 | 一号 RAG 原文 | 二号当前定位 | 冲突等级 | 处理规则 |
 | --- | --- | --- | --- | --- |
-| 产品名称 | Smart Knowledge Hub / RAG MCP Server | Controlled Mod Agent Platform | 高 | 一号产品名只作为 imported source，不作为二号项目名 |
+| 产品名称 | Smart Knowledge Hub / RAG MCP Server | Evidence-Grounded Controlled Code Generation Agent Platform | 高 | 一号产品名只作为 imported source，不作为二号项目名 |
 | 主目标 | 文档问答、知识库检索、MCP 查询 | 受控代码生成、证据驱动 patch workflow | 高 | RAG 作为 evidence subsystem，不替代 LangGraph workflow |
 | 用户路径 | 用户 query -> retrieve -> answer | request -> plan -> evidence -> proposal -> review -> dry-run | 高 | query path 只服务 evidence retrieval；QA 后置 |
 | 目录结构 | `src/core`, `src/ingestion`, `src/libs`, `src/mcp_server` | `src/mod_agent/...` | 中 | 迁移到 `src/mod_agent/knowledge_hub/...` |
@@ -5881,8 +5930,8 @@ retrieval quality 通过真实 eval case 和 dashboard report 证明。
 第 46 章是一号 RAG 系统的完整迁入规格。
 它在二号中整合为 Knowledge Hub / Evidence RAG 的权威子系统规格。
 它提供 ingestion、chunking、retrieval、rerank、multimodal、MCP、dashboard、eval 的工程细节。
-它服务于二号项目的顶层目标：Controlled Mod Agent Platform。
-patch/apply/review/build/runtime 决策通过 Controlled Mod Agent Platform 的 workflow、artifact 和 eval 链路完成。
+它服务于二号项目的顶层目标：Evidence-Grounded Controlled Code Generation Agent Platform。
+patch/apply/review/build/runtime 决策通过 Evidence-Grounded Controlled Code Generation Agent Platform 的 workflow、artifact 和 eval 链路完成。
 ```
 
 因此，后续实现时可以放心引用第 46 章做 RAG 子系统，但每次引用都必须同时检查第 47 章的冲突处理规则。

@@ -16,7 +16,7 @@ from src.mod_agent.proposal.models import (
     stable_proposal_id,
 )
 
-FailureSource = Literal["build", "runtime", "eval"]
+FailureSource = Literal["build", "runtime", "eval", "proposal_review"]
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,8 @@ class RepairPlan:
     allowed_edit_binding_ids: tuple[str, ...] = ()
     source_proposal: dict[str, Any] | None = None
     display_files: tuple[str, ...] = ()
+    failure_findings: tuple[dict[str, Any], ...] = ()
+    repair_context: dict[str, Any] | None = None
 
     def to_artifact_payload(self) -> dict[str, Any]:
         """Return payload compatible with the repair_plan artifact contract."""
@@ -80,6 +82,8 @@ class RepairPlan:
             "allowed_edit_binding_ids": list(self.allowed_edit_binding_ids),
             "source_proposal": dict(self.source_proposal or {}),
             "display_files": list(self.display_files),
+            "failure_findings": [dict(finding) for finding in self.failure_findings],
+            "repair_context": dict(self.repair_context or {}),
         }
 
     def _recommended_fix_strategy(self) -> str:
@@ -137,6 +141,13 @@ class RepairPlanner:
             minimal_changes=minimal_changes,
         )
         next_retry_count = retry_count if exhausted else retry_count + 1
+        repair_context = _failure_repair_context(
+            failure_source="build",
+            failure_class=failure_class,
+            exhausted=exhausted,
+            evidence_refs=evidence_refs,
+            minimal_changes=minimal_changes,
+        )
         return RepairPlan(
             repair_id=stable_repair_id(
                 feature_id=feature_id,
@@ -168,6 +179,7 @@ class RepairPlanner:
             allowed_edit_binding_ids=tuple(sorted(allowed_binding_ids)),
             source_proposal=_source_proposal_from_context(proposal_context_pack),
             display_files=tuple(resolver.display_files_for_edit_ids(tuple(sorted(allowed_binding_ids)))),
+            repair_context=repair_context,
         )
 
     def from_runtime_failure(
@@ -216,6 +228,13 @@ class RepairPlanner:
             minimal_changes=minimal_changes,
         )
         next_retry_count = retry_count if exhausted else retry_count + 1
+        repair_context = _failure_repair_context(
+            failure_source="runtime",
+            failure_class=failure_class,
+            exhausted=exhausted,
+            evidence_refs=evidence_refs,
+            minimal_changes=minimal_changes,
+        )
         return RepairPlan(
             repair_id=stable_repair_id(
                 feature_id=feature_id,
@@ -247,6 +266,110 @@ class RepairPlanner:
             allowed_edit_binding_ids=tuple(sorted(allowed_binding_ids)),
             source_proposal=_source_proposal_from_context(proposal_context_pack),
             display_files=tuple(resolver.display_files_for_edit_ids(tuple(sorted(allowed_binding_ids)))),
+            repair_context=repair_context,
+        )
+
+    def from_review_failure(
+        self,
+        *,
+        proposal_review: dict[str, Any],
+        proposal_review_ref: str,
+        retry_count: int,
+        target_behavior: str | None = None,
+        proposal_context_pack: dict[str, Any] | None = None,
+        implementation_plan: dict[str, Any] | None = None,
+    ) -> RepairPlan:
+        """Create a bounded repair context from proposal_review blockers."""
+
+        feature_id = _feature_id_from_context(
+            proposal_context_pack,
+            fallback="unknown_feature",
+        )
+        findings = _blocking_review_findings(proposal_review)
+        finding_rule_ids = _unique_strings(
+            [finding.get("rule_id") for finding in findings]
+        )
+        failure_class = (
+            "proposal_review:" + ",".join(finding_rule_ids)
+            if finding_rule_ids
+            else "proposal_review:unknown"
+        )
+        evidence_refs = _unique_strings(
+            [
+                proposal_review_ref,
+                *(
+                    ref
+                    for finding in findings
+                    for ref in finding.get("evidence_refs", [])
+                    if isinstance(finding, dict)
+                ),
+            ]
+        )
+        allowed_binding_ids = _allowed_binding_ids_from_context(proposal_context_pack)
+        resolver = BindingResolver.from_implementation_plan(implementation_plan)
+        exhausted = retry_count >= self.retry_budget
+        minimal_changes: tuple[dict[str, Any], ...] = ()
+        blockers = self._review_blockers(
+            exhausted=exhausted,
+            findings=findings,
+            evidence_refs=evidence_refs,
+        )
+        next_retry_count = retry_count if exhausted else retry_count + 1
+        display_files = tuple(
+            resolver.display_files_for_edit_ids(tuple(sorted(allowed_binding_ids)))
+        )
+        review_repair_decision = _review_repair_decision(finding_rule_ids)
+        repair_context = {
+            "review_decision": proposal_review.get("decision"),
+            "review_allowed_next_stage": proposal_review.get("allowed_next_stage"),
+            "blocking_rule_ids": list(finding_rule_ids),
+            "repair_decision": review_repair_decision["repair_decision"],
+            "required_actions": review_repair_decision["required_actions"],
+            "reason": review_repair_decision["reason"],
+            "scope_source": "patch_proposal.context_pack.allowed_edit_binding_ids",
+        }
+        return RepairPlan(
+            repair_id=stable_repair_id(
+                feature_id=feature_id,
+                failure_source="proposal_review",
+                failure_class=failure_class,
+                retry_count=next_retry_count,
+                evidence_refs=evidence_refs,
+            ),
+            feature_id=feature_id,
+            failure_source="proposal_review",
+            failure_class=failure_class,
+            evidence_refs=evidence_refs,
+            hypothesis=(
+                "Proposal review rejected the patch because its context, binding, "
+                "or evidence contract is incomplete."
+            ),
+            minimal_changes=minimal_changes,
+            retry_count=next_retry_count,
+            retry_budget=self.retry_budget,
+            retry_budget_remaining=max(self.retry_budget - retry_count, 0),
+            retry_exhausted=exhausted,
+            scope_expansion_allowed=False,
+            stop_condition=(
+                "Stop until proposal planning, context, or evidence binding is "
+                "corrected and reviewed again."
+            ),
+            forbidden_regressions=(
+                "Do not bypass proposal_review.",
+                "Do not expand repair scope beyond allowed edit bindings.",
+                "Do not turn review blockers into successful dry-run/build/runtime artifacts.",
+            ),
+            requires_new_evidence=bool(
+                review_repair_decision["requires_new_evidence"]
+            ),
+            allowed_next_stage=None,
+            blockers=blockers,
+            target_behavior=target_behavior,
+            allowed_edit_binding_ids=tuple(sorted(allowed_binding_ids)),
+            source_proposal=_source_proposal_from_context(proposal_context_pack),
+            display_files=display_files,
+            failure_findings=tuple(dict(finding) for finding in findings),
+            repair_context=repair_context,
         )
 
     @staticmethod
@@ -357,6 +480,43 @@ class RepairPlanner:
                     "stage": "repair_plan",
                     "code": "REPAIR_SCOPE_UNRESOLVED",
                     "message": "Failure evidence does not identify a safe repair scope.",
+                }
+            )
+        return tuple(blockers)
+
+    @staticmethod
+    def _review_blockers(
+        *,
+        exhausted: bool,
+        findings: tuple[dict[str, Any], ...],
+        evidence_refs: tuple[str, ...],
+    ) -> tuple[dict[str, Any], ...]:
+        blockers: list[dict[str, Any]] = []
+        if exhausted:
+            blockers.append(
+                {
+                    "stage": "repair_plan",
+                    "code": "RETRY_BUDGET_EXHAUSTED",
+                    "message": "Repair retry budget is exhausted.",
+                }
+            )
+        if not evidence_refs:
+            blockers.append(
+                {
+                    "stage": "repair_plan",
+                    "code": "MISSING_FAILURE_EVIDENCE",
+                    "message": "Repair plan cannot proceed without failure evidence.",
+                }
+            )
+        if findings:
+            blockers.append(
+                {
+                    "stage": "repair_plan",
+                    "code": "REVIEW_REPLAN_REQUIRED",
+                    "message": (
+                        "Proposal review blockers require context, evidence, or "
+                        "planning correction before repair proposal generation."
+                    ),
                 }
             )
         return tuple(blockers)
@@ -535,6 +695,147 @@ class RepairPatchProposalBuilder:
         }
 
 
+def _failure_repair_context(
+    *,
+    failure_source: Literal["build", "runtime"],
+    failure_class: str,
+    exhausted: bool,
+    evidence_refs: tuple[str, ...],
+    minimal_changes: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    """Classify whether failure evidence supports a bounded repair attempt."""
+
+    scoped_binding_ids = _unique_strings(
+        [change.get("edit_binding_id") for change in minimal_changes]
+    )
+    if exhausted:
+        repair_decision = "retry_budget_exhausted"
+        required_actions = ["request_human_review_or_new_evidence"]
+        reason = "The retry budget is exhausted; no additional repair attempt is allowed."
+    elif minimal_changes:
+        repair_decision = "scoped_patch_repair"
+        required_actions = [
+            "generate_evidence_bound_repair_proposal",
+            "rerun_proposal_review",
+            "rerun_failed_validation_stage",
+        ]
+        reason = (
+            "Failure evidence resolves to edit bindings already allowed by the "
+            "source patch proposal."
+        )
+    elif failure_source == "runtime":
+        repair_decision = "runtime_evidence_required"
+        required_actions = [
+            "collect_target_bound_runtime_evidence",
+            "resolve_failure_to_allowed_edit_binding",
+        ]
+        reason = (
+            "Runtime evidence does not resolve to an allowed edit binding, so a "
+            "patch repair cannot be proposed safely."
+        )
+    else:
+        repair_decision = "build_scope_resolution_required"
+        required_actions = [
+            "collect_or_correct_build_diagnostics",
+            "resolve_diagnostic_path_to_allowed_edit_binding",
+        ]
+        reason = (
+            "Build diagnostics do not resolve to an allowed edit binding, so a "
+            "patch repair cannot be proposed safely."
+        )
+    return {
+        "failure_source": failure_source,
+        "failure_class": failure_class,
+        "repair_decision": repair_decision,
+        "required_actions": required_actions,
+        "scoped_edit_binding_ids": list(scoped_binding_ids),
+        "failure_evidence_available": bool(evidence_refs),
+        "reason": reason,
+    }
+
+
+def _review_repair_decision(
+    finding_rule_ids: tuple[str, ...],
+) -> dict[str, Any]:
+    """Map proposal-review rules to the next bounded correction action."""
+
+    rule_ids = set(finding_rule_ids)
+    evidence_rules = {"binding_registry", "evidence_binding", "hook_target_binding"}
+    safety_rules = {
+        "domain_profile",
+        "forbidden_paths",
+        "permission_level",
+        "risk_policy",
+        "scope_boundary",
+    }
+    planning_rules = {"target_alignment", "test_plan_presence"}
+
+    if rule_ids & safety_rules:
+        return {
+            "repair_decision": "human_or_scope_review_required",
+            "required_actions": ["return_to_human_or_scope_review"],
+            "requires_new_evidence": False,
+            "reason": (
+                "Safety, permission, domain, or scope findings cannot be repaired "
+                "by regenerating a patch proposal."
+            ),
+        }
+    if rule_ids & evidence_rules:
+        return {
+            "repair_decision": "evidence_retrieval_required",
+            "required_actions": [
+                "refresh_or_expand_evidence",
+                "rebuild_implementation_plan",
+                "regenerate_patch_proposal",
+                "rerun_proposal_review",
+            ],
+            "requires_new_evidence": True,
+            "reason": (
+                "Binding or Hook findings require current evidence and planning "
+                "correction before proposal regeneration."
+            ),
+        }
+    if rule_ids & planning_rules:
+        return {
+            "repair_decision": "planning_revision_required",
+            "required_actions": [
+                "revise_implementation_plan",
+                "regenerate_patch_proposal",
+                "rerun_proposal_review",
+            ],
+            "requires_new_evidence": False,
+            "reason": (
+                "Target-alignment or test-plan findings require planning revision "
+                "before proposal regeneration."
+            ),
+        }
+    if "context_pack" in rule_ids:
+        return {
+            "repair_decision": "context_rebuild_required",
+            "required_actions": [
+                "rebuild_proposal_context",
+                "regenerate_patch_proposal",
+                "rerun_proposal_review",
+            ],
+            "requires_new_evidence": False,
+            "reason": (
+                "Proposal context must be rebuilt from existing authoritative "
+                "artifacts before proposal regeneration."
+            ),
+        }
+    return {
+        "repair_decision": "proposal_revision_required",
+        "required_actions": [
+            "revise_patch_proposal",
+            "rerun_proposal_review",
+        ],
+        "requires_new_evidence": False,
+        "reason": (
+            "Proposal-local findings require proposal revision and review re-entry."
+        ),
+    }
+
+
 def stable_repair_id(
     *,
     feature_id: str,
@@ -603,3 +904,23 @@ def _source_proposal_from_context(
     if proposal_context_pack.get("source_patch_proposal_hash"):
         result["hash"] = proposal_context_pack.get("source_patch_proposal_hash")
     return result
+
+
+def _feature_id_from_context(
+    proposal_context_pack: dict[str, Any] | None,
+    *,
+    fallback: str,
+) -> str:
+    if not isinstance(proposal_context_pack, dict):
+        return fallback
+    return str(proposal_context_pack.get("feature_id") or fallback)
+
+
+def _blocking_review_findings(
+    proposal_review: dict[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        dict(finding)
+        for finding in proposal_review.get("findings") or []
+        if isinstance(finding, dict) and finding.get("level") == "blocking"
+    )

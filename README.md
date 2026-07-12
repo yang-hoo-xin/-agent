@@ -1,4 +1,4 @@
-# Controlled Mod Agent Platform
+# Evidence-Grounded Controlled Code Generation Agent Platform
 
 一个面向垂直代码开发场景的受控 Agent 平台。
 

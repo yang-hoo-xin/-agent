@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .models import ModPlanningBrief, RequestPlan
+from .request_planner import requested_scope_text
 
 _CONFIG_TERMS = (
     "config",
@@ -137,6 +138,7 @@ class ModPlanningBriefBuilder:
     @staticmethod
     def _request_type(plan: RequestPlan) -> dict[str, str]:
         lowered = plan.user_request.lower()
+        requested_scope = requested_scope_text(plan.user_request)
         if plan.blocked:
             return {
                 "value": "unknown / needs evidence",
@@ -152,12 +154,12 @@ class ModPlanningBriefBuilder:
                 "value": "runtime diagnostics",
                 "rationale": "The request asks for logging, diagnostics, tracing, or startup evidence.",
             }
-        if plan.requires_hook_evidence or any(term in lowered for term in _HOOK_TERMS):
+        if plan.requires_hook_evidence or any(term in requested_scope for term in _HOOK_TERMS):
             return {
                 "value": "hook-required",
                 "rationale": "The request likely depends on runtime method or gameplay interception evidence.",
             }
-        if any(term in lowered for term in _UI_TERMS):
+        if any(term in requested_scope for term in _UI_TERMS):
             return {
                 "value": "UI feedback",
                 "rationale": "The request asks for user-visible interface or feedback behavior.",

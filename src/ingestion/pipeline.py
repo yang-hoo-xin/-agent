@@ -1,4 +1,4 @@
-"""Ingestion Pipeline orchestrator for the Modular RAG MCP Server.
+"""Ingestion pipeline for the Evidence-Grounded Controlled Code Generation Agent Platform.
 
 This module implements the main pipeline that orchestrates the complete
 document ingestion flow:

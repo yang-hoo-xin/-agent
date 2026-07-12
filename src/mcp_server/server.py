@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     pass
 
 
-SERVER_NAME = "modular-rag-mcp-server"
+SERVER_NAME = "evidence-grounded-controlled-code-generation-agent-platform"
 SERVER_VERSION = "0.1.0"
 
 

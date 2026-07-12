@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Evaluation script for Modular RAG MCP Server.
+"""Evaluation script for Evidence-Grounded Controlled Code Generation Agent Platform.
 
 Runs batch evaluation against a golden test set and outputs a metrics report.
 

@@ -15,18 +15,19 @@ from langgraph.types import interrupt
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.build import BuildResult, build_fake_build_result
 from src.mod_agent.domain import (
+    GTFO_DOMAIN_NAME,
     DomainAdapterRegistry,
     DomainReviewPolicy,
-    GTFO_DOMAIN_NAME,
     GTFOAdapter,
     UnsupportedDomainAdapter,
 )
+from src.mod_agent.evaluation import build_transition_eval_gate_report
 from src.mod_agent.evidence import (
     DenseRetrievalProvider,
     DeterministicEvidenceRetriever,
+    EvidencePack,
     EvidenceRequest,
 )
-from src.mod_agent.evaluation import build_transition_eval_gate_report
 from src.mod_agent.git import GitCommandError, GitRepository
 from src.mod_agent.knowledge import (
     CollectionResolutionError,
@@ -57,14 +58,15 @@ from .state import ModAgentState
 from .transitions import (
     route_after_build,
     route_after_dry_run,
-    route_after_evidence,
     route_after_evaluate,
+    route_after_evidence,
     route_after_feature_spec,
     route_after_human_review_gate,
     route_after_implementation_plan,
+    route_after_isolated_apply,
     route_after_patch_proposal,
-    route_after_planning_brief,
     route_after_plan_request,
+    route_after_planning_brief,
     route_after_repair_plan,
     route_after_review,
     route_after_runtime_evidence,
@@ -76,6 +78,13 @@ BuildResultFactory = Callable[[str, str | None], BuildResult]
 RuntimeEvidenceFactory = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
 EvaluationContextFactory = Callable[[ModAgentState], dict[str, Any]]
 ProposalGitBindingFactory = Callable[[], dict[str, Any]]
+EvidencePackFactory = Callable[[ModAgentState, dict[str, Any]], EvidencePack]
+PatchChangeFactory = Callable[
+    [ModAgentState, dict[str, Any], dict[str, Any]], tuple[dict[str, Any], ...]
+]
+PatchExecutionFactory = Callable[
+    [dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]
+]
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -95,7 +104,14 @@ def build_graph(
     runtime_evidence_factory: RuntimeEvidenceFactory | None = None,
     allow_game_launch: bool = False,
     proposal_git_binding_factory: ProposalGitBindingFactory | None = None,
+    use_default_proposal_git_binding: bool = True,
+    evidence_pack_factory: EvidencePackFactory | None = None,
+    patch_change_factory: PatchChangeFactory | None = None,
+    dry_run_factory: PatchExecutionFactory | None = None,
+    isolated_apply_factory: PatchExecutionFactory | None = None,
+    stop_after_build: bool = False,
     evaluation_context_factory: EvaluationContextFactory | None = None,
+    require_external_evaluation: bool = False,
     require_review_approval_for_dry_run: bool = False,
     enable_dynamic_review_interrupt: bool = False,
     checkpointer: Any | None = None,
@@ -111,6 +127,8 @@ def build_graph(
 
     if enable_dynamic_review_interrupt and checkpointer is None:
         raise ValueError("Dynamic review interrupt requires a LangGraph checkpointer.")
+    if require_external_evaluation and evaluation_context_factory is None:
+        raise ValueError("require_external_evaluation requires evaluation_context_factory")
 
     stub_runner = StubNodeRunner(artifact_store)
     effective_domain_registry = domain_adapter_registry or _default_domain_adapter_registry()
@@ -121,9 +139,9 @@ def build_graph(
             allow_game_launch=allow_game_launch,
         )
     )
-    effective_proposal_git_binding_factory = (
-        proposal_git_binding_factory or _default_proposal_git_binding_factory
-    )
+    effective_proposal_git_binding_factory = proposal_git_binding_factory
+    if effective_proposal_git_binding_factory is None and use_default_proposal_git_binding:
+        effective_proposal_git_binding_factory = _default_proposal_git_binding_factory
     graph = StateGraph(ModAgentState)
 
     graph.add_node(
@@ -161,6 +179,7 @@ def build_graph(
                 dense_enabled,
                 dense_required,
                 dense_top_k,
+                evidence_pack_factory,
             ),
         ),
     )
@@ -179,6 +198,7 @@ def build_graph(
                 state,
                 artifact_store,
                 proposal_git_binding_factory=effective_proposal_git_binding_factory,
+                patch_change_factory=patch_change_factory,
             ),
         ),
     )
@@ -190,6 +210,7 @@ def build_graph(
                 state,
                 artifact_store,
                 domain_adapter_registry=effective_domain_registry,
+                require_executable_patch=patch_change_factory is not None,
             ),
         ),
     )
@@ -206,13 +227,26 @@ def build_graph(
         "dry_run_apply",
         _make_real_graph_node(
             "dry_run_apply",
-            lambda state: _run_fake_dry_run_apply(
+            lambda state: _run_dry_run_apply(
                 state,
                 artifact_store,
                 require_review_approval=require_review_approval_for_dry_run,
+                dry_run_factory=dry_run_factory,
             ),
         ),
     )
+    if isolated_apply_factory is not None:
+        graph.add_node(
+            "isolated_apply",
+            _make_real_graph_node(
+                "isolated_apply",
+                lambda state: _run_isolated_apply(
+                    state,
+                    artifact_store,
+                    isolated_apply_factory=isolated_apply_factory,
+                ),
+            ),
+        )
     graph.add_node(
         "build",
         _make_real_graph_node(
@@ -239,6 +273,7 @@ def build_graph(
                 state,
                 artifact_store,
                 evaluation_context_factory,
+                require_external_evaluation,
             ),
         ),
     )
@@ -304,16 +339,32 @@ def build_graph(
             route_after_human_review_gate,
             dict(registry["human_review_gate"]),
         )
+    dry_run_routes = dict(registry["dry_run_apply"])
+    if isolated_apply_factory is not None:
+        dry_run_routes["continue"] = "isolated_apply"
     graph.add_conditional_edges(
         "dry_run_apply",
         route_after_dry_run,
-        dict(registry["dry_run_apply"]),
+        dry_run_routes,
     )
-    graph.add_conditional_edges(
-        "build",
-        route_after_build,
-        dict(registry["build"]),
-    )
+    if isolated_apply_factory is not None:
+        graph.add_conditional_edges(
+            "isolated_apply",
+            route_after_isolated_apply,
+            dict(registry["isolated_apply"]),
+        )
+    if stop_after_build:
+        graph.add_conditional_edges(
+            "build",
+            route_after_build,
+            {"continue": END, "repair": END},
+        )
+    else:
+        graph.add_conditional_edges(
+            "build",
+            route_after_build,
+            dict(registry["build"]),
+        )
     graph.add_conditional_edges(
         "collect_runtime_evidence",
         route_after_runtime_evidence,
@@ -477,9 +528,12 @@ def _run_retrieve_evidence(
     dense_enabled: bool,
     dense_required: bool,
     dense_top_k: int | None,
+    evidence_pack_factory: EvidencePackFactory | None,
 ) -> ModAgentState:
     feature_data = _read_artifact_data(state, artifact_store, "feature_spec")
-    if knowledge_database is None:
+    if evidence_pack_factory is not None:
+        pack = evidence_pack_factory(state, feature_data)
+    elif knowledge_database is None:
         from src.mod_agent.evidence import EvidencePack
 
         pack = EvidencePack.empty(
@@ -572,6 +626,7 @@ def _run_generate_patch_proposal(
     artifact_store: ArtifactStore,
     *,
     proposal_git_binding_factory: ProposalGitBindingFactory | None = None,
+    patch_change_factory: PatchChangeFactory | None = None,
 ) -> ModAgentState:
     if state["current_stage"] == "repair_plan" and "repair_plan" in state["artifacts"]:
         repair_plan = _read_artifact_data(state, artifact_store, "repair_plan")
@@ -583,9 +638,17 @@ def _run_generate_patch_proposal(
         ]
     else:
         implementation = _read_artifact_data(state, artifact_store, "implementation_plan")
+        evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
+        if patch_change_factory is not None:
+            implementation = {
+                **implementation,
+                "proposed_changes": list(
+                    patch_change_factory(state, implementation, evidence_pack)
+                ),
+            }
         proposal = PatchProposalBuilder().build(
             implementation,
-            evidence_pack=_read_artifact_data(state, artifact_store, "evidence_pack"),
+            evidence_pack=evidence_pack,
             artifact_hashes=dict(state["artifact_hashes"]),
             git_binding=(
                 proposal_git_binding_factory()
@@ -652,6 +715,7 @@ def _run_review_proposal(
     artifact_store: ArtifactStore,
     *,
     domain_adapter_registry: DomainAdapterRegistry | None = None,
+    require_executable_patch: bool = False,
 ) -> ModAgentState:
     proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
     implementation_plan = _read_artifact_data(
@@ -678,6 +742,7 @@ def _run_review_proposal(
             domain_adapter_registry,
         ),
         permission_level="dry_run_write",
+        require_executable_patch=require_executable_patch,
     )
     artifact_ref = artifact_store.write(
         feature_id=proposal["feature_id"],
@@ -859,11 +924,12 @@ def _runtime_evidence_factory_from_settings(
     return None
 
 
-def _run_fake_dry_run_apply(
+def _run_dry_run_apply(
     state: ModAgentState,
     artifact_store: ArtifactStore,
     *,
     require_review_approval: bool = False,
+    dry_run_factory: PatchExecutionFactory | None = None,
 ) -> ModAgentState:
     proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
     review = _read_artifact_data(state, artifact_store, "proposal_review")
@@ -874,14 +940,24 @@ def _run_fake_dry_run_apply(
     )
     changed_files = list(proposal.get("files") or [])
     diff_intent = list(proposal.get("diff_intent") or [])
+    generated_payload = (
+        dry_run_factory(
+            proposal,
+            _read_artifact_data(state, artifact_store, "implementation_plan"),
+            review,
+        )
+        if dry_run_factory is not None and approved
+        else None
+    )
     payload = {
         "node_name": "dry_run_apply",
         "stage": "dry_run_apply",
         "message": (
-            "Fake dry-run completed. No source files were written and no patch "
-            "was applied."
+            "Executable patch dry-run validated without writing source files."
+            if generated_payload is not None
+            else "Fake dry-run completed. No source files were written and no patch was applied."
         ),
-        "execution_mode": "fake",
+        "execution_mode": "dry_run" if generated_payload is not None else "fake",
         "actual_write_performed": False,
         "real_patch_applied": False,
         "approved_by_review": approved_by_review,
@@ -898,9 +974,11 @@ def _run_fake_dry_run_apply(
             "deletions": 0,
         },
         "limitations": [
-            "This is an isolated fake dry-run artifact.",
-            "It does not prove a patch applies to the filesystem.",
+            "Dry-run validation does not prove the isolated write or build succeeds."
+            if generated_payload is not None
+            else "This is an isolated fake dry-run artifact."
         ],
+        **dict(generated_payload or {}),
     }
     status = "success" if approved else "blocked"
     artifact_ref = artifact_store.write(
@@ -934,12 +1012,22 @@ def _run_build(
 ) -> ModAgentState:
     dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
     feature_id = state["feature_id"] or state["request_id"]
+    apply_result = (
+        _read_artifact_data(state, artifact_store, "isolated_apply_result")
+        if "isolated_apply_result" in state["artifacts"]
+        else None
+    )
+    input_execution_mode = (
+        apply_result.get("execution_mode")
+        if apply_result is not None
+        else dry_run.get("execution_mode")
+    )
     result = (
-        build_result_factory(feature_id, dry_run.get("execution_mode"))
+        build_result_factory(feature_id, input_execution_mode)
         if build_result_factory is not None
         else build_fake_build_result(
             feature_id=feature_id,
-            input_execution_mode=dry_run.get("execution_mode"),
+            input_execution_mode=input_execution_mode,
         )
     )
     payload = result.to_artifact_payload()
@@ -948,7 +1036,14 @@ def _run_build(
         artifact_type="build_result",
         payload=payload,
         status="failed" if payload["status"] == "failed" else "success",
-        upstream_refs=[_artifact_ref_from_state(state, "dry_run_result")],
+        upstream_refs=[
+            _artifact_ref_from_state(state, "dry_run_result"),
+            *(
+                [_artifact_ref_from_state(state, "isolated_apply_result")]
+                if "isolated_apply_result" in state["artifacts"]
+                else []
+            ),
+        ],
     )
     next_state = _copy_state(state)
     next_state["current_stage"] = "build"
@@ -1002,7 +1097,7 @@ def _run_create_repair_plan(
             ),
         )
         upstream_refs = [build_ref, proposal_ref]
-    else:
+    elif "runtime_evidence" in state["artifacts"]:
         runtime_ref = _artifact_ref_from_state(state, "runtime_evidence")
         plan = planner.from_runtime_failure(
             runtime_evidence=_read_artifact_data(
@@ -1021,6 +1116,25 @@ def _run_create_repair_plan(
             ),
         )
         upstream_refs = [runtime_ref, proposal_ref]
+    else:
+        review_ref = _artifact_ref_from_state(state, "proposal_review")
+        plan = planner.from_review_failure(
+            proposal_review=_read_artifact_data(
+                state,
+                artifact_store,
+                "proposal_review",
+            ),
+            proposal_review_ref=review_ref.path,
+            retry_count=state["retry_count"],
+            target_behavior=str(feature_spec.get("target_behavior") or ""),
+            proposal_context_pack=proposal_context_for_repair,
+            implementation_plan=_read_artifact_data(
+                state,
+                artifact_store,
+                "implementation_plan",
+            ),
+        )
+        upstream_refs = [review_ref, proposal_ref]
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
         artifact_type="repair_plan",
@@ -1102,6 +1216,7 @@ def _run_fake_evaluate(
     state: ModAgentState,
     artifact_store: ArtifactStore,
     evaluation_context_factory: EvaluationContextFactory | None = None,
+    require_external_evaluation: bool = False,
 ) -> ModAgentState:
     review = _read_artifact_data(state, artifact_store, "proposal_review")
     dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
@@ -1129,6 +1244,7 @@ def _run_fake_evaluate(
             if evaluation_context_factory is not None
             else None
         ),
+        evaluation_required=require_external_evaluation,
     )
     payload = {
         "node_name": "evaluate",
@@ -1197,6 +1313,92 @@ def _run_fake_evaluate(
             for blocker in gate_blockers
             if isinstance(blocker, dict)
         )
+    return next_state
+
+
+def _run_isolated_apply(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    *,
+    isolated_apply_factory: PatchExecutionFactory,
+) -> ModAgentState:
+    proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
+    review = _read_artifact_data(state, artifact_store, "proposal_review")
+    approved_by_user = state["approvals"].get("confirmed_write") is True
+    next_state = _copy_state(state)
+    status = "success"
+    if not approved_by_user:
+        payload = {
+            "execution_mode": "blocked",
+            "actual_write_performed": False,
+            "real_patch_applied": False,
+            "approved_by_review": review.get("allowed_next_stage") == "dry_run_apply",
+            "changed_files": [],
+        }
+        status = "blocked"
+        next_state["blockers"].append(
+            {
+                "stage": "isolated_apply",
+                "code": "ISOLATED_WRITE_NOT_APPROVED",
+                "message": "Isolated patch application requires explicit user approval.",
+            }
+        )
+    else:
+        try:
+            payload = isolated_apply_factory(
+                proposal,
+                _read_artifact_data(state, artifact_store, "implementation_plan"),
+                review,
+            )
+        except Exception as exc:
+            payload = {
+                "execution_mode": "isolated_apply",
+                "actual_write_performed": False,
+                "real_patch_applied": False,
+                "approved_by_review": review.get("allowed_next_stage") == "dry_run_apply",
+                "changed_files": [],
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            status = "failed"
+            next_state["blockers"].append(
+                {
+                    "stage": "isolated_apply",
+                    "code": "ISOLATED_APPLY_FAILED",
+                    "message": payload["error"],
+                }
+            )
+    exact_diff_approved = bool(
+        payload.get("approved_diff_hash")
+        and payload.get("approved_diff_hash") == payload.get("diff_hash")
+    )
+    complete_payload = {
+        "node_name": "isolated_apply",
+        "stage": "isolated_apply",
+        "message": (
+            "Approved patch was applied inside the isolated workspace."
+            if status == "success"
+            else "Isolated patch application did not complete."
+        ),
+        **payload,
+        "write_scope_preapproved": approved_by_user,
+        "approved_by_user": bool(
+            payload.get("approved_by_user", approved_by_user if status == "success" else False)
+        ),
+        "exact_diff_approved": exact_diff_approved,
+    }
+    artifact_ref = artifact_store.write(
+        feature_id=proposal["feature_id"],
+        artifact_type="isolated_apply_result",
+        payload=complete_payload,
+        status=status,
+        upstream_refs=[
+            _artifact_ref_from_state(state, "patch_proposal"),
+            _artifact_ref_from_state(state, "proposal_review"),
+            _artifact_ref_from_state(state, "dry_run_result"),
+        ],
+    )
+    next_state["current_stage"] = "isolated_apply"
+    _record_artifact(next_state, "isolated_apply_result", artifact_ref)
     return next_state
 
 

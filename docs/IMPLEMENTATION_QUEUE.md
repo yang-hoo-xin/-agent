@@ -17,9 +17,11 @@ Do not close a task without updating every affected coverage row.
 ## Current Queue
 
 ```text
-current_queue: GTFO-VSLICE-001C
-last_completed: GTFO-VSLICE-001B hook evidence binding through implementation_plan/proposal_review/repair eligibility
-next_recommended_task: GTFO-VSLICE-001C connect evidence-bound proposal_review blockers and repair context for the selected GTFO path
+current_queue: None; awaiting the next concrete product capability or real Mod request
+last_completed: targeted request-to-build code review hardening
+next_recommended_task: Select one concrete product capability or real Mod request; reuse the completed controlled loop and add infrastructure only for an observed failure
+directional_sequence: completed -> retain rg plus live reads -> defer SymbolIndexer deepening until repeated structural-navigation failures -> defer community BM25 until authentic traceable material exists
+formal_validation_track: V2-RET-001A/B/C and H1-H5 are conditionally triggered when a product decision requires a promotion-grade claim; they are not the active consecutive queue
 Q_queue_status: Q-022, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, TRANSITION-001, TRANSITION-002, TRANSITION-003, TRANSITION-004, TRANSITION-005, MISS-026D, MISS-026E, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; approved GTFO launch and real gameplay evidence remain explicit opt-in production runtime automation work
 next_stage_after_expert_split: V2 platform expansion is active; do not continue splitting process Skills by default
 V3_deferred_runtime_track: approved GTFO launch smoke, real gameplay evidence, and production runtime automation remain V3 or explicit opt-in work after V2 platform surfaces mature
@@ -35,12 +37,13 @@ EVIDENCE_RAG_MCP_SPEC.md is the Evidence RAG / MCP subsystem spec.
 Read order for RAG/MCP tasks:
   1. DEV_SPEC.md for product boundary, LangGraph artifact loop, safety gates,
      review/runtime/eval authority, and queue discipline.
-  2. EVIDENCE_RAG_MCP_SPEC.md sections 1-3 for project-specific overlay:
-     read order, integration rules, source authority, phase placement, and
-     controlled-agent MCP surface.
-  3. EVIDENCE_RAG_MCP_SPEC.md section 4 for the imported technical blueprint:
-     ingestion, chunking, retrieval, rerank, trace, eval, dashboard, multimodal,
-     and MCP protocol detail.
+  2. EVIDENCE_RAG_MCP_SPEC.md sections 0-3 for validation-first subsystem rules,
+     source authority, phase placement, and controlled-agent MCP boundaries.
+  3. docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md and
+     docs/RETRIEVAL_VALIDATION_PLAN.md for the three-layer architecture,
+     H1-H5, experimental arms, metrics, and promotion/stopping rules.
+  4. EVIDENCE_RAG_MCP_SPEC.md section 4 and later imported material only for
+     non-normative implementation reference after validation justifies it.
 
 If DEV_SPEC.md and EVIDENCE_RAG_MCP_SPEC.md conflict, DEV_SPEC.md wins for
 product identity, LangGraph/artifact authority, safety, review, runtime, eval,
@@ -70,15 +73,9 @@ Historical record evidence:
 
 Current known missing historical references:
   docs/EXECUTION_CONTROL_GUIDE.md
-  src/mod_agent/evaluation/agent_quality.py
-  src/mod_agent/evaluation/retrieval_regression.py
   src/mod_agent/git/workflow_binding.py
   src/mod_agent/mcp/jobs.py
-  tests/fixtures/evaluation/agent_quality_cases.json
-  tests/fixtures/retrieval/golden_queries.json
-  tests/unit/test_agent_quality_eval.py
   tests/unit/test_mcp_async_jobs.py
-  tests/unit/test_retrieval_regression.py
   tests/unit/test_runtime_screenshots.py
   tests/unit/test_workflow_checkpointing.py
 ```
@@ -87,7 +84,8 @@ Current known missing historical references:
 
 ```text
 auto-coder:
-  .agents/skills/auto-coder/SKILL.md remains the DEV_SPEC.md-driven platform-development Skill.
+  .agents/skills/auto-coder/SKILL.md is frozen as SKILL.md.frozen. It is retained
+  for historical review and is not an active execution authority.
 mod-delivery-playbook:
   Planned process-only Skill for the user-facing mod delivery chain.
 patch-review-playbook:
@@ -99,7 +97,9 @@ hook-discovery-playbook:
 repair-loop-playbook:
   Process-only expert Skill for failed gate classification, repair eligibility checks, evidence-bound minimal repair scope, review re-entry, and repair or handoff routing.
 Boundary:
-  Process playbooks must not replace auto-coder, store current state, duplicate interface schemas, or embed test results.
+  Process playbooks must not replace DEV_SPEC.md, source/tests, current state,
+  interface contracts, artifacts, or LangGraph routing; they must not become a
+  platform-development control plane.
 Runtime Skill system boundary:
   Process playbooks do not implement a runtime Skill registry, Skill selector, Skill loader, LangGraph selected-skill node injection, or Skill output validator.
 Hook automation boundary:
@@ -129,13 +129,13 @@ Default-paused items unless explicitly selected:
 
 Allowed next:
   - V2 proposal context pack deepening
-  - V2 curated reference mod and community note loaders when they feed proposal/review evidence
+  - minimal curated reference/community fixtures required by registered evaluation cases
   - V2 GTFO vertical slice evidence binding through hook discovery, implementation_plan, proposal, review, and repair context
-  - V2 dashboard/API projection work
-  - V2 MCP approved-route design and tests
   - V2 agent decision-quality eval recovery
+  - V2 retrieval ablation and freshness evaluation
+  - dashboard/API and MCP projection after measured production-route decisions
   - control-document recovery when it directly supports V2 delivery
-  - explicit user-directed platform development through auto-coder
+  - explicit user-directed platform development without the frozen auto-coder Skill
 ```
 
 ## V2 Platform Expansion Queue
@@ -164,11 +164,16 @@ RAG placement:
   V1 keeps Knowledge Base and Evidence RAG basics: local source, artifacts, logs,
   domain docs, SourceRegistry metadata, incremental hashes, deterministic
   retrieval, symbol retrieval, BM25, EvidencePack, and readiness gates.
-  V2 adds curated local reference sources and proves that retrieved evidence
-  controls vertical code-generation decisions.
-  V3 upgrades dense/hybrid retrieval, RRF, citation/source span evaluation,
-  allowlisted GitHub importing, Discord export importing, and broader community
-  importers. These are not V2 blockers.
+  V2 has stabilized the vertical-slice consumer and evaluator contract. The
+  completed one-day A/B/D directional pilot reused those assets without
+  expanding them into a general evaluation platform and retained rg plus live
+  reads. Curated
+  source material may be used as a minimal authentic fixture. Dense, fusion,
+  bounded Agentic routing, complete freshness matrices, and formal H1-H5 closure
+  are conditional follow-ups triggered by a concrete product decision.
+  Later phases own only the importers and mechanisms justified by those results;
+  allowlisted GitHub importing, Discord export importing, and broad community
+  importers are not V2 blockers.
 
 V1 code check:
   Current source provides SourceRegistry, SourceDiscovery, Document, Chunk,
@@ -193,37 +198,59 @@ V1 code check:
 ```text
 V2 centerline:
   Prove one controlled vertical code-generation slice before expanding optional
-  retrieval, importers, dashboard polish, or MCP write/runtime routes.
+  retrieval, importers, dashboard polish, or MCP write/runtime routes. Use
+  bounded experiments to decide uncertain investments; do not turn the
+  long-term validation roadmap into a consecutive platform-building queue.
 
 Execution rule:
-  A task may pull a supporting task forward only when it directly unblocks
-  GTFO-VSLICE-001 acceptance. Schema deepening, external knowledge, dashboard,
-  MCP, eval, and dense retrieval work must attach to the vertical slice rather
-  than becoming standalone workstreams.
+  Reuse existing evaluator/authenticity capabilities. An experiment may add a
+  thin adapter, frozen decision cases, raw results, and a decision report. Stop
+  an arm when it requires a new general schema, Dashboard/MCP work, production
+  loader, or more than the one-day experiment budget. Return to product delivery
+  after the decision; start formal validation only for the claim then required.
 ```
 
 | Order | Task | Purpose | Concrete First Implementation | Acceptance |
 | --- | --- | --- | --- | --- |
-| 1 | GTFO-VSLICE-001A | Define the vertical-slice contract and prove the current evidence retrieval identity path can gate a GTFO feature path with target source / symbol / BM25 evidence | Working-tree tests cover `retrieve_evidence -> create_implementation_plan -> create_patch_proposal -> review_proposal -> checkpoint/static interrupt -> resume_report -> dry_run/build/runtime/eval` and the dynamic `interrupt()` / `Command(resume)` review gate before dry-run | Tests prove no implementation/proposal/review/dry-run path proceeds without EvidencePack identity, source authority, readiness, and required human approval where enabled. Dynamic resume is LangGraph-checkpointer driven; project workflow_checkpoint/resume_report artifacts are audit records written after resume. Wrong thread_id cannot recover the original interrupted graph. Reject writes blocked dry_run_result but no success build/runtime/eval/summary artifacts. No real GTFO launch; persistent checkpoint backend remains future work |
-| 2 | V2-PROP-001A | Make proposal context auditable enough for code-generation review | Extend `patch_proposal.context_pack` with source snippets, target symbol signatures, evidence artifact hashes, implementation_plan hash, proposal-time git base revision, context budget metadata, and omission blockers | Proposal review blocks missing/drifting context; focused proposal/artifact/workflow/dashboard tests pass |
-| 3 | GTFO-VSLICE-001B | Bind hook discovery and implementation_plan to retrieved evidence instead of only schema fields | Ensure planning/hook-discovery handoff, implementation_plan target symbols, proposal change units, and review findings all consume the same evidence refs and source spans | End-to-end test proves evidence refs survive from retrieval through proposal_review and repair eligibility |
-| 4 | V2-KB-REF-001 | Add curated local reference mods as supporting implementation-pattern evidence | Implement ReferenceModLoader metadata contract for local curated `.cs`, `.csproj`, README, LICENSE, release notes with `repo_url`, `commit_sha`, `license`, `imported_at`, `usage_permission` | Reference evidence defaults `authoritative_for_patch=false` and cannot unlock patch authority alone |
-| 5 | V2-KB-COMM-001 | Add curated community notes without letting raw chat enter patch context | Implement curated note loader/extractor for `claim`, `claim_type`, `source_locator`, `timestamp`, `confidence`, `requires_verification` | Raw chat remains `raw_only`; curated notes remain planning-only until verified by target/API/runtime evidence |
-| 6 | GTFO-VSLICE-001C | Finish the V2 vertical slice with review and repair context | Connect evidence-bound proposal_review blockers and repair_context for the selected GTFO path | One GTFO slice demonstrates hook discovery, implementation_plan, patch_proposal, review gate, and repair context end to end |
-| 7 | V2-EVAL-001 | Make the slice measurable | Add agent decision-quality eval cases for evidence sufficiency, proposal context completeness, review correctness, false-success, and false-block | Eval report blocks unsafe completion and provides interview-visible reliability evidence |
-| 8 | V2-DASH-001 | Make the slice inspectable | Upgrade dashboard/API projections for artifact DAG, proposal context, review findings, eval gate status, and blocked reasons | Human can inspect why evidence allowed or blocked the path without reading raw artifacts |
-| 9 | V2-MCP-001 | Expose controlled external tool growth safely | Model approved write/runtime route contracts as LangGraph-backed approval artifacts without executing dangerous actions directly | MCP remains read/report-first; write/runtime routes return approval/rollback requirements |
-| 10 | V2-RET-001 | Evaluate production retrieval hardening only after consumers can use evidence identity | Add retrieval-quality evaluation around controlled-agent evidence identity; keep dense/vector auxiliary until authority is proven | Dense/RRF/rerank cannot bypass target_source/decompiled_api/review/eval gates |
+| 1-5 | GTFO-VSLICE-001A / V2-PROP-001A / GTFO-VSLICE-001B / GTFO-VSLICE-001C / V2-EVAL-001 | Establish the evidence-controlled consumer and reusable evaluation boundary | Completed and focused-tested | Reuse the completed capability; do not deepen it merely to make a more general evaluator |
+| 6 | V2-RET-DIRECTIONAL-001 | Choose the next retrieval investment within one working day | Completed with frozen A/B/D cases and raw results | Retain `rg` plus live reads; B did not cross the frozen investment threshold and D had no authentic corpus. No H1-H5 or promotion claim |
+| 7 | V2-CODEGEN-REAL-001 | Prove one narrow real request-to-build product loop | Completed with local `run-request`, read-only external BetterHitFeedback input, isolated workspace, rg plus live read, Qwen `qwen3.6-plus` exact patch, existing review, dry-run, isolated apply, baseline build, and post-change build | Run `0dca9c33` preserved all artifacts; external source hash remained unchanged, exactly one isolated source file changed once, and the final DLL was verified. No real game/runtime claim |
+| 8 | EXEC-002 | Bind confirmed apply to the exact reviewed diff | Completed with interactive pause after dry-run, exact before/after preview, canonical `sha256:` binding, recomputation before write, and separate write-scope/exact-diff approval fields | Run `d189434f` records identical displayed, approved, and recomputed hashes; one isolated occurrence was written and the verified build succeeded |
+| 9 | LLM-SOURCE-DISCLOSURE-001 | Make external source disclosure an explicit product decision | Completed with `--allow-source-disclosure`, pre-target-access blocking, and manifest endpoint/model/data-class/scope recording without API Key persistence | Run `be7104b7` records per-run consent, independently records exact-diff approval, changes one isolated occurrence, and completes a verified build |
+| 10 | Targeted request-to-build code review hardening | Close confirmed trust-boundary gaps without expanding the platform | Bind approval to proposal/plan/evidence/live-source context; sanitize endpoint metadata; validate disclosure class subsets; isolate copied build references; derive AssemblyName; require real-build claim for CLI success | 105 affected tests pass. Full project adapters and OS-level build sandboxing remain triggered by concrete product need |
+
+### V2 Necessity Review — 2026-07-11
+
+This is a one-time queue correction, not a new evaluation program. A task may be
+near-term only when it directly unlocks `real request -> real patch -> review ->
+isolated apply -> real build`, or when that loop records the failure it repairs.
+
+| Classification | Tasks | Required trigger / treatment |
+| --- | --- | --- |
+| Directly required now | None | The narrow real loop now covers explicit source-disclosure consent, live evidence, Qwen generation, review, dry-run, exact-diff approval, isolated apply, and verified build. Select the next concrete product capability or real Mod request before creating more infrastructure work. |
+| Freeze and reuse | `GTFO-VSLICE-001A/B/C`, `V2-PROP-001A`, `V2-EVAL-001`, `V2-EVAL-001-FOLLOWUP`, `PLANNING-BRIEF-IMPL-001`, `E2E-001/002`, `TRANSITION-001..005`, `ARTIFACT-INTEGRITY-001..003`, `ARTIFACT-PROD-001A/B`, `RUNTIME-DENSE-API-BOUNDARY-001`, `MISS-026D/E` | Existing control, evidence, review, artifact, runtime-boundary, and evaluator behavior is sufficient for the narrow loop. Do not add schemas, validators, audit rounds, or repair taxonomy before a real run requires them. |
+| Product-failure or use-triggered | `V2-KB-REF-001`, `V2-KB-COMM-001`, `V2-DASH-001`, `V2-MCP-001`, `ARTIFACT-PROD-001`, `LEGACY-TEST-001`; workspace-aware path resolution; automatic repair; persistent checkpoint backend; execution-layer Git stop/resume | Start only after a recorded real task needs the source class/interface or fails because the current capability is insufficient. `LEGACY-TEST-001` starts only when a focused product path fails or a full-suite release claim is required. Dashboard demonstration preference alone and roadmap presence alone are not triggers. |
+| Formal/V3 deferred | `V2-RET-001`, `V2-RET-001A/B/C`, `V2-RET-001A-BENCHMARK-DESIGN`, `V2-RET-001A-BENCHMARK`, Arms A-G, H1-H5, Dense/RRF/Agentic promotion work, broad importers, production Dashboard/MCP deployment, approved GTFO launch, game-directory copy, and real gameplay certification | Resume only for an explicitly required formal claim, production deployment, or separately approved runtime validation. They do not block V2-CODEGEN-REAL-001. |
+
+### Conditional Formal Validation Backlog
+
+| Trigger | Task | Scope | Non-blocking rule |
+| --- | --- | --- | --- |
+| A promotion-grade deterministic/source-aware claim is required | V2-RET-001A | Formal Arms A-D and the applicable H1/H2/H4 measurements | Do not start only because it appears in the roadmap |
+| Product tasks expose a semantic-recall gap after deterministic paths | V2-RET-001B | Arm E and H3 dense auxiliary evaluation | No production Dense/Qdrant work before this trigger |
+| Fixed routing cannot combine complementary evidence or recover a classified first-attempt failure | V2-RET-001C | Arms F/G and the applicable H5 fusion/Agentic evaluation | No RRF/Agentic platform work before this trigger |
+| A retained source class needs production ingestion | V2-KB-REF-001 / V2-KB-COMM-001 | Minimal curated loader and attribution contracts | Directional fixtures do not imply production ingestion |
+| A selected product path needs external inspection or approved routes | V2-DASH-001 / V2-MCP-001 | Project accepted behavior and approval requirements | Do not build these merely to display an experiment |
 
 ## Knowledge Source Implementation Phase Table
 
 | Project | Phase |
 | --- | --- |
 | artifact/log/domain-doc loader deepening | V2 supporting item |
-| ReferenceModLoader metadata contract | V2 |
-| CommunityNoteLoader / Extractor | V2 |
-| controlled-agent RRF/rerank | V3 |
-| citation/source-span retrieval eval | V3 |
+| ReferenceModLoader metadata contract | After the relevant validation cases justify reference-source ingestion |
+| CommunityNoteLoader / Extractor | After H1 passes or a recorded dataset-gap decision requires a minimal fixture loader |
+| controlled-agent RRF/rerank | V2 experiment only; production phase decided by H4/H5 |
+| citation/source-span retrieval eval | V2-EVAL-001 / V2-RET-001 |
 | GitHubRepoImporter | V3 |
 | DiscordExportImporter | V3/V3+ |
 | Thunderstore/Nexus/forum importer | V3+ |
@@ -231,17 +258,24 @@ Execution rule:
 
 | Task | Status | Scope | Evidence Plan |
 | --- | --- | --- | --- |
-| GTFO-VSLICE-001 | queued parent | Parent vertical-slice track. Execute `GTFO-VSLICE-001A`, `V2-PROP-001A`, `GTFO-VSLICE-001B`, then `GTFO-VSLICE-001C`; keep real GTFO launch and gameplay evidence out of scope unless explicitly approved | domain/hook discovery evidence, `src/mod_agent/evidence/`, `src/mod_agent/planning/`, `src/mod_agent/proposal/`, review/eval tests; success requires an end-to-end controlled-agent path, not only schema expansion |
+| GTFO-VSLICE-001 | completed at the controlled-consumer boundary | Parent vertical-slice track completed through `GTFO-VSLICE-001A`, `V2-PROP-001A`, `GTFO-VSLICE-001B`, and `GTFO-VSLICE-001C`; real GTFO launch and gameplay evidence remain out of scope unless explicitly approved | The evidence-bound implementation_plan, proposal, review, checkpoint, repair-decision, and eval consumer path is focused-tested; this does not claim real gameplay validation |
 | GTFO-VSLICE-001A | completed | Evidence retrieval identity now gates the first GTFO artifact-loop path through review, checkpoint/static resume, dynamic `interrupt()` / `Command(resume)`, dry-run, build, runtime, eval, and summary tests | `src/mod_agent/workflow/graph.py`, `src/mod_agent/workflow/transitions.py`, `tests/unit/test_workflow_graph.py`; focused command: `.\\.venv\\Scripts\\python.exe -m pytest tests/unit/test_workflow_graph.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_artifact_contract.py -q --tb=short` -> 48 passed |
 | V2-PROP-001 | tested support | Parent proposal-context track. `V2-PROP-001A` deepens `patch_proposal.context_pack` with source snippets, symbol signatures, artifact hashes, implementation_plan hash, context budget metadata, omission blockers, and proposal-time Git base revision binding before review; default `build_graph()` now attempts project-root Git binding and missing `base_revision` blocks proposal review | `src/mod_agent/proposal/models.py`, `src/mod_agent/proposal/builder.py`, `src/mod_agent/proposal/reviewer.py`, `src/mod_agent/workflow/graph.py`, `tests/unit/test_proposal_review.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_domain_adapter.py`; focused affected command: `.\\.venv\\Scripts\\python.exe -m pytest tests/unit/test_proposal_review.py tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py tests/unit/test_dashboard_projection.py tests/unit/test_repair_loop.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_domain_adapter.py -q --tb=short` -> 80 passed |
 | GTFO-VSLICE-001B | completed / frozen | Bind implementation_plan, proposal context, review, and repair scope to retrieved evidence refs and source spans without treating all evidence as writable edit targets | `ImplementationPlanner` now emits `implementation_plan.binding_registry` as the only authoritative Binding Registry; proposal and repair proposals reference `edit_binding_id` / `supporting_binding_ids` only; `patch_proposal.context_pack.allowed_edit_binding_ids` seeds repair scope; shared `BindingResolver` blocks edit/supporting registry evidence drift, copied path/symbol/span fields, out-of-scope repair bindings, forbidden/domain paths, and non-canonical repair diagnostics; `ArtifactStore` enforces non-blocking implementation_plan registry contracts and non-blocking repair_plan source-proposal exact lineage; current path resolution is fail-closed exact-path matching, not a workspace-aware canonicalizer; focused affected command: `.\\.venv\\Scripts\\python.exe -m pytest tests/unit/test_planning.py tests/unit/test_proposal_review.py tests/unit/test_repair_loop.py tests/unit/test_workflow_graph.py tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_domain_adapter.py tests/unit/test_dashboard_projection.py -q --tb=short` -> 131 passed |
-| GTFO-VSLICE-001C | in progress | Tighten concrete GTFO hook-target evidence, review blocker quality, and repair decision quality beyond the scope binding loop | 001C-A implements structured Hook Target Selection: `RequestPlanner` / `FeatureSpec` / `EvidenceRequest` carry `hook_requirement` while `requires_hook_evidence` remains the broad evidence gate, Hook targets require complete method identity, `DeterministicEvidenceRetriever` projects Hook target method metadata from `SymbolIndexer` chunk metadata, `ImplementationPlanner` selects exactly one `hook_target_binding_id` instead of attaching all supporting evidence, `AMBIGUOUS_HOOK_TARGET` blocks multiple unresolved targets, and `ProposalReviewer` validates the selected target against `implementation_plan.binding_registry` and EvidencePack; focused affected command: `.\\.venv\\Scripts\\python.exe -m pytest tests/unit/test_evidence_retrieval.py tests/unit/test_planning.py tests/unit/test_proposal_review.py tests/unit/test_repair_loop.py tests/unit/test_workflow_graph.py tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_domain_adapter.py tests/unit/test_dashboard_projection.py -q --tb=short` -> 155 passed |
-| V2-KB-REF-001 | queued | Add curated local `reference_mod` knowledge sources and a ReferenceModLoader for small, manually selected public mod projects; load `.cs`, `.csproj`, README, LICENSE, and release notes while recording `repo_url`, `commit_sha`, `license`, `imported_at`, and `usage_permission` | `src/mod_agent/knowledge/`, knowledge model/loader tests, artifact contract tests; default `authoritative_for_patch=false` and use only for implementation patterns, hook hints, and build hints |
-| V2-KB-COMM-001 | queued | Add curated `community_note` and `community_hint` sources from already organized notes, not full raw Discord chat; require `claim`, `claim_type`, `source_locator`, `timestamp`, `confidence`, and `requires_verification` | `src/mod_agent/knowledge/`, loader/extractor tests, evidence readiness tests; raw chat remains `raw_only`, curated notes remain `planning_only` and `authoritative_for_patch=false` |
-| V2-DASH-001 | queued | Upgrade dashboard/API projection for workflow, artifact DAG, proposal context, review findings, eval gate status, and blocked reasons as platform demonstration surfaces | `src/mod_agent/dashboard/projections.py`, `src/mod_agent/api/http_server.py`, dashboard/API tests |
-| V2-MCP-001 | queued | Define approved write/runtime route contract without executing dangerous actions directly; keep read-only/report-only tools safe and route future writes through LangGraph artifacts and approval records | `src/mod_agent/mcp/protocol.py`, `src/mod_agent/mcp/tools.py`, MCP protocol/tool tests |
-| V2-EVAL-001 | queued | Recover agent decision-quality eval around false-success, false-block, review correctness, retrieval sufficiency, and proposal context completeness | `src/mod_agent/evaluation/`, eval fixtures, `tests/unit/test_transition_eval_gate.py`, new focused eval tests |
-| V2-RET-001 | queued | Evaluate retrieval production path only after proposal/review context can consume evidence identity; keep dense/vector evidence auxiliary until readiness and eval checks prove authority | `src/mod_agent/evidence/`, `src/mod_agent/knowledge/`, retrieval/evidence tests |
+| GTFO-VSLICE-001C | completed | Tighten concrete GTFO Hook-target evidence, review blocker quality, and repair decision quality beyond the scope binding loop | 001C-A implements structured Hook Target Selection and 001C-B routes revision-class proposal_review blockers into evidence-bound repair context. Final closure adds deterministic repair decisions for scoped build/runtime repair, unresolved build/runtime scope, context rebuild, planning revision, evidence retrieval, proposal revision, safety/scope review, and retry exhaustion without bypassing proposal_review or writing code. Focused repair/workflow/checkpoint command -> 44 passed; affected artifact/dashboard/proposal/domain command -> 76 passed on 2026-07-11. |
+| V2-KB-REF-001 | validation-gated | Add curated local `reference_mod` knowledge sources only when registered cases require them and measured results justify the production path; record `repo_url`, `commit_sha`, `license`, `imported_at`, and `usage_permission` | `src/mod_agent/knowledge/`, knowledge model/loader tests, artifact contract tests; default `authoritative_for_patch=false` and use only for implementation patterns, Hook hints, and build hints |
+| V2-KB-COMM-001 | validation-gated | Add curated `community_note` and `community_hint` sources after H1 passes or as the minimal fixture loader required to run H1; require `claim`, `claim_type`, `source_locator`, `timestamp`, `confidence`, and `requires_verification` | `src/mod_agent/knowledge/`, loader/extractor tests, evidence readiness tests; raw chat remains `raw_only`, curated notes remain `planning_only` and `authoritative_for_patch=false` |
+| V2-DASH-001 | conditional / product-use-triggered | Upgrade dashboard/API projection only when a real operator/demo workflow cannot inspect the preserved request, patch, review, apply, build, or blockers through current projections | `src/mod_agent/dashboard/projections.py`, `src/mod_agent/api/http_server.py`, dashboard/API tests; not a blocker for V2-CODEGEN-REAL-001 |
+| V2-MCP-001 | conditional / external-client-triggered | Define approved write/runtime route contracts only when an external MCP client is selected to drive a real controlled write/runtime workflow | `src/mod_agent/mcp/protocol.py`, `src/mod_agent/mcp/tools.py`, MCP protocol/tool tests; not a blocker for V2-CODEGEN-REAL-001 |
+| V2-EVAL-001 | completed at evaluator-contract boundary | Versioned calibration/benchmark datasets, separate retrieval and decision observations, standard Precision@K plus returned precision, explicit decision/file/conditional metrics and denominators, strict required-evaluation Gate, reproducibility identities, strict comparator, and CLI status separation | Second-audit follow-up is focused-tested; formal smoke v5 now supplies actual RunManifest collection and execution authenticity. No held-out benchmark quality or H1-H5 verdict is claimed. Reuse this boundary without further platform generalization for the directional pilot. |
+| V2-EVAL-001-FOLLOWUP | completed | Close second-audit benchmark-authority findings before real Arm A | Policy recomputation, calibration/measurement/promotion modes, applicable case identities, explicit LangGraph requirement, strict runtime types, `mrr_at_k`, observation envelope/normalized hashes, strict JSON, and valid benchmark CLI inputs implemented; focused changed-path suite 75 passed and Ruff passed on 2026-07-11 |
+| V2-RET-DIRECTIONAL-001 | completed / bounded local decision | Frozen A/B/D results and limitations are saved in `evaluation/directional`; the decision retains rg plus live reads | B improved one of five structural cases, below the frozen investment threshold; D is synthetic plumbing only; no H1-H5 or promotion claim |
+| V2-CODEGEN-REAL-001 | active / only near-term task | Add the minimum local request entry, then prove one real BetterHitFeedback request can produce and apply an evidence-bound non-prewritten patch in isolation and complete a real build | Reuse existing control-plane contracts; treat BetterHitFeedback as an externally produced read-only target; add only the minimum entry, patch-generation, and isolated-apply capability exposed by this real loop; stop after one preserved successful loop or a concrete blocker |
+| V2-RET-001 | conditional formal-validation parent | Run registered promotion-grade retrieval ablations only when a concrete later product decision requires the relevant claim | Real rg/live-read smoke and manifest collection are complete; full multi-stratum formal Arm A and H1/H2/H4 remain unrun and are not current blockers |
+| V2-RET-001A-SMOKE-ARTIFACT | completed | Produce and retain internally recomputable v1/v2 smoke artifacts | v2 hashes, raw observations, metrics, cost, policy, protocol and before/after bindings independently recompute; binary identity and exact searchable-corpus equivalence are not attested, so v2 is not formal benchmark evidence |
+| V2-RET-001A-AUTHENTICITY | completed | Close formal runner, executable identity, canonical corpus, final rehash, scope, and ledger boundaries | v5 ledger hash matches persisted bytes; exact argv file lists equal the 175-file snapshot; returned files rehash; rg path/hash/version and traces recorded; test harness is non-formal; smoke is non-promotion; v3/v4 invalidations retained |
+| V2-RET-001A-BENCHMARK-DESIGN | retained / conditional formal track | Preserve the existing held-out exact/structural/vague/community-history design as future formal-validation material | Do not make it a prerequisite for `V2-RET-DIRECTIONAL-001`; resume only when a promotion-grade deterministic/source-aware claim is required |
+| V2-RET-001A-BENCHMARK | conditional / not active | Collect the formal held-out Arm A baseline only after the formal track is explicitly triggered | No Arms B-D formal comparison or H1-H5 claim before its population, exclusions, policy and protocol are frozen |
 
 ## Current Stabilization Queue
 
@@ -302,9 +336,9 @@ Queue purpose: verify the current implementation against DEV_SPEC.md V1 acceptan
 ## Legacy Test Triage
 
 ```text
-LEGACY-TEST-001_status: queued
+LEGACY-TEST-001_status: conditional / non-blocking
 Scope: normalize full-suite dependency parity, external-service gates, Windows Chroma cleanup, RAGAS compatibility, and historical legacy test assertions.
-Policy: LEGACY-TEST-001 does not block R-009. R-009 may only absorb evidence_retrieval, stub_nodes, and sparse_encoder failures that directly affect retrieval authority or evidence boundary behavior.
+Policy: start only when a focused current product path fails or a full-suite release claim is explicitly required. It does not block V2-CODEGEN-REAL-001 and must not replace the real request-to-build loop with general test cleanup.
 ```
 
 ## Hardening Follow-ups

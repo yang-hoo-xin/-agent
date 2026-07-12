@@ -65,10 +65,12 @@ def route_after_patch_proposal(state: ModAgentState) -> str:
 
 
 def route_after_review(state: ModAgentState) -> str:
-    """Allow dry-run only after explicit review approval."""
+    """Allow dry-run after approval or route revision findings to repair."""
 
     if state["review_summary"].get("allowed_next_stage") == "dry_run_apply":
         return "continue"
+    if state["review_summary"].get("decision") == "revise_proposal":
+        return "repair"
     return "blocked"
 
 
@@ -82,6 +84,14 @@ def route_after_human_review_gate(state: ModAgentState) -> str:
 
 def route_after_dry_run(state: ModAgentState) -> str:
     """Stop when dry-run is blocked by missing or rejected approval."""
+
+    if state["blockers"]:
+        return "blocked"
+    return "continue"
+
+
+def route_after_isolated_apply(state: ModAgentState) -> str:
+    """Stop when the approved isolated write failed or was not performed."""
 
     if state["blockers"]:
         return "blocked"
@@ -151,12 +161,17 @@ def route_registry() -> RouteRegistry:
         "review_proposal": {
             "blocked": "blocked",
             "continue": "dry_run_apply",
+            "repair": "create_repair_plan",
         },
         "human_review_gate": {
             "blocked": "blocked",
             "continue": "dry_run_apply",
         },
         "dry_run_apply": {
+            "blocked": "blocked",
+            "continue": "build",
+        },
+        "isolated_apply": {
             "blocked": "blocked",
             "continue": "build",
         },

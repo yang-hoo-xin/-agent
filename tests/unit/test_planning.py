@@ -80,6 +80,16 @@ def test_request_planner_blocks_ambiguous_request() -> None:
     assert plan.uncertainties[0].uncertainty_id == "ambiguous_user_request"
 
 
+def test_non_goal_damage_terms_do_not_force_hook_evidence() -> None:
+    plan = RequestPlanner().plan(
+        "Change the kill marker color to pink without changing damage or sound.",
+        target_mod="BetterHitFeedback",
+    )
+
+    assert plan.requires_hook_evidence is False
+    assert plan.hook_requirement == {"required": False, "reason": "not_required"}
+
+
 def test_request_planner_classifies_runtime_feature_as_high_risk() -> None:
     plan = RequestPlanner().plan(
         "make enemies glow when damaged in BetterHitFeedback"

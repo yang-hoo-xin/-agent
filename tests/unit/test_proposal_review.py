@@ -183,6 +183,21 @@ def _hook_target_evidence_item() -> dict[str, object]:
     }
 
 
+def test_reviewer_requires_executable_patch_when_real_codegen_is_enabled() -> None:
+    proposal = _proposal_payload()
+    review = ProposalReviewer().review(
+        proposal,
+        evidence_pack=_evidence_pack(),
+        implementation_plan=_implementation_payload(),
+        artifact_hashes=_artifact_hashes(),
+        feature_spec=_feature_spec(),
+        require_executable_patch=True,
+    )
+
+    assert review.allowed_next_stage is None
+    assert any(item.rule_id == "executable_patch" for item in review.findings)
+
+
 def test_patch_proposal_builder_converts_implementation_plan_to_reviewable_intent() -> None:
     proposal = PatchProposalBuilder().build(
         _implementation_payload(),

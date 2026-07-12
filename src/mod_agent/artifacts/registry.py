@@ -392,6 +392,30 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             dashboard_projection=("message",),
         ),
         ArtifactContract(
+            artifact_type="isolated_apply_result",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "execution_mode",
+                    "actual_write_performed",
+                    "real_patch_applied",
+                    "approved_by_review",
+                    "approved_by_user",
+                    "changed_files",
+                }
+            ),
+            producer_stage="isolated_apply",
+            consumer_stages=frozenset({"build", "dashboard"}),
+            allowed_statuses=statuses,
+            required_upstream_artifacts=frozenset(
+                {"patch_proposal", "proposal_review", "dry_run_result"}
+            ),
+            dashboard_projection=("message", "real_patch_applied", "changed_files"),
+        ),
+        ArtifactContract(
             artifact_type="build_result",
             schema_version="1.0",
             required_fields=frozenset(
@@ -571,7 +595,7 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             allowed_statuses=statuses,
             required_exact_revision_upstream_artifacts=frozenset({"patch_proposal"}),
             required_one_of_upstream_artifact_groups=(
-                frozenset({"build_result", "runtime_evidence"}),
+                frozenset({"build_result", "runtime_evidence", "proposal_review"}),
             ),
             dashboard_projection=(
                 "message",

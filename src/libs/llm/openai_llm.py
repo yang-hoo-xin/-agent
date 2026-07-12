@@ -81,8 +81,9 @@ class OpenAILLM(BaseLLM):
         azure_endpoint = getattr(settings.llm, 'azure_endpoint', None)
         self.api_version = getattr(settings.llm, 'api_version', None)
         
-        if base_url:
-            self.base_url = base_url
+        configured_base_url = getattr(settings.llm, "base_url", None)
+        if base_url or configured_base_url:
+            self.base_url = str(base_url or configured_base_url)
             self._use_azure_auth = False
         elif azure_endpoint:
             # Azure-compatible mode: construct deployment-based URL

@@ -19,6 +19,7 @@ from src.mod_agent.workflow import build_graph, create_initial_state
 from src.mod_agent.workflow.transitions import (
     route_after_build,
     route_after_repair_plan,
+    route_after_review,
     route_after_runtime_evidence,
 )
 
@@ -111,6 +112,10 @@ def test_failed_build_creates_evidence_bound_repair_plan() -> None:
     assert payload["retry_budget"] == 2
     assert payload["retry_exhausted"] is False
     assert payload["allowed_next_stage"] == "generate_patch_proposal"
+    assert payload["repair_context"]["repair_decision"] == "scoped_patch_repair"
+    assert payload["repair_context"]["scoped_edit_binding_ids"] == [
+        "edit_binding_001"
+    ]
 
 
 def test_retry_budget_exhaustion_blocks_repair_loop() -> None:
@@ -127,6 +132,123 @@ def test_retry_budget_exhaustion_blocks_repair_loop() -> None:
     assert payload["retry_exhausted"] is True
     assert payload["allowed_next_stage"] is None
     assert payload["blockers"][0]["code"] == "RETRY_BUDGET_EXHAUSTED"
+
+
+def test_proposal_review_blockers_create_bounded_repair_context() -> None:
+    review_payload = {
+        "decision": "revise_proposal",
+        "allowed_next_stage": None,
+        "findings": [
+            {
+                "rule_id": "context_pack",
+                "level": "blocking",
+                "message": "Proposal context_pack is missing Git base revision binding.",
+                "change_id": None,
+                "evidence_refs": [],
+            }
+        ],
+    }
+
+    plan = RepairPlanner(retry_budget=2).from_review_failure(
+        proposal_review=review_payload,
+        proposal_review_ref="artifacts/features/feature_001/proposal_review.json",
+        retry_count=0,
+        target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=_implementation_plan_payload(),
+    )
+    payload = plan.to_artifact_payload()
+
+    assert payload["failure_source"] == "proposal_review"
+    assert payload["failure_class"] == "proposal_review:context_pack"
+    assert payload["evidence_refs"] == [
+        "artifacts/features/feature_001/proposal_review.json"
+    ]
+    assert payload["allowed_edit_binding_ids"] == ["edit_binding_001"]
+    assert payload["display_files"] == ["mods/BetterHitFeedback/Plugin.cs"]
+    assert payload["minimal_changes"] == []
+    assert payload["allowed_next_stage"] is None
+    assert payload["requires_new_evidence"] is False
+    assert payload["failure_findings"] == review_payload["findings"]
+    assert payload["repair_context"] == {
+        "review_decision": "revise_proposal",
+        "review_allowed_next_stage": None,
+        "blocking_rule_ids": ["context_pack"],
+        "repair_decision": "context_rebuild_required",
+        "required_actions": [
+            "rebuild_proposal_context",
+            "regenerate_patch_proposal",
+            "rerun_proposal_review",
+        ],
+        "reason": (
+            "Proposal context must be rebuilt from existing authoritative "
+            "artifacts before proposal regeneration."
+        ),
+        "scope_source": "patch_proposal.context_pack.allowed_edit_binding_ids",
+    }
+    assert payload["blockers"][0]["code"] == "REVIEW_REPLAN_REQUIRED"
+
+
+def test_hook_binding_review_failure_requires_new_evidence() -> None:
+    review_payload = {
+        "decision": "revise_proposal",
+        "allowed_next_stage": None,
+        "findings": [
+            {
+                "rule_id": "hook_target_binding",
+                "level": "blocking",
+                "message": "Selected Hook target is not present in current evidence.",
+                "change_id": "chg_001",
+                "evidence_refs": ["ev_001"],
+            }
+        ],
+    }
+
+    payload = RepairPlanner(retry_budget=2).from_review_failure(
+        proposal_review=review_payload,
+        proposal_review_ref="artifacts/features/feature_001/proposal_review.json",
+        retry_count=0,
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=_implementation_plan_payload(),
+    ).to_artifact_payload()
+
+    assert payload["requires_new_evidence"] is True
+    assert payload["repair_context"]["repair_decision"] == (
+        "evidence_retrieval_required"
+    )
+    assert payload["repair_context"]["required_actions"] == [
+        "refresh_or_expand_evidence",
+        "rebuild_implementation_plan",
+        "regenerate_patch_proposal",
+        "rerun_proposal_review",
+    ]
+
+
+def test_unresolved_runtime_failure_requests_target_bound_evidence() -> None:
+    payload = RepairPlanner(retry_budget=2).from_runtime_failure(
+        runtime_evidence={
+            "feature_id": "feature_001",
+            "acceptance_status": "failed",
+            "message": "Expected gameplay marker was not observed.",
+            "evidence_items": [
+                {
+                    "source": "runtime_logs/gtfo.log",
+                    "locator": "runtime_logs/gtfo.log:120",
+                }
+            ],
+        },
+        runtime_evidence_ref="artifacts/features/feature_001/runtime_evidence.json",
+        retry_count=0,
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=_implementation_plan_payload(),
+    ).to_artifact_payload()
+
+    assert payload["allowed_next_stage"] is None
+    assert payload["blockers"][0]["code"] == "REPAIR_SCOPE_UNRESOLVED"
+    assert payload["repair_context"]["repair_decision"] == (
+        "runtime_evidence_required"
+    )
+    assert payload["repair_context"]["scoped_edit_binding_ids"] == []
 
 
 def test_repair_proposal_reenters_review_gate() -> None:
@@ -224,6 +346,19 @@ def test_repair_routes_are_explicit() -> None:
     state["blockers"] = [{"code": "RETRY_BUDGET_EXHAUSTED"}]
     assert route_after_repair_plan(state) == "blocked"
 
+    state["blockers"] = []
+    state["review_summary"] = {
+        "decision": "revise_proposal",
+        "allowed_next_stage": None,
+    }
+    assert route_after_review(state) == "repair"
+
+    state["review_summary"] = {
+        "decision": "blocked_scope_risk",
+        "allowed_next_stage": None,
+    }
+    assert route_after_review(state) == "blocked"
+
 
 def test_graph_failed_build_enters_repair_and_stops_at_retry_budget(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
@@ -281,6 +416,65 @@ def test_graph_failed_build_enters_repair_and_stops_at_retry_budget(tmp_path: Pa
         for event in result["trace_events"]
     )
     assert result["blockers"][0]["code"] == "RETRY_BUDGET_EXHAUSTED"
+
+
+def test_graph_review_revision_creates_repair_plan_without_success_artifacts(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        proposal_git_binding_factory=lambda: {
+            "status": "unavailable",
+            "base_revision": None,
+            "error": "not inside a Git working tree",
+        },
+    )
+    state = create_initial_state(
+        run_id="run_review_repair_context",
+        request_id="req_review_repair_context",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    repair_plan = _artifact_data(store, result, "repair_plan")
+    review = _artifact_data(store, result, "proposal_review")
+    repair_envelope = json.loads(
+        Path(result["artifacts"]["repair_plan"]).read_text(encoding="utf-8")
+    )
+    upstream_types = {
+        upstream["artifact_type"]
+        for upstream in repair_envelope["inputs"]["upstream_artifacts"]
+    }
+    patch_upstreams = [
+        upstream
+        for upstream in repair_envelope["inputs"]["upstream_artifacts"]
+        if upstream["artifact_type"] == "patch_proposal"
+    ]
+
+    assert review["decision"] == "revise_proposal"
+    assert result["current_stage"] == "blocked"
+    assert "repair_plan" in result["artifacts"]
+    assert "dry_run_result" not in result["artifacts"]
+    assert "build_result" not in result["artifacts"]
+    assert "runtime_evidence" not in result["artifacts"]
+    assert "workflow_summary" not in result["artifacts"]
+    assert repair_plan["failure_source"] == "proposal_review"
+    assert repair_plan["failure_class"] == "proposal_review:context_pack"
+    assert repair_plan["minimal_changes"] == []
+    assert repair_plan["allowed_next_stage"] is None
+    assert repair_plan["repair_context"]["repair_decision"] == (
+        "context_rebuild_required"
+    )
+    assert repair_plan["source_proposal"]["ref"] == result["artifacts"]["patch_proposal"]
+    assert upstream_types == {"patch_proposal", "proposal_review"}
+    assert len(patch_upstreams) == 1
+    assert patch_upstreams[0]["require_latest"] is False
+    assert patch_upstreams[0]["path"] == repair_plan["source_proposal"]["ref"]
+    assert patch_upstreams[0]["artifact_hash"] == repair_plan["source_proposal"]["hash"]
 
 
 def _failed_build_result(

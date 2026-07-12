@@ -1,10 +1,10 @@
-# Controlled Mod Agent Platform - Configuration
+# Evidence-Grounded Controlled Code Generation Agent Platform - Configuration
 # Phase A keeps business behavior stubbed and side effects blocked.
 # RAG-oriented settings below are preserved for the future Evidence Knowledge
 # Subsystem and should not be treated as the top-level product goal.
 
 project:
-  name: "controlled-mod-agent-platform"
+  name: "evidence-grounded-controlled-code-generation-agent-platform"
   phase: "A"
   default_domain: "gtfo"
 
@@ -89,12 +89,13 @@ runtime:
 # LLM Configuration
 # =============================================================================
 llm:
-  provider: "openai"  # Options: openai, azure, ollama, deepseek
-  model: "gpt-4o"
-  deployment_name: "gpt-4o"
-  azure_endpoint: "https://YOUR_ENDPOINT.openai.azure.com/"
-  api_version: "2024-02-15-preview"
-  api_key: "YOUR_API_KEY_HERE"
+  provider: "openai"  # OpenAI-compatible client
+  model: "qwen3.6-plus"
+  base_url: null  # local run-request reads DASHSCOPE_BASE_URL
+  deployment_name: null
+  azure_endpoint: null
+  api_version: null
+  api_key: null  # V2-CODEGEN-REAL-001 reads DASHSCOPE_API_KEY at the local entry
   temperature: 0.0
   max_tokens: 4096
 
