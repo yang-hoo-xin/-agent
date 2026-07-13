@@ -1,5 +1,10 @@
 # V1 To V2 Transition
 
+Frozen historical record. Its transition gates have completed or been replaced
+by current product evidence. Do not use it as an active V2 queue. Current
+execution starts with `docs/ACTIVE_PRODUCT_CONTRACT.md` and
+`docs/PROJECT_STATE.md`.
+
 This document records the engineering progression rules for moving from the
 accepted-with-gaps V1 contract path toward V2 implementation work.
 

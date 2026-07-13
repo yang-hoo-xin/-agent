@@ -2,10 +2,11 @@
 
 This file tracks detailed coverage of `DEV_SPEC.md` and its subsystem specs.
 
-It is not a replacement for `DEV_SPEC.md`, `EVIDENCE_RAG_MCP_SPEC.md`, `PROJECT_STATE.md`, or `IMPLEMENTATION_QUEUE.md`.
+It is not a replacement for `docs/ACTIVE_PRODUCT_CONTRACT.md`, `DEV_SPEC.md`,
+`EVIDENCE_RAG_MCP_SPEC.md`, `PROJECT_STATE.md`, or `IMPLEMENTATION_QUEUE.md`.
 It is the bridge between the full specification and small implementation loops.
 
-Last updated: 2026-07-11
+Last updated: 2026-07-13
 
 ## Status Values
 
@@ -41,12 +42,13 @@ blocked      Cannot proceed until named evidence, dependency, or user input exis
 
 | Document | Responsibility |
 | --- | --- |
+| `docs/ACTIVE_PRODUCT_CONTRACT.md` | Concise daily execution scope, claim boundaries, and task-selection policy |
 | `DEV_SPEC.md` | Root control-plane requirement source; wins on product identity, LangGraph/artifact authority, safety, review, runtime, eval, permission, and rollback |
 | `EVIDENCE_RAG_MCP_SPEC.md` | Evidence Retrieval / Knowledge / MCP subsystem spec; sections 0-3 are normative and section 4 plus later imported material is reference-only |
 | `docs/SPEC_COVERAGE_MATRIX.md` | Requirement-level coverage ledger |
 | `docs/PROJECT_STATE.md` | Current factual project state |
 | `docs/IMPLEMENTATION_QUEUE.md` | Next executable small loops |
-| `docs/V1_TO_V2_TRANSITION.md` | Module maturity targets, task-width control, human supervision contract, and V1-to-V2 transition gates |
+| `docs/V1_TO_V2_TRANSITION.md.frozen` | Frozen historical module-maturity and transition record; not an active gate |
 | `docs/audits/LOOP_HISTORY.md` | Restored historical loop archive from rescue commit c43f4ec; useful for reconstruction, not a substitute for current-branch verification |
 | `docs/EXECUTION_CONTROL_GUIDE.md` | Historical control guide referenced by older records; currently missing from this branch and not current-branch evidence |
 
@@ -66,8 +68,9 @@ M3 Eval And Dashboard:
   eval cases, metrics, dashboard projection, and claim-boundary tests make behavior inspectable.
 ```
 
-M3 is not production readiness. V2 production-facing work remains gated by
-`docs/V1_TO_V2_TRANSITION.md`.
+M3 is not production readiness. Current production-facing task selection is
+governed by `docs/ACTIVE_PRODUCT_CONTRACT.md`; the frozen transition document
+is historical context only.
 
 ## Evidence Provenance Levels
 
@@ -253,11 +256,11 @@ tests/unit/test_workflow_checkpointing.py
 | MISS-013A | 45.18 | Controlled-agent performance budget contract now supports config-driven API-call, item, batch, duration, positive concurrency, enforced cache policy, default blocking for unconfigured operations, blocked/degraded decisions, trace summaries, and job_status budget_summary serialization | Q-020 | `src/mod_agent/performance/budget.py`, `src/core/settings.py`, `config/settings.yaml`, `tests/unit/test_performance_budget.py`, `tests/unit/test_config_loading.py`, `tests/unit/test_artifact_contract.py` |
 | MISS-018 | 20.3, 45.12 | Controlled-agent read-only/report-only MCP tool surface now exposes safe status/artifact/retrieval/proposal/review/eval/job summaries and preserves degraded budget semantics | Q-021 | `src/mod_agent/mcp/tools.py`, `tests/unit/test_controlled_agent_mcp_tools.py`, `tests/integration/test_mcp_server.py`, `tests/e2e/test_mcp_client.py` |
 | MISS-019 | 8.7, 45.8, 45.18.1 | Disabled-by-default dense retrieval provider contract now exists with fake provider tests, trace-visible dense route, and explicit budget accounting while preserving BM25/symbol V1 gates | Q-022 | `src/mod_agent/evidence/dense.py`, `src/mod_agent/evidence/retriever.py`, `src/mod_agent/knowledge/models.py`, `src/core/settings.py`, `tests/unit/test_evidence_retrieval.py`, `tests/unit/test_config_loading.py` |
-| MISS-021A | 8.7, 45.8, 45.18.1 | FakeDenseRetrievalProvider can no longer be loaded through normal settings; settings tests must explicitly pass allow_test_providers=True | V1-AUDIT-001 | `src/core/settings.py`, `tests/unit/test_config_loading.py`, `docs/V1_ACCEPTANCE_AUDIT.md` |
+| MISS-021A | 8.7, 45.8, 45.18.1 | FakeDenseRetrievalProvider can no longer be loaded through normal settings; settings tests must explicitly pass allow_test_providers=True | V1-AUDIT-001 | `src/core/settings.py`, `tests/unit/test_config_loading.py`, `docs/V1_ACCEPTANCE_AUDIT.md.frozen` |
 | MISS-022A | 10.3, 15.3, 49.1.4, 50.9.3 | FeatureSpec acceptance contract now flows through runtime_evidence and eval_report with strict acceptance_verified routing | V1-AUDIT-002 | `src/mod_agent/runtime/evidence.py`, `src/mod_agent/workflow/graph.py`, `src/mod_agent/workflow/transitions.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_repair_loop.py`, `tests/unit/test_artifact_contract.py` |
 | MISS-023A | 15.2, 15.3, 49.1.4, 50.9.3 | Manual and supplied runtime evidence now require supports_acceptance to cover every acceptance_criteria entry in the current acceptance_contract before verified acceptance can be recorded | V1-AUDIT-003 | `src/mod_agent/runtime/evidence.py`, `tests/unit/test_runtime_evidence.py` |
 | MISS-024A | 49.1.4, 50.9.3 | Fake/local eval_report and workflow_summary now explicitly block V1 acceptance when real build/runtime evidence is missing | V1-AUDIT-004 | `src/mod_agent/workflow/graph.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_artifact_contract.py` |
-| MISS-025A | 49.1.4, 50.9.3 | V1 audit verdict recorded the contract path as accepted with known gaps and deferred real runtime evidence before MISS-022 was implemented | V1-AUDIT-005 | `docs/V1_ACCEPTANCE_AUDIT.md`, `docs/PROJECT_STATE.md`, `docs/IMPLEMENTATION_QUEUE.md` |
+| MISS-025A | 49.1.4, 50.9.3 | V1 audit verdict recorded the contract path as accepted with known gaps and deferred real runtime evidence before MISS-022 was implemented | V1-AUDIT-005 | `docs/V1_ACCEPTANCE_AUDIT.md.frozen`, `docs/PROJECT_STATE.md`, `docs/IMPLEMENTATION_QUEUE.md` |
 | MISS-022B | 49.1.4, 50.9.3 | Real runtime evidence branch now exists through build_real_runtime_evidence_payload, runtime_evidence_factory injection, strict V1 accepted gates for execution_mode=real, real_runtime_performed=True, claims_real_runtime_success=True, and acceptance_verified=True, and graph E2E tests outside fake/manual/supplied fixture-style evidence | MISS-022 | `src/mod_agent/runtime/evidence.py`, `src/mod_agent/workflow/graph.py`, `tests/unit/test_runtime_evidence.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_artifact_contract.py` |
 | MISS-026A | 49.1.4, 50.9.3 | Local runtime probe runner now launches an explicitly approved subprocess, collects stdout/stderr, maps acceptance_criteria to configured log markers, and feeds the existing runtime_evidence contract through a graph-compatible factory | MISS-026 | `src/mod_agent/runtime/probe.py`, `src/mod_agent/runtime/__init__.py`, `tests/unit/test_runtime_probe.py`, `tests/unit/test_workflow_graph.py` |
 | MISS-026B | 49.1.4, 50.9.3 | GTFO real runtime automation interface now requires explicit launch approval, validates executable/working-directory/log-path configuration, collects persistent log markers, captures screenshots with timeout, records failed automation as runtime_evidence, and separates process liveness from startup and acceptance markers | RUNTIME-DENSE-API-BOUNDARY-001 | `src/mod_agent/runtime/gtfo_automation.py`, `src/mod_agent/runtime/__init__.py`, `src/core/settings.py`, `config/settings.yaml`, `tests/unit/test_gtfo_runtime_automation.py`, `tests/unit/test_config_loading.py`; GTFO-specific trust binding is completed by MISS-026E |

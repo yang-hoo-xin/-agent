@@ -1,5 +1,9 @@
 # V1 Acceptance Audit
 
+Frozen historical record. Do not use this file for current task selection or
+claim promotion. Current execution starts with
+`docs/ACTIVE_PRODUCT_CONTRACT.md` and `docs/PROJECT_STATE.md`.
+
 Last updated: 2026-07-08
 
 This audit maps the current implementation back to the V1-related requirements in

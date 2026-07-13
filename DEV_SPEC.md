@@ -1,5 +1,10 @@
 # Evidence-Grounded Controlled Code Generation Agent Platform DEV_SPEC
 
+Daily execution starts with `docs/ACTIVE_PRODUCT_CONTRACT.md`. This file remains
+the detailed root control-plane specification. Older phase tables, imported
+material, and historical addenda do not create active work unless the active
+contract and current queue select it.
+
 # 0.0A Validation-First Specification Authority
 
 This section is the highest-priority specification rule. It supersedes older

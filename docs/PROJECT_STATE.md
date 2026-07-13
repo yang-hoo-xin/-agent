@@ -3,7 +3,7 @@
 This file is the active state summary for the Evidence-Grounded Controlled Code Generation Agent Platform.
 Historical loop details are archived in `docs/audits/LOOP_HISTORY.md`.
 
-Last updated: 2026-07-11
+Last updated: 2026-07-13
 
 ## Current Queue
 
@@ -16,10 +16,10 @@ directional_sequence: Completed. Frozen cases and raw A/B/D results are preserve
 formal_validation_track: V2-RET-001A/B/C and H1-H5 remain a conditional long-term roadmap. Start the relevant formal measurement only when a concrete product decision requires a promotion-grade claim; they are not consecutive V2 blockers.
 ordinary_queue_status: Q-022, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, TRANSITION-001, TRANSITION-002, TRANSITION-003, TRANSITION-004, TRANSITION-005, MISS-026D, MISS-026E, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; approved GTFO launch and real gameplay evidence remain explicit opt-in production runtime automation work
 known_failures_unattributed: evaluator/workflow/dashboard pre-Arm-A focused suite passed 75 tests. Arm A/Git focused tests pass and changed-path Ruff passes. The earlier full unit run on 2026-07-11 produced 1502 passed, 7 skipped, and 32 failures across timing, MCP fixture binding, embedding settings mocks, collection calling convention, optional PDF image extraction, delivery E2E environment, duplicate MCP registration, and unavailable/incompatible Ragas dependencies. Without a pre-change run on the same revision and environment, causal attribution is unverified; none occurs in the focused Arm A paths.
-next_stage_after_expert_split: V2 platform expansion is active; prioritize platform capability work over further process Skill splitting
+next_stage_after_expert_split: No platform-expansion task is active while current_queue is None. First select one concrete product capability or real Mod request; split another process Skill only if that selected work exposes a failure that requires it.
 V3_deferred_runtime_track: approved GTFO launch smoke, game directory copy, and real gameplay evidence are V3 or explicit opt-in runtime validation work
 career_oriented_progression: V2/V3 tasks must improve interview-visible production Agent platform depth: vertical slice evidence, safe tool integration, observability, evaluation, artifact lineage, runtime feedback, and retrieval quality
-current_spec_split_status: Validation-first normative overrides now exist in DEV_SPEC.md and EVIDENCE_RAG_MCP_SPEC.md; imported/legacy RAG material is reference-only pending later mechanical extraction; docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md holds current architecture decisions and docs/RETRIEVAL_VALIDATION_PLAN.md records the completed directional pilot separately from the conditional H1-H5 formal-validation roadmap.
+current_spec_split_status: docs/ACTIVE_PRODUCT_CONTRACT.md is the concise daily execution contract. DEV_SPEC.md remains detailed root control-plane authority; EVIDENCE_RAG_MCP_SPEC.md sections 0-3 remain conditional subsystem authority. Imported/legacy material is reference-only. V1 acceptance and transition documents are frozen historical records.
 ```
 
 ## V2-CODEGEN-REAL-001 Completion — 2026-07-11
@@ -714,7 +714,7 @@ files_changed:
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
-  docs/V1_ACCEPTANCE_AUDIT.md
+  docs/V1_ACCEPTANCE_AUDIT.md.frozen
 behavior:
   GTFORealRuntimeAutomationRunner now provides a GTFO real runtime automation interface with explicit allow_game_launch gating, executable/working-directory/log-path validation, persistent log marker collection, screenshot capture with timeout, failure payload capture, and marker/liveness separation.
   Settings now parse runtime.gtfo.acceptance_markers and build_graph can select make_gtfo_runtime_evidence_factory_from_settings when runtime.gtfo.enabled is true and no runtime_evidence_factory is explicitly supplied.
@@ -821,7 +821,7 @@ forbidden_claims:
   This does not prove non-goal behavior is actively verified; it only consumes supplied non-goal preservation evidence.
   This does not complete production runtime automation, dense/RAG production integration, API/dashboard service work, MCP transport, or baseline metric collection.
 next:
-  Explicit opt-in approved GTFO launch smoke if real GTFO runtime evidence is selected; otherwise select one explicit recovery target from docs/V1_TO_V2_TRANSITION.md.
+  Explicit opt-in approved GTFO launch smoke if real GTFO runtime evidence is selected; otherwise consult docs/V1_TO_V2_TRANSITION.md.frozen only for historical recovery context.
 ```
 
 ## V1-AUDIT-001: V1 Acceptance Boundary And Fake Dense Provider Gate
@@ -839,7 +839,7 @@ spec_refs:
 files:
   src/core/settings.py
   tests/unit/test_config_loading.py
-  docs/V1_ACCEPTANCE_AUDIT.md
+  docs/V1_ACCEPTANCE_AUDIT.md.frozen
   docs/PROJECT_STATE.md
   docs/IMPLEMENTATION_QUEUE.md
   docs/SPEC_COVERAGE_MATRIX.md
@@ -950,7 +950,7 @@ status: completed
 branch: codex/v1-acceptance-audit
 commit: 0c78c81 docs(v1): record final acceptance audit verdict
 files:
-  docs/V1_ACCEPTANCE_AUDIT.md
+  docs/V1_ACCEPTANCE_AUDIT.md.frozen
   docs/IMPLEMENTATION_QUEUE.md
   docs/PROJECT_STATE.md
   docs/SPEC_COVERAGE_MATRIX.md

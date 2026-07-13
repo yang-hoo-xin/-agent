@@ -1,5 +1,9 @@
 # Evidence RAG / MCP Sub-Spec
 
+Daily execution starts with `docs/ACTIVE_PRODUCT_CONTRACT.md`. This file is read
+only when the selected work affects retrieval, knowledge, or MCP. Sections 0-3
+are normative subsystem detail; section 4 and later material is reference-only.
+
 This file defines the Evidence Retrieval, Knowledge, and MCP subsystem inside
 the Evidence-Grounded Controlled Code Generation Agent Platform.
 

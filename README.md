@@ -1,5 +1,7 @@
 # Evidence-Grounded Controlled Code Generation Agent Platform
 
+Current execution scope and claim boundaries: `docs/ACTIVE_PRODUCT_CONTRACT.md`.
+
 一个面向垂直代码开发场景的受控 Agent 平台。
 
 首个验证场景是 GTFO / BepInEx / IL2CPP / Harmony 风格 DLL Mod 开发，但

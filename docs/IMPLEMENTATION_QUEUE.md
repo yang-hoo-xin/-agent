@@ -23,26 +23,31 @@ next_recommended_task: Select one concrete product capability or real Mod reques
 directional_sequence: completed -> retain rg plus live reads -> defer SymbolIndexer deepening until repeated structural-navigation failures -> defer community BM25 until authentic traceable material exists
 formal_validation_track: V2-RET-001A/B/C and H1-H5 are conditionally triggered when a product decision requires a promotion-grade claim; they are not the active consecutive queue
 Q_queue_status: Q-022, MISS-022, MISS-026A, RUNTIME-DENSE-API-BOUNDARY-001, TRANSITION-001, TRANSITION-002, TRANSITION-003, TRANSITION-004, TRANSITION-005, MISS-026D, MISS-026E, STATE-001, SKILL-MCP-001, E2E-001, E2E-002, SKILL-SPLIT-001, SKILL-SPLIT-002, SKILL-SPLIT-003, SKILL-SPLIT-004, SKILL-SPLIT-CLOSURE-001, PLANNING-BRIEF-001, ARTIFACT-INTEGRITY-001, ARTIFACT-INTEGRITY-002, ARTIFACT-INTEGRITY-003, ARTIFACT-PROD-001A, ARTIFACT-PROD-001B, and PLANNING-BRIEF-IMPL-001 completed; approved GTFO launch and real gameplay evidence remain explicit opt-in production runtime automation work
-next_stage_after_expert_split: V2 platform expansion is active; do not continue splitting process Skills by default
+next_stage_after_expert_split: No platform-expansion task is active while current_queue is None. First select one concrete product capability or real Mod request; do not continue splitting process Skills by default.
 V3_deferred_runtime_track: approved GTFO launch smoke, real gameplay evidence, and production runtime automation remain V3 or explicit opt-in work after V2 platform surfaces mature
 career_oriented_progression: select tasks that improve interview-visible production Agent platform depth, not tasks that only expand schemas or documentation
 ```
 
+Daily task selection starts with `docs/ACTIVE_PRODUCT_CONTRACT.md`. The full
+specifications are consulted only for the boundary touched by the selected task.
+
 ## RAG/MCP Spec Anchors
 
 ```text
-DEV_SPEC.md remains the root control-plane spec.
+docs/ACTIVE_PRODUCT_CONTRACT.md is the daily execution contract.
+DEV_SPEC.md remains the detailed root control-plane spec.
 EVIDENCE_RAG_MCP_SPEC.md is the Evidence RAG / MCP subsystem spec.
 
 Read order for RAG/MCP tasks:
-  1. DEV_SPEC.md for product boundary, LangGraph artifact loop, safety gates,
+  1. docs/ACTIVE_PRODUCT_CONTRACT.md for current scope and claim boundaries.
+  2. DEV_SPEC.md for product boundary, LangGraph artifact loop, safety gates,
      review/runtime/eval authority, and queue discipline.
-  2. EVIDENCE_RAG_MCP_SPEC.md sections 0-3 for validation-first subsystem rules,
+  3. EVIDENCE_RAG_MCP_SPEC.md sections 0-3 for validation-first subsystem rules,
      source authority, phase placement, and controlled-agent MCP boundaries.
-  3. docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md and
+  4. docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md and
      docs/RETRIEVAL_VALIDATION_PLAN.md for the three-layer architecture,
      H1-H5, experimental arms, metrics, and promotion/stopping rules.
-  4. EVIDENCE_RAG_MCP_SPEC.md section 4 and later imported material only for
+  5. EVIDENCE_RAG_MCP_SPEC.md section 4 and later imported material only for
      non-normative implementation reference after validation justifies it.
 
 If DEV_SPEC.md and EVIDENCE_RAG_MCP_SPEC.md conflict, DEV_SPEC.md wins for
@@ -302,13 +307,13 @@ isolated apply -> real build`, or when that loop records the failure it repairs.
 | MISS-026E | completed | Add `runtime_trust_binding` to runtime evidence, bind GTFO automation claims to current-run logs, `feature_id`, graph `run_id`, build artifact hash, plugin load marker, acceptance markers, runtime process identity, and screenshot/runtime artifact linkage, and block V1 accepted status when GTFO trust binding is missing | `src/mod_agent/runtime/evidence.py`, `src/mod_agent/runtime/gtfo_automation.py`, `src/mod_agent/evaluation/gate.py`, `src/mod_agent/workflow/graph.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_runtime_evidence.py`, `tests/unit/test_gtfo_runtime_automation.py`, `tests/unit/test_transition_eval_gate.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_artifact_contract.py`, `tests/unit/test_dashboard_projection.py`; focused affected command -> 86 passed; dashboard/MCP/E2E/runtime-probe affected command -> 18 passed; this does not claim a real GTFO launch or gameplay success |
 | ARTIFACT-PROD-001 | deferred | Remaining production-grade artifact storage hardening: automatic startup/preflight recovery invocation, recovery for states without a valid pending marker and revision, cross-process write locking, revision manifest/index files, historical revision query APIs, old-ref migration/backfill, and revision garbage collection | Tracked as future work in `docs/SPEC_COVERAGE_MATRIX.md`; do not claim ArtifactStore is production-grade; do not continue this by default before returning to the mod delivery mainline |
 
-## V1 To V2 Transition Queue
+## Frozen Historical V1 To V2 Transition Record
 
 ```text
 Queue purpose: prepare for V2 expansion by reducing wrong-claim, unsafe-change,
 interface, and runtime-evidence ambiguity risks. This is not V2 feature
 expansion. Detailed module maturity boundaries live in
-docs/V1_TO_V2_TRANSITION.md.
+docs/V1_TO_V2_TRANSITION.md.frozen.
 ```
 
 | Task | Status | Scope | Evidence |
@@ -319,7 +324,7 @@ docs/V1_TO_V2_TRANSITION.md.
 | TRANSITION-004 | completed | MCP JSON-RPC Wire Boundary: add initialize, notifications/initialized, `tools/list`, `tools/call`, content, structuredContent, artifact_refs, trace_refs, JSON-RPC error behavior, and dangerous tool hidden/disabled policy | `src/mod_agent/mcp/protocol.py`, `src/mod_agent/mcp/__init__.py`, `tests/unit/test_controlled_agent_mcp_protocol.py`; dangerous tools remain hidden and wire-level calls to `run_game` return JSON-RPC method-not-found errors; this is not a full MCP server because stdio/http transport integration, server process wiring, and production deployment are not implemented; ToolAnnotations are schema hints, not the safety boundary |
 | TRANSITION-005 | completed | Runtime Evidence Binding: add `feature_id`, build artifact hash, run id, plugin-specific marker binding, screenshot refs, non-goal preservation fields, and runtime claim-boundary tests | `src/mod_agent/runtime/evidence.py`, `src/mod_agent/runtime/probe.py`, `src/mod_agent/runtime/__init__.py`, `src/mod_agent/workflow/graph.py`, `src/mod_agent/evaluation/gate.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_runtime_evidence.py`, `tests/unit/test_transition_eval_gate.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_runtime_probe.py`, `tests/unit/test_artifact_contract.py`, `tests/unit/test_dashboard_projection.py`; focused command -> 65 passed; this binds runtime success claims to graph/build/acceptance marker context and supplied non-goal preservation evidence; GTFO-specific marker trust binding is closed by MISS-026E |
 
-## V1 Acceptance Audit Queue
+## Frozen Historical V1 Acceptance Audit Record
 
 ```text
 Queue purpose: verify the current implementation against DEV_SPEC.md V1 acceptance boundaries before adding further Q work.
@@ -327,11 +332,11 @@ Queue purpose: verify the current implementation against DEV_SPEC.md V1 acceptan
 
 | Task | Status | Scope | Evidence |
 | --- | --- | --- | --- |
-| V1-AUDIT-001 | completed | Audit V1 acceptance boundaries and gate FakeDenseRetrievalProvider behind explicit test opt-in | `docs/V1_ACCEPTANCE_AUDIT.md`, `tests/unit/test_config_loading.py` |
+| V1-AUDIT-001 | completed | Audit V1 acceptance boundaries and gate FakeDenseRetrievalProvider behind explicit test opt-in | `docs/V1_ACCEPTANCE_AUDIT.md.frozen`, `tests/unit/test_config_loading.py` |
 | V1-AUDIT-002 | completed | Carry FeatureSpec acceptance contract through runtime_evidence and eval_report, and enforce strict acceptance_verified routing | `src/mod_agent/workflow/graph.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_repair_loop.py` |
 | V1-AUDIT-003 | completed | Verify manual/supplied runtime acceptance evidence contract matching outside fake runtime fixtures | `src/mod_agent/runtime/evidence.py`, `tests/unit/test_runtime_evidence.py` |
 | V1-AUDIT-004 | completed | Make fake/local eval and workflow summaries explicitly block V1 acceptance when real build/runtime evidence is missing | `src/mod_agent/workflow/graph.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_workflow_graph.py`, `tests/unit/test_artifact_contract.py` |
-| V1-AUDIT-005 | completed | Produce the final V1 acceptance verdict and queue handoff without claiming real runtime execution | `docs/V1_ACCEPTANCE_AUDIT.md`, `docs/SPEC_COVERAGE_MATRIX.md` |
+| V1-AUDIT-005 | completed | Produce the final V1 acceptance verdict and queue handoff without claiming real runtime execution | `docs/V1_ACCEPTANCE_AUDIT.md.frozen`, `docs/SPEC_COVERAGE_MATRIX.md` |
 
 ## Legacy Test Triage
 
