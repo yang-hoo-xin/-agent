@@ -42,8 +42,10 @@ blocked      Cannot proceed until named evidence, dependency, or user input exis
 
 | Document | Responsibility |
 | --- | --- |
-| `docs/ACTIVE_PRODUCT_CONTRACT.md` | Concise daily execution scope, claim boundaries, and task-selection policy |
-| `DEV_SPEC.md` | Root control-plane requirement source; wins on product identity, LangGraph/artifact authority, safety, review, runtime, eval, permission, and rollback |
+| `AGENTS.md` | Persistent repository-working rules for Codex, authority order, architecture guardrails, evidence, writes, and claims |
+| `docs/ACTIVE_PRODUCT_CONTRACT.md` | Concise execution scope, claim boundaries, and task-selection policy |
+| `docs/ARCHITECTURE_OVERVIEW.md` | Current architecture map, maturity overlay, Critic boundary, change triggers, and drift stop rules |
+| `DEV_SPEC.md` | Detailed control-plane requirement source for product identity, LangGraph/artifact behavior, safety, review, runtime, eval, permission, and rollback |
 | `EVIDENCE_RAG_MCP_SPEC.md` | Evidence Retrieval / Knowledge / MCP subsystem spec; sections 0-3 are normative and section 4 plus later imported material is reference-only |
 | `docs/SPEC_COVERAGE_MATRIX.md` | Requirement-level coverage ledger |
 | `docs/PROJECT_STATE.md` | Current factual project state |
@@ -85,8 +87,28 @@ history_restored:
   Detailed record exists in docs/audits/LOOP_HISTORY.md, restored from c43f4ec.
 history_only_missing_current_files:
   Historical record names files that are not present in this branch; do not claim current tested coverage until restored or reimplemented.
-explicit_opt_in:
-  Capability is intentionally paused by default, but can be reopened by explicit user-directed platform-development work or a named queue task.
+```
+
+## Trigger Values
+
+Trigger is separate from implementation Status and evidence Provenance. A gap
+does not enter the active queue until its exact trigger is satisfied.
+
+```text
+active:
+  The user selected the work and its dependencies are explicit.
+selected_product_failure:
+  A concrete product task recorded the named failure.
+selected_external_client:
+  A concrete external client requires the named interface.
+explicit_run_approval:
+  The user approved the exact external disclosure, launch, copy, or runtime action for this run.
+formal_claim_required:
+  A precise promotion-grade, cross-project, or production claim requires the work.
+repeated_verified_failure:
+  Repeated bound outcomes show that the current manual or deterministic path is insufficient.
+none_satisfied:
+  No current product trigger exists; the row remains outside the queue.
 ```
 
 Current missing historical references:
@@ -102,13 +124,13 @@ tests/unit/test_workflow_checkpointing.py
 
 ## Product And Governance Coverage
 
-| Coverage ID | Spec Refs | Requirement | Module | Status | Queue / Next | Current Evidence Or Gap |
+| Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |
 | --- | --- | --- | --- | --- | --- | --- |
 | GOV-001 | 0.0, 50.4 | Capability-first controlled code-generation loop outranks passive RAG expansion | WF | tested | Q-001, Q-002A done | Queue now prioritizes controlled fake execution before deeper Knowledge Hub work |
 | GOV-002 | 0.0B, 2.1, 50.8 | Project is a vertical code development Agent, not a GTFO-only script set | DOM | partial | Q-017 done; future onboarding workflow | GTFO rules now live behind a DomainAdapter/GameProfile boundary; full onboarding workflow and capability report remain incomplete |
 | GOV-003 | 0.5, 44, 50.7 | Claims must be backed by artifact/test evidence | OBS | partial | ongoing per-loop rule; R-008, V1-AUDIT-005, MISS-022, MISS-026A, TRANSITION-005, and MISS-026E done | Q-002A prevents fake execution from claiming real success; R-008 adds explicit workflow_completion_status=fake_execution_completed and requested_behavior_status=not_verified while keeping real-success claims false; V1-AUDIT-005 records that the V1 contract path is accepted with known gaps; MISS-022 adds a tested real runtime evidence branch; MISS-026A adds a tested local subprocess runtime probe; TRANSITION-005 binds runtime success claims to run/build/acceptance-marker context and supplied non-goal preservation evidence; MISS-026E blocks GTFO automation acceptance unless runtime_trust_binding is trusted; real GTFO gameplay evidence remains explicit opt-in |
 | GOV-004 | 42, 48.2 | Detailed spec requirements need durable tracking | OBS | implemented | this file | This matrix now records requirement-level coverage and gaps |
-| GOV-005 | 50.6 | Token and context budget policy must preserve project continuity | OBS | partial | STATE-001, future context-pack task | State, queue, coverage, and restored loop history exist; `docs/EXECUTION_CONTROL_GUIDE.md` is referenced by historical records but missing from the current branch; no automated context pack yet |
+| GOV-005 | 50.6 | Token, context, and governed long-term experience policy must preserve project continuity | OBS | partial | STATE-001; future task only after repeated real recurrence failure | State, queue, coverage, restored loop history, and `docs/ARCHITECTURE_OVERVIEW.md` now distinguish run history, verified reusable lessons, stale revalidation, and explicit human-approved control changes. Current source/API/runtime evidence outranks memory, and lessons remain planning-only. `docs/EXECUTION_CONTROL_GUIDE.md` is referenced by historical records but missing from the current branch; no automated context pack, verified lesson extraction, accumulated-experience retrieval, feedback job, or policy learning exists. |
 | GOV-006 | 48.12, 49.8 | ADR and glossary backlog must exist for core design choices | OBS | not_started | future ADR task | No ADR/glossary files tracked yet |
 | GOV-007 | 42, 48.2, 50.7 | External review findings must enter the execution queue before feature expansion | OBS | partial | STATE-001 | `docs/IMPLEMENTATION_QUEUE.md`, `docs/PROJECT_STATE.md`, and restored `docs/audits/LOOP_HISTORY.md` preserve the repair-queue policy; the former auto-coder Skill is frozen and `docs/EXECUTION_CONTROL_GUIDE.md` is currently missing, so the execution-guide part of this claim is historical-only until restored |
 | GOV-008 | Skill/MCP boundary decision | Reusable methods belong in Skills while product facts, state, contracts, tests, and artifacts remain outside Skills | OBS | implemented | SKILL-SPLIT-CLOSURE-001 done; auto-coder frozen 2026-07-11 | `mod-delivery-playbook`, `patch-review-playbook`, `runtime-diagnosis-playbook`, `hook-discovery-playbook`, and `repair-loop-playbook` remain process-only Skills; current state/schema/test evidence remain in control docs and artifacts; `.agents/skills/auto-coder/SKILL.md` is frozen as `SKILL.md.frozen` and is not an execution authority; no runtime Skill registry, Skill selector, Skill loader, LangGraph selected-skill node injection, Skill output validator, automatic hook scanner, or automatic repair executor is claimed |
@@ -119,7 +141,7 @@ tests/unit/test_workflow_checkpointing.py
 
 ## Workflow And Artifact Coverage
 
-| Coverage ID | Spec Refs | Requirement | Module | Status | Queue / Next | Current Evidence Or Gap |
+| Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |
 | --- | --- | --- | --- | --- | --- | --- |
 | WF-001 | 0.1A, 5, 49.1 | Real LangGraph `StateGraph` control plane | WF | tested | Q-001 done | Graph tests pass; front-half and fake tail execute through graph |
 | WF-002 | 5.2, 49.1.3 | State ownership contract prevents arbitrary field writes | WF | tested | Q-001 done | `test_mod_agent_state.py` covers ownership policy |
@@ -135,7 +157,7 @@ tests/unit/test_workflow_checkpointing.py
 
 ## Knowledge And Retrieval Coverage
 
-| Coverage ID | Spec Refs | Requirement | Module | Status | Queue / Next | Current Evidence Or Gap |
+| Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |
 | --- | --- | --- | --- | --- | --- | --- |
 | KB-001 | 7.2, 37.2, 45.5.1 | Source discovery with stable source identity and ignore rules | KB | tested | Q-003 done | SourceDiscovery and SourceRegistry now classify supported source patterns, prune ignored/cache/build directories, and produce stable source ids and content hashes |
 | KB-002 | 7.3, 37.3, 45.5.4 | Raw text, canonical text, retrieval text, metadata contract | KB | tested | Q-002 and R-011 done | Document, Chunk, and ChunkRecord contracts now preserve raw/canonical/retrieval text separation with inherited metadata and stable hashes; R-011 defines identity_v1 for document_id, file_hash, source_hash, doc_hash, chunk_id, source_ref, and content_hash |
@@ -160,7 +182,7 @@ tests/unit/test_workflow_checkpointing.py
 
 ## Planning, Proposal, Review, And Change Control Coverage
 
-| Coverage ID | Spec Refs | Requirement | Module | Status | Queue / Next | Current Evidence Or Gap |
+| Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |
 | --- | --- | --- | --- | --- | --- | --- |
 | PLAN-001 | 10.2, 49.3.1 | Request planning classifies ambiguity, risk, and route | PLAN | tested | Q-001 done | Planning tests pass |
 | PLAN-002 | 10.3, 49.3.2 | Feature spec includes acceptance contract | PLAN | verified | E2E-001 done; real game runtime evidence remains future work | FeatureSpec acceptance_criteria and runtime_verification_plan are carried into runtime_evidence.acceptance_contract and eval_report.acceptance_contract; manual/supplied builders require evidence support for every acceptance_criteria entry; E2E-001 current-branch proof verifies each acceptance criterion through configured local runtime probe markers; real game runtime evidence remains future work |
@@ -169,6 +191,7 @@ tests/unit/test_workflow_checkpointing.py
 | PROP-001 | 11.2, 49.3.3 | Patch proposal schema is intent-only before apply | PROP | tested | TRANSITION-003 done | `PatchProposal` remains intent-only and now carries explicit `change_units`, proposal metadata `context_pack`, `no_op_status`, and `rollback_hints`; no real diff writing is introduced |
 | PROP-002 | 11.3, 49.3.3, 50.6 | Proposal context builder uses evidence without guessing | PROP | tested | V2-PROP-001A, GTFO-VSLICE-001B, and GTFO-VSLICE-001C completed | `PatchProposalBuilder` now deepens `patch_proposal.context_pack` with source snippets from evidence excerpts/spans, target symbol signatures, upstream evidence_pack and implementation_plan artifact hashes, implementation_plan hash, context budget metadata, omission blockers, proposal-time Git base revision binding, `binding_registry_ref`, derived display files, and `allowed_edit_binding_ids`. The default `build_graph()` path attempts project-root Git binding before proposal review. `ProposalReviewer` uses shared `BindingResolver` to block missing registry, copied path/symbol/span fields, unknown binding IDs, registry/evidence drift, missing repair scope coverage, forbidden/domain paths, missing/drifting upstream artifact hashes, missing implementation_plan hash, context budget gaps, omission blockers, missing Git base revision, and Hook-required changes whose `hook_target_binding_id` is missing, unknown, incomplete, or not selected by the implementation_plan. Focused proposal/workflow/artifact/dashboard/repair/domain tests passed |
 | PROP-003 | 11.4 | No-op detector blocks meaningless plans | PROP | tested | TRANSITION-003 done | No-op proposals now carry explicit `no_op_status`; reviewer still blocks empty diff_intent and also blocks inconsistent no-op status when diff intent exists |
+| PROP-004 | 0.1A, 11.4, 49.3.4 | Optional independent Critic scores a proposal without receiving route or write authority | PROP | tested | V2-CRITIC-001 completed at local/injected boundary | `ProposalCritic` emits a separately registered `critic_assessment` bound to the exact `patch_proposal` ref/hash and current upstream artifacts. `ProposalReviewer` validates the score schema and deterministically fuses it with existing hard rules; stale, malformed, low, non-pass, blocking, or unavailable Critic output cannot approve dry-run. Focused tests cover local scoring, incomplete dimensions, hard-rule precedence, stale hash rejection, integrated Artifact persistence, and fail-closed execution. No external-model Critic or semantic-quality improvement is claimed. |
 | REVIEW-001 | 12.2, 49.3.4 | Review gate checks evidence binding, scope, permissions, forbidden paths | REVIEW | tested | R-001/R-002 and GTFO-VSLICE-001C completed | Graph-level domain_policy wiring is tested through review_proposal; missing evidence_pack now blocks evidence-bound proposals while repair_plan remains an approved repair evidence source; GTFO-VSLICE-001C-A adds a `hook_target_binding` review rule that validates each Hook-required change's selected `hook_target_binding_id` against planner output, complete method identity, Binding Registry, and EvidencePack; 001C-B routes only `revise_proposal` review decisions into repair planning while keeping scope-risk, human-required, and insufficient-evidence decisions blocked |
 | REVIEW-002 | 12.4, 50.3 | Permission model blocks confirmed writes by default | REVIEW | tested | Q-001 done | Permission tests pass |
 | REVIEW-003 | 12.5, 9.5 | Path guard prevents unsafe project paths | REVIEW | tested | Q-001 done | Forbidden path test passes |
@@ -177,7 +200,7 @@ tests/unit/test_workflow_checkpointing.py
 
 ## Execution, Build, Runtime, And Repair Coverage
 
-| Coverage ID | Spec Refs | Requirement | Module | Status | Queue / Next | Current Evidence Or Gap |
+| Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |
 | --- | --- | --- | --- | --- | --- | --- |
 | EXEC-001 | 13, 49.4.1 | Dry-run apply produces structured result before real write | BUILD | tested | V2-CODEGEN-REAL-001 completed | Run `0dca9c33` generated an evidence-bound exact patch, preserved a no-write dry-run result, then applied exactly one occurrence in one isolated source file before build. |
 | EXEC-002 | 49.4.1 | Confirmed apply requires approval and exact diff hash | BUILD | tested | run d189434f plus 2026-07-12 targeted hardening | The dry-run preserves exact before/after text and a canonical `sha256:` hash. Apply rereads live source and recomputes a context hash bound to proposal, implementation_plan, evidence artifact identity, source snapshot, path, before, and after. Missing, stale, or mismatched approval blocks before write; focused drift/context tests pass. |
@@ -192,7 +215,7 @@ tests/unit/test_workflow_checkpointing.py
 
 ## Multimodal Coverage
 
-| Coverage ID | Spec Refs | Requirement | Module | Status | Queue / Next | Current Evidence Or Gap |
+| Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |
 | --- | --- | --- | --- | --- | --- | --- |
 | MM-001 | 38.1 | Loader extracts image references and metadata | MM | partial | Q-018 done; future multimodal ingestion task | Runtime screenshot metadata can now be registered; document/image loaders that extract image_refs remain missing |
 | MM-002 | 38.2 | Splitter preserves image-text relationships | MM | not_started | future multimodal splitter task | No image-text chunk linkage |
@@ -203,7 +226,7 @@ tests/unit/test_workflow_checkpointing.py
 
 ## Evaluation, Observability, MCP, And Performance Coverage
 
-| Coverage ID | Spec Refs | Requirement | Module | Status | Queue / Next | Current Evidence Or Gap |
+| Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |
 | --- | --- | --- | --- | --- | --- | --- |
 | EVAL-001 | 18, 41.5, 45.14 | Golden query list and regression gate for evidence retrieval | EVAL | tested | V2-EVAL-001-FOLLOWUP, formal smoke v5, and directional pilot done | Versioned evaluation plumbing and formal-smoke authenticity are focused-tested. The bounded directional result is preserved and makes no promotion claim. A held-out promotion-grade Arm A result remains missing by design and is not a current blocker. |
 | EVAL-002 | 18.3, 41.5 | Faithfulness, answer relevancy, context precision adapted to evidence tasks | EVAL | partial | V2-EVAL-001 supplies controlled metrics; citation/source-span scoring remains V2-RET work | Current agent-quality tests cover relevance recall/precision, Hook/file correctness, readiness decisions, and wrong-file outcomes; full citation/source-span faithfulness scoring remains incomplete |
@@ -224,7 +247,7 @@ tests/unit/test_workflow_checkpointing.py
 
 ## Domain And Extensibility Coverage
 
-| Coverage ID | Spec Refs | Requirement | Module | Status | Queue / Next | Current Evidence Or Gap |
+| Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |
 | --- | --- | --- | --- | --- | --- | --- |
 | DOM-001 | 9.2, 43.1 | Base Domain Adapter interface | DOM | tested | Q-017 done | DomainAdapter protocol, DomainProfile, DomainRoute, EvidenceQuery, RuntimeProfile, VerificationPlan, DomainReviewPolicy, and DomainAdapterRegistry are tested |
 | DOM-002 | 9.3, 50.8 | GTFO GameProfile as first high-complexity validation target | DOM | tested | Q-017 done | GTFOAdapter exposes GameProfile fields for GTFO / Unity IL2CPP / BepInEx / HarmonyX, source definitions, build profile, runtime profile, and verification strategy |
@@ -299,33 +322,31 @@ tests/unit/test_workflow_checkpointing.py
 | MISS-R011A | 6, 7, 8, 30, 45.4 | Controlled-agent identity fields now have one tested mapping: document_id identifies the loaded document, file_hash is the loaded source file hash, source_hash is the V1 alias for file_hash, doc_hash is canonical document text hash, chunk_id identifies a chunk, and source_ref points from chunk to document | R-011 | `src/mod_agent/knowledge/models.py`, `src/mod_agent/knowledge/database.py`, `src/mod_agent/evidence/models.py`, `src/mod_agent/evidence/retriever.py`, `src/mod_agent/artifacts/registry.py`, `tests/unit/test_knowledge_base.py`, `tests/unit/test_evidence_retrieval.py`, `tests/unit/test_artifact_contract.py` |
 | MISS-R009B | 8.10, 8.11, 37.5, 39.3, 45.8, 45.10 | Authority defaults, raw dict provenance checks, dashboard authority projection, and shared sparse/query tokenization are implemented | R-009-HARDENING-001 | `src/mod_agent/evidence/models.py`, `src/mod_agent/evidence/retriever.py`, `src/mod_agent/planning/implementation_plan.py`, `src/mod_agent/dashboard/projections.py`, `src/core/query_engine/tokenization.py`, `src/core/query_engine/query_processor.py`, `src/ingestion/embedding/sparse_encoder.py`, `tests/unit/test_evidence_retrieval.py`, `tests/unit/test_planning.py`, `tests/unit/test_dashboard_projection.py`, `tests/unit/test_query_processor.py`, `tests/unit/test_sparse_encoder.py` |
 
-## Open Missing Requirement Register
+## Conditional Trigger Register
 
-These rows are the current high-impact gaps that must not be forgotten when selecting future tasks.
+These rows are genuine open gaps. They are not queue entries. A row can move to
+`docs/IMPLEMENTATION_QUEUE.md` only after its exact trigger is satisfied.
 
-| Missing ID | Spec Refs | Missing Detail | Blocking Impact | Recommended Task |
+| Trigger ID | Spec Refs | Open Detail | Exact Trigger | Action After Trigger |
 | --- | --- | --- | --- | --- |
-| V2-PROP-001A | 11.3, 49.3.3, 50.6 | completed: `patch_proposal.context_pack` carries source snippets, target symbol signatures, evidence artifact hashes, implementation_plan hash, optional proposal-time git base revision, context budget metadata, and omission blockers | Dashboard/MCP/eval can now inspect why a patch proposal is evidence-bound instead of only reading shallow proposal fields | Focused affected command: `.\\.venv\\Scripts\\python.exe -m pytest tests/unit/test_proposal_review.py tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py tests/unit/test_dashboard_projection.py tests/unit/test_repair_loop.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_domain_adapter.py -q --tb=short` -> 80 passed |
-| V2-KB-REF-001 | 7.2, 37.2, 50.6 | `reference_mod` is recognized by current source registry/discovery/profile code, but curated public mod import metadata and loader boundaries are missing: `repo_url`, `commit_sha`, `license`, `imported_at`, and `usage_permission` | Conditional only: trigger when a real task needs a reference mod; reference material remains non-authoritative and does not block the current target-source loop | V2-KB-REF-001 after recorded product need |
-| V2-KB-COMM-001 | 7.2, 37.2, 50.6 | `community_note`, `community_hint`, and `raw_community_chat` are not implemented as controlled knowledge source types or loaders | Conditional only: the directional D arm had no authentic traceable corpus, so building a loader now would be infrastructure-first work | V2-KB-COMM-001 after authentic material and recorded product need |
-| GTFO-VSLICE-001 | 8, 9, 11.3, 37.5, 49.3.3 | GTFO-VSLICE-001A proves the first evidence-gated artifact-loop path, V2-PROP-001A deepens proposal context, GTFO-VSLICE-001B proves Binding Registry scope, and GTFO-VSLICE-001C-A/B tighten hook target and review repair context | The project can now claim a tested evidence-gated LangGraph artifact-loop path with static/dynamic review resume plus `implementation_plan.binding_registry`, `edit_binding_id`, `supporting_binding_ids`, `allowed_edit_binding_ids`, non-blocking implementation_plan registry contract enforcement, non-blocking repair_plan exact source-proposal lineage, structured Hook target selection, and revision-class proposal_review blockers entering repair context. It still cannot claim complete production hook discovery, real GTFO launch evidence, production repair quality, or workspace-aware canonical path resolution | GTFO-VSLICE-001C |
-| V2-DASH-001 | 19.4, 39.3, 49.7 | Dashboard/API projections do not yet make every proposal/apply/build detail a first-class demonstration surface | Conditional only: current read-only projections are sufficient to run the narrow loop; trigger when a recorded operator/demo inspection gap remains after its artifacts exist | V2-DASH-001 after recorded inspection gap |
-| V2-MCP-001 | 20.3, 45.12, 49.7.2 | MCP currently exposes safe read-only/report-only tools, but approved write/runtime route contracts are not modeled as LangGraph-backed approval artifacts | Conditional only: local product delivery does not require an external client; trigger when an external MCP client is selected to drive the controlled workflow | V2-MCP-001 after selected external-client use |
-| MISS-R005F | 49.2.2, 49.2.5 | ArtifactStore has per-file same-directory temporary replacement and manual pending-marker recovery, but no automatic startup/preflight recovery invocation and no recovery for states without a valid pending marker and revision is implemented | Some interrupted states still require manual handling, so ArtifactStore must not be described as production-grade durable storage | ARTIFACT-PROD-001 |
-| MISS-R005G | 49.2.2, 49.2.4 | ArtifactStore has immutable revision files but no manifest/index file and no historical revision query API | Revision files exist on disk, but there is no first-class API for listing revision history, resolving latest by manifest, or auditing revision sequences | ARTIFACT-PROD-001 |
-| MISS-R005H | 49.2.2, 49.2.5 | Existing old refs and pre-revision artifact layouts have no migration/backfill path | Older artifacts or refs may not be upgraded into the revision layout, limiting compatibility across branch history and persisted workspaces | ARTIFACT-PROD-001 |
-| MISS-R005I | 49.2.2, 45.18 | Revision retention and garbage collection are not implemented | Artifact revisions can grow without retention policy, reachability analysis, or cleanup controls | ARTIFACT-PROD-001 |
-| MISS-R005J | 49.2.2, 45.18 | Cross-process concurrent write protection is not implemented for ArtifactStore | Concurrent agents or processes writing the same feature/artifact_type can race on latest files or revision metadata once manifest/index files are added | ARTIFACT-PROD-001 |
-| MISS-020 | 20.3, 45.12 | JSON-RPC MCP adapter must map unknown tool names to protocol error instead of reusing facade-level unsupported tool results | TRANSITION-004 | `src/mod_agent/mcp/protocol.py` and `tests/unit/test_controlled_agent_mcp_protocol.py` prove initialize protocolVersion/capabilities/serverInfo response, wire-level method-not-found errors for unknown and dangerous tool names, invalid-params errors for malformed initialize/tools/call params, parse-error handling, notification no-response behavior, safe tools/list schema, and content/structuredContent/artifact_refs/trace_refs preservation; stdio/http transport and production MCP server process wiring remain unimplemented |
-| MISS-021 | 8.7, 45.8, 45.18.1 | Dense vector_store bridge exists, but production RAG remains incomplete: future work needs embedding cache, production batching, operational benchmarks, RRF/rerank closure, score thresholds, source/collection governance, and real deployment evidence | Dense retrieval claims can be overstated if the bridge is described as production RAG | explicit_opt_in |
-| V3-KB-IMPORT-001 | 37.2, 45.18.1, 50.6 | GitHubRepoImporter, DiscordExportImporter, Thunderstore/Nexus/forum importers, and general community crawler are not implemented in the controlled-agent knowledge source layer | External knowledge collection remains curated/manual in V2 and must not be described as automated ingestion or broad crawling | V3/V3+ importer tasks |
-| MISS-026 | 49.1.4, 50.9.3 | GTFO runtime automation interface and trust binding exist, but live gameplay success remains unproven: future work needs exact GTFO paths, plugin-specific markers, feature_id/build_hash/run_id binding, live BepInEx/plugin load evidence, screenshot capture, and explicit launch approval | Production runtime automation cannot be claimed from marker-based interface tests alone | V3 explicit GTFO validation task |
-| MISS-010 | 38 | Full multimodal image ingestion, captioning, byte storage, cache, and confidence policy remain incomplete and default-paused; Q-018 only partially survives in current branch as runtime screenshot metadata code | Image evidence can be registered for runtime screenshots, but full multimodal diagnostics and retrieval still lack loader/caption/storage policy | explicit_opt_in |
-| MISS-011 | 41.5, 49.6, 50.7 | Full behavior benchmark runner, real direct-LLM baseline execution, multi-run consistency, trace matching, and dashboard integration remain incomplete; Q-019 is history-only in the current branch | Project cannot claim measured real-world agent-quality improvement beyond present tests | explicit_opt_in after current-branch eval files are restored or reimplemented |
-| MISS-013 | 45.18 | Budget/resource-limit contracts exist, but real batch orchestration, cache behavior implementation, execution-path integration, concurrent operation handling, and benchmark harness are incomplete | Scaling and cost-control claims remain limited to contract checks until measured execution paths exist | explicit_opt_in |
-| MISS-014 | 50.8 | Full GameProfile onboarding workflow, smoke plugin/startup probe, and capability report are absent; Q-017 provides contracts and unknown-domain blocking only | Supported-domain claims still need onboarding evidence before being advertised | future onboarding/capability report task |
-| MISS-016 | 19, 39 | Local read-only artifact inspection API and dashboard projection exist, but polished dashboard UI, persisted trace viewer, production API/auth, and explicit artifact_status versus blocker-semantics visualization are absent | Process black-box problem is reduced but not fully solved for human UI/demo or service usage | explicit_opt_in |
-| MISS-027 | 42, 50.7 | Current branch has restored LOOP_HISTORY but still misses several historical evidence files listed above | Coverage can overclaim if historical task records are treated as current branch evidence | STATE-001 follow-up: either restore/reimplement missing files or keep affected rows partial |
+| V2-KB-REF-001 | 7.2, 37.2, 50.6 | `reference_mod` support lacks curated import metadata and loader boundaries | `selected_product_failure`: a selected task requires an authentic reference Mod and current source/live reads are insufficient | Add one bounded loader for the exact material; keep it non-authoritative |
+| V2-KB-COMM-001 | 7.2, 37.2, 50.6 | Controlled community/history source types and loaders are absent | `selected_product_failure`: authentic traceable material exists and a selected task cannot proceed adequately without it | Add only the minimum real-material loader; synthetic fixtures remain plumbing-only |
+| V2-DASH-001 | 19.4, 39.3, 49.7 | Existing projections are not a polished full inspection surface | `selected_product_failure`: a real operator/demo records a concrete inspection gap | Implement only the missing projection or view |
+| V2-MCP-001 | 20.3, 45.12, 49.7.2 | Approved MCP write/runtime routes are not modeled as LangGraph-backed approval artifacts | `selected_external_client`: a named MCP client is selected to drive the controlled workflow | Specify and test only the required client route |
+| MISS-R005F | 49.2.2, 49.2.5 | ArtifactStore lacks automatic startup recovery and recovery without a valid pending marker/revision | `selected_product_failure`: a real delivery run exposes this recovery failure | Implement the observed recovery case |
+| MISS-R005G | 49.2.2, 49.2.4 | ArtifactStore lacks a manifest/index and historical revision query API | `selected_product_failure`: a real audit or delivery task requires revision enumeration | Add the minimum query/index path |
+| MISS-R005H | 49.2.2, 49.2.5 | Old refs and pre-revision layouts lack migration/backfill | `selected_product_failure`: a selected workspace contains an incompatible persisted layout | Migrate only the observed layout with rollback evidence |
+| MISS-R005I | 49.2.2, 45.18 | Artifact revision retention and garbage collection are absent | `selected_product_failure`: measured revision growth creates a storage or operation failure | Add a bounded retention policy with reachability tests |
+| MISS-R005J | 49.2.2, 45.18 | ArtifactStore lacks cross-process write protection | `selected_product_failure`: concurrent real writers are selected or a race is reproduced | Add locking for the reproduced write path |
+| MISS-021 | 8.7, 45.8, 45.18.1 | The Dense bridge does not constitute production RAG; batching, caching, governance, evaluation, and deployment evidence remain absent | `formal_claim_required` or `selected_product_failure`: a precise production/semantic-recall claim or recorded deterministic-retrieval failure requires it | Run a bounded decision experiment before production implementation |
+| V3-KB-IMPORT-001 | 37.2, 45.18.1, 50.6 | General repository/chat/forum importers and crawler are absent | `selected_product_failure`: a selected task requires one exact external source that curated/manual ingestion cannot support | Add one source-specific importer, not a general crawler |
+| MISS-026 | 49.1.4, 50.9.3 | Real GTFO gameplay success remains unproven | `explicit_run_approval`: a selected Mod acceptance criterion requires gameplay evidence and the exact launch/copy actions are separately approved | Collect bound process, build, log/marker, and requested acceptance evidence |
+| MISS-010 | 38 | Full multimodal ingestion, captioning, storage, cache, and confidence policy are incomplete | `selected_product_failure`: a selected runtime diagnosis cannot be resolved with logs/source and requires image evidence | Implement the minimum evidence path for that failure |
+| MISS-011 | 41.5, 49.6, 50.7 | Full behavior benchmark execution and real direct-model baseline are incomplete | `formal_claim_required`: a precise comparative quality claim is required | Restore or implement the smallest benchmark that supports that claim |
+| MISS-013 | 45.18 | Real batch orchestration, cache integration, concurrency handling, and measured resource limits are incomplete | `selected_product_failure`: a selected workload reproduces a budget, scale, or concurrency failure | Implement and measure only the failing path |
+| MISS-014 | 50.8 | Full GameProfile onboarding workflow and startup capability probe are absent | `selected_product_failure` or `formal_claim_required`: a second real domain must be onboarded or advertised | Build the minimum onboarding proof for that domain |
+| MISS-016 | 19, 39 | Inspection API/projections exist, but production UI/auth and persisted trace viewing are incomplete | `selected_product_failure`: a real operator or deployment records one missing inspection/auth capability | Implement that exact surface or boundary |
+| MISS-027 | 42, 50.7 | Restored history names files absent from the current branch | `formal_claim_required`: a claim depends on one of those historical files | Restore/reimplement the exact evidence or keep the affected status partial |
 
 ## Next Matrix Maintenance Rules
 
@@ -337,7 +358,7 @@ When a queue task starts:
 
 When a queue task completes:
   1. Update each affected row status.
-  2. Add code files, test files, or artifact evidence in PROJECT_STATE.
-  3. Add any new missing detail to the Missing Requirement Register.
+  2. Update the row's provenance with exact code, test, or artifact evidence.
+  3. Add a trigger row only for a genuine remaining gap with an exact trigger.
   4. Do not mark verified without E2E, regression, performance, or real execution evidence.
 ```

@@ -23,6 +23,7 @@ from src.mod_agent.knowledge import (
     SourceRecord,
     SourceRegistry,
 )
+from src.mod_agent.proposal import RuleBasedProposalCritic
 from src.mod_agent.runtime import (
     GTFOLogSnapshot,
     GTFOProcessHandle,
@@ -52,6 +53,22 @@ def test_external_evaluation_requirement_requires_factory(tmp_path: Path) -> Non
         build_graph(
             ArtifactStore(tmp_path / "artifacts"),
             require_external_evaluation=True,
+        )
+
+
+def test_proposal_critic_cannot_be_implicitly_triggered(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="critic_requirement='required'"):
+        build_graph(
+            ArtifactStore(tmp_path / "artifacts"),
+            proposal_critic=RuleBasedProposalCritic(),
+        )
+
+
+def test_proposal_critic_requirement_rejects_unknown_value(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must be exactly"):
+        build_graph(
+            ArtifactStore(tmp_path / "artifacts"),
+            critic_requirement="automatic",  # type: ignore[arg-type]
         )
 
 
@@ -285,6 +302,91 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     )
 
 
+def test_graph_can_persist_independent_critic_and_keep_routing_deterministic(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        proposal_critic=RuleBasedProposalCritic(),
+        critic_requirement="required",
+    )
+    state = create_initial_state(
+        run_id="run_with_critic",
+        request_id="req_with_critic",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    critic = _artifact_data(store, result, "critic_assessment")
+    review = _artifact_data(store, result, "proposal_review")
+    assert result["current_stage"] == "done"
+    assert critic["verdict"] == "pass"
+    assert critic["subject_artifact_hash"] == result["artifact_hashes"]["patch_proposal"]
+    assert critic["independence_boundary"] == "read_only_no_route_authority"
+    assert review["decision"] == "approve_dry_run"
+    assert "proposal_critic" in review["checked_rules"]
+    assert review["critic_gate"]["state"] == "required_succeeded"
+
+
+def test_graph_fails_closed_when_required_critic_execution_fails(tmp_path: Path) -> None:
+    class FailingCritic:
+        def assess(self, proposal, *, subject_artifact_ref, subject_artifact_hash):
+            raise RuntimeError("critic unavailable")
+
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        proposal_critic=FailingCritic(),
+        critic_requirement="required",
+    )
+    state = create_initial_state(
+        run_id="run_with_failed_critic",
+        request_id="req_with_failed_critic",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    critic = _artifact_data(store, result, "critic_assessment")
+    review = _artifact_data(store, result, "proposal_review")
+    assert result["current_stage"] == "blocked"
+    assert critic["verdict"] == "unresolved"
+    assert review["allowed_next_stage"] is None
+    assert review["critic_gate"]["state"] == "required_failed"
+    assert "dry_run_result" not in result["artifacts"]
+    assert "workflow_summary" not in result["artifacts"]
+
+
+def test_graph_blocks_when_required_proposal_critic_has_no_provider(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        critic_requirement="required",
+    )
+    state = create_initial_state(
+        run_id="run_missing_required_critic",
+        request_id="req_missing_required_critic",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+
+    review = _artifact_data(store, result, "proposal_review")
+    assert result["current_stage"] == "blocked"
+    assert review["decision"] == "blocked_requires_human"
+    assert review["critic_gate"]["state"] == "required_failed"
+    assert "critic_assessment" not in result["artifacts"]
+    assert "dry_run_result" not in result["artifacts"]
+
+
 def test_default_proposal_git_binding_uses_project_root_when_cwd_moves(
     tmp_path: Path,
     monkeypatch,
@@ -477,6 +579,7 @@ def test_langgraph_artifact_loop_can_resume_after_human_review_approval(
     assert "workflow_summary" in result["artifacts"]
     assert result["evidence_summary"]["can_generate_patch"] is True
     assert result["review_summary"]["allowed_next_stage"] == "dry_run_apply"
+    assert result["review_summary"]["critic_gate"]["state"] == "not_required"
 
     evidence_pack = _artifact_data(store, result, "evidence_pack")
     dry_run = _artifact_data(store, result, "dry_run_result")

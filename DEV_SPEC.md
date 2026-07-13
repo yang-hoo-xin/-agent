@@ -1,6 +1,6 @@
 # Evidence-Grounded Controlled Code Generation Agent Platform DEV_SPEC
 
-Daily execution starts with `docs/ACTIVE_PRODUCT_CONTRACT.md`. This file remains
+Authority and reading order are defined only by `AGENTS.md` section 2. This file remains
 the detailed root control-plane specification. Older phase tables, imported
 material, and historical addenda do not create active work unless the active
 contract and current queue select it.
@@ -276,7 +276,12 @@ build_result, runtime_evidence, repair_plan, eval_report
 11. Evidence RAG / Knowledge Hub feeds evidence decisions inside the LangGraph
     controlled workflow.
 12. Specialist nodes are implementation roles inside one LangGraph orchestrator
-    and can grow as the single controlled graph matures.
+    and can grow as the single controlled graph matures. The optional
+    ProposalCritic local/injected assessment boundary may score a registered
+    proposal inside `review_proposal`, but it is
+    read-only, writes a separate `critic_assessment` artifact, and has no route,
+    path, approval, or write authority. Deterministic ProposalReviewer rules and
+    LangGraph conditional edges retain final decision authority.
 13. Interrupt/resume and checkpoint/resume should mature alongside real build
     and runtime branches.
 

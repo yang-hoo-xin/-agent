@@ -6,7 +6,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
@@ -43,7 +43,14 @@ from src.mod_agent.planning import (
     RequestPlanner,
     Uncertainty,
 )
-from src.mod_agent.proposal import PatchProposalBuilder, ProposalReviewer
+from src.mod_agent.proposal import (
+    CRITIC_DIMENSIONS,
+    CriticAssessment,
+    CriticFinding,
+    PatchProposalBuilder,
+    ProposalCritic,
+    ProposalReviewer,
+)
 from src.mod_agent.repair import RepairPatchProposalBuilder, RepairPlanner
 from src.mod_agent.runtime import (
     build_fake_runtime_evidence_payload,
@@ -85,6 +92,7 @@ PatchChangeFactory = Callable[
 PatchExecutionFactory = Callable[
     [dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]
 ]
+CriticRequirement = Literal["not_required", "required"]
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -107,6 +115,8 @@ def build_graph(
     use_default_proposal_git_binding: bool = True,
     evidence_pack_factory: EvidencePackFactory | None = None,
     patch_change_factory: PatchChangeFactory | None = None,
+    proposal_critic: ProposalCritic | None = None,
+    critic_requirement: CriticRequirement = "not_required",
     dry_run_factory: PatchExecutionFactory | None = None,
     isolated_apply_factory: PatchExecutionFactory | None = None,
     stop_after_build: bool = False,
@@ -129,6 +139,15 @@ def build_graph(
         raise ValueError("Dynamic review interrupt requires a LangGraph checkpointer.")
     if require_external_evaluation and evaluation_context_factory is None:
         raise ValueError("require_external_evaluation requires evaluation_context_factory")
+    if critic_requirement not in {"not_required", "required"}:
+        raise ValueError(
+            "critic_requirement must be exactly 'not_required' or 'required'."
+        )
+    if critic_requirement == "not_required" and proposal_critic is not None:
+        raise ValueError(
+            "proposal_critic requires critic_requirement='required'; "
+            "implicit triggering is not supported."
+        )
 
     stub_runner = StubNodeRunner(artifact_store)
     effective_domain_registry = domain_adapter_registry or _default_domain_adapter_registry()
@@ -211,6 +230,8 @@ def build_graph(
                 artifact_store,
                 domain_adapter_registry=effective_domain_registry,
                 require_executable_patch=patch_change_factory is not None,
+                proposal_critic=proposal_critic,
+                critic_requirement=critic_requirement,
             ),
         ),
     )
@@ -716,6 +737,8 @@ def _run_review_proposal(
     *,
     domain_adapter_registry: DomainAdapterRegistry | None = None,
     require_executable_patch: bool = False,
+    proposal_critic: ProposalCritic | None = None,
+    critic_requirement: CriticRequirement = "not_required",
 ) -> ModAgentState:
     proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
     implementation_plan = _read_artifact_data(
@@ -730,6 +753,48 @@ def _run_review_proposal(
         if "repair_plan" in state["artifacts"]
         else None
     )
+    proposal_ref = _artifact_ref_from_state(state, "patch_proposal")
+    critic_payload: dict[str, Any] | None = None
+    critic_ref: ArtifactRef | None = None
+    if critic_requirement == "required" and proposal_critic is not None:
+        try:
+            critic_assessment = proposal_critic.assess(
+                proposal,
+                subject_artifact_ref=proposal_ref.path,
+                subject_artifact_hash=proposal_ref.artifact_hash,
+            )
+        except Exception as exc:  # fail closed at the external Critic boundary
+            critic_assessment = CriticAssessment(
+                assessor_id=type(proposal_critic).__name__ or "unidentified_critic",
+                assessor_kind="unresolved",
+                subject_artifact_ref=proposal_ref.path,
+                subject_artifact_hash=proposal_ref.artifact_hash,
+                dimension_scores={dimension: 0 for dimension in CRITIC_DIMENSIONS},
+                total_score=0,
+                verdict="unresolved",
+                findings=(
+                    CriticFinding(
+                        dimension="evidence_grounding",
+                        level="blocking",
+                        message=f"Critic execution failed with {type(exc).__name__}.",
+                    ),
+                ),
+                limitations=("The Critic result was not available for this review.",),
+            )
+        critic_payload = critic_assessment.to_artifact_payload()
+        critic_ref = artifact_store.write(
+            feature_id=proposal["feature_id"],
+            artifact_type="critic_assessment",
+            payload=critic_payload,
+            status="success" if critic_assessment.verdict == "pass" else "blocked",
+            upstream_refs=[
+                _artifact_ref_from_state(state, "feature_spec"),
+                _artifact_ref_from_state(state, "evidence_pack"),
+                _artifact_ref_from_state(state, "implementation_plan"),
+                proposal_ref,
+            ],
+        )
+
     review = ProposalReviewer().review(
         proposal,
         evidence_pack=evidence_pack,
@@ -737,6 +802,8 @@ def _run_review_proposal(
         implementation_plan=implementation_plan,
         feature_spec=feature_spec,
         artifact_hashes=dict(state["artifact_hashes"]),
+        critic_assessment=critic_payload,
+        require_critic_assessment=critic_requirement == "required",
         domain_policy=_domain_review_policy_from_state(
             state,
             domain_adapter_registry,
@@ -749,7 +816,7 @@ def _run_review_proposal(
         artifact_type="proposal_review",
         payload=review.to_artifact_payload(),
         status="success" if review.allowed_next_stage == "dry_run_apply" else "blocked",
-        upstream_refs=[_artifact_ref_from_state(state, "patch_proposal")],
+        upstream_refs=[proposal_ref, *([critic_ref] if critic_ref is not None else [])],
     )
     next_state = _copy_state(state)
     next_state["current_stage"] = "proposal_review"
@@ -757,8 +824,11 @@ def _run_review_proposal(
         "decision": review.decision,
         "allowed_next_stage": review.allowed_next_stage,
         "num_findings": len(review.findings),
+        "critic_gate": dict(review.critic_gate),
     }
     _record_artifact(next_state, "proposal_review", artifact_ref)
+    if critic_ref is not None:
+        _record_artifact(next_state, "critic_assessment", critic_ref)
     if review.allowed_next_stage != "dry_run_apply":
         next_state["blockers"].extend(
             {

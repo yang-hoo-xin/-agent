@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.mod_agent.artifacts import ArtifactStore
-from src.mod_agent.proposal import PatchProposalBuilder, ProposalReviewer
+from src.mod_agent.proposal import (
+    CriticAssessment,
+    PatchProposalBuilder,
+    ProposalReviewer,
+    RuleBasedProposalCritic,
+)
 
 
 def _implementation_payload() -> dict[str, object]:
@@ -181,6 +188,116 @@ def _hook_target_evidence_item() -> dict[str, object]:
         "doc_hash": "sha256:doc_api",
         "usage": "hook_target",
     }
+
+
+def _passing_critic_payload() -> dict[str, object]:
+    return CriticAssessment(
+        assessor_id="test_independent_critic",
+        assessor_kind="test",
+        subject_artifact_ref="artifacts/features/feature_001/patch_proposal.json",
+        subject_artifact_hash="sha256:proposal",
+        dimension_scores={
+            "evidence_grounding": 100,
+            "scope_discipline": 100,
+            "verification_quality": 100,
+            "reversibility": 100,
+        },
+        total_score=100,
+        verdict="pass",
+    ).to_artifact_payload()
+
+
+def test_rule_based_critic_scores_bound_proposal_without_route_authority() -> None:
+    assessment = RuleBasedProposalCritic().assess(
+        _proposal_payload(),
+        subject_artifact_ref="artifacts/features/feature_001/patch_proposal.json",
+        subject_artifact_hash="sha256:proposal",
+    )
+
+    payload = assessment.to_artifact_payload()
+    assert payload["verdict"] == "pass"
+    assert payload["total_score"] == 100
+    assert payload["independence_boundary"] == "read_only_no_route_authority"
+    assert payload["subject_artifact_hash"] == "sha256:proposal"
+
+
+def test_critic_assessment_rejects_incomplete_dimension_scores() -> None:
+    with pytest.raises(ValueError, match="dimension_scores"):
+        CriticAssessment(
+            assessor_id="test_independent_critic",
+            assessor_kind="test",
+            subject_artifact_ref="patch_proposal.json",
+            subject_artifact_hash="sha256:proposal",
+            dimension_scores={"evidence_grounding": 100},
+            total_score=100,
+            verdict="pass",
+        )
+
+
+def test_reviewer_fuses_passing_critic_without_weakening_hard_rules() -> None:
+    proposal = _proposal_payload()
+    proposal["expected_tests"] = []
+    artifact_hashes = {**_artifact_hashes(), "patch_proposal": "sha256:proposal"}
+
+    review = ProposalReviewer().review(
+        proposal,
+        evidence_pack=_evidence_pack(),
+        implementation_plan=_implementation_payload(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=artifact_hashes,
+        critic_assessment=_passing_critic_payload(),
+        require_critic_assessment=True,
+    )
+
+    assert review.allowed_next_stage is None
+    assert "proposal_critic" in review.checked_rules
+    assert any(finding.rule_id == "test_plan_presence" for finding in review.findings)
+
+
+def test_reviewer_blocks_critic_score_bound_to_stale_proposal_hash() -> None:
+    artifact_hashes = {**_artifact_hashes(), "patch_proposal": "sha256:current"}
+
+    review = ProposalReviewer().review(
+        _proposal_payload(),
+        evidence_pack=_evidence_pack(),
+        implementation_plan=_implementation_payload(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=artifact_hashes,
+        critic_assessment=_passing_critic_payload(),
+        require_critic_assessment=True,
+    )
+
+    assert review.allowed_next_stage is None
+    assert any(
+        finding.rule_id == "proposal_critic_unavailable"
+        and "failed or is invalid" in finding.message
+        for finding in review.findings
+    )
+    assert review.critic_gate["state"] == "required_failed"
+
+
+def test_reviewer_blocks_critic_payload_with_tampered_weight_policy() -> None:
+    proposal = _proposal_payload()
+    payload = _passing_critic_payload()
+    payload["dimension_weights"] = {
+        "evidence_grounding": 40,
+        "scope_discipline": 20,
+        "verification_quality": 20,
+        "reversibility": 20,
+    }
+
+    review = ProposalReviewer().review(
+        proposal,
+        evidence_pack=_evidence_pack(),
+        implementation_plan=_implementation_payload(),
+        feature_spec=_feature_spec(),
+        artifact_hashes={**_artifact_hashes(), "patch_proposal": "sha256:proposal"},
+        critic_assessment=payload,
+        require_critic_assessment=True,
+    )
+
+    assert review.decision == "blocked_requires_human"
+    assert review.critic_gate["state"] == "required_failed"
 
 
 def test_reviewer_requires_executable_patch_when_real_codegen_is_enabled() -> None:

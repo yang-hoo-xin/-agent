@@ -8,6 +8,13 @@ from typing import Any
 from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.domain import DomainReviewPolicy
 
+from .critic import (
+    CRITIC_AGGREGATION,
+    CRITIC_APPLICABILITY,
+    CRITIC_DIMENSIONS,
+    CRITIC_PASS_THRESHOLD,
+    CRITIC_POLICY_VERSION,
+)
 from .models import ProposalReview, ReviewFinding
 
 CHECKED_RULES = (
@@ -39,6 +46,8 @@ class ProposalReviewer:
         implementation_plan: dict[str, Any] | None = None,
         feature_spec: dict[str, Any] | None = None,
         artifact_hashes: dict[str, str] | None = None,
+        critic_assessment: dict[str, Any] | None = None,
+        require_critic_assessment: bool = False,
         domain_policy: DomainReviewPolicy | None = None,
         permission_level: str = "dry_run_write",
         require_executable_patch: bool = False,
@@ -61,6 +70,21 @@ class ProposalReviewer:
         evidence_ids = self._evidence_ids(evidence_pack, repair_plan)
         proposal_evidence_refs = set(proposal.get("evidence_refs") or [])
         allowed_files = set(proposal.get("files") or [])
+        checked_rules = CHECKED_RULES
+
+        critic_gate = self._critic_gate(
+            critic_assessment=critic_assessment,
+            artifact_hashes=artifact_hashes,
+            required=require_critic_assessment,
+        )
+        if critic_gate["state"] != "not_required":
+            checked_rules = (*checked_rules, "proposal_critic")
+            findings.extend(
+                self._review_critic_assessment(
+                    critic_assessment=critic_assessment,
+                    critic_gate=critic_gate,
+                )
+            )
 
         if proposal.get("blocked"):
             findings.append(
@@ -315,11 +339,12 @@ class ProposalReviewer:
                 findings=tuple(findings),
                 required_changes=tuple(finding.message for finding in blocking),
                 allowed_next_stage=None,
-                checked_rules=CHECKED_RULES,
+                checked_rules=checked_rules,
                 trace_metrics={
                     "num_changes_checked": len(diff_intent),
                     "num_blocking_findings": len(blocking),
                 },
+                critic_gate=critic_gate,
             )
 
         return ProposalReview(
@@ -327,11 +352,12 @@ class ProposalReviewer:
             findings=tuple(findings),
             required_changes=(),
             allowed_next_stage="dry_run_apply",
-            checked_rules=CHECKED_RULES,
+            checked_rules=checked_rules,
             trace_metrics={
                 "num_changes_checked": len(diff_intent),
                 "num_blocking_findings": 0,
             },
+            critic_gate=critic_gate,
         )
 
     @staticmethod
@@ -412,6 +438,128 @@ class ProposalReviewer:
     @staticmethod
     def _context_change_unit_ids(context_pack: dict[str, Any]) -> set[str]:
         return {str(value) for value in context_pack.get("change_unit_ids") or []}
+
+    @staticmethod
+    def _critic_gate(
+        *,
+        critic_assessment: dict[str, Any] | None,
+        artifact_hashes: dict[str, str] | None,
+        required: bool,
+    ) -> dict[str, Any]:
+        base = {
+            "requirement": "required" if required else "not_required",
+            "policy_version": CRITIC_POLICY_VERSION,
+            "applicability": CRITIC_APPLICABILITY,
+            "aggregation_method": CRITIC_AGGREGATION,
+            "pass_threshold": CRITIC_PASS_THRESHOLD,
+            "hard_rule_priority": "proposal_reviewer_hard_rules_first",
+        }
+        if not required:
+            return {**base, "state": "not_required", "route_semantics": "normal_review"}
+        if critic_assessment is None or critic_assessment.get("assessor_kind") == "unresolved":
+            return {**base, "state": "required_failed", "route_semantics": "blocked"}
+        expected_hash = (artifact_hashes or {}).get("patch_proposal")
+        scores = critic_assessment.get("dimension_scores")
+        values = [
+            *(scores.values() if isinstance(scores, dict) else []),
+            critic_assessment.get("total_score"),
+        ]
+        expected_weights = {dimension: 25 for dimension in CRITIC_DIMENSIONS}
+        structurally_valid = (
+            critic_assessment.get("independence_boundary") == "read_only_no_route_authority"
+            and bool(expected_hash)
+            and critic_assessment.get("subject_artifact_hash") == expected_hash
+            and critic_assessment.get("policy_version") == CRITIC_POLICY_VERSION
+            and critic_assessment.get("applicability") == CRITIC_APPLICABILITY
+            and critic_assessment.get("aggregation_method") == CRITIC_AGGREGATION
+            and critic_assessment.get("policy_threshold") == CRITIC_PASS_THRESHOLD
+            and critic_assessment.get("dimension_weights") == expected_weights
+            and critic_assessment.get("verdict") in {"pass", "revise", "block"}
+            and isinstance(scores, dict)
+            and set(scores) == set(CRITIC_DIMENSIONS)
+            and all(
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                and 0 <= value <= 100
+                for value in values
+            )
+            and critic_assessment.get("total_score")
+            == round(sum(scores.values()) / len(CRITIC_DIMENSIONS))
+            and isinstance(critic_assessment.get("findings"), list)
+        )
+        return {
+            **base,
+            "state": "required_succeeded" if structurally_valid else "required_failed",
+            "route_semantics": "score_policy" if structurally_valid else "blocked",
+        }
+
+    @staticmethod
+    def _review_critic_assessment(
+        *,
+        critic_assessment: dict[str, Any] | None,
+        critic_gate: dict[str, Any],
+    ) -> tuple[ReviewFinding, ...]:
+        if critic_gate["state"] == "required_failed":
+            return (
+                ReviewFinding(
+                    rule_id="proposal_critic_unavailable",
+                    level="blocking",
+                    message="Required ProposalCritic assessment failed or is invalid.",
+                ),
+            )
+        if critic_gate["state"] == "not_required" or critic_assessment is None:
+            return ()
+        findings: list[ReviewFinding] = []
+        critic_findings = critic_assessment.get("findings")
+        if any(
+            isinstance(item, dict) and item.get("level") == "blocking"
+            for item in critic_findings or []
+        ):
+            findings.append(
+                ReviewFinding(
+                    rule_id="proposal_critic",
+                    level="blocking",
+                    message="ProposalCritic reported a blocking finding.",
+                )
+            )
+
+        verdict = critic_assessment.get("verdict")
+        if verdict == "block":
+            findings.append(
+                ReviewFinding(
+                    rule_id="proposal_critic_block",
+                    level="blocking",
+                    message="ProposalCritic blocked the proposal.",
+                )
+            )
+        elif verdict != "pass":
+            findings.append(
+                ReviewFinding(
+                    rule_id="proposal_critic",
+                    level="blocking",
+                    message=(
+                        "ProposalCritic did not pass the proposal: "
+                        f"{critic_assessment.get('verdict')!r}."
+                    ),
+                )
+            )
+        total_score = critic_assessment.get("total_score")
+        if (
+            isinstance(total_score, int)
+            and not isinstance(total_score, bool)
+            and total_score < CRITIC_PASS_THRESHOLD
+        ):
+            findings.append(
+                ReviewFinding(
+                    rule_id="proposal_critic",
+                    level="blocking",
+                    message=(
+                        "ProposalCritic score is below the deterministic "
+                        f"threshold of {CRITIC_PASS_THRESHOLD}."
+                    ),
+                )
+            )
+        return tuple(findings)
 
     def _review_context_pack_depth(
         self,
@@ -715,6 +863,8 @@ class ProposalReviewer:
     @staticmethod
     def _blocked_decision(blocking: list[ReviewFinding]) -> str:
         rule_ids = {finding.rule_id for finding in blocking}
+        if rule_ids & {"proposal_critic_unavailable", "proposal_critic_block"}:
+            return "blocked_requires_human"
         if "evidence_binding" in rule_ids:
             return "blocked_insufficient_evidence"
         if "scope_boundary" in rule_ids or "forbidden_paths" in rule_ids:

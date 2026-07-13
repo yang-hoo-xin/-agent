@@ -26,6 +26,40 @@ baseline tag: baseline-controlled-agent-v0
 local tracking: main...origin/main
 ```
 
+## 2026-07-13 Active Control Document Cleanup
+
+Status: archived from active control documents
+
+The completed, frozen, review, and prior-direction material that had accumulated
+in `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md` is historical. It
+must not participate in current task selection merely because it once appeared
+under an active-document heading.
+
+Archived record classes include:
+
+- V1 acceptance, V1-to-V2 transition, Q-series, R-series, STATE, E2E,
+  artifact-integrity, runtime-boundary, and retrieval-validation closures;
+- `GTFO-VSLICE-001A/B/C`, `V2-PROP-001A`, `V2-EVAL-001`,
+  `V2-RET-DIRECTIONAL-001`, and `V2-CODEGEN-REAL-001` completion evidence;
+- prior review findings, focused-test counts, frozen/formal validation tracks,
+  and superseded `next_recommended_task` values;
+- former Dense/RAG, Dashboard, MCP, multimodal, production storage, and runtime
+  expansion directions that have no currently satisfied product trigger.
+
+The detailed records elsewhere in this file and the repository's Git history
+remain the audit source. Their removal from the active state and
+queue is a control-plane cleanup, not a deletion of evidence or a reversal of
+implemented code.
+
+Current effect:
+
+- active authority order is defined only by `AGENTS.md` section 2;
+- `docs/PROJECT_STATE.md` contains current verified boundaries and no inherited
+  next-task recommendation;
+- `docs/IMPLEMENTATION_QUEUE.md` contains only active or conditional work;
+- formal retrieval, Dense/RAG, Dashboard, MCP, runtime, and storage expansion
+  remain conditional until an explicit trigger is recorded.
+
 Remote push status:
 
 ```text

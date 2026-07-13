@@ -99,6 +99,7 @@ class ProposalReview:
     allowed_next_stage: str | None
     checked_rules: tuple[str, ...]
     trace_metrics: dict[str, int]
+    critic_gate: dict[str, Any]
 
     def to_artifact_payload(self) -> dict[str, Any]:
         """Return payload compatible with the proposal_review contract."""
@@ -113,6 +114,7 @@ class ProposalReview:
             "allowed_next_stage": self.allowed_next_stage,
             "checked_rules": list(self.checked_rules),
             "trace_metrics": self.trace_metrics,
+            "critic_gate": self.critic_gate,
         }
 
 

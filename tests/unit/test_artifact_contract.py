@@ -478,6 +478,33 @@ def test_patch_and_review_contracts_require_review_gate_fields() -> None:
     )
 
 
+def test_critic_assessment_contract_binds_score_to_exact_proposal_revision() -> None:
+    registry = ArtifactTypeRegistry()
+
+    contract = registry.get("critic_assessment")
+
+    assert {
+        "assessor_id",
+        "assessor_kind",
+        "independence_boundary",
+        "subject_artifact_ref",
+        "subject_artifact_hash",
+        "dimension_scores",
+        "total_score",
+        "policy_version",
+        "applicability",
+        "aggregation_method",
+        "dimension_weights",
+        "verdict",
+        "findings",
+        "limitations",
+    }.issubset(contract.required_fields)
+    assert contract.producer_stage == "proposal_review"
+    assert contract.required_exact_revision_upstream_artifacts == frozenset(
+        {"patch_proposal"}
+    )
+
+
 def test_checkpoint_contract_requires_resume_binding() -> None:
     registry = ArtifactTypeRegistry()
 

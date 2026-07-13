@@ -360,6 +360,52 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             dashboard_projection=("message", "files", "blocked"),
         ),
         ArtifactContract(
+            artifact_type="critic_assessment",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "assessor_id",
+                    "assessor_kind",
+                    "independence_boundary",
+                    "subject_type",
+                    "subject_artifact_ref",
+                    "subject_artifact_hash",
+                    "score_scale",
+                    "dimension_scores",
+                    "total_score",
+                    "policy_threshold",
+                    "policy_version",
+                    "applicability",
+                    "aggregation_method",
+                    "dimension_weights",
+                    "verdict",
+                    "findings",
+                    "limitations",
+                }
+            ),
+            producer_stage="proposal_review",
+            consumer_stages=frozenset({"review_proposal", "dashboard"}),
+            allowed_statuses=statuses,
+            required_upstream_artifacts=frozenset(
+                {
+                    "feature_spec",
+                    "evidence_pack",
+                    "implementation_plan",
+                    "patch_proposal",
+                }
+            ),
+            required_exact_revision_upstream_artifacts=frozenset({"patch_proposal"}),
+            dashboard_projection=(
+                "message",
+                "assessor_kind",
+                "total_score",
+                "verdict",
+            ),
+        ),
+        ArtifactContract(
             artifact_type="proposal_review",
             schema_version="1.0",
             required_fields=frozenset(

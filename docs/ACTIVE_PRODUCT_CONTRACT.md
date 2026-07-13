@@ -158,23 +158,10 @@ The next meaningful breadth proof should be a second different real task,
 delivery handoff, or incompatible project/build contract—not another passive
 schema layer.
 
-## 8. Daily Reading Order
+## 8. Authority Reference
 
-For ordinary product work, read only:
-
-1. this contract;
-2. the top of `docs/PROJECT_STATE.md`;
-3. the selected real request;
-4. relevant source and focused tests;
-5. affected rows in `docs/SPEC_COVERAGE_MATRIX.md`;
-6. `docs/IMPLEMENTATION_QUEUE.md` only when a task is active.
-
-Read additional material only when triggered:
-
-- `DEV_SPEC.md`: root control-plane detail and cross-cutting product boundaries;
-- `EVIDENCE_RAG_MCP_SPEC.md` sections 0-3: retrieval/knowledge/MCP detail;
-- retrieval decision and validation documents: a current retrieval decision;
-- frozen V1 documents and `docs/audits/LOOP_HISTORY.md`: historical audit only.
+This contract does not define a second authority or reading order. Follow
+`AGENTS.md` section 2 exclusively.
 
 ## 9. Conflict Rule
 
