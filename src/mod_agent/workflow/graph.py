@@ -119,6 +119,7 @@ def build_graph(
     critic_requirement: CriticRequirement = "not_required",
     dry_run_factory: PatchExecutionFactory | None = None,
     isolated_apply_factory: PatchExecutionFactory | None = None,
+    stop_after_evidence: bool = False,
     stop_after_build: bool = False,
     evaluation_context_factory: EvaluationContextFactory | None = None,
     require_external_evaluation: bool = False,
@@ -331,11 +332,18 @@ def build_graph(
         route_after_feature_spec,
         dict(registry["draft_feature_spec"]),
     )
-    graph.add_conditional_edges(
-        "retrieve_evidence",
-        route_after_evidence,
-        dict(registry["retrieve_evidence"]),
-    )
+    if stop_after_evidence:
+        graph.add_conditional_edges(
+            "retrieve_evidence",
+            route_after_evidence,
+            {"continue": END, "blocked": END},
+        )
+    else:
+        graph.add_conditional_edges(
+            "retrieve_evidence",
+            route_after_evidence,
+            dict(registry["retrieve_evidence"]),
+        )
     graph.add_conditional_edges(
         "create_implementation_plan",
         route_after_implementation_plan,

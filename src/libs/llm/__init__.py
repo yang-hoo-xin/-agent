@@ -9,6 +9,20 @@ This package contains LLM client abstractions and implementations:
 """
 
 from src.libs.llm.base_llm import BaseLLM, ChatResponse, Message
+from src.libs.llm.agent_turn import (
+    AgentMessage,
+    AgentResponseFormat,
+    AgentToolCall,
+    AgentToolDefinition,
+    AgentToolResult,
+    AgentTurnClient,
+    AgentTurnProviderError,
+    AgentTurnRequest,
+    AgentTurnResponse,
+    AgentUsage,
+    OpenAIResponsesAgentAdapter,
+    QwenChatAgentAdapter,
+)
 from src.libs.llm.base_vision_llm import BaseVisionLLM, ImageInput
 from src.libs.llm.llm_factory import LLMFactory
 from src.libs.llm.openai_llm import OpenAILLM, OpenAILLMError
@@ -29,15 +43,27 @@ __all__ = [
     # Base classes
     "BaseLLM",
     "BaseVisionLLM",
+    "AgentTurnClient",
     # Data types
     "ChatResponse",
     "Message",
     "ImageInput",
+    "AgentMessage",
+    "AgentResponseFormat",
+    "AgentToolCall",
+    "AgentToolDefinition",
+    "AgentToolResult",
+    "AgentTurnProviderError",
+    "AgentTurnRequest",
+    "AgentTurnResponse",
+    "AgentUsage",
     # Factory
     "LLMFactory",
     # Text-only LLM implementations
     "OpenAILLM",
     "OpenAILLMError",
+    "OpenAIResponsesAgentAdapter",
+    "QwenChatAgentAdapter",
     "AzureLLM",
     "AzureLLMError",
     "DeepSeekLLM",

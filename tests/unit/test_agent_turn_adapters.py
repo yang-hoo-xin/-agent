@@ -1,0 +1,249 @@
+"""Focused tests for provider-neutral structured Agent turns."""
+
+from __future__ import annotations
+
+import json
+
+from src.libs.llm import (
+    AgentMessage,
+    AgentResponseFormat,
+    AgentToolCall,
+    AgentToolDefinition,
+    AgentToolResult,
+    AgentTurnRequest,
+    OpenAIResponsesAgentAdapter,
+    QwenChatAgentAdapter,
+)
+
+
+def _tool() -> AgentToolDefinition:
+    return AgentToolDefinition(
+        name="search_dotnet_metadata",
+        description="Search exact metadata.",
+        parameters={
+            "type": "object",
+            "properties": {"source_id": {"type": "string"}},
+            "required": ["source_id"],
+            "additionalProperties": False,
+        },
+    )
+
+
+def _format() -> AgentResponseFormat:
+    return AgentResponseFormat(
+        name="finish",
+        description="Finish object.",
+        schema={
+            "type": "object",
+            "properties": {"action": {"type": "string", "enum": ["finish"]}},
+            "required": ["action"],
+            "additionalProperties": False,
+        },
+    )
+
+
+def test_qwen_chat_adapter_uses_native_tools_without_thinking_or_parallel_calls() -> None:
+    captured: list[tuple[str, dict[str, object], dict[str, str]]] = []
+
+    def send(url, payload, headers):
+        captured.append((url, payload, headers))
+        return {
+            "id": "chatcmpl-qwen-001",
+            "model": "qwen3.6-plus",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-qwen-001",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_dotnet_metadata",
+                                    "arguments": json.dumps({"source_id": "r8-modules"}),
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "completion_tokens_details": {"reasoning_tokens": 0},
+            },
+        }
+
+    adapter = QwenChatAgentAdapter(
+        api_key="not-a-real-key",
+        base_url="https://dashscope.example/compatible-mode/v1",
+        model="qwen3.6-plus",
+        max_completion_tokens=4096,
+        request_sender=send,
+    )
+    response = adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content={"goal": "find methods"}),),
+            tools=(_tool(),),
+            parallel_tool_calls=False,
+        )
+    )
+
+    payload = captured[0][1]
+    assert captured[0][0].endswith("/chat/completions")
+    assert payload["enable_thinking"] is False
+    assert payload["parallel_tool_calls"] is False
+    assert payload["max_completion_tokens"] == 4096
+    assert "strict" not in payload["tools"][0]["function"]
+    assert response.tool_calls == (
+        AgentToolCall(
+            call_id="call-qwen-001",
+            name="search_dotnet_metadata",
+            arguments={"source_id": "r8-modules"},
+        ),
+    )
+    assert response.usage.input_tokens == 100
+    assert response.usage.output_tokens == 20
+
+
+def test_qwen_chat_adapter_links_local_tool_result_to_exact_call_id() -> None:
+    captured: list[dict[str, object]] = []
+
+    def send(url, payload, headers):
+        captured.append(payload)
+        return {
+            "id": "chatcmpl-qwen-002",
+            "model": "qwen3.6-plus",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": '{"action":"finish"}'},
+                }
+            ],
+            "usage": {},
+        }
+
+    raw_tool_call = {
+        "id": "call-qwen-001",
+        "type": "function",
+        "function": {
+            "name": "search_dotnet_metadata",
+            "arguments": '{"source_id":"r8-modules"}',
+        },
+    }
+    adapter = QwenChatAgentAdapter(
+        api_key="not-a-real-key",
+        base_url="https://dashscope.example/compatible-mode/v1",
+        model="qwen3.6-plus",
+        max_completion_tokens=4096,
+        request_sender=send,
+    )
+    response = adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content={"goal": "finish"}),),
+            tools=(),
+            tool_choice="none",
+            response_format=_format(),
+            tool_results=(
+                AgentToolResult(
+                    call_id="call-qwen-001",
+                    name="search_dotnet_metadata",
+                    output={"observation_id": "obs-001"},
+                ),
+            ),
+            provider_state={"content": None, "tool_calls": [raw_tool_call]},
+        )
+    )
+
+    messages = captured[0]["messages"]
+    assert messages[-2]["tool_calls"][0]["id"] == "call-qwen-001"
+    assert messages[-1]["tool_call_id"] == "call-qwen-001"
+    assert captured[0]["response_format"] == {"type": "json_object"}
+    assert response.content == '{"action":"finish"}'
+
+
+def test_openai_responses_adapter_replays_only_bound_reasoning_call_and_output() -> None:
+    captured: list[dict[str, object]] = []
+    responses = [
+        {
+            "id": "resp_001",
+            "model": "gpt-5.6-luna",
+            "status": "completed",
+            "output": [
+                {"type": "reasoning", "id": "rs_001", "summary": []},
+                {
+                    "type": "function_call",
+                    "id": "fc_001",
+                    "call_id": "call_001",
+                    "name": "search_dotnet_metadata",
+                    "arguments": '{"source_id":"r8-modules"}',
+                },
+            ],
+            "usage": {
+                "input_tokens": 80,
+                "output_tokens": 12,
+                "output_tokens_details": {"reasoning_tokens": 5},
+            },
+        },
+        {
+            "id": "resp_002",
+            "model": "gpt-5.6-luna",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": '{"action":"finish"}'}
+                    ],
+                }
+            ],
+            "usage": {"input_tokens": 90, "output_tokens": 8},
+        },
+    ]
+
+    def send(url, payload, headers):
+        captured.append(payload)
+        return responses.pop(0)
+
+    adapter = OpenAIResponsesAgentAdapter(
+        api_key="not-a-real-key",
+        model="gpt-5.6-luna",
+        max_output_tokens=2048,
+        request_sender=send,
+    )
+    first = adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content={"goal": "find methods"}),),
+            tools=(_tool(),),
+        )
+    )
+    second = adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content={"goal": "finish"}),),
+            tools=(),
+            tool_choice="none",
+            response_format=_format(),
+            tool_results=(
+                AgentToolResult(
+                    call_id="call_001",
+                    name="search_dotnet_metadata",
+                    output={"observation_id": "obs-001"},
+                ),
+            ),
+            provider_state=first.provider_state,
+        )
+    )
+
+    assert captured[0]["tools"][0]["strict"] is True
+    second_input = captured[1]["input"]
+    assert [item["type"] for item in second_input if "type" in item] == [
+        "reasoning",
+        "function_call",
+        "function_call_output",
+    ]
+    assert second_input[-1]["call_id"] == "call_001"
+    assert captured[1]["text"]["format"]["strict"] is True
+    assert first.usage.reasoning_tokens == 5
+    assert second.content == '{"action":"finish"}'

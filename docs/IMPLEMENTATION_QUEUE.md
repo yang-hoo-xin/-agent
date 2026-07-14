@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-13
+Last updated: 2026-07-14
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -17,6 +17,24 @@ selected_product_request: None
 The ProposalCritic documentation/contract cleanup is complete and did not
 activate a product-expansion task. Obtain or select one concrete product
 capability or real Mod request before changing platform behavior.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-004` is completed and recorded in current
+state/history; it is not retained as an active queue item. A real external-model
+Evidence run requires a new explicit per-run disclosure approval and does not
+implicitly unlock Proposal-only or Mod implementation.
+
+Its acceptance-hardening insertion is also complete: conclusion classification,
+durable sanitized trace hashes, truthful multi-source selection accounting, and
+the two-source machine-local registry were added without creating an active
+queue item. The next real-model run still requires explicit disclosure.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-005` is also completed and moved to current
+state/history. It adds the provider-neutral structured Agent-turn boundary,
+locally tested Qwen Chat and OpenAI Responses adapters, compact trajectory
+reconstruction, focused metadata observations, and stricter trajectory-level
+acceptance. No external model was called. A real Qwen semantic run remains a
+separate execution requiring a new per-run disclosure approval; it is not an
+active infrastructure task and cannot cross the evidence-only stop boundary.
 
 ## 2. Entry Rule
 

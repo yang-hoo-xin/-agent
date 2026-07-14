@@ -52,6 +52,7 @@ flowchart TD
     Q["Binding Registry / PathGuard / permissions"] -. "write authority" .-> R
     M["External model adapters"] -. "bounded generation or critique" .-> C
     M -. "optional, separately authorized" .-> K
+    M -. "bounded evidence actions; separately authorized" .-> E
     X["Knowledge sources / live reads"] -. "evidence only" .-> E
 ```
 
@@ -59,6 +60,132 @@ LangGraph owns execution order, conditional routing, interrupt/resume, and
 checkpoint integration. ArtifactStore owns durable business outputs and audit
 lineage. Deterministic policies retain authority over write scope, approval,
 verification, and claim promotion.
+
+The local `plan-request` command is a bounded entry slice before this full
+graph. It runs RequestPlanner and ModPlanningBriefBuilder in memory, emits both
+planning payloads, and stops before `feature_spec` without ArtifactStore writes.
+Hook-required planning-only requests report `needs_evidence` and hand off to
+Hook discovery; this entry does not retrieve source evidence or enter proposal,
+apply, build, or runtime stages.
+
+The `evidence-request` entry uses that same graph with the explicit
+`stop_after_evidence` route. It reads only the approved GTFO R8 manifest,
+validates exact file hashes, symbols, and JSON identity linkage, persists the
+normal planning and evidence artifacts, and maps both evidence outcomes to
+`END`. It does not create a second workflow or grant implementation authority.
+
+The bounded R8 IL inspector uses .NET `PEReader` and CLI metadata without
+loading or executing the target assembly. Its exact JSON report is hash-bound
+and validated before three IL EvidenceItems enter the existing evidence node.
+It is a task-specific evidence reader, not a general decompiler service or a
+new routing authority.
+
+For the current WallCrawler follow-up, the same deterministic reader accepts
+only an explicitly supplied assembly path and an exact symbol set selected by
+the Evidence specialist. It rereads the assembly hash before and after
+inspection and records current interop or reference-Mod items in the normal
+EvidencePack. It is not a separate Agent and is not a RAG authority: retrieval
+may later find its recorded facts, but cannot replace live hash and metadata
+validation.
+
+The current Evidence specialist also has one implemented bounded internal
+loop. It is not a second graph and does not own routing:
+
+```text
+natural-language evidence goal + path-hidden registered source views
+-> provider-neutral Agent turn returns one native tool call or final JSON object
+-> deterministic source/tool/argument/budget validation
+-> local read-only metadata observation
+-> model selects an observed method_id
+-> deterministic exact IL read and identity revalidation
+-> model emits observation-bound findings and unresolved questions
+-> deterministic EvidencePack serialization
+-> LangGraph stop, continue, or blocked route
+```
+
+The long-lived source layer remains `SourceDefinition` / Source Registry. For
+this loop its metadata projection uses these exact fields:
+
+```json
+{
+  "evidence_discovery_kind": "unity_script_assembly",
+  "evidence_class": "supplied_r8_unity_export",
+  "description": "R8 Modules assembly supplied by the user.",
+  "allowed_tools": ["search_dotnet_metadata", "inspect_method_il"],
+  "assembly_relative_paths": ["Modules-ASM.dll"],
+  "version_identity": {"game_release": "R8"}
+}
+```
+
+`root_path` stays in the machine-local registry and is never included in the
+model view. The single-run input is the request plus budgets and stop boundary.
+The model cannot supply an absolute path or exact symbol to the IL tool; it must
+use a current-run `method_id` bound to source id, relative path, assembly hash,
+MVID, metadata token, and exact observed symbol. External chat execution
+requires a one-run disclosure record covering the request, path-hidden source
+views, and metadata/IL observations. Injected local tests require no external
+disclosure and are labelled as such in EvidencePack provenance.
+
+The implemented model boundary is not `BaseLLM.chat()` widened with
+provider-specific fields. Plain chat remains intact. The adjacent structured
+Agent-turn contract represents messages, exact tool JSON Schemas, tool call ids,
+parsed arguments, bound tool results, final response schema, stop reason,
+provider/model/request identity, and normalized token usage. Two provider wire
+mappings are locally tested:
+
+- `QwenChatAgentAdapter` uses OpenAI-compatible Chat Completions native tools,
+  disables thinking and parallel calls for this dependent evidence sequence,
+  and uses documented JSON-object mode for a forced final turn. Qwen's wire
+  response is still subject to all local deterministic validators; no provider
+  strict-schema equivalence is assumed.
+- `OpenAIResponsesAgentAdapter` maps typed input/output items, exact
+  `function_call` / `function_call_output` linkage, returned reasoning items,
+  strict `text.format`, incomplete/status reason, and usage. It is an adapter
+  inside the Evidence specialist, not a second orchestrator or durable state
+  owner.
+
+The local Artifact/trajectory remains authoritative. Provider continuation is
+used only to bind the immediately preceding tool call to its output; the
+platform does not treat provider-side conversation state or
+`previous_response_id` as workflow memory.
+
+Final conclusions use one exact classification: `observed`, `inferred`, or
+`unknown`. The validator requires current-run observation refs for observed and
+inferred claims, limitations for inferred claims, and no observation refs for
+unknown claims. The durable audit projection stores sanitized action JSON and
+hashes, observation hashes and byte counts, prompt-contract and initial-context
+hashes, model identity, and budget consumption. It intentionally does not store
+the raw prompt or expose machine-local roots.
+
+Each turn is reconstructed rather than appended to an unbounded chat history:
+
+```text
+immutable initial goal and path-hidden source views
++ compact prior action/observation summaries and observed method ids
++ latest full observation only
++ current budget or correction state
+```
+
+Earlier full observations remain in the EvidencePack audit trace but are not
+replayed cumulatively. Metadata search requires `result_kinds` and
+`limit_per_kind`; its model projection factors assembly SHA256/MVID into one
+assembly table and carries per-kind matched/returned/truncated counts. The
+default local cap is 50 results per requested kind and 16 KiB per metadata model
+observation.
+
+For the pending real-model rerun, the ignored machine-local registry contains
+two task-relevant exact sources rather than unrelated directory noise:
+the supplied R8 `Modules-ASM.dll` and current installed interop
+`Modules-ASM.dll`. Their registered SHA256/MVID values are checked against the
+live metadata report on every search. This local registry is execution input,
+not a committed cross-machine configuration or a new retrieval subsystem.
+
+The prior approved Qwen run is retained as failure evidence: it exhausted 8
+model steps and 6 tool calls after 205,912 observation bytes and produced no
+conclusion. It triggered compact context reconstruction, focused metadata
+results, native structured turns, and stricter trajectory acceptance. It did
+not prove semantic discovery quality, and rerunning Qwen requires a new per-run
+disclosure approval.
 
 ## 3. Workflow, ReAct, And Specialist Roles
 
@@ -329,6 +456,7 @@ Current maturity is split deliberately:
 | --- | --- | --- |
 | Local request entry | Verified for one BetterHitFeedback request-to-build run | Local synchronous entry works for the preserved run |
 | LangGraph StateGraph and conditional routing | Tested | One controlled graph owns the implemented route matrix |
+| Structured Evidence Agent turns | Qwen Chat and OpenAI Responses request/response mappings locally tested | Provider-neutral tool/final/usage semantics work inside the Evidence specialist; no real-provider semantic-quality claim |
 | Artifact lineage and hash binding | Tested on focused paths | Registered outputs retain current upstream refs and hashes |
 | Patch review, no-write dry-run, and exact approval | Verified on the narrow real run plus focused tests | Model output cannot directly authorize a write |
 | ProposalCritic local/injected assessment boundary | Tested for explicit not-required, required-success, and required-failure paths | No external-model or semantic-quality-improvement claim |

@@ -10,7 +10,7 @@ import pytest
 
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
-from src.mod_agent.evidence import FakeDenseRetrievalProvider
+from src.mod_agent.evidence import EvidencePack, FakeDenseRetrievalProvider
 from src.mod_agent.knowledge import (
     IDENTITY_FIELD_MAPPING,
     IDENTITY_SCHEMA_VERSION,
@@ -951,6 +951,46 @@ def test_missing_knowledge_routes_to_blocked_after_evidence(tmp_path: Path) -> N
     assert result["evidence_summary"]["missing_evidence"]
     assert result["evidence_summary"]["timing"]["final_count"] == 0.0
     assert result["blockers"]
+
+
+def test_stop_after_evidence_ends_before_implementation_plan(tmp_path: Path) -> None:
+    pack = EvidencePack(
+        query="WallCrawler",
+        readiness="partial",
+        can_generate_patch=False,
+        blockers=(
+            {
+                "code": "HOOK_BEHAVIOR_UNRESOLVED",
+                "message": "Method behavior remains unresolved.",
+                "needed_evidence": ["method body"],
+            },
+        ),
+        retrieval_methods_used=("exact_supplied_file_read",),
+        timing={"final_count": 0.0},
+    )
+    graph = build_graph(
+        ArtifactStore(tmp_path / "artifacts"),
+        evidence_pack_factory=lambda _state, _feature: pack,
+        stop_after_evidence=True,
+    )
+    state = create_initial_state(
+        run_id="run_evidence_only",
+        request_id="req_evidence_only",
+        user_request="Make GTFO enemy movement use a verified WallCrawler hook.",
+        target_domain="gtfo",
+        target_mod="WallCrawler",
+    )
+
+    result = graph.invoke(state)
+
+    assert result["current_stage"] == "evidence_retrieval"
+    assert "evidence_pack" in result["artifacts"]
+    assert "implementation_plan" not in result["artifacts"]
+    assert "patch_proposal" not in result["artifacts"]
+    assert "proposal_review" not in result["artifacts"]
+    assert "dry_run_result" not in result["artifacts"]
+    assert "build_result" not in result["artifacts"]
+    assert "runtime_evidence" not in result["artifacts"]
 
 
 def test_collection_resolution_failure_routes_to_blocked_after_evidence(

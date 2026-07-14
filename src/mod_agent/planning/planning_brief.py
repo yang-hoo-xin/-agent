@@ -2,19 +2,12 @@
 
 from __future__ import annotations
 
-from .models import ModPlanningBrief, RequestPlan
-from .request_planner import requested_scope_text
+from dataclasses import replace
 
-_CONFIG_TERMS = (
-    "config",
-    "configuration",
-    "default",
-    "json",
-    "yaml",
-    "toml",
-    "ini",
-    "setting",
-    "settings",
+from .models import ModPlanningBrief, RequestPlan
+from .request_planner import (
+    has_config_intent,
+    requested_scope_text,
 )
 _UI_TERMS = (
     "ui",
@@ -135,6 +128,41 @@ class ModPlanningBriefBuilder:
             blockers=blockers,
         )
 
+    def build_planning_only(
+        self,
+        plan: RequestPlan,
+        *,
+        target_game: str | None = None,
+        constraints: tuple[str, ...] = (),
+        non_goals: tuple[str, ...] = (),
+    ) -> ModPlanningBrief:
+        """Build a no-write brief that stops hook work before feature_spec."""
+
+        brief = self.build(
+            plan,
+            target_game=target_game,
+            constraints=constraints,
+            non_goals=non_goals,
+        )
+        if brief.request_type["value"] != "hook-required":
+            return brief
+        return replace(
+            brief,
+            decision="needs_evidence",
+            next_action="hook discovery",
+            blockers=(
+                *brief.blockers,
+                {
+                    "stage": "planning_brief",
+                    "code": "HOOK_EVIDENCE_REQUIRED",
+                    "message": (
+                        "Planning-only mode stops before feature_spec until current "
+                        "source and API evidence are collected."
+                    ),
+                },
+            ),
+        )
+
     @staticmethod
     def _request_type(plan: RequestPlan) -> dict[str, str]:
         lowered = plan.user_request.lower()
@@ -144,7 +172,17 @@ class ModPlanningBriefBuilder:
                 "value": "unknown / needs evidence",
                 "rationale": "The request planner reported blocking ambiguity.",
             }
-        if any(term in lowered for term in _CONFIG_TERMS):
+        if plan.requires_hook_evidence or any(
+            term in requested_scope for term in _HOOK_TERMS
+        ):
+            return {
+                "value": "hook-required",
+                "rationale": (
+                    "The request likely depends on runtime method or gameplay "
+                    "interception evidence."
+                ),
+            }
+        if has_config_intent(plan.user_request):
             return {
                 "value": "config-only",
                 "rationale": "The request uses configuration or settings language.",
@@ -153,11 +191,6 @@ class ModPlanningBriefBuilder:
             return {
                 "value": "runtime diagnostics",
                 "rationale": "The request asks for logging, diagnostics, tracing, or startup evidence.",
-            }
-        if plan.requires_hook_evidence or any(term in requested_scope for term in _HOOK_TERMS):
-            return {
-                "value": "hook-required",
-                "rationale": "The request likely depends on runtime method or gameplay interception evidence.",
             }
         if any(term in requested_scope for term in _UI_TERMS):
             return {

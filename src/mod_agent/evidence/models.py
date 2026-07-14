@@ -107,6 +107,19 @@ class EvidencePack:
     timing: dict[str, float] = field(default_factory=dict)
     budget_summary: dict[str, Any] = field(default_factory=dict)
     trace_refs: tuple[str, ...] = ()
+    run_status: str | None = None
+    verified_findings: tuple[dict[str, Any], ...] = ()
+    evidence_conclusions: tuple[dict[str, Any], ...] = ()
+    unresolved_questions: tuple[str, ...] = ()
+    missing_capabilities: tuple[str, ...] = ()
+    tool_trace_summary: tuple[dict[str, Any], ...] = ()
+    model_action_trace: tuple[dict[str, Any], ...] = ()
+    observation_trace: tuple[dict[str, Any], ...] = ()
+    prompt_contract: dict[str, Any] = field(default_factory=dict)
+    model_identity: dict[str, Any] = field(default_factory=dict)
+    provenance_validation: dict[str, Any] = field(default_factory=dict)
+    input_audit: dict[str, int] = field(default_factory=dict)
+    intelligence_transfer: dict[str, bool] = field(default_factory=dict)
     message: str = ""
 
     def to_artifact_payload(self) -> dict[str, Any]:
@@ -137,6 +150,19 @@ class EvidencePack:
             "timing": dict(self.timing),
             "budget_summary": dict(self.budget_summary),
             "trace_refs": list(self.trace_refs),
+            "run_status": self.run_status,
+            "verified_findings": [dict(item) for item in self.verified_findings],
+            "evidence_conclusions": [dict(item) for item in self.evidence_conclusions],
+            "unresolved_questions": list(self.unresolved_questions),
+            "missing_capabilities": list(self.missing_capabilities),
+            "tool_trace_summary": [dict(item) for item in self.tool_trace_summary],
+            "model_action_trace": [dict(item) for item in self.model_action_trace],
+            "observation_trace": [dict(item) for item in self.observation_trace],
+            "prompt_contract": dict(self.prompt_contract),
+            "model_identity": dict(self.model_identity),
+            "provenance_validation": dict(self.provenance_validation),
+            "input_audit": dict(self.input_audit),
+            "intelligence_transfer": dict(self.intelligence_transfer),
         }
 
     @classmethod

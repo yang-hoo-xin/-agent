@@ -96,7 +96,7 @@ def test_request_planner_classifies_runtime_feature_as_high_risk() -> None:
     )
 
     assert plan.blocked is False
-    assert plan.route == "standard_feature"
+    assert plan.route == "game_hook_investigation"
     assert plan.risk_level == "high"
     assert plan.target_mod == "BetterHitFeedback"
     assert plan.requires_hook_evidence is True
@@ -105,6 +105,65 @@ def test_request_planner_classifies_runtime_feature_as_high_risk() -> None:
         "required": True,
         "reason": "gameplay_method_interception",
     }
+
+
+def test_request_planner_does_not_downgrade_mixed_config_gameplay_request() -> None:
+    plan = RequestPlanner().plan(
+        "WallCrawler JSON config changes enemy movement on walls, slopes, and ceilings.",
+        target_mod="WallCrawler",
+    )
+
+    assert plan.route == "game_hook_investigation"
+    assert plan.risk_level == "high"
+    assert plan.requires_hook_evidence is True
+    assert plan.requires_runtime_evidence is True
+
+
+def test_request_planner_classifies_wallcrawler_chinese_request() -> None:
+    plan = RequestPlanner().plan(
+        "希望让 GTFO 的怪物在配置指定的区域内，能够在原本不支持行走的墙面、"
+        "斜面和天花板上移动。区域应能通过面向地图开发者的 JSON 配置；配置需要"
+        "与游戏/地图数据库的真实 PersistentID 或准确等价身份建立绑定。",
+        target_mod="WallCrawler",
+    )
+
+    assert plan.route == "game_hook_investigation"
+    assert plan.risk_level == "high"
+    assert plan.target_mod == "WallCrawler"
+    assert plan.requires_hook_evidence is True
+    assert plan.requires_runtime_evidence is True
+
+
+def test_request_planner_does_not_infer_persistent_id_as_target_mod() -> None:
+    plan = RequestPlanner().plan(
+        "JSON config binds a region to PersistentID without changing runtime behavior."
+    )
+
+    assert plan.target_mod is None
+
+
+def test_request_planner_separates_runtime_diagnostics_from_hook_work() -> None:
+    plan = RequestPlanner().plan(
+        "default config Load runtime diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    assert plan.route == "quick_patch"
+    assert plan.risk_level == "high"
+    assert plan.requires_hook_evidence is False
+    assert plan.requires_runtime_evidence is True
+
+
+def test_request_planner_keeps_plain_config_compile_level() -> None:
+    plan = RequestPlanner().plan(
+        "default config EnableLogging false",
+        target_mod="BetterHitFeedback",
+    )
+
+    assert plan.route == "quick_patch"
+    assert plan.risk_level == "low"
+    assert plan.requires_hook_evidence is False
+    assert plan.requires_runtime_evidence is False
 
 
 def test_feature_spec_builder_creates_verifiable_contract() -> None:
@@ -200,6 +259,25 @@ def test_mod_planning_brief_classifies_hook_required_request() -> None:
     assert payload["handoff"]["hook_discovery_guidance"] == (
         "Run hook discovery before implementation planning."
     )
+
+
+def test_planning_only_brief_stops_hook_request_before_feature_spec() -> None:
+    plan = RequestPlanner().plan(
+        "WallCrawler JSON config changes enemy movement on walls, slopes, and ceilings.",
+        target_mod="WallCrawler",
+    )
+
+    payload = ModPlanningBriefBuilder().build_planning_only(
+        plan,
+        target_game="GTFO",
+    ).to_artifact_payload()
+
+    assert payload["decision"] == "needs_evidence"
+    assert payload["blocked"] is True
+    assert payload["request_type"]["value"] == "hook-required"
+    assert payload["selected_plan"]["scope"] == plan.user_request
+    assert payload["next_action"] == "hook discovery"
+    assert payload["blockers"][0]["code"] == "HOOK_EVIDENCE_REQUIRED"
 
 
 def test_mod_planning_brief_blocks_unclear_request() -> None:

@@ -1,4 +1,4 @@
-"""Minimal Phase A CLI for the Evidence-Grounded Controlled Code Generation Agent Platform."""
+"""Local CLI for the Evidence-Grounded Controlled Code Generation Agent Platform."""
 
 from __future__ import annotations
 
@@ -8,30 +8,53 @@ import sys
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
+from .evidence import R8EvidenceError, R8ILInspectionError
+from .evidence_only import EvidenceOnlyError, run_gtfo_r8_evidence_only
+from .intelligent_evidence_only import (
+    IntelligentEvidenceEntryError,
+    run_intelligent_evidence_only,
+)
 from .local_entry import LocalEntryError, run_local_request
+from .planning import ModPlanningBriefBuilder, RequestPlanner
 from .tools import PermissionModel
 
 
 @dataclass(frozen=True)
-class StubPlanRequestResult:
-    """Structured placeholder returned by the Phase A plan-request command."""
+class PlanRequestResult:
+    """Structured no-write planning result returned by plan-request."""
 
     status: str
     command: str
     request: str
-    message: str
+    execution_mode: str
+    writes_performed: bool
+    stopped_before: str
+    request_planning_report: dict[str, object]
+    mod_planning_brief: dict[str, object]
 
 
-def plan_request(description: str) -> StubPlanRequestResult:
-    """Return a safe Phase A placeholder for request planning."""
+def plan_request(
+    description: str,
+    *,
+    target_game: str | None = None,
+    target_mod: str | None = None,
+) -> PlanRequestResult:
+    """Run request planning and stop before feature specification."""
 
-    return StubPlanRequestResult(
-        status="stubbed",
+    request_plan = RequestPlanner().plan(description, target_mod=target_mod)
+    planning_brief = ModPlanningBriefBuilder().build_planning_only(
+        request_plan,
+        target_game=target_game,
+    )
+    return PlanRequestResult(
+        status=planning_brief.decision,
         command="plan-request",
         request=description,
-        message=(
-            "Phase A platform skeleton only. Request planning is not implemented yet."
-        ),
+        execution_mode="planning_only",
+        writes_performed=False,
+        stopped_before="feature_spec",
+        request_planning_report=request_plan.to_artifact_payload(),
+        mod_planning_brief=planning_brief.to_artifact_payload(),
     )
 
 
@@ -46,9 +69,51 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan_parser = subparsers.add_parser(
         "plan-request",
-        help="Return a stubbed request-planning result.",
+        help="Create a no-write request plan and planning brief.",
     )
     plan_parser.add_argument("description", help="Natural-language request description.")
+    plan_parser.add_argument("--target-game")
+    plan_parser.add_argument("--target-mod")
+
+    evidence_parser = subparsers.add_parser(
+        "evidence-request",
+        help="Read the approved GTFO R8 snapshot and stop before implementation planning.",
+    )
+    evidence_parser.add_argument("description", help="Natural-language Mod request.")
+    evidence_parser.add_argument("--evidence-root", required=True)
+    evidence_parser.add_argument("--artifact-root", default="artifacts/evidence_only")
+    evidence_parser.add_argument("--target-mod", default="WallCrawler")
+    evidence_parser.add_argument("--assembly-path")
+    evidence_parser.add_argument("--current-interop-path")
+    evidence_parser.add_argument("--enemy-animation-fix-path")
+    evidence_parser.add_argument("--stuck-enemy-fix-path")
+
+    intelligent_evidence_parser = subparsers.add_parser(
+        "intelligent-evidence-request",
+        help="Let the Evidence specialist select read-only assembly tools and stop after evidence.",
+    )
+    intelligent_evidence_parser.add_argument(
+        "description", help="Natural-language evidence request."
+    )
+    intelligent_evidence_parser.add_argument("--source-registry", required=True)
+    intelligent_evidence_parser.add_argument(
+        "--artifact-root", default="artifacts/intelligent_evidence_only"
+    )
+    intelligent_evidence_parser.add_argument("--settings", default="config/settings.yaml")
+    intelligent_evidence_parser.add_argument("--target-domain", default="gtfo")
+    intelligent_evidence_parser.add_argument("--target-mod", default="WallCrawler")
+    intelligent_evidence_parser.add_argument("--api-key-env", default="DASHSCOPE_API_KEY")
+    intelligent_evidence_parser.add_argument(
+        "--base-url-env", default="DASHSCOPE_BASE_URL"
+    )
+    intelligent_evidence_parser.add_argument(
+        "--allow-evidence-disclosure",
+        action="store_true",
+        help=(
+            "Approve this run to send the natural-language request, path-hidden source "
+            "views, and metadata/IL tool observations to the configured model."
+        ),
+    )
 
     apply_parser = subparsers.add_parser(
         "apply-patch",
@@ -84,13 +149,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the Phase A CLI."""
+    """Run the local controlled-development CLI."""
 
     parser = build_parser()
     args = parser.parse_args(argv)
 
     if args.command == "plan-request":
-        result = plan_request(args.description)
+        result = plan_request(
+            args.description,
+            target_game=args.target_game,
+            target_mod=args.target_mod,
+        )
         print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
         return 0
 
@@ -109,6 +178,65 @@ def main(argv: Sequence[str] | None = None) -> int:
                 indent=2,
             )
         )
+        return 0
+
+    if args.command == "evidence-request":
+        try:
+            result = run_gtfo_r8_evidence_only(
+                description=args.description,
+                evidence_root=args.evidence_root,
+                artifact_root=args.artifact_root,
+                target_mod=args.target_mod,
+                assembly_path=args.assembly_path,
+                current_interop_path=args.current_interop_path,
+                enemy_animation_fix_path=args.enemy_animation_fix_path,
+                stuck_enemy_fix_path=args.stuck_enemy_fix_path,
+            )
+        except (
+            EvidenceOnlyError,
+            R8EvidenceError,
+            R8ILInspectionError,
+            OSError,
+            ValueError,
+        ) as exc:
+            print(
+                json.dumps(
+                    {"status": "BLOCKED", "command": "evidence-request", "reason": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "intelligent-evidence-request":
+        try:
+            result = run_intelligent_evidence_only(
+                description=args.description,
+                source_registry_path=args.source_registry,
+                artifact_root=args.artifact_root,
+                settings_path=args.settings,
+                allow_evidence_disclosure=bool(args.allow_evidence_disclosure),
+                target_domain=args.target_domain,
+                target_mod=args.target_mod,
+                api_key_env=args.api_key_env,
+                base_url_env=args.base_url_env,
+            )
+        except (IntelligentEvidenceEntryError, OSError, RuntimeError, ValueError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "command": "intelligent-evidence-request",
+                        "reason": str(exc),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "run-request":

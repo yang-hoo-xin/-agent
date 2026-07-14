@@ -4,6 +4,48 @@ This archive preserves historical loop details moved out of the active control d
 
 Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md`.
 
+## 2026-07-14 WALLCRAWLER-INTELLIGENT-EVIDENCE-004
+
+```text
+Status: completed
+Product request: Move evidence source/tool selection, symbol discovery,
+  observation interpretation, and follow-up selection into the platform instead
+  of manually precomputing WallCrawler EvidencePacks.
+Implemented boundary:
+  - bounded model/action/observation loop inside retrieve_evidence;
+  - strict JSON chat adapter with one-run exact-data-class disclosure;
+  - SourceDefinition projection with hidden local roots and exact relative DLLs;
+  - metadata search and observation-derived exact IL tools;
+  - EvidencePack tool trace, provenance, input audit, and intelligence transfer;
+  - intelligent-evidence-request CLI with stop_after_evidence.
+Focused verification:
+  python -m pytest tests/unit/test_intelligent_evidence_discovery.py
+    tests/unit/test_mod_agent_cli.py tests/unit/test_gtfo_r8_evidence.py
+    tests/unit/test_evidence_retrieval.py tests/unit/test_artifact_contract.py
+    tests/unit/test_planning.py tests/unit/test_domain_adapter.py
+    tests/unit/test_workflow_graph.py -q
+  Result after acceptance hardening: 137 passed.
+  dotnet build scripts/r8_il_inspector/r8_il_inspector.csproj --configuration Debug
+  Result: 0 warnings, 0 errors.
+Real local tool evidence:
+  - exact R8 Modules-ASM.dll SHA256 and MVID were reread;
+  - exact method symbols and metadata tokens were observed;
+  - one observation-derived method body was read with target_code_executed=false;
+  - no external model, game launch, game copy, implementation plan, or target
+    source write occurred.
+Remaining boundary:
+  External-model semantic performance and WallCrawler Hook feasibility are
+  unverified. Proposal-only remains locked.
+Acceptance-hardening insertion:
+  - exact observed/inferred/unknown conclusion validation;
+  - inferred limitations and unknown non-citation rules;
+  - sanitized action/hash, observation hash, prompt/context hash, model identity,
+    and actual budget persistence;
+  - source-selection transfer requires at least two available sources;
+  - ignored machine-local registry binds R8 and current interop Modules-ASM.dll
+    to live SHA256/MVID and hides absolute roots from the model.
+```
+
 
 ## Archived PROJECT_STATE.md Before Sanitation
 
@@ -2485,4 +2527,59 @@ Completed evidence:
   - Repair patch proposals now carry implementation_plan, evidence_pack, and repair_plan lineage.
   - focused R-005 tests passed: 27 passed.
   - affected workflow/repair/checkpoint/dashboard tests passed: 25 passed.
+```
+
+
+### WALLCRAWLER-INTELLIGENT-EVIDENCE-005: Structured Agent Turn And Compact Discovery
+
+```text
+Status: completed
+Module: RET, EVAL, LLM
+Spec refs: 49.5, 49.6, 50.5, 50.6, 50.7
+Goal: Replace text-only intelligent discovery turns with provider-neutral
+      structured turns, stop cumulative observation replay, focus metadata
+      output, and make intelligence acceptance trajectory-grounded.
+Files modified:
+  src/libs/llm/agent_turn.py
+  src/libs/llm/__init__.py
+  src/mod_agent/evidence/discovery.py
+  src/mod_agent/evidence/discovery_contract.py
+  src/mod_agent/evidence/discovery_loop.py
+  src/mod_agent/evidence/discovery_tools.py
+  src/mod_agent/evidence/__init__.py
+  src/mod_agent/intelligent_evidence_only.py
+  tests/unit/test_agent_turn_adapters.py
+  tests/unit/test_intelligent_evidence_discovery.py
+  docs/ACTIVE_PRODUCT_CONTRACT.md
+  docs/ARCHITECTURE_OVERVIEW.md
+  docs/IMPLEMENTATION_QUEUE.md
+  docs/PROJECT_STATE.md
+  docs/SPEC_COVERAGE_MATRIX.md
+Completed evidence:
+  - BaseLLM.chat remains the plain-text compatibility boundary.
+  - AgentTurnRequest/AgentTurnResponse normalize exact tool schemas, call ids,
+    parsed arguments, bound tool results, final output, stop reason, provider
+    identity, request identity, and token usage.
+  - Qwen Chat mapping disables thinking and parallel tool calls; OpenAI
+    Responses mapping preserves function call/output ids, returned reasoning
+    items, strict text.format, and usage. Both are local fixture tests only.
+  - discovery.py is a compatibility facade over discovery_contract.py,
+    discovery_loop.py, and discovery_tools.py.
+  - Each turn contains immutable initial context, compact trajectory, latest
+    full observation only, and budget/correction state; prior full observation
+    replay is regression-tested as absent.
+  - Metadata search requires result_kinds and limit_per_kind, factors assembly
+    identity out of result rows, and records per-kind matched/returned/truncated
+    counts under a 16 KiB default observation cap.
+  - Intelligence transfer requires budget convergence, no identical repeated
+    source/tool/argument work, observed-method IL follow-up, and an
+    inspection-citing grounded conclusion. Semantic relevance remains
+    explicitly unevaluated without ground truth.
+  - Focused command passed 180 tests.
+  - No external model call, source disclosure, game launch, game-directory
+    copy, implementation plan, proposal, apply, build, or runtime action occurred.
+Stop condition:
+  - Local interface/control/trajectory acceptance is complete.
+  - Real Qwen WallCrawler semantic acceptance requires a new exact per-run
+    disclosure approval and remains evidence-only; Proposal-only is locked.
 ```

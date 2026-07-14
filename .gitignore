@@ -16,6 +16,8 @@ build/
 develop-eggs/
 dist/
 downloads/
+bin/
+obj/
 eggs/
 .eggs/
 lib/
