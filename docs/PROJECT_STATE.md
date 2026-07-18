@@ -14,6 +14,40 @@ selected_product_request: None
 most_recent_completed_capability: WALLCRAWLER-INTELLIGENT-EVIDENCE-014
 ```
 
+Checkpoint `5c78e06` implements durable `evidence_run_attempt` identity and
+sanitized provider diagnostics for the evidence-only entry. A `running`
+revision is persisted before `graph.invoke`, and its terminal revision keeps
+the same `run_id`. Provider-reported and adapter-extracted tool names remain
+separate; argument content is represented only by validity fields and SHA256.
+The production Qwen Evidence call is non-streaming. Unknown tool validation
+executes no evidence tool and performs no automatic provider retry. Focused
+verification passed 171 tests; compileall and diff checks passed.
+
+Exactly one separately approved `qwen3.6-plus` run then completed under run id
+`intelligent_evidence_448f8515e5634f9faf629494f8febbef`, with no second run or
+automatic retry. It used 7 model turns and 6 evidence tools: four metadata
+searches and two IL inspections selected through current-run `candidate_ref`
+values. EvidencePack provenance preserves both
+observation -> `candidate_ref` -> internal method identity -> IL observation
+chains and reports
+`all_method_inspections_derived_from_observations=true`. The run ended
+`completed` with a `needs_more_evidence` finish at `evidence_retrieval`, left
+no pending or temporary files, and produced no implementation, Proposal,
+build, or runtime artifact. The EvidencePack hash is
+`2174bca310480916658811dd46e9cd8858b2a241371310a4365379add2b60a81`.
+
+This is real evidence that the bounded intelligent identity loop is executable;
+it is not V2-C completion. The current hidden semantic evaluator returned a
+false positive: it accepted claims about Hook viability, base-class logic, and
+movement/surface behavior that are not established by the cited `nop; ret` and
+static-field-getter observations. The evaluator checks reference/symbol
+association rather than predicate-level fidelity, and the external Qwen entry
+currently does not invoke the WallCrawler evaluator path used for local Ollama.
+Semantic acceptance is therefore unresolved, evidence sufficiency and
+implementation readiness remain false, Proposal remains locked, and
+`most_recent_completed_capability` remains 014. No semantic repair or rerun is
+selected by this documentation checkpoint.
+
 The ArtifactStore path failure that blocked the next local V2-C execution
 before Agent logic is repaired for the current Windows, NTFS, and configured
 artifact-root boundary. Revision and pending files now use the shared short

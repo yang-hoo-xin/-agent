@@ -273,6 +273,25 @@ revisions and latest projections with no pending or temporary files left. It
 ended later as `budget_exhausted`; persistence is unblocked, but capability,
 convergence, semantic acceptance, and V2-C completion remain unproved.
 
+The evidence-only entry now also persists an `evidence_run_attempt` before the
+first possible external model call and writes a terminal revision with the same
+`run_id`. Sanitized provider-turn diagnostics preserve provider-reported and
+adapter-extracted tool names separately, argument validity/hash, call identity,
+finish reason, non-streaming state, and usage without retaining API keys,
+complete prompts, source roots, or raw arguments. Unknown tools execute no
+evidence tool and receive no automatic provider retry. This contract passed
+171 focused tests and is checkpointed at `5c78e06`.
+
+One separately approved `qwen3.6-plus` run subsequently completed the bounded
+metadata -> `candidate_ref` -> control-resolved method identity -> IL loop
+twice under run id `intelligent_evidence_448f8515e5634f9faf629494f8febbef`.
+The EvidencePack retains both identity chains, stops at `evidence_retrieval`,
+and contains no later-stage artifact. This validates the real intelligent
+identity loop only. The current semantic evaluator falsely accepted claims
+beyond the cited IL observations and is not invoked on this external-provider
+entry. Semantic acceptance, evidence sufficiency, implementation readiness,
+and V2-C completion therefore remain unresolved; Proposal remains locked.
+
 ### 2.1 Current V2 Intelligence Mainline
 
 V2 now targets real-task intelligence transfer inside the existing controlled

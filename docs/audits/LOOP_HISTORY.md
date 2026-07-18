@@ -4,6 +4,67 @@ This archive preserves historical loop details moved out of the active control d
 
 Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md`.
 
+## 2026-07-18 Durable Evidence Attempt And External Qwen Identity Loop
+
+```text
+Implementation checkpoint:
+  - commit 5c78e06 persists evidence_run_attempt before graph.invoke and writes
+    a terminal revision with the same run_id;
+  - provider-reported and adapter-extracted tool names remain distinct;
+  - provider diagnostics retain call identity, finish reason, stream=false,
+    argument JSON validity/hash, and usage without API keys, complete prompts,
+    source roots, or raw arguments;
+  - unknown tool validation executes zero evidence tools and performs zero
+    automatic provider retries;
+  - accepted_model_actions counts accepted model tools plus accepted model finish;
+  - 171 focused tests passed; compileall and git diff --check passed.
+Approved execution:
+  - exactly one external qwen3.6-plus run, no second run and no automatic retry;
+  - run_id intelligent_evidence_448f8515e5634f9faf629494f8febbef;
+  - request SHA256 8eae153e6c0492be4ab3fdd6ba7f8c0a1a04d215e117e12e6824d5920509a9e7,
+    342 UTF-8 bytes;
+  - registered supplied-R8 and current-interop source hashes matched before use;
+  - result completed at evidence_retrieval with needs_more_evidence;
+  - 7 model turns, 6 executed evidence tools, zero automatic retry;
+  - 30,228 input, 1,269 output, and 31,497 total provider tokens;
+  - running and success attempt revisions share the run id;
+  - terminal attempt records 7 external model calls, 7 accepted model actions,
+    6 executed tools, failure_attribution=none;
+  - all six provider-reported and adapter-extracted tool names match exactly;
+  - no raw tool arguments, API key, complete request, or source root is present
+    in the attempt diagnostic;
+  - no pending/temp or implementation, Proposal, build, or runtime artifact remained.
+Identity provenance:
+  - obs-003 -> candidate_73ff66bd287ccffec09039cd
+    -> method_b4cf489925e45dbbe0661c06 -> obs-004;
+  - obs-005 -> candidate_dab6a6eb4f59525935cddc34
+    -> method_04088bcea8cc3f1a170053db -> obs-006;
+  - all_method_inspections_derived_from_observations=true;
+  - evidence_pack hash
+    2174bca310480916658811dd46e9cd8858b2a241371310a4365379add2b60a81;
+  - evidence_run_attempt hash
+    c9076509d23bdfc7ff1038987aa04fbaf6020748551d70126afbc278dfc6c0f7.
+Observed evaluation defect:
+  - the current evaluator reported capability=true, convergence=false,
+    semantic=true when applied offline to this pack;
+  - semantic=true is a false positive: obs-006 establishes only the method
+    identity and nop; ret instruction sequence, not Hook viability or base-class
+    logic; obs-004 establishes a static-field getter body, not movement physics
+    or surface-interaction behavior;
+  - current semantic checks bind claims to inspected symbol names but do not
+    validate predicate-level fidelity;
+  - the external Qwen entry does not invoke the WallCrawler evaluator path used
+    by the local Ollama entry.
+Claim boundary:
+  - real metadata -> candidate_ref -> control-resolved method identity -> IL
+    looping and durable provenance are validated for this bounded run;
+  - the semantic gate result is invalid, evidence sufficiency is false,
+    implementation readiness is false, Proposal remains locked, convergence is
+    not established, and V2-C is incomplete;
+  - no semantic repair, evaluator expansion, rerun, or queue task is selected by
+    this documentation record.
+```
+
 ## 2026-07-17 ArtifactStore Path Reliability And One Local Validation Run
 
 ```text

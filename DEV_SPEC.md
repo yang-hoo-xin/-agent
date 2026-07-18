@@ -5526,11 +5526,11 @@ the abbreviated filename.
 
 Before `intelligent-evidence-request` constructs or invokes the graph, model,
 or evidence tools, `ArtifactStore` probes the actual pending, revision, and
-latest write locations for `request_planning_report`, `mod_planning_brief`,
-`feature_spec`, and `evidence_pack`. The probe uses the production locator and
-atomic-write implementation, removes its reserved probe files after success,
-and creates no business revision, latest projection, `ArtifactRef`, or upstream
-binding.
+latest write locations for `evidence_run_attempt`, `request_planning_report`,
+`mod_planning_brief`, `feature_spec`, and `evidence_pack`. The probe uses the
+production locator and atomic-write implementation, removes its reserved probe
+files after success, and creates no business revision, latest projection,
+`ArtifactRef`, or upstream binding.
 
 A recognized unaddressable-path replace failure returns the existing CLI
 top-level `BLOCKED` result with exit code 2 and a machine-readable diagnostic:
@@ -5559,6 +5559,31 @@ local NTFS artifact root, and single-process evidence-only write chain. It does
 not establish arbitrary path-length support, a Windows-specific path layer,
 cross-process locking, fallback storage, dual writes, migration, retention,
 garbage collection, or crash recovery beyond the normal pending commit flow.
+
+### 49.2.8 Durable Evidence Attempt Identity And Provider Diagnostics
+
+`intelligent-evidence-request` writes an `evidence_run_attempt` revision with
+status `running`, `run_validity=attempt_started`, and
+`terminal_stage=before_graph` before `graph.invoke` can make the first model
+call. A terminal `success` or `failed` revision uses the same `run_id`; an
+external call that later fails validation therefore remains bound to a durable
+attempt identity even when no EvidencePack is produced.
+
+The terminal revision records model and external-model call counts, accepted
+model actions, executed evidence tools, failure attribution, and one sanitized
+provider-turn envelope per provider response. Each tool-call diagnostic keeps
+`provider_reported_tool_name` and `adapter_extracted_tool_name` as distinct
+values and also records `normalized_tool_name`, `normalization_applied`, JSON
+validity, argument SHA256, provider request and tool-call ids, finish reason,
+API type, streaming state, and reported usage. It does not persist API keys,
+complete prompts, source roots, or raw tool arguments.
+
+The production Qwen Evidence request explicitly uses `stream=false`. Unknown
+tool names fail before evidence-tool execution and do not trigger an automatic
+provider retry. `accepted_model_actions` counts accepted model tool actions and
+an accepted model finish; a deterministic control-plane finish is not counted.
+These fields provide run diagnosis and attribution evidence. They do not prove
+semantic correctness or authorize later workflow stages.
 
 ---
 
@@ -7048,8 +7073,9 @@ the model finishes before the model-step and tool-call budgets are exhausted;
 all input-pollution counts are zero;
 the model selects a registered source without being given the answer;
 the model selects metadata search as an evidence action;
-metadata returns a current identity-bound method_id;
-the model selects a dependent IL read using that method_id;
+metadata returns a current-run, source-bound, observation-bound candidate_ref;
+the model selects a dependent IL read using that candidate_ref;
+the control layer resolves and validates the candidate_ref as an internal method_id;
 the conclusion cites the resulting IL observation;
 the conclusion passes observed/inferred/unknown validation;
 no identical source/tool/arguments action repeats;
@@ -7095,8 +7121,9 @@ Capability, convergence, and semantic acceptance are independent:
 ```text
 capability gate
   -> within 8 model turns and 6 tools;
-  -> registered metadata search followed by an IL read whose method_id came
-     from a prior metadata observation in the same run;
+  -> registered metadata search followed by an IL read whose candidate_ref
+     came from a prior metadata observation in the same run and whose internal
+     method_id was resolved and validated by the control layer;
   -> an observed/inferred conclusion cites the IL observation;
   -> input pollution and repeated identical calls are absent;
   -> evidence-only stop is preserved.
@@ -7183,6 +7210,50 @@ conclusion. Capability, convergence, and semantic gates therefore remain false;
 the persistence result proves only that the earlier infrastructure stop no
 longer prevents this bounded run from reaching Agent execution and durable
 EvidencePack output.
+
+One separately approved external `qwen3.6-plus` execution then exercised the
+post-diagnostic contract exactly once with no automatic retry. Run
+`intelligent_evidence_448f8515e5634f9faf629494f8febbef` completed at
+`evidence_retrieval` in 7 model turns and 6 evidence-tool calls. It performed
+four metadata searches and two dependent IL inspections. Both inspections
+were selected through model-visible `candidate_ref` values and resolved by the
+control layer to current-run internal method identities. EvidencePack
+provenance records both complete chains:
+
+```text
+obs-003
+-> candidate_73ff66bd287ccffec09039cd
+-> method_b4cf489925e45dbbe0661c06
+-> obs-004
+
+obs-005
+-> candidate_dab6a6eb4f59525935cddc34
+-> method_04088bcea8cc3f1a170053db
+-> obs-006
+```
+
+The run produced `needs_more_evidence`, stopped before implementation planning,
+and created no Proposal, build, or runtime artifact. Its running and terminal
+`evidence_run_attempt` revisions share the run id; the terminal revision
+records 7 external model calls, 7 accepted model actions, 6 executed tools, and
+matching provider-reported and adapter-extracted tool names for all six calls.
+The EvidencePack hash is
+`2174bca310480916658811dd46e9cd8858b2a241371310a4365379add2b60a81`.
+
+This run proves the bounded model-tool-observation identity loop under the
+recorded request, source snapshots, tool contract, model, and budget. It does
+not prove semantic acceptance or V2-C completion. The current post-run semantic
+evaluator returned a false positive on this pack: observation `obs-006` proves
+only the inspected method identity and instruction sequence `nop; ret`, while
+the model labeled Hook viability and possible base-class logic as observed;
+observation `obs-004` proves a static-field getter body, not the claimed
+movement-physics or surface-interaction behavior. The evaluator currently
+checks symbol/reference association rather than predicate-level observation
+fidelity, and the external Qwen entry does not invoke the WallCrawler evaluator
+path used by the local Ollama entry. Until those two observed defects are
+repaired and tested, the recorded semantic result is invalid, evidence
+sufficiency is false, implementation planning remains locked, and V2-C remains
+incomplete.
 
 ## 51.7 V2-D Failure-Driven Capability Growth
 
@@ -7402,6 +7473,7 @@ Current verified mapping:
 | `WALLCRAWLER-INTELLIGENT-EVIDENCE-014` | 013-triggered V2-D query/finish/provenance repair | prompt v6 removes copyable argument values, shares finish cross-field rules across initial and correction context, and separates valid method-origin provenance from convergence; 31 direct and 199 affected deterministic tests pass with unchanged tools, budgets, and evidence-only stop; no real model call |
 | `WALLCRAWLER-LOCAL-MODEL-EVIDENCE-015` | post-014 same-model local V2-C rerun | exact request/source/model/budget boundaries preserved; the removed placeholder was not copied, but identical zero-result query strings were used across both sources and repeat correction exhausted before method_id or IL; 4 turns, 2 metadata tools, no model conclusion, all hidden gates false, Proposal locked |
 | 2026-07-17 artifact persistence validation | infrastructure unblock plus one bounded local execution | short physical locators, complete-hash collision checks, legacy revision reads, atomic preflight, and structured CLI blocking are implemented; run `intelligent_evidence_5327cb5988774bc5aba6cfcc53f8d2ab` persisted all evidence-only artifacts and then ended `budget_exhausted`; all V2-C gates remain false |
+| 2026-07-18 external Qwen evidence-loop validation | attempt diagnostics plus real candidate_ref identity loop | checkpoint `5c78e06` durably binds pre-call and terminal attempt revisions and sanitized provider diagnostics; one approved `qwen3.6-plus` run completed four metadata searches, two candidate_ref-derived IL reads, and a grounded-abstention finish with complete provenance, but the current semantic evaluator produced a demonstrated false positive and is not invoked by this provider path; V2-C and implementation readiness remain false |
 
 The 006-exposed model-facing acceptance-contract repair is complete as 007 and
 was exercised exactly once by 008. The 008-exposed compact IL, inspection-
