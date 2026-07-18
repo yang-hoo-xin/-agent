@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Mapping
 from uuid import uuid4
@@ -40,10 +41,49 @@ _PENDING_WRITE_FIELDS = frozenset(
     )
 )
 _PENDING_WRITE_STATUS = "pending_latest_replace"
+_PHYSICAL_LOCATOR_HEX_LENGTH = 32
+_REVISION_DIRECTORY = "r"
+_PENDING_DIRECTORY = "p"
+_PREFLIGHT_CONTENT = '{"artifact_store_preflight":true}\n'
 
 
 class ArtifactStoreError(ValueError):
     """Raised when artifact storage validation fails."""
+
+
+class ArtifactStorePreflightError(ArtifactStoreError):
+    """Raised for a recognized atomic-replace path failure during preflight."""
+
+    def __init__(
+        self,
+        *,
+        artifact_type: str,
+        path_role: str,
+        source_path_length: int,
+        target_path_length: int,
+        target_parent_exists: bool,
+        winerror: int,
+    ) -> None:
+        super().__init__(
+            "ArtifactStore preflight could not address the "
+            f"{path_role} path for {artifact_type}."
+        )
+        self.artifact_type = artifact_type
+        self.path_role = path_role
+        self.source_path_length = source_path_length
+        self.target_path_length = target_path_length
+        self.target_parent_exists = target_parent_exists
+        self.winerror = winerror
+
+
+class _AtomicReplaceFailure(RuntimeError):
+    """Carry exact source/target evidence from a preflight replace failure."""
+
+    def __init__(self, source_path: Path, target_path: Path, cause: OSError) -> None:
+        super().__init__(str(cause))
+        self.source_path = source_path
+        self.target_path = target_path
+        self.cause = cause
 
 
 def _requires_conditional_upstream_contract(
@@ -152,7 +192,12 @@ class ArtifactStore:
             json.dumps(envelope.to_dict(), ensure_ascii=False, indent=2, sort_keys=True)
             + "\n"
         )
-        revision_path = self._revision_artifact_path(
+        existing_revision_path = self._find_existing_revision_path(
+            feature_id,
+            artifact_type,
+            artifact_hash,
+        )
+        revision_path = existing_revision_path or self._revision_artifact_path(
             feature_id,
             artifact_type,
             artifact_hash,
@@ -162,6 +207,12 @@ class ArtifactStore:
             feature_id,
             artifact_type,
             artifact_hash,
+        )
+        self._validate_pending_locator(
+            pending_path,
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            artifact_hash=artifact_hash,
         )
         self._write_text_atomic(
             pending_path,
@@ -174,7 +225,8 @@ class ArtifactStore:
             ),
         )
         try:
-            self._write_text_atomic(revision_path, serialized_envelope)
+            if existing_revision_path is None:
+                self._write_text_atomic(revision_path, serialized_envelope)
             self._write_text_atomic(latest_path, serialized_envelope)
         except Exception:
             if not revision_path.exists():
@@ -199,6 +251,10 @@ class ArtifactStore:
         if envelope.get("artifact_hash") != ref.artifact_hash:
             raise ArtifactStoreError("Artifact hash mismatch")
         self._validate_envelope_fields(envelope)
+        if envelope.get("feature_id") != ref.feature_id:
+            raise ArtifactStoreError("Artifact feature_id mismatch")
+        if envelope.get("artifact_type") != ref.artifact_type:
+            raise ArtifactStoreError("Artifact artifact_type mismatch")
         try:
             self.registry.validate_envelope(envelope)
         except ArtifactRegistryError as exc:
@@ -343,9 +399,81 @@ class ArtifactStore:
             return []
 
         results: list[dict[str, str]] = []
-        for marker_path in sorted(features_dir.glob("*/pending_writes/*/*.json")):
+        for marker_path in sorted(features_dir.glob(f"*/{_PENDING_DIRECTORY}/*/*.json")):
             results.append(self._recover_pending_write(marker_path))
         return results
+
+    def preflight_atomic_commit(
+        self,
+        *,
+        feature_id: str,
+        artifact_types: tuple[str, ...],
+    ) -> None:
+        """Probe actual write locations without creating business artifacts."""
+
+        self._validate_feature_id(feature_id)
+        if not artifact_types:
+            raise ArtifactStoreError("Artifact preflight requires artifact_types")
+
+        synthetic_hash = "0" * 64
+        probes: list[tuple[str, str, Path]] = []
+        for artifact_type in artifact_types:
+            self._validate_artifact_type(artifact_type)
+            targets = (
+                (
+                    "pending_marker",
+                    self._pending_write_path(feature_id, artifact_type, synthetic_hash),
+                ),
+                (
+                    "revision",
+                    self._revision_artifact_path(feature_id, artifact_type, synthetic_hash),
+                ),
+                (
+                    "latest_projection",
+                    self._artifact_path(feature_id, artifact_type),
+                ),
+            )
+            for path_role, business_path in targets:
+                probe_path = business_path.with_name(
+                    self._preflight_filename(len(business_path.stem))
+                )
+                probes.append((artifact_type, path_role, self._guard_path(probe_path)))
+
+        created_directories = self._missing_probe_directories(
+            path for _, _, path in probes
+        )
+        try:
+            for artifact_type, path_role, probe_path in probes:
+                try:
+                    self._write_text_atomic(
+                        probe_path,
+                        _PREFLIGHT_CONTENT,
+                        capture_replace_error=True,
+                    )
+                except _AtomicReplaceFailure as exc:
+                    winerror = getattr(exc.cause, "winerror", None)
+                    if winerror == 3:
+                        raise ArtifactStorePreflightError(
+                            artifact_type=artifact_type,
+                            path_role=path_role,
+                            source_path_length=len(str(exc.source_path)),
+                            target_path_length=len(str(exc.target_path)),
+                            target_parent_exists=exc.target_path.parent.exists(),
+                            winerror=winerror,
+                        ) from exc.cause
+                    raise exc.cause
+                finally:
+                    self._unlink_if_exists(probe_path)
+        finally:
+            for directory in sorted(
+                created_directories,
+                key=lambda path: len(path.parts),
+                reverse=True,
+            ):
+                try:
+                    directory.rmdir()
+                except (FileNotFoundError, OSError):
+                    pass
 
     def exists(self, ref: ArtifactRef) -> bool:
         """Return whether a guarded artifact reference exists."""
@@ -370,6 +498,21 @@ class ArtifactStore:
             self.root
             / "features"
             / feature_id
+            / _REVISION_DIRECTORY
+            / artifact_type
+            / f"{self._physical_locator(artifact_hash)}.json"
+        )
+
+    def _legacy_revision_artifact_path(
+        self,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str,
+    ) -> Path:
+        return self._guard_path(
+            self.root
+            / "features"
+            / feature_id
             / "revisions"
             / artifact_type
             / f"{artifact_hash}.json"
@@ -385,9 +528,9 @@ class ArtifactStore:
             self.root
             / "features"
             / feature_id
-            / "pending_writes"
+            / _PENDING_DIRECTORY
             / artifact_type
-            / f"{artifact_hash}.json"
+            / f"{self._physical_locator(artifact_hash)}.json"
         )
 
     def _latest_artifact_hash(self, feature_id: str, artifact_type: str) -> str | None:
@@ -406,7 +549,13 @@ class ArtifactStore:
         )
         return str(self.read(latest_ref)["artifact_hash"])
 
-    def _write_text_atomic(self, path: Path, content: str) -> None:
+    def _write_text_atomic(
+        self,
+        path: Path,
+        content: str,
+        *,
+        capture_replace_error: bool = False,
+    ) -> None:
         guarded_path = self._guard_path(path)
         guarded_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = self._guard_path(
@@ -417,7 +566,12 @@ class ArtifactStore:
                 handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(temp_path, guarded_path)
+            try:
+                os.replace(temp_path, guarded_path)
+            except OSError as exc:
+                if capture_replace_error:
+                    raise _AtomicReplaceFailure(temp_path, guarded_path, exc) from exc
+                raise
         finally:
             if temp_path.exists():
                 temp_path.unlink()
@@ -430,11 +584,7 @@ class ArtifactStore:
         feature_id = str(marker["feature_id"])
         artifact_type = str(marker["artifact_type"])
         artifact_hash = str(marker["artifact_hash"])
-        revision_path = self._revision_artifact_path(
-            feature_id,
-            artifact_type,
-            artifact_hash,
-        )
+        revision_path = self._guard_path(Path(str(marker["revision_path"])))
         latest_path = self._artifact_path(feature_id, artifact_type)
         expected_marker_path = self._pending_write_path(
             feature_id,
@@ -443,7 +593,15 @@ class ArtifactStore:
         )
         if guarded_marker_path != expected_marker_path:
             raise ArtifactStoreError("Pending write marker path mismatch")
-        if str(revision_path) != marker["revision_path"]:
+        allowed_revision_paths = {
+            self._revision_artifact_path(feature_id, artifact_type, artifact_hash),
+            self._legacy_revision_artifact_path(
+                feature_id,
+                artifact_type,
+                artifact_hash,
+            ),
+        }
+        if revision_path not in allowed_revision_paths:
             raise ArtifactStoreError("Pending write revision_path mismatch")
         if str(latest_path) != marker["latest_path"]:
             raise ArtifactStoreError("Pending write latest_path mismatch")
@@ -536,6 +694,99 @@ class ArtifactStore:
     def _unlink_if_exists(path: Path) -> None:
         if path.exists():
             path.unlink()
+
+    def _find_existing_revision_path(
+        self,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str,
+    ) -> Path | None:
+        legacy_path = self._legacy_revision_artifact_path(
+            feature_id,
+            artifact_type,
+            artifact_hash,
+        )
+        revision_path = self._revision_artifact_path(
+            feature_id,
+            artifact_type,
+            artifact_hash,
+        )
+        found: list[Path] = []
+        for path, is_short_locator in (
+            (legacy_path, False),
+            (revision_path, True),
+        ):
+            if not path.exists():
+                continue
+            ref = ArtifactRef(
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                path=str(path),
+                artifact_hash=artifact_hash,
+            )
+            try:
+                self.read(ref)
+            except ArtifactStoreError as exc:
+                if is_short_locator and str(exc) == "Artifact hash mismatch":
+                    raise ArtifactStoreError(
+                        "Artifact revision locator collision"
+                    ) from exc
+                raise ArtifactStoreError(
+                    f"Existing artifact revision is invalid: {exc}"
+                ) from exc
+            found.append(path)
+        if len(found) == 2 and found[0].read_bytes() != found[1].read_bytes():
+            raise ArtifactStoreError(
+                "Duplicate artifact revisions have inconsistent bytes"
+            )
+        return found[0] if found else None
+
+    def _validate_pending_locator(
+        self,
+        path: Path,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str,
+    ) -> None:
+        if not path.exists():
+            return
+        try:
+            marker = json.loads(path.read_text(encoding="utf-8"))
+            self._validate_pending_write_marker(marker)
+        except (ArtifactStoreError, json.JSONDecodeError, OSError) as exc:
+            raise ArtifactStoreError("Existing pending write marker is invalid") from exc
+        if (
+            marker.get("feature_id") != feature_id
+            or marker.get("artifact_type") != artifact_type
+            or marker.get("artifact_hash") != artifact_hash
+        ):
+            raise ArtifactStoreError("Artifact pending locator collision")
+
+    def _missing_probe_directories(self, paths: Iterable[Path]) -> set[Path]:
+        missing: set[Path] = set()
+        if not self.root.exists():
+            missing.add(self.root)
+        for path in paths:
+            current = path.parent
+            while current != self.root:
+                if not current.exists():
+                    missing.add(current)
+                current = current.parent
+        return missing
+
+    @staticmethod
+    def _preflight_filename(stem_length: int) -> str:
+        digest = hashlib.sha256(uuid4().hex.encode("ascii")).hexdigest()
+        if stem_length < 2:
+            raise ArtifactStoreError("Artifact preflight target stem is too short")
+        return f".{digest[: stem_length - 1]}.json"
+
+    @staticmethod
+    def _physical_locator(artifact_hash: str) -> str:
+        if not re.fullmatch(r"[0-9a-f]{64}", artifact_hash):
+            raise ArtifactStoreError("Invalid artifact_hash for physical locator")
+        return artifact_hash[:_PHYSICAL_LOCATOR_HEX_LENGTH]
 
     def _validate_upstream_refs(
         self,

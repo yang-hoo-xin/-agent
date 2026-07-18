@@ -61,6 +61,86 @@ checkpoint integration. ArtifactStore owns durable business outputs and audit
 lineage. Deterministic policies retain authority over write scope, approval,
 verification, and claim promotion.
 
+### 2.1 V2 Real-Task Intelligence Architecture
+
+The control-plane diagram above is the implemented delivery baseline. It is not
+the V2 intelligence work list. `DEV_SPEC.md` section 51 defines the detailed
+capability program: controlled intelligent input, a bounded loop inside the
+Evidence specialist, a real WallCrawler run with no manual answers, and only
+failure-driven tool or loop growth.
+
+```mermaid
+flowchart TD
+    A["V2-A: controlled intelligent input"] --> B["V2-B: bounded Evidence loop"]
+    B --> C["V2-C: approved real WallCrawler model run"]
+    C --> D{"Observed result"}
+    D -->|"grounded conclusion within budget"| G["Intelligence-transfer gate resolved"]
+    D -->|"exact missing evidence capability"| E["V2-D: add only that capability"]
+    D -->|"provider, schema, tool, context, or budget failure"| F["Repair only the observed loop failure"]
+    E --> C
+    F --> C
+    G --> H["Stop at evidence_retrieval"]
+    H --> I["Separately select or reject Proposal-only"]
+```
+
+V2-A excludes exact symbols, DLL choice, tool sequence, Hook, precomputed IL
+reports, and artificial blockers from an acceptance run. V2-B may reason and
+use registered read-only tools, but it cannot choose graph routes, authorize
+paths or writes, approve a Proposal, or launch execution stages. V2-C may
+truthfully finish with grounded `needs_more_evidence`; Proposal remains locked.
+V2-D activates only from an exact observed failure and never authorizes a
+general decompiler, generic ReAct platform, new retrieval stack, multi-agent
+swarm, or long-term memory system.
+
+The current mapping is: deterministic WallCrawler work through
+`WALLCRAWLER-CURRENT-HOOK-EVIDENCE-003` established the request/source/tool
+baseline; `WALLCRAWLER-INTELLIGENT-EVIDENCE-004` implemented V2-A/V2-B and its
+first real Qwen attempt exposed the failure; acceptance hardening plus
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-005` repaired the provider, context,
+observation, and acceptance boundaries locally.
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-006` then exercised the new interface with
+real Qwen. Compact observations worked, but the model used all six tool calls
+for metadata search, performed no IL inspection, and returned two invalid
+finish shapes. This activates only the documented trigger for a bounded
+model-facing finish-schema and acceptance-progress repair.
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-007` completed that repair locally by sharing
+one exact nested schema across response format, system context, and correction
+feedback, and by exposing current metadata/IL acceptance progress. It did not
+change tools, budgets, graph authority, or the evidence-only stop. Real-model
+acceptance remains unresolved and no rerun is active.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-008` executed that rerun once. The structured
+finish and acceptance-progress repair changed the failure boundary: real Qwen
+now converged, selected a metadata-derived IL read, and returned a valid finish.
+The remaining structural loss occurs when the full IL observation is no longer
+the latest observation. `_compact_step` preserves metadata rows under
+`observed_methods`, but IL observations store `method_id`, `symbol`,
+`metadata_token`, and instruction facts as direct fields; the compact IL step
+therefore exposes `observed_methods: []`. The final conclusion treated that as
+an unsuccessful IL read and did not cite the IL observation. This activated
+only the compact-IL representation and inspection-citation repair completed as
+009; it did not authorize more tools, budget, graph authority, Proposal, or
+another external run.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-009` completed that repair locally. Compact
+reconstruction now separates deduplicated metadata method identities from
+direct IL inspection outcomes, excludes the current latest full observation
+from both catalogs, and records serialized discovery-message bytes per turn.
+Deterministic finish validation requires an observed/inferred conclusion to
+cite an available IL observation and offers one bounded correction. Post-IL
+state recommends finishing unless one exact unresolved gap justifies another
+tool call, so `needs_more_evidence` does not require broad metadata expansion.
+This changes only the Evidence specialist context representation and stop
+signaling; the tools, production budgets, graph authority, and evidence-only
+boundary are unchanged. Real-model acceptance remains unresolved.
+
+After the core intelligence gate, section 51 defines deeper conditional gates
+for evidence-to-implementation planning, Proposal-only generation and review,
+deterministic dry-run and approval, build-failure repair, runtime diagnosis,
+and delivery evaluation. Those gates specify decision capability, input
+representation, deterministic authority, failure boundary, and promotion
+evidence; they are not a preactivated consecutive queue.
+
 The local `plan-request` command is a bounded entry slice before this full
 graph. It runs RequestPlanner and ModPlanningBriefBuilder in memory, emits both
 planning payloads, and stops before `feature_spec` without ArtifactStore writes.
@@ -173,8 +253,8 @@ assembly table and carries per-kind matched/returned/truncated counts. The
 default local cap is 50 results per requested kind and 16 KiB per metadata model
 observation.
 
-For the pending real-model rerun, the ignored machine-local registry contains
-two task-relevant exact sources rather than unrelated directory noise:
+The ignored machine-local registry contains two task-relevant exact sources
+rather than unrelated directory noise:
 the supplied R8 `Modules-ASM.dll` and current installed interop
 `Modules-ASM.dll`. Their registered SHA256/MVID values are checked against the
 live metadata report on every search. This local registry is execution input,
@@ -186,6 +266,20 @@ conclusion. It triggered compact context reconstruction, focused metadata
 results, native structured turns, and stricter trajectory acceptance. It did
 not prove semantic discovery quality, and rerunning Qwen requires a new per-run
 disclosure approval.
+
+The provider-neutral Agent-turn boundary now has a loopback-only Ollama adapter
+in addition to the fixture-tested hosted adapters. This is not a second control
+plane: it only maps native tool calls, tool results, structured finish output,
+and local usage into the existing Evidence specialist. Local execution accepts
+only literal `127.0.0.1` or `::1` HTTP origins, does not follow redirects or
+inherit proxy routing, and is recorded as `local_agent_turn_adapter`.
+
+011 exercised that adapter with a real local `qwen3:4b-instruct` model. The
+control and data-locality boundaries passed, but the model repeated
+identifier-ineffective natural-language metadata queries, selected no IL, and
+failed the separate capability, convergence, and semantic gates. This is a
+recorded product failure, not authority to add a provider router, larger budget,
+new evidence tool, or Proposal stage.
 
 ## 3. Workflow, ReAct, And Specialist Roles
 

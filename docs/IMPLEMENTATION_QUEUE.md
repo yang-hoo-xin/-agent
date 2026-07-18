@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-14
+Last updated: 2026-07-16
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -14,9 +14,44 @@ current_queue: None
 selected_product_request: None
 ```
 
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-015` completed exactly one authorized
+post-014 local real-model run and moved to `docs/audits/LOOP_HISTORY.md`. Prompt
+v6 did not expose the old copyable query value, but the model used the same five
+zero-result behavioral symbol strings across both sources and then twice
+returned to an already executed source/tool/arguments signature. The repeat
+validator stopped the run before any method_id, IL inspection, or model finish.
+All three formal gates failed; no rerun or repair is selected automatically.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-014` completed the deterministic repair and
+moved to `docs/audits/LOOP_HISTORY.md`. Prompt v6 removes value-like query
+examples, shares finish decision/open-gap constraints with initial and
+correction context, and reports valid metadata-derived method provenance
+independently from final convergence. No real model ran and no rerun is
+selected automatically.
+
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-013` completed exactly one same-model local
+replication and moved to `docs/audits/LOOP_HISTORY.md`. It reached metadata-to-
+IL without an executed repeat but exhausted finish correction and failed all
+three formal gates. No automatic retry or repair is selected.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-012` completed the selected deterministic
+query-semantics and pre-execution exact-repeat repair and moved to
+`docs/audits/LOOP_HISTORY.md`. It did not call a real model. A same-model local
+rerun is not implied and requires a separately selected task.
+
 The ProposalCritic documentation/contract cleanup is complete and did not
-activate a product-expansion task. Obtain or select one concrete product
-capability or real Mod request before changing platform behavior.
+activate a product-expansion task. `WALLCRAWLER-INTELLIGENT-EVIDENCE-006` has
+completed its one approved real-model execution and moved to
+`docs/audits/LOOP_HISTORY.md`; its exact bounded repair was selected as 007.
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-007` completed that local repair and is also
+archived there. `WALLCRAWLER-INTELLIGENT-EVIDENCE-008` was the selected one-run
+external acceptance; it completed exactly once and is archived in
+`docs/audits/LOOP_HISTORY.md`. Its bounded compact-IL/context repair completed
+as `WALLCRAWLER-INTELLIGENT-EVIDENCE-009` with 75 focused tests passing and is
+also archived there. 010 was blocked before process creation. 011 completed one
+loopback-only local-model run and is archived with failed capability,
+convergence, and semantic gates. Its bounded 012 repair is also complete; no
+new task is selected automatically.
 
 `WALLCRAWLER-INTELLIGENT-EVIDENCE-004` is completed and recorded in current
 state/history; it is not retained as an active queue item. A real external-model
@@ -35,6 +70,30 @@ reconstruction, focused metadata observations, and stricter trajectory-level
 acceptance. No external model was called. A real Qwen semantic run remains a
 separate execution requiring a new per-run disclosure approval; it is not an
 active infrastructure task and cannot cross the evidence-only stop boundary.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-006` then ran that real Qwen path once. It
+stopped correctly at `evidence_retrieval` but exhausted 8 model steps and all 6
+tool calls after six metadata searches, no IL inspection, and two rejected
+finish objects. The exact bounded repair direction is to expose the full nested
+finish schema and current IL/conclusion acceptance state to the model;
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-007` completed only that repair with 70
+focused tests passing. V2-C remains unresolved until a separately selected and
+approved real-model rerun exercises it. That rerun completed as 008: it fixed
+the 006 convergence and finish-shape failures but exposed one exact compact-IL
+representation and inspection-citation failure. No repair was selected
+automatically. The user then selected 009 to repair only that failure and
+the directly observed repeated-context growth. That repair is complete; a new
+real-model run is not implied or authorized.
+
+The confirmed V2 product direction is specified in `DEV_SPEC.md` section 51:
+controlled intelligent input, a bounded Evidence loop, an approved real
+WallCrawler model run, and only then one failure-driven capability or loop
+repair when the run proves it is needed. This direction is not a preactivated
+consecutive queue. A later external real-model rerun requires explicit task
+selection plus disclosure approval. A local real-model rerun requires a
+separately selected task and the literal-loopback boundary. Every result stops
+at `evidence_retrieval` and may only recommend a later bounded repair or
+separately selected Proposal-only task.
 
 ## 2. Entry Rule
 

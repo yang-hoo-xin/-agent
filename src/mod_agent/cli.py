@@ -8,6 +8,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
+from .artifacts.store import ArtifactStorePreflightError
 from .evidence import R8EvidenceError, R8ILInspectionError
 from .evidence_only import EvidenceOnlyError, run_gtfo_r8_evidence_only
 from .intelligent_evidence_only import (
@@ -113,6 +114,23 @@ def build_parser() -> argparse.ArgumentParser:
             "Approve this run to send the natural-language request, path-hidden source "
             "views, and metadata/IL tool observations to the configured model."
         ),
+    )
+    intelligent_evidence_parser.add_argument(
+        "--local-ollama",
+        action="store_true",
+        help=(
+            "Use Ollama through a literal loopback endpoint; no external model "
+            "disclosure is authorized."
+        ),
+    )
+    intelligent_evidence_parser.add_argument(
+        "--ollama-base-url", default="http://127.0.0.1:11434"
+    )
+    intelligent_evidence_parser.add_argument(
+        "--ollama-model", default="qwen3:4b-instruct"
+    )
+    intelligent_evidence_parser.add_argument(
+        "--ollama-max-output-tokens", type=int, default=4096
     )
 
     apply_parser = subparsers.add_parser(
@@ -222,7 +240,43 @@ def main(argv: Sequence[str] | None = None) -> int:
                 target_mod=args.target_mod,
                 api_key_env=args.api_key_env,
                 base_url_env=args.base_url_env,
+                local_ollama=bool(args.local_ollama),
+                ollama_base_url=args.ollama_base_url,
+                ollama_model=args.ollama_model,
+                ollama_max_output_tokens=args.ollama_max_output_tokens,
             )
+        except ArtifactStorePreflightError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "command": "intelligent-evidence-request",
+                        "reason": str(exc),
+                        "diagnostic": {
+                            "category": "infrastructure_preflight_failure",
+                            "component": "artifact_store",
+                            "stage": "artifact_preflight",
+                            "code": "artifact_path_unaddressable",
+                            "operation": "os.replace",
+                            "model_execution_started": False,
+                            "tool_execution_started": False,
+                            "model_call_count": 0,
+                            "tool_call_count": 0,
+                            "details": {
+                                "artifact_type": exc.artifact_type,
+                                "path_role": exc.path_role,
+                                "source_path_length": exc.source_path_length,
+                                "target_path_length": exc.target_path_length,
+                                "target_parent_exists": exc.target_parent_exists,
+                                "winerror": exc.winerror,
+                            },
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
         except (IntelligentEvidenceEntryError, OSError, RuntimeError, ValueError) as exc:
             print(
                 json.dumps(

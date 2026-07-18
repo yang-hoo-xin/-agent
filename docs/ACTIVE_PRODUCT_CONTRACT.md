@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-07-14
+Last updated: 2026-07-18
 
 ## 1. Product
 
@@ -144,6 +144,176 @@ inspection-citing grounded conclusion, and absence of repeated identical tool
 work. Semantic relevance remains explicitly unevaluated without a ground-truth
 case. Real Qwen WallCrawler semantic acceptance still requires a new exact
 per-run disclosure approval and does not unlock Proposal-only.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-006` performed that post-005 real Qwen run
+once under separate disclosure approval. It stopped at `evidence_retrieval`
+with no forbidden later artifact, and total model-visible observation bytes
+fell from 205,912 to 20,001. It still failed V2-C: all six tool calls were
+metadata searches, no observed method was inspected through IL, and finish
+steps 7 and 8 failed exact validation with `DISCOVERY_DECISION_INVALID` and
+`EVIDENCE_CONCLUSION_SHAPE_INVALID`. That evidence allowed only a bounded repair
+of the exact nested finish schema and remaining IL/conclusion acceptance state;
+007 completed that local repair below. Proposal remains locked.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-007` completed that exact local repair. The
+final response format, system contract, and bounded validation correction now
+share the same full nested schema. Each turn also exposes exact metadata and IL
+observation ids plus the remaining inspection/conclusion acceptance
+requirements. The prompt contract is now `evidence_discovery_prompt_v3`; the
+production tools and 8-step/6-tool limits are unchanged. Seventy focused tests
+passed without an external call. This is local repair evidence, not real Qwen
+V2-C acceptance; Proposal remains locked.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-008` performed exactly one separately
+approved post-007 real Qwen rerun. It completed at `evidence_retrieval` in 7 of
+8 model steps with five metadata searches, one metadata-derived IL inspection,
+and one valid `needs_more_evidence` finish. The run used 20,417 observation
+bytes and produced no forbidden later artifact or target-source write. It did
+not complete the intelligence-transfer gate: its grounded conclusion cited a
+later metadata observation rather than the IL observation, the persisted flag
+is `symbol_discovery_by_platform=false`, and its second conclusion incorrectly
+said the IL was not retrieved even though the EvidencePack records a 42-
+instruction body for `Beh_GroundMovement.OnStateEnter`. This allowed only the
+separately selected compact-IL representation and inspection-citation repair
+completed as 009 below. Proposal remains locked and no rerun is authorized.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-009` completed that local repair without an
+external call. Prompt contract `evidence_discovery_prompt_v4` carries separate
+deduplicated metadata-method and IL-inspection catalogs, never duplicates the
+latest full observation in those catalogs, and persists per-turn discovery-
+message byte counts. A finish that ignores an available IL observation receives
+one bounded correction. Once IL exists, the next-action state directs the model
+to finish unless one exact unresolved gap justifies another tool call; grounded
+`needs_more_evidence` remains valid. The three-turn local path uses 13,864
+message bytes versus the 38,774-byte seven-turn pre-repair baseline. This is
+local message-shape and convergence evidence, not a new Qwen token or billing
+claim. Seventy-five focused tests passed; Proposal remains locked and no rerun
+is authorized.
+
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-011` adds a real on-device model path without
+changing the graph or evidence tools. Ollama native tool calls are normalized
+through the existing Agent-turn contract. Local execution accepts only a
+literal `127.0.0.1` or `::1` HTTP origin, rejects redirects and proxy routing,
+and is recorded separately from external disclosure and injected/test models.
+A hidden post-run evaluator reports capability, convergence, and semantic gates
+independently; expected symbols and scoring remain outside model context.
+Eighty-five focused tests passed.
+
+The one 011 `qwen3:4b-instruct` run kept all request and GTFO-derived data local
+and stopped at `evidence_retrieval`, but did not pass intelligence transfer. It
+used 7 turns and all 6 tool calls for metadata search, repeated 3 exact action
+signatures, selected no IL read, and produced no IL-grounded conclusion. Its
+5,969 observation bytes and 48,741 discovery-message bytes do not indicate the
+earlier observation-bloat failure; the observed failure is identifier-query
+choice plus repeated work. The exact UTF-8 Chinese goal was preserved. No
+Proposal or repair task is unlocked automatically.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-012` repairs only the two confounded failures
+observed in 011. Prompt contract `evidence_discovery_prompt_v5` truthfully
+describes metadata queries as case-insensitive literal substrings of fully
+qualified managed type, method, and field symbols, not behavioral semantic
+search. The loop rejects a repeated exact source/tool/arguments signature
+before the local tool executes, emits at most one repeat-specific answer-free correction, and
+deterministically stops on a second repeat. An injected regression recovered
+through a changed symbol query, observation-derived `method_id`, IL inspection,
+and an IL-bound conclusion. Thirty direct and 198 affected tests passed. This
+is local contract evidence only: no real model ran, Proposal remains locked,
+and a later local rerun requires separate task selection.
+
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-013` performed that separately selected local
+rerun exactly once with the same 011 request bytes, source identities, model,
+quantization, and budgets. The prompt-v5 path eliminated executed repeats and
+the model selected metadata, an observation-derived method, and IL for
+`Beh_GroundMovement.OnStateEnter`. It did not pass acceptance: the first IL-
+grounded finish had the wrong top-level shape, the correction selected
+`sufficient_for_proposal` while retaining open questions, and the single finish
+correction was exhausted. The final run status is `budget_exhausted`; all three
+hidden gates are false; Proposal remains locked. The run also exposed a copied
+query-placeholder representation and a provenance/convergence reporting
+coupling. The 013 result itself did not authorize a retry or repair.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-014` completed the exact deterministic repair
+selected from 013. Prompt v6 exposes metadata-tool argument names without a
+copyable query value, states finish decision/open-gap constraints in the shared
+schema and correction context, and computes accepted method-origin provenance
+without requiring final convergence. Thirty-one direct and 199 affected tests
+passed; existing message-byte thresholds, tools, budgets, validators, graph
+route, and the `evidence_retrieval` stop remain unchanged. No real model ran,
+Proposal remains locked, and no rerun is selected.
+
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-015` then exercised prompt v6 exactly once
+through the same loopback-only `qwen3:4b-instruct` boundary, original 013
+request bytes, and two live identity-matched sources. The removed placeholder
+was not copied. The model instead used the same five invented behavioral symbol
+strings against both sources, received zero methods twice, and then returned
+twice to the same current-interop source/tool/arguments signature. Both repeats
+were rejected before tool execution. The deterministic stop produced
+`budget_exhausted` after 4 model turns and 2 metadata tools, with no method_id,
+IL inspection, or model conclusion. All three hidden gates remain false. The
+run stopped at `evidence_retrieval`, produced no forbidden later artifact, and
+does not select a retry or repair automatically.
+
+Artifact persistence for this evidence-only entry is now verified under the
+current Windows, local NTFS, and existing artifact-root boundary. Immutable
+revisions use `r/<artifact_type>/<artifact_hash first 32 hex>.json`, pending
+markers use `p/<artifact_type>/<artifact_hash first 32 hex>.json`, and latest
+envelope projections retain their prior paths. The abbreviated locator is only
+physical storage: complete hashes remain in envelopes, refs, and upstream
+bindings; reads validate the complete hash and writes reject locator collisions.
+Valid legacy full-hash revisions remain readable and are reused idempotently
+without migration or duplicate writes.
+
+`intelligent-evidence-request` now probes the real pending, revision, and latest
+atomic-write paths before graph, model, or tool execution. A recognized
+unaddressable-path replace failure returns `BLOCKED`, exit code 2, and an
+`artifact_preflight` diagnostic without exposing absolute local paths. Focused
+no-model verification passed 134 tests. One new loopback-only run then persisted
+request planning, planning brief, feature specification, and EvidencePack
+revisions and latest projections with no pending or temporary files left. It
+ended later as `budget_exhausted`; persistence is unblocked, but capability,
+convergence, semantic acceptance, and V2-C completion remain unproved.
+
+### 2.1 Current V2 Intelligence Mainline
+
+V2 now targets real-task intelligence transfer inside the existing controlled
+workflow. It is not another expansion pass over Proposal, dry-run, apply,
+build, runtime, or generic RAG infrastructure. The normative detailed program
+is `DEV_SPEC.md` section 51:
+
+```text
+V2-A controlled intelligent input
+-> V2-B bounded intelligent loop inside retrieve_evidence
+-> V2-C approved real WallCrawler run with no manual answers
+-> V2-D add only the exact capability or loop repair exposed by that run
+-> rerun until the intelligence-transfer gate is truthfully resolved
+-> only then select or reject a separate Proposal-only task
+```
+
+The deterministic WallCrawler slices through
+`WALLCRAWLER-CURRENT-HOOK-EVIDENCE-003` are the real request, evidence, and tool
+baseline, not intelligent-transfer proof. `WALLCRAWLER-INTELLIGENT-EVIDENCE-004`
+implemented V2-A/V2-B and exposed the first real-model failure. Its acceptance
+hardening plus `WALLCRAWLER-INTELLIGENT-EVIDENCE-005` are bounded repairs to
+that failure. `WALLCRAWLER-INTELLIGENT-EVIDENCE-006` performed the
+new-interface V2-C run and recorded the bounded schema/progress-contract
+failure above. `WALLCRAWLER-INTELLIGENT-EVIDENCE-007` repaired that exact local
+contract and passed focused regression. `WALLCRAWLER-INTELLIGENT-EVIDENCE-008`
+then exercised it once: convergence, dependent IL selection, and finish shape
+succeeded, while IL-aware compact interpretation and conclusion grounding
+failed. `WALLCRAWLER-INTELLIGENT-EVIDENCE-009` repaired that exact compact
+representation, inspection-citation, and post-IL convergence boundary locally.
+011 exercised the loop through a real local model but failed all three gates.
+013 reached metadata-derived IL but failed finish acceptance; 014 repaired that
+exact deterministic contract. 015 did not reproduce the removed placeholder,
+but failed earlier because zero-result literal symbol queries were not revised
+and repeat correction exhausted before IL. Intelligence transfer remains
+unresolved until a separately selected bounded response to this observed
+failure and later real-model acceptance resolve the gate.
+
+A grounded `needs_more_evidence` may satisfy the intelligence-transfer gate
+while Proposal remains locked. Every result stops at `evidence_retrieval` and
+may only recommend one bounded evidence capability, one bounded loop repair,
+or a separately selected Proposal-only task.
 
 ## 3. Non-Negotiable Authority Boundaries
 

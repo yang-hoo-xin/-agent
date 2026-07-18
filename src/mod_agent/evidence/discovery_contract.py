@@ -17,6 +17,7 @@ from src.libs.llm import (
     AgentTurnResponse,
     BaseLLM,
     Message,
+    validate_loopback_http_base_url,
 )
 from src.mod_agent.knowledge.source_registry import SourceDefinition
 
@@ -26,7 +27,7 @@ EVIDENCE_DISCOVERY_TOOLS = frozenset(
     {"search_dotnet_metadata", "inspect_method_il"}
 )
 EVIDENCE_DISCOVERY_RESULT_KINDS = frozenset({"methods", "types", "fields"})
-EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v2"
+EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v7"
 EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES = (
     "natural_language_request",
     "source_registry_model_views",
@@ -78,6 +79,37 @@ class EvidenceDiscoveryDisclosure:
         }
 
 
+@dataclass(frozen=True)
+class EvidenceDiscoveryLocalExecution:
+    """Auditable on-device model boundary that does not authorize disclosure."""
+
+    endpoint: str
+    provider: str
+    model: str
+    scope: str = "local_loopback_only"
+
+    def validate(self) -> None:
+        validate_loopback_http_base_url(self.endpoint)
+        if self.scope != "local_loopback_only":
+            raise ValueError("EVIDENCE_LOCAL_MODEL_SCOPE_INVALID")
+        if not self.provider.strip() or not self.model.strip():
+            raise ValueError("EVIDENCE_LOCAL_MODEL_IDENTITY_INVALID")
+
+    def to_audit_record(self) -> dict[str, object]:
+        self.validate()
+        return {
+            "approved": False,
+            "reason": "On-device inference through a literal loopback endpoint; no external model disclosure occurred.",
+            "execution_kind": "local_agent_turn_adapter",
+            "destination": {
+                "provider": self.provider,
+                "model": self.model,
+                "endpoint": validate_loopback_http_base_url(self.endpoint),
+            },
+            "scope": self.scope,
+        }
+
+
 class EvidenceDiscoveryAgentModel:
     """Map provider-neutral structured turns to the local discovery action contract."""
 
@@ -85,17 +117,22 @@ class EvidenceDiscoveryAgentModel:
         self,
         client: AgentTurnClient,
         *,
-        disclosure: EvidenceDiscoveryDisclosure,
+        disclosure: EvidenceDiscoveryDisclosure | None = None,
+        local_execution: EvidenceDiscoveryLocalExecution | None = None,
     ) -> None:
-        disclosure.validate()
+        if (disclosure is None) == (local_execution is None):
+            raise ValueError("EVIDENCE_MODEL_EXECUTION_BOUNDARY_MUST_BE_EXACTLY_ONE")
+        boundary = disclosure if disclosure is not None else local_execution
+        assert boundary is not None
+        boundary.validate()
         self.client = client
-        self.disclosure = disclosure
+        self.execution_boundary = boundary
         self._pending_response: AgentTurnResponse | None = None
         self._usage_records: list[dict[str, object]] = []
 
     @property
     def disclosure_record(self) -> dict[str, object]:
-        return self.disclosure.to_audit_record()
+        return self.execution_boundary.to_audit_record()
 
     @property
     def usage_records(self) -> tuple[dict[str, object], ...]:
@@ -218,6 +255,10 @@ class ChatEvidenceDiscoveryModel:
 class EvidenceDiscoveryToolExecutor(Protocol):
     """Execute one already-authorized structured read-only action."""
 
+    def begin_run(self, *, run_id: str) -> None:
+        """Reset run-scoped observation bindings before discovery starts."""
+        ...
+
     def execute(
         self,
         *,
@@ -333,6 +374,7 @@ def evidence_discovery_source_from_definition(
 class EvidenceDiscoveryRequest:
     """One evidence-only intelligent run with no precomputed discovery decisions."""
 
+    run_id: str
     request_id: str
     natural_language_request: str
     sources: tuple[EvidenceDiscoverySource, ...]
@@ -346,8 +388,12 @@ class EvidenceDiscoveryRequest:
     operator_intervention_count: int = 0
 
     def __post_init__(self) -> None:
-        if not self.request_id.strip() or not self.natural_language_request.strip():
-            raise ValueError("Evidence discovery request id and goal are required.")
+        if (
+            not self.run_id.strip()
+            or not self.request_id.strip()
+            or not self.natural_language_request.strip()
+        ):
+            raise ValueError("Evidence discovery run id, request id, and goal are required.")
         if not self.sources:
             raise ValueError("Evidence discovery requires at least one authorized source.")
         source_ids = [source.source_id for source in self.sources]
@@ -387,8 +433,24 @@ class ToolObservation:
             "tool": self.tool,
             "source_id": self.source_id,
             "summary": self.summary,
-            "data": self.data,
+            "data": _without_control_only_method_ids(self.data),
         }
+
+
+def _without_control_only_method_ids(value: object) -> object:
+    """Project an observation without exposing internal method identities."""
+
+    if isinstance(value, dict):
+        return {
+            key: _without_control_only_method_ids(item)
+            for key, item in value.items()
+            if key != "method_id"
+        }
+    if isinstance(value, list):
+        return [_without_control_only_method_ids(item) for item in value]
+    if isinstance(value, tuple):
+        return [_without_control_only_method_ids(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -416,8 +478,11 @@ def _discovery_tool_definitions() -> tuple[AgentToolDefinition, ...]:
         AgentToolDefinition(
             name="search_dotnet_metadata",
             description=(
-                "Search exact managed metadata in one registered source. Select result "
-                "kinds and a small per-kind limit to keep the observation focused."
+                "Search managed metadata symbols in one registered source using "
+                "case-insensitive literal-substring matching. Queries match fully "
+                "qualified managed type, method, and field symbols; this is not "
+                "behavioral or semantic search. Select result kinds and a small "
+                "per-kind limit to keep the observation focused."
             ),
             parameters={
                 "type": "object",
@@ -427,6 +492,12 @@ def _discovery_tool_definitions() -> tuple[AgentToolDefinition, ...]:
                         "type": "array",
                         "minItems": 1,
                         "maxItems": 12,
+                        "description": (
+                            "Literal symbol-name substrings, not natural-language "
+                            "behavior descriptions. Matching is case-insensitive "
+                            "against fully qualified managed type, method, and field "
+                            "symbols."
+                        ),
                         "items": {"type": "string", "minLength": 1},
                     },
                     "result_kinds": {
@@ -457,18 +528,21 @@ def _discovery_tool_definitions() -> tuple[AgentToolDefinition, ...]:
         ),
         AgentToolDefinition(
             name="inspect_method_il",
-            description="Read IL only for a method_id returned by this run's metadata observation.",
+            description=(
+                "Read IL only for a candidate_ref returned by this run's metadata "
+                "observation. The control layer resolves it to an internal method identity."
+            ),
             parameters={
                 "type": "object",
                 "properties": {
                     **common_properties,
-                    "method_id": {"type": "string", "minLength": 1},
+                    "candidate_ref": {"type": "string", "minLength": 1},
                 },
                 "required": [
                     "source_id",
                     "evidence_need",
                     "derived_from_observation_ids",
-                    "method_id",
+                    "candidate_ref",
                 ],
                 "additionalProperties": False,
             },
@@ -476,7 +550,8 @@ def _discovery_tool_definitions() -> tuple[AgentToolDefinition, ...]:
     )
 
 
-def _finish_response_format() -> AgentResponseFormat:
+def evidence_discovery_finish_schema() -> dict[str, object]:
+    """Return the exact model-facing schema enforced for a discovery finish."""
     conclusion = {
         "type": "object",
         "properties": {
@@ -497,41 +572,62 @@ def _finish_response_format() -> AgentResponseFormat:
         "required": ["claim", "claim_status", "observation_ids", "limitations"],
         "additionalProperties": False,
     }
+    return {
+        "type": "object",
+        "description": (
+            "Cross-field: sufficient=>conclusions>0,gaps=0; "
+            "needs_more=>gaps>0; blocked=>missing>0."
+        ),
+        "properties": {
+            "action": {"type": "string", "enum": ["finish"]},
+            "decision": {
+                "type": "string",
+                "enum": [
+                    "sufficient_for_proposal",
+                    "needs_more_evidence",
+                    "blocked_by_missing_capability",
+                    "conflicting_evidence",
+                ],
+            },
+            "evidence_conclusions": {"type": "array", "items": conclusion},
+            "unresolved_questions": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+            },
+            "missing_capabilities": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+        "required": [
+            "action",
+            "decision",
+            "evidence_conclusions",
+            "unresolved_questions",
+            "missing_capabilities",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def evidence_discovery_finish_decision_constraints() -> dict[str, object]:
+    """Return the cross-field finish rules shared by prompt and correction."""
+
+    return {
+        "sufficient_for_proposal": (
+            "conclusions>0; unresolved_questions=0; missing_capabilities=0"
+        ),
+        "needs_more_evidence": "unresolved_questions+missing_capabilities>0",
+        "blocked_by_missing_capability": "missing_capabilities>0",
+        "conflicting_evidence": "conflict; proposal_locked",
+    }
+
+
+def _finish_response_format() -> AgentResponseFormat:
     return AgentResponseFormat(
         name="evidence_discovery_finish",
         description="Final grounded evidence decision for the bounded discovery run.",
-        schema={
-            "type": "object",
-            "properties": {
-                "action": {"type": "string", "enum": ["finish"]},
-                "decision": {
-                    "type": "string",
-                    "enum": [
-                        "sufficient_for_proposal",
-                        "needs_more_evidence",
-                        "blocked_by_missing_capability",
-                        "conflicting_evidence",
-                    ],
-                },
-                "evidence_conclusions": {"type": "array", "items": conclusion},
-                "unresolved_questions": {
-                    "type": "array",
-                    "items": {"type": "string", "minLength": 1},
-                },
-                "missing_capabilities": {
-                    "type": "array",
-                    "items": {"type": "string", "minLength": 1},
-                },
-            },
-            "required": [
-                "action",
-                "decision",
-                "evidence_conclusions",
-                "unresolved_questions",
-                "missing_capabilities",
-            ],
-            "additionalProperties": False,
-        },
+        schema=evidence_discovery_finish_schema(),
     )
 
 

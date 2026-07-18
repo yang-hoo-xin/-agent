@@ -39,6 +39,14 @@ class _ObservedMethod:
     metadata_token: str
 
 
+@dataclass(frozen=True)
+class _CandidateBinding:
+    run_id: str
+    observation_id: str
+    source_id: str
+    method_id: str
+
+
 class LocalAssemblyEvidenceToolExecutor:
     """Search authorized roots and inspect only run-observed exact method identities."""
 
@@ -65,7 +73,16 @@ class LocalAssemblyEvidenceToolExecutor:
         self.max_results_per_search = max_results_per_search
         self.max_model_instructions = max_model_instructions
         self.max_model_observation_bytes = max_model_observation_bytes
+        self._run_id: str | None = None
         self._observed_methods: dict[str, _ObservedMethod] = {}
+        self._candidate_bindings: dict[str, _CandidateBinding] = {}
+
+    def begin_run(self, *, run_id: str) -> None:
+        if not run_id.strip():
+            raise ValueError("EVIDENCE_TOOL_RUN_ID_INVALID")
+        self._run_id = run_id
+        self._observed_methods.clear()
+        self._candidate_bindings.clear()
 
     @classmethod
     def from_inspector(
@@ -119,7 +136,7 @@ class LocalAssemblyEvidenceToolExecutor:
             return self._inspect(
                 source=source,
                 observation_id=observation_id,
-                method_id=str(arguments["method_id"]),
+                candidate_ref=str(arguments["candidate_ref"]),
             )
         raise ValueError("UNKNOWN_EVIDENCE_TOOL")
 
@@ -132,6 +149,8 @@ class LocalAssemblyEvidenceToolExecutor:
         result_kinds: tuple[str, ...],
         limit_per_kind: int,
     ) -> ToolObservation:
+        if self._run_id is None:
+            raise ValueError("EVIDENCE_TOOL_RUN_NOT_STARTED")
         if not result_kinds or any(
             item not in {"methods", "types", "fields"} for item in result_kinds
         ):
@@ -232,8 +251,22 @@ class LocalAssemblyEvidenceToolExecutor:
                         metadata_token=metadata_token,
                     )
                     self._observed_methods[method_id] = observed
+                    candidate_ref = _stable_id(
+                        "candidate",
+                        self._run_id,
+                        source.source_id,
+                        observation_id,
+                        method_id,
+                    )
+                    self._candidate_bindings[candidate_ref] = _CandidateBinding(
+                        run_id=self._run_id,
+                        observation_id=observation_id,
+                        source_id=source.source_id,
+                        method_id=method_id,
+                    )
                     methods.append(
                         {
+                            "candidate_ref": candidate_ref,
                             "method_id": method_id,
                             "assembly_id": assembly_id,
                             "symbol": symbol,
@@ -300,8 +333,8 @@ class LocalAssemblyEvidenceToolExecutor:
             tool="search_dotnet_metadata",
             source_id=source.source_id,
             summary=(
-                f"Searched {searched_count} managed assemblies and observed "
-                f"{len(methods)} exact methods."
+                f"Searched {searched_count} managed assemblies and returned "
+                f"{len(methods)} exact methods within the model observation budget."
             ),
             data=data,
         )
@@ -346,8 +379,16 @@ class LocalAssemblyEvidenceToolExecutor:
         *,
         source: EvidenceDiscoverySource,
         observation_id: str,
-        method_id: str,
+        candidate_ref: str,
     ) -> ToolObservation:
+        if self._run_id is None:
+            raise ValueError("EVIDENCE_TOOL_RUN_NOT_STARTED")
+        binding = self._candidate_bindings.get(candidate_ref)
+        if binding is None or binding.run_id != self._run_id:
+            raise ValueError("UNVERIFIED_CANDIDATE_REFERENCE")
+        if binding.source_id != source.source_id:
+            raise ValueError("CANDIDATE_SOURCE_MISMATCH")
+        method_id = binding.method_id
         observed = self._observed_methods.get(method_id)
         if observed is None:
             raise ValueError("UNVERIFIED_METHOD_REFERENCE")
@@ -438,6 +479,7 @@ class LocalAssemblyEvidenceToolExecutor:
                 f"{len(instructions)} instructions were present."
             ),
             data={
+                "candidate_ref": candidate_ref,
                 "method_id": method_id,
                 "relative_path": observed.relative_path,
                 "assembly_sha256": observed.assembly_sha256,

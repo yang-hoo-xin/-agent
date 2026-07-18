@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-14
+Last updated: 2026-07-18
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -11,17 +11,247 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_queue: None
 current_documentation_task: None
 selected_product_request: None
-most_recent_completed_capability: WALLCRAWLER-INTELLIGENT-EVIDENCE-005
+most_recent_completed_capability: WALLCRAWLER-INTELLIGENT-EVIDENCE-014
 ```
 
-The ProposalCritic contract, active-state cleanup, queue cleanup, coverage
-separation, and architecture-reference maturity labels are complete. They do
-not authorize another evaluator, retrieval, Dashboard, MCP, memory, multi-agent,
-or runtime platform expansion.
+The ArtifactStore path failure that blocked the next local V2-C execution
+before Agent logic is repaired for the current Windows, NTFS, and configured
+artifact-root boundary. Revision and pending files now use the shared short
+physical layout documented in `DEV_SPEC.md` section 49.2.7 while complete
+artifact hashes remain revision identity and upstream provenance. Existing
+legacy revision refs remain readable, valid legacy revisions are reused
+idempotently, short-locator collisions block deterministically, and the normal
+pending -> revision -> latest -> cleanup protocol is unchanged.
 
-After this cleanup, the next implementation task must be selected from a
-concrete product capability or real Mod request. This file intentionally does
-not prescribe that task.
+The intelligent-evidence entry performs a real atomic-path preflight for
+`request_planning_report`, `mod_planning_brief`, `feature_spec`, and
+`evidence_pack` before graph, model, or tool execution. A recognized path
+replace failure now maps to the existing CLI `BLOCKED` status, exit code 2, and
+an `artifact_preflight` diagnostic with zero model/tool calls. The earlier
+blocked run's exit code 1 remains historical observation; current repository
+evidence does not explain that difference and does not rewrite it.
+
+Focused no-model verification passed 134 tests. The broader `tests/unit`
+collection could not start because this environment lacks unrelated `jieba`
+and `mcp` dependencies, so the repository-wide unit suite is not claimed green.
+The actual new revision and pending paths measured 224 characters at the
+previously blocked root, versus the observed 269-character pending target in
+the failed layout.
+
+Exactly one post-repair loopback-only run then executed with the same 342-byte
+request, source identities, artifact root, `qwen3:4b-instruct`, and unchanged
+8-step/6-tool envelope. Run
+`intelligent_evidence_5327cb5988774bc5aba6cfcc53f8d2ab` persisted all four
+evidence-only runtime artifact types as validated revisions and latest
+projections; no pending, temporary, `implementation_plan`, or later artifact
+remained. The Agent used 6 model turns, executed 4 metadata searches, rejected
+2 repeated actions, selected no IL inspection, and produced no accepted
+conclusion. Its legal result was `budget_exhausted`; capability, convergence,
+and semantic gates remain false. This is an Artifact persistence result, not a
+new V2 intelligence capability, so `most_recent_completed_capability` remains
+014 and no retry or repair enters the queue automatically.
+
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-015` completed exactly one authorized local
+real-model acceptance run after 014. It is a completed failed acceptance task,
+not a new implemented capability, so `most_recent_completed_capability` remains
+014. The request was loaded directly from the 013 EvidencePack and retained its
+342-byte UTF-8 representation and SHA256
+`8eae153e6c0492be4ab3fdd6ba7f8c0a1a04d215e117e12e6824d5920509a9e7`.
+Both registered assembly SHA256/MVID identities matched before execution, the
+Ollama model id remained `0edcdef34593`, and the run stayed on literal
+`127.0.0.1` with no external disclosure.
+
+The prompt-v6 run used 4 model turns and 2 executed metadata searches. It did
+not copy the removed value-like query placeholder. Instead it searched both
+sources with the same five invented behavioral symbol strings; both searches
+returned zero methods. Its next two actions returned to the same current-
+interop source/tool/arguments signature and were rejected with
+`REPEATED_EXACT_TOOL_ACTION`. Changing only `evidence_need` did not change the
+executable signature. Deterministic repeat-correction exhaustion ended the run
+as `budget_exhausted` with no method_id, IL inspection, or model conclusion.
+
+All three hidden gates are false. The run did not reach finish validation or
+method-origin provenance, so it does not provide real-model evidence for 014's
+finish-schema or provenance repair. It does provide real evidence that removal
+of the copyable placeholder alone did not make this 4B model revise zero-result
+literal symbol queries. The run recorded 1,949 observation bytes, 24,720
+discovery-message bytes, 8,285 input tokens, 446 output tokens, zero input
+pollution, no executed identical signature, no forbidden later artifact, and
+`current_stage=evidence_retrieval`. Proposal remains locked. No rerun or repair
+is selected automatically.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-014` completed without a real-model call.
+Prompt contract `evidence_discovery_prompt_v6` replaces value-like tool argument
+examples with exact argument-name lists, while the existing rule text retains
+the actual managed-symbol substring semantics. The shared finish schema states
+the decision/open-gap constraints, and the single finish-correction message
+carries the same rules with exact field names. Accepted `inspect_method_il`
+actions now derive
+`provenance_validation.all_method_inspections_derived_from_observations`
+directly from current-run method origin and `derived_from_observation_ids`;
+failure to finish no longer falsifies that provenance fact. The hidden
+capability evaluator therefore preserves a valid prior-observation method
+binding even when convergence and overall capability remain false.
+
+Deterministic injected verification passed 31 direct and 199 affected tests.
+The ordinary three-turn fixture serialized 14,587 discovery-message bytes and
+the seven-turn repeated-method fixture serialized 40,337 bytes, both within
+their unchanged thresholds. Tools, 8-step/6-tool budgets, deterministic
+validators, graph route, disclosure boundary, and `evidence_retrieval` stop are
+unchanged. No Proposal, write, build, copy, game launch, runtime action, or
+real-model retry occurred.
+
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-013` completed exactly one local run with no
+retry. The request was byte-identical to 011, both registered assembly hashes
+matched, and the model remained `qwen3:4b-instruct` digest
+`0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0`,
+4.0B Q4_K_M through literal `127.0.0.1`.
+
+The run improved the observed tool trajectory from 011: 5 model turns and 3
+executed tools instead of 7 and 6, no identical executed signature, and an
+observation-derived `inspect_method_il` read of
+`Beh_GroundMovement.OnStateEnter`. Its first finish cited that IL observation
+and truthfully noted the `nop; ret` body did not establish non-walkable-surface
+movement, but the object used the wrong top-level fields and was rejected with
+`DISCOVERY_FINISH_SHAPE_INVALID`. The one finish correction then returned
+`sufficient_for_proposal` while retaining open questions and was rejected with
+`SUFFICIENT_DECISION_HAS_OPEN_GAPS`. Deterministic correction exhaustion left
+no accepted model conclusion, so run status was `budget_exhausted` and all
+three hidden gates failed. Proposal remained locked.
+
+The first metadata call copied the prompt placeholder text `literal managed-
+symbol substring` as a literal query. Separately, the accepted IL action passed
+the deterministic `method_id` origin validation against `obs-002`, but
+`provenance_validation.all_method_inspections_derived_from_observations` was
+false because it aliased a transfer flag that also required final convergence.
+These were the structural confounders subsequently repaired by 014 above.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-012` completed under the existing
+evidence-only boundary. Prompt contract `evidence_discovery_prompt_v5` now
+states that `search_dotnet_metadata` performs case-insensitive literal-
+substring matching over fully qualified managed type, method, and field
+symbols, not behavioral semantic search. An already executed identical
+source/tool/arguments action is rejected before tool execution and receives at
+most one repeat-specific answer-free corrective turn. A deterministic injected trajectory
+recovered from a behavioral query and one rejected repeat through a changed
+symbol query, observation-derived `method_id`, `inspect_method_il`, and an IL-
+bound conclusion. A second repeat stopped deterministically. Thirty direct and
+198 affected tests passed. No real model ran; no budget, tool, Proposal, write,
+build, or runtime boundary changed.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-006` completed one separately approved real
+Qwen V2-C execution on 2026-07-15. The run preserved the evidence-only stop but
+failed intelligence-transfer acceptance. Its exact evidence and bounded repair
+direction are archived in `docs/audits/LOOP_HISTORY.md`.
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-007` completed the local bounded repair: the
+model now receives one shared exact nested finish schema, field-specific
+correction feedback, and current metadata-to-IL/conclusion progress. The task
+did not call an external model or authorize Proposal, write, build, game, or
+runtime action.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-008` completed exactly one approved post-007
+`qwen_chat / qwen3.6-plus` evidence-only acceptance run. It ended `completed`
+at `evidence_retrieval` after 7 of 8 model steps and all 6 tool calls, with no
+forbidden later artifact or target-source write. The model selected one exact
+metadata-derived IL inspection and returned a valid `needs_more_evidence`
+finish without a correction step. The intelligence-transfer gate remains
+unresolved because no grounded conclusion cited the IL observation and
+`symbol_discovery_by_platform=false`.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-009` completed that bounded local repair.
+Compact context now preserves direct IL method/outcome facts in a deduplicated
+inspection catalog, deduplicates metadata method identities, excludes the
+latest full observation from both catalogs, records discovery-message bytes per
+turn, and corrects a finish that ignores an available IL observation. After an
+IL observation, budget state directs the model to finish unless one exact
+unresolved gap justifies another tool call. Seventy-five focused tests passed;
+no external model call, disclosure, budget increase, or later-stage action
+occurred.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-010` received exact user approval for one
+external execution, but the Codex tenant execution-policy
+reviewer rejected process creation because the payload would contain non-public
+material derived from local commercial GTFO assemblies and target a third-party
+DashScope endpoint. No process was created, no external request was sent, and
+no 010 artifact root or EvidencePack exists. The rejection forbids workaround
+or indirect execution, and the user also forbade automatic retry. 010 is
+archived as blocked before execution; its three-turn and token acceptance
+measurements are unavailable. 011 subsequently tested the real model loop
+locally through a literal loopback endpoint. Proposal and all later stages
+remain locked.
+
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-011` completed one real on-device model run.
+Ollama 0.32.0 listened only on `127.0.0.1:11434`; the installed
+`qwen3:4b-instruct` identity was `0edcdef34593`, 4.0B Q4_K_M with native tool
+support. The local Agent-turn adapter rejects non-literal-loopback origins,
+does not inherit HTTP proxy settings, does not follow redirects, and records
+the run as `local_agent_turn_adapter` rather than external or injected/test.
+The exact natural-language request remained byte-identical to the queue record;
+terminal mojibake was display-only.
+
+The run completed and stopped at `evidence_retrieval`, but all three hidden
+011 gates failed. It used 7 model turns and all 6 tool calls for metadata
+searches, repeated 3 exact source/tool/arguments signatures, selected no
+`inspect_method_il` action, produced no EvidenceItem, and grounded no conclusion
+in IL. Total model-visible observation bytes were 5,969, the largest single
+observation was 1,006 bytes, serialized discovery messages totaled 48,741
+bytes, and Ollama reported 15,351 input plus 1,032 output tokens. Those token
+counts are local-tokenizer measurements and are not compared numerically with
+DashScope. Input pollution remained zero, no external model was called, no
+forbidden later artifact or target write occurred, and Proposal remains locked.
+The exact 011 query-semantics/repeat repair completed as 012. Intelligence
+transfer remains unresolved until a separately selected real-model rerun.
+
+### 1.1 Current V2 Intelligence Completion Boundary
+
+`DEV_SPEC.md` section 51 now records the detailed V2 real-task intelligence
+program. Current status is:
+
+| V2 step | Current state | Evidence boundary |
+| --- | --- | --- |
+| V2-A controlled intelligent input | implemented and locally tested | Path-hidden registered sources, budgets, disclosure, and evidence-only stop are provided without manual symbols, tool order, Hook, or precomputed IL report |
+| V2-B bounded Evidence loop | implemented and locally tested | Model source/tool selection, deterministic validation, observation-derived follow-up, EvidencePack persistence, and LangGraph routing remain inside `retrieve_evidence` |
+| V2-C real WallCrawler model acceptance | 015 post-014 same-model local rerun completed; capability, convergence, and semantic gates failed | Literal-loopback/local-data and evidence-only boundaries passed; the removed placeholder was not copied, but two zero-result metadata searches were followed by repeat rejection, no method_id or IL was selected, and intelligence transfer remains unresolved |
+| V2-D failure-driven capability growth | 008-triggered repair completed as 009; 011-triggered repair as 012; 013-triggered structural repair as 014 | Direct IL outcome is preserved; exact repeats are bounded; query examples are non-copyable field lists; finish cross-field rules are model-visible; provenance is independent from convergence; no tools or runtime budgets were added |
+| Intelligence-transfer completion gate | unresolved | Requires a real-model run with zero manual answers, budget convergence, dependent metadata-to-IL work, an observation-bound conclusion, deterministic acceptance, and the evidence-only stop |
+
+The deterministic WallCrawler work through
+`WALLCRAWLER-CURRENT-HOOK-EVIDENCE-003` is supporting evidence and regression
+baseline, not intelligent-transfer proof. `WALLCRAWLER-INTELLIGENT-EVIDENCE-004`
+implemented V2-A/V2-B and exposed the first V2-C failure. Its acceptance
+hardening and `WALLCRAWLER-INTELLIGENT-EVIDENCE-005` repaired the observed
+context, observation, provider-boundary, and acceptance defects.
+
+The 006 run reduced total model-visible observation bytes from 205,912 to
+20,001, recorded 43,978 provider tokens, preserved all four zero input-pollution
+counts, repeated no identical source/tool/arguments action, and produced no
+forbidden later artifact. It nevertheless spent all six tool calls on metadata
+search, never called `inspect_method_il`, and failed both finish validations:
+`DISCOVERY_DECISION_INVALID` followed by `EVIDENCE_CONCLUSION_SHAPE_INVALID`.
+
+Deterministic replay confirmed that its selected `EnemyLocomotion`, `EnemyAI`,
+`ParasiteLocomotion`, and `Beh_GroundMovement` symbols were present and that
+`WallWalk` / `Climb` were absent from those observations. Claims about a
+critical Hook or reusable non-horizontal movement remain unsupported because
+no IL was inspected. The bounded local repair completed as 007; any new external
+rerun remains a separate task requiring a new per-run disclosure approval.
+Proposal remains locked.
+
+The 008 run used 20,417 model-visible observation bytes and 36,532 provider
+tokens. Step 2 inspected `Beh_GroundMovement.OnStateEnter` from the current
+interop assembly through `method_f23458376ea3474ca5b1c924`; the persisted item
+records metadata token `0x06000307`, RVA 63320, a method body, and 42 IL
+instructions. Later compact context represented that successful IL step with
+`observed_methods: []` because `_compact_step` only preserves rows from the
+metadata observation's `methods` collection, while an IL observation stores
+its method identity as direct fields. The final model output consequently
+claimed that IL was not successfully retrieved. 009 repaired that exact local
+representation and validation failure. The seven-turn repeated-method fixture
+now records 38,734 discovery-message bytes versus the 38,774-byte pre-repair
+baseline, while the normal metadata-to-IL-to-finish fixture completes in three
+turns with 13,864 bytes. The latter is a 64.2 percent message-byte reduction
+against the seven-turn baseline by avoiding post-IL broad searches; it is not a
+claim about unmeasured Qwen billing. Another external call is not authorized.
 
 `WALLCRAWLER-PLAN-001` completed the selected planning-only vertical slice.
 `plan-request` is no longer a placeholder: it emits request-planning and
@@ -273,7 +503,7 @@ regressions pass the current focused command:
 
 ```text
 python -m pytest tests/unit/test_agent_turn_adapters.py tests/unit/test_intelligent_evidence_discovery.py tests/unit/test_mod_agent_cli.py tests/unit/test_gtfo_r8_evidence.py tests/unit/test_evidence_retrieval.py tests/unit/test_artifact_contract.py tests/unit/test_planning.py tests/unit/test_domain_adapter.py tests/unit/test_workflow_graph.py tests/unit/test_llm_providers_smoke.py -q -p no:cacheprovider
-180 passed
+198 passed
 ```
 
 The .NET metadata reader also built with zero warnings and zero errors. The
@@ -281,7 +511,7 @@ real-tool check used local supplied files and did not call an external model,
 start GTFO, copy game files, create an implementation plan, or write target
 source.
 
-The 180-test command proves local request/response mapping for Qwen Chat and
+The 198-test command proves local request/response mapping for Qwen Chat and
 OpenAI Responses, not a real provider call. It also proves the compact-history
 and stricter intelligence-transfer regressions; semantic relevance remains
 unevaluated until a separately approved real Qwen case is run.

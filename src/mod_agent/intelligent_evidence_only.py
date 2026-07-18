@@ -9,13 +9,14 @@ from typing import Any
 from uuid import uuid4
 
 from src.core.settings import load_settings
-from src.libs.llm import QwenChatAgentAdapter
+from src.libs.llm import OllamaChatAgentAdapter, QwenChatAgentAdapter
 
 from .artifacts import ArtifactRef, ArtifactStore
 from .evidence import (
     EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
     EvidenceDiscoveryAgentModel,
     EvidenceDiscoveryDisclosure,
+    EvidenceDiscoveryLocalExecution,
     EvidenceDiscoverySource,
     EvidenceDiscoverySpecialist,
     IntelligentEvidencePackFactory,
@@ -23,6 +24,8 @@ from .evidence import (
     evidence_discovery_source_from_definition,
 )
 from .knowledge import SourceDefinition
+from .domain.wallcrawler_acceptance import evaluate_wallcrawler_local_evidence
+from .planning.models import stable_feature_id
 from .workflow import build_graph, create_initial_state
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -49,6 +52,12 @@ _SOURCE_TYPES = frozenset(
         "manual_note",
         "screenshot",
     }
+)
+_EVIDENCE_ONLY_ARTIFACT_TYPES = (
+    "request_planning_report",
+    "mod_planning_brief",
+    "feature_spec",
+    "evidence_pack",
 )
 
 
@@ -121,6 +130,10 @@ def run_intelligent_evidence_only(
     target_mod: str = "WallCrawler",
     api_key_env: str = "DASHSCOPE_API_KEY",
     base_url_env: str = "DASHSCOPE_BASE_URL",
+    local_ollama: bool = False,
+    ollama_base_url: str = "http://127.0.0.1:11434",
+    ollama_model: str = "qwen3:4b-instruct",
+    ollama_max_output_tokens: int = 4096,
     inspector_path: str | Path = _DEFAULT_INSPECTOR,
 ) -> dict[str, Any]:
     """Run model-selected read-only tools inside the graph and stop after evidence."""
@@ -130,43 +143,68 @@ def run_intelligent_evidence_only(
         raise IntelligentEvidenceEntryError(
             "intelligent-evidence-request requires a non-empty request."
         )
-    if not allow_evidence_disclosure:
+    if local_ollama and allow_evidence_disclosure:
         raise IntelligentEvidenceEntryError(
-            "intelligent-evidence-request requires --allow-evidence-disclosure before "
-            "sending the request, source views, or metadata/IL observations to the model."
+            "Choose exactly one model boundary: --local-ollama or "
+            "--allow-evidence-disclosure."
         )
-    api_key = os.environ.get(api_key_env)
-    if not api_key:
+    if not local_ollama and not allow_evidence_disclosure:
         raise IntelligentEvidenceEntryError(
-            f"Required API key environment variable is missing: {api_key_env}"
-        )
-    settings = load_settings(settings_path)
-    base_url = os.environ.get(base_url_env) or settings.llm.base_url
-    if not base_url:
-        raise IntelligentEvidenceEntryError(
-            f"Required LLM base URL is missing from settings and environment: {base_url_env}"
+            "intelligent-evidence-request requires --local-ollama for on-device "
+            "inference or --allow-evidence-disclosure for an external model."
         )
     sources = load_evidence_discovery_sources(source_registry_path)
     resolved_artifact_root = _resolve_artifact_root(artifact_root)
+    store = ArtifactStore(resolved_artifact_root)
+    store.preflight_atomic_commit(
+        feature_id=stable_feature_id(request),
+        artifact_types=_EVIDENCE_ONLY_ARTIFACT_TYPES,
+    )
     run_id = f"intelligent_evidence_{uuid4().hex}"
     request_id = f"request_{uuid4().hex}"
-    model = EvidenceDiscoveryAgentModel(
-        QwenChatAgentAdapter(
-            api_key=api_key,
-            base_url=base_url,
-            model=settings.llm.model,
-            max_completion_tokens=settings.llm.max_tokens,
-        ),
-        disclosure=EvidenceDiscoveryDisclosure(
-            approved=True,
-            approval_id=f"cli:{run_id}",
-            destination={
-                "provider": "qwen_chat",
-                "model": settings.llm.model,
-            },
-            approved_data_classes=EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
-        ),
-    )
+    if local_ollama:
+        client = OllamaChatAgentAdapter(
+            base_url=ollama_base_url,
+            model=ollama_model,
+            max_output_tokens=ollama_max_output_tokens,
+        )
+        model = EvidenceDiscoveryAgentModel(
+            client,
+            local_execution=EvidenceDiscoveryLocalExecution(
+                endpoint=client.base_url,
+                provider=client.provider,
+                model=client.model,
+            ),
+        )
+    else:
+        api_key = os.environ.get(api_key_env)
+        if not api_key:
+            raise IntelligentEvidenceEntryError(
+                f"Required API key environment variable is missing: {api_key_env}"
+            )
+        settings = load_settings(settings_path)
+        base_url = os.environ.get(base_url_env) or settings.llm.base_url
+        if not base_url:
+            raise IntelligentEvidenceEntryError(
+                f"Required LLM base URL is missing from settings and environment: {base_url_env}"
+            )
+        model = EvidenceDiscoveryAgentModel(
+            QwenChatAgentAdapter(
+                api_key=api_key,
+                base_url=base_url,
+                model=settings.llm.model,
+                max_completion_tokens=settings.llm.max_tokens,
+            ),
+            disclosure=EvidenceDiscoveryDisclosure(
+                approved=True,
+                approval_id=f"cli:{run_id}",
+                destination={
+                    "provider": "qwen_chat",
+                    "model": settings.llm.model,
+                },
+                approved_data_classes=EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
+            ),
+        )
     executor = LocalAssemblyEvidenceToolExecutor.from_inspector(inspector_path)
     evidence_factory = IntelligentEvidencePackFactory(
         specialist=EvidenceDiscoverySpecialist(
@@ -175,7 +213,6 @@ def run_intelligent_evidence_only(
         ),
         sources=sources,
     )
-    store = ArtifactStore(resolved_artifact_root)
     graph = build_graph(
         store,
         evidence_pack_factory=evidence_factory,
@@ -220,7 +257,7 @@ def run_intelligent_evidence_only(
         artifact_hash=result["artifact_hashes"]["evidence_pack"],
     )
     pack = store.read(evidence_ref)["data"]
-    return {
+    output = {
         "status": evidence_factory.last_result.run_status,
         "command": "intelligent-evidence-request",
         "execution_mode": "intelligent_evidence_only",
@@ -229,15 +266,24 @@ def run_intelligent_evidence_only(
         "current_stage": result["current_stage"],
         "stopped_before": "implementation_plan",
         "target_source_writes_performed": False,
-        "external_model_called": True,
+        "external_model_called": not local_ollama,
+        "local_model_called": local_ollama,
         "source_ids": [source.source_id for source in sources],
         "source_roots_disclosed_to_model": False,
+        "model_execution": model.disclosure_record,
         "disclosure": model.disclosure_record,
         "artifacts": dict(result["artifacts"]),
         "artifact_hashes": dict(result["artifact_hashes"]),
         "forbidden_artifacts_present": forbidden,
         "evidence_pack": pack,
     }
+    if local_ollama and target_domain == "gtfo" and target_mod == "WallCrawler":
+        output["acceptance"] = evaluate_wallcrawler_local_evidence(
+            evidence_pack=pack,
+            current_stage=str(result["current_stage"]),
+            forbidden_artifacts=forbidden,
+        )
+    return output
 
 
 def _resolve_artifact_root(path: str | Path) -> Path:

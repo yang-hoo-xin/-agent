@@ -15,6 +15,8 @@ from .discovery_contract import (
     EvidenceDiscoverySource,
     EvidenceDiscoveryToolExecutor,
     ToolObservation,
+    evidence_discovery_finish_decision_constraints,
+    evidence_discovery_finish_schema,
 )
 from .models import EvidencePack, missing_evidence_from_blockers
 
@@ -41,12 +43,14 @@ class IntelligentEvidencePackFactory:
         self.last_result: EvidenceDiscoveryResult | None = None
 
     def __call__(self, state: dict[str, Any], feature_data: dict[str, Any]) -> EvidencePack:
+        run_id = str(state.get("run_id") or "").strip()
         request_id = str(state.get("request_id") or "").strip()
         goal = str(
             feature_data.get("target_behavior") or state.get("user_request") or ""
         ).strip()
         result = self.specialist.discover(
             EvidenceDiscoveryRequest(
+                run_id=run_id,
                 request_id=request_id,
                 natural_language_request=goal,
                 sources=self.sources,
@@ -76,6 +80,9 @@ class EvidenceDiscoverySpecialist:
         begin_run = getattr(self.model, "begin_run", None)
         if callable(begin_run):
             begin_run()
+        begin_tool_run = getattr(self.tool_executor, "begin_run", None)
+        if callable(begin_tool_run):
+            begin_tool_run(run_id=request.run_id)
         sources = {source.source_id: source for source in request.sources}
         initial_messages: tuple[dict[str, object], ...] = (
             {"role": "system", "content": _system_contract()},
@@ -99,17 +106,24 @@ class EvidenceDiscoverySpecialist:
             "version": EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION,
             "system_contract_sha256": _json_sha256(initial_messages[0]["content"]),
             "initial_context_sha256": _json_sha256(initial_messages[1]["content"]),
-            "context_strategy": "initial_plus_compact_trajectory_plus_latest_observation_v1",
+            "context_strategy": (
+                "deduplicated_catalog_latest_observation_and_repeat_correction_v4"
+            ),
             "raw_prompt_persisted": False,
         }
         actions: list[dict[str, object]] = []
         model_action_attempts: list[dict[str, object]] = []
         observations: list[ToolObservation] = []
         observations_by_id: dict[str, ToolObservation] = {}
-        method_origins: dict[str, str] = {}
+        candidate_origins: dict[str, tuple[str, str]] = {}
         total_observation_bytes = 0
+        discovery_message_bytes_by_turn: list[int] = []
         pending_observation: ToolObservation | None = None
         finish_validation_error: str | None = None
+        finish_correction_used = False
+        tool_action_validation_error: dict[str, object] | None = None
+        repeated_action_correction_used = False
+        executed_tool_action_signatures: set[str] = set()
 
         model_steps_used = 0
         for model_step in range(1, request.max_model_steps + 1):
@@ -120,13 +134,41 @@ class EvidenceDiscoverySpecialist:
                 observations=observations,
                 pending_observation=pending_observation,
                 finish_validation_error=finish_validation_error,
+                tool_action_validation_error=tool_action_validation_error,
                 request=request,
                 model_step=model_step,
             )
+            discovery_message_bytes_by_turn.append(_json_size(messages))
+            correction_required = finish_validation_error is not None
             pending_observation = None
             finish_validation_error = None
+            tool_action_validation_error = None
             raw = self.model.complete(messages)
             action = _parse_action(raw)
+            if correction_required and action["action"] != "finish":
+                model_action_attempts.append(
+                    _model_action_attempt(
+                        model_step=model_step,
+                        action=action,
+                        status="rejected",
+                        validation_error="FINISH_CORRECTION_TOOL_CALL_FORBIDDEN",
+                    )
+                )
+                return self._budget_result(
+                    request=request,
+                    actions=actions,
+                    observations=observations,
+                    candidate_origins=candidate_origins,
+                    reason=(
+                        "The single finish-correction opportunity returned a tool "
+                        "action instead of finish."
+                    ),
+                    prompt_contract=prompt_contract,
+                    model_steps_used=model_steps_used,
+                    total_observation_bytes=total_observation_bytes,
+                    discovery_message_bytes_by_turn=discovery_message_bytes_by_turn,
+                    model_action_attempts=model_action_attempts,
+                )
             if action["action"] == "finish":
                 try:
                     _validate_finish(action, observations_by_id)
@@ -140,6 +182,25 @@ class EvidenceDiscoverySpecialist:
                             validation_error=error,
                         )
                     )
+                    if finish_correction_used:
+                        return self._budget_result(
+                            request=request,
+                            actions=actions,
+                            observations=observations,
+                            candidate_origins=candidate_origins,
+                            reason=(
+                                "The single finish-correction opportunity was "
+                                "exhausted."
+                            ),
+                            prompt_contract=prompt_contract,
+                            model_steps_used=model_steps_used,
+                            total_observation_bytes=total_observation_bytes,
+                            discovery_message_bytes_by_turn=(
+                                discovery_message_bytes_by_turn
+                            ),
+                            model_action_attempts=model_action_attempts,
+                        )
+                    finish_correction_used = True
                     finish_validation_error = error
                     continue
                 model_action_attempts.append(
@@ -155,10 +216,11 @@ class EvidenceDiscoverySpecialist:
                     finish=action,
                     actions=actions,
                     observations=observations,
-                    method_origins=method_origins,
+                    candidate_origins=candidate_origins,
                     prompt_contract=prompt_contract,
                     model_steps_used=model_steps_used,
                     total_observation_bytes=total_observation_bytes,
+                    discovery_message_bytes_by_turn=discovery_message_bytes_by_turn,
                     finish_origin="model",
                     model_action_attempts=model_action_attempts,
                 )
@@ -175,19 +237,54 @@ class EvidenceDiscoverySpecialist:
                     request=request,
                     actions=actions,
                     observations=observations,
-                    method_origins=method_origins,
+                    candidate_origins=candidate_origins,
                     reason="Tool-call budget was exhausted before the model finished.",
                     prompt_contract=prompt_contract,
                     model_steps_used=model_steps_used,
                     total_observation_bytes=total_observation_bytes,
+                    discovery_message_bytes_by_turn=discovery_message_bytes_by_turn,
                     model_action_attempts=model_action_attempts,
                 )
             _validate_tool_action(
                 action,
                 sources=sources,
                 observations_by_id=observations_by_id,
-                method_origins=method_origins,
+                candidate_origins=candidate_origins,
             )
+            action_signature = _tool_action_signature(action)
+            if action_signature in executed_tool_action_signatures:
+                model_action_attempts.append(
+                    _model_action_attempt(
+                        model_step=model_step,
+                        action=action,
+                        status="rejected",
+                        validation_error="REPEATED_EXACT_TOOL_ACTION",
+                    )
+                )
+                if repeated_action_correction_used:
+                    return self._budget_result(
+                        request=request,
+                        actions=actions,
+                        observations=observations,
+                        candidate_origins=candidate_origins,
+                        reason=(
+                            "The single exact-repeat correction opportunity was "
+                            "exhausted before the model finished."
+                        ),
+                        prompt_contract=prompt_contract,
+                        model_steps_used=model_steps_used,
+                        total_observation_bytes=total_observation_bytes,
+                        discovery_message_bytes_by_turn=discovery_message_bytes_by_turn,
+                        model_action_attempts=model_action_attempts,
+                    )
+                repeated_action_correction_used = True
+                tool_action_validation_error = {
+                    "error_code": "REPEATED_EXACT_TOOL_ACTION",
+                    "rejected_action_signature_sha256": action_signature,
+                    "rejected_tool": action["tool"],
+                    "rejected_source_id": action["source_id"],
+                }
+                continue
             model_action_attempts.append(
                 _model_action_attempt(
                     model_step=model_step,
@@ -218,30 +315,36 @@ class EvidenceDiscoverySpecialist:
                     request=request,
                     actions=actions,
                     observations=observations,
-                    method_origins=method_origins,
+                    candidate_origins=candidate_origins,
                     reason="Total observation byte budget was exhausted.",
                     prompt_contract=prompt_contract,
                     model_steps_used=model_steps_used,
                     total_observation_bytes=total_observation_bytes,
+                    discovery_message_bytes_by_turn=discovery_message_bytes_by_turn,
                     model_action_attempts=model_action_attempts,
                 )
             actions.append(action)
+            executed_tool_action_signatures.add(action_signature)
             observations.append(observation)
             observations_by_id[observation.observation_id] = observation
             for method in observation.data.get("methods", []):
-                if isinstance(method, dict) and method.get("method_id"):
-                    method_origins[str(method["method_id"])] = observation.observation_id
+                if isinstance(method, dict) and method.get("candidate_ref"):
+                    candidate_origins[str(method["candidate_ref"])] = (
+                        observation.observation_id,
+                        observation.source_id,
+                    )
             pending_observation = observation
 
         return self._budget_result(
             request=request,
             actions=actions,
             observations=observations,
-            method_origins=method_origins,
+            candidate_origins=candidate_origins,
             reason="Model-step budget was exhausted before the model finished.",
             prompt_contract=prompt_contract,
             model_steps_used=model_steps_used,
             total_observation_bytes=total_observation_bytes,
+            discovery_message_bytes_by_turn=discovery_message_bytes_by_turn,
             model_action_attempts=model_action_attempts,
         )
 
@@ -253,10 +356,11 @@ class EvidenceDiscoverySpecialist:
         finish: dict[str, object],
         actions: list[dict[str, object]],
         observations: list[ToolObservation],
-        method_origins: dict[str, str],
+        candidate_origins: dict[str, tuple[str, str]],
         prompt_contract: dict[str, object],
         model_steps_used: int,
         total_observation_bytes: int,
+        discovery_message_bytes_by_turn: list[int],
         finish_origin: str,
         model_action_attempts: list[dict[str, object]],
     ) -> EvidenceDiscoveryResult:
@@ -291,15 +395,25 @@ class EvidenceDiscoverySpecialist:
             for item in finish.get("evidence_conclusions", [])
             if isinstance(item, dict)
         )
+        method_inspection_provenance_valid = (
+            _all_method_inspections_derived_from_observations(
+                actions=actions,
+                candidate_origins=candidate_origins,
+            )
+        )
+        candidate_binding_trace = _candidate_binding_trace(
+            actions=actions,
+            observations=observations,
+        )
         intelligence_transfer = _intelligence_transfer(
             actions=actions,
             observations=observations,
-            method_origins=method_origins,
             finish=finish,
             input_audit=input_audit,
             source_count=len(request.sources),
             run_status=run_status,
             finish_origin=finish_origin,
+            method_inspection_provenance_valid=method_inspection_provenance_valid,
         )
         usage_records = _model_usage_records(self.model)
         pack = EvidencePack(
@@ -328,6 +442,12 @@ class EvidenceDiscoverySpecialist:
                 "max_result_bytes_per_call": request.max_result_bytes_per_call,
                 "max_total_observation_bytes": request.max_total_observation_bytes,
                 "total_observation_bytes_used": total_observation_bytes,
+                "discovery_message_bytes_by_turn": list(
+                    discovery_message_bytes_by_turn
+                ),
+                "total_discovery_message_bytes": sum(
+                    discovery_message_bytes_by_turn
+                ),
                 "model_turn_usage": list(usage_records),
                 "model_usage_totals": _usage_totals(usage_records),
             },
@@ -381,9 +501,11 @@ class EvidenceDiscoverySpecialist:
             prompt_contract=dict(prompt_contract),
             model_identity=_model_identity(self.model),
             provenance_validation={
-                "all_method_inspections_derived_from_observations": intelligence_transfer[
-                    "followup_selection_by_platform"
-                ],
+                "run_id": request.run_id,
+                "all_method_inspections_derived_from_observations": (
+                    method_inspection_provenance_valid
+                ),
+                "candidate_binding_trace": candidate_binding_trace,
                 "target_code_executed": False,
                 "model_disclosure": _model_disclosure_record(self.model),
             },
@@ -409,11 +531,12 @@ class EvidenceDiscoverySpecialist:
         request: EvidenceDiscoveryRequest,
         actions: list[dict[str, object]],
         observations: list[ToolObservation],
-        method_origins: dict[str, str],
+        candidate_origins: dict[str, tuple[str, str]],
         reason: str,
         prompt_contract: dict[str, object],
         model_steps_used: int,
         total_observation_bytes: int,
+        discovery_message_bytes_by_turn: list[int],
         model_action_attempts: list[dict[str, object]],
     ) -> EvidenceDiscoveryResult:
         return self._result(
@@ -428,10 +551,11 @@ class EvidenceDiscoverySpecialist:
             },
             actions=actions,
             observations=observations,
-            method_origins=method_origins,
+            candidate_origins=candidate_origins,
             prompt_contract=prompt_contract,
             model_steps_used=model_steps_used,
             total_observation_bytes=total_observation_bytes,
+            discovery_message_bytes_by_turn=discovery_message_bytes_by_turn,
             finish_origin="deterministic_budget_stop",
             model_action_attempts=model_action_attempts,
         )
@@ -444,11 +568,18 @@ def _build_turn_messages(
     observations: list[ToolObservation],
     pending_observation: ToolObservation | None,
     finish_validation_error: str | None,
+    tool_action_validation_error: dict[str, object] | None,
     request: EvidenceDiscoveryRequest,
     model_step: int,
 ) -> tuple[dict[str, object], ...]:
     messages = list(initial_messages)
     if actions:
+        excluded_observation_id = (
+            pending_observation.observation_id
+            if pending_observation is not None
+            else None
+        )
+        excluded_method_ids = _observation_internal_method_ids(pending_observation)
         messages.append(
             {
                 "role": "user",
@@ -458,6 +589,15 @@ def _build_turn_messages(
                         _compact_step(index, action, observations[index])
                         for index, action in enumerate(actions)
                     ],
+                    "observed_method_catalog": _observed_method_catalog(
+                        observations,
+                        excluded_observation_id=excluded_observation_id,
+                        excluded_method_ids=excluded_method_ids,
+                    ),
+                    "inspection_catalog": _inspection_catalog(
+                        observations,
+                        excluded_observation_id=excluded_observation_id,
+                    ),
                     "history_policy": (
                         "Earlier full observations remain in the local audit record and "
                         "are not replayed. Use exact ids from this compact trajectory."
@@ -481,6 +621,16 @@ def _build_turn_messages(
                         "blocked_by_missing_capability",
                         "conflicting_evidence",
                     ],
+                    "required_finish_schema": evidence_discovery_finish_schema(),
+                    "decision_constraints": (
+                        evidence_discovery_finish_decision_constraints()
+                    ),
+                    "repair_focus": _finish_validation_repair_focus(
+                        finish_validation_error
+                    ),
+                    "available_inspection_observation_ids": (
+                        _inspection_observation_ids(observations)
+                    ),
                     "instruction": (
                         "Return one corrected finish JSON object that follows the "
                         "system contract. Do not request another tool."
@@ -488,7 +638,34 @@ def _build_turn_messages(
                 },
             }
         )
+    if tool_action_validation_error is not None:
+        messages.append(
+            {
+                "role": "user",
+                "content": {
+                    "message_type": "tool_action_validation_error",
+                    **tool_action_validation_error,
+                    "executed_tool_call_count": len(actions),
+                    "required_change": (
+                        "Choose a different source, tool, or arguments, or finish. "
+                        "Changing only evidence_need or derived observation ids does "
+                        "not make the action different."
+                    ),
+                    "metadata_query_semantics": (
+                        "search_dotnet_metadata uses case-insensitive literal-substring "
+                        "matching against fully qualified managed type, method, and "
+                        "field symbols. It does not interpret behavioral sentences as "
+                        "semantic search."
+                    ),
+                    "instruction": (
+                        "Do not repeat the rejected source/tool/arguments action. No "
+                        "expected symbol or hidden evaluator value is provided."
+                    ),
+                },
+            }
+        )
     remaining_tool_calls = request.max_tool_calls - len(actions)
+    acceptance_progress = _acceptance_progress(observations)
     messages.append(
         {
             "role": "user",
@@ -498,10 +675,20 @@ def _build_turn_messages(
                 "remaining_tool_calls": remaining_tool_calls,
                 "model_steps_used": model_step - 1,
                 "remaining_model_steps": request.max_model_steps - model_step + 1,
+                "acceptance_progress": acceptance_progress["progress"],
+                "remaining_acceptance_requirements": acceptance_progress[
+                    "remaining_requirements"
+                ],
                 "required_next_action": (
                     "finish"
                     if remaining_tool_calls == 0 or finish_validation_error is not None
-                    else "use_tool_or_finish"
+                    else (
+                        "finish_or_use_tool_for_exact_gap"
+                        if acceptance_progress["progress"][
+                            "inspect_method_il_observation_ids"
+                        ]
+                        else "use_tool_or_finish"
+                    )
                 ),
             },
         }
@@ -509,33 +696,216 @@ def _build_turn_messages(
     return tuple(messages)
 
 
+def _acceptance_progress(
+    observations: list[ToolObservation],
+) -> dict[str, object]:
+    metadata_observation_ids = [
+        observation.observation_id
+        for observation in observations
+        if observation.tool == "search_dotnet_metadata"
+    ]
+    inspection_observation_ids = _inspection_observation_ids(observations)
+    if not metadata_observation_ids:
+        remaining_requirements = [
+            "Use search_dotnet_metadata to obtain a current-run candidate_ref.",
+            "Use inspect_method_il with a candidate_ref from that metadata observation.",
+            (
+                "Finish with an observed or inferred conclusion whose observation_ids "
+                "includes an inspect_method_il observation_id."
+            ),
+        ]
+    elif not inspection_observation_ids:
+        remaining_requirements = [
+            "Use inspect_method_il with a candidate_ref from a current-run metadata observation.",
+            (
+                "Finish with an observed or inferred conclusion whose observation_ids "
+                "includes an inspect_method_il observation_id."
+            ),
+        ]
+    else:
+        remaining_requirements = [
+            (
+                "Finish now with an observed or inferred conclusion whose observation_ids "
+                "includes one listed inspect_method_il observation id, unless one exact "
+                "unresolved gap justifies one new tool call. needs_more_evidence is valid; "
+                "do not broad-search or repeat a method."
+            )
+        ]
+    return {
+        "progress": {
+            "metadata_observation_ids": metadata_observation_ids,
+            "inspect_method_il_observation_ids": inspection_observation_ids,
+        },
+        "remaining_requirements": remaining_requirements,
+    }
+
+
+def _finish_validation_repair_focus(error_code: str) -> dict[str, object]:
+    if error_code == "DISCOVERY_DECISION_INVALID":
+        return {
+            "field": "decision",
+            "requirement": "Use exactly one value from allowed_decisions.",
+        }
+    if error_code == "EVIDENCE_CONCLUSION_SHAPE_INVALID":
+        return {
+            "field": "evidence_conclusions[]",
+            "required_keys": [
+                "claim",
+                "claim_status",
+                "observation_ids",
+                "limitations",
+            ],
+            "field_types": {
+                "claim": "non-empty string",
+                "claim_status": "observed | inferred | unknown",
+                "observation_ids": "array of non-empty strings",
+                "limitations": "array of non-empty strings",
+            },
+            "additional_keys_allowed": False,
+        }
+    if error_code == "EVIDENCE_CONCLUSION_INSPECTION_REFERENCE_REQUIRED":
+        return {
+            "field": "evidence_conclusions[].observation_ids",
+            "requirement": (
+                "At least one observed or inferred conclusion must cite one id "
+                "from available_inspection_observation_ids."
+            ),
+        }
+    return {
+        "field": "finish",
+        "requirement": "Match required_finish_schema exactly.",
+    }
+
+
 def _compact_step(
     index: int,
     action: dict[str, object],
     observation: ToolObservation,
 ) -> dict[str, object]:
-    methods: list[dict[str, object]] = []
-    for raw in observation.data.get("methods", []):
-        if isinstance(raw, dict):
-            methods.append(
-                {
-                    key: raw[key]
-                    for key in ("method_id", "assembly_id", "symbol", "metadata_token")
-                    if key in raw
-                }
-            )
     return {
         "step": index + 1,
         "tool": action.get("tool"),
         "source_id": action.get("source_id"),
-        "evidence_need": action.get("evidence_need"),
+        "arguments": dict(action.get("arguments") or {}),
         "derived_from_observation_ids": list(
             action.get("derived_from_observation_ids") or []
         ),
         "observation_id": observation.observation_id,
         "observation_summary": observation.summary,
-        "observed_methods": methods,
     }
+
+
+def _observed_method_catalog(
+    observations: list[ToolObservation],
+    *,
+    excluded_observation_id: str | None,
+    excluded_method_ids: set[str],
+) -> list[dict[str, object]]:
+    catalog: dict[str, dict[str, object]] = {}
+    for observation in observations:
+        if observation.observation_id == excluded_observation_id:
+            continue
+        for raw in observation.data.get("methods", []):
+            if (
+                not isinstance(raw, dict)
+                or not raw.get("candidate_ref")
+                or not raw.get("method_id")
+            ):
+                continue
+            method_id = str(raw["method_id"])
+            candidate_ref = str(raw["candidate_ref"])
+            if method_id in excluded_method_ids:
+                continue
+            entry = {
+                "candidate_ref": candidate_ref,
+                "source_id": observation.source_id,
+                "discovered_in_observation_id": observation.observation_id,
+                **{
+                    key: raw[key]
+                    for key in (
+                        "symbol",
+                        "has_method_body",
+                    )
+                    if key in raw
+                },
+            }
+            existing = catalog.get(method_id)
+            if existing is not None and _method_identity(existing) != _method_identity(
+                entry
+            ):
+                raise ValueError("COMPACT_CANDIDATE_IDENTITY_CONFLICT")
+            catalog.setdefault(method_id, entry)
+    return list(catalog.values())
+
+
+def _inspection_catalog(
+    observations: list[ToolObservation],
+    *,
+    excluded_observation_id: str | None,
+) -> list[dict[str, object]]:
+    catalog: dict[str, dict[str, object]] = {}
+    for observation in observations:
+        if (
+            observation.observation_id == excluded_observation_id
+            or observation.tool != "inspect_method_il"
+        ):
+            continue
+        data = observation.data
+        candidate_ref = str(data.get("candidate_ref") or "")
+        method_id = str(data.get("method_id") or "")
+        if not candidate_ref or not method_id:
+            raise ValueError("COMPACT_INSPECTION_CANDIDATE_REF_MISSING")
+        entry = {
+            "candidate_ref": candidate_ref,
+            "source_id": observation.source_id,
+            "inspection_observation_id": observation.observation_id,
+            **{
+                key: data[key]
+                for key in (
+                    "symbol",
+                    "metadata_token",
+                    "has_method_body",
+                    "rva",
+                    "instruction_count",
+                    "instructions_truncated",
+                    "resolved_refs",
+                    "target_code_executed",
+                )
+                if key in data
+            },
+        }
+        catalog.setdefault(method_id, entry)
+    return list(catalog.values())
+
+
+def _method_identity(entry: dict[str, object]) -> tuple[object, ...]:
+    return tuple(entry.get(key) for key in ("source_id", "symbol"))
+
+
+def _inspection_observation_ids(
+    observations: list[ToolObservation],
+) -> list[str]:
+    return [
+        observation.observation_id
+        for observation in observations
+        if observation.tool == "inspect_method_il"
+    ]
+
+
+def _observation_internal_method_ids(
+    observation: ToolObservation | None,
+) -> set[str]:
+    if observation is None:
+        return set()
+    method_ids = {
+        str(raw["method_id"])
+        for raw in observation.data.get("methods", [])
+        if isinstance(raw, dict) and raw.get("method_id")
+    }
+    direct_method_id = observation.data.get("method_id")
+    if direct_method_id:
+        method_ids.add(str(direct_method_id))
+    return method_ids
 
 
 def _parse_action(raw: str) -> dict[str, object]:
@@ -555,7 +925,7 @@ def _validate_tool_action(
     *,
     sources: dict[str, EvidenceDiscoverySource],
     observations_by_id: dict[str, ToolObservation],
-    method_origins: dict[str, str],
+    candidate_origins: dict[str, tuple[str, str]],
 ) -> None:
     if set(action) != {
         "action",
@@ -608,14 +978,17 @@ def _validate_tool_action(
             raise ValueError("METADATA_SEARCH_LIMIT_INVALID")
         return
     if tool == "inspect_method_il":
-        if set(arguments) != {"method_id"}:
+        if set(arguments) != {"candidate_ref"}:
             raise ValueError("METHOD_INSPECTION_ARGUMENTS_INVALID")
-        method_id = str(arguments.get("method_id") or "")
-        origin = method_origins.get(method_id)
+        candidate_ref = str(arguments.get("candidate_ref") or "")
+        origin = candidate_origins.get(candidate_ref)
         if origin is None:
-            raise ValueError("UNVERIFIED_METHOD_REFERENCE")
-        if origin not in derived:
-            raise ValueError("METHOD_ORIGIN_OBSERVATION_REQUIRED")
+            raise ValueError("UNVERIFIED_CANDIDATE_REFERENCE")
+        origin_observation_id, origin_source_id = origin
+        if origin_source_id != source_id:
+            raise ValueError("CANDIDATE_SOURCE_MISMATCH")
+        if origin_observation_id not in derived:
+            raise ValueError("CANDIDATE_ORIGIN_OBSERVATION_REQUIRED")
         return
     raise ValueError("UNKNOWN_EVIDENCE_TOOL")
 
@@ -691,6 +1064,23 @@ def _validate_finish(
             raise ValueError("UNKNOWN_CONCLUSION_MUST_NOT_CITE_OBSERVATION")
         if status == "unknown" and not limitations:
             raise ValueError("UNKNOWN_CONCLUSION_LIMITATIONS_REQUIRED")
+    inspection_observation_ids = {
+        observation_id
+        for observation_id, observation in observations_by_id.items()
+        if observation.tool == "inspect_method_il"
+    }
+    if inspection_observation_ids and not any(
+        conclusion.get("claim_status") in {"observed", "inferred"}
+        and isinstance(conclusion.get("observation_ids"), list)
+        and bool(
+            inspection_observation_ids.intersection(
+                conclusion["observation_ids"]
+            )
+        )
+        for conclusion in conclusions
+        if isinstance(conclusion, dict)
+    ):
+        raise ValueError("EVIDENCE_CONCLUSION_INSPECTION_REFERENCE_REQUIRED")
     if decision == "sufficient_for_proposal" and (unresolved or missing):
         raise ValueError("SUFFICIENT_DECISION_HAS_OPEN_GAPS")
     if decision == "sufficient_for_proposal" and not conclusions:
@@ -714,12 +1104,12 @@ def _intelligence_transfer(
     *,
     actions: list[dict[str, object]],
     observations: list[ToolObservation],
-    method_origins: dict[str, str],
     finish: dict[str, object],
     input_audit: dict[str, int],
     source_count: int,
     run_status: str,
     finish_origin: str,
+    method_inspection_provenance_valid: bool,
 ) -> dict[str, bool]:
     no_manual_input = all(value == 0 for value in input_audit.values())
     tool_actions = [action for action in actions if action.get("action") == "use_tool"]
@@ -739,14 +1129,7 @@ def _intelligence_transfer(
     inspection_actions = [
         action for action in tool_actions if action.get("tool") == "inspect_method_il"
     ]
-    followup = any(
-        bool(action.get("derived_from_observation_ids"))
-        and isinstance(action.get("arguments"), dict)
-        and str(action["arguments"].get("method_id") or "") in method_origins
-        and method_origins[str(action["arguments"].get("method_id"))]
-        in action.get("derived_from_observation_ids", [])
-        for action in inspection_actions
-    )
+    followup = method_inspection_provenance_valid
     inspection_observation_ids = {
         observation.observation_id
         for observation in observations
@@ -794,37 +1177,122 @@ def _system_contract() -> dict[str, object]:
                     "derived_from_observation_ids",
                 ],
                 "tools": {
-                    "search_dotnet_metadata": {
-                        "arguments": {
-                            "queries": ["string"],
-                            "result_kinds": ["methods | types | fields"],
-                            "limit_per_kind": "integer 1..50",
-                        }
-                    },
-                    "inspect_method_il": {"arguments": {"method_id": "observed id"}},
+                    "search_dotnet_metadata": [
+                        "queries",
+                        "result_kinds",
+                        "limit_per_kind",
+                    ],
+                    "inspect_method_il": ["candidate_ref"],
                 },
             },
             "finish": {
-                "required": [
-                    "action",
-                    "decision",
-                    "evidence_conclusions",
-                    "unresolved_questions",
-                    "missing_capabilities",
-                ]
+                "schema": evidence_discovery_finish_schema(),
+                "acceptance_requirements": [
+                    "First obtain a current-run candidate_ref through search_dotnet_metadata.",
+                    "Then inspect that reference through inspect_method_il.",
+                    (
+                        "A grounded finish cites an inspect_method_il observation_id in at "
+                        "least one observed or inferred conclusion."
+                    ),
+                ],
             },
         },
         "rules": [
             "Return one JSON object or one native tool call only.",
             "Use only listed source_ids and allowed tools.",
+            (
+                "Metadata queries match case-insensitive substrings of fully qualified "
+                "managed type/method/field symbols; they are not behavioral semantic search."
+            ),
             "Select focused result_kinds and the smallest useful limit_per_kind.",
-            "An inspect_method_il method_id must come from a prior observation.",
+            "Do not repeat an already executed identical source/tool/arguments action.",
+            "An inspect_method_il candidate_ref must come from a prior observation.",
             "Observed and inferred conclusions must reference prior observations.",
             "Inferred conclusions must state limitations; unknown conclusions cite no observation.",
             "When budget_state.required_next_action is finish, return finish and do not request another tool.",
             "Community evidence cannot confirm current runtime behavior.",
         ],
     }
+
+
+def _all_method_inspections_derived_from_observations(
+    *,
+    actions: list[dict[str, object]],
+    candidate_origins: dict[str, tuple[str, str]],
+) -> bool:
+    inspection_actions = [
+        action
+        for action in actions
+        if action.get("action") == "use_tool"
+        and action.get("tool") == "inspect_method_il"
+    ]
+    if not inspection_actions:
+        return False
+    return all(
+        isinstance(action.get("arguments"), dict)
+        and str(action["arguments"].get("candidate_ref") or "")
+        in candidate_origins
+        and candidate_origins[str(action["arguments"].get("candidate_ref"))][0]
+        in action.get("derived_from_observation_ids", [])
+        and candidate_origins[str(action["arguments"].get("candidate_ref"))][1]
+        == action.get("source_id")
+        for action in inspection_actions
+    )
+
+
+def _candidate_binding_trace(
+    *,
+    actions: list[dict[str, object]],
+    observations: list[ToolObservation],
+) -> list[dict[str, object]]:
+    if len(actions) != len(observations):
+        raise ValueError("CANDIDATE_TRACE_ACTION_OBSERVATION_COUNT_MISMATCH")
+    bindings: dict[str, tuple[str, str, str]] = {}
+    for observation in observations:
+        if observation.tool != "search_dotnet_metadata":
+            continue
+        for method in observation.data.get("methods", []):
+            if not isinstance(method, dict):
+                continue
+            candidate_ref = str(method.get("candidate_ref") or "")
+            method_id = str(method.get("method_id") or "")
+            if not candidate_ref or not method_id:
+                continue
+            bindings[candidate_ref] = (
+                observation.observation_id,
+                observation.source_id,
+                method_id,
+            )
+
+    trace: list[dict[str, object]] = []
+    for action, observation in zip(actions, observations):
+        if action.get("tool") != "inspect_method_il":
+            continue
+        arguments = action.get("arguments")
+        if not isinstance(arguments, dict):
+            raise ValueError("CANDIDATE_TRACE_INSPECTION_ARGUMENTS_INVALID")
+        candidate_ref = str(arguments.get("candidate_ref") or "")
+        binding = bindings.get(candidate_ref)
+        if binding is None:
+            raise ValueError("CANDIDATE_TRACE_BINDING_MISSING")
+        metadata_observation_id, source_id, method_id = binding
+        if observation.tool != "inspect_method_il":
+            raise ValueError("CANDIDATE_TRACE_IL_OBSERVATION_MISSING")
+        if observation.source_id != source_id:
+            raise ValueError("CANDIDATE_TRACE_SOURCE_MISMATCH")
+        if str(observation.data.get("method_id") or "") != method_id:
+            raise ValueError("CANDIDATE_TRACE_INTERNAL_METHOD_ID_MISMATCH")
+        trace.append(
+            {
+                "candidate_ref": candidate_ref,
+                "source_id": source_id,
+                "metadata_observation_id": metadata_observation_id,
+                "internal_method_id": method_id,
+                "il_observation_id": observation.observation_id,
+                "il_observation_sha256": _json_sha256(observation.model_view()),
+            }
+        )
+    return trace
 
 
 def _model_disclosure_record(model: EvidenceDiscoveryModel) -> dict[str, object]:
@@ -840,6 +1308,16 @@ def _model_disclosure_record(model: EvidenceDiscoveryModel) -> dict[str, object]
 def _model_identity(model: EvidenceDiscoveryModel) -> dict[str, object]:
     disclosure = _model_disclosure_record(model)
     destination = disclosure.get("destination")
+    if (
+        disclosure.get("execution_kind") == "local_agent_turn_adapter"
+        and isinstance(destination, dict)
+    ):
+        return {
+            "execution_kind": "local_agent_turn_adapter",
+            "provider": destination.get("provider"),
+            "model": destination.get("model"),
+            "endpoint": destination.get("endpoint"),
+        }
     if disclosure.get("approved") is True and isinstance(destination, dict):
         return {
             "execution_kind": "external_agent_turn_adapter",
@@ -888,6 +1366,26 @@ def _json_sha256(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _tool_action_signature(action: dict[str, object]) -> str:
+    return _json_sha256(
+        {
+            "tool": action.get("tool"),
+            "source_id": action.get("source_id"),
+            "arguments": action.get("arguments"),
+        }
+    )
+
+
+def _json_size(value: object) -> int:
+    return len(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
 
 
 def _model_action_attempt(

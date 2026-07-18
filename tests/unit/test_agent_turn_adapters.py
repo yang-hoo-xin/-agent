@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from src.libs.llm import (
     AgentMessage,
     AgentResponseFormat,
@@ -11,6 +13,7 @@ from src.libs.llm import (
     AgentToolDefinition,
     AgentToolResult,
     AgentTurnRequest,
+    OllamaChatAgentAdapter,
     OpenAIResponsesAgentAdapter,
     QwenChatAgentAdapter,
 )
@@ -161,6 +164,122 @@ def test_qwen_chat_adapter_links_local_tool_result_to_exact_call_id() -> None:
     assert messages[-1]["tool_call_id"] == "call-qwen-001"
     assert captured[0]["response_format"] == {"type": "json_object"}
     assert response.content == '{"action":"finish"}'
+
+
+def test_ollama_adapter_uses_native_tools_and_local_usage() -> None:
+    captured: list[tuple[str, dict[str, object], dict[str, str]]] = []
+
+    def send(url, payload, headers):
+        captured.append((url, payload, headers))
+        return {
+            "model": "qwen3:4b-instruct",
+            "done": True,
+            "done_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "search_dotnet_metadata",
+                            "arguments": {"source_id": "r8-modules"},
+                        }
+                    }
+                ],
+            },
+            "prompt_eval_count": 123,
+            "eval_count": 17,
+        }
+
+    adapter = OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434",
+        model="qwen3:4b-instruct",
+        max_output_tokens=2048,
+        request_sender=send,
+    )
+    response = adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content={"goal": "find methods"}),),
+            tools=(_tool(),),
+        )
+    )
+
+    url, payload, headers = captured[0]
+    assert url == "http://127.0.0.1:11434/api/chat"
+    assert payload["stream"] is False
+    assert payload["think"] is False
+    assert payload["options"] == {"temperature": 0.0, "num_predict": 2048}
+    assert payload["tools"][0]["function"]["name"] == "search_dotnet_metadata"
+    assert headers == {"Content-Type": "application/json"}
+    assert response.tool_calls[0].call_id.startswith("ollama-call-")
+    assert response.tool_calls[0].arguments == {"source_id": "r8-modules"}
+    assert response.usage.input_tokens == 123
+    assert response.usage.output_tokens == 17
+
+
+def test_ollama_adapter_replays_native_tool_exchange_and_forces_schema() -> None:
+    captured: list[dict[str, object]] = []
+
+    def send(url, payload, headers):
+        captured.append(payload)
+        return {
+            "model": "qwen3:4b-instruct",
+            "done": True,
+            "message": {"role": "assistant", "content": '{"action":"finish"}'},
+        }
+
+    raw_call = {
+        "function": {
+            "name": "search_dotnet_metadata",
+            "arguments": {"source_id": "r8-modules"},
+        }
+    }
+    adapter = OllamaChatAgentAdapter(
+        base_url="http://[::1]:11434/",
+        model="qwen3:4b-instruct",
+        max_output_tokens=2048,
+        request_sender=send,
+    )
+    adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content={"goal": "finish"}),),
+            tools=(),
+            tool_choice="none",
+            response_format=_format(),
+            tool_results=(
+                AgentToolResult(
+                    call_id="ollama-call-local",
+                    name="search_dotnet_metadata",
+                    output={"observation_id": "obs-001"},
+                ),
+            ),
+            provider_state={"content": "", "tool_calls": [raw_call]},
+        )
+    )
+
+    assert captured[0]["messages"][-2]["tool_calls"] == [raw_call]
+    assert captured[0]["messages"][-1]["tool_name"] == "search_dotnet_metadata"
+    assert captured[0]["format"] == _format().schema
+    assert "tools" not in captured[0]
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://localhost:11434",
+        "http://192.168.1.10:11434",
+        "https://127.0.0.1:11434",
+        "http://127.0.0.1:11434/api",
+    ],
+)
+def test_ollama_adapter_rejects_non_literal_loopback_origin(base_url: str) -> None:
+    with pytest.raises(ValueError, match="LITERAL_LOOPBACK"):
+        OllamaChatAgentAdapter(
+            base_url=base_url,
+            model="qwen3:4b-instruct",
+            max_output_tokens=2048,
+            request_sender=lambda *_: {},
+        )
 
 
 def test_openai_responses_adapter_replays_only_bound_reasoning_call_and_output() -> None:

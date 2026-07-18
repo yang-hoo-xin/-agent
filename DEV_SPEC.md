@@ -5480,6 +5480,86 @@ Stale detection works across at least feature_spec -> implementation_plan -> pat
 Schema version is explicit.
 ```
 
+### 49.2.7 Physical Locator And Atomic Commit Reliability
+
+The committed revision identity remains the complete `artifact_hash` stored in
+the envelope, `ArtifactRef`, and upstream binding. Physical storage uses a
+short deterministic locator only to keep the local write path addressable:
+
+```text
+features/<feature_id>/<artifact_type>.json
+  -> mutable latest envelope projection
+
+features/<feature_id>/r/<artifact_type>/<artifact_hash first 32 hex>.json
+  -> immutable committed revision locator
+
+features/<feature_id>/p/<artifact_type>/<artifact_hash first 32 hex>.json
+  -> internal pending-write marker
+```
+
+The 32-hex locator is not revision identity. An existing short-locator file is
+read and checked against the complete hash, feature id, artifact type, schema,
+and envelope content before it can be reused. A different complete hash at the
+same locator is a deterministic collision and blocks overwrite.
+
+Write-time idempotence checks the exact legacy full-hash revision location
+before the short-locator location. A valid legacy revision is reused without
+copy, migration, or a second revision file. Explicit `ArtifactRef` reads use
+the persisted path and validate that referenced revision only; they do not scan
+other revisions or rewrite old paths. Legacy pending markers are not recovered
+or migrated by this compatibility boundary.
+
+The commit order remains:
+
+```text
+pending marker
+-> immutable revision
+-> latest envelope projection
+-> pending marker cleanup
+```
+
+Each file is written through a short same-directory temporary file, followed
+by flush, `fsync`, and `os.replace`. Parent directories are created before the
+replace operation. Pending data records the complete artifact hash and the
+actual intended revision and latest locations; identity is never inferred from
+the abbreviated filename.
+
+Before `intelligent-evidence-request` constructs or invokes the graph, model,
+or evidence tools, `ArtifactStore` probes the actual pending, revision, and
+latest write locations for `request_planning_report`, `mod_planning_brief`,
+`feature_spec`, and `evidence_pack`. The probe uses the production locator and
+atomic-write implementation, removes its reserved probe files after success,
+and creates no business revision, latest projection, `ArtifactRef`, or upstream
+binding.
+
+A recognized unaddressable-path replace failure returns the existing CLI
+top-level `BLOCKED` result with exit code 2 and a machine-readable diagnostic:
+
+```text
+category = infrastructure_preflight_failure
+component = artifact_store
+stage = artifact_preflight
+code = artifact_path_unaddressable
+operation = os.replace
+model_execution_started = false
+tool_execution_started = false
+model_call_count = 0
+tool_call_count = 0
+details include artifact_type, path_role, path lengths, parent existence,
+and the operating-system error number without absolute local paths
+```
+
+Unknown `OSError` values are not relabeled as this path failure. The historical
+blocked run's observed process exit code remains 1; current source and focused
+tests prove exit code 2 for the new recognized preflight branch but do not
+explain or rewrite that historical discrepancy.
+
+The verified reliability claim is limited to the current Windows process,
+local NTFS artifact root, and single-process evidence-only write chain. It does
+not establish arbitrary path-length support, a Windows-specific path layer,
+cross-process locking, fallback storage, dual writes, migration, retention,
+garbage collection, or crash recovery beyond the normal pending commit flow.
+
 ---
 
 ## 49.3 Change Control Chain
@@ -6269,6 +6349,12 @@ mypy or pyright, choose one only if it does not slow Phase A/B
 
 ### 50.4.3 V2 Acceleration Track
 
+This subsection is a conditional technology catalog, not the V2 product
+mainline, implementation sequence, or active queue. Section 51 is the
+normative V2 real-task intelligence-transfer program. No item below may be
+selected from technology preference alone; it requires the exact observed
+product failure or capability trigger recorded by section 51.
+
 ```text
 Qdrant
 Chroma
@@ -6676,6 +6762,687 @@ Therefore:
 ```text
 Chapter 40 remains useful for README-level explanation.
 Chapter 50.9 is the implementation-level architecture reference for V1.
+```
+
+---
+
+# 51. V2 Real-Task Intelligence Transfer Program
+
+This chapter defines the V2 capability program that begins after the controlled
+workflow baseline exists. It supersedes any interpretation of V2 as a list of
+frameworks to install or as a replay of the stage names Proposal, dry-run,
+apply, build, and runtime.
+
+V2 is advanced through one real product request at a time. The current request
+is WallCrawler. Platform infrastructure may grow only when the current run
+exposes an exact missing capability, protocol failure, evidence gap, or
+verification failure.
+
+## 51.1 Problem, Goal, And Optimization Target
+
+The implemented control plane can already route planning, evidence, Proposal,
+review, dry-run, approval, isolated apply, build, runtime, and repair. That
+proves controlled execution behavior. It does not by itself prove that the
+platform has taken over the substantive decisions that an operator previously
+performed.
+
+The unproven decisions include:
+
+```text
+which registered source is relevant;
+which bounded evidence tool should run first;
+which symbol is discovered from the observation rather than supplied manually;
+which dependent tool call follows from that symbol;
+what the observed evidence proves and does not prove;
+whether the current tool set is sufficient;
+whether the run should finish, block, or request one bounded capability.
+```
+
+Without this capability, the operator or Codex can precompute paths, symbols,
+tool order, IL reports, and blockers while LangGraph only validates the answer.
+That is a controlled workflow, not demonstrated intelligence transfer.
+
+The V2 optimization target is therefore:
+
+```text
+maximize verified platform-owned task decisions inside a real request
+while preserving deterministic route, permission, evidence, write, and claim authority
+```
+
+The target is not maximum autonomy, maximum model calls, maximum tool count, or
+minimum human approval. Human approval remains mandatory where disclosure,
+write, game launch, game-directory copy, or runtime control requires it.
+
+## 51.2 Status And Authority Model
+
+Architecture references use the existing exact states:
+
+- `implemented`: current source plus focused evidence supports the recorded
+  claim boundary;
+- `documented_only`: responsibility separation or a possible design, not an
+  implementation or queue entry;
+- `conditional_trigger`: implementation may be selected only after the exact
+  real-task signal named by the reference is recorded.
+
+Implementation status and semantic evidence status are separate. A model
+adapter or loop can be implemented and locally tested while real-model semantic
+quality remains unproven.
+
+The single LangGraph `StateGraph` remains the control plane. Specialist loops
+operate inside their nodes. They cannot authorize paths or writes, approve a
+Proposal, launch build/runtime work, or choose final graph routes. ArtifactStore
+owns durable outputs and lineage. Deterministic policy owns validation and
+promotion.
+
+## 51.3 V2 Program Shape
+
+The V2 program has one current core gate and a set of later conditional product
+gates.
+
+### 51.3.1 Core Intelligence-Transfer Gate
+
+```text
+V2-A controlled intelligent input
+-> V2-B bounded intelligent loop inside retrieve_evidence
+-> V2-C real WallCrawler run with no manual answers
+-> V2-D add only the exact capability or loop repair exposed by that run
+-> rerun V2-C
+-> resolve the intelligence-transfer gate truthfully
+```
+
+The gate can resolve with grounded `needs_more_evidence`. It does not require
+WallCrawler Hook feasibility or Proposal readiness. It does require the model
+to perform an observation-dependent evidence sequence and finish truthfully
+within the configured boundary.
+
+### 51.3.2 Conditional Delivery-Intelligence Gates
+
+Only after the core gate is resolved may the selected product request activate
+one later gate:
+
+```text
+evidence-to-implementation planning
+-> Proposal-only generation and review
+-> deterministic dry-run and exact approval
+-> isolated apply and real build
+-> failure-driven build repair when observed
+-> separately approved runtime evidence and diagnosis
+-> evaluation, delivery, repair, or explicit unresolved handoff
+```
+
+These are not a preapproved consecutive queue. Each gate has its own entry
+evidence, selected capability, permission boundary, verification, and stop
+condition. Dry-run and apply remain deterministic control mechanisms; no model
+role is added merely because a later stage exists.
+
+## 51.4 V2-A Controlled Intelligent Input
+
+### 51.4.1 Input Representation
+
+The model input combines:
+
+```text
+natural-language product goal;
+path-hidden Source Registry views;
+allowed read-only tools per source;
+model-step, tool-call, result-byte, and total-observation budgets;
+external disclosure boundary;
+evidence-only stopping boundary;
+current compact action/observation trajectory;
+deduplicated metadata-method and IL-inspection catalogs;
+latest full observation only.
+```
+
+Machine-local roots, API keys, write targets, and unrestricted filesystem
+access are not model input. Source identity is preserved through registered
+source id, relative path, live file identity, assembly identity where
+applicable, and current-run observation identity.
+
+### 51.4.2 Information Preserved And Lost
+
+The representation preserves:
+
+```text
+the product goal;
+which evidence classes and tools are available;
+the current source and assembly identity;
+the exact observed method identity needed for dependent IL work;
+the exact direct IL identity, method-body outcome, instruction count, and
+inspection observation id after its full payload rotates out;
+prior action summaries and observation ids;
+budget, stop state, and per-turn serialized discovery-message byte counts.
+```
+
+It intentionally removes:
+
+```text
+absolute local paths;
+unrelated source trees;
+earlier full observations after their compact identities are recorded;
+hidden model reasoning;
+unapproved local material;
+operator-supplied answers that would make the intelligence claim circular.
+```
+
+Loss is acceptable only when the compact trajectory retains every identity
+required for a legal dependent action. If a required source, method identity,
+constraint, or observation reference is lost, the run blocks or the context
+representation is repaired; the model may not reconstruct it by guessing.
+
+### 51.4.3 Input-Pollution Boundary
+
+A V2-C acceptance run requires all four current audit counts to remain zero:
+
+```text
+manual_symbol_count
+manual_tool_sequence_count
+precomputed_report_count
+operator_intervention_count
+```
+
+The user may approve sources and data disclosure. That approval does not select
+the source, DLL, symbol, Hook, method, or tool sequence for the model.
+
+## 51.5 V2-B Bounded Evidence Intelligence Loop
+
+### 51.5.1 Core Mechanism
+
+```text
+initial goal and registered source views
+-> provider-neutral Agent turn
+-> native tool call or final structured output
+-> deterministic source/tool/argument validation
+-> local read-only tool execution
+-> observation identity and byte accounting
+-> compact trajectory plus deduplicated method/inspection catalogs
+-> latest full observation without catalog duplication
+-> dependent next Agent turn
+-> deterministic conclusion validation
+-> EvidencePack
+-> LangGraph conditional edge
+```
+
+Native provider structures terminate at the adapter. Qwen Chat `tool_calls`,
+OpenAI Responses typed items, and any future provider representation do not
+enter EvidencePack or LangGraph state as provider authority.
+
+The current dependent discovery sequence is:
+
+```text
+search_dotnet_metadata
+-> current-run observation containing exact method_id values
+-> inspect_method_il using one observed method_id
+```
+
+The IL call is illegal when the method identity was not created by a prior
+current-run metadata observation for the same registered source identity.
+
+### 51.5.2 Current Budget Boundary
+
+Current implemented defaults are:
+
+```text
+max_tool_calls: 6
+max_model_steps: 8
+max_result_bytes_per_call: 65,536
+max_total_observation_bytes: 262,144
+metadata model observation cap: 16,384 bytes
+parallel tool calls: disabled
+Qwen thinking for this sequence: disabled
+```
+
+The prior real Qwen baseline used 8 model steps, 6 tool calls, and 205,912
+observation bytes before ending without a conclusion. Run 008 used 7 model
+steps, all 6 tool calls, 20,417 observation bytes, and 35,134 provider input
+tokens. It exposed a successful IL observation that disappeared from compact
+interpretation and caused four later metadata searches. Repair 009 records
+per-turn serialized discovery-message bytes and, after an IL observation,
+directs the model to finish unless one exact unresolved gap justifies another
+tool call. The local metadata-to-IL-to-finish fixture uses 13,864 message bytes
+in three turns versus the 38,774-byte seven-turn pre-repair fixture. These are
+provider-independent serialized-message measurements; a later real run must
+separately report provider token usage. Comparing total observation size with
+205,912 or message bytes with the recorded fixture is a task acceptance
+measurement, not a generic hard budget embedded in every future request.
+
+### 51.5.3 Conclusion Boundary
+
+Final evidence conclusions use the exact current classes:
+
+```text
+observed
+inferred
+unknown
+```
+
+Observed and inferred conclusions cite current-run observations. Inferred
+conclusions state limitations. Unknown conclusions do not cite an observation
+as proof and state the missing boundary. A decision of
+`sufficient_for_proposal` cannot contain open gaps. A decision of
+`needs_more_evidence` must identify an unresolved question or missing
+capability.
+
+No conclusion, score, or model self-report can grant write authority or bypass
+Evidence readiness, Binding Registry, Proposal review, approval, runtime, or
+evaluation gates.
+
+## 51.6 V2-C Real-Model Acceptance
+
+### 51.6.1 Required Evidence Mode
+
+Injected or fake models prove local contracts only. The intelligence-transfer
+claim requires at least one separately approved real-model run against the
+current WallCrawler request and current registered source identities.
+
+The run remains evidence-only and stops at `evidence_retrieval`. It does not
+create `implementation_plan`, Proposal, dry-run, apply, build, or runtime
+artifacts.
+
+### 51.6.2 Acceptance Conditions
+
+The run must establish all applicable conditions from actual trajectory data:
+
+```text
+run_status is completed rather than budget_exhausted;
+the model finishes before the model-step and tool-call budgets are exhausted;
+all input-pollution counts are zero;
+the model selects a registered source without being given the answer;
+the model selects metadata search as an evidence action;
+metadata returns a current identity-bound method_id;
+the model selects a dependent IL read using that method_id;
+the conclusion cites the resulting IL observation;
+the conclusion passes observed/inferred/unknown validation;
+no identical source/tool/arguments action repeats;
+per-turn provider usage is recorded;
+the graph stops at evidence_retrieval;
+forbidden later artifacts are absent.
+```
+
+Semantic relevance is reviewed separately for the real case. Current
+`semantic_relevance_evaluated=false` is truthful until that review occurs.
+Tool-call success alone is not semantic acceptance.
+
+### 51.6.3 Valid Outcomes
+
+```text
+grounded needs_more_evidence
+  -> intelligence transfer may pass;
+  -> Proposal remains locked;
+  -> exact gaps may select one later evidence task.
+
+grounded sufficient_for_proposal
+  -> intelligence transfer may pass;
+  -> the evidence-only run still stops;
+  -> a separate Proposal-only task may be selected.
+
+budget, schema, provider, tool, identity, repetition, or grounding failure
+  -> intelligence transfer does not pass;
+  -> route only to one bounded repair based on that failure.
+```
+
+### 51.6.4 Local Real-Model Acceptance Boundary
+
+A non-injected local model may supply real-model trajectory evidence without
+external disclosure only when all model inputs remain on-device and the client
+accepts a literal `127.0.0.1` or `::1` HTTP origin. The local client must reject
+LAN addresses, domain names including `localhost`, HTTPS origins, URL paths,
+credentials, queries, fragments, redirects, and environment proxy routing. Its
+EvidencePack identity is `local_agent_turn_adapter`, not external and not
+injected/test.
+
+Capability, convergence, and semantic acceptance are independent:
+
+```text
+capability gate
+  -> within 8 model turns and 6 tools;
+  -> registered metadata search followed by an IL read whose method_id came
+     from a prior metadata observation in the same run;
+  -> an observed/inferred conclusion cites the IL observation;
+  -> input pollution and repeated identical calls are absent;
+  -> evidence-only stop is preserved.
+
+convergence gate
+  -> exactly 3 model turns and 2 tools on the intended path;
+  -> zero corrections and no broad metadata search after successful IL.
+
+semantic gate
+  -> a post-run hidden evaluator binds the conclusion to an actually inspected
+     symbol and verifies that unsupported PersistentID/identity linkage remains
+     unresolved;
+  -> expected symbols, mappings, and scoring rules never enter model-visible
+     context.
+```
+
+A bounded four-turn trajectory may pass capability and fail convergence. Raw
+local tokens are recorded but are not numerically compared with a hosted
+provider that uses different tokenization and accounting.
+
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-011` implemented this boundary with Ollama
+0.32.0 and `qwen3:4b-instruct`. Its one run preserved local-data and stop
+boundaries but failed all three gates: 7 turns, 6 metadata-only calls, 3
+repeated exact action signatures, no IL inspection, and no IL-grounded
+conclusion. The exact UTF-8 request was preserved. This selects no repair by
+itself. `WALLCRAWLER-INTELLIGENT-EVIDENCE-012` then repaired only the observed
+query/repeat contract locally: metadata lookup is described as case-insensitive
+literal-substring matching over fully qualified managed symbols; exact repeated
+source/tool/arguments are rejected before execution; one repeat-specific answer-free correction
+is allowed; and a second repeat stops deterministically. The injected recovery
+path reaches observation-derived IL and an IL-bound conclusion without adding
+tools or runtime budget. This is not real-model acceptance.
+
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-013` exercised prompt v5 once with the same
+011 local model and inputs. It reduced the executed path to metadata, metadata,
+and one observation-derived IL read with no exact repeat, but failed finish
+acceptance twice: wrong top-level fields, then `sufficient_for_proposal` with
+open questions. The deterministic budget stop removed the rejected IL-grounded
+conclusion from the final pack, so all three hidden gates remained false. The
+run also showed that an example-like query placeholder can be copied as a
+literal query and that method-origin provenance is incorrectly coupled to final
+convergence in the current report. These are observed failure directions only;
+no repair or rerun is automatically selected.
+
+`WALLCRAWLER-INTELLIGENT-EVIDENCE-014` repairs only those three structural
+failures under deterministic injection. Prompt v6 represents tool arguments as
+field names rather than copyable values; the shared finish schema and bounded
+correction both expose decision/open-gap constraints; and method-origin
+provenance is derived from the accepted IL action independently from finish
+convergence. The normal three-turn and repeated-method fixtures remain below
+their unchanged message-byte thresholds. No tool, runtime budget, route,
+disclosure, or stop boundary changes, and no real-model acceptance is claimed.
+
+`WALLCRAWLER-LOCAL-MODEL-EVIDENCE-015` exercised prompt v6 exactly once through
+the same loopback-only model, original request bytes, source identities, and
+budgets. The old value-like placeholder was not copied. The model searched both
+sources with the same five invented behavioral symbol strings and received zero
+methods, then twice returned to the same current-interop source/tool/arguments
+signature. Both repeats were rejected before execution and deterministic
+correction exhaustion stopped the run after 4 model turns and 2 metadata tools.
+No method_id, IL action, or model conclusion was produced. Capability,
+convergence, and semantic gates all failed while the evidence-only stop and
+input-pollution boundary passed. This run did not exercise finish validation or
+method-origin provenance and selects no repair or rerun automatically.
+
+The following infrastructure validation used the same 342-byte request,
+registered source identities, artifact root, loopback-only
+`qwen3:4b-instruct`, and unchanged 8-step/6-tool envelope. Before the repair, a
+run had stopped at the first `request_planning_report` pending-marker replace:
+the temporary source path was 222 characters, the target was 269, the parent
+existed, and `os.replace` returned WinError 3 before any model or evidence-tool
+call. That evidence supports a path-addressability root cause for this deployed
+write chain, but it is not a general Windows conclusion.
+
+After section 49.2.7 was implemented and its focused no-model tests passed, one
+new run completed the graph persistence path under run id
+`intelligent_evidence_5327cb5988774bc5aba6cfcc53f8d2ab`. All four evidence-only
+runtime artifact types produced validated revision and latest files; the
+longest actual revision/pending path was 224 characters, and no pending or
+temporary file remained. The run then ended legally as `budget_exhausted` after
+6 model turns and 4 executed metadata searches plus 2 rejected repeated
+actions. It selected no IL inspection and emitted no accepted evidence
+conclusion. Capability, convergence, and semantic gates therefore remain false;
+the persistence result proves only that the earlier infrastructure stop no
+longer prevents this bounded run from reaching Agent execution and durable
+EvidencePack output.
+
+## 51.7 V2-D Failure-Driven Capability Growth
+
+V2-D is `conditional_trigger`, not an open tool-building phase.
+
+| Observed failure class | Allowed response | Forbidden expansion |
+| --- | --- | --- |
+| provider request or response mismatch | repair the current adapter mapping and add a captured regression | replace the control plane or build a generic provider router |
+| action/schema failure | repair the exact tool/final contract or validation feedback | weaken deterministic validation |
+| repeated work or context growth | repair trajectory reconstruction, observation shape, deduplication, or post-inspection stop signaling; 009 applies this to the 008 direct-IL loss | add unbounded chat memory or silently enable provider-side retained conversation state |
+| metadata result noise | narrow the current query/result representation | activate Dense/RRF/rerank without a measured retrieval failure |
+| missing current method identity | add the smallest current-source identity lookup proven necessary | build a general decompiler platform |
+| missing native mapping | add one bounded read-only mapping tool for the exact registered material | claim native semantics from interop wrappers |
+| tool process failure | repair the registered local tool invocation and evidence reporting | allow unrestricted Shell or target execution |
+| grounded `needs_more_evidence` | select one exact evidence acquisition task | convert an unresolved gap into Proposal readiness |
+| semantic irrelevance | repair source projection, query choice, or the exact missing evidence tool | pass because the trajectory was structurally valid |
+
+Each repair has a finite retry budget and returns to the same V2-C acceptance
+run. Repeated failure at the stop condition yields an explicit unresolved or
+blocked handoff.
+
+## 51.8 Conditional Post-Core Capability Gates
+
+The following design is deeper than a stage list. Each gate defines the
+decision capability to prove, its input representation, deterministic authority,
+failure boundary, and evidence required for promotion.
+
+### 51.8.1 Evidence-To-Implementation Planning
+
+Entry trigger:
+
+```text
+the intelligence-transfer gate is resolved;
+the selected evidence decision supports planning;
+the user selects a Proposal-oriented product task.
+```
+
+Capability to prove:
+
+```text
+transform FeatureSpec, EvidencePack, current Binding Registry, acceptance
+criteria, non-goals, and runtime applicability into a bounded implementation
+intent without inventing paths, symbols, Hooks, APIs, or configuration fields.
+```
+
+The model may propose change intent and unresolved alternatives. Deterministic
+validation owns target binding, writable scope, evidence refs, risk, and whether
+planning may continue. Missing Hook, source identity, configuration identity,
+or runtime plan blocks the gate.
+
+Promotion evidence is an implementation plan whose targets and claims are
+bound to current artifacts and source identity. The gate stops before source
+write.
+
+### 51.8.2 Proposal-Only Generation And Review
+
+Entry trigger:
+
+```text
+a current validated implementation plan exists;
+the Proposal-only task is explicitly selected;
+required source disclosure is approved for that generation run.
+```
+
+Capability to prove:
+
+```text
+generate a minimal exact patch proposal from the bounded context pack and
+survive deterministic review without relying on copied or invented authority.
+```
+
+The Proposal context preserves exact evidence refs, target bindings, source
+excerpts, acceptance criteria, non-goals, side-effect boundaries, and rollback
+intent. It excludes unrelated source and historical chat.
+
+ProposalReviewer remains authoritative. ProposalCritic is called only when the
+explicit `critic_requirement` requires it. A review failure may select one
+proposal-repair task; it cannot authorize a write or activate parallel critics,
+Worker self-check, or second-level Critic without the documented real failure
+trigger.
+
+Promotion evidence is a reviewed Proposal that is allowed to enter dry-run.
+The gate performs no source write.
+
+### 51.8.3 Deterministic Dry-Run And Exact Approval
+
+Entry trigger:
+
+```text
+Proposal review permits dry-run;
+current bindings and source identities are fresh.
+```
+
+No new model intelligence is required by default. The capability is
+deterministic simulation and user inspection:
+
+```text
+fresh live-source read;
+exact before/after display;
+unique-match and path validation;
+no-write result;
+exact context/diff hash;
+explicit approval boundary.
+```
+
+Conflict, ambiguity, stale binding, or source drift blocks. A model may explain
+the conflict only in a separately selected repair task; it cannot reinterpret
+the approved bytes.
+
+### 51.8.4 Isolated Apply And Real Build
+
+Entry trigger:
+
+```text
+the user approves the exact displayed hash;
+fresh source and Binding Registry checks still match.
+```
+
+Apply remains deterministic and isolated. Build uses the declared profile and
+must verify the expected artifact identity. Neither exit code zero nor DLL
+existence alone proves runtime behavior.
+
+If build fails, the next intelligence capability is not generic self-healing.
+It is a failure-evidence-bound repair loop:
+
+```text
+compiler diagnostics and build log refs
+-> bounded root-cause hypothesis
+-> minimal repair intent
+-> new Proposal
+-> normal review, dry-run, approval, apply, and build gates
+```
+
+The repair model cannot edit directly, broaden scope without evidence, or skip
+review because the failure occurred after approval.
+
+### 51.8.5 Runtime Evidence And Diagnosis
+
+Entry trigger:
+
+```text
+the selected request requires runtime acceptance;
+a verified build artifact exists;
+the user separately approves each required game copy, launch, process, capture,
+or manual observation action.
+```
+
+Runtime intelligence is evidence interpretation, not autonomous game control.
+It receives only approved logs, screenshots, probe output, manual notes, current
+build identity, environment identity, acceptance criteria, and non-goals.
+
+The runtime gate must separate:
+
+```text
+startup/load evidence;
+configuration and identity binding evidence;
+gameplay behavior evidence;
+non-goal preservation evidence;
+missing or contradictory signals.
+```
+
+A build-level fact cannot become a gameplay claim. A local probe cannot become
+real game evidence. A runtime failure may select one bounded diagnosis/repair
+task, which re-enters Proposal review and the normal execution gates.
+
+### 51.8.6 Evaluation, Delivery, And Reuse
+
+Delivery claims use the weakest evidence boundary. Evaluation records the
+selected case, route, evidence sufficiency, Hook/file correctness where ground
+truth exists, review correctness, repair attempts, token usage, latency, human
+interventions, runtime applicability, and limitations.
+
+One successful WallCrawler run proves that bound task and environment only. It
+does not establish cross-project generality. Artifact history and Git preserve
+audit lineage; they do not become learned memory or policy. Reusable lessons
+remain planning-only and require a separately triggered experiment under the
+long-term memory rules.
+
+## 51.9 Task Promotion Contract
+
+Only one selected product task enters `docs/IMPLEMENTATION_QUEUE.md`. A V2 task
+record must identify:
+
+```text
+the concrete product decision or observed failure;
+the intelligence capability being transferred;
+the current source, artifact, log, or runtime evidence;
+the model and tool input representation;
+the information intentionally excluded;
+the deterministic authority that remains outside the model;
+the exact permissions and disclosure required;
+the focused verification and real-run acceptance;
+the stop condition and conditional next outcomes.
+```
+
+A later gate is not activated because it appears in this chapter. It activates
+only when the preceding real result supplies its exact trigger and the user or
+product decision selects it.
+
+## 51.10 Current WallCrawler Mapping
+
+Current verified mapping:
+
+| Work | V2 role | Current claim |
+| --- | --- | --- |
+| `WALLCRAWLER-PLAN-001` through `WALLCRAWLER-CURRENT-HOOK-EVIDENCE-003` | real request, deterministic Evidence, source/tool baseline | supporting evidence and regression baseline; not intelligent-transfer proof |
+| `WALLCRAWLER-INTELLIGENT-EVIDENCE-004` | V2-A and V2-B plus first V2-C attempt | bounded loop implemented; prior real Qwen run ended without conclusion |
+| acceptance-hardening insertion | failure-driven validation repair | conclusion, provenance, identity, budget, and input-audit boundaries tested locally |
+| `WALLCRAWLER-INTELLIGENT-EVIDENCE-005` | failure-driven provider/context/observation repair | structured turns and compact context tested locally; no new real-model semantic acceptance |
+| `WALLCRAWLER-INTELLIGENT-EVIDENCE-006` | post-005 V2-C real-model acceptance | real Qwen used six focused metadata searches and only 20,001 observation bytes, but never selected IL and failed two exact finish validations; intelligence transfer remains unresolved |
+| `WALLCRAWLER-INTELLIGENT-EVIDENCE-007` | 006-triggered V2-D contract/progress repair | one exact nested finish schema is shared across model response format, system context, and bounded correction; metadata/IL observation progress and remaining acceptance requirements are locally tested with unchanged tools and budgets; no external model call |
+| `WALLCRAWLER-INTELLIGENT-EVIDENCE-008` | post-007 V2-C real-model acceptance | real Qwen converged in 7 steps, selected one metadata-derived IL read, and emitted a valid `needs_more_evidence` finish; the gate remains unresolved because no grounded conclusion cited the IL observation and later compact context misrepresented the successful IL step as `observed_methods: []` |
+| `WALLCRAWLER-INTELLIGENT-EVIDENCE-009` | 008-triggered V2-D compact-IL and convergence repair | direct IL outcomes survive in a deduplicated inspection catalog, repeated metadata method identities collapse, the latest full observation is not duplicated, per-turn message bytes are recorded, and missing IL citation receives one bounded correction; 75 focused tests passed with unchanged tools and budgets and no external call |
+| `WALLCRAWLER-LOCAL-MODEL-EVIDENCE-011` | loopback-only local real-model acceptance plus local provider boundary | Ollama native tools and separate hidden gates are implemented and 85 focused tests pass; the one real local run used six metadata searches with three repeated signatures, selected no IL, and failed capability, convergence, and semantic gates while preserving local-data and evidence-only boundaries |
+| `WALLCRAWLER-INTELLIGENT-EVIDENCE-012` | 011-triggered V2-D query-semantics and exact-repeat repair | prompt v5 states the actual literal managed-symbol query semantics; exact repeated source/tool/arguments are rejected before execution with one repeat-specific answer-free correction; deterministic recovery reaches changed metadata query, observation-derived IL, and grounded conclusion; a second repeat stops; 198 affected tests pass with no real model call, tool addition, or runtime-budget increase |
+| `WALLCRAWLER-LOCAL-MODEL-EVIDENCE-013` | post-012 same-model local V2-C rerun | exact 011 input and 4B Q4 identity preserved; 5 turns and 3 tools reached observation-derived IL with no repeat; two invalid finishes exhausted correction, no accepted final conclusion survived, all hidden gates failed, and Proposal remained locked |
+| `WALLCRAWLER-INTELLIGENT-EVIDENCE-014` | 013-triggered V2-D query/finish/provenance repair | prompt v6 removes copyable argument values, shares finish cross-field rules across initial and correction context, and separates valid method-origin provenance from convergence; 31 direct and 199 affected deterministic tests pass with unchanged tools, budgets, and evidence-only stop; no real model call |
+| `WALLCRAWLER-LOCAL-MODEL-EVIDENCE-015` | post-014 same-model local V2-C rerun | exact request/source/model/budget boundaries preserved; the removed placeholder was not copied, but identical zero-result query strings were used across both sources and repeat correction exhausted before method_id or IL; 4 turns, 2 metadata tools, no model conclusion, all hidden gates false, Proposal locked |
+| 2026-07-17 artifact persistence validation | infrastructure unblock plus one bounded local execution | short physical locators, complete-hash collision checks, legacy revision reads, atomic preflight, and structured CLI blocking are implemented; run `intelligent_evidence_5327cb5988774bc5aba6cfcc53f8d2ab` persisted all evidence-only artifacts and then ended `budget_exhausted`; all V2-C gates remain false |
+
+The 006-exposed model-facing acceptance-contract repair is complete as 007 and
+was exercised exactly once by 008. The 008-exposed compact IL, inspection-
+citation, and post-IL convergence failure is repaired locally as 009. It does
+not authorize a larger budget, a new tool, Proposal, implementation, provider-
+side conversation retention, or another external run. 011 later exercised the
+same loop through a literal-loopback local model and exposed identifier-query
+and repeated-action failures; 012 repairs those two contracts locally without
+resolving real-model intelligence transfer. 013 then reached IL without a
+repeat but failed final-schema convergence and exposed query-placeholder plus
+provenance-report coupling. 014 repairs those three structural defects locally.
+015 exercised prompt v6 once without copying the removed placeholder but failed
+before IL because it did not revise zero-result literal symbol queries and then
+exhausted repeat correction. It therefore does not validate the finish or
+provenance repairs and does not select another repair automatically. Any
+later external rerun requires new exact per-run disclosure approval; any local
+rerun requires a separately selected bounded task and the same loopback-only
+boundary. Both must stop at `evidence_retrieval`. The result selects only one of:
+
+```text
+intelligence gate resolved with Proposal still locked;
+one exact evidence-capability task;
+one exact loop/provider/tool repair;
+explicit unresolved or blocked handoff.
+```
+
+## 51.11 Non-Goals
+
+This program does not authorize:
+
+```text
+an always-on multi-agent swarm;
+top-level ReAct migration;
+parallel specialist fan-out without a separable real risk;
+two-level Critic without the recorded cross-context review failure;
+Dense, RRF, rerank, or formal retrieval expansion without measured need;
+a generic decompiler or native reverse-engineering platform;
+automatic source, Hook, path, permission, or write authority selection;
+automatic game copy, launch, process control, or gameplay claim;
+long-term memory, policy learning, or threshold tuning from chat history;
+framework installation as a substitute for a verified product capability.
 ```
 
 

@@ -4,6 +4,579 @@ This archive preserves historical loop details moved out of the active control d
 
 Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md`.
 
+## 2026-07-17 ArtifactStore Path Reliability And One Local Validation Run
+
+```text
+Status: implemented and verified for the current Windows/NTFS/artifact-root boundary
+Observed blocking run:
+  - intelligent-evidence-request stopped at the first request_planning_report
+    pending-marker os.replace before graph model/tool work;
+  - temporary source path length 222, target path length 269, target parent
+    present, WinError 3, zero persisted artifacts, no EvidencePack or run_id;
+  - observed process exit code was 1; current repository exception paths return
+    2, and retained repository evidence does not explain the historical difference.
+Implemented boundary:
+  - new revisions use r/<artifact_type>/<complete hash first 32 hex>.json;
+  - pending markers use p/<artifact_type>/<complete hash first 32 hex>.json;
+  - latest envelope projection path and ArtifactEnvelope/ArtifactRef schemas are unchanged;
+  - complete artifact_hash remains revision identity, content verification, and
+    exact upstream binding;
+  - short-locator collisions are read and rejected deterministically;
+  - valid legacy full-hash revision refs remain readable and are reused without
+    migration or duplicate writes;
+  - pending -> revision -> latest -> cleanup and same-directory flush/fsync/
+    os.replace semantics remain unchanged;
+  - intelligent-evidence-request probes actual pending, revision, and latest
+    atomic paths before graph/model/tool execution;
+  - recognized path-addressability failure returns BLOCKED, exit code 2,
+    artifact_preflight diagnostic, and zero model/tool calls.
+Focused verification:
+  - 134 related tests passed;
+  - actual long-root pending/revision path length measured 224;
+  - preflight cleanup left no business revision/latest/ref or pending/temp file;
+  - full tests/unit collection was not available because unrelated jieba and
+    mcp dependencies were absent; no repository-wide green claim is made.
+One independent local run:
+  - run_id intelligent_evidence_5327cb5988774bc5aba6cfcc53f8d2ab;
+  - same 342-byte request, registered source identities, artifact root,
+    loopback-only qwen3:4b-instruct, 8-step/6-tool budget, and zero retry;
+  - persisted request_planning_report, mod_planning_brief, feature_spec, and
+    evidence_pack revisions plus latest projections;
+  - all complete hashes validated; no pending/temp or forbidden later artifact remained;
+  - 6 model turns, 4 executed metadata searches, 2 rejected repeats, no IL,
+    and no accepted conclusion;
+  - legal result budget_exhausted; capability, convergence, and semantic gates false.
+Claim boundary:
+  - the earlier persistence block is removed for this deployed write chain;
+  - V2-C, general Windows long-path support, arbitrary roots, cross-process
+    safety, migration, fallback storage, and cross-platform production maturity
+    remain unproved or out of scope.
+```
+
+## 2026-07-16 WALLCRAWLER-LOCAL-MODEL-EVIDENCE-015
+
+```text
+Status: completed exactly one post-014 local real-model execution; all formal gates failed
+Execution identity:
+  - run_id intelligent_evidence_e7edc05ea2ae48268637999493f0123b;
+  - qwen3:4b-instruct preflight model id 0edcdef34593, matching the recorded
+    prefix of the 013 model digest;
+  - literal endpoint http://127.0.0.1:11434 through local_agent_turn_adapter;
+  - request SHA256 8eae153e6c0492be4ab3fdd6ba7f8c0a1a04d215e117e12e6824d5920509a9e7,
+    342 UTF-8 bytes loaded directly from the 013 EvidencePack;
+  - both registered assembly SHA256/MVID identities matched immediately before
+    execution and target_code_executed=false;
+  - execution_attempts=1, automatic_model_retries=0, external_requests=0.
+Artifact:
+  - evidence_pack hash d21eaefabe6b1ebef1c6a783796dad84e66eb557ab5da9f146469cfd8356dbba;
+  - prompt evidence_discovery_prompt_v6;
+  - current_stage evidence_retrieval; no forbidden later artifact or target write.
+Observed trajectory:
+  - step 1 searched the current interop source for GTFOMovementHandler,
+    WallMovement, CeilingWalk, SlopeNavigation, and SurfaceTraversal and returned
+    zero methods;
+  - step 2 used the same five query strings against the supplied R8 source and
+    also returned zero methods;
+  - step 3 repeated the exact step-1 source/tool/arguments signature and was
+    rejected with REPEATED_EXACT_TOOL_ACTION;
+  - step 4 changed only evidence_need while preserving the same executable
+    source/tool/arguments signature, so it received the same rejection;
+  - deterministic repeat-correction exhaustion emitted needs_more_evidence with
+    no model conclusion; no method_id or inspect_method_il action existed.
+Usage:
+  - 4 model turns and 2 executed metadata tools;
+  - 1,949 observation bytes and 24,720 discovery-message bytes;
+  - 8,285 input tokens, 446 output tokens, 8,731 total local tokens;
+  - all four input-pollution counts were zero.
+Gate result:
+  - capability=false: run_status=budget_exhausted, no metadata-to-IL transition,
+    no prior-observation method binding, and no IL-grounded conclusion;
+  - convergence=false: 4 rather than 3 turns, two metadata calls rather than
+    metadata then IL, and two rejected corrections;
+  - semantic=false: no inspected-symbol claim or PersistentID unresolved text;
+  - evidence-only stop, no executed identical signature, and Proposal lock passed.
+014 assessment:
+  - the removed value-like placeholder was not copied, so that narrow prompt-v6
+    representation change was observed in a real run;
+  - the model did not reach finish validation or method-origin provenance, so
+    014's finish-schema and provenance repairs were not exercised by this run;
+  - the newly observed failure is failure to revise zero-result literal symbol
+    queries across sources and after repeat-specific correction.
+Boundaries:
+  - one real model execution only; an earlier Python argument-binding TypeError
+    occurred before function entry, Ollama access, or artifact creation and is
+    not a model execution;
+  - no automatic rerun, external disclosure, new tool, budget increase,
+    Proposal, write, build, copy, game launch, or runtime action;
+  - no repair task is selected automatically.
+Coverage: RET-008, RET-014, EVAL-003, PERF-001
+```
+
+## 2026-07-16 WALLCRAWLER-INTELLIGENT-EVIDENCE-014
+
+```text
+Status: completed deterministic injected repair; no real model execution
+Observed trigger:
+  - 013 copied a value-like query placeholder as a literal metadata query;
+  - its initial finish used the wrong top-level fields and its correction paired
+    sufficient_for_proposal with an open question;
+  - its accepted metadata-derived IL action was reported as invalid provenance
+    because provenance reused a final-convergence transfer flag.
+Implemented capability:
+  - prompt contract evidence_discovery_prompt_v6 lists exact tool argument names
+    without supplying copyable argument values;
+  - the shared finish schema exposes decision/open-gap constraints from the
+    initial turn, and the bounded correction repeats exact field constraints;
+  - all_method_inspections_derived_from_observations is computed directly from
+    accepted inspect_method_il actions, current-run method origins, and
+    derived_from_observation_ids;
+  - intelligence-transfer convergence remains separate and can stay false.
+Deterministic acceptance:
+  - a metadata-to-IL path with two rejected finishes preserves method provenance
+    while run_status, convergence, and overall capability remain false;
+  - prompt regression rejects the old value-like placeholder text and verifies
+    the initial and correction cross-field contracts;
+  - normal three-turn messages total 14,587 bytes and the seven-turn repeated-
+    method fixture totals 40,337 bytes, below unchanged 15,000/40,500 limits.
+Focused verification:
+  python -m pytest tests/unit/test_intelligent_evidence_discovery.py -q -p no:cacheprovider --tb=short
+  Result: 31 passed in 0.97 seconds.
+Affected verification:
+  python -m pytest tests/unit/test_agent_turn_adapters.py tests/unit/test_intelligent_evidence_discovery.py tests/unit/test_mod_agent_cli.py tests/unit/test_gtfo_r8_evidence.py tests/unit/test_evidence_retrieval.py tests/unit/test_artifact_contract.py tests/unit/test_planning.py tests/unit/test_domain_adapter.py tests/unit/test_workflow_graph.py tests/unit/test_llm_providers_smoke.py -q -p no:cacheprovider --tb=short
+  Result: 199 passed in 13.97 seconds.
+Boundaries:
+  - no Ollama, Qwen, OpenAI, DashScope, or other real-model call;
+  - no new tool, budget increase, external disclosure, Proposal, target-source
+    write, apply, build, copy, game launch, or runtime action;
+  - graph remains stopped at evidence_retrieval;
+  - no real-model rerun or 4B Q4 semantic acceptance is implied.
+Coverage: RET-008, RET-014, EVAL-003, PERF-001
+```
+
+## 2026-07-16 WALLCRAWLER-LOCAL-MODEL-EVIDENCE-013
+
+```text
+Status: completed exactly one local real-model execution; all formal gates failed
+Execution identity:
+  - run_id intelligent_evidence_d2b6a545cc4e4efab51771f0acbd80f0;
+  - qwen3:4b-instruct digest 0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0;
+  - 4.0B Q4_K_M, Ollama 0.32.0, native tools;
+  - literal endpoint http://127.0.0.1:11434, no proxy or redirect;
+  - request SHA256 8eae153e6c0492be4ab3fdd6ba7f8c0a1a04d215e117e12e6824d5920509a9e7,
+    byte-identical to 011;
+  - both registered assembly SHA256 values matched 011 before execution;
+  - execution_attempts=1, automatic_retries=0, external_requests=0.
+Artifact:
+  - evidence_pack hash 0600c29641c51ce7346f8a2c402a5060ed14d525142e657a702f87abd000755b;
+  - prompt evidence_discovery_prompt_v5;
+  - current_stage evidence_retrieval; no forbidden later artifact or target write.
+Observed trajectory:
+  - model step 1 copied `literal managed-symbol substring` from the prompt
+    representation as the query and returned no method;
+  - step 2 searched wall/ceiling/slope/move/navigation/pathfinding in the R8
+    assembly and returned methods;
+  - step 3 used method_id method_04088bcea8cc3f1a170053db from obs-002 and
+    inspected Beh_GroundMovement.OnStateEnter through obs-003;
+  - exact IL contained nop; ret and target code was not executed;
+  - no identical source/tool/arguments action was executed;
+  - first finish cited obs-003 and stated the IL did not prove non-walkable-
+    surface movement, but used wrong top-level keys and failed
+    DISCOVERY_FINISH_SHAPE_INVALID;
+  - corrected finish selected sufficient_for_proposal while retaining open
+    questions and failed SUFFICIENT_DECISION_HAS_OPEN_GAPS;
+  - the single finish correction exhausted, producing deterministic
+    budget_exhausted with no accepted final conclusion.
+Usage:
+  - 5 model turns, 3 executed tools;
+  - 6,757 observation bytes and 47,882 discovery-message bytes;
+  - 15,787 input tokens, 1,001 output tokens, 16,788 total local tokens;
+  - input pollution counts all zero.
+Gate result:
+  - capability=false: final run not completed and no accepted final IL-grounded
+    conclusion; metadata-to-IL, input cleanliness, no-repeat, and stop checks passed;
+  - convergence=false: not 3 turns/2 tools, two rejected finish attempts;
+  - semantic=false: deterministic final result retained no inspected-symbol
+    claim or PersistentID unresolved text; Proposal remained locked.
+Reporting defect observed:
+  - the IL action passed deterministic origin validation using obs-002;
+  - provenance_validation.all_method_inspections_derived_from_observations is
+    nevertheless false because it aliases followup_selection_by_platform,
+    which also requires final convergence;
+  - this underreports dependency provenance and contributes one false capability check.
+Comparison with 011:
+  - turns 7 -> 5; tools 6 -> 3; executed repeats 3 -> 0; IL reads 0 -> 1;
+  - message bytes 48,741 -> 47,882; input tokens 15,351 -> 15,787;
+  - the core tool transition improved, but valid final convergence did not.
+Boundaries:
+  - no retry, external model, disclosure, new tool, budget increase, Proposal,
+    write, build, copy, game launch, or runtime action;
+  - 4B Q4 inability to perform metadata-to-IL is disproved for this run;
+    reliable finish-schema/semantic adequacy remains unresolved;
+  - no repair task is selected automatically.
+Coverage: RET-008, RET-014, EVAL-003, PERF-001
+```
+
+## 2026-07-16 WALLCRAWLER-INTELLIGENT-EVIDENCE-012
+
+```text
+Status: completed deterministic injected repair; no real model execution
+Observed trigger:
+  - 011 treated literal managed-symbol metadata lookup as behavioral search;
+  - 011 executed three repeated exact source/tool/arguments signatures;
+  - model-size insufficiency remained confounded with these interface failures.
+Implemented capability:
+  - evidence_discovery_prompt_v5 states that search_dotnet_metadata performs
+    case-insensitive literal-substring matching over fully qualified managed
+    type, method, and field symbols, not semantic behavioral retrieval;
+  - an already executed identical source/tool/arguments action is rejected
+    before LocalAssemblyEvidenceToolExecutor execution;
+  - one repeat-specific answer-free corrective message exposes only the actual query semantics
+    and required action change, not expected WallCrawler symbols or evaluator values;
+  - a second repeated action stops deterministically;
+  - rejected repeats consume a model step but no tool-call or observation budget.
+Deterministic acceptance:
+  - a scripted behavioral query produced no method;
+  - its exact repeat was rejected without a second execution;
+  - a changed symbol-substring query produced a current-run method_id;
+  - inspect_method_il used that observation-derived id;
+  - the final observed conclusion cited the IL observation;
+  - a separate fixture proved the second repeat exhausts the one repeat correction.
+Focused verification:
+  python -m pytest tests/unit/test_intelligent_evidence_discovery.py -q --tb=short
+  Result: 30 passed in 0.81 seconds.
+Affected verification:
+  python -m pytest tests/unit/test_agent_turn_adapters.py tests/unit/test_intelligent_evidence_discovery.py tests/unit/test_mod_agent_cli.py tests/unit/test_gtfo_r8_evidence.py tests/unit/test_evidence_retrieval.py tests/unit/test_artifact_contract.py tests/unit/test_planning.py tests/unit/test_domain_adapter.py tests/unit/test_workflow_graph.py tests/unit/test_llm_providers_smoke.py -q -p no:cacheprovider --tb=short
+  Result: 198 passed in 18.56 seconds.
+Boundaries:
+  - no Ollama, Qwen, OpenAI, DashScope, or other real model call;
+  - no external disclosure, target execution, target-source write, Proposal,
+    apply, build, game launch, copy, or runtime action;
+  - tools and runtime budgets unchanged;
+  - intelligence transfer and 4B Q4 adequacy remain unresolved until a
+    separately selected same-model local run.
+Coverage: RET-008, RET-014, EVAL-003
+```
+
+## 2026-07-16 WALLCRAWLER-LOCAL-MODEL-EVIDENCE-011
+
+```text
+Status: completed one local real-model execution; all three acceptance gates failed
+Local runtime:
+  - Ollama 0.32.0, literal endpoint http://127.0.0.1:11434 only;
+  - qwen3:4b-instruct, model id 0edcdef34593, 4.0B Q4_K_M, 2.5 GB,
+    native tools capability;
+  - natural request and GTFO-derived metadata/IL observations remained local;
+  - no API key, external model request, LAN endpoint, redirect, or proxy use.
+Implemented boundary:
+  - Ollama native Chat tool calls map into AgentTurnRequest/Response;
+  - local tool-call identities are deterministic and tool results replay through
+    Ollama's assistant tool_calls plus tool_name message shape;
+  - local execution and external disclosure are mutually exclusive;
+  - literal 127.0.0.1 or ::1 HTTP origins are required;
+  - a hidden post-run evaluator reports capability, convergence, and semantic
+    gates separately; a four-turn correct path can pass capability while failing
+    convergence;
+  - expected semantic relationships and scoring do not enter the model prompt.
+Focused verification:
+  python -m pytest tests/unit/test_intelligent_evidence_discovery.py
+    tests/unit/test_agent_turn_adapters.py tests/unit/test_mod_agent_cli.py
+    tests/unit/test_workflow_graph.py -q -p no:cacheprovider
+  Result: 85 passed in 17.14 seconds.
+Observed run:
+  - run_id intelligent_evidence_fad29a43c11a48ea9a479c7469add2ab;
+  - EvidencePack artifact hash a581a3e7a2dace4b2f56f55eeb4e34bf71e6d8c32da0db471466c0bd1a7728cc;
+  - run_status completed; current_stage evidence_retrieval; no forbidden later
+    artifact and no target-source write;
+  - 7 model turns, 6 tool calls, all search_dotnet_metadata, no
+    inspect_method_il, no EvidenceItem, and no IL-grounded conclusion;
+  - 3 repeated exact source/tool/arguments signatures;
+  - 5,969 total observation bytes; largest observation 1,006 bytes; 48,741
+    serialized discovery-message bytes;
+  - Ollama usage: 15,351 input tokens and 1,032 output tokens; local tokenizer
+    counts are not directly comparable with DashScope usage;
+  - all four input-pollution counts zero and correction_count zero.
+Gate result:
+  - capability_gate=false: no metadata-to-IL transition, prior-observation
+    method binding, IL-grounded conclusion, or no-repeat result;
+  - convergence_gate=false: not 3 turns/2 tools and repeated work occurred;
+  - semantic_gate=false: no inspected symbol existed to bind a grounded claim;
+    PersistentID/identity remained explicitly unresolved and Proposal stayed locked.
+Encoding check:
+  - the queue request and persisted EvidencePack query were byte-identical UTF-8,
+    SHA256 8eae153e6c0492be4ab3fdd6ba7f8c0a1a04d215e117e12e6824d5920509a9e7;
+  - terminal mojibake was display-only and did not invalidate the model input.
+Failure direction only; not selected work:
+  - metadata query semantics were treated as natural-language behavior search
+    rather than identifier-oriented managed metadata search;
+  - identical actions were measured but not rejected before local tool execution;
+  - any repair must be separately selected, bounded to query representation and
+    repeat prevention, and must not add tools, budgets, Proposal, or runtime work.
+```
+
+## 2026-07-16 WALLCRAWLER-INTELLIGENT-EVIDENCE-010
+
+```text
+Status: blocked by tenant execution policy before process creation; archived
+Selected run:
+  - one approved qwen_chat / qwen3.6-plus post-009 Evidence-only execution;
+  - explicit cache/session features disabled and automatic retry forbidden;
+  - 75 focused local tests passed before the attempted launch.
+Observed result:
+  - the Codex tenant execution-policy reviewer rejected process creation because
+    the payload would contain non-public GTFO-derived material and target a
+    third-party DashScope endpoint;
+  - launch_attempts=1, external_execution_count=0, external_request_count=0,
+    automatic_retries=0;
+  - no process was created, no external request was sent, and
+    artifacts/intelligent_evidence_v2c_wallcrawler_010 was not created.
+Boundary:
+  - the rejection is not a provider, schema, tool, or model-quality result;
+  - no workaround or indirect retry is allowed;
+  - real DashScope three-turn convergence and token reduction remain unproven;
+  - the next selected capability is the separately governed loopback-only local
+    real-model acceptance WALLCRAWLER-LOCAL-MODEL-EVIDENCE-011.
+```
+
+## 2026-07-15 WALLCRAWLER-INTELLIGENT-EVIDENCE-009
+
+```text
+Status: completed local V2-D repair; real-model V2-C acceptance unresolved
+Observed failure:
+  - 008 recorded 35,134 provider input tokens across 7 stateless Chat turns,
+    growing from 1,734 input tokens on turn 1 to 6,891 on turn 7;
+  - obs-002 persisted a successful 42-instruction IL read, but later compact
+    context exposed observed_methods: [] because IL fields are direct
+    ToolObservation.data fields rather than metadata data.methods rows;
+  - the model therefore broad-searched metadata after IL and finished with no
+    observed/inferred conclusion citing obs-002;
+  - the fixed seven-turn repeated-method fixture serialized 38,774 discovery-
+    message bytes before this repair.
+Implemented boundary:
+  - prompt contract advanced to evidence_discovery_prompt_v4;
+  - compact trajectory now carries action arguments and observation identity
+    separately from one deduplicated observed_method_catalog and one
+    inspection_catalog;
+  - inspection_catalog preserves exact method_id, source_id, inspection
+    observation id, symbol, metadata token, body/RVA/instruction outcome,
+    truncation, resolved refs, and target-execution flag after the full IL
+    observation rotates out;
+  - both catalogs exclude the latest full observation, preventing one payload
+    from being represented twice in the same turn;
+  - deterministic identity conflict and missing inspection identity checks
+    block malformed compact reconstruction;
+  - finish validation now rejects an observed/inferred conclusion set that
+    ignores every available inspect_method_il observation and offers one exact
+    bounded correction with the available observation ids;
+  - after IL exists, budget state recommends finish unless one exact unresolved
+    gap justifies one new tool call; grounded needs_more_evidence remains valid;
+  - EvidencePack budget_summary now records discovery_message_bytes_by_turn and
+    total_discovery_message_bytes in addition to provider usage.
+Measured local result:
+  - metadata -> IL -> grounded finish: 3 turns and 13,864 total discovery-
+    message bytes;
+  - forced seven-turn repeated-method path: 38,734 bytes, below the exact
+    38,774-byte pre-repair baseline;
+  - the three-turn path is 64.2 percent smaller than that seven-turn baseline;
+    this measures serialized provider-independent messages, not Qwen billing.
+Focused verification:
+  python -m pytest tests/unit/test_intelligent_evidence_discovery.py
+    tests/unit/test_agent_turn_adapters.py tests/unit/test_mod_agent_cli.py
+    tests/unit/test_workflow_graph.py -q -p no:cacheprovider
+  Result: 75 passed in 11.15 seconds.
+Acceptance boundary:
+  - no external model call or GTFO-derived disclosure occurred;
+  - production limits remain 8 model steps, 6 tool calls, 65,536 bytes per tool
+    result, 262,144 total observation bytes, no thinking, and no parallel calls;
+  - no provider-side conversation cache/session was enabled; doing so would
+    change the external disclosure/retention boundary and is not implied by 009;
+  - no Proposal, target-source write, apply, build, game launch, or runtime
+    action occurred;
+  - lower real Qwen token use and the V2-C intelligence-transfer result remain
+    unproven until a separately selected and approved external run.
+```
+
+## 2026-07-15 WALLCRAWLER-INTELLIGENT-EVIDENCE-008
+
+```text
+Status: completed exactly one approved external execution; V2-C gate unresolved
+Product decision:
+  Exercise the 007 finish-contract and acceptance-progress repair once through
+  real qwen_chat / qwen3.6-plus, with the same WallCrawler request, two
+  hash-bound registered sources, zero manual answers, and evidence-only stop.
+Approval and disclosure:
+  - user approved this 008 run only for natural_language_request,
+    path-hidden source_registry_model_views, and GTFO commercial assembly-
+    derived tool_observation_metadata_and_il;
+  - exact destination was
+    https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions;
+  - API key values and absolute source roots were excluded;
+  - the command executed once and was not retried.
+Preflight:
+  python -m pytest tests/unit/test_intelligent_evidence_discovery.py
+    tests/unit/test_agent_turn_adapters.py tests/unit/test_mod_agent_cli.py
+    tests/unit/test_workflow_graph.py -q -p no:cacheprovider
+  Result: 70 passed in 17.50 seconds.
+Real result:
+  run_id: intelligent_evidence_6f48f5b0ccc243668fb38009cfe17deb
+  feature_id: feature_8eae153e6c04
+  evidence_pack_hash: e5b3ba872c4cd45a22d19241b9c1bce2318ed6b4b4ef0328bc1d2d2c8e7937af
+  query_sha256: 8eae153e6c0492be4ab3fdd6ba7f8c0a1a04d215e117e12e6824d5920509a9e7
+  run_status: completed
+  decision: needs_more_evidence
+  current_stage: evidence_retrieval
+  model_steps_used: 7 of 8
+  tool_calls_used: 6 of 6
+  tool sequence: five search_dotnet_metadata calls and one
+    inspect_method_il call at step 2
+  total_observation_bytes_used: 20,417
+  provider usage: 35,134 input, 1,398 output, 0 reasoning, 36,532 total tokens
+  rejected model actions: none
+  exact duplicate source/tool/arguments: absent
+  input pollution counts: all zero
+  forbidden later artifacts: absent
+  target source writes: false
+  target code executed: false
+Successful capability evidence:
+  - prompt contract evidence_discovery_prompt_v3 produced a valid finish on the
+    first finish attempt;
+  - the model selected method_f23458376ea3474ca5b1c924 from obs-001 and used it
+    in inspect_method_il at obs-002;
+  - the persisted item binds Beh_GroundMovement.OnStateEnter, metadata token
+    0x06000307, RVA 63320, a method body, and 42 IL instructions to the current
+    interop Modules-ASM.dll;
+  - convergence, source selection, tool selection, follow-up selection,
+    grounded-conclusion presence, evidence interpretation, and no-repetition
+    flags are true.
+Unresolved acceptance evidence:
+  - symbol_discovery_by_platform is false because neither grounded conclusion
+    cites the inspect_method_il observation obs-002;
+  - the model instead states that the IL was not successfully retrieved and
+    says obs-002 returned an empty observed_methods list, contradicting the
+    persisted 42-instruction item and the observation summary;
+  - the later metadata-only observed conclusion calls EnemyCourseNavigation
+    methods potential Hooks, which remains an inference without inspected
+    method semantics;
+  - can_generate_patch is false, readiness is partial, and Proposal remains
+    locked.
+Exact structural failure:
+  - _compact_step builds observed_methods only from observation.data.methods;
+  - inspect_method_il stores method_id, symbol, metadata_token, method-body and
+    instruction facts as direct observation.data fields;
+  - after obs-002 ceased to be the latest full observation, its compact step
+    therefore contained a truthful success summary but observed_methods: [];
+  - acceptance_progress listed obs-002, but finish validation did not require a
+    grounded conclusion to cite an available IL observation, so the false
+    interpretation passed shape validation and failed only in the post-run
+    intelligence-transfer flag.
+Bounded repair direction:
+  Preserve the exact direct IL identity/outcome in compact trajectory and issue
+  one bounded correction when an available IL observation is absent from all
+  observed/inferred conclusion references. Do not add tools, increase budgets,
+  unlock Proposal, or automatically perform another external run.
+```
+
+## 2026-07-15 WALLCRAWLER-INTELLIGENT-EVIDENCE-007
+
+```text
+Status: completed local V2-D repair; real-model V2-C acceptance unresolved
+Observed failure:
+  - 006 used all six tool calls on search_dotnet_metadata and never selected
+    inspect_method_il;
+  - its two finish attempts failed as DISCOVERY_DECISION_INVALID and
+    EVIDENCE_CONCLUSION_SHAPE_INVALID;
+  - the enforced nested conclusion shape and remaining metadata-to-IL state
+    were absent from the model-facing contract and correction message.
+Implemented boundary:
+  - evidence_discovery_finish_schema is the single schema used by the Agent
+    response format, system contract, and validation-error correction context;
+  - correction feedback identifies the exact invalid decision field or the
+    exact evidence_conclusions[] keys and field types exposed by 006;
+  - budget_state now exposes metadata observation ids, inspect_method_il
+    observation ids, and remaining inspection/conclusion requirements;
+  - prompt contract advanced to evidence_discovery_prompt_v3 and the context
+    strategy records acceptance-progress feedback;
+  - production tools, 8 model steps, 6 tool calls, LangGraph routes, and the
+    evidence_retrieval stop remain unchanged.
+Focused verification:
+  python -m pytest tests/unit/test_intelligent_evidence_discovery.py
+    tests/unit/test_agent_turn_adapters.py tests/unit/test_mod_agent_cli.py
+    tests/unit/test_workflow_graph.py -q -p no:cacheprovider
+  Result: 70 passed in 12.37 seconds.
+Acceptance boundary:
+  - local scripted tests reproduce both 006 finish failures and prove one
+    bounded corrected finish;
+  - local tests prove the model sees the exact nested schema and current
+    metadata/IL progress;
+  - no external model was called and no GTFO-derived data was disclosed;
+  - no Proposal, target-source write, apply, build, game launch, or runtime
+    action occurred;
+  - real Qwen convergence, dependent IL selection, grounded conclusion quality,
+    and WallCrawler Hook feasibility remain unproven. Any rerun is a separate
+    task requiring new exact per-run disclosure approval.
+```
+
+## 2026-07-15 WALLCRAWLER-INTELLIGENT-EVIDENCE-006
+
+```text
+Status: completed execution; V2-C acceptance failed
+Product decision:
+  Exercise the post-005 provider-neutral Qwen path once against the real
+  WallCrawler evidence request, with zero manual answers and an evidence-only
+  stop.
+Approval and disclosure:
+  - user approved natural_language_request, source_registry_model_views, and
+    tool_observation_metadata_and_il for qwen_chat / qwen3.6-plus;
+  - after the first platform review rejected process creation, the user
+    explicitly acknowledged the proprietary GTFO binary-derived data risk;
+  - the renewed command was allowed and only that one real run executed;
+  - API key value and machine-local roots were not persisted or disclosed to
+    the model.
+Preflight:
+  python -m pytest tests/unit/test_agent_turn_adapters.py
+    tests/unit/test_intelligent_evidence_discovery.py
+    tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py
+    -q -p no:cacheprovider
+  Result: 69 passed in 19.26 seconds.
+Real result:
+  run_id: intelligent_evidence_3c698779e3a1446db1298bbcd933686e
+  feature_id: feature_8eae153e6c04
+  evidence_pack_hash: 495de4e05fca03fd3010d2cf173a04ada07d94421001113d28355dd1eb76dd76
+  run_status: budget_exhausted
+  current_stage: evidence_retrieval
+  model_steps_used: 8 of 8
+  tool_calls_used: 6 of 6
+  tool sequence: six search_dotnet_metadata calls; no inspect_method_il
+  total_observation_bytes_used: 20,001 versus old 205,912
+  provider usage: 40,964 input, 3,014 output, 0 reasoning, 43,978 total tokens
+  exact duplicate source/tool/arguments: absent
+  input pollution counts: all zero
+  forbidden later artifacts: absent
+  target code executed: false
+Finish failures:
+  - step 7: DISCOVERY_DECISION_INVALID because evidence_retrieval_complete is
+    not an allowed decision;
+  - step 8: EVIDENCE_CONCLUSION_SHAPE_INVALID because Qwen returned conclusion,
+    derived_from_observation_ids, and scalar limitations instead of claim,
+    claim_status, observation_ids, and list limitations;
+  - the Qwen Chat adapter can request JSON object mode but does not transmit the
+    platform nested schema as provider-enforced strict JSON Schema;
+  - the current system and correction messages name only the finish top-level
+    fields and return a generic error code, so the exact nested repair shape is
+    not present in model-facing correction context.
+Semantic review:
+  - deterministic local replay of the same six searches confirmed
+    EnemyLocomotion, EnemyAI, ParasiteLocomotion, and Beh_GroundMovement hits;
+  - WallWalk and Climb produced no hit in those observations;
+  - claims that a method is a critical Hook or proves reusable non-horizontal
+    movement remain inferred and unsupported because no IL was inspected.
+Bounded repair direction:
+  Expose the exact nested finish schema and current acceptance progress,
+  including the missing dependent IL inspection and inspection-citing
+  conclusion, in the model turn and field-level correction context. Keep the
+  same tools and budgets by default. Do not add retrieval infrastructure,
+  increase autonomy, unlock Proposal, or automatically rerun an external model.
+```
+
 ## 2026-07-14 WALLCRAWLER-INTELLIGENT-EVIDENCE-004
 
 ```text

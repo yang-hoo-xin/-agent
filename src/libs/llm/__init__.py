@@ -20,8 +20,10 @@ from src.libs.llm.agent_turn import (
     AgentTurnRequest,
     AgentTurnResponse,
     AgentUsage,
+    OllamaChatAgentAdapter,
     OpenAIResponsesAgentAdapter,
     QwenChatAgentAdapter,
+    validate_loopback_http_base_url,
 )
 from src.libs.llm.base_vision_llm import BaseVisionLLM, ImageInput
 from src.libs.llm.llm_factory import LLMFactory
@@ -57,12 +59,14 @@ __all__ = [
     "AgentTurnRequest",
     "AgentTurnResponse",
     "AgentUsage",
+    "validate_loopback_http_base_url",
     # Factory
     "LLMFactory",
     # Text-only LLM implementations
     "OpenAILLM",
     "OpenAILLMError",
     "OpenAIResponsesAgentAdapter",
+    "OllamaChatAgentAdapter",
     "QwenChatAgentAdapter",
     "AzureLLM",
     "AzureLLMError",

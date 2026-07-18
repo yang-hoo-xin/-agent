@@ -14,6 +14,7 @@ from src.mod_agent.artifacts import (
     ArtifactStoreError,
     StaleArtifactError,
 )
+from src.mod_agent.artifacts.store import ArtifactStorePreflightError
 from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
 
 
@@ -167,7 +168,8 @@ def test_write_creates_parent_directories(tmp_path: Path) -> None:
 
     assert Path(ref.path).exists()
     assert Path(ref.path).parent.name == "request_planning_report"
-    assert Path(ref.path).parent.parent.name == "revisions"
+    assert Path(ref.path).parent.parent.name == "r"
+    assert len(Path(ref.path).stem) == 32
     assert (
         tmp_path / "artifacts" / "features" / "feature_001" / "request_planning_report.json"
     ).exists()
@@ -195,7 +197,7 @@ def test_write_removes_pending_marker_after_success(tmp_path: Path) -> None:
     )
 
     pending_dir = (
-        tmp_path / "artifacts" / "features" / "feature_001" / "pending_writes"
+        tmp_path / "artifacts" / "features" / "feature_001" / "p"
     )
     assert list(pending_dir.rglob("*.json")) == []
 
@@ -243,7 +245,7 @@ def test_recover_pending_write_restores_latest_from_revision(
         )
 
     pending_dir = (
-        tmp_path / "artifacts" / "features" / "feature_001" / "pending_writes"
+        tmp_path / "artifacts" / "features" / "feature_001" / "p"
     )
     pending_markers = list(pending_dir.rglob("*.json"))
     assert len(pending_markers) == 1
@@ -253,7 +255,7 @@ def test_recover_pending_write_restores_latest_from_revision(
             / "artifacts"
             / "features"
             / "feature_001"
-            / "revisions"
+            / "r"
             / "feature_spec"
         ).glob("*.json")
     )
@@ -276,6 +278,262 @@ def test_recover_pending_write_restores_latest_from_revision(
     ]
     assert json.loads(latest_path.read_text(encoding="utf-8")) == revision_envelope
     assert list(pending_dir.rglob("*.json")) == []
+
+
+def test_write_reuses_valid_legacy_revision_without_copying_it(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    first = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    new_path = Path(first.path)
+    legacy_path = (
+        tmp_path
+        / "artifacts"
+        / "features"
+        / "feature_001"
+        / "revisions"
+        / "feature_spec"
+        / f"{first.artifact_hash}.json"
+    )
+    legacy_path.parent.mkdir(parents=True)
+    new_path.replace(legacy_path)
+
+    second = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    assert second.path == str(legacy_path.resolve())
+    assert second.artifact_hash == first.artifact_hash
+    assert store.read(second)["artifact_hash"] == first.artifact_hash
+    assert not new_path.exists()
+
+
+def test_write_rejects_short_revision_locator_collision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    monkeypatch.setattr(
+        ArtifactStore,
+        "_physical_locator",
+        staticmethod(lambda _artifact_hash: "0" * 32),
+    )
+    store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    with pytest.raises(ArtifactStoreError, match="revision locator collision"):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="feature_spec",
+            payload=_changed_feature_payload(),
+        )
+
+
+def test_write_rejects_short_pending_locator_collision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    monkeypatch.setattr(
+        ArtifactStore,
+        "_physical_locator",
+        staticmethod(lambda _artifact_hash: "0" * 32),
+    )
+    other_hash = "a" * 64
+    pending_path = store._pending_write_path(
+        "feature_001",
+        "feature_spec",
+        other_hash,
+    )
+    revision_path = store._revision_artifact_path(
+        "feature_001",
+        "feature_spec",
+        other_hash,
+    )
+    latest_path = store._artifact_path("feature_001", "feature_spec")
+    pending_path.parent.mkdir(parents=True)
+    pending_path.write_text(
+        store._serialize_pending_write(
+            feature_id="feature_001",
+            artifact_type="feature_spec",
+            artifact_hash=other_hash,
+            revision_path=revision_path,
+            latest_path=latest_path,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ArtifactStoreError, match="pending locator collision"):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="feature_spec",
+            payload=_feature_payload(),
+        )
+
+
+def test_explicit_ref_rejects_feature_and_type_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    ref = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    with pytest.raises(ArtifactStoreError, match="feature_id mismatch"):
+        store.read(
+            ArtifactRef(
+                feature_id="feature_002",
+                artifact_type=ref.artifact_type,
+                path=ref.path,
+                artifact_hash=ref.artifact_hash,
+            )
+        )
+    with pytest.raises(ArtifactStoreError, match="artifact_type mismatch"):
+        store.read(
+            ArtifactRef(
+                feature_id=ref.feature_id,
+                artifact_type="evidence_pack",
+                path=ref.path,
+                artifact_hash=ref.artifact_hash,
+            )
+        )
+
+
+def test_preflight_uses_compact_real_paths_and_leaves_no_artifact_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = str(tmp_path.resolve())
+    filler_length = max(1, 130 - len(base) - 1)
+    root = tmp_path / ("a" * filler_length)
+    store = ArtifactStore(root)
+    feature_id = "feature_8eae153e6c04"
+    artifact_types = (
+        "request_planning_report",
+        "mod_planning_brief",
+        "feature_spec",
+        "evidence_pack",
+    )
+    synthetic_hash = "0" * 64
+    pending_path = store._pending_write_path(
+        feature_id,
+        "request_planning_report",
+        synthetic_hash,
+    )
+    revision_path = store._revision_artifact_path(
+        feature_id,
+        "request_planning_report",
+        synthetic_hash,
+    )
+    replace_calls: list[tuple[Path, Path]] = []
+    original_replace = artifact_store_module.os.replace
+
+    def record_replace(source: Path, destination: Path) -> None:
+        source_path = Path(source)
+        destination_path = Path(destination)
+        assert source_path.parent == destination_path.parent
+        replace_calls.append((source_path, destination_path))
+        original_replace(source, destination)
+
+    monkeypatch.setattr(artifact_store_module.os, "replace", record_replace)
+
+    store.preflight_atomic_commit(
+        feature_id=feature_id,
+        artifact_types=artifact_types,
+    )
+
+    if len(str(root.resolve())) == 130:
+        assert len(str(pending_path)) == 224
+        assert len(str(revision_path)) == 224
+    assert len(replace_calls) == len(artifact_types) * 3
+    assert not root.exists() or list(root.rglob("*.json")) == []
+
+
+def test_long_artifact_root_commits_request_planning_artifact(
+    tmp_path: Path,
+) -> None:
+    base = str(tmp_path.resolve())
+    filler_length = max(1, 130 - len(base) - 1)
+    root = tmp_path / ("b" * filler_length)
+    store = ArtifactStore(root)
+
+    ref = store.write(
+        feature_id="feature_8eae153e6c04",
+        artifact_type="request_planning_report",
+        payload={**_request_payload(), "feature_id": "feature_8eae153e6c04"},
+    )
+
+    assert Path(ref.path).exists()
+    assert Path(ref.path).parent.parent.name == "r"
+    assert len(Path(ref.path).stem) == 32
+    if len(str(root.resolve())) == 130:
+        assert len(ref.path) == 224
+    latest = (
+        root
+        / "features"
+        / "feature_8eae153e6c04"
+        / "request_planning_report.json"
+    )
+    assert latest.exists()
+    assert list((root / "features").rglob(".tmp-*")) == []
+    assert list((root / "features").rglob("p/**/*.json")) == []
+
+
+def test_preflight_wraps_only_recognized_replace_path_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+
+    def fail_replace(_source: Path, _destination: Path) -> None:
+        error = FileNotFoundError("path is not addressable")
+        error.winerror = 3
+        raise error
+
+    monkeypatch.setattr(artifact_store_module.os, "replace", fail_replace)
+
+    with pytest.raises(ArtifactStorePreflightError) as captured:
+        store.preflight_atomic_commit(
+            feature_id="feature_001",
+            artifact_types=("request_planning_report",),
+        )
+
+    error = captured.value
+    assert error.artifact_type == "request_planning_report"
+    assert error.path_role == "pending_marker"
+    assert error.source_path_length < error.target_path_length
+    assert error.target_parent_exists is True
+    assert error.winerror == 3
+    assert not (tmp_path / "artifacts").exists()
+
+
+def test_preflight_does_not_reclassify_unknown_replace_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+
+    def fail_replace(_source: Path, _destination: Path) -> None:
+        raise PermissionError("replace is denied")
+
+    monkeypatch.setattr(artifact_store_module.os, "replace", fail_replace)
+
+    with pytest.raises(PermissionError, match="replace is denied"):
+        store.preflight_atomic_commit(
+            feature_id="feature_001",
+            artifact_types=("request_planning_report",),
+        )
 
 
 def test_list_feature_artifacts_returns_refs(tmp_path: Path) -> None:

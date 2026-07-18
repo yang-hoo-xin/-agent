@@ -241,7 +241,7 @@ def _revision_count(tmp_path: Path, feature_id: str, artifact_type: str) -> int:
         / "artifacts"
         / "features"
         / feature_id
-        / "revisions"
+        / "r"
         / artifact_type
     )
     return len(list(revision_dir.glob("*.json"))) if revision_dir.exists() else 0

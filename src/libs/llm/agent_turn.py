@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Protocol
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True)
@@ -161,6 +163,160 @@ class _HttpJsonSender:
         if not isinstance(data, dict):
             raise AgentTurnProviderError("Agent provider response must be an object.")
         return data
+
+
+def validate_loopback_http_base_url(base_url: str) -> str:
+    """Return one normalized literal-loopback HTTP origin or raise."""
+
+    parsed = urlsplit(base_url)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("LOCAL_AGENT_ENDPOINT_INVALID") from exc
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "::1"}
+        or port is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("LOCAL_AGENT_ENDPOINT_MUST_BE_LITERAL_LOOPBACK_HTTP_ORIGIN")
+    host = f"[{parsed.hostname}]" if parsed.hostname == "::1" else parsed.hostname
+    return f"http://{host}:{port}"
+
+
+class _LoopbackHttpJsonSender:
+    def __init__(self, *, timeout_seconds: float = 180.0) -> None:
+        self.timeout_seconds = timeout_seconds
+
+    def __call__(
+        self,
+        url: str,
+        payload: dict[str, object],
+        headers: dict[str, str],
+    ) -> dict[str, Any]:
+        import httpx
+
+        endpoint = urlsplit(url)
+        if endpoint.scheme != "http" or endpoint.hostname not in {"127.0.0.1", "::1"}:
+            raise AgentTurnProviderError("LOCAL_AGENT_REQUEST_LEFT_LOOPBACK")
+        try:
+            with httpx.Client(
+                timeout=self.timeout_seconds,
+                follow_redirects=False,
+                trust_env=False,
+            ) as client:
+                response = client.post(url, json=payload, headers=headers)
+        except httpx.TimeoutException as exc:
+            raise AgentTurnProviderError(
+                f"Local Agent request timed out after {self.timeout_seconds:g} seconds."
+            ) from exc
+        except httpx.RequestError as exc:
+            raise AgentTurnProviderError(
+                f"Local Agent connection failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if response.status_code != 200:
+            try:
+                error = response.json()
+            except Exception:
+                error = response.text
+            raise AgentTurnProviderError(
+                f"Local Agent HTTP {response.status_code}: {error}"
+            )
+        data = response.json()
+        if not isinstance(data, dict):
+            raise AgentTurnProviderError("Local Agent response must be an object.")
+        return data
+
+
+class OllamaChatAgentAdapter:
+    """Ollama native Chat adapter restricted to a literal loopback origin."""
+
+    provider = "ollama_chat_local"
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        max_output_tokens: int,
+        request_sender: JsonRequestSender | None = None,
+    ) -> None:
+        if not model.strip() or max_output_tokens <= 0:
+            raise ValueError("Ollama Agent adapter configuration is invalid.")
+        self.base_url = validate_loopback_http_base_url(base_url)
+        self.model = model
+        self.max_output_tokens = max_output_tokens
+        self._send = request_sender or _LoopbackHttpJsonSender()
+
+    def complete_turn(self, request: AgentTurnRequest) -> AgentTurnResponse:
+        messages = [_chat_message(item) for item in request.messages]
+        if request.tool_results:
+            state = request.provider_state
+            if not isinstance(state, dict) or not isinstance(state.get("tool_calls"), list):
+                raise AgentTurnProviderError("OLLAMA_TOOL_RESULT_STATE_MISSING")
+            exchange: list[dict[str, object]] = [
+                {
+                    "role": "assistant",
+                    "content": state.get("content") or "",
+                    "tool_calls": state["tool_calls"],
+                }
+            ]
+            for result in request.tool_results:
+                exchange.append(
+                    {
+                        "role": "tool",
+                        "tool_name": result.name,
+                        "content": _json_text(result.output),
+                    }
+                )
+            insert_at = _insert_index(request.tool_result_insert_index, len(messages))
+            messages[insert_at:insert_at] = exchange
+        payload: dict[str, object] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "think": False,
+            "options": {
+                "temperature": request.temperature,
+                "num_predict": self.max_output_tokens,
+            },
+        }
+        if request.tools:
+            payload["tools"] = [_chat_tool(tool) for tool in request.tools]
+        if request.response_format is not None:
+            payload["format"] = request.response_format.schema
+        data = self._send(
+            f"{self.base_url}/api/chat",
+            payload,
+            {"Content-Type": "application/json"},
+        )
+        message = data.get("message")
+        if not isinstance(message, dict):
+            raise AgentTurnProviderError("OLLAMA_CHAT_RESPONSE_INVALID")
+        raw_tool_calls = message.get("tool_calls") or []
+        if not isinstance(raw_tool_calls, list):
+            raise AgentTurnProviderError("OLLAMA_CHAT_TOOL_CALLS_INVALID")
+        tool_calls = tuple(_parse_ollama_tool_call(item) for item in raw_tool_calls)
+        return AgentTurnResponse(
+            provider=self.provider,
+            model=str(data.get("model") or self.model),
+            content=str(message.get("content") or "") or None,
+            tool_calls=tool_calls,
+            stop_reason=str(data.get("done_reason") or "") or None,
+            usage=AgentUsage(
+                input_tokens=_int_value(data.get("prompt_eval_count")),
+                output_tokens=_int_value(data.get("eval_count")),
+            ),
+            provider_state={
+                "content": message.get("content"),
+                "tool_calls": raw_tool_calls,
+            },
+            raw_response=data,
+        )
 
 
 class QwenChatAgentAdapter:
@@ -430,6 +586,27 @@ def _parse_chat_tool_call(item: object) -> AgentToolCall:
         call_id=call_id,
         name=name,
         arguments=_parse_arguments(function.get("arguments")),
+    )
+
+
+def _parse_ollama_tool_call(item: object) -> AgentToolCall:
+    if not isinstance(item, dict) or not isinstance(item.get("function"), dict):
+        raise AgentTurnProviderError("OLLAMA_CHAT_TOOL_CALL_INVALID")
+    function = item["function"]
+    name = str(function.get("name") or "")
+    arguments = _parse_arguments(function.get("arguments"))
+    if not name:
+        raise AgentTurnProviderError("OLLAMA_CHAT_TOOL_CALL_IDENTITY_INVALID")
+    identity = json.dumps(
+        {"name": name, "arguments": arguments},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return AgentToolCall(
+        call_id="ollama-call-" + sha256(identity).hexdigest()[:16],
+        name=name,
+        arguments=arguments,
     )
 
 
