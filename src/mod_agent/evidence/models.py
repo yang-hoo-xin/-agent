@@ -110,6 +110,7 @@ class EvidencePack:
     run_status: str | None = None
     verified_findings: tuple[dict[str, Any], ...] = ()
     evidence_conclusions: tuple[dict[str, Any], ...] = ()
+    observation_fact_catalog: tuple[dict[str, Any], ...] = ()
     unresolved_questions: tuple[str, ...] = ()
     missing_capabilities: tuple[str, ...] = ()
     tool_trace_summary: tuple[dict[str, Any], ...] = ()
@@ -153,6 +154,9 @@ class EvidencePack:
             "run_status": self.run_status,
             "verified_findings": [dict(item) for item in self.verified_findings],
             "evidence_conclusions": [dict(item) for item in self.evidence_conclusions],
+            "observation_fact_catalog": [
+                dict(item) for item in self.observation_fact_catalog
+            ],
             "unresolved_questions": list(self.unresolved_questions),
             "missing_capabilities": list(self.missing_capabilities),
             "tool_trace_summary": [dict(item) for item in self.tool_trace_summary],

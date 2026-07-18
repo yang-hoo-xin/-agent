@@ -29,7 +29,7 @@ from .evidence import (
 )
 from .evidence.discovery_contract import EVIDENCE_DISCOVERY_TOOLS
 from .knowledge import SourceDefinition
-from .domain.wallcrawler_acceptance import evaluate_wallcrawler_local_evidence
+from .domain.wallcrawler_acceptance import evaluate_wallcrawler_evidence
 from .planning.models import stable_feature_id
 from .workflow import build_graph, create_initial_state
 
@@ -392,13 +392,35 @@ def run_intelligent_evidence_only(
         "forbidden_artifacts_present": forbidden,
         "evidence_pack": pack,
     }
-    if local_ollama and target_domain == "gtfo" and target_mod == "WallCrawler":
-        output["acceptance"] = evaluate_wallcrawler_local_evidence(
-            evidence_pack=pack,
-            current_stage=str(result["current_stage"]),
-            forbidden_artifacts=forbidden,
-        )
+    acceptance = _post_run_acceptance(
+        target_domain=target_domain,
+        target_mod=target_mod,
+        evidence_pack=pack,
+        current_stage=str(result["current_stage"]),
+        forbidden_artifacts=forbidden,
+    )
+    if acceptance is not None:
+        output["acceptance"] = acceptance
     return output
+
+
+def _post_run_acceptance(
+    *,
+    target_domain: str,
+    target_mod: str,
+    evidence_pack: dict[str, Any],
+    current_stage: str,
+    forbidden_artifacts: list[str],
+) -> dict[str, object] | None:
+    """Apply the same WallCrawler evaluator regardless of model provider."""
+
+    if target_domain != "gtfo" or target_mod != "WallCrawler":
+        return None
+    return evaluate_wallcrawler_evidence(
+        evidence_pack=evidence_pack,
+        current_stage=current_stage,
+        forbidden_artifacts=forbidden_artifacts,
+    )
 
 
 def _resolve_artifact_root(path: str | Path) -> Path:

@@ -7133,11 +7133,16 @@ convergence gate
   -> zero corrections and no broad metadata search after successful IL.
 
 semantic gate
-  -> a post-run hidden evaluator binds the conclusion to an actually inspected
-     symbol and verifies that unsupported PersistentID/identity linkage remains
-     unresolved;
-  -> expected symbols, mappings, and scoring rules never enter model-visible
-     context.
+  -> deterministic tools project structured observation facts and one exact
+     canonical_claim for each mechanically verifiable fact;
+  -> observed conclusions count as verified findings only when the claim equals
+     one canonical_claim and cites only that fact's observation_id;
+  -> inferred conclusions require fact-bearing observation refs and limitations
+     but remain unverified; unknown conclusions cite no observation and state
+     their evidence limitation;
+  -> reference integrity, bounded uncertainty, PersistentID/identity gaps, and
+     Proposal lock are checked post-run through the same provider-neutral path;
+  -> expected symbols and hidden scoring rules never enter model-visible context.
 ```
 
 A bounded four-turn trajectory may pass capability and fail convergence. Raw
@@ -7254,6 +7259,20 @@ path used by the local Ollama entry. Until those two observed defects are
 repaired and tested, the recorded semantic result is invalid, evidence
 sufficiency is false, implementation planning remains locked, and V2-C remains
 incomplete.
+
+The bounded semantic repair is now implemented without changing graph routing,
+model/tool budgets, or later workflow stages. Prompt contract v9 exposes only
+observation id plus deterministic `canonical_claim` in the model view, while
+EvidencePack retains the complete `observation_fact_catalog`. Unsupported
+`observed` text no longer enters `verified_findings`. The provider-neutral
+post-run evaluator separately checks reference integrity, exact observed-fact
+matching, bounded unverified inference, bounded unknowns, verified-finding
+purity, unresolved identity evidence, and Proposal lock. Focused regression
+passed 154 related tests. Offline reevaluation of the preserved external Qwen
+pack now reports capability true, convergence false, and semantic false, with
+both overreaching observed conclusions rejected. Because that pack predates the
+fact catalog and no new real model run occurred, this repair is implemented and
+locally validated but does not establish semantic acceptance or V2-C completion.
 
 ## 51.7 V2-D Failure-Driven Capability Growth
 

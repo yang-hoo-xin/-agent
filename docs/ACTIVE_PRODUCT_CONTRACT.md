@@ -287,10 +287,17 @@ metadata -> `candidate_ref` -> control-resolved method identity -> IL loop
 twice under run id `intelligent_evidence_448f8515e5634f9faf629494f8febbef`.
 The EvidencePack retains both identity chains, stops at `evidence_retrieval`,
 and contains no later-stage artifact. This validates the real intelligent
-identity loop only. The current semantic evaluator falsely accepted claims
-beyond the cited IL observations and is not invoked on this external-provider
-entry. Semantic acceptance, evidence sufficiency, implementation readiness,
-and V2-C completion therefore remain unresolved; Proposal remains locked.
+identity loop only. Its original semantic result was a false positive.
+
+Current source now projects deterministic observation facts, admits an
+`observed` conclusion to `verified_findings` only when it exactly matches one
+fact's `canonical_claim`, keeps inferred conclusions unverified, permits bounded
+unknown conclusions, and invokes the same post-run evaluator for local and
+external providers. Related regression passed 154 tests. Offline reevaluation
+of the preserved run now reports capability true, convergence false, and
+semantic false, rejecting both unsupported observed conclusions. No new model
+run occurred, so semantic acceptance, evidence sufficiency, implementation
+readiness, and V2-C completion remain unresolved; Proposal remains locked.
 
 ### 2.1 Current V2 Intelligence Mainline
 

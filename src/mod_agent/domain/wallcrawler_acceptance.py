@@ -1,4 +1,4 @@
-"""Hidden post-run gates for the local WallCrawler model acceptance."""
+"""Provider-neutral hidden post-run gates for WallCrawler evidence acceptance."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from hashlib import sha256
 from typing import Any
 
 
-def evaluate_wallcrawler_local_evidence(
+def evaluate_wallcrawler_evidence(
     *,
     evidence_pack: dict[str, Any],
     current_stage: str,
@@ -133,16 +133,84 @@ def evaluate_wallcrawler_local_evidence(
         "no_identical_tool_repeat": len(signatures) == len(set(signatures)),
     }
 
-    il_items = [
+    observation_ids = {
+        str(item.get("observation_id"))
+        for item in tools
+        if isinstance(item, dict) and item.get("observation_id")
+    }
+    raw_facts = evidence_pack.get("observation_fact_catalog")
+    fact_rows = raw_facts if isinstance(raw_facts, list) else []
+    facts = [
         item
-        for item in evidence_pack.get("items", [])
+        for item in fact_rows
         if isinstance(item, dict)
-        and item.get("retrieval_method") == "agent_selected_cli_metadata_il_read"
-        and isinstance(item.get("symbol"), str)
-        and item.get("symbol")
+        and isinstance(item.get("fact_id"), str)
+        and isinstance(item.get("observation_id"), str)
+        and isinstance(item.get("fact_type"), str)
+        and isinstance(item.get("canonical_claim"), str)
+        and item.get("observation_id") in observation_ids
     ]
-    grounded_claim_text = "\n".join(
-        str(item.get("claim") or "") for item in grounded_il_conclusions
+    facts_by_claim: dict[str, list[dict[str, Any]]] = {}
+    for fact in facts:
+        facts_by_claim.setdefault(str(fact["canonical_claim"]), []).append(fact)
+
+    valid_observed_indexes: list[int] = []
+    unsupported_observed_indexes: list[int] = []
+    reference_integrity = True
+    inferred_claims_bounded = True
+    unknown_claims_bounded = True
+    fact_observation_ids = {str(fact["observation_id"]) for fact in facts}
+    for index, conclusion in enumerate(conclusions):
+        if not isinstance(conclusion, dict):
+            reference_integrity = False
+            continue
+        status = conclusion.get("claim_status")
+        claim = conclusion.get("claim")
+        refs = conclusion.get("observation_ids")
+        limitations = conclusion.get("limitations")
+        if not isinstance(refs, list) or any(
+            not isinstance(ref, str) or ref not in observation_ids for ref in refs
+        ):
+            reference_integrity = False
+            refs = []
+        if status == "observed":
+            matching_facts = [
+                fact
+                for fact in facts_by_claim.get(str(claim), [])
+                if refs == [fact["observation_id"]]
+            ]
+            if len(matching_facts) == 1:
+                valid_observed_indexes.append(index)
+            else:
+                unsupported_observed_indexes.append(index)
+        elif status == "inferred":
+            if (
+                not refs
+                or not set(refs).issubset(fact_observation_ids)
+                or not isinstance(limitations, list)
+                or not limitations
+                or any(not isinstance(item, str) or not item.strip() for item in limitations)
+            ):
+                inferred_claims_bounded = False
+        elif status == "unknown":
+            if (
+                refs
+                or not isinstance(limitations, list)
+                or not limitations
+                or any(not isinstance(item, str) or not item.strip() for item in limitations)
+            ):
+                unknown_claims_bounded = False
+        else:
+            reference_integrity = False
+
+    expected_verified_findings = [
+        conclusions[index] for index in valid_observed_indexes
+    ]
+    verified_findings = evidence_pack.get("verified_findings")
+    verified_findings_exact = (
+        isinstance(verified_findings, list)
+        and _canonical_json(verified_findings)
+        == _canonical_json(expected_verified_findings)
     )
     unresolved_text = "\n".join(
         str(value)
@@ -157,9 +225,11 @@ def evaluate_wallcrawler_local_evidence(
         )
     ).casefold()
     semantic_checks = {
-        "grounded_claim_names_inspected_symbol": any(
-            str(item["symbol"]) in grounded_claim_text for item in il_items
-        ),
+        "reference_integrity": reference_integrity,
+        "observed_claims_match_supported_facts": not unsupported_observed_indexes,
+        "inferred_claims_are_bounded_and_unverified": inferred_claims_bounded,
+        "unknown_claims_are_bounded": unknown_claims_bounded,
+        "verified_findings_contain_only_direct_observations": verified_findings_exact,
         "persistent_identity_binding_left_unresolved": any(
             term in unresolved_text
             for term in ("persistentid", "identity", "身份", "数据库绑定")
@@ -182,8 +252,31 @@ def evaluate_wallcrawler_local_evidence(
         "semantic_gate": {
             "passed": all(semantic_checks.values()),
             "checks": semantic_checks,
+            "supported_fact_count": len(facts),
+            "verified_observed_claim_count": len(valid_observed_indexes),
+            "unverified_inferred_claim_count": sum(
+                1
+                for item in conclusions
+                if isinstance(item, dict) and item.get("claim_status") == "inferred"
+            ),
+            "unsupported_observed_claim_indexes": unsupported_observed_indexes,
         },
     }
+
+
+def evaluate_wallcrawler_local_evidence(
+    *,
+    evidence_pack: dict[str, Any],
+    current_stage: str,
+    forbidden_artifacts: list[str],
+) -> dict[str, object]:
+    """Backward-compatible name for the provider-neutral evaluator."""
+
+    return evaluate_wallcrawler_evidence(
+        evidence_pack=evidence_pack,
+        current_stage=current_stage,
+        forbidden_artifacts=forbidden_artifacts,
+    )
 
 
 def _bounded_int(value: object, lower: int, upper: int) -> bool:
@@ -201,3 +294,12 @@ def _contains_ordered_pair(values: list[str], first: str, second: str) -> bool:
     except ValueError:
         return False
     return first_index < second_index
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )

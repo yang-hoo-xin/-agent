@@ -29,7 +29,7 @@ EVIDENCE_DISCOVERY_TOOLS = frozenset(
     {"search_dotnet_metadata", "inspect_method_il"}
 )
 EVIDENCE_DISCOVERY_RESULT_KINDS = frozenset({"methods", "types", "fields"})
-EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v8"
+EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v9"
 EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES = (
     "natural_language_request",
     "source_registry_model_views",
@@ -457,6 +457,25 @@ class ToolObservation:
     data: dict[str, object]
     evidence_items: tuple[EvidenceItem, ...] = ()
 
+    def supported_facts(self) -> list[dict[str, object]]:
+        """Project mechanically verifiable facts without semantic interpretation."""
+
+        return _supported_observation_facts(self)
+
+    def model_supported_facts(self) -> list[dict[str, object]]:
+        """Expose only observation binding and the exact claim required by the model."""
+
+        return [
+            {
+                key: fact[key]
+                for key in (
+                    "observation_id",
+                    "canonical_claim",
+                )
+            }
+            for fact in self.supported_facts()
+        ]
+
     def model_view(self) -> dict[str, object]:
         return {
             "observation_id": self.observation_id,
@@ -464,6 +483,7 @@ class ToolObservation:
             "source_id": self.source_id,
             "summary": self.summary,
             "data": _without_control_only_method_ids(self.data),
+            "supported_facts": self.model_supported_facts(),
         }
 
 
@@ -481,6 +501,178 @@ def _without_control_only_method_ids(value: object) -> object:
     if isinstance(value, tuple):
         return [_without_control_only_method_ids(item) for item in value]
     return value
+
+
+def _supported_observation_facts(
+    observation: ToolObservation,
+) -> list[dict[str, object]]:
+    data = observation.data
+    facts: list[dict[str, object]] = []
+    if observation.tool == "search_dotnet_metadata":
+        matched_counts = data.get("matched_counts")
+        returned_counts = data.get("returned_counts")
+        truncated_by_kind = data.get("truncated_by_kind")
+        if all(
+            isinstance(value, dict)
+            for value in (matched_counts, returned_counts, truncated_by_kind)
+        ):
+            value = {
+                "queries": list(data.get("queries") or []),
+                "matched_counts": dict(matched_counts),
+                "returned_counts": dict(returned_counts),
+                "results_truncated": data.get("results_truncated") is True,
+                "truncated_by_kind": dict(truncated_by_kind),
+            }
+            facts.append(
+                _observation_fact(
+                    observation=observation,
+                    fact_type="metadata_search_result",
+                    subject=observation.source_id,
+                    value=value,
+                    canonical_claim=(
+                        "Observed metadata search result: "
+                        f"matched_counts={_canonical_json(value['matched_counts'])}; "
+                        f"returned_counts={_canonical_json(value['returned_counts'])}; "
+                        "results_truncated="
+                        f"{str(value['results_truncated']).lower()}."
+                    ),
+                )
+            )
+    elif observation.tool == "inspect_method_il" and data.get("symbol"):
+        symbol = str(data["symbol"])
+        facts.append(
+            _observation_fact(
+                observation=observation,
+                fact_type="inspected_symbol",
+                subject=symbol,
+                value={"symbol": symbol},
+                canonical_claim=f"Observed inspected symbol: {symbol}.",
+            )
+        )
+        body_value = {
+            "metadata_token": str(data.get("metadata_token") or ""),
+            "rva": data.get("rva"),
+            "has_method_body": data.get("has_method_body") is True,
+            "instruction_count": data.get("instruction_count"),
+            "instructions_truncated": data.get("instructions_truncated") is True,
+        }
+        facts.append(
+            _observation_fact(
+                observation=observation,
+                fact_type="method_body_metadata",
+                subject=symbol,
+                value=body_value,
+                canonical_claim=(
+                    f"Observed method body metadata for {symbol}: "
+                    f"metadata_token={body_value['metadata_token']}; "
+                    f"rva={body_value['rva']}; "
+                    "has_method_body="
+                    f"{str(body_value['has_method_body']).lower()}; "
+                    f"instruction_count={body_value['instruction_count']}; "
+                    "instructions_truncated="
+                    f"{str(body_value['instructions_truncated']).lower()}."
+                ),
+            )
+        )
+        instructions = data.get("instructions")
+        if isinstance(instructions, list):
+            opcodes = [
+                str(item.get("opcode"))
+                for item in instructions
+                if isinstance(item, dict) and item.get("opcode")
+            ]
+            if opcodes:
+                facts.append(
+                    _observation_fact(
+                        observation=observation,
+                        fact_type="instruction_sequence",
+                        subject=symbol,
+                        value={"opcodes": opcodes},
+                        canonical_claim=(
+                            f"Observed IL instruction sequence for {symbol}: "
+                            f"{', '.join(opcodes)}."
+                        ),
+                    )
+                )
+            for instruction in instructions:
+                if not isinstance(instruction, dict):
+                    continue
+                offset = str(instruction.get("offset") or "")
+                opcode = str(instruction.get("opcode") or "")
+                resolved = str(instruction.get("resolved") or "")
+                if opcode in {"ldfld", "ldsfld"} and resolved:
+                    facts.append(
+                        _observation_fact(
+                            observation=observation,
+                            fact_type="field_read",
+                            subject=symbol,
+                            value={
+                                "offset": offset,
+                                "opcode": opcode,
+                                "field": resolved,
+                            },
+                            canonical_claim=(
+                                f"Observed IL field read in {symbol}: "
+                                f"offset={offset}; opcode={opcode}; field={resolved}."
+                            ),
+                        )
+                    )
+                if opcode in {"call", "callvirt", "newobj"} and resolved:
+                    facts.append(
+                        _observation_fact(
+                            observation=observation,
+                            fact_type="call_target",
+                            subject=symbol,
+                            value={
+                                "offset": offset,
+                                "opcode": opcode,
+                                "target": resolved,
+                            },
+                            canonical_claim=(
+                                f"Observed IL call target in {symbol}: "
+                                f"offset={offset}; opcode={opcode}; target={resolved}."
+                            ),
+                        )
+                    )
+    return facts
+
+
+def _observation_fact(
+    *,
+    observation: ToolObservation,
+    fact_type: str,
+    subject: str,
+    value: dict[str, object],
+    canonical_claim: str,
+) -> dict[str, object]:
+    digest = hashlib.sha256(
+        _canonical_json(
+            {
+                "observation_id": observation.observation_id,
+                "fact_type": fact_type,
+                "subject": subject,
+                "value": value,
+            }
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    return {
+        "fact_id": f"{observation.observation_id}:{fact_type}:{digest}",
+        "observation_id": observation.observation_id,
+        "source_id": observation.source_id,
+        "fact_type": fact_type,
+        "subject": subject,
+        "value": value,
+        "canonical_claim": canonical_claim,
+    }
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 @dataclass(frozen=True)

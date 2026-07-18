@@ -37,16 +37,24 @@ build, or runtime artifact. The EvidencePack hash is
 `2174bca310480916658811dd46e9cd8858b2a241371310a4365379add2b60a81`.
 
 This is real evidence that the bounded intelligent identity loop is executable;
-it is not V2-C completion. The current hidden semantic evaluator returned a
-false positive: it accepted claims about Hook viability, base-class logic, and
-movement/surface behavior that are not established by the cited `nop; ret` and
-static-field-getter observations. The evaluator checks reference/symbol
-association rather than predicate-level fidelity, and the external Qwen entry
-currently does not invoke the WallCrawler evaluator path used for local Ollama.
-Semantic acceptance is therefore unresolved, evidence sufficiency and
-implementation readiness remain false, Proposal remains locked, and
-`most_recent_completed_capability` remains 014. No semantic repair or rerun is
-selected by this documentation checkpoint.
+it is not V2-C completion. The recorded evaluator result was a false positive:
+it accepted claims about Hook viability, base-class logic, and movement/surface
+behavior that are not established by the cited `nop; ret` and static-field-
+getter observations.
+
+Current source repairs that exact defect. Deterministic observation facts and
+their exact `canonical_claim` values are model-visible without internal method
+identity, while the complete `observation_fact_catalog` is persisted. Only an
+`observed` conclusion that exactly matches one fact and cites its observation
+enters `verified_findings`; inferred conclusions remain unverified and unknown
+conclusions may express grounded abstention. The same post-run evaluator now
+covers local and external model providers. Related regression passed 154 tests,
+compileall passed, and offline reevaluation of the preserved Qwen pack changed
+the gate result to capability=true, convergence=false, semantic=false, rejecting
+both unsupported observed conclusions. No model rerun occurred. Semantic
+acceptance, evidence sufficiency, implementation readiness, and V2-C completion
+remain unresolved; Proposal remains locked and `most_recent_completed_capability`
+remains 014.
 
 The ArtifactStore path failure that blocked the next local V2-C execution
 before Agent logic is repaired for the current Windows, NTFS, and configured

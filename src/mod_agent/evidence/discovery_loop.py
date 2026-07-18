@@ -108,7 +108,7 @@ class EvidenceDiscoverySpecialist:
             "initial_context_sha256": _json_sha256(initial_messages[1]["content"]),
             "context_strategy": (
                 "deduplicated_catalog_latest_observation_zero_result_recovery_"
-                "and_repeat_correction_v5"
+                "repeat_correction_and_supported_facts_v6"
             ),
             "raw_prompt_persisted": False,
         }
@@ -417,6 +417,11 @@ class EvidenceDiscoverySpecialist:
             method_inspection_provenance_valid=method_inspection_provenance_valid,
         )
         usage_records = _model_usage_records(self.model)
+        observation_fact_catalog = tuple(
+            fact
+            for observation in observations
+            for fact in observation.supported_facts()
+        )
         pack = EvidencePack(
             query=request.natural_language_request,
             readiness="partial" if items else "insufficient",
@@ -454,10 +459,12 @@ class EvidenceDiscoverySpecialist:
             },
             trace_refs=tuple(observation.observation_id for observation in observations),
             run_status=run_status,
-            verified_findings=tuple(
-                dict(item) for item in conclusions if item.get("claim_status") == "observed"
+            verified_findings=_verified_observed_findings(
+                conclusions=conclusions,
+                observation_facts=observation_fact_catalog,
             ),
             evidence_conclusions=conclusions,
+            observation_fact_catalog=observation_fact_catalog,
             unresolved_questions=unresolved,
             missing_capabilities=missing_capabilities,
             tool_trace_summary=tuple(
@@ -596,6 +603,10 @@ def _build_turn_messages(
                         excluded_method_ids=excluded_method_ids,
                     ),
                     "inspection_catalog": _inspection_catalog(
+                        observations,
+                        excluded_observation_id=excluded_observation_id,
+                    ),
+                    "supported_fact_catalog": _compact_supported_fact_catalog(
                         observations,
                         excluded_observation_id=excluded_observation_id,
                     ),
@@ -823,6 +834,21 @@ def _compact_step(
         "observation_id": observation.observation_id,
         "observation_summary": observation.summary,
     }
+
+
+def _compact_supported_fact_catalog(
+    observations: list[ToolObservation],
+    *,
+    excluded_observation_id: str | None,
+) -> list[dict[str, object]]:
+    catalog: dict[str, dict[str, object]] = {}
+    for observation in observations:
+        if observation.observation_id == excluded_observation_id:
+            continue
+        for fact in observation.model_supported_facts():
+            key = str(fact["canonical_claim"])
+            catalog[key] = fact
+    return list(catalog.values())
 
 
 def _observed_method_catalog(
@@ -1130,6 +1156,35 @@ def _input_audit(request: EvidenceDiscoveryRequest) -> dict[str, int]:
     }
 
 
+def _verified_observed_findings(
+    *,
+    conclusions: tuple[dict[str, Any], ...],
+    observation_facts: tuple[dict[str, object], ...],
+) -> tuple[dict[str, Any], ...]:
+    facts_by_claim: dict[str, list[dict[str, object]]] = {}
+    for fact in observation_facts:
+        canonical_claim = fact.get("canonical_claim")
+        observation_id = fact.get("observation_id")
+        if isinstance(canonical_claim, str) and isinstance(observation_id, str):
+            facts_by_claim.setdefault(canonical_claim, []).append(fact)
+    verified: list[dict[str, Any]] = []
+    for conclusion in conclusions:
+        if conclusion.get("claim_status") != "observed":
+            continue
+        claim = conclusion.get("claim")
+        observation_ids = conclusion.get("observation_ids")
+        if not isinstance(claim, str) or not isinstance(observation_ids, list):
+            continue
+        matching_facts = [
+            fact
+            for fact in facts_by_claim.get(claim, [])
+            if observation_ids == [fact["observation_id"]]
+        ]
+        if len(matching_facts) == 1:
+            verified.append(dict(conclusion))
+    return tuple(verified)
+
+
 def _intelligence_transfer(
     *,
     actions: list[dict[str, object]],
@@ -1238,6 +1293,10 @@ def _system_contract() -> dict[str, object]:
             "Do not repeat an already executed identical source/tool/arguments action.",
             "An inspect_method_il candidate_ref must come from a prior observation.",
             "Observed and inferred conclusions must reference prior observations.",
+            (
+                "An observed conclusion must exactly copy canonical_claim from one "
+                "supported_fact and cite only that fact's observation_id."
+            ),
             "Inferred conclusions must state limitations; unknown conclusions cite no observation.",
             "When budget_state.required_next_action is finish, return finish and do not request another tool.",
             "Community evidence cannot confirm current runtime behavior.",

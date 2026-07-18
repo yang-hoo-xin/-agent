@@ -39,7 +39,10 @@ from src.libs.llm import (
     Message,
 )
 from src.mod_agent.knowledge import SourceDefinition
-from src.mod_agent.intelligent_evidence_only import load_evidence_discovery_sources
+from src.mod_agent.intelligent_evidence_only import (
+    _post_run_acceptance,
+    load_evidence_discovery_sources,
+)
 
 
 def _metadata_arguments(*queries: str, limit_per_kind: int = 20) -> dict[str, object]:
@@ -236,7 +239,7 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
                 "decision": "needs_more_evidence",
                 "evidence_conclusions": [
                     {
-                        "claim": "An exact movement-related method body was observed.",
+                        "claim": "Observed inspected symbol: Observed.Type.Move.",
                         "claim_status": "observed",
                         "observation_ids": ["obs-002"],
                         "limitations": [],
@@ -278,6 +281,10 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
         "semantic_relevance_evaluated": False,
     }
     assert result.observations[1].data["method_id"] == "method_obs_001"
+    assert result.observations[1].supported_facts()[0]["canonical_claim"] == (
+        "Observed inspected symbol: Observed.Type.Move."
+    )
+    assert result.pack.observation_fact_catalog
     assert result.pack.evidence_conclusions[0]["claim_status"] == "observed"
     assert result.pack.verified_findings[0]["claim_status"] == "observed"
     assert len(result.pack.model_action_trace) == 3
@@ -288,7 +295,7 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
     assert result.pack.budget_summary["total_observation_bytes_used"] > 0
     system_contract = model.calls[0][0]["content"]
     assert isinstance(system_contract, dict)
-    assert system_contract["contract_version"] == "evidence_discovery_prompt_v8"
+    assert system_contract["contract_version"] == "evidence_discovery_prompt_v9"
     assert "literal managed-symbol substring" not in json.dumps(
         system_contract,
         ensure_ascii=False,
@@ -303,7 +310,7 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
     ]
     assert result.pack.prompt_contract["context_strategy"] == (
         "deduplicated_catalog_latest_observation_zero_result_recovery_"
-        "and_repeat_correction_v5"
+        "repeat_correction_and_supported_facts_v6"
     )
     finish_schema = system_contract["actions"]["finish"]["schema"]
     assert finish_schema["required"] == [
@@ -349,7 +356,7 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
     assert result.pack.budget_summary["total_discovery_message_bytes"] == sum(
         result.pack.budget_summary["discovery_message_bytes_by_turn"]
     )
-    assert result.pack.budget_summary["total_discovery_message_bytes"] < 15_000
+    assert result.pack.budget_summary["total_discovery_message_bytes"] < 16_000
 
 
 def test_each_turn_replays_compact_history_and_only_the_latest_full_observation(
@@ -637,8 +644,8 @@ def test_repeated_method_context_is_deduplicated_and_byte_accounted(
     )
     assert final_compact["observed_method_catalog"] == []
     assert len(final_compact["inspection_catalog"]) == 1
-    assert final_compact_bytes < 2_618
-    assert result.pack.budget_summary["total_discovery_message_bytes"] < 40_500
+    assert final_compact_bytes < 2_700
+    assert result.pack.budget_summary["total_discovery_message_bytes"] < 44_000
     assert result.pack.budget_summary["total_discovery_message_bytes"] == sum(
         result.pack.budget_summary["discovery_message_bytes_by_turn"]
     )
@@ -1547,6 +1554,12 @@ def test_real_tool_executor_binds_search_identity_to_exact_il(tmp_path: Path) ->
     assert search.data["assemblies"][0]["assembly_sha256"]
     assert "method_id" not in json.dumps(search.model_view())
     assert "method_id" not in json.dumps(inspection.model_view())
+    assert "method_id" not in json.dumps(search.supported_facts())
+    assert "method_id" not in json.dumps(inspection.supported_facts())
+    assert any(
+        fact["fact_type"] == "instruction_sequence"
+        for fact in inspection.supported_facts()
+    )
     assert str(tmp_path) not in json.dumps(search.model_view())
     assert str(tmp_path) not in json.dumps(inspection.model_view())
 
@@ -1628,6 +1641,50 @@ def test_metadata_search_truncates_inside_tool_observation_budget(
     assert len(encoded) <= 8_192
     assert observation.data["results_truncated"] is True
     assert 0 < len(observation.data["methods"]) < 300
+    search_fact = observation.supported_facts()[0]
+    assert search_fact["fact_type"] == "metadata_search_result"
+    assert search_fact["value"]["results_truncated"] is True
+    assert search_fact["canonical_claim"].endswith("results_truncated=true.")
+
+
+def test_repeated_il_targets_keep_distinct_instruction_facts() -> None:
+    observation = ToolObservation(
+        observation_id="obs-duplicate-call",
+        tool="inspect_method_il",
+        source_id="source-a",
+        summary="Two calls to the same target were observed.",
+        data={
+            "symbol": "Observed.Type.Move",
+            "metadata_token": "0x06000001",
+            "rva": 12,
+            "has_method_body": True,
+            "instruction_count": 2,
+            "instructions_truncated": False,
+            "instructions": [
+                {
+                    "offset": "IL_0000",
+                    "opcode": "call",
+                    "resolved": "Observed.Target.Run",
+                },
+                {
+                    "offset": "IL_0005",
+                    "opcode": "call",
+                    "resolved": "Observed.Target.Run",
+                },
+            ],
+        },
+    )
+
+    call_facts = [
+        fact
+        for fact in observation.supported_facts()
+        if fact["fact_type"] == "call_target"
+    ]
+
+    assert len(call_facts) == 2
+    assert len({fact["fact_id"] for fact in call_facts}) == 2
+    assert "offset=IL_0000" in call_facts[0]["canonical_claim"]
+    assert "offset=IL_0005" in call_facts[1]["canonical_claim"]
 
 
 def test_source_registry_can_bind_an_exact_relative_assembly(tmp_path: Path) -> None:
@@ -2106,7 +2163,28 @@ def test_wallcrawler_hidden_gates_separate_capability_from_convergence() -> None
         ],
         "evidence_conclusions": [
             {
-                "claim": "EnemyLocomotion.Move has an exact inspected IL body.",
+                "claim": "Observed inspected symbol: EnemyLocomotion.Move.",
+                "claim_status": "observed",
+                "observation_ids": ["obs-002"],
+                "limitations": ["PersistentID region binding remains unresolved."],
+            }
+        ],
+        "observation_fact_catalog": [
+            {
+                "fact_id": "obs-002:inspected_symbol:fixture",
+                "observation_id": "obs-002",
+                "source_id": "source-a",
+                "fact_type": "inspected_symbol",
+                "subject": "EnemyLocomotion.Move",
+                "value": {"symbol": "EnemyLocomotion.Move"},
+                "canonical_claim": (
+                    "Observed inspected symbol: EnemyLocomotion.Move."
+                ),
+            }
+        ],
+        "verified_findings": [
+            {
+                "claim": "Observed inspected symbol: EnemyLocomotion.Move.",
                 "claim_status": "observed",
                 "observation_ids": ["obs-002"],
                 "limitations": ["PersistentID region binding remains unresolved."],
@@ -2141,6 +2219,78 @@ def test_wallcrawler_hidden_gates_separate_capability_from_convergence() -> None
     assert result["convergence_gate"]["passed"] is True
     assert result["semantic_gate"]["passed"] is True
 
+    overclaim_pack = deepcopy(pack)
+    overclaim = (
+        "EnemyLocomotion.Move is a viable Hook point, suggesting movement logic "
+        "may reside in a base class."
+    )
+    overclaim_pack["evidence_conclusions"][0]["claim"] = overclaim
+    overclaim_pack["verified_findings"][0]["claim"] = overclaim
+    result = evaluate_wallcrawler_local_evidence(
+        evidence_pack=overclaim_pack,
+        current_stage="evidence_retrieval",
+        forbidden_artifacts=[],
+    )
+    assert result["capability_gate"]["passed"] is True
+    assert result["semantic_gate"]["passed"] is False
+    assert result["semantic_gate"]["checks"][
+        "observed_claims_match_supported_facts"
+    ] is False
+    assert result["semantic_gate"]["unsupported_observed_claim_indexes"] == [0]
+
+    abstention_pack = deepcopy(pack)
+    abstention_pack["evidence_conclusions"] = [
+        {
+            "claim": "Hook viability remains unknown.",
+            "claim_status": "unknown",
+            "observation_ids": [],
+            "limitations": ["The available evidence does not establish runtime use."],
+        }
+    ]
+    abstention_pack["verified_findings"] = []
+    result = evaluate_wallcrawler_local_evidence(
+        evidence_pack=abstention_pack,
+        current_stage="evidence_retrieval",
+        forbidden_artifacts=[],
+    )
+    assert result["semantic_gate"]["passed"] is True
+    assert result["capability_gate"]["passed"] is False
+
+    truncated_nonexistence_pack = deepcopy(pack)
+    truncated_nonexistence_pack["evidence_conclusions"][0]["claim"] = (
+        "EnemyLocomotion.Missing does not exist."
+    )
+    truncated_nonexistence_pack["evidence_conclusions"][0]["observation_ids"] = [
+        "obs-001"
+    ]
+    truncated_nonexistence_pack["observation_fact_catalog"] = [
+        {
+            "fact_id": "obs-001:metadata_search_result:fixture",
+            "observation_id": "obs-001",
+            "source_id": "source-a",
+            "fact_type": "metadata_search_result",
+            "subject": "source-a",
+            "value": {
+                "matched_counts": {"methods": 20, "types": 0, "fields": 0},
+                "returned_counts": {"methods": 5, "types": 0, "fields": 0},
+                "results_truncated": True,
+            },
+            "canonical_claim": (
+                "Observed metadata search result: "
+                'matched_counts={"fields":0,"methods":20,"types":0}; '
+                'returned_counts={"fields":0,"methods":5,"types":0}; '
+                "results_truncated=true."
+            ),
+        }
+    ]
+    truncated_nonexistence_pack["verified_findings"] = []
+    result = evaluate_wallcrawler_local_evidence(
+        evidence_pack=truncated_nonexistence_pack,
+        current_stage="evidence_retrieval",
+        forbidden_artifacts=[],
+    )
+    assert result["semantic_gate"]["passed"] is False
+
     four_turn_pack = deepcopy(pack)
     four_turn_pack["budget_summary"]["model_steps_used"] = 4
     result = evaluate_wallcrawler_local_evidence(
@@ -2150,6 +2300,46 @@ def test_wallcrawler_hidden_gates_separate_capability_from_convergence() -> None
     )
     assert result["capability_gate"]["passed"] is True
     assert result["convergence_gate"]["passed"] is False
+
+
+def test_wallcrawler_post_run_evaluator_is_provider_neutral(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def evaluate(**kwargs):
+        calls.append(kwargs)
+        return {"semantic_gate": {"passed": False}}
+
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.evaluate_wallcrawler_evidence",
+        evaluate,
+    )
+    pack = {"run_status": "completed"}
+
+    result = _post_run_acceptance(
+        target_domain="gtfo",
+        target_mod="WallCrawler",
+        evidence_pack=pack,
+        current_stage="evidence_retrieval",
+        forbidden_artifacts=[],
+    )
+
+    assert result == {"semantic_gate": {"passed": False}}
+    assert calls == [
+        {
+            "evidence_pack": pack,
+            "current_stage": "evidence_retrieval",
+            "forbidden_artifacts": [],
+        }
+    ]
+    assert _post_run_acceptance(
+        target_domain="gtfo",
+        target_mod="AnotherMod",
+        evidence_pack=pack,
+        current_stage="evidence_retrieval",
+        forbidden_artifacts=[],
+    ) is None
 
 
 def test_chat_adapter_requires_exact_one_run_disclosure() -> None:
