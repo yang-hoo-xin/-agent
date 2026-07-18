@@ -278,13 +278,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         except (IntelligentEvidenceEntryError, OSError, RuntimeError, ValueError) as exc:
+            blocked_payload: dict[str, object] = {
+                "status": "BLOCKED",
+                "command": "intelligent-evidence-request",
+                "reason": str(exc),
+            }
+            if isinstance(exc, IntelligentEvidenceEntryError) and exc.diagnostic:
+                blocked_payload["diagnostic"] = dict(exc.diagnostic)
             print(
                 json.dumps(
-                    {
-                        "status": "BLOCKED",
-                        "command": "intelligent-evidence-request",
-                        "reason": str(exc),
-                    },
+                    blocked_payload,
                     ensure_ascii=False,
                     indent=2,
                 )

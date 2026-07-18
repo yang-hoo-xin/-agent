@@ -120,6 +120,32 @@ class ArtifactTypeRegistry:
     ) -> None:
         if artifact_type == "implementation_plan":
             _validate_implementation_plan_binding_registry(payload)
+        if artifact_type == "evidence_run_attempt":
+            _validate_evidence_run_attempt(payload)
+
+
+def _validate_evidence_run_attempt(payload: dict[str, Any]) -> None:
+    if payload.get("run_validity") not in {
+        "attempt_started",
+        "valid_run",
+        "invalid_run",
+    }:
+        raise ArtifactRegistryError("evidence_run_attempt run_validity is invalid")
+    for field_name in (
+        "external_model_calls",
+        "model_calls",
+        "accepted_model_actions",
+        "tool_calls_executed",
+    ):
+        value = payload.get(field_name)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ArtifactRegistryError(
+                f"evidence_run_attempt {field_name} must be a non-negative integer"
+            )
+    if not isinstance(payload.get("provider_turns"), list):
+        raise ArtifactRegistryError("evidence_run_attempt provider_turns must be a list")
+    if not isinstance(payload.get("failure"), dict):
+        raise ArtifactRegistryError("evidence_run_attempt failure must be an object")
 
 
 def _validate_implementation_plan_binding_registry(payload: dict[str, Any]) -> None:
@@ -257,6 +283,43 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             ),
             allowed_statuses=statuses,
             dashboard_projection=("message", "target_behavior", "risk_level", "blocked"),
+        ),
+        ArtifactContract(
+            artifact_type="evidence_run_attempt",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "run_id",
+                    "request_id",
+                    "run_validity",
+                    "terminal_stage",
+                    "model_execution",
+                    "model_calls",
+                    "external_model_calls",
+                    "accepted_model_actions",
+                    "tool_calls_executed",
+                    "provider_turns",
+                    "failure_attribution",
+                    "failure",
+                }
+            ),
+            producer_stage="evidence_retrieval",
+            consumer_stages=frozenset({"dashboard", "eval"}),
+            allowed_statuses=frozenset({"running", "success", "failed"}),
+            dashboard_projection=(
+                "message",
+                "run_id",
+                "run_validity",
+                "terminal_stage",
+                "model_calls",
+                "external_model_calls",
+                "accepted_model_actions",
+                "tool_calls_executed",
+                "failure_attribution",
+            ),
         ),
         ArtifactContract(
             artifact_type="evidence_pack",

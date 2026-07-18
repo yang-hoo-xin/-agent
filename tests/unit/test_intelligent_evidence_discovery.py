@@ -288,7 +288,7 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
     assert result.pack.budget_summary["total_observation_bytes_used"] > 0
     system_contract = model.calls[0][0]["content"]
     assert isinstance(system_contract, dict)
-    assert system_contract["contract_version"] == "evidence_discovery_prompt_v7"
+    assert system_contract["contract_version"] == "evidence_discovery_prompt_v8"
     assert "literal managed-symbol substring" not in json.dumps(
         system_contract,
         ensure_ascii=False,
@@ -302,7 +302,8 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
         "limit_per_kind",
     ]
     assert result.pack.prompt_contract["context_strategy"] == (
-        "deduplicated_catalog_latest_observation_and_repeat_correction_v4"
+        "deduplicated_catalog_latest_observation_zero_result_recovery_"
+        "and_repeat_correction_v5"
     )
     finish_schema = system_contract["actions"]["finish"]["schema"]
     assert finish_schema["required"] == [
@@ -979,6 +980,66 @@ def test_model_receives_mandatory_finish_when_tool_budget_reaches_zero(
             "includes an inspect_method_il observation_id."
         ),
     ]
+    assert result.run_status == "completed"
+
+
+def test_zero_result_metadata_requires_query_recovery_or_grounded_finish(
+    tmp_path: Path,
+) -> None:
+    model = _ScriptedModel(
+        [
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("enemy wall movement behavior"),
+                "evidence_need": "Search for movement behavior.",
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "finish",
+                "decision": "needs_more_evidence",
+                "evidence_conclusions": [],
+                "unresolved_questions": [
+                    "No current metadata observation exposed a method reference."
+                ],
+                "missing_capabilities": [],
+            },
+        ]
+    )
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_QueryAwareObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path, include_second_source=False),
+            max_tool_calls=2,
+            max_model_steps=2,
+        )
+    )
+
+    budget_state = model.calls[1][-1]["content"]
+    assert isinstance(budget_state, dict)
+    assert budget_state["required_next_action"] == "use_tool_or_finish"
+    assert budget_state["acceptance_progress"] == {
+        "metadata_observation_ids": ["obs-001"],
+        "inspect_method_il_observation_ids": [],
+    }
+    assert budget_state["remaining_acceptance_requirements"] == [
+        (
+            "No current-run candidate_ref has been observed. Do not call "
+            "inspect_method_il without one."
+        ),
+        (
+            "Use a materially different literal managed-symbol substring, change "
+            "result_kinds to types or fields, or finish with needs_more_evidence. "
+            "Do not treat zero results as proof that a symbol does not exist."
+        ),
+    ]
+    serialized_state = json.dumps(budget_state, ensure_ascii=False)
+    assert "WallCrawler" not in serialized_state
+    assert "MonsterMovementHandler" not in serialized_state
     assert result.run_status == "completed"
 
 
@@ -1900,6 +1961,80 @@ def test_agent_turn_model_maps_native_tool_call_and_bound_observation() -> None:
     assert client.requests[1].tool_results[0].call_id == "call-test-001"
     assert client.requests[1].tool_result_insert_index == 1
     assert model.usage_records[1]["total_tokens"] == 27
+
+
+def test_agent_turn_model_preserves_provider_and_adapter_tool_names_on_rejection() -> None:
+    provider_diagnostic = {
+        "api_type": "openai_compatible_chat_completions",
+        "streaming": False,
+        "provider_request_id": "request-tool-name-mismatch",
+        "finish_reason": "tool_calls",
+        "tool_calls": [
+            {
+                "tool_call_id": "call-tool-name-mismatch",
+                "provider_reported_tool_name": "search_dotnet_metadata",
+                "adapter_extracted_tool_name": "functions.search_dotnet_metadata",
+                "normalized_tool_name": "functions.search_dotnet_metadata",
+                "normalization_applied": False,
+                "arguments_valid_json": True,
+                "arguments_is_object": True,
+                "arguments_sha256": "A" * 64,
+            }
+        ],
+        "usage": {
+            "input_tokens": 41,
+            "output_tokens": 3,
+            "total_tokens": 44,
+            "reasoning_tokens": 0,
+            "cached_input_tokens": 0,
+        },
+    }
+
+    class _ToolNameMismatchClient:
+        provider = "qwen_chat"
+        model = "qwen3.6-plus"
+
+        def complete_turn(self, request):
+            return AgentTurnResponse(
+                provider=self.provider,
+                model=self.model,
+                content=None,
+                tool_calls=(
+                    AgentToolCall(
+                        call_id="call-tool-name-mismatch",
+                        name="functions.search_dotnet_metadata",
+                        arguments={},
+                    ),
+                ),
+                stop_reason="tool_calls",
+                request_id="request-tool-name-mismatch",
+                usage=AgentUsage(input_tokens=41, output_tokens=3),
+                provider_diagnostic=provider_diagnostic,
+            )
+
+    client = _ToolNameMismatchClient()
+    model = EvidenceDiscoveryAgentModel(
+        client,
+        disclosure=EvidenceDiscoveryDisclosure(
+            approved=True,
+            approval_id="approval-tool-name-mismatch",
+            destination={"provider": client.provider, "model": client.model},
+            approved_data_classes=EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="UNKNOWN_EVIDENCE_TOOL"):
+        model.complete(
+            (
+                {"role": "system", "content": {"contract": "v2"}},
+                {"role": "user", "content": {"required_next_action": "use_tool"}},
+            )
+        )
+
+    assert model.model_call_count == 1
+    assert model.accepted_action_count == 0
+    assert model.provider_turn_records == (provider_diagnostic,)
+    assert model.usage_records[0]["total_tokens"] == 44
 
 
 def test_agent_turn_model_records_local_execution_without_disclosure() -> None:

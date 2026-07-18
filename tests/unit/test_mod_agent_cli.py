@@ -9,11 +9,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.libs.llm import AgentToolCall, AgentTurnResponse, AgentUsage
+from src.libs.llm import (
+    AgentToolCall,
+    AgentTurnProviderError,
+    AgentTurnResponse,
+    AgentUsage,
+)
 from src.mod_agent import __version__
 from src.mod_agent.artifacts.store import ArtifactStorePreflightError
 from src.mod_agent.cli import main, plan_request
 from src.mod_agent.evidence.discovery_tools import LocalAssemblyEvidenceToolExecutor
+from src.mod_agent.intelligent_evidence_only import (
+    _evidence_run_failure_code,
+    _failure_attribution,
+)
 
 
 def test_mod_agent_package_imports() -> None:
@@ -195,6 +204,126 @@ class _CliInjectedAgentAdapter:
         )
 
 
+class _CliUnknownToolAgentAdapter:
+    provider = "qwen_chat"
+    instances: list["_CliUnknownToolAgentAdapter"] = []
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        max_completion_tokens: int,
+    ) -> None:
+        assert api_key == "test-api-key"
+        self.base_url = base_url
+        self.model = model
+        self.max_completion_tokens = max_completion_tokens
+        self.calls = 0
+        self.__class__.instances.append(self)
+
+    def complete_turn(self, request) -> AgentTurnResponse:
+        self.calls += 1
+        return AgentTurnResponse(
+            provider=self.provider,
+            model=self.model,
+            content=None,
+            tool_calls=(
+                AgentToolCall(
+                    call_id="call-cli-unknown-tool",
+                    name="search_metadata",
+                    arguments={},
+                ),
+            ),
+            stop_reason="tool_calls",
+            request_id="provider-cli-unknown-tool",
+            usage=AgentUsage(input_tokens=53, output_tokens=7),
+            provider_diagnostic={
+                "api_type": "openai_compatible_chat_completions",
+                "streaming": False,
+                "provider_request_id": "provider-cli-unknown-tool",
+                "finish_reason": "tool_calls",
+                "tool_calls": [
+                    {
+                        "tool_call_id": "call-cli-unknown-tool",
+                        "provider_reported_tool_name": "search_metadata",
+                        "adapter_extracted_tool_name": "search_metadata",
+                        "normalized_tool_name": "search_metadata",
+                        "normalization_applied": False,
+                        "arguments_valid_json": True,
+                        "arguments_is_object": True,
+                        "arguments_sha256": hashlib.sha256(b"{}").hexdigest(),
+                    }
+                ],
+                "usage": {
+                    "input_tokens": 53,
+                    "output_tokens": 7,
+                    "total_tokens": 60,
+                    "reasoning_tokens": 0,
+                    "cached_input_tokens": 0,
+                },
+            },
+        )
+
+
+class _CliRejectToolExecution:
+    def __init__(self) -> None:
+        self.actions: list[dict[str, object]] = []
+
+    def execute(self, **kwargs):
+        self.actions.append(dict(kwargs))
+        raise AssertionError("an unknown model tool must not execute")
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "adapter_name", "expected"),
+    (
+        (
+            "search_dotnet_metadata",
+            "functions.search_dotnet_metadata",
+            "provider_adapter_extraction_failure",
+        ),
+        (
+            " search_dotnet_metadata ",
+            " search_dotnet_metadata ",
+            "whitespace_normalization_issue",
+        ),
+        ("", "search_metadata", "unresolved"),
+    ),
+)
+def test_unknown_tool_failure_attribution_uses_both_identity_layers(
+    provider_name: str,
+    adapter_name: str,
+    expected: str,
+) -> None:
+    model = SimpleNamespace(
+        provider_turn_records=(
+            {
+                "tool_calls": [
+                    {
+                        "provider_reported_tool_name": provider_name,
+                        "adapter_extracted_tool_name": adapter_name,
+                    }
+                ]
+            },
+        )
+    )
+
+    assert _failure_attribution(
+        model=model,
+        error="UNKNOWN_EVIDENCE_TOOL",
+    ) == expected
+
+
+def test_external_provider_error_body_is_not_used_as_persisted_failure_code() -> None:
+    error = AgentTurnProviderError(
+        "Agent provider HTTP 400: full prompt and raw arguments"
+    )
+
+    assert _evidence_run_failure_code(error) == "AGENT_TURN_PROVIDER_ERROR"
+
+
 def test_plan_request_returns_no_write_planning_result() -> None:
     """Planning stops before feature_spec without performing writes."""
 
@@ -365,6 +494,7 @@ def test_cli_intelligent_evidence_preflight_failure_is_structured_and_stops_exec
     def fail_preflight(self, *, feature_id, artifact_types) -> None:
         assert feature_id.startswith("feature_")
         assert artifact_types == (
+            "evidence_run_attempt",
             "request_planning_report",
             "mod_planning_brief",
             "feature_spec",
@@ -542,6 +672,151 @@ def test_cli_intelligent_evidence_request_persists_candidate_binding_provenance(
     adapter = _CliInjectedAgentAdapter.instances[0]
     assert len(adapter.model_observations) == 2
     assert "method_id" not in json.dumps(adapter.model_observations)
+    attempt_envelope = json.loads(
+        Path(payload["attempt_artifact"]["path"]).read_text(encoding="utf-8")
+    )
+    attempt = attempt_envelope["data"]
+    assert attempt["run_id"] == payload["run_id"]
+    assert attempt["run_validity"] == "valid_run"
+    assert attempt["model_calls"] == 3
+    assert attempt["external_model_calls"] == 0
+    assert attempt["accepted_model_actions"] == 3
+    assert attempt["tool_calls_executed"] == 2
+
+
+def test_cli_unknown_external_tool_persists_invalid_attempt_without_execution_or_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "Modules-ASM.dll").write_bytes(b"managed-cli-test-bytes")
+    registry_path = tmp_path / "source-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "evidence_discovery_source_registry_v1",
+                "sources": [
+                    {
+                        "source_id": "cli-source",
+                        "source_type": "decompiled_api",
+                        "root_path": str(source_root),
+                        "metadata": {
+                            "evidence_discovery_kind": "unity_script_assembly",
+                            "evidence_class": "cli_unknown_tool_test",
+                            "description": "Generic CLI source capability view.",
+                            "allowed_tools": [
+                                "search_dotnet_metadata",
+                                "inspect_method_il",
+                            ],
+                            "assembly_relative_paths": ["Modules-ASM.dll"],
+                            "version_identity": {},
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    executor = _CliRejectToolExecution()
+    monkeypatch.setattr(
+        LocalAssemblyEvidenceToolExecutor,
+        "from_inspector",
+        classmethod(lambda cls, inspector_path: executor),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.QwenChatAgentAdapter",
+        _CliUnknownToolAgentAdapter,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only._PROJECT_ROOT",
+        tmp_path,
+    )
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-api-key")
+    monkeypatch.setenv(
+        "DASHSCOPE_BASE_URL",
+        "https://dashscope.example/compatible-mode/v1",
+    )
+    uuid_values = iter(("3" * 32, "4" * 32))
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.uuid4",
+        lambda: SimpleNamespace(hex=next(uuid_values)),
+    )
+    _CliUnknownToolAgentAdapter.instances.clear()
+
+    exit_code = main(
+        [
+            "intelligent-evidence-request",
+            "Discover one exact movement method and inspect its IL.",
+            "--source-registry",
+            str(registry_path),
+            "--artifact-root",
+            "a",
+            "--settings",
+            str(Path("config/settings.yaml").resolve()),
+            "--allow-evidence-disclosure",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["reason"] == "UNKNOWN_EVIDENCE_TOOL"
+    diagnostic = payload["diagnostic"]
+    assert diagnostic["run_id"] == f"intelligent_evidence_{'3' * 32}"
+    assert diagnostic["stage"] == "tool_call_validation"
+    assert diagnostic["external_model_calls"] == 1
+    assert diagnostic["accepted_model_actions"] == 0
+    assert diagnostic["tool_calls_executed"] == 0
+    assert diagnostic["failure_attribution"] == (
+        "model_or_provider_emitted_unknown_tool"
+    )
+    attempt_envelope = json.loads(
+        Path(diagnostic["attempt_artifact"]["path"]).read_text(encoding="utf-8")
+    )
+    attempt = attempt_envelope["data"]
+    assert attempt["run_id"] == diagnostic["run_id"]
+    assert attempt["run_validity"] == "invalid_run"
+    assert attempt["terminal_stage"] == "tool_call_validation"
+    assert attempt["model_calls"] == 1
+    assert attempt["external_model_calls"] == 1
+    assert attempt["accepted_model_actions"] == 0
+    assert attempt["tool_calls_executed"] == 0
+    assert attempt["failure"]["code"] == "UNKNOWN_EVIDENCE_TOOL"
+    assert attempt["provider_turns"][0]["streaming"] is False
+    assert attempt["provider_turns"][0]["usage"]["total_tokens"] == 60
+    serialized_attempt = json.dumps(attempt, ensure_ascii=False)
+    assert "test-api-key" not in serialized_attempt
+    assert str(source_root) not in serialized_attempt
+    assert "Discover one exact movement method and inspect its IL." not in (
+        serialized_attempt
+    )
+    tool_identity = attempt["provider_turns"][0]["tool_calls"][0]
+    assert tool_identity["provider_reported_tool_name"] == "search_metadata"
+    assert tool_identity["adapter_extracted_tool_name"] == "search_metadata"
+    assert len(tool_identity["arguments_sha256"]) == 64
+    assert _CliUnknownToolAgentAdapter.instances[0].calls == 1
+    assert executor.actions == []
+    artifact_root = tmp_path / "a"
+    attempt_revisions = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in artifact_root.glob("features/*/r/evidence_run_attempt/*.json")
+    ]
+    assert {item["status"] for item in attempt_revisions} == {"running", "failed"}
+    assert {
+        item["data"]["run_id"] for item in attempt_revisions
+    } == {diagnostic["run_id"]}
+    started_attempt = next(
+        item for item in attempt_revisions if item["status"] == "running"
+    )
+    assert started_attempt["data"]["run_validity"] == "attempt_started"
+    assert started_attempt["data"]["external_model_calls"] == 0
+    assert not [
+        path
+        for path in artifact_root.rglob("*.json")
+        if json.loads(path.read_text(encoding="utf-8")).get("artifact_type")
+        == "evidence_pack"
+    ]
 
 
 def test_cli_intelligent_evidence_request_selects_local_ollama_without_disclosure(

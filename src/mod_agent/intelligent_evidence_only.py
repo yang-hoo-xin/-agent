@@ -9,7 +9,11 @@ from typing import Any
 from uuid import uuid4
 
 from src.core.settings import load_settings
-from src.libs.llm import OllamaChatAgentAdapter, QwenChatAgentAdapter
+from src.libs.llm import (
+    AgentTurnProviderError,
+    OllamaChatAgentAdapter,
+    QwenChatAgentAdapter,
+)
 
 from .artifacts import ArtifactRef, ArtifactStore
 from .evidence import (
@@ -23,6 +27,7 @@ from .evidence import (
     LocalAssemblyEvidenceToolExecutor,
     evidence_discovery_source_from_definition,
 )
+from .evidence.discovery_contract import EVIDENCE_DISCOVERY_TOOLS
 from .knowledge import SourceDefinition
 from .domain.wallcrawler_acceptance import evaluate_wallcrawler_local_evidence
 from .planning.models import stable_feature_id
@@ -54,6 +59,7 @@ _SOURCE_TYPES = frozenset(
     }
 )
 _EVIDENCE_ONLY_ARTIFACT_TYPES = (
+    "evidence_run_attempt",
     "request_planning_report",
     "mod_planning_brief",
     "feature_spec",
@@ -63,6 +69,15 @@ _EVIDENCE_ONLY_ARTIFACT_TYPES = (
 
 class IntelligentEvidenceEntryError(RuntimeError):
     """Raised when the intelligent evidence-only entry cannot run truthfully."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostic = dict(diagnostic or {})
 
 
 def load_evidence_discovery_sources(
@@ -156,8 +171,9 @@ def run_intelligent_evidence_only(
     sources = load_evidence_discovery_sources(source_registry_path)
     resolved_artifact_root = _resolve_artifact_root(artifact_root)
     store = ArtifactStore(resolved_artifact_root)
+    feature_id = stable_feature_id(request)
     store.preflight_atomic_commit(
-        feature_id=stable_feature_id(request),
+        feature_id=feature_id,
         artifact_types=_EVIDENCE_ONLY_ARTIFACT_TYPES,
     )
     run_id = f"intelligent_evidence_{uuid4().hex}"
@@ -219,44 +235,139 @@ def run_intelligent_evidence_only(
         use_default_proposal_git_binding=False,
         stop_after_evidence=True,
     )
-    result = graph.invoke(
-        create_initial_state(
+    store.write(
+        feature_id=feature_id,
+        artifact_type="evidence_run_attempt",
+        payload=_evidence_run_attempt_payload(
             run_id=run_id,
             request_id=request_id,
-            user_request=request,
-            target_domain=target_domain,
-            target_mod=target_mod,
-        )
+            model=model,
+            local_ollama=local_ollama,
+            run_validity="attempt_started",
+            terminal_stage="before_graph",
+            accepted_model_actions=0,
+            tool_calls_executed=0,
+            failure_attribution="unresolved",
+            failure={},
+        ),
+        status="running",
     )
-    forbidden = sorted(
-        artifact_type
-        for artifact_type in (
-            "implementation_plan",
-            "patch_proposal",
-            "proposal_review",
-            "dry_run_result",
-            "isolated_apply_result",
-            "build_result",
-            "runtime_evidence",
+    try:
+        result = graph.invoke(
+            create_initial_state(
+                run_id=run_id,
+                request_id=request_id,
+                user_request=request,
+                target_domain=target_domain,
+                target_mod=target_mod,
+            )
         )
-        if artifact_type in result["artifacts"]
-    )
-    if forbidden:
+        forbidden = sorted(
+            artifact_type
+            for artifact_type in (
+                "implementation_plan",
+                "patch_proposal",
+                "proposal_review",
+                "dry_run_result",
+                "isolated_apply_result",
+                "build_result",
+                "runtime_evidence",
+            )
+            if artifact_type in result["artifacts"]
+        )
+        if forbidden:
+            raise IntelligentEvidenceEntryError(
+                "Intelligent evidence-only run crossed its stop boundary."
+            )
+        if (
+            evidence_factory.last_result is None
+            or "evidence_pack" not in result["artifacts"]
+        ):
+            raise IntelligentEvidenceEntryError(
+                "Intelligent evidence-only run did not produce an evidence_pack."
+            )
+        evidence_ref = ArtifactRef(
+            feature_id=result["feature_id"] or result["request_id"],
+            artifact_type="evidence_pack",
+            path=result["artifacts"]["evidence_pack"],
+            artifact_hash=result["artifact_hashes"]["evidence_pack"],
+        )
+        pack = store.read(evidence_ref)["data"]
+    except (OSError, RuntimeError, ValueError) as exc:
+        error_code = _evidence_run_failure_code(exc)
+        failure_attribution = _failure_attribution(model=model, error=error_code)
+        failed_ref = store.write(
+            feature_id=feature_id,
+            artifact_type="evidence_run_attempt",
+            payload=_evidence_run_attempt_payload(
+                run_id=run_id,
+                request_id=request_id,
+                model=model,
+                local_ollama=local_ollama,
+                run_validity="invalid_run",
+                terminal_stage=(
+                    "tool_call_validation"
+                    if error_code == "UNKNOWN_EVIDENCE_TOOL"
+                    else "evidence_retrieval"
+                ),
+                accepted_model_actions=_accepted_model_action_count(
+                    evidence_factory=evidence_factory,
+                    model=model,
+                ),
+                tool_calls_executed=_executed_tool_call_count(evidence_factory),
+                failure_attribution=failure_attribution,
+                failure={
+                    "exception_type": type(exc).__name__,
+                    "code": error_code,
+                },
+            ),
+            status="failed",
+        )
         raise IntelligentEvidenceEntryError(
-            "Intelligent evidence-only run crossed its stop boundary: "
-            + ", ".join(forbidden)
-        )
-    if evidence_factory.last_result is None or "evidence_pack" not in result["artifacts"]:
-        raise IntelligentEvidenceEntryError(
-            "Intelligent evidence-only run did not produce an evidence_pack."
-        )
-    evidence_ref = ArtifactRef(
-        feature_id=result["feature_id"] or result["request_id"],
-        artifact_type="evidence_pack",
-        path=result["artifacts"]["evidence_pack"],
-        artifact_hash=result["artifact_hashes"]["evidence_pack"],
+            error_code,
+            diagnostic={
+                "category": "evidence_run_failure",
+                "stage": "tool_call_validation"
+                if error_code == "UNKNOWN_EVIDENCE_TOOL"
+                else "evidence_retrieval",
+                "code": error_code,
+                "run_id": run_id,
+                "attempt_artifact": {
+                    "path": failed_ref.path,
+                    "artifact_hash": failed_ref.artifact_hash,
+                },
+                "external_model_calls": _external_model_call_count(
+                    model=model,
+                    local_ollama=local_ollama,
+                ),
+                "accepted_model_actions": _accepted_model_action_count(
+                    evidence_factory=evidence_factory,
+                    model=model,
+                ),
+                "tool_calls_executed": _executed_tool_call_count(evidence_factory),
+                "failure_attribution": failure_attribution,
+            },
+        ) from exc
+    completed_attempt_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="evidence_run_attempt",
+        payload=_evidence_run_attempt_payload(
+            run_id=run_id,
+            request_id=request_id,
+            model=model,
+            local_ollama=local_ollama,
+            run_validity="valid_run",
+            terminal_stage="evidence_retrieval",
+            accepted_model_actions=_accepted_model_action_count(
+                evidence_factory=evidence_factory,
+                model=model,
+            ),
+            tool_calls_executed=_executed_tool_call_count(evidence_factory),
+            failure_attribution="none",
+            failure={},
+        ),
+        status="success",
     )
-    pack = store.read(evidence_ref)["data"]
     output = {
         "status": evidence_factory.last_result.run_status,
         "command": "intelligent-evidence-request",
@@ -274,6 +385,10 @@ def run_intelligent_evidence_only(
         "disclosure": model.disclosure_record,
         "artifacts": dict(result["artifacts"]),
         "artifact_hashes": dict(result["artifact_hashes"]),
+        "attempt_artifact": {
+            "path": completed_attempt_ref.path,
+            "artifact_hash": completed_attempt_ref.artifact_hash,
+        },
         "forbidden_artifacts_present": forbidden,
         "evidence_pack": pack,
     }
@@ -296,3 +411,113 @@ def _resolve_artifact_root(path: str | Path) -> Path:
             "artifact_root must stay inside the project root."
         ) from exc
     return resolved
+
+
+def _evidence_run_attempt_payload(
+    *,
+    run_id: str,
+    request_id: str,
+    model: EvidenceDiscoveryAgentModel,
+    local_ollama: bool,
+    run_validity: str,
+    terminal_stage: str,
+    accepted_model_actions: int,
+    tool_calls_executed: int,
+    failure_attribution: str,
+    failure: dict[str, object],
+) -> dict[str, object]:
+    model_calls = int(getattr(model, "model_call_count", 0))
+    provider_turns = getattr(model, "provider_turn_records", ())
+    return {
+        "node_name": "retrieve_evidence",
+        "stage": "evidence_retrieval",
+        "message": (
+            "Durable identity and sanitized provider diagnostics for one bounded "
+            "evidence discovery attempt."
+        ),
+        "run_id": run_id,
+        "request_id": request_id,
+        "run_validity": run_validity,
+        "terminal_stage": terminal_stage,
+        "model_execution": model.disclosure_record,
+        "model_calls": model_calls,
+        "external_model_calls": 0 if local_ollama else model_calls,
+        "accepted_model_actions": accepted_model_actions,
+        "tool_calls_executed": tool_calls_executed,
+        "provider_turns": [dict(item) for item in provider_turns],
+        "failure_attribution": failure_attribution,
+        "failure": dict(failure),
+    }
+
+
+def _accepted_model_action_count(
+    *,
+    evidence_factory: IntelligentEvidencePackFactory,
+    model: EvidenceDiscoveryAgentModel,
+) -> int:
+    """Count accepted model tool actions and accepted model finish actions."""
+
+    result = evidence_factory.last_result
+    if result is None:
+        return int(getattr(model, "accepted_action_count", 0))
+    return sum(
+        1
+        for item in result.pack.model_action_trace
+        if item.get("origin") == "model" and item.get("status") == "accepted"
+    )
+
+
+def _executed_tool_call_count(
+    evidence_factory: IntelligentEvidencePackFactory,
+) -> int:
+    result = evidence_factory.last_result
+    return len(result.actions) if result is not None else 0
+
+
+def _external_model_call_count(
+    *,
+    model: EvidenceDiscoveryAgentModel,
+    local_ollama: bool,
+) -> int:
+    return 0 if local_ollama else int(getattr(model, "model_call_count", 0))
+
+
+def _failure_attribution(
+    *,
+    model: EvidenceDiscoveryAgentModel,
+    error: str,
+) -> str:
+    if error != "UNKNOWN_EVIDENCE_TOOL":
+        return "unresolved"
+    records = getattr(model, "provider_turn_records", ())
+    if not records:
+        return "unresolved"
+    tool_calls = records[-1].get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return "unresolved"
+    latest = tool_calls[-1]
+    if not isinstance(latest, dict):
+        return "unresolved"
+    provider_name = str(latest.get("provider_reported_tool_name") or "")
+    adapter_name = str(latest.get("adapter_extracted_tool_name") or "")
+    if not provider_name:
+        return "unresolved"
+    if provider_name not in EVIDENCE_DISCOVERY_TOOLS:
+        if provider_name.strip() in EVIDENCE_DISCOVERY_TOOLS:
+            return "whitespace_normalization_issue"
+        return "model_or_provider_emitted_unknown_tool"
+    if adapter_name not in EVIDENCE_DISCOVERY_TOOLS:
+        return "provider_adapter_extraction_failure"
+    return "unresolved"
+
+
+def _evidence_run_failure_code(exc: BaseException) -> str:
+    if str(exc) == "UNKNOWN_EVIDENCE_TOOL":
+        return "UNKNOWN_EVIDENCE_TOOL"
+    if isinstance(exc, AgentTurnProviderError):
+        return "AGENT_TURN_PROVIDER_ERROR"
+    if isinstance(exc, OSError):
+        return "EVIDENCE_RUN_OS_ERROR"
+    if isinstance(exc, ValueError):
+        return "EVIDENCE_RUN_VALIDATION_ERROR"
+    return "EVIDENCE_RUN_RUNTIME_ERROR"

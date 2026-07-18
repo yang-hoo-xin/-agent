@@ -105,6 +105,7 @@ class AgentTurnResponse:
     request_id: str | None = None
     usage: AgentUsage = field(default_factory=AgentUsage)
     provider_state: object | None = None
+    provider_diagnostic: dict[str, object] | None = None
     raw_response: object | None = None
 
 
@@ -123,6 +124,15 @@ JsonRequestSender = Callable[[str, dict[str, object], dict[str, str]], dict[str,
 
 class AgentTurnProviderError(RuntimeError):
     """Raised when a provider rejects or returns an invalid Agent turn."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostic: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostic = dict(diagnostic or {})
 
 
 class _HttpJsonSender:
@@ -368,6 +378,7 @@ class QwenChatAgentAdapter:
         payload: dict[str, object] = {
             "model": self.model,
             "messages": messages,
+            "stream": False,
             "temperature": request.temperature,
             "max_completion_tokens": self.max_completion_tokens,
             "enable_thinking": False,
@@ -395,8 +406,6 @@ class QwenChatAgentAdapter:
             message = choice["message"]
         except (KeyError, IndexError, TypeError) as exc:
             raise AgentTurnProviderError("QWEN_CHAT_RESPONSE_INVALID") from exc
-        raw_tool_calls = message.get("tool_calls") or []
-        tool_calls = tuple(_parse_chat_tool_call(item) for item in raw_tool_calls)
         usage_data = data.get("usage") or {}
         usage = AgentUsage(
             input_tokens=_int_value(usage_data.get("prompt_tokens")),
@@ -410,6 +419,28 @@ class QwenChatAgentAdapter:
                 (usage_data.get("prompt_tokens_details") or {}).get("cached_tokens")
             ),
         )
+        raw_tool_calls = message.get("tool_calls") or []
+        parsed_tool_calls: list[AgentToolCall] = []
+        try:
+            for item in raw_tool_calls:
+                parsed_tool_calls.append(_parse_chat_tool_call(item))
+        except AgentTurnProviderError as exc:
+            raise AgentTurnProviderError(
+                str(exc),
+                diagnostic=_qwen_chat_response_diagnostic(
+                    data=data,
+                    raw_tool_calls=raw_tool_calls,
+                    tool_calls=tuple(parsed_tool_calls),
+                    usage=usage,
+                ),
+            ) from exc
+        tool_calls = tuple(parsed_tool_calls)
+        provider_diagnostic = _qwen_chat_response_diagnostic(
+            data=data,
+            raw_tool_calls=raw_tool_calls,
+            tool_calls=tool_calls,
+            usage=usage,
+        )
         return AgentTurnResponse(
             provider=self.provider,
             model=str(data.get("model") or self.model),
@@ -422,6 +453,7 @@ class QwenChatAgentAdapter:
                 "content": message.get("content"),
                 "tool_calls": raw_tool_calls,
             },
+            provider_diagnostic=provider_diagnostic,
             raw_response=data,
         )
 
@@ -571,6 +603,82 @@ def _responses_tool(tool: AgentToolDefinition) -> dict[str, object]:
         "description": tool.description,
         "parameters": tool.parameters,
         "strict": tool.strict,
+    }
+
+
+def _qwen_chat_response_diagnostic(
+    *,
+    data: dict[str, Any],
+    raw_tool_calls: object,
+    tool_calls: tuple[AgentToolCall, ...],
+    usage: AgentUsage,
+) -> dict[str, object]:
+    raw_items = raw_tool_calls if isinstance(raw_tool_calls, list) else []
+    tool_call_diagnostics: list[dict[str, object]] = []
+    for index, raw in enumerate(raw_items):
+        raw_call = raw if isinstance(raw, dict) else {}
+        function = raw_call.get("function")
+        raw_function = function if isinstance(function, dict) else {}
+        provider_name = str(raw_function.get("name") or "")
+        adapter_name = tool_calls[index].name if index < len(tool_calls) else ""
+        arguments_audit = _provider_arguments_audit(raw_function.get("arguments"))
+        tool_call_diagnostics.append(
+            {
+                "tool_call_id": str(raw_call.get("id") or ""),
+                "provider_reported_tool_name": provider_name,
+                "adapter_extracted_tool_name": adapter_name,
+                "normalized_tool_name": adapter_name,
+                "normalization_applied": False,
+                **arguments_audit,
+            }
+        )
+    choice = {}
+    choices = data.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        choice = choices[0]
+    return {
+        "api_type": "openai_compatible_chat_completions",
+        "streaming": False,
+        "provider_request_id": str(data.get("id") or "") or None,
+        "finish_reason": str(choice.get("finish_reason") or "") or None,
+        "tool_calls": tool_call_diagnostics,
+        "usage": usage.to_dict(),
+    }
+
+
+def _provider_arguments_audit(value: object) -> dict[str, object]:
+    valid_json = True
+    parsed: object = value
+    if isinstance(value, str):
+        serialized = value
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            valid_json = False
+            parsed = value
+    elif not isinstance(value, dict):
+        valid_json = False
+        try:
+            serialized = json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError):
+            serialized = repr(value)
+    else:
+        serialized = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    valid_object = valid_json and isinstance(parsed, dict)
+    return {
+        "arguments_valid_json": valid_json,
+        "arguments_is_object": valid_object,
+        "arguments_sha256": sha256(serialized.encode("utf-8")).hexdigest(),
     }
 
 

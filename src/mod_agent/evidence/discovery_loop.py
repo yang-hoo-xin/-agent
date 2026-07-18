@@ -107,7 +107,8 @@ class EvidenceDiscoverySpecialist:
             "system_contract_sha256": _json_sha256(initial_messages[0]["content"]),
             "initial_context_sha256": _json_sha256(initial_messages[1]["content"]),
             "context_strategy": (
-                "deduplicated_catalog_latest_observation_and_repeat_correction_v4"
+                "deduplicated_catalog_latest_observation_zero_result_recovery_"
+                "and_repeat_correction_v5"
             ),
             "raw_prompt_persisted": False,
         }
@@ -705,6 +706,7 @@ def _acceptance_progress(
         if observation.tool == "search_dotnet_metadata"
     ]
     inspection_observation_ids = _inspection_observation_ids(observations)
+    metadata_candidate_refs = _metadata_candidate_refs(observations)
     if not metadata_observation_ids:
         remaining_requirements = [
             "Use search_dotnet_metadata to obtain a current-run candidate_ref.",
@@ -712,6 +714,18 @@ def _acceptance_progress(
             (
                 "Finish with an observed or inferred conclusion whose observation_ids "
                 "includes an inspect_method_il observation_id."
+            ),
+        ]
+    elif not metadata_candidate_refs:
+        remaining_requirements = [
+            (
+                "No current-run candidate_ref has been observed. Do not call "
+                "inspect_method_il without one."
+            ),
+            (
+                "Use a materially different literal managed-symbol substring, change "
+                "result_kinds to types or fields, or finish with needs_more_evidence. "
+                "Do not treat zero results as proof that a symbol does not exist."
             ),
         ]
     elif not inspection_observation_ids:
@@ -738,6 +752,22 @@ def _acceptance_progress(
         },
         "remaining_requirements": remaining_requirements,
     }
+
+
+def _metadata_candidate_refs(
+    observations: list[ToolObservation],
+) -> list[str]:
+    refs: list[str] = []
+    for observation in observations:
+        if observation.tool != "search_dotnet_metadata":
+            continue
+        methods = observation.data.get("methods", [])
+        if not isinstance(methods, list):
+            continue
+        for raw in methods:
+            if isinstance(raw, dict) and raw.get("candidate_ref"):
+                refs.append(str(raw["candidate_ref"]))
+    return refs
 
 
 def _finish_validation_repair_focus(error_code: str) -> dict[str, object]:

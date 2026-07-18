@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -13,6 +14,7 @@ from src.libs.llm import (
     AgentToolDefinition,
     AgentToolResult,
     AgentTurnRequest,
+    AgentTurnProviderError,
     OllamaChatAgentAdapter,
     OpenAIResponsesAgentAdapter,
     QwenChatAgentAdapter,
@@ -97,6 +99,7 @@ def test_qwen_chat_adapter_uses_native_tools_without_thinking_or_parallel_calls(
     assert captured[0][0].endswith("/chat/completions")
     assert payload["enable_thinking"] is False
     assert payload["parallel_tool_calls"] is False
+    assert payload["stream"] is False
     assert payload["max_completion_tokens"] == 4096
     assert "strict" not in payload["tools"][0]["function"]
     assert response.tool_calls == (
@@ -108,6 +111,135 @@ def test_qwen_chat_adapter_uses_native_tools_without_thinking_or_parallel_calls(
     )
     assert response.usage.input_tokens == 100
     assert response.usage.output_tokens == 20
+    assert response.provider_diagnostic == {
+        "api_type": "openai_compatible_chat_completions",
+        "streaming": False,
+        "provider_request_id": "chatcmpl-qwen-001",
+        "finish_reason": "tool_calls",
+        "tool_calls": [
+            {
+                "tool_call_id": "call-qwen-001",
+                "provider_reported_tool_name": "search_dotnet_metadata",
+                "adapter_extracted_tool_name": "search_dotnet_metadata",
+                "normalized_tool_name": "search_dotnet_metadata",
+                "normalization_applied": False,
+                "arguments_valid_json": True,
+                "arguments_is_object": True,
+                "arguments_sha256": hashlib.sha256(
+                    json.dumps({"source_id": "r8-modules"}).encode("utf-8")
+                ).hexdigest(),
+            }
+        ],
+        "usage": {
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "total_tokens": 120,
+            "reasoning_tokens": 0,
+            "cached_input_tokens": 0,
+        },
+    }
+
+
+def test_qwen_chat_adapter_preserves_unknown_provider_tool_name() -> None:
+    def send(url, payload, headers):
+        return {
+            "id": "chatcmpl-qwen-unknown",
+            "model": "qwen3.6-plus",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-qwen-unknown",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_metadata",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+            "usage": {"prompt_tokens": 17, "completion_tokens": 4},
+        }
+
+    response = QwenChatAgentAdapter(
+        api_key="not-a-real-key",
+        base_url="https://dashscope.example/compatible-mode/v1",
+        model="qwen3.6-plus",
+        max_completion_tokens=4096,
+        request_sender=send,
+    ).complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content="use a tool"),),
+            tools=(_tool(),),
+        )
+    )
+
+    assert response.tool_calls[0].name == "search_metadata"
+    diagnostic = response.provider_diagnostic
+    assert diagnostic is not None
+    assert diagnostic["usage"]["total_tokens"] == 21
+    assert diagnostic["tool_calls"][0]["provider_reported_tool_name"] == (
+        "search_metadata"
+    )
+    assert diagnostic["tool_calls"][0]["adapter_extracted_tool_name"] == (
+        "search_metadata"
+    )
+
+
+def test_qwen_chat_adapter_preserves_diagnostic_when_arguments_are_invalid() -> None:
+    def send(url, payload, headers):
+        return {
+            "id": "chatcmpl-qwen-invalid-arguments",
+            "model": "qwen3.6-plus",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call-qwen-invalid-arguments",
+                                "type": "function",
+                                "function": {
+                                    "name": "search_dotnet_metadata",
+                                    "arguments": "{",
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+            "usage": {"prompt_tokens": 19, "completion_tokens": 2},
+        }
+
+    adapter = QwenChatAgentAdapter(
+        api_key="not-a-real-key",
+        base_url="https://dashscope.example/compatible-mode/v1",
+        model="qwen3.6-plus",
+        max_completion_tokens=4096,
+        request_sender=send,
+    )
+    with pytest.raises(AgentTurnProviderError) as raised:
+        adapter.complete_turn(
+            AgentTurnRequest(
+                messages=(AgentMessage(role="user", content="use a tool"),),
+                tools=(_tool(),),
+            )
+        )
+
+    diagnostic = raised.value.diagnostic
+    assert diagnostic["provider_request_id"] == "chatcmpl-qwen-invalid-arguments"
+    assert diagnostic["usage"]["total_tokens"] == 21
+    tool_call = diagnostic["tool_calls"][0]
+    assert tool_call["provider_reported_tool_name"] == "search_dotnet_metadata"
+    assert tool_call["adapter_extracted_tool_name"] == ""
+    assert tool_call["arguments_valid_json"] is False
+    assert tool_call["arguments_is_object"] is False
 
 
 def test_qwen_chat_adapter_links_local_tool_result_to_exact_call_id() -> None:

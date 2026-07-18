@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,7 @@ from src.libs.llm import (
     AgentToolDefinition,
     AgentToolResult,
     AgentTurnClient,
+    AgentTurnProviderError,
     AgentTurnRequest,
     AgentTurnResponse,
     BaseLLM,
@@ -27,7 +29,7 @@ EVIDENCE_DISCOVERY_TOOLS = frozenset(
     {"search_dotnet_metadata", "inspect_method_il"}
 )
 EVIDENCE_DISCOVERY_RESULT_KINDS = frozenset({"methods", "types", "fields"})
-EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v7"
+EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v8"
 EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES = (
     "natural_language_request",
     "source_registry_model_views",
@@ -129,6 +131,9 @@ class EvidenceDiscoveryAgentModel:
         self.execution_boundary = boundary
         self._pending_response: AgentTurnResponse | None = None
         self._usage_records: list[dict[str, object]] = []
+        self._provider_turn_records: list[dict[str, object]] = []
+        self._model_call_count = 0
+        self._accepted_action_count = 0
 
     @property
     def disclosure_record(self) -> dict[str, object]:
@@ -138,9 +143,24 @@ class EvidenceDiscoveryAgentModel:
     def usage_records(self) -> tuple[dict[str, object], ...]:
         return tuple(dict(item) for item in self._usage_records)
 
+    @property
+    def provider_turn_records(self) -> tuple[dict[str, object], ...]:
+        return tuple(dict(item) for item in self._provider_turn_records)
+
+    @property
+    def model_call_count(self) -> int:
+        return self._model_call_count
+
+    @property
+    def accepted_action_count(self) -> int:
+        return self._accepted_action_count
+
     def begin_run(self) -> None:
         self._pending_response = None
         self._usage_records.clear()
+        self._provider_turn_records.clear()
+        self._model_call_count = 0
+        self._accepted_action_count = 0
 
     def complete(self, messages: tuple[dict[str, object], ...]) -> str:
         agent_messages: list[AgentMessage] = []
@@ -178,19 +198,28 @@ class EvidenceDiscoveryAgentModel:
             )
             provider_state = pending.provider_state
 
-        response = self.client.complete_turn(
-            AgentTurnRequest(
-                messages=tuple(agent_messages),
-                tools=() if force_finish else _discovery_tool_definitions(),
-                tool_choice="none" if force_finish else "auto",
-                parallel_tool_calls=False,
-                response_format=_finish_response_format() if force_finish else None,
-                tool_results=tool_results,
-                tool_result_insert_index=tool_result_insert_index,
-                provider_state=provider_state,
-                temperature=0.0,
-            )
+        request = AgentTurnRequest(
+            messages=tuple(agent_messages),
+            tools=() if force_finish else _discovery_tool_definitions(),
+            tool_choice="none" if force_finish else "auto",
+            parallel_tool_calls=False,
+            response_format=_finish_response_format() if force_finish else None,
+            tool_results=tool_results,
+            tool_result_insert_index=tool_result_insert_index,
+            provider_state=provider_state,
+            temperature=0.0,
         )
+        self._model_call_count += 1
+        try:
+            response = self.client.complete_turn(request)
+        except AgentTurnProviderError as exc:
+            if exc.diagnostic:
+                self._provider_turn_records.append(dict(exc.diagnostic))
+            raise
+        if response.provider_diagnostic is not None:
+            self._provider_turn_records.append(dict(response.provider_diagnostic))
+        else:
+            self._provider_turn_records.append(_fallback_provider_turn_record(response))
         self._usage_records.append(
             {
                 "provider": response.provider,
@@ -205,6 +234,7 @@ class EvidenceDiscoveryAgentModel:
         if response.tool_calls:
             call = response.tool_calls[0]
             action = _action_from_tool_call(call.name, call.arguments)
+            self._accepted_action_count += 1
             self._pending_response = response
             return json.dumps(action, ensure_ascii=False, separators=(",", ":"))
         self._pending_response = None
@@ -629,6 +659,38 @@ def _finish_response_format() -> AgentResponseFormat:
         description="Final grounded evidence decision for the bounded discovery run.",
         schema=evidence_discovery_finish_schema(),
     )
+
+
+def _fallback_provider_turn_record(
+    response: AgentTurnResponse,
+) -> dict[str, object]:
+    return {
+        "api_type": "provider_neutral_agent_turn",
+        "streaming": False,
+        "provider_request_id": response.request_id,
+        "finish_reason": response.stop_reason,
+        "tool_calls": [
+            {
+                "tool_call_id": call.call_id,
+                "provider_reported_tool_name": None,
+                "adapter_extracted_tool_name": call.name,
+                "normalized_tool_name": call.name,
+                "normalization_applied": False,
+                "arguments_valid_json": True,
+                "arguments_is_object": True,
+                "arguments_sha256": hashlib.sha256(
+                    json.dumps(
+                        call.arguments,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest(),
+            }
+            for call in response.tool_calls
+        ],
+        "usage": response.usage.to_dict(),
+    }
 
 
 def _action_from_tool_call(
