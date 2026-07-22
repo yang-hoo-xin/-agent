@@ -17,6 +17,7 @@ from .discovery_contract import (
     ToolObservation,
     evidence_discovery_finish_decision_constraints,
     evidence_discovery_finish_schema,
+    observed_conclusion_matches_bound_fact,
 )
 from .models import EvidencePack, missing_evidence_from_blockers
 
@@ -42,7 +43,14 @@ class IntelligentEvidencePackFactory:
         self.max_total_observation_bytes = max_total_observation_bytes
         self.last_result: EvidenceDiscoveryResult | None = None
 
+    @property
+    def runtime_diagnostics(self) -> dict[str, object]:
+        """Expose the specialist's sanitized run snapshot even before result return."""
+
+        return self.specialist.runtime_diagnostics
+
     def __call__(self, state: dict[str, Any], feature_data: dict[str, Any]) -> EvidencePack:
+        self.last_result = None
         run_id = str(state.get("run_id") or "").strip()
         request_id = str(state.get("request_id") or "").strip()
         goal = str(
@@ -65,7 +73,11 @@ class IntelligentEvidencePackFactory:
 
 
 class EvidenceDiscoverySpecialist:
-    """Run one bounded read-only action/observation loop inside Evidence."""
+    """Run one bounded read-only action/observation loop inside Evidence.
+
+    The first invalid finish is rejected. At most one correction is offered only
+    when a model/provider turn remains inside the existing model-step budget.
+    """
 
     def __init__(
         self,
@@ -75,8 +87,40 @@ class EvidenceDiscoverySpecialist:
     ) -> None:
         self.model = model
         self.tool_executor = tool_executor
+        self._runtime_diagnostics = _new_runtime_diagnostics()
+
+    @property
+    def runtime_diagnostics(self) -> dict[str, object]:
+        """Return failure-safe counters without action arguments or observations."""
+
+        snapshot = dict(self._runtime_diagnostics)
+        snapshot["provider_tool_calls"] = _provider_tool_call_count(self.model)
+        snapshot["adapter_accepted_actions"] = int(
+            getattr(self.model, "accepted_action_count", 0)
+        )
+        return snapshot
 
     def discover(self, request: EvidenceDiscoveryRequest) -> EvidenceDiscoveryResult:
+        self._runtime_diagnostics = _new_runtime_diagnostics()
+        self._runtime_diagnostics["failure_stage"] = "run_initialization"
+        try:
+            result = self._discover(request)
+        except (OSError, RuntimeError, ValueError) as exc:
+            failure_stage = str(self._runtime_diagnostics["failure_stage"])
+            if failure_stage == "provider_turn":
+                model_stage = str(getattr(self.model, "runtime_stage", "") or "")
+                if model_stage:
+                    failure_stage = model_stage
+            self._runtime_diagnostics["failure_stage"] = failure_stage
+            self._runtime_diagnostics["symbolic_failure_code"] = (
+                _symbolic_discovery_failure_code(exc)
+            )
+            raise
+        if self._runtime_diagnostics["symbolic_failure_code"] == "none":
+            self._runtime_diagnostics["failure_stage"] = "none"
+        return result
+
+    def _discover(self, request: EvidenceDiscoveryRequest) -> EvidenceDiscoveryResult:
         begin_run = getattr(self.model, "begin_run", None)
         if callable(begin_run):
             begin_run()
@@ -129,6 +173,7 @@ class EvidenceDiscoverySpecialist:
         model_steps_used = 0
         for model_step in range(1, request.max_model_steps + 1):
             model_steps_used = model_step
+            self._runtime_diagnostics["failure_stage"] = "turn_context_construction"
             messages = _build_turn_messages(
                 initial_messages=initial_messages,
                 actions=actions,
@@ -141,10 +186,14 @@ class EvidenceDiscoverySpecialist:
             )
             discovery_message_bytes_by_turn.append(_json_size(messages))
             correction_required = finish_validation_error is not None
+            if correction_required:
+                self._runtime_diagnostics["correction_attempted"] = True
             pending_observation = None
             finish_validation_error = None
             tool_action_validation_error = None
+            self._runtime_diagnostics["failure_stage"] = "provider_turn"
             raw = self.model.complete(messages)
+            self._runtime_diagnostics["failure_stage"] = "action_parsing"
             action = _parse_action(raw)
             if correction_required and action["action"] != "finish":
                 model_action_attempts.append(
@@ -171,6 +220,7 @@ class EvidenceDiscoverySpecialist:
                     model_action_attempts=model_action_attempts,
                 )
             if action["action"] == "finish":
+                self._runtime_diagnostics["failure_stage"] = "finish_validation"
                 try:
                     _validate_finish(action, observations_by_id)
                 except ValueError as exc:
@@ -184,7 +234,7 @@ class EvidenceDiscoverySpecialist:
                         )
                     )
                     if finish_correction_used:
-                        return self._budget_result(
+                        result = self._budget_result(
                             request=request,
                             actions=actions,
                             observations=observations,
@@ -201,6 +251,27 @@ class EvidenceDiscoverySpecialist:
                             ),
                             model_action_attempts=model_action_attempts,
                         )
+                        if error == "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH":
+                            self._runtime_diagnostics["failure_stage"] = (
+                                "finish_validation"
+                            )
+                            self._runtime_diagnostics["symbolic_failure_code"] = error
+                        return result
+                    if (
+                        error == "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+                        and model_step == request.max_model_steps
+                    ):
+                        self._runtime_diagnostics["failure_stage"] = (
+                            "finish_validation"
+                        )
+                        self._runtime_diagnostics["symbolic_failure_code"] = error
+                        self._runtime_diagnostics["correction_attempted"] = False
+                        self._runtime_diagnostics[
+                            "correction_unavailable_reason"
+                        ] = "no_remaining_model_turn"
+                        terminal_error = ValueError(error)
+                        terminal_error.run_status = "budget_exhausted"  # type: ignore[attr-defined]
+                        raise terminal_error
                     finish_correction_used = True
                     finish_validation_error = error
                     continue
@@ -246,12 +317,14 @@ class EvidenceDiscoverySpecialist:
                     discovery_message_bytes_by_turn=discovery_message_bytes_by_turn,
                     model_action_attempts=model_action_attempts,
                 )
+            self._runtime_diagnostics["failure_stage"] = "action_validation"
             _validate_tool_action(
                 action,
                 sources=sources,
                 observations_by_id=observations_by_id,
                 candidate_origins=candidate_origins,
             )
+            self._runtime_diagnostics["failure_stage"] = "repeat_policy"
             action_signature = _tool_action_signature(action)
             if action_signature in executed_tool_action_signatures:
                 model_action_attempts.append(
@@ -286,6 +359,9 @@ class EvidenceDiscoverySpecialist:
                     "rejected_source_id": action["source_id"],
                 }
                 continue
+            self._runtime_diagnostics["deterministic_validation_passed"] = int(
+                self._runtime_diagnostics["deterministic_validation_passed"]
+            ) + 1
             model_action_attempts.append(
                 _model_action_attempt(
                     model_step=model_step,
@@ -295,12 +371,25 @@ class EvidenceDiscoverySpecialist:
             )
             observation_id = f"obs-{len(observations) + 1:03d}"
             source = sources[str(action["source_id"])]
+            self._runtime_diagnostics["failure_stage"] = "tool_dispatch"
+            self._runtime_diagnostics["dispatch_started"] = int(
+                self._runtime_diagnostics["dispatch_started"]
+            ) + 1
+            self._runtime_diagnostics["failure_stage"] = "tool_execution"
             observation = self.tool_executor.execute(
                 action=action,
                 source=source,
                 observation_id=observation_id,
             )
+            self._runtime_diagnostics["tool_execution_completed"] = int(
+                self._runtime_diagnostics["tool_execution_completed"]
+            ) + 1
+            self._runtime_diagnostics["observation_created"] = int(
+                self._runtime_diagnostics["observation_created"]
+            ) + 1
+            self._runtime_diagnostics["failure_stage"] = "observation_validation"
             _validate_observation(observation, action=action)
+            self._runtime_diagnostics["failure_stage"] = "observation_projection"
             encoded_size = len(
                 json.dumps(
                     observation.model_view(),
@@ -324,6 +413,7 @@ class EvidenceDiscoverySpecialist:
                     discovery_message_bytes_by_turn=discovery_message_bytes_by_turn,
                     model_action_attempts=model_action_attempts,
                 )
+            self._runtime_diagnostics["failure_stage"] = "observation_registration"
             actions.append(action)
             executed_tool_action_signatures.add(action_signature)
             observations.append(observation)
@@ -365,6 +455,7 @@ class EvidenceDiscoverySpecialist:
         finish_origin: str,
         model_action_attempts: list[dict[str, object]],
     ) -> EvidenceDiscoveryResult:
+        self._runtime_diagnostics["failure_stage"] = "result_construction"
         unresolved = tuple(str(item) for item in finish.get("unresolved_questions", []))
         missing_capabilities = tuple(
             str(item) for item in finish.get("missing_capabilities", [])
@@ -461,7 +552,7 @@ class EvidenceDiscoverySpecialist:
             run_status=run_status,
             verified_findings=_verified_observed_findings(
                 conclusions=conclusions,
-                observation_facts=observation_fact_catalog,
+                observations=tuple(observations),
             ),
             evidence_conclusions=conclusions,
             observation_fact_catalog=observation_fact_catalog,
@@ -495,7 +586,7 @@ class EvidenceDiscoverySpecialist:
                     "observation_id": observation.observation_id,
                     "tool": observation.tool,
                     "source_id": observation.source_id,
-                    "observation_sha256": _json_sha256(observation.model_view()),
+                    "observation_sha256": observation.identity_sha256(),
                     "model_payload_bytes": len(
                         json.dumps(
                             observation.model_view(),
@@ -812,6 +903,15 @@ def _finish_validation_repair_focus(error_code: str) -> dict[str, object]:
                 "from available_inspection_observation_ids."
             ),
         }
+    if error_code == "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH":
+        return {
+            "field": "evidence_conclusions[]",
+            "requirement": (
+                "Each observed claim must exactly copy one supported_fact "
+                "canonical_claim and cite only that fact's observation_id. Put any "
+                "interpretation in a separate inferred conclusion with limitations."
+            ),
+        }
     return {
         "field": "finish",
         "requirement": "Match required_finish_schema exactly.",
@@ -962,6 +1062,76 @@ def _observation_internal_method_ids(
     if direct_method_id:
         method_ids.add(str(direct_method_id))
     return method_ids
+
+
+def _new_runtime_diagnostics() -> dict[str, object]:
+    return {
+        "provider_tool_calls": 0,
+        "adapter_accepted_actions": 0,
+        "deterministic_validation_passed": 0,
+        "dispatch_started": 0,
+        "tool_execution_completed": 0,
+        "observation_created": 0,
+        "failure_stage": "not_started",
+        "symbolic_failure_code": "none",
+        "correction_attempted": False,
+        "correction_unavailable_reason": "none",
+    }
+
+
+def _provider_tool_call_count(model: EvidenceDiscoveryModel) -> int:
+    total = 0
+    for record in getattr(model, "provider_turn_records", ()):
+        if not isinstance(record, dict):
+            continue
+        tool_calls = record.get("tool_calls")
+        if isinstance(tool_calls, list):
+            total += len(tool_calls)
+    return total
+
+
+def _symbolic_discovery_failure_code(exc: BaseException) -> str:
+    """Keep known symbolic codes while refusing arbitrary exception text."""
+
+    message = str(exc)
+    compact = message.replace("_", "")
+    allowed_prefixes = (
+        "ASSEMBLY_",
+        "CANDIDATE_",
+        "COMPACT_",
+        "DISCOVERY_",
+        "DUPLICATE_",
+        "EVIDENCE_",
+        "EXACT_",
+        "FINISH_",
+        "INFERRED_",
+        "METADATA_",
+        "METHOD_",
+        "MISSING_",
+        "MODEL_",
+        "NEEDS_",
+        "OBSERVED_",
+        "REPEATED_",
+        "SEARCH_",
+        "SOURCE_",
+        "SUFFICIENT_",
+        "TOOL_",
+        "UNAUTHORIZED_",
+        "UNKNOWN_",
+        "UNVERIFIED_",
+    )
+    if (
+        3 <= len(message) <= 96
+        and compact.isalnum()
+        and message == message.upper()
+        and message.startswith(allowed_prefixes)
+    ):
+        return message
+    if isinstance(exc, ValueError):
+        return "EVIDENCE_DISCOVERY_VALUE_ERROR"
+    if isinstance(exc, OSError):
+        return "EVIDENCE_DISCOVERY_OS_ERROR"
+    return "EVIDENCE_DISCOVERY_RUNTIME_ERROR"
 
 
 def _parse_action(raw: str) -> dict[str, object]:
@@ -1145,6 +1315,24 @@ def _validate_finish(
         raise ValueError("NEEDS_MORE_EVIDENCE_REQUIRES_OPEN_GAP")
     if decision == "blocked_by_missing_capability" and not missing:
         raise ValueError("MISSING_CAPABILITY_DECISION_REQUIRES_CAPABILITY")
+    for conclusion in conclusions:
+        if conclusion.get("claim_status") != "observed":
+            continue
+        matching_fact_count = sum(
+            1
+            for observation in observations_by_id.values()
+            for fact in observation.supported_facts()
+            if observed_conclusion_matches_bound_fact(
+                conclusion=conclusion,
+                fact=fact,
+                observation_id=observation.observation_id,
+                observation_tool=observation.tool,
+                observation_source_id=observation.source_id,
+                observation_sha256=observation.identity_sha256(),
+            )
+        )
+        if matching_fact_count != 1:
+            raise ValueError("OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH")
 
 
 def _input_audit(request: EvidenceDiscoveryRequest) -> dict[str, int]:
@@ -1159,26 +1347,24 @@ def _input_audit(request: EvidenceDiscoveryRequest) -> dict[str, int]:
 def _verified_observed_findings(
     *,
     conclusions: tuple[dict[str, Any], ...],
-    observation_facts: tuple[dict[str, object], ...],
+    observations: tuple[ToolObservation, ...],
 ) -> tuple[dict[str, Any], ...]:
-    facts_by_claim: dict[str, list[dict[str, object]]] = {}
-    for fact in observation_facts:
-        canonical_claim = fact.get("canonical_claim")
-        observation_id = fact.get("observation_id")
-        if isinstance(canonical_claim, str) and isinstance(observation_id, str):
-            facts_by_claim.setdefault(canonical_claim, []).append(fact)
     verified: list[dict[str, Any]] = []
     for conclusion in conclusions:
         if conclusion.get("claim_status") != "observed":
             continue
-        claim = conclusion.get("claim")
-        observation_ids = conclusion.get("observation_ids")
-        if not isinstance(claim, str) or not isinstance(observation_ids, list):
-            continue
         matching_facts = [
             fact
-            for fact in facts_by_claim.get(claim, [])
-            if observation_ids == [fact["observation_id"]]
+            for observation in observations
+            for fact in observation.supported_facts()
+            if observed_conclusion_matches_bound_fact(
+                conclusion=conclusion,
+                fact=fact,
+                observation_id=observation.observation_id,
+                observation_tool=observation.tool,
+                observation_source_id=observation.source_id,
+                observation_sha256=observation.identity_sha256(),
+            )
         ]
         if len(matching_facts) == 1:
             verified.append(dict(conclusion))
@@ -1378,7 +1564,7 @@ def _candidate_binding_trace(
                 "metadata_observation_id": metadata_observation_id,
                 "internal_method_id": method_id,
                 "il_observation_id": observation.observation_id,
-                "il_observation_sha256": _json_sha256(observation.model_view()),
+                "il_observation_sha256": observation.identity_sha256(),
             }
         )
     return trace

@@ -6,6 +6,11 @@ import json
 from hashlib import sha256
 from typing import Any
 
+from src.mod_agent.evidence.discovery_contract import (
+    observation_fact_integrity_valid,
+    observed_conclusion_matches_bound_fact,
+)
+
 
 def evaluate_wallcrawler_evidence(
     *,
@@ -18,6 +23,7 @@ def evaluate_wallcrawler_evidence(
     trace = evidence_pack.get("model_action_trace")
     tools = evidence_pack.get("tool_trace_summary")
     conclusions = evidence_pack.get("evidence_conclusions")
+    observation_trace = evidence_pack.get("observation_trace")
     budget = evidence_pack.get("budget_summary")
     provenance = evidence_pack.get("provenance_validation")
     input_audit = evidence_pack.get("input_audit")
@@ -27,6 +33,7 @@ def evaluate_wallcrawler_evidence(
             (trace, list),
             (tools, list),
             (conclusions, list),
+            (observation_trace, list),
             (budget, dict),
             (provenance, dict),
             (input_audit, dict),
@@ -56,7 +63,7 @@ def evaluate_wallcrawler_evidence(
         and item.get("tool") == "inspect_method_il"
         and item.get("observation_id")
     }
-    grounded_il_conclusions = [
+    il_referencing_conclusions = [
         item
         for item in conclusions
         if isinstance(item, dict)
@@ -117,7 +124,7 @@ def evaluate_wallcrawler_evidence(
         "prior_observation_method_binding": (
             provenance.get("all_method_inspections_derived_from_observations") is True
         ),
-        "grounded_il_conclusion": bool(grounded_il_conclusions),
+        "il_referencing_conclusion_present": bool(il_referencing_conclusions),
         "input_pollution_absent": input_is_clean,
         "no_identical_tool_repeat": len(signatures) == len(set(signatures)),
         "evidence_only_stop": current_stage == "evidence_retrieval"
@@ -133,30 +140,40 @@ def evaluate_wallcrawler_evidence(
         "no_identical_tool_repeat": len(signatures) == len(set(signatures)),
     }
 
-    observation_ids = {
-        str(item.get("observation_id"))
-        for item in tools
-        if isinstance(item, dict) and item.get("observation_id")
-    }
+    observation_identities, observation_identity_integrity = (
+        _observation_identity_index(
+            tool_trace_summary=tools,
+            observation_trace=observation_trace,
+        )
+    )
+    observation_ids = set(observation_identities)
     raw_facts = evidence_pack.get("observation_fact_catalog")
-    fact_rows = raw_facts if isinstance(raw_facts, list) else []
-    facts = [
-        item
+    fact_catalog_present = isinstance(raw_facts, list)
+    fact_rows = raw_facts if fact_catalog_present else []
+    fact_ids = [
+        item.get("fact_id")
         for item in fact_rows
-        if isinstance(item, dict)
-        and isinstance(item.get("fact_id"), str)
-        and isinstance(item.get("observation_id"), str)
-        and isinstance(item.get("fact_type"), str)
-        and isinstance(item.get("canonical_claim"), str)
-        and item.get("observation_id") in observation_ids
+        if isinstance(item, dict) and isinstance(item.get("fact_id"), str)
     ]
-    facts_by_claim: dict[str, list[dict[str, Any]]] = {}
-    for fact in facts:
-        facts_by_claim.setdefault(str(fact["canonical_claim"]), []).append(fact)
-
+    fact_catalog_integrity = fact_catalog_present and observation_identity_integrity
+    if fact_catalog_integrity:
+        fact_catalog_integrity = len(fact_ids) == len(fact_rows) == len(set(fact_ids))
+    if fact_catalog_integrity:
+        for item in fact_rows:
+            observation_id = item.get("observation_id")
+            identity = observation_identities.get(str(observation_id))
+            if identity is None or not observation_fact_integrity_valid(
+                fact=item,
+                observation_tool=identity["tool"],
+                observation_source_id=identity["source_id"],
+                observation_sha256=identity["observation_sha256"],
+            ):
+                fact_catalog_integrity = False
+                break
+    facts = list(fact_rows) if fact_catalog_integrity else []
     valid_observed_indexes: list[int] = []
     unsupported_observed_indexes: list[int] = []
-    reference_integrity = True
+    reference_integrity = observation_identity_integrity
     inferred_claims_bounded = True
     unknown_claims_bounded = True
     fact_observation_ids = {str(fact["observation_id"]) for fact in facts}
@@ -165,7 +182,6 @@ def evaluate_wallcrawler_evidence(
             reference_integrity = False
             continue
         status = conclusion.get("claim_status")
-        claim = conclusion.get("claim")
         refs = conclusion.get("observation_ids")
         limitations = conclusion.get("limitations")
         if not isinstance(refs, list) or any(
@@ -173,17 +189,24 @@ def evaluate_wallcrawler_evidence(
         ):
             reference_integrity = False
             refs = []
-        if status == "observed":
-            matching_facts = [
-                fact
-                for fact in facts_by_claim.get(str(claim), [])
-                if refs == [fact["observation_id"]]
-            ]
+        if status == "observed" and fact_catalog_integrity:
+            matching_facts: list[dict[str, Any]] = []
+            for fact in facts:
+                identity = observation_identities.get(str(fact.get("observation_id")))
+                if identity is not None and observed_conclusion_matches_bound_fact(
+                    conclusion=conclusion,
+                    fact=fact,
+                    observation_id=str(fact["observation_id"]),
+                    observation_tool=identity["tool"],
+                    observation_source_id=identity["source_id"],
+                    observation_sha256=identity["observation_sha256"],
+                ):
+                    matching_facts.append(fact)
             if len(matching_facts) == 1:
                 valid_observed_indexes.append(index)
             else:
                 unsupported_observed_indexes.append(index)
-        elif status == "inferred":
+        elif status == "inferred" and fact_catalog_integrity:
             if (
                 not refs
                 or not set(refs).issubset(fact_observation_ids)
@@ -200,18 +223,20 @@ def evaluate_wallcrawler_evidence(
                 or any(not isinstance(item, str) or not item.strip() for item in limitations)
             ):
                 unknown_claims_bounded = False
-        else:
+        elif status not in {"observed", "inferred"}:
             reference_integrity = False
 
     expected_verified_findings = [
         conclusions[index] for index in valid_observed_indexes
     ]
     verified_findings = evidence_pack.get("verified_findings")
-    verified_findings_exact = (
-        isinstance(verified_findings, list)
-        and _canonical_json(verified_findings)
-        == _canonical_json(expected_verified_findings)
-    )
+    verified_findings_exact = None
+    if fact_catalog_integrity:
+        verified_findings_exact = (
+            isinstance(verified_findings, list)
+            and _canonical_json(verified_findings)
+            == _canonical_json(expected_verified_findings)
+        )
     unresolved_text = "\n".join(
         str(value)
         for value in (
@@ -225,9 +250,17 @@ def evaluate_wallcrawler_evidence(
         )
     ).casefold()
     semantic_checks = {
+        "observation_fact_catalog_present": fact_catalog_present,
+        "observation_fact_catalog_integrity": (
+            fact_catalog_integrity if fact_catalog_present else None
+        ),
         "reference_integrity": reference_integrity,
-        "observed_claims_match_supported_facts": not unsupported_observed_indexes,
-        "inferred_claims_are_bounded_and_unverified": inferred_claims_bounded,
+        "observed_claims_match_supported_facts": (
+            not unsupported_observed_indexes if fact_catalog_integrity else None
+        ),
+        "inferred_claims_are_bounded_and_unverified": (
+            inferred_claims_bounded if fact_catalog_integrity else None
+        ),
         "unknown_claims_are_bounded": unknown_claims_bounded,
         "verified_findings_contain_only_direct_observations": verified_findings_exact,
         "persistent_identity_binding_left_unresolved": any(
@@ -237,6 +270,26 @@ def evaluate_wallcrawler_evidence(
         "proposal_not_unlocked": finish.get("decision") == "needs_more_evidence"
         and evidence_pack.get("can_generate_patch") is False,
     }
+    semantic_failure_reasons: list[str] = []
+    if not fact_catalog_present:
+        semantic_failure_reasons.append("observation_fact_catalog_missing")
+    elif not fact_catalog_integrity:
+        semantic_failure_reasons.append("observation_fact_catalog_integrity_invalid")
+    else:
+        if unsupported_observed_indexes:
+            semantic_failure_reasons.append("observed_claim_semantic_mismatch")
+        if inferred_claims_bounded is False:
+            semantic_failure_reasons.append("inferred_claim_boundary_invalid")
+        if verified_findings_exact is False:
+            semantic_failure_reasons.append("verified_findings_mismatch")
+    if not reference_integrity:
+        semantic_failure_reasons.append("reference_integrity_invalid")
+    if not unknown_claims_bounded:
+        semantic_failure_reasons.append("unknown_claim_boundary_invalid")
+    if not semantic_checks["persistent_identity_binding_left_unresolved"]:
+        semantic_failure_reasons.append("persistent_identity_gap_not_explicit")
+    if not semantic_checks["proposal_not_unlocked"]:
+        semantic_failure_reasons.append("proposal_readiness_not_separated")
     return {
         "evaluator_visibility": "post_run_hidden_from_model",
         "capability_gate": {
@@ -250,8 +303,16 @@ def evaluate_wallcrawler_evidence(
             "broad_searches_after_il": broad_searches_after_il,
         },
         "semantic_gate": {
-            "passed": all(semantic_checks.values()),
+            "passed": all(value is True for value in semantic_checks.values()),
             "checks": semantic_checks,
+            "failure_reasons": semantic_failure_reasons,
+            "fact_catalog_status": (
+                "missing"
+                if not fact_catalog_present
+                else "valid"
+                if fact_catalog_integrity
+                else "invalid"
+            ),
             "supported_fact_count": len(facts),
             "verified_observed_claim_count": len(valid_observed_indexes),
             "unverified_inferred_claim_count": sum(
@@ -303,3 +364,72 @@ def _canonical_json(value: object) -> str:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _observation_identity_index(
+    *,
+    tool_trace_summary: list[object],
+    observation_trace: list[object],
+) -> tuple[dict[str, dict[str, str]], bool]:
+    tool_identities: dict[str, tuple[str, str]] = {}
+    trace_identities: dict[str, dict[str, str]] = {}
+    integrity = True
+    for item in tool_trace_summary:
+        if not isinstance(item, dict):
+            integrity = False
+            continue
+        observation_id = item.get("observation_id")
+        tool = item.get("tool")
+        source_id = item.get("source_id")
+        if (
+            not isinstance(observation_id, str)
+            or not observation_id
+            or not isinstance(tool, str)
+            or not tool
+            or not isinstance(source_id, str)
+            or not source_id
+            or observation_id in tool_identities
+        ):
+            integrity = False
+            continue
+        tool_identities[observation_id] = (tool, source_id)
+    for item in observation_trace:
+        if not isinstance(item, dict):
+            integrity = False
+            continue
+        observation_id = item.get("observation_id")
+        tool = item.get("tool")
+        source_id = item.get("source_id")
+        observation_sha256 = item.get("observation_sha256")
+        if (
+            not isinstance(observation_id, str)
+            or not observation_id
+            or not isinstance(tool, str)
+            or not tool
+            or not isinstance(source_id, str)
+            or not source_id
+            or not isinstance(observation_sha256, str)
+            or len(observation_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in observation_sha256
+            )
+            or observation_id in trace_identities
+        ):
+            integrity = False
+            continue
+        trace_identities[observation_id] = {
+            "tool": tool,
+            "source_id": source_id,
+            "observation_sha256": observation_sha256,
+        }
+    if set(tool_identities) != set(trace_identities):
+        integrity = False
+    for observation_id, (tool, source_id) in tool_identities.items():
+        trace_identity = trace_identities.get(observation_id)
+        if trace_identity is None or (
+            trace_identity["tool"] != tool
+            or trace_identity["source_id"] != source_id
+        ):
+            integrity = False
+    return trace_identities, integrity

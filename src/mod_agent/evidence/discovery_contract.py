@@ -134,6 +134,7 @@ class EvidenceDiscoveryAgentModel:
         self._provider_turn_records: list[dict[str, object]] = []
         self._model_call_count = 0
         self._accepted_action_count = 0
+        self._runtime_stage = "not_started"
 
     @property
     def disclosure_record(self) -> dict[str, object]:
@@ -155,14 +156,22 @@ class EvidenceDiscoveryAgentModel:
     def accepted_action_count(self) -> int:
         return self._accepted_action_count
 
+    @property
+    def runtime_stage(self) -> str:
+        """Return the current provider/adapter substage without response content."""
+
+        return self._runtime_stage
+
     def begin_run(self) -> None:
         self._pending_response = None
         self._usage_records.clear()
         self._provider_turn_records.clear()
         self._model_call_count = 0
         self._accepted_action_count = 0
+        self._runtime_stage = "model_request_construction"
 
     def complete(self, messages: tuple[dict[str, object], ...]) -> str:
+        self._runtime_stage = "model_request_construction"
         agent_messages: list[AgentMessage] = []
         latest_observation: object | None = None
         tool_result_insert_index: int | None = None
@@ -210,6 +219,7 @@ class EvidenceDiscoveryAgentModel:
             temperature=0.0,
         )
         self._model_call_count += 1
+        self._runtime_stage = "provider_turn"
         try:
             response = self.client.complete_turn(request)
         except AgentTurnProviderError as exc:
@@ -229,17 +239,22 @@ class EvidenceDiscoveryAgentModel:
                 **response.usage.to_dict(),
             }
         )
+        self._runtime_stage = "adapter_response_validation"
         if len(response.tool_calls) > 1:
             raise ValueError("EVIDENCE_MODEL_PARALLEL_TOOL_CALLS_FORBIDDEN")
         if response.tool_calls:
             call = response.tool_calls[0]
+            self._runtime_stage = "adapter_action_conversion"
             action = _action_from_tool_call(call.name, call.arguments)
             self._accepted_action_count += 1
             self._pending_response = response
+            self._runtime_stage = "adapter_action_accepted"
             return json.dumps(action, ensure_ascii=False, separators=(",", ":"))
         self._pending_response = None
+        self._runtime_stage = "adapter_finish_extraction"
         if not response.content or not response.content.strip():
             raise ValueError("EVIDENCE_MODEL_EMPTY_RESPONSE")
+        self._runtime_stage = "adapter_finish_accepted"
         return response.content
 
 
@@ -457,6 +472,24 @@ class ToolObservation:
     data: dict[str, object]
     evidence_items: tuple[EvidenceItem, ...] = ()
 
+    def identity_view(self) -> dict[str, object]:
+        """Return the fact-independent payload used for durable identity binding."""
+
+        return {
+            "observation_id": self.observation_id,
+            "tool": self.tool,
+            "source_id": self.source_id,
+            "summary": self.summary,
+            "data": _without_control_only_method_ids(self.data),
+        }
+
+    def identity_sha256(self) -> str:
+        """Hash the observation payload without recursively including fact rows."""
+
+        return hashlib.sha256(
+            _canonical_json(self.identity_view()).encode("utf-8")
+        ).hexdigest()
+
     def supported_facts(self) -> list[dict[str, object]]:
         """Project mechanically verifiable facts without semantic interpretation."""
 
@@ -478,11 +511,7 @@ class ToolObservation:
 
     def model_view(self) -> dict[str, object]:
         return {
-            "observation_id": self.observation_id,
-            "tool": self.tool,
-            "source_id": self.source_id,
-            "summary": self.summary,
-            "data": _without_control_only_method_ids(self.data),
+            **self.identity_view(),
             "supported_facts": self.model_supported_facts(),
         }
 
@@ -649,21 +678,258 @@ def _observation_fact(
         _canonical_json(
             {
                 "observation_id": observation.observation_id,
+                "observation_sha256": observation.identity_sha256(),
+                "source_id": observation.source_id,
                 "fact_type": fact_type,
                 "subject": subject,
                 "value": value,
+                "canonical_claim": canonical_claim,
             }
         ).encode("utf-8")
     ).hexdigest()[:16]
     return {
         "fact_id": f"{observation.observation_id}:{fact_type}:{digest}",
         "observation_id": observation.observation_id,
+        "observation_sha256": observation.identity_sha256(),
         "source_id": observation.source_id,
         "fact_type": fact_type,
         "subject": subject,
         "value": value,
         "canonical_claim": canonical_claim,
     }
+
+
+def observation_fact_integrity_valid(
+    *,
+    fact: object,
+    observation_tool: str,
+    observation_source_id: str,
+    observation_sha256: str,
+) -> bool:
+    """Validate one persisted fact against its deterministic identity contract."""
+
+    if not isinstance(fact, dict) or set(fact) != {
+        "fact_id",
+        "observation_id",
+        "observation_sha256",
+        "source_id",
+        "fact_type",
+        "subject",
+        "value",
+        "canonical_claim",
+    }:
+        return False
+    fact_id = fact.get("fact_id")
+    observation_id = fact.get("observation_id")
+    fact_observation_sha256 = fact.get("observation_sha256")
+    source_id = fact.get("source_id")
+    fact_type = fact.get("fact_type")
+    subject = fact.get("subject")
+    value = fact.get("value")
+    canonical_claim = fact.get("canonical_claim")
+    if not all(
+        isinstance(item, str) and bool(item)
+        for item in (
+            fact_id,
+            observation_id,
+            fact_observation_sha256,
+            source_id,
+            fact_type,
+            subject,
+            canonical_claim,
+        )
+    ) or not isinstance(value, dict):
+        return False
+    if (
+        source_id != observation_source_id
+        or fact_observation_sha256 != observation_sha256
+        or len(observation_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in observation_sha256)
+    ):
+        return False
+    allowed_fact_types = {
+        "search_dotnet_metadata": {"metadata_search_result"},
+        "inspect_method_il": {
+            "inspected_symbol",
+            "method_body_metadata",
+            "instruction_sequence",
+            "field_read",
+            "call_target",
+        },
+    }
+    if fact_type not in allowed_fact_types.get(observation_tool, set()):
+        return False
+    expected_claim = _canonical_claim_for_persisted_fact(
+        fact_type=fact_type,
+        subject=subject,
+        value=value,
+    )
+    if canonical_claim != expected_claim:
+        return False
+    digest = hashlib.sha256(
+        _canonical_json(
+            {
+                "observation_id": observation_id,
+                "observation_sha256": fact_observation_sha256,
+                "source_id": source_id,
+                "fact_type": fact_type,
+                "subject": subject,
+                "value": value,
+                "canonical_claim": canonical_claim,
+            }
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    return fact_id == f"{observation_id}:{fact_type}:{digest}"
+
+
+def observed_conclusion_matches_bound_fact(
+    *,
+    conclusion: object,
+    fact: object,
+    observation_id: str,
+    observation_tool: str,
+    observation_source_id: str,
+    observation_sha256: str,
+) -> bool:
+    """Match one observed conclusion to one integrity-valid observation fact."""
+
+    if (
+        not isinstance(conclusion, dict)
+        or conclusion.get("claim_status") != "observed"
+        or not isinstance(fact, dict)
+        or fact.get("observation_id") != observation_id
+    ):
+        return False
+    if not observation_fact_integrity_valid(
+        fact=fact,
+        observation_tool=observation_tool,
+        observation_source_id=observation_source_id,
+        observation_sha256=observation_sha256,
+    ):
+        return False
+    return (
+        conclusion.get("claim") == fact.get("canonical_claim")
+        and conclusion.get("observation_ids") == [fact.get("observation_id")]
+    )
+
+
+def _canonical_claim_for_persisted_fact(
+    *,
+    fact_type: str,
+    subject: str,
+    value: dict[str, object],
+) -> str | None:
+    if fact_type == "metadata_search_result":
+        if set(value) != {
+            "queries",
+            "matched_counts",
+            "returned_counts",
+            "results_truncated",
+            "truncated_by_kind",
+        }:
+            return None
+        queries = value.get("queries")
+        matched_counts = value.get("matched_counts")
+        returned_counts = value.get("returned_counts")
+        truncated_by_kind = value.get("truncated_by_kind")
+        if (
+            not isinstance(queries, list)
+            or any(not isinstance(item, str) for item in queries)
+            or not isinstance(matched_counts, dict)
+            or not isinstance(returned_counts, dict)
+            or not isinstance(truncated_by_kind, dict)
+            or not isinstance(value.get("results_truncated"), bool)
+        ):
+            return None
+        return (
+            "Observed metadata search result: "
+            f"matched_counts={_canonical_json(matched_counts)}; "
+            f"returned_counts={_canonical_json(returned_counts)}; "
+            "results_truncated="
+            f"{str(value['results_truncated']).lower()}."
+        )
+    if fact_type == "inspected_symbol":
+        if value != {"symbol": subject}:
+            return None
+        return f"Observed inspected symbol: {subject}."
+    if fact_type == "method_body_metadata":
+        if set(value) != {
+            "metadata_token",
+            "rva",
+            "has_method_body",
+            "instruction_count",
+            "instructions_truncated",
+        }:
+            return None
+        if (
+            not isinstance(value.get("metadata_token"), str)
+            or not isinstance(value.get("has_method_body"), bool)
+            or not isinstance(value.get("instructions_truncated"), bool)
+            or not isinstance(value.get("instruction_count"), int)
+            or isinstance(value.get("instruction_count"), bool)
+            or (
+                value.get("rva") is not None
+                and (
+                    not isinstance(value.get("rva"), int)
+                    or isinstance(value.get("rva"), bool)
+                )
+            )
+        ):
+            return None
+        return (
+            f"Observed method body metadata for {subject}: "
+            f"metadata_token={value['metadata_token']}; "
+            f"rva={value['rva']}; "
+            f"has_method_body={str(value['has_method_body']).lower()}; "
+            f"instruction_count={value['instruction_count']}; "
+            "instructions_truncated="
+            f"{str(value['instructions_truncated']).lower()}."
+        )
+    if fact_type == "instruction_sequence":
+        opcodes = value.get("opcodes")
+        if (
+            set(value) != {"opcodes"}
+            or not isinstance(opcodes, list)
+            or not opcodes
+            or any(not isinstance(item, str) or not item for item in opcodes)
+        ):
+            return None
+        return f"Observed IL instruction sequence for {subject}: {', '.join(opcodes)}."
+    if fact_type == "field_read":
+        if set(value) != {"offset", "opcode", "field"}:
+            return None
+        offset = value.get("offset")
+        opcode = value.get("opcode")
+        field = value.get("field")
+        if (
+            not isinstance(offset, str)
+            or opcode not in {"ldfld", "ldsfld"}
+            or not isinstance(field, str)
+            or not field
+        ):
+            return None
+        return (
+            f"Observed IL field read in {subject}: "
+            f"offset={offset}; opcode={opcode}; field={field}."
+        )
+    if fact_type == "call_target":
+        if set(value) != {"offset", "opcode", "target"}:
+            return None
+        offset = value.get("offset")
+        opcode = value.get("opcode")
+        target = value.get("target")
+        if (
+            not isinstance(offset, str)
+            or opcode not in {"call", "callvirt", "newobj"}
+            or not isinstance(target, str)
+            or not target
+        ):
+            return None
+        return (
+            f"Observed IL call target in {subject}: "
+            f"offset={offset}; opcode={opcode}; target={target}."
+        )
+    return None
 
 
 def _canonical_json(value: object) -> str:

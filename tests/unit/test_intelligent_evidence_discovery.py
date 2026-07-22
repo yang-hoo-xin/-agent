@@ -24,6 +24,7 @@ from src.mod_agent.evidence.discovery import (
     evidence_discovery_source_from_definition,
 )
 from src.mod_agent.evidence.discovery_tools import LocalAssemblyEvidenceToolExecutor
+from src.mod_agent.evidence.discovery_loop import _validate_finish
 from src.mod_agent.evidence.models import EvidenceItem
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.workflow import build_graph, create_initial_state
@@ -40,6 +41,7 @@ from src.libs.llm import (
 )
 from src.mod_agent.knowledge import SourceDefinition
 from src.mod_agent.intelligent_evidence_only import (
+    _failed_run_diagnostics,
     _post_run_acceptance,
     load_evidence_discovery_sources,
 )
@@ -213,6 +215,30 @@ def _request(
     )
 
 
+def _metadata_then_il_responses(
+    *finishes: dict[str, object],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "action": "use_tool",
+            "tool": "search_dotnet_metadata",
+            "source_id": "current-interop",
+            "arguments": _metadata_arguments("movement"),
+            "evidence_need": "Find one exact movement method.",
+            "derived_from_observation_ids": [],
+        },
+        {
+            "action": "use_tool",
+            "tool": "inspect_method_il",
+            "source_id": "current-interop",
+            "arguments": {"candidate_ref": "candidate_obs_001"},
+            "evidence_need": "Inspect the observed method body.",
+            "derived_from_observation_ids": ["obs-001"],
+        },
+        *finishes,
+    ]
+
+
 def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
     tmp_path: Path,
 ) -> None:
@@ -285,8 +311,23 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
         "Observed inspected symbol: Observed.Type.Move."
     )
     assert result.pack.observation_fact_catalog
+    inspection_fact_hashes = {
+        fact["observation_sha256"]
+        for fact in result.pack.observation_fact_catalog
+        if fact["observation_id"] == "obs-002"
+    }
+    assert inspection_fact_hashes == {
+        result.pack.observation_trace[1]["observation_sha256"]
+    }
+    assert result.pack.provenance_validation["candidate_binding_trace"][0][
+        "il_observation_sha256"
+    ] == result.pack.observation_trace[1]["observation_sha256"]
     assert result.pack.evidence_conclusions[0]["claim_status"] == "observed"
     assert result.pack.verified_findings[0]["claim_status"] == "observed"
+    assert len(model.calls) == 3
+    assert all(
+        item["status"] == "accepted" for item in result.pack.model_action_trace
+    )
     assert len(result.pack.model_action_trace) == 3
     assert len(result.pack.observation_trace) == 2
     assert len(result.pack.prompt_contract["system_contract_sha256"]) == 64
@@ -385,7 +426,7 @@ def test_each_turn_replays_compact_history_and_only_the_latest_full_observation(
                 "decision": "needs_more_evidence",
                 "evidence_conclusions": [
                     {
-                        "claim": "One method body was observed.",
+                        "claim": "Observed inspected symbol: Observed.Type.Move.",
                         "claim_status": "observed",
                         "observation_ids": ["obs-002"],
                         "limitations": [],
@@ -445,7 +486,7 @@ def test_compact_history_preserves_prior_il_outcome_without_duplicate_method_row
                 "decision": "needs_more_evidence",
                 "evidence_conclusions": [
                     {
-                        "claim": "One exact method body was observed.",
+                        "claim": "Observed inspected symbol: Observed.Type.Move.",
                         "claim_status": "observed",
                         "observation_ids": ["obs-002"],
                         "limitations": [],
@@ -530,7 +571,7 @@ def test_finish_without_available_il_reference_receives_bounded_correction(
                 "decision": "needs_more_evidence",
                 "evidence_conclusions": [
                     {
-                        "claim": "One exact method body was observed.",
+                        "claim": "Observed inspected symbol: Observed.Type.Move.",
                         "claim_status": "observed",
                         "observation_ids": ["obs-002"],
                         "limitations": [],
@@ -566,6 +607,264 @@ def test_finish_without_available_il_reference_receives_bounded_correction(
         "rejected",
         "accepted",
     ]
+
+
+def test_exact_observed_claim_with_wrong_observation_id_receives_correction(
+    tmp_path: Path,
+) -> None:
+    invalid_finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [
+            {
+                "claim": "Observed inspected symbol: Observed.Type.Move.",
+                "claim_status": "observed",
+                "observation_ids": ["obs-001"],
+                "limitations": [],
+            },
+            {
+                "claim": "The inspected body may not contain runtime behavior.",
+                "claim_status": "inferred",
+                "observation_ids": ["obs-002"],
+                "limitations": ["Only one method body was inspected."],
+            },
+        ],
+        "unresolved_questions": ["Runtime movement remains unresolved."],
+        "missing_capabilities": [],
+    }
+    corrected_finish = deepcopy(invalid_finish)
+    corrected_finish["evidence_conclusions"] = [
+        {
+            "claim": "Observed inspected symbol: Observed.Type.Move.",
+            "claim_status": "observed",
+            "observation_ids": ["obs-002"],
+            "limitations": [],
+        }
+    ]
+    model = _ScriptedModel(
+        _metadata_then_il_responses(invalid_finish, corrected_finish)
+    )
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(_request(tmp_path))
+
+    assert result.run_status == "completed"
+    assert result.pack.model_action_trace[2]["validation_error"] == (
+        "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+    )
+    correction = model.calls[3][-2]["content"]
+    assert correction["error_code"] == (
+        "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+    )
+
+
+def test_mixed_observed_claim_is_corrected_into_exact_observed_and_inferred(
+    tmp_path: Path,
+) -> None:
+    mixed_finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [
+            {
+                "claim": (
+                    "Observed inspected symbol: Observed.Type.Move. This is likely "
+                    "an empty runtime implementation."
+                ),
+                "claim_status": "observed",
+                "observation_ids": ["obs-002"],
+                "limitations": [],
+            }
+        ],
+        "unresolved_questions": ["Runtime movement remains unresolved."],
+        "missing_capabilities": [],
+    }
+    corrected_finish = {
+        **mixed_finish,
+        "evidence_conclusions": [
+            {
+                "claim": "Observed inspected symbol: Observed.Type.Move.",
+                "claim_status": "observed",
+                "observation_ids": ["obs-002"],
+                "limitations": [],
+            },
+            {
+                "claim": "The inspected symbol may be an empty runtime implementation.",
+                "claim_status": "inferred",
+                "observation_ids": ["obs-002"],
+                "limitations": [
+                    "The symbol identity alone does not establish runtime behavior."
+                ],
+            },
+        ],
+    }
+    model = _ScriptedModel(
+        _metadata_then_il_responses(mixed_finish, corrected_finish)
+    )
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+
+    result = specialist.discover(_request(tmp_path))
+
+    assert result.run_status == "completed"
+    assert len(model.calls) == 4
+    assert len(model.calls) <= _request(tmp_path).max_model_steps
+    assert len(executor.actions) == 2
+    assert [item["status"] for item in result.pack.model_action_trace] == [
+        "accepted",
+        "accepted",
+        "rejected",
+        "accepted",
+    ]
+    assert result.pack.model_action_trace[2]["validation_error"] == (
+        "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+    )
+    correction = model.calls[3][-2]["content"]
+    assert correction["repair_focus"] == {
+        "field": "evidence_conclusions[]",
+        "requirement": (
+            "Each observed claim must exactly copy one supported_fact "
+            "canonical_claim and cite only that fact's observation_id. Put any "
+            "interpretation in a separate inferred conclusion with limitations."
+        ),
+    }
+    assert [
+        item["claim_status"] for item in result.pack.evidence_conclusions
+    ] == ["observed", "inferred"]
+    assert [item["claim_status"] for item in result.pack.verified_findings] == [
+        "observed"
+    ]
+    assert all(
+        item["claim_status"] != "inferred"
+        for item in result.pack.verified_findings
+    )
+    assert specialist.runtime_diagnostics["failure_stage"] == "none"
+    assert specialist.runtime_diagnostics["symbolic_failure_code"] == "none"
+
+
+def test_repeated_mixed_observed_claim_exhausts_existing_finish_correction(
+    tmp_path: Path,
+) -> None:
+    mixed_finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [
+            {
+                "claim": (
+                    "Observed inspected symbol: Observed.Type.Move. This is likely "
+                    "an empty runtime implementation."
+                ),
+                "claim_status": "observed",
+                "observation_ids": ["obs-002"],
+                "limitations": [],
+            }
+        ],
+        "unresolved_questions": ["Runtime movement remains unresolved."],
+        "missing_capabilities": [],
+    }
+    model = _ScriptedModel(
+        _metadata_then_il_responses(mixed_finish, deepcopy(mixed_finish))
+    )
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+    request = _request(tmp_path)
+
+    result = specialist.discover(request)
+
+    assert result.run_status == "budget_exhausted"
+    assert len(model.calls) == 4
+    assert len(model.calls) <= request.max_model_steps
+    assert len(executor.actions) == 2
+    assert result.pack.model_action_trace[2]["validation_error"] == (
+        "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+    )
+    assert result.pack.model_action_trace[3]["validation_error"] == (
+        "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+    )
+    assert result.pack.model_action_trace[-1]["origin"] == (
+        "deterministic_budget_stop"
+    )
+    diagnostics = specialist.runtime_diagnostics
+    assert diagnostics["failure_stage"] == "finish_validation"
+    assert diagnostics["symbolic_failure_code"] == (
+        "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+    )
+    assert "semantic_gate" not in diagnostics
+    assert "semantic_gate" not in result.pack.to_artifact_payload()
+
+
+def test_last_model_turn_first_observed_mismatch_has_no_correction_or_pack(
+    tmp_path: Path,
+) -> None:
+    mixed_finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [
+            {
+                "claim": (
+                    "Observed inspected symbol: Observed.Type.Move. This is likely "
+                    "an empty runtime implementation."
+                ),
+                "claim_status": "observed",
+                "observation_ids": ["obs-002"],
+                "limitations": [],
+            }
+        ],
+        "unresolved_questions": ["Runtime movement remains unresolved."],
+        "missing_capabilities": [],
+    }
+    model = _ScriptedModel(_metadata_then_il_responses(mixed_finish))
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+    request = replace(_request(tmp_path), max_model_steps=3)
+    factory = IntelligentEvidencePackFactory(
+        specialist=specialist,
+        sources=request.sources,
+        max_tool_calls=request.max_tool_calls,
+        max_model_steps=request.max_model_steps,
+        max_result_bytes_per_call=request.max_result_bytes_per_call,
+        max_total_observation_bytes=request.max_total_observation_bytes,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH",
+    ) as raised:
+        factory(
+            {
+                "run_id": request.run_id,
+                "request_id": request.request_id,
+                "user_request": request.natural_language_request,
+            },
+            {"target_behavior": request.natural_language_request},
+        )
+
+    assert getattr(raised.value, "run_status") == "budget_exhausted"
+    assert len(model.calls) == request.max_model_steps == 3
+    assert len(executor.actions) == 2
+    assert factory.last_result is None
+    diagnostics = specialist.runtime_diagnostics
+    assert diagnostics["failure_stage"] == "finish_validation"
+    assert diagnostics["symbolic_failure_code"] == (
+        "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+    )
+    assert diagnostics["correction_attempted"] is False
+    assert diagnostics["correction_unavailable_reason"] == (
+        "no_remaining_model_turn"
+    )
+    persisted_diagnostics = _failed_run_diagnostics(
+        evidence_factory=factory,
+        error=raised.value,
+    )
+    assert persisted_diagnostics["failure_stage"] == "finish_validation"
+    assert persisted_diagnostics["symbolic_failure_code"] == (
+        "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+    )
+    assert persisted_diagnostics["correction_attempted"] is False
+    assert persisted_diagnostics["correction_unavailable_reason"] == (
+        "no_remaining_model_turn"
+    )
 
 
 def test_repeated_method_context_is_deduplicated_and_byte_accounted(
@@ -606,7 +905,7 @@ def test_repeated_method_context_is_deduplicated_and_byte_accounted(
             "decision": "needs_more_evidence",
             "evidence_conclusions": [
                 {
-                    "claim": "One exact method body was observed.",
+                    "claim": "Observed inspected symbol: Observed.Type.Move.",
                     "claim_status": "observed",
                     "observation_ids": ["obs-002"],
                     "limitations": [],
@@ -677,10 +976,11 @@ def test_repeated_identical_action_is_rejected_before_tool_execution(
     )
 
     executor = _ObservedToolExecutor()
-    result = EvidenceDiscoverySpecialist(
+    specialist = EvidenceDiscoverySpecialist(
         model=model,
         tool_executor=executor,
-    ).discover(_request(tmp_path))
+    )
+    result = specialist.discover(_request(tmp_path))
 
     assert len(executor.actions) == 1
     assert result.pack.budget_summary["tool_calls_used"] == 1
@@ -741,7 +1041,7 @@ def test_repeat_correction_recovers_through_metadata_il_and_grounded_finish(
                 "decision": "needs_more_evidence",
                 "evidence_conclusions": [
                     {
-                        "claim": "Observed.Type.Move has an inspected CLI method body.",
+                        "claim": "Observed inspected symbol: Observed.Type.Move.",
                         "claim_status": "observed",
                         "observation_ids": ["obs-003"],
                         "limitations": [],
@@ -811,10 +1111,11 @@ def test_second_repeated_action_exhausts_single_repeat_correction(
     model = _ScriptedModel([repeated, repeated, repeated])
     executor = _ObservedToolExecutor()
 
-    result = EvidenceDiscoverySpecialist(
+    specialist = EvidenceDiscoverySpecialist(
         model=model,
         tool_executor=executor,
-    ).discover(_request(tmp_path))
+    )
+    result = specialist.discover(_request(tmp_path))
 
     assert result.run_status == "budget_exhausted"
     assert len(executor.actions) == 1
@@ -822,6 +1123,11 @@ def test_second_repeated_action_exhausts_single_repeat_correction(
     assert result.pack.unresolved_questions == (
         "The single exact-repeat correction opportunity was exhausted before the model finished.",
     )
+    diagnostics = specialist.runtime_diagnostics
+    assert diagnostics["deterministic_validation_passed"] == 1
+    assert diagnostics["dispatch_started"] == 1
+    assert diagnostics["tool_execution_completed"] == 1
+    assert diagnostics["observation_created"] == 1
 
 
 def test_unobserved_candidate_reference_is_rejected(tmp_path: Path) -> None:
@@ -838,11 +1144,99 @@ def test_unobserved_candidate_reference_is_rejected(tmp_path: Path) -> None:
         ]
     )
 
+    specialist = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    )
+
     with pytest.raises(ValueError, match="UNVERIFIED_CANDIDATE_REFERENCE"):
-        EvidenceDiscoverySpecialist(
-            model=model,
-            tool_executor=_ObservedToolExecutor(),
-        ).discover(_request(tmp_path))
+        specialist.discover(_request(tmp_path))
+
+    diagnostics = specialist.runtime_diagnostics
+    assert diagnostics["deterministic_validation_passed"] == 0
+    assert diagnostics["dispatch_started"] == 0
+    assert diagnostics["tool_execution_completed"] == 0
+    assert diagnostics["observation_created"] == 0
+    assert diagnostics["failure_stage"] == "action_validation"
+    assert diagnostics["symbolic_failure_code"] == "UNVERIFIED_CANDIDATE_REFERENCE"
+
+
+def test_observation_validation_failure_retains_completed_tool_counters(
+    tmp_path: Path,
+) -> None:
+    model = _ScriptedModel(
+        [
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("movement"),
+                "evidence_need": "Find one exact method.",
+                "derived_from_observation_ids": [],
+            }
+        ]
+    )
+
+    class _WrongToolObservationExecutor(_ObservedToolExecutor):
+        def execute(self, **kwargs) -> ToolObservation:
+            observation = super().execute(**kwargs)
+            return replace(observation, tool="inspect_method_il")
+
+    specialist = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_WrongToolObservationExecutor(),
+    )
+
+    with pytest.raises(ValueError, match="TOOL_OBSERVATION_TOOL_MISMATCH"):
+        specialist.discover(_request(tmp_path))
+
+    diagnostics = specialist.runtime_diagnostics
+    assert diagnostics["deterministic_validation_passed"] == 1
+    assert diagnostics["dispatch_started"] == 1
+    assert diagnostics["tool_execution_completed"] == 1
+    assert diagnostics["observation_created"] == 1
+    assert diagnostics["failure_stage"] == "observation_validation"
+    assert diagnostics["symbolic_failure_code"] == "TOOL_OBSERVATION_TOOL_MISMATCH"
+
+
+def test_result_construction_failure_is_distinct_from_action_and_tool_stages(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = _ScriptedModel(
+        [
+            {
+                "action": "finish",
+                "decision": "needs_more_evidence",
+                "evidence_conclusions": [],
+                "unresolved_questions": ["No exact evidence was established."],
+                "missing_capabilities": [],
+            }
+        ]
+    )
+
+    def fail_result_construction(**kwargs):
+        raise ValueError("CANDIDATE_TRACE_TEST_FAILURE")
+
+    monkeypatch.setattr(
+        "src.mod_agent.evidence.discovery_loop._candidate_binding_trace",
+        fail_result_construction,
+    )
+    specialist = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    )
+
+    with pytest.raises(ValueError, match="CANDIDATE_TRACE_TEST_FAILURE"):
+        specialist.discover(_request(tmp_path))
+
+    diagnostics = specialist.runtime_diagnostics
+    assert diagnostics["deterministic_validation_passed"] == 0
+    assert diagnostics["dispatch_started"] == 0
+    assert diagnostics["tool_execution_completed"] == 0
+    assert diagnostics["observation_created"] == 0
+    assert diagnostics["failure_stage"] == "result_construction"
+    assert diagnostics["symbolic_failure_code"] == "CANDIDATE_TRACE_TEST_FAILURE"
 
 
 def test_candidate_reference_must_use_its_origin_observation(tmp_path: Path) -> None:
@@ -1825,7 +2219,7 @@ def test_intelligent_factory_runs_inside_graph_and_stops_after_evidence(
                 "decision": "needs_more_evidence",
                 "evidence_conclusions": [
                     {
-                        "claim": "One exact method body was observed.",
+                        "claim": "Observed inspected symbol: Observed.Type.Move.",
                         "claim_status": "observed",
                         "observation_ids": ["obs-002"],
                         "limitations": [],
@@ -2125,6 +2519,45 @@ def test_agent_turn_model_requires_exactly_one_execution_boundary() -> None:
 
 
 def test_wallcrawler_hidden_gates_separate_capability_from_convergence() -> None:
+    search_observation = ToolObservation(
+        observation_id="obs-001",
+        tool="search_dotnet_metadata",
+        source_id="source-a",
+        summary="One exact movement method was returned.",
+        data={
+            "queries": ["movement"],
+            "matched_counts": {"methods": 1, "types": 0, "fields": 0},
+            "returned_counts": {"methods": 1, "types": 0, "fields": 0},
+            "results_truncated": False,
+            "truncated_by_kind": {
+                "methods": False,
+                "types": False,
+                "fields": False,
+            },
+        },
+    )
+    inspection_observation = ToolObservation(
+        observation_id="obs-002",
+        tool="inspect_method_il",
+        source_id="source-a",
+        summary="Read exact IL for EnemyLocomotion.Move.",
+        data={
+            "symbol": "EnemyLocomotion.Move",
+            "metadata_token": "0x06000001",
+            "rva": 12,
+            "has_method_body": True,
+            "instruction_count": 1,
+            "instructions_truncated": False,
+            "instructions": [
+                {
+                    "offset": "IL_0000",
+                    "opcode": "ret",
+                    "resolved": None,
+                }
+            ],
+        },
+    )
+    exact_claim = "Observed inspected symbol: EnemyLocomotion.Move."
     pack = {
         "run_status": "completed",
         "model_action_trace": [
@@ -2158,33 +2591,35 @@ def test_wallcrawler_hidden_gates_separate_capability_from_convergence() -> None
             {
                 "observation_id": "obs-001",
                 "tool": "search_dotnet_metadata",
+                "source_id": "source-a",
             },
-            {"observation_id": "obs-002", "tool": "inspect_method_il"},
+            {
+                "observation_id": "obs-002",
+                "tool": "inspect_method_il",
+                "source_id": "source-a",
+            },
+        ],
+        "observation_trace": [
+            {
+                "observation_id": observation.observation_id,
+                "tool": observation.tool,
+                "source_id": observation.source_id,
+                "observation_sha256": observation.identity_sha256(),
+            }
+            for observation in (search_observation, inspection_observation)
         ],
         "evidence_conclusions": [
             {
-                "claim": "Observed inspected symbol: EnemyLocomotion.Move.",
+                "claim": exact_claim,
                 "claim_status": "observed",
                 "observation_ids": ["obs-002"],
                 "limitations": ["PersistentID region binding remains unresolved."],
             }
         ],
-        "observation_fact_catalog": [
-            {
-                "fact_id": "obs-002:inspected_symbol:fixture",
-                "observation_id": "obs-002",
-                "source_id": "source-a",
-                "fact_type": "inspected_symbol",
-                "subject": "EnemyLocomotion.Move",
-                "value": {"symbol": "EnemyLocomotion.Move"},
-                "canonical_claim": (
-                    "Observed inspected symbol: EnemyLocomotion.Move."
-                ),
-            }
-        ],
+        "observation_fact_catalog": inspection_observation.supported_facts(),
         "verified_findings": [
             {
-                "claim": "Observed inspected symbol: EnemyLocomotion.Move.",
+                "claim": exact_claim,
                 "claim_status": "observed",
                 "observation_ids": ["obs-002"],
                 "limitations": ["PersistentID region binding remains unresolved."],
@@ -2210,14 +2645,34 @@ def test_wallcrawler_hidden_gates_separate_capability_from_convergence() -> None
         "can_generate_patch": False,
     }
 
+    exact_finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": deepcopy(pack["evidence_conclusions"]),
+        "unresolved_questions": deepcopy(pack["unresolved_questions"]),
+        "missing_capabilities": [],
+    }
+    _validate_finish(
+        exact_finish,
+        {
+            "obs-001": search_observation,
+            "obs-002": inspection_observation,
+        },
+    )
     result = evaluate_wallcrawler_local_evidence(
         evidence_pack=pack,
         current_stage="evidence_retrieval",
         forbidden_artifacts=[],
     )
     assert result["capability_gate"]["passed"] is True
+    assert result["capability_gate"]["checks"][
+        "il_referencing_conclusion_present"
+    ] is True
+    assert "grounded_il_conclusion" not in result["capability_gate"]["checks"]
     assert result["convergence_gate"]["passed"] is True
     assert result["semantic_gate"]["passed"] is True
+    assert result["semantic_gate"]["fact_catalog_status"] == "valid"
+    assert result["semantic_gate"]["failure_reasons"] == []
 
     overclaim_pack = deepcopy(pack)
     overclaim = (
@@ -2226,6 +2681,19 @@ def test_wallcrawler_hidden_gates_separate_capability_from_convergence() -> None
     )
     overclaim_pack["evidence_conclusions"][0]["claim"] = overclaim
     overclaim_pack["verified_findings"][0]["claim"] = overclaim
+    overclaim_finish = deepcopy(exact_finish)
+    overclaim_finish["evidence_conclusions"][0]["claim"] = overclaim
+    with pytest.raises(
+        ValueError,
+        match="OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH",
+    ):
+        _validate_finish(
+            overclaim_finish,
+            {
+                "obs-001": search_observation,
+                "obs-002": inspection_observation,
+            },
+        )
     result = evaluate_wallcrawler_local_evidence(
         evidence_pack=overclaim_pack,
         current_stage="evidence_retrieval",
@@ -2237,6 +2705,105 @@ def test_wallcrawler_hidden_gates_separate_capability_from_convergence() -> None
         "observed_claims_match_supported_facts"
     ] is False
     assert result["semantic_gate"]["unsupported_observed_claim_indexes"] == [0]
+    assert "observed_claim_semantic_mismatch" in result["semantic_gate"][
+        "failure_reasons"
+    ]
+
+    missing_catalog_pack = deepcopy(pack)
+    missing_catalog_pack.pop("observation_fact_catalog")
+    result = evaluate_wallcrawler_local_evidence(
+        evidence_pack=missing_catalog_pack,
+        current_stage="evidence_retrieval",
+        forbidden_artifacts=[],
+    )
+    assert result["semantic_gate"]["passed"] is False
+    assert result["semantic_gate"]["fact_catalog_status"] == "missing"
+    assert result["semantic_gate"]["failure_reasons"] == [
+        "observation_fact_catalog_missing"
+    ]
+    assert result["semantic_gate"]["checks"][
+        "observed_claims_match_supported_facts"
+    ] is None
+    assert result["semantic_gate"]["unsupported_observed_claim_indexes"] == []
+
+    forged_fact_pack = deepcopy(pack)
+    forged_fact = forged_fact_pack["observation_fact_catalog"][0]
+    forged_fact["canonical_claim"] = (
+        "EnemyLocomotion.Move is a viable Hook point for wall traversal."
+    )
+    forged_digest = hashlib.sha256(
+        json.dumps(
+            {
+                "observation_id": forged_fact["observation_id"],
+                "observation_sha256": forged_fact["observation_sha256"],
+                "source_id": forged_fact["source_id"],
+                "fact_type": forged_fact["fact_type"],
+                "subject": forged_fact["subject"],
+                "value": forged_fact["value"],
+                "canonical_claim": forged_fact["canonical_claim"],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    forged_fact["fact_id"] = (
+        f"{forged_fact['observation_id']}:{forged_fact['fact_type']}:"
+        f"{forged_digest}"
+    )
+    result = evaluate_wallcrawler_local_evidence(
+        evidence_pack=forged_fact_pack,
+        current_stage="evidence_retrieval",
+        forbidden_artifacts=[],
+    )
+    assert result["semantic_gate"]["fact_catalog_status"] == "invalid"
+    assert result["semantic_gate"]["failure_reasons"] == [
+        "observation_fact_catalog_integrity_invalid"
+    ]
+
+    for field_name, invalid_value in (
+        ("observation_id", "obs-unknown"),
+        ("source_id", "source-b"),
+        ("observation_sha256", "0" * 64),
+    ):
+        mismatched_pack = deepcopy(pack)
+        mismatched_pack["observation_fact_catalog"][0][field_name] = invalid_value
+        result = evaluate_wallcrawler_local_evidence(
+            evidence_pack=mismatched_pack,
+            current_stage="evidence_retrieval",
+            forbidden_artifacts=[],
+        )
+        assert result["semantic_gate"]["fact_catalog_status"] == "invalid"
+        assert "observation_fact_catalog_integrity_invalid" in result[
+            "semantic_gate"
+        ]["failure_reasons"]
+
+    mismatched_tool_pack = deepcopy(pack)
+    mismatched_tool_pack["tool_trace_summary"][1]["tool"] = "search_dotnet_metadata"
+    mismatched_tool_pack["observation_trace"][1]["tool"] = "search_dotnet_metadata"
+    result = evaluate_wallcrawler_local_evidence(
+        evidence_pack=mismatched_tool_pack,
+        current_stage="evidence_retrieval",
+        forbidden_artifacts=[],
+    )
+    assert result["semantic_gate"]["fact_catalog_status"] == "invalid"
+    assert "observation_fact_catalog_integrity_invalid" in result["semantic_gate"][
+        "failure_reasons"
+    ]
+
+    mismatched_trace_hash_pack = deepcopy(pack)
+    mismatched_trace_hash_pack["observation_trace"][1]["observation_sha256"] = (
+        "f" * 64
+    )
+    result = evaluate_wallcrawler_local_evidence(
+        evidence_pack=mismatched_trace_hash_pack,
+        current_stage="evidence_retrieval",
+        forbidden_artifacts=[],
+    )
+    assert result["semantic_gate"]["fact_catalog_status"] == "invalid"
+    assert "observation_fact_catalog_integrity_invalid" in result["semantic_gate"][
+        "failure_reasons"
+    ]
 
     abstention_pack = deepcopy(pack)
     abstention_pack["evidence_conclusions"] = [
@@ -2263,26 +2830,9 @@ def test_wallcrawler_hidden_gates_separate_capability_from_convergence() -> None
     truncated_nonexistence_pack["evidence_conclusions"][0]["observation_ids"] = [
         "obs-001"
     ]
-    truncated_nonexistence_pack["observation_fact_catalog"] = [
-        {
-            "fact_id": "obs-001:metadata_search_result:fixture",
-            "observation_id": "obs-001",
-            "source_id": "source-a",
-            "fact_type": "metadata_search_result",
-            "subject": "source-a",
-            "value": {
-                "matched_counts": {"methods": 20, "types": 0, "fields": 0},
-                "returned_counts": {"methods": 5, "types": 0, "fields": 0},
-                "results_truncated": True,
-            },
-            "canonical_claim": (
-                "Observed metadata search result: "
-                'matched_counts={"fields":0,"methods":20,"types":0}; '
-                'returned_counts={"fields":0,"methods":5,"types":0}; '
-                "results_truncated=true."
-            ),
-        }
-    ]
+    truncated_nonexistence_pack["observation_fact_catalog"] = (
+        search_observation.supported_facts()
+    )
     truncated_nonexistence_pack["verified_findings"] = []
     result = evaluate_wallcrawler_local_evidence(
         evidence_pack=truncated_nonexistence_pack,

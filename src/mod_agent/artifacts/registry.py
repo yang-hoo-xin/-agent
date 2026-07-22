@@ -122,6 +122,8 @@ class ArtifactTypeRegistry:
             _validate_implementation_plan_binding_registry(payload)
         if artifact_type == "evidence_run_attempt":
             _validate_evidence_run_attempt(payload)
+        if artifact_type == "evidence_post_run_validation":
+            _validate_evidence_post_run_validation(payload)
 
 
 def _validate_evidence_run_attempt(payload: dict[str, Any]) -> None:
@@ -146,6 +148,161 @@ def _validate_evidence_run_attempt(payload: dict[str, Any]) -> None:
         raise ArtifactRegistryError("evidence_run_attempt provider_turns must be a list")
     if not isinstance(payload.get("failure"), dict):
         raise ArtifactRegistryError("evidence_run_attempt failure must be an object")
+    diagnostics = payload.get("failure_diagnostics")
+    if diagnostics is not None:
+        _validate_evidence_run_failure_diagnostics(diagnostics)
+
+    lineage_schema = payload.get("lineage_schema_version")
+    if lineage_schema is not None:
+        if lineage_schema != "phase1_source_bound_no_write_v1":
+            raise ArtifactRegistryError(
+                "evidence_run_attempt lineage_schema_version is invalid"
+            )
+        for field_name in (
+            "request_binding",
+            "platform_source_binding",
+            "target_source_binding",
+            "authorization_boundary",
+            "lineage",
+        ):
+            if not isinstance(payload.get(field_name), dict):
+                raise ArtifactRegistryError(
+                    f"evidence_run_attempt {field_name} must be an object"
+                )
+
+
+def _validate_evidence_post_run_validation(payload: dict[str, Any]) -> None:
+    if payload.get("lineage_schema_version") != "phase1_source_bound_no_write_v1":
+        raise ArtifactRegistryError(
+            "evidence_post_run_validation lineage_schema_version is invalid"
+        )
+    checks = payload.get("lineage_checks")
+    if not isinstance(checks, dict) or not checks:
+        raise ArtifactRegistryError(
+            "evidence_post_run_validation lineage_checks must be a non-empty object"
+        )
+    if any(not isinstance(value, bool) for value in checks.values()):
+        raise ArtifactRegistryError(
+            "evidence_post_run_validation lineage_checks values must be boolean"
+        )
+    lineage_passed = payload.get("lineage_passed")
+    if not isinstance(lineage_passed, bool) or lineage_passed != all(checks.values()):
+        raise ArtifactRegistryError(
+            "evidence_post_run_validation lineage_passed must equal all lineage checks"
+        )
+    if payload.get("affects_runtime_route") is not False:
+        raise ArtifactRegistryError(
+            "evidence_post_run_validation affects_runtime_route must be false"
+        )
+    if not isinstance(payload.get("runtime_outcome"), dict):
+        raise ArtifactRegistryError(
+            "evidence_post_run_validation runtime_outcome must be an object"
+        )
+    domain_validation = payload.get("domain_validation")
+    if domain_validation is not None and not isinstance(domain_validation, dict):
+        raise ArtifactRegistryError(
+            "evidence_post_run_validation domain_validation must be null or an object"
+        )
+    limitations = payload.get("limitations")
+    if not isinstance(limitations, list) or any(
+        not isinstance(item, str) or not item for item in limitations
+    ):
+        raise ArtifactRegistryError(
+            "evidence_post_run_validation limitations must be a list of non-empty strings"
+        )
+
+
+def _validate_evidence_run_failure_diagnostics(value: object) -> None:
+    if not isinstance(value, dict):
+        raise ArtifactRegistryError(
+            "evidence_run_attempt failure_diagnostics must be an object"
+        )
+    if value.get("schema_version") != "evidence_run_failure_diagnostics_v1":
+        raise ArtifactRegistryError(
+            "evidence_run_attempt failure_diagnostics schema_version is invalid"
+        )
+    for field_name in (
+        "provider_tool_calls",
+        "adapter_accepted_actions",
+        "deterministic_validation_passed",
+        "dispatch_started",
+        "tool_execution_completed",
+        "observation_created",
+    ):
+        field_value = value.get(field_name)
+        if (
+            not isinstance(field_value, int)
+            or isinstance(field_value, bool)
+            or field_value < 0
+        ):
+            raise ArtifactRegistryError(
+                f"evidence_run_attempt failure_diagnostics {field_name} "
+                "must be a non-negative integer"
+            )
+    for field_name in ("failure_stage", "symbolic_failure_code"):
+        field_value = value.get(field_name)
+        if not isinstance(field_value, str) or not field_value:
+            raise ArtifactRegistryError(
+                f"evidence_run_attempt failure_diagnostics {field_name} "
+                "must be a non-empty string"
+            )
+    traceback_data = value.get("traceback")
+    if not isinstance(traceback_data, dict):
+        raise ArtifactRegistryError(
+            "evidence_run_attempt failure_diagnostics traceback must be an object"
+        )
+    for field_name in (
+        "available_in_process",
+        "recoverable_from_artifact",
+        "source_lines_persisted",
+        "locals_persisted",
+        "exception_message_persisted",
+    ):
+        if not isinstance(traceback_data.get(field_name), bool):
+            raise ArtifactRegistryError(
+                f"evidence_run_attempt failure_diagnostics traceback {field_name} "
+                "must be boolean"
+            )
+    external_frame_count = traceback_data.get("external_frame_count")
+    if (
+        not isinstance(external_frame_count, int)
+        or isinstance(external_frame_count, bool)
+        or external_frame_count < 0
+    ):
+        raise ArtifactRegistryError(
+            "evidence_run_attempt failure_diagnostics traceback "
+            "external_frame_count must be a non-negative integer"
+        )
+    frames = traceback_data.get("project_frames")
+    if not isinstance(frames, list):
+        raise ArtifactRegistryError(
+            "evidence_run_attempt failure_diagnostics traceback project_frames "
+            "must be a list"
+        )
+    for frame in frames:
+        if not isinstance(frame, dict) or set(frame) != {"path", "line", "function"}:
+            raise ArtifactRegistryError(
+                "evidence_run_attempt failure_diagnostics traceback frame is invalid"
+            )
+        path = frame.get("path")
+        line = frame.get("line")
+        function = frame.get("function")
+        if (
+            not isinstance(path, str)
+            or not path
+            or "\\" in path
+            or path.startswith("/")
+            or ":" in path
+            or ".." in path.split("/")
+            or not isinstance(line, int)
+            or isinstance(line, bool)
+            or line <= 0
+            or not isinstance(function, str)
+            or not function
+        ):
+            raise ArtifactRegistryError(
+                "evidence_run_attempt failure_diagnostics traceback frame is invalid"
+            )
 
 
 def _validate_implementation_plan_binding_registry(payload: dict[str, Any]) -> None:
@@ -320,6 +477,38 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 "tool_calls_executed",
                 "failure_attribution",
             ),
+        ),
+        ArtifactContract(
+            artifact_type="evidence_post_run_validation",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "run_id",
+                    "request_id",
+                    "lineage_schema_version",
+                    "lineage_checks",
+                    "lineage_passed",
+                    "runtime_outcome",
+                    "domain_validation",
+                    "affects_runtime_route",
+                    "limitations",
+                }
+            ),
+            producer_stage="post_run_validation",
+            consumer_stages=frozenset({"dashboard", "eval"}),
+            allowed_statuses=frozenset({"success", "blocked", "failed"}),
+            required_upstream_artifacts=frozenset(
+                {"evidence_pack", "workflow_trace"}
+            ),
+            dashboard_projection=(
+                "message",
+                "run_id",
+                "lineage_passed",
+            ),
+            eval_visibility=True,
         ),
         ArtifactContract(
             artifact_type="evidence_pack",

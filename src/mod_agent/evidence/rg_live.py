@@ -80,13 +80,20 @@ class RgLiveEvidenceProvider:
             return EvidencePack.empty(query=query, reason="rg found no live C# source matches.")
 
         selected_path, selected_line = _select_file(matches, tokens)
-        source = selected_path.read_text(encoding="utf-8")
-        lines = source.splitlines()
+        source_bytes = selected_path.read_bytes()
+        try:
+            source = source_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            return EvidencePack.empty(
+                query=query,
+                reason=f"Selected live C# source is not valid UTF-8: {exc}",
+            )
+        lines = source.splitlines(keepends=True)
         start_line = max(1, selected_line - 10)
         end_line = min(len(lines), selected_line + 18)
-        excerpt = "\n".join(lines[start_line - 1 : end_line])
+        excerpt = "".join(lines[start_line - 1 : end_line])
         relative = selected_path.relative_to(self.workspace_root).as_posix()
-        file_hash = hashlib.sha256(selected_path.read_bytes()).hexdigest()
+        file_hash = hashlib.sha256(source_bytes).hexdigest()
         evidence_id = "rg_live_" + hashlib.sha256(
             f"{relative}:{file_hash}:{start_line}:{end_line}".encode()
         ).hexdigest()[:16]

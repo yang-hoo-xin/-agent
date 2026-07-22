@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.mod_agent.artifacts import (
+    ArtifactRegistryError,
     ArtifactStore,
     ArtifactStoreError,
     ArtifactTypeRegistry,
@@ -237,6 +238,7 @@ def test_every_workflow_artifact_type_is_registered() -> None:
         "mod_planning_brief",
         "feature_spec",
         "evidence_pack",
+        "evidence_post_run_validation",
         "implementation_plan",
         "patch_proposal",
         "proposal_review",
@@ -254,6 +256,50 @@ def test_every_workflow_artifact_type_is_registered() -> None:
         "git_change_record",
         "knowledge_index_report",
     }.issubset(registry.artifact_types())
+
+
+def test_evidence_post_run_validation_contract_is_non_routing_and_consistent() -> None:
+    registry = ArtifactTypeRegistry()
+    payload = {
+        "node_name": "post_run_validation",
+        "stage": "post_run_validation",
+        "message": "lineage validation",
+        "run_id": "run_001",
+        "request_id": "request_001",
+        "lineage_schema_version": "phase1_source_bound_no_write_v1",
+        "lineage_checks": {"source_bound": True, "trace_persisted": True},
+        "lineage_passed": True,
+        "runtime_outcome": {"terminal_stage": "evidence_retrieval"},
+        "domain_validation": None,
+        "affects_runtime_route": False,
+        "limitations": ["One no-write run only."],
+    }
+
+    contract = registry.validate_write(
+        artifact_type="evidence_post_run_validation",
+        status="success",
+        payload=payload,
+    )
+
+    assert contract.required_upstream_artifacts == frozenset(
+        {"evidence_pack", "workflow_trace"}
+    )
+    with pytest.raises(
+        ArtifactRegistryError, match="affects_runtime_route must be false"
+    ):
+        registry.validate_write(
+            artifact_type="evidence_post_run_validation",
+            status="success",
+            payload={**payload, "affects_runtime_route": True},
+        )
+    with pytest.raises(
+        ArtifactRegistryError, match="must equal all lineage checks"
+    ):
+        registry.validate_write(
+            artifact_type="evidence_post_run_validation",
+            status="success",
+            payload={**payload, "lineage_passed": False},
+        )
 
 
 def test_git_change_record_contract_supports_audit_and_replay() -> None:
