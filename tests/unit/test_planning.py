@@ -35,6 +35,11 @@ def _authoritative_item(**overrides: object) -> dict[str, object]:
         "source_hash": "file_hash_001",
         "file_hash": "file_hash_001",
         "doc_hash": "doc_hash_001",
+        "declaring_type": "Plugin",
+        "method_name": "Load",
+        "parameter_types": [],
+        "return_type": "void",
+        "method_kind": "method",
     }
     item.update(overrides)
     return item
@@ -344,6 +349,11 @@ def test_implementation_plan_binds_every_change_to_evidence() -> None:
     assert edit_binding["evidence_id"] == "ev_001"
     assert edit_binding["canonical_target_path"] == "mods/BetterHitFeedback/Plugin.cs"
     assert edit_binding["target_span"] == {"start_line": 10, "end_line": 20}
+    assert edit_binding["declaring_type"] == "Plugin"
+    assert edit_binding["method_name"] == "Load"
+    assert edit_binding["parameter_types"] == []
+    assert edit_binding["return_type"] == "void"
+    assert edit_binding["method_kind"] == "method"
     assert implementation.binding_registry["supporting_bindings"] == []
     assert implementation.rollback_plan
 

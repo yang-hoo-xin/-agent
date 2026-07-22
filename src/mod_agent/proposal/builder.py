@@ -289,11 +289,22 @@ class PatchProposalBuilder:
         for binding in registry.get("edit_bindings") or []:
             if not isinstance(binding, dict) or not binding.get("target_symbol"):
                 continue
+            method_name = binding.get("method_name")
+            return_type = binding.get("return_type")
+            parameter_types = binding.get("parameter_types")
+            if method_name and return_type and isinstance(parameter_types, list):
+                signature = (
+                    f"{return_type} {method_name}("
+                    + ", ".join(str(item) for item in parameter_types)
+                    + ")"
+                )
+            else:
+                signature = str(binding["target_symbol"])
             signatures.append(
                 {
                     "symbol": str(binding["target_symbol"]),
                     "binding_id": binding.get("binding_id"),
-                    "signature": binding.get("target_symbol"),
+                    "signature": signature,
                     "signature_source": "binding_registry",
                     "evidence_ids": [binding.get("evidence_id")],
                 }

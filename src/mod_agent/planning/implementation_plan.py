@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
-
 from src.mod_agent.evidence.models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
     EVIDENCE_PACK_AUTHORITY,
     LEGACY_RAG_AUXILIARY_AUTHORITY,
 )
+from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
+
 from .models import FeatureSpec, ImplementationPlan
 
 EDITABLE_EVIDENCE_SOURCE_TYPES = frozenset({"target_source"})
@@ -290,6 +290,15 @@ class ImplementationPlanner:
             "source_type": item.get("source_type"),
             "target_symbol": item.get("symbol"),
             "target_span": item.get("span"),
+            "declaring_type": item.get("declaring_type"),
+            "method_name": item.get("method_name"),
+            "parameter_types": (
+                list(item["parameter_types"])
+                if isinstance(item.get("parameter_types"), (list, tuple))
+                else None
+            ),
+            "return_type": item.get("return_type"),
+            "method_kind": item.get("method_kind"),
             "retrieval_method": item.get("retrieval_method"),
             "claim_supported": item.get("claim_supported"),
             "authority": item.get("authority"),

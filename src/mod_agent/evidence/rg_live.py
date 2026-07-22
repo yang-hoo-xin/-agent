@@ -16,6 +16,17 @@ from .models import (
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 _RG_LINE_RE = re.compile(r"^(.*\.cs):(\d+):(.*)$", re.IGNORECASE)
+_CSHARP_METHOD_RE = re.compile(
+    r"^(?:(?:public|private|protected|internal|static|virtual|override|abstract|"
+    r"sealed|async|extern|unsafe|new|partial)\s+)*"
+    r"(?P<return_type>[A-Za-z_][A-Za-z0-9_.<>,?\[\]]*)\s+"
+    r"(?P<method_name>[A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"\((?P<parameters>[^)]*)\)\s*(?:\{|=>)?\s*$"
+)
+_CSHARP_TYPE_RE = re.compile(
+    r"^(?:(?:public|private|protected|internal|static|abstract|sealed|partial)\s+)*"
+    r"(?:class|struct|record)\s+(?P<type_name>[A-Za-z_][A-Za-z0-9_]*)\b"
+)
 _STOP_WORDS = {
     "and",
     "change",
@@ -89,7 +100,12 @@ class RgLiveEvidenceProvider:
                 reason=f"Selected live C# source is not valid UTF-8: {exc}",
             )
         lines = source.splitlines(keepends=True)
-        start_line = max(1, selected_line - 10)
+        method_context = _enclosing_csharp_method(lines, selected_line=selected_line)
+        start_line = (
+            method_context["declaration_line"]
+            if method_context is not None
+            else max(1, selected_line - 10)
+        )
         end_line = min(len(lines), selected_line + 18)
         excerpt = "".join(lines[start_line - 1 : end_line])
         relative = selected_path.relative_to(self.workspace_root).as_posix()
@@ -97,7 +113,11 @@ class RgLiveEvidenceProvider:
         evidence_id = "rg_live_" + hashlib.sha256(
             f"{relative}:{file_hash}:{start_line}:{end_line}".encode()
         ).hexdigest()[:16]
-        symbol = _best_symbol(excerpt, tokens)
+        symbol = (
+            str(method_context["method_name"])
+            if method_context is not None
+            else _best_symbol(excerpt, tokens)
+        )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         item = EvidenceItem(
             evidence_id=evidence_id,
@@ -116,6 +136,29 @@ class RgLiveEvidenceProvider:
             file_hash=file_hash,
             doc_hash=file_hash,
             authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
+            declaring_type=(
+                str(method_context["declaring_type"])
+                if method_context is not None
+                and method_context.get("declaring_type") is not None
+                else None
+            ),
+            method_name=(
+                str(method_context["method_name"])
+                if method_context is not None
+                else None
+            ),
+            parameter_types=(
+                tuple(method_context["parameter_types"])
+                if method_context is not None
+                and method_context.get("parameter_types") is not None
+                else None
+            ),
+            return_type=(
+                str(method_context["return_type"])
+                if method_context is not None
+                else None
+            ),
+            method_kind="method" if method_context is not None else None,
         )
         return EvidencePack(
             query=query,
@@ -205,3 +248,35 @@ def _best_symbol(excerpt: str, tokens: list[str]) -> str | None:
     ):
         return scored[0]
     return identifiers[0] if identifiers else None
+
+
+def _enclosing_csharp_method(
+    lines: list[str],
+    *,
+    selected_line: int,
+) -> dict[str, object] | None:
+    """Return the nearest preceding C# method declaration for one selected line."""
+
+    for index in range(min(selected_line, len(lines)) - 1, -1, -1):
+        declaration = lines[index].strip()
+        match = _CSHARP_METHOD_RE.fullmatch(declaration)
+        if match is None:
+            continue
+        parameters = match.group("parameters").strip()
+        declaring_type = _nearest_csharp_type(lines, before_line=index + 1)
+        return {
+            "declaration_line": index + 1,
+            "declaring_type": declaring_type,
+            "method_name": match.group("method_name"),
+            "parameter_types": () if not parameters else None,
+            "return_type": match.group("return_type"),
+        }
+    return None
+
+
+def _nearest_csharp_type(lines: list[str], *, before_line: int) -> str | None:
+    for index in range(min(before_line, len(lines)) - 1, -1, -1):
+        match = _CSHARP_TYPE_RE.match(lines[index].strip())
+        if match is not None:
+            return match.group("type_name")
+    return None

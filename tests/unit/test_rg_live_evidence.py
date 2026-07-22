@@ -47,3 +47,37 @@ def test_rg_live_provider_preserves_crlf_for_raw_exact_patch_binding(
     assert "\r\n" in excerpt
     assert "\n" not in excerpt.replace("\r\n", "")
     assert excerpt.encode("utf-8") in raw_source
+
+
+def test_rg_live_provider_binds_enclosing_csharp_method_declaration(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "generated_mods" / "BetterHitFeedback" / "Plugin.cs"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "public sealed class Plugin\n"
+        "{\n"
+        "    public override void Load()\n"
+        "    {\n"
+        + "".join(f"        var filler{index} = {index};\n" for index in range(12))
+        + "        ConfigEnabled = Config.Bind(\"General\", \"Enabled\", true);\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="General Enabled startup",
+        search_root="generated_mods/BetterHitFeedback",
+    )
+
+    item = pack.items[0]
+    assert item.excerpt.splitlines()[0] == "    public override void Load()"
+    assert item.symbol == "Load"
+    assert item.declaring_type == "Plugin"
+    assert item.method_name == "Load"
+    assert item.parameter_types == ()
+    assert item.return_type == "void"
+    assert item.method_kind == "method"
+    assert item.span is not None
+    assert item.span["start_line"] == 3

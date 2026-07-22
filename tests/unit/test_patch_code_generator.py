@@ -187,6 +187,100 @@ def test_generator_rejects_missing_declared_literal_validation_marker() -> None:
     ]
 
 
+def test_generator_rejects_return_value_from_bound_csharp_void_method() -> None:
+    payload = {
+        "changes": [
+            {
+                "edit_binding_id": "edit_binding_001",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "ConfigEnabled = true;",
+                    "after_text": "if (!ConfigEnabled) { return false; }",
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+    evidence = {
+        "evidence_id": "ev_load",
+        "source_path": "generated_mods/Example/Plugin.cs",
+        "method_name": "Load",
+        "return_type": "void",
+        "excerpt": "public override void Load() { ConfigEnabled = true; }",
+    }
+    registry = {
+        "edit_bindings": [
+            {
+                "binding_id": "edit_binding_001",
+                "evidence_id": "ev_load",
+                "canonical_target_path": "generated_mods/Example/Plugin.cs",
+                "method_name": "Load",
+                "return_type": "void",
+            }
+        ]
+    }
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(_FakeLLM(json.dumps(payload))).generate(
+            user_request="disable startup",
+            evidence_items=[evidence],
+            binding_registry=registry,
+            constraints=[],
+        )
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "csharp_return_value_in_void_method"
+    )
+    assert exc_info.value.diagnostics["method_name"] == "Load"
+    assert exc_info.value.diagnostics["return_type"] == "void"
+
+
+def test_generator_allows_bare_return_and_ignores_return_text_in_csharp_strings() -> None:
+    payload = {
+        "changes": [
+            {
+                "edit_binding_id": "edit_binding_001",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "ConfigEnabled = true;",
+                    "after_text": (
+                        'LogInfo("return false;"); // return false;\n'
+                        "if (!ConfigEnabled) { return; }"
+                    ),
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+    evidence = {
+        "evidence_id": "ev_load",
+        "source_path": "generated_mods/Example/Plugin.cs",
+        "method_name": "Load",
+        "return_type": "void",
+        "excerpt": "public override void Load() { ConfigEnabled = true; }",
+    }
+    registry = {
+        "edit_bindings": [
+            {
+                "binding_id": "edit_binding_001",
+                "evidence_id": "ev_load",
+                "canonical_target_path": "generated_mods/Example/Plugin.cs",
+                "method_name": "Load",
+                "return_type": "void",
+            }
+        ]
+    }
+
+    generated = LLMExactPatchGenerator(_FakeLLM(json.dumps(payload))).generate(
+        user_request="disable startup",
+        evidence_items=[evidence],
+        binding_registry=registry,
+        constraints=[],
+    )
+
+    assert "return;" in generated.changes[0]["patch"]["after_text"]
+
+
 def test_generator_rejects_omitted_upstream_validation_requirement() -> None:
     payload = {
         "changes": [

@@ -34,6 +34,11 @@ def _implementation_payload() -> dict[str, object]:
                     "source_type": "target_source",
                     "target_symbol": "Load",
                     "target_span": {"start_line": 10, "end_line": 18},
+                    "declaring_type": "Plugin",
+                    "method_name": "Load",
+                    "parameter_types": [],
+                    "return_type": "void",
+                    "method_kind": "method",
                     "retrieval_method": "symbol_exact",
                     "claim_supported": "Symbol Load exists.",
                     "authority": "mod_agent_deterministic",
@@ -346,6 +351,9 @@ def test_patch_proposal_builder_converts_implementation_plan_to_reviewable_inten
         "end_line": 18,
     }
     assert proposal.context_pack["target_symbol_signatures"][0]["symbol"] == "Load"
+    assert proposal.context_pack["target_symbol_signatures"][0]["signature"] == (
+        "void Load()"
+    )
     assert proposal.context_pack["binding_registry_ref"] == {
         "artifact_type": "implementation_plan",
         "artifact_hash": "sha256:implementation",

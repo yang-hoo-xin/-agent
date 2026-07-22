@@ -10,7 +10,6 @@ from typing import Any
 
 from src.libs.llm import BaseLLM, ChatResponse, Message
 
-
 _LITERAL_VALIDATION_MARKER_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 
 
@@ -63,6 +62,28 @@ class LLMExactPatchGenerator:
         }
         if not allowed_bindings:
             raise PatchGenerationError("No editable binding is available for generation.")
+
+        evidence_by_id = {
+            str(item["evidence_id"]): item
+            for item in evidence_items
+            if isinstance(item, dict) and item.get("evidence_id")
+        }
+        binding_contexts: dict[str, dict[str, Any]] = {}
+        for binding in binding_registry.get("edit_bindings") or []:
+            if not isinstance(binding, dict) or not binding.get("binding_id"):
+                continue
+            evidence = evidence_by_id.get(str(binding.get("evidence_id") or "")) or {}
+            binding_contexts[str(binding["binding_id"])] = {
+                field: binding.get(field) or evidence.get(evidence_field)
+                for field, evidence_field in (
+                    ("canonical_target_path", "source_path"),
+                    ("declaring_type", "declaring_type"),
+                    ("method_name", "method_name"),
+                    ("parameter_types", "parameter_types"),
+                    ("return_type", "return_type"),
+                    ("method_kind", "method_kind"),
+                )
+            }
 
         required_validation = {
             str(binding_id): tuple(str(item) for item in values)
@@ -144,6 +165,7 @@ class LLMExactPatchGenerator:
                             "request": user_request,
                             "constraints": constraints,
                             "allowed_edit_binding_ids": sorted(allowed_bindings),
+                            "edit_binding_contexts": binding_contexts,
                             "required_validation_by_binding": {
                                 binding_id: list(values)
                                 for binding_id, values in sorted(
@@ -175,6 +197,7 @@ class LLMExactPatchGenerator:
                     allowed_bindings=allowed_bindings,
                     evidence_excerpts=evidence_excerpts,
                     required_validation=required_validation,
+                    binding_contexts=binding_contexts,
                     index=index,
                 )
                 for index, item in enumerate(raw_changes, start=1)
@@ -300,6 +323,7 @@ def _validate_change(
     allowed_bindings: set[str],
     evidence_excerpts: tuple[str, ...],
     required_validation: Mapping[str, tuple[str, ...]],
+    binding_contexts: Mapping[str, Mapping[str, Any]],
     index: int,
 ) -> dict[str, Any]:
     if not isinstance(raw, dict):
@@ -326,6 +350,12 @@ def _validate_change(
         )
     if not isinstance(after, str) or not after or after == before:
         raise PatchGenerationError(f"Change {index} after_text must be a real replacement.")
+    _validate_bound_language_semantics(
+        after=after,
+        binding_id=binding_id,
+        binding_contexts=binding_contexts,
+        index=index,
+    )
     if patch.get("expected_occurrences") != 1:
         raise PatchGenerationError(f"Change {index} expected_occurrences must equal 1.")
     expected_validation = [
@@ -378,3 +408,116 @@ def _validate_change(
             "expected_occurrences": 1,
         },
     }
+
+
+def _validate_bound_language_semantics(
+    *,
+    after: str,
+    binding_id: str,
+    binding_contexts: Mapping[str, Mapping[str, Any]],
+    index: int,
+) -> None:
+    context = binding_contexts.get(binding_id) or {}
+    source_path = context.get("canonical_target_path")
+    return_type = context.get("return_type")
+    if not isinstance(source_path, str) or not source_path.lower().endswith(".cs"):
+        return
+    if return_type != "void":
+        return
+    code_only = _strip_csharp_non_code(after)
+    invalid_returns = [
+        match.group(1).strip()
+        for match in re.finditer(r"\breturn\b\s*([^;]*);", code_only)
+        if match.group(1).strip()
+    ]
+    if invalid_returns:
+        raise PatchGenerationError(
+            f"Change {index} returns a value from bound void method.",
+            diagnostics={
+                "failure_boundary": "deterministic_patch_validation",
+                "failure_classification": "csharp_return_value_in_void_method",
+                "binding_id": binding_id,
+                "method_name": context.get("method_name"),
+                "return_type": return_type,
+            },
+        )
+
+
+def _strip_csharp_non_code(value: str) -> str:
+    """Replace C# comments and string/character contents while preserving layout."""
+
+    selected: list[str] = []
+    index = 0
+    state = "code"
+    while index < len(value):
+        current = value[index]
+        following = value[index + 1] if index + 1 < len(value) else ""
+        if state == "code":
+            if current == "/" and following == "/":
+                selected.extend("  ")
+                index += 2
+                state = "line_comment"
+                continue
+            if current == "/" and following == "*":
+                selected.extend("  ")
+                index += 2
+                state = "block_comment"
+                continue
+            if current == '"':
+                selected.append(" ")
+                index += 1
+                state = "verbatim_string" if index >= 2 and value[index - 2] == "@" else "string"
+                continue
+            if current == "'":
+                selected.append(" ")
+                index += 1
+                state = "character"
+                continue
+            selected.append(current)
+            index += 1
+            continue
+        if state == "line_comment":
+            selected.append(current if current in "\r\n" else " ")
+            index += 1
+            if current == "\n":
+                state = "code"
+            continue
+        if state == "block_comment":
+            if current == "*" and following == "/":
+                selected.extend("  ")
+                index += 2
+                state = "code"
+            else:
+                selected.append(current if current in "\r\n" else " ")
+                index += 1
+            continue
+        if state == "verbatim_string":
+            if current == '"' and following == '"':
+                selected.extend("  ")
+                index += 2
+            elif current == '"':
+                selected.append(" ")
+                index += 1
+                state = "code"
+            else:
+                selected.append(current if current in "\r\n" else " ")
+                index += 1
+            continue
+        if current == "\\":
+            selected.append(" ")
+            if following:
+                selected.append(" ")
+                index += 2
+            else:
+                index += 1
+            continue
+        if (state == "string" and current == '"') or (
+            state == "character" and current == "'"
+        ):
+            selected.append(" ")
+            index += 1
+            state = "code"
+            continue
+        selected.append(current if current in "\r\n" else " ")
+        index += 1
+    return "".join(selected)
