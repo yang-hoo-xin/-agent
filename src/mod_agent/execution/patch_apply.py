@@ -16,6 +16,10 @@ class PatchApplyError(RuntimeError):
     """Raised when an executable patch is unsafe, stale, or ambiguous."""
 
 
+class ExactDiffApprovalRejectedError(RuntimeError):
+    """Raised when the user explicitly rejects the displayed exact diff."""
+
+
 class ExactTextPatchApplier:
     """Validate exact replacements and optionally write them inside one workspace."""
 

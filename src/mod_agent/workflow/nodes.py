@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 from uuid import uuid4
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
@@ -108,13 +109,14 @@ class StubNodeRunner:
             node_name=node_name,
             stage=stage,
             user_request=state["user_request"],
+            state=state,
         )
         upstream_refs = self._upstream_refs_for(artifact_type, feature_id, state)
         artifact_ref = self.artifact_store.write(
             feature_id=feature_id,
             artifact_type=artifact_type,
             payload=payload,
-            status="stubbed",
+            status="blocked" if node_name == "blocked" else "stubbed",
             trace_refs=[event_id],
             upstream_refs=upstream_refs,
         )
@@ -139,9 +141,13 @@ class StubNodeRunner:
             node_name=node_name,
             stage=stage,
             event_type="node_finished",
-            status="stubbed",
+            status="blocked" if node_name == "blocked" else "stubbed",
             artifact_refs=[artifact_ref.path],
-            summary=f"{node_name} completed as a Phase A stub.",
+            summary=(
+                "Workflow terminal blocker report persisted."
+                if node_name == "blocked"
+                else f"{node_name} completed as a Phase A stub."
+            ),
         )
         return StubNodeResult(
             state=next_state,
@@ -178,7 +184,24 @@ class StubNodeRunner:
         node_name: str,
         stage: StageName,
         user_request: str,
+        state: ModAgentState,
     ) -> dict[str, Any]:
+        if artifact_type == "blocked_report":
+            return {
+                "node_name": node_name,
+                "stage": stage,
+                "message": "Workflow stopped at the blocked terminal stage.",
+                "blockers": list(state["blockers"]),
+                "upstream_artifacts": {
+                    artifact_name: {
+                        "path": artifact_path,
+                        "artifact_hash": state["artifact_hashes"].get(artifact_name),
+                    }
+                    for artifact_name, artifact_path in sorted(
+                        state["artifacts"].items()
+                    )
+                },
+            }
         payload: dict[str, Any] = {
             "node_name": node_name,
             "stage": stage,

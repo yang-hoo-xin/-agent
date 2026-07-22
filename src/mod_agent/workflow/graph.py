@@ -28,6 +28,7 @@ from src.mod_agent.evidence import (
     EvidencePack,
     EvidenceRequest,
 )
+from src.mod_agent.execution import ExactDiffApprovalRejectedError
 from src.mod_agent.git import GitCommandError, GitRepository
 from src.mod_agent.knowledge import (
     CollectionResolutionError,
@@ -1427,6 +1428,24 @@ def _run_isolated_apply(
                 proposal,
                 _read_artifact_data(state, artifact_store, "implementation_plan"),
                 review,
+            )
+        except ExactDiffApprovalRejectedError as exc:
+            payload = {
+                "execution_mode": "rejected",
+                "actual_write_performed": False,
+                "real_patch_applied": False,
+                "approved_by_review": review.get("allowed_next_stage")
+                == "dry_run_apply",
+                "changed_files": [],
+                "rejection": str(exc),
+            }
+            status = "blocked"
+            next_state["blockers"].append(
+                {
+                    "stage": "isolated_apply",
+                    "code": "EXACT_DIFF_REJECTED",
+                    "message": str(exc),
+                }
             )
         except Exception as exc:
             payload = {

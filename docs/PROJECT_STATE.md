@@ -219,6 +219,43 @@ the canonical snapshot SHA256 exactly. No Phase 2B run, graph, model call,
 product-source write, or final build occurred during the repair. Another real
 Phase 2B run requires new explicit authorization.
 
+Fresh run `b237e35e` then passed the run-local inspector and NuGet-isolated
+baseline, made one bound local Ollama Patch Generation call, and reached the
+no-write exact-diff boundary. The generated replacement contained `return
+false;` inside the bound `public override void Load()` method. That C# code is
+invalid because `Load` returns `void`; the user rejected the displayed diff,
+so no apply, final build, runtime action, or source write occurred. The old
+terminal projection nevertheless recorded the rejection as
+`ISOLATED_APPLY_FAILED`, left `run_manifest.json` at `baseline_verified` with
+`graph_invoked=false` and `model_call_count=0`, labelled the baseline DLL as a
+passed final verification, and emitted a generic Phase A blocked message that
+contradicted the completed Evidence, Plan, Proposal, Review, and Dry-run work.
+The run remains immutable; these defects are recorded as defects in its
+projection, not retroactively rewritten facts.
+
+Two separate bounded repairs now close the observed gaps without a model call
+or a new run. First, live C# Evidence carries the enclosing method declaration,
+declaring type, method name, parameter types, and return type into the edit
+binding and Patch Generation context. Deterministic Patch admission rejects a
+value-returning statement in a bound C# `void` method before Proposal
+materialization; a no-model replay of the preserved `b237e35e` model payload is
+rejected as `csharp_return_value_in_void_method`. The implementation is a
+language/edit-binding rule and contains no BetterHitFeedback behavior keyword
+check. The direct and affected suite passed 134 tests.
+
+Second, the exact-diff input now has an explicit `REJECTED_BY_USER` decision
+that produces `EXACT_DIFF_REJECTED`, `status=blocked`, and
+`actual_write_performed=false`; other nonmatching input remains a hash-mismatch
+apply failure. `blocked_report` now records the live blockers and upstream
+Artifact refs instead of the generic Phase A claim. Final DLL and source-change
+verification run only after a real successful final build and use the final
+artifact in the business workspace, never the baseline DLL. Returned graph
+results update the same run manifest with terminal stage, result hash,
+`graph_invoked`, model-call count, Patch-parser entry, and actual-write facts.
+The focused terminal suite passed 121 tests. These repairs do not approve a
+replacement run and do not prove product runtime behavior, Phase 2B completion,
+or V2 completion.
+
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four
 disclosed data classes, no fallback, and no automatic retry. Run `d3718a7e`

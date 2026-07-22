@@ -11,6 +11,7 @@ import pytest
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import EvidencePack, FakeDenseRetrievalProvider
+from src.mod_agent.execution import ExactDiffApprovalRejectedError
 from src.mod_agent.knowledge import (
     IDENTITY_FIELD_MAPPING,
     IDENTITY_SCHEMA_VERSION,
@@ -45,6 +46,7 @@ from src.mod_agent.workflow import (
 from src.mod_agent.workflow.graph import (
     _PROJECT_ROOT,
     _default_proposal_git_binding_factory,
+    _run_isolated_apply,
 )
 
 
@@ -928,7 +930,8 @@ def test_langgraph_dynamic_review_interrupt_wrong_thread_id_cannot_resume_origin
 
 
 def test_missing_knowledge_routes_to_blocked_after_evidence(tmp_path: Path) -> None:
-    graph = build_graph(ArtifactStore(tmp_path / "artifacts"))
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(store)
     state = create_initial_state(
         run_id="run_001",
         request_id="req_001",
@@ -951,6 +954,54 @@ def test_missing_knowledge_routes_to_blocked_after_evidence(tmp_path: Path) -> N
     assert result["evidence_summary"]["missing_evidence"]
     assert result["evidence_summary"]["timing"]["final_count"] == 0.0
     assert result["blockers"]
+    blocked_envelope = store.read(_artifact_ref(store, result, "blocked_report"))
+    blocked_report = blocked_envelope["data"]
+    assert blocked_envelope["status"] == "blocked"
+    assert blocked_report["message"] == (
+        "Workflow stopped at the blocked terminal stage."
+    )
+    assert blocked_report["blockers"] == result["blockers"]
+    assert blocked_report["upstream_artifacts"]["evidence_pack"] == {
+        "path": result["artifacts"]["evidence_pack"],
+        "artifact_hash": result["artifact_hashes"]["evidence_pack"],
+    }
+    assert "No real retrieval" not in blocked_report["message"]
+
+
+def test_explicit_exact_diff_rejection_is_not_apply_failure(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+    )
+    state = create_initial_state(
+        run_id="run_rejected_diff",
+        request_id="req_rejected_diff",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+    completed = graph.invoke(state)
+    completed["approvals"]["confirmed_write"] = True
+
+    rejected = _run_isolated_apply(
+        completed,
+        store,
+        isolated_apply_factory=lambda *_: (_ for _ in ()).throw(
+            ExactDiffApprovalRejectedError("User rejected the displayed exact diff.")
+        ),
+    )
+
+    apply_envelope = store.read(
+        _artifact_ref(store, rejected, "isolated_apply_result")
+    )
+    assert apply_envelope["status"] == "blocked"
+    assert apply_envelope["data"]["execution_mode"] == "rejected"
+    assert apply_envelope["data"]["actual_write_performed"] is False
+    assert rejected["blockers"][-1]["code"] == "EXACT_DIFF_REJECTED"
+    assert all(
+        blocker.get("code") != "ISOLATED_APPLY_FAILED"
+        for blocker in rejected["blockers"]
+    )
 
 
 def test_stop_after_evidence_ends_before_implementation_plan(tmp_path: Path) -> None:

@@ -8,7 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.libs.llm import LLMFactory, OllamaLLM
+from src.mod_agent.execution import ExactDiffApprovalRejectedError
 from src.mod_agent.local_entry import (
+    EXACT_DIFF_REJECTION_TOKEN,
     LOCAL_DIAGNOSTIC_CONTENT_FILENAME,
     LOCAL_DIAGNOSTIC_CONTENT_MAX_BYTES,
     CompiledArtifactInspectionProfile,
@@ -21,8 +23,11 @@ from src.mod_agent.local_entry import (
     _external_evidence_items,
     _local_model_admission_record,
     _local_no_external_disclosure_record,
+    _persist_graph_terminal_failure,
+    _persist_graph_terminal_result,
     _persist_local_failure_diagnostics,
     _project_text_property,
+    _read_exact_diff_approval,
     _read_ollama_server_version,
     _remove_generated_build_directory,
     _resolve_project_path_property,
@@ -32,11 +37,144 @@ from src.mod_agent.local_entry import (
     _source_disclosure_record,
     _verify_bepin_plugin_identity,
     _verify_exact_snapshot_change,
+    _verify_final_compiled_artifact_if_built,
     _verify_source_disclosure,
     run_local_request,
 )
 
 _OLLAMA_DIGEST = "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
+
+
+def test_exact_diff_rejection_is_distinct_from_hash_mismatch() -> None:
+    with pytest.raises(ExactDiffApprovalRejectedError, match="User rejected"):
+        _read_exact_diff_approval(
+            lambda _: EXACT_DIFF_REJECTION_TOKEN,
+            {"diff_hash": "sha256:displayed"},
+        )
+
+    assert _read_exact_diff_approval(
+        lambda _: "sha256:other",
+        {"diff_hash": "sha256:displayed"},
+    ) == "sha256:other"
+
+
+def test_final_artifact_verification_requires_real_final_build(tmp_path: Path) -> None:
+    calls: list[tuple[Path, str]] = []
+
+    def verify(path: Path, stage: str) -> dict[str, object]:
+        calls.append((path, stage))
+        return {"stage": stage}
+
+    blocked = _verify_final_compiled_artifact_if_built(
+        graph_result={"build_summary": {}},
+        target_copy=tmp_path,
+        expected_artifact=Path("bin/Debug/Example.dll"),
+        verifier=verify,
+    )
+
+    assert blocked is None
+    assert calls == []
+
+    final_artifact = tmp_path / "bin" / "Debug" / "Example.dll"
+    final_artifact.parent.mkdir(parents=True)
+    final_artifact.write_bytes(b"final")
+    verified = _verify_final_compiled_artifact_if_built(
+        graph_result={"build_summary": {"claims_real_build_success": True}},
+        target_copy=tmp_path,
+        expected_artifact=Path("bin/Debug/Example.dll"),
+        verifier=verify,
+    )
+
+    assert verified == {"stage": "final"}
+    assert calls == [(final_artifact, "final")]
+
+
+def test_graph_terminal_result_updates_same_run_manifest(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "run_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "run_id": "run_001",
+                "request_id": "request_001",
+                "status": "baseline_verified",
+                "graph_invoked": False,
+                "model_call_count": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    summary = {
+        "run_id": "run_001",
+        "current_stage": "blocked",
+        "blockers": [{"code": "EXACT_DIFF_REJECTED"}],
+        "graph_invoked": True,
+        "model_call_count": 1,
+        "patch_payload_parser_entered": True,
+        "actual_write_performed": False,
+    }
+
+    _persist_graph_terminal_result(
+        run_root=tmp_path,
+        run_id="run_001",
+        request_id="request_001",
+        summary=summary,
+        model_call_count=1,
+        patch_payload_parser_entered=True,
+        actual_write_performed=False,
+    )
+
+    result_path = tmp_path / "run_result.json"
+    result_bytes = result_path.read_bytes()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert json.loads(result_bytes) == summary
+    assert manifest["status"] == "blocked"
+    assert manifest["terminal_stage"] == "blocked"
+    assert manifest["graph_invoked"] is True
+    assert manifest["model_call_count"] == 1
+    assert manifest["patch_payload_parser_entered"] is True
+    assert manifest["actual_write_performed"] is False
+    assert manifest["terminal_record"] == {
+        "path": str(result_path),
+        "sha256": hashlib.sha256(result_bytes).hexdigest(),
+    }
+
+
+def test_graph_patch_failure_updates_same_run_manifest(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "run_manifest.json"
+    manifest_path.write_text(
+        json.dumps({"run_id": "run_002", "request_id": "request_002"}),
+        encoding="utf-8",
+    )
+    error = LocalEntryError("bound void method rejected")
+    error.diagnostics = {
+        "failure_boundary": "deterministic_patch_validation",
+        "failure_classification": "csharp_return_value_in_void_method",
+    }
+
+    failure = _persist_graph_terminal_failure(
+        run_root=tmp_path,
+        run_id="run_002",
+        request_id="request_002",
+        error=error,
+        model_call_count=1,
+    )
+
+    failure_path = tmp_path / "run_failure.json"
+    failure_bytes = failure_path.read_bytes()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert failure["failure_stage"] == "deterministic_patch_validation"
+    assert failure["graph_invoked"] is True
+    assert failure["model_call_count"] == 1
+    assert failure["patch_payload_parser_entered"] is True
+    assert failure["actual_write_performed"] is False
+    assert manifest["status"] == "failed"
+    assert manifest["terminal_failure_stage"] == (
+        "deterministic_patch_validation"
+    )
+    assert manifest["terminal_record"] == {
+        "path": str(failure_path),
+        "sha256": hashlib.sha256(failure_bytes).hexdigest(),
+    }
 
 
 def _nuget_isolated_profile(tmp_path: Path):

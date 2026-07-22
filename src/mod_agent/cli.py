@@ -324,7 +324,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "diff_preview": dry_run.get("diff_preview"),
                         "instruction": (
                             "Paste the exact diff_hash to approve isolated apply; "
-                            "any other input blocks the write."
+                            "enter REJECTED_BY_USER to explicitly reject it; any "
+                            "other input blocks the write as a hash mismatch."
                         ),
                     },
                     ensure_ascii=False,

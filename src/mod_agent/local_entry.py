@@ -23,7 +23,7 @@ from src.libs.llm import LLMFactory, OllamaLLM, validate_loopback_http_base_url
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import RgLiveEvidenceProvider
-from src.mod_agent.execution import ExactTextPatchApplier
+from src.mod_agent.execution import ExactDiffApprovalRejectedError, ExactTextPatchApplier
 from src.mod_agent.planning.request_planner import requested_scope_text
 from src.mod_agent.proposal import LLMExactPatchGenerator
 from src.mod_agent.workflow import build_graph, create_initial_state
@@ -41,6 +41,7 @@ SOURCE_DISCLOSURE_DATA_CLASSES = (
 )
 LOCAL_DIAGNOSTIC_CONTENT_MAX_BYTES = 262_144
 LOCAL_DIAGNOSTIC_CONTENT_FILENAME = "patch_generation_failure_message_content.txt"
+EXACT_DIFF_REJECTION_TOKEN = "REJECTED_BY_USER"
 OllamaModelIdentityReader = Callable[[str, str], dict[str, Any]]
 OllamaServerVersionReader = Callable[[str], str]
 
@@ -597,6 +598,134 @@ def _run_pre_graph_step(
             extra=extra,
         )
         raise
+
+
+def _persist_graph_terminal_result(
+    *,
+    run_root: Path,
+    run_id: str,
+    request_id: str,
+    summary: Mapping[str, Any],
+    model_call_count: int,
+    patch_payload_parser_entered: bool,
+    actual_write_performed: bool,
+) -> None:
+    manifest_path = run_root / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("run_id") != run_id or manifest.get("request_id") != request_id:
+        raise LocalEntryError("Run manifest identity changed before terminal projection.")
+    result_path = run_root / "run_result.json"
+    result_bytes = (
+        json.dumps(dict(summary), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    result_path.write_bytes(result_bytes)
+    terminal_stage = str(summary.get("current_stage") or "unknown")
+    manifest.update(
+        {
+            "status": terminal_stage,
+            "terminal_stage": terminal_stage,
+            "terminal_record": {
+                "path": str(result_path),
+                "sha256": hashlib.sha256(result_bytes).hexdigest(),
+            },
+            "model_call_count": model_call_count,
+            "graph_invoked": True,
+            "patch_payload_parser_entered": patch_payload_parser_entered,
+            "actual_write_performed": actual_write_performed,
+        }
+    )
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _persist_graph_terminal_failure(
+    *,
+    run_root: Path,
+    run_id: str,
+    request_id: str,
+    error: BaseException,
+    model_call_count: int,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    diagnostics = getattr(error, "diagnostics", None)
+    diagnostic_record = dict(diagnostics) if isinstance(diagnostics, Mapping) else {}
+    patch_payload_parser_entered = (
+        diagnostic_record.get("failure_boundary")
+        == "deterministic_patch_validation"
+    )
+    failure = {
+        "run_id": run_id,
+        "request_id": request_id,
+        "current_stage": "failed_after_graph_invocation",
+        "failure_stage": diagnostic_record.get("failure_boundary")
+        or "graph_invocation",
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "model_call_count": model_call_count,
+        "graph_invoked": True,
+        "patch_payload_parser_entered": patch_payload_parser_entered,
+        "actual_write_performed": False,
+        "run_root": str(run_root),
+    }
+    if extra:
+        failure.update(dict(extra))
+    manifest_path = run_root / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("run_id") != run_id or manifest.get("request_id") != request_id:
+        raise LocalEntryError("Run manifest identity changed before failure projection.")
+    failure_path = run_root / "run_failure.json"
+    failure_bytes = (
+        json.dumps(failure, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    failure_path.write_bytes(failure_bytes)
+    manifest.update(
+        {
+            "status": "failed",
+            "terminal_failure_stage": failure["failure_stage"],
+            "terminal_record": {
+                "path": str(failure_path),
+                "sha256": hashlib.sha256(failure_bytes).hexdigest(),
+            },
+            "model_call_count": model_call_count,
+            "graph_invoked": True,
+            "patch_payload_parser_entered": patch_payload_parser_entered,
+            "actual_write_performed": False,
+        }
+    )
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return failure
+
+
+def _read_exact_diff_approval(
+    reader: Callable[[dict[str, Any]], str],
+    dry_run: Mapping[str, Any],
+) -> str:
+    approval = reader(dict(dry_run)).strip()
+    if approval == EXACT_DIFF_REJECTION_TOKEN:
+        raise ExactDiffApprovalRejectedError("User rejected the displayed exact diff.")
+    return approval
+
+
+def _verify_final_compiled_artifact_if_built(
+    *,
+    graph_result: Mapping[str, Any],
+    target_copy: Path,
+    expected_artifact: Path,
+    verifier: Callable[[Path, str], dict[str, Any]] | None,
+) -> dict[str, Any] | None:
+    if graph_result.get("build_summary", {}).get("claims_real_build_success") is not True:
+        return None
+    if verifier is None:
+        return None
+    final_artifact = target_copy / expected_artifact
+    if not final_artifact.is_file():
+        raise LocalEntryError("Final compiled artifact is missing after the graph build.")
+    return verifier(final_artifact, "final")
 
 
 def run_local_request(
@@ -1251,7 +1380,10 @@ def run_local_request(
     ) -> dict[str, Any]:
         if pending_dry_run is None:
             raise LocalEntryError("Exact diff approval requested before dry-run completed.")
-        approved_diff_hash = diff_approval_reader(dict(pending_dry_run)).strip()
+        approved_diff_hash = _read_exact_diff_approval(
+            diff_approval_reader,
+            pending_dry_run,
+        )
         return applier.run(
             workspace_root=run_root,
             proposal=proposal,
@@ -1406,36 +1538,34 @@ def run_local_request(
         try:
             result = graph.invoke(state)
         except Exception as exc:
-            failure = {
-                "run_id": run_id,
-                "current_stage": "failed_before_result",
-                "error_type": type(exc).__name__,
-                "error": str(exc),
-                "run_root": str(run_root),
-            }
-            if local_ollama:
-                failure["model_call_count"] = model_call_count
             provider_failure = _persist_local_failure_diagnostics(
                 run_root=run_root,
                 error=exc,
                 enabled=local_ollama,
             )
-            if provider_failure is not None:
-                failure["provider_failure"] = provider_failure
-            (run_root / "run_failure.json").write_text(
-                json.dumps(failure, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
+            _persist_graph_terminal_failure(
+                run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                error=exc,
+                model_call_count=model_call_count,
+                extra=(
+                    {"provider_failure": provider_failure}
+                    if provider_failure is not None
+                    else None
+                ),
             )
             raise LocalEntryError(f"Controlled graph failed: {type(exc).__name__}: {exc}") from exc
 
-    final_artifact_verification = None
-    if active_compiled_artifact_verifier is not None:
-        if not baseline_artifact.is_file():
-            raise LocalEntryError("Final compiled artifact is missing after the graph build.")
-        final_artifact_verification = active_compiled_artifact_verifier(
-            baseline_artifact,
-            "final",
-        )
+    final_build_succeeded = (
+        result.get("build_summary", {}).get("claims_real_build_success") is True
+    )
+    final_artifact_verification = _verify_final_compiled_artifact_if_built(
+        graph_result=result,
+        target_copy=target_copy,
+        expected_artifact=expected_artifact,
+        verifier=active_compiled_artifact_verifier,
+    )
     final_canonical_snapshot = _source_snapshot(source)
     canonical_source_unchanged = (
         final_canonical_snapshot == initial_source_snapshot
@@ -1446,11 +1576,13 @@ def run_local_request(
         raise LocalEntryError("Canonical source changed during the isolated run.")
     final_isolated_snapshot = _source_snapshot(target_copy)
     source_change_verification = None
-    if source_change_verifier is not None:
+    if final_build_succeeded and source_change_verifier is not None:
         source_change_verification = source_change_verifier(
             initial_source_snapshot,
             final_isolated_snapshot,
         )
+    actual_write_performed = final_isolated_snapshot != initial_source_snapshot
+    patch_payload_parser_entered = "patch_proposal" in (result.get("artifacts") or {})
     selected_classification = dict(completion_classification or {})
     if selected_classification:
         if result.get("build_summary", {}).get("claims_real_build_success") is not True:
@@ -1473,6 +1605,10 @@ def run_local_request(
         "source_revision_binding": dict(source_revision_binding or {}),
         "external_model_input_audit": external_model_input_audit,
         "local_model_input_audit": local_model_input_audit,
+        "model_call_count": model_call_count,
+        "graph_invoked": True,
+        "patch_payload_parser_entered": patch_payload_parser_entered,
+        "actual_write_performed": actual_write_performed,
         "model_admission": model_admission,
         "local_model_identity": local_model_identity,
         "verification_tool_build": verification_tool_build,
@@ -1486,9 +1622,14 @@ def run_local_request(
         "source_change_verification": source_change_verification,
         "completion_classification": selected_classification,
     }
-    (run_root / "run_result.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    _persist_graph_terminal_result(
+        run_root=run_root,
+        run_id=run_id,
+        request_id=request_id,
+        summary=summary,
+        model_call_count=model_call_count,
+        patch_payload_parser_entered=patch_payload_parser_entered,
+        actual_write_performed=actual_write_performed,
     )
     return summary
 
