@@ -661,7 +661,10 @@ def test_pre_graph_cleanup_failure_is_terminally_bound(
     workspace = tmp_path / "runs"
     _install_local_ollama_factory(monkeypatch)
 
+    built_working_directories: list[Path] = []
+
     def build(profile):
+        built_working_directories.append(profile.working_directory)
         artifact = profile.working_directory / "bin" / "Debug" / "BetterHitFeedback.dll"
         artifact.parent.mkdir(parents=True)
         artifact.write_bytes(b"baseline")
@@ -721,6 +724,13 @@ def test_pre_graph_cleanup_failure_is_terminally_bound(
     assert failure["patch_payload_parser_entered"] is False
     assert failure["actual_write_performed"] is False
     assert failure["baseline_build"]["artifact_exists"] is True
+    assert len(built_working_directories) == 1
+    assert built_working_directories[0] == run_root / "baseline_source" / source.name
+    assert Path(failure["baseline_build"]["artifact_path"]).is_relative_to(
+        run_root / "baseline_source"
+    )
+    assert not (run_root / "generated_mods" / source.name / "bin").exists()
+    assert not (run_root / "generated_mods" / source.name / "obj").exists()
     assert not (run_root / "a").exists()
 
 

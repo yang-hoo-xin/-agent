@@ -195,6 +195,30 @@ recently authorized fresh local run. No automatic replacement run is
 authorized; any later run must receive new explicit authorization and retain
 the immutable-failure/no-write exact-diff stop boundary.
 
+Fresh run `ae6f408b` then passed the NuGet-isolated baseline restore/build and
+compiled identity inspection, but the same `obj\Debug` editor-config entry
+survived both immediate cleanup attempts. The run terminally failed at
+`pre_graph_generated_directory_cleanup` with `model_call_count=0`,
+`graph_invoked=false`, and `actual_write_performed=false`; its manifest binds
+the immutable `run_failure.json` hash. A no-model canary proved that adding
+`--disable-build-servers` to restore/build does not remove this filesystem
+race, so that command change was not retained.
+
+The replacement bounded repair removes the race from the delivery path rather
+than extending retry timing. The admitted canonical snapshot is copied once to
+the business workspace at `generated_mods/<Mod>` and separately to
+`baseline_source/<Mod>`. Baseline restore/build and DLL inspection use only the
+baseline copy; the existing LangGraph, Evidence, Proposal, dry-run, apply, and
+final-build path continues to use the untouched business workspace. Both use
+the existing `v2_codegen_real_local_dotnet_nuget_isolated` profile definition,
+run-local NuGet caches, BepInEx copy, commands, and 120-second timeout. Sixty-two
+focused local-entry/CLI tests passed. No-model canary
+`pre_graph_baseline_copy_canary_001` passed restore, build, GUID/name/version
+and `Plugin.Load` inspection, kept business `bin`/`obj` absent, and reproduced
+the canonical snapshot SHA256 exactly. No Phase 2B run, graph, model call,
+product-source write, or final build occurred during the repair. Another real
+Phase 2B run requires new explicit authorization.
+
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four
 disclosed data classes, no fallback, and no automatic retry. Run `d3718a7e`

@@ -791,13 +791,18 @@ def run_local_request(
         encoding="utf-8",
     )
     target_copy = run_root / "generated_mods" / source.name
+    baseline_copy = run_root / "baseline_source" / source.name
     target_copy.parent.mkdir(parents=True)
+    baseline_copy.parent.mkdir(parents=True)
     _run_pre_graph_step(
         failure_stage="workspace_preparation",
-        action=lambda: shutil.copytree(
-            source,
-            target_copy,
-            ignore=shutil.ignore_patterns("bin", "obj", ".git", ".idea"),
+        action=lambda: tuple(
+            shutil.copytree(
+                source,
+                destination,
+                ignore=shutil.ignore_patterns("bin", "obj", ".git", ".idea"),
+            )
+            for destination in (target_copy, baseline_copy)
         ),
         run_root=run_root,
         run_id=run_id,
@@ -883,6 +888,21 @@ def run_local_request(
         source_revision_binding=source_revision_binding,
         model_admission=model_admission,
     )
+    baseline_build_profile = _run_pre_graph_step(
+        failure_stage="baseline_profile",
+        action=lambda: _create_nuget_isolated_build_profile(
+            run_root=run_root,
+            working_directory=baseline_copy,
+            config_file=baseline_copy / "nuget.config",
+            bepinex_dir=isolated_bepinex_dir,
+            timeout_seconds=120,
+        ),
+        run_root=run_root,
+        run_id=run_id,
+        request_id=request_id,
+        source_revision_binding=source_revision_binding,
+        model_admission=model_admission,
+    )
     verification_tool_build = None
     active_compiled_artifact_verifier = compiled_artifact_verifier
     if compiled_artifact_inspection_profile is not None:
@@ -921,7 +941,7 @@ def run_local_request(
     baseline_stderr = run_root / "baseline_build.stderr.log"
     baseline = _run_pre_graph_step(
         failure_stage="baseline_build",
-        action=lambda: _run_nuget_isolated_build(nuget_build_profile),
+        action=lambda: _run_nuget_isolated_build(baseline_build_profile),
         run_root=run_root,
         run_id=run_id,
         request_id=request_id,
@@ -932,7 +952,7 @@ def run_local_request(
     baseline_stdout.write_text(baseline.stdout, encoding="utf-8")
     baseline_stderr.write_text(baseline.stderr, encoding="utf-8")
     expected_artifact = f"bin/Debug/{assembly_name}.dll"
-    baseline_artifact = target_copy / expected_artifact
+    baseline_artifact = baseline_copy / expected_artifact
     baseline_stat = baseline_artifact.stat() if baseline_artifact.is_file() else None
     baseline_result = {
         **baseline.to_dict(),
@@ -951,7 +971,7 @@ def run_local_request(
         ),
         "stdout_path": str(baseline_stdout),
         "stderr_path": str(baseline_stderr),
-        "build_profile": nuget_build_profile.to_dict(),
+        "build_profile": baseline_build_profile.to_dict(),
     }
     if baseline.exit_code != 0 or not baseline_result["artifact_exists"]:
         failure_stage = (
