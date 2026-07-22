@@ -307,6 +307,38 @@ def _join_build_phase_output(*phases: tuple[str, str]) -> str:
     return "\n".join(selected)
 
 
+def _remove_generated_build_directory(
+    directory: Path,
+    *,
+    tree_remover: Callable[..., Any] = shutil.rmtree,
+) -> dict[str, Any]:
+    """Remove one generated build directory while tolerating vanished entries."""
+
+    selected = directory.resolve()
+    ignored_missing_paths: list[str] = []
+
+    def handle_error(
+        _operation: Callable[..., Any],
+        failed_path: str,
+        error_info: tuple[type[BaseException], BaseException, Any],
+    ) -> None:
+        error = error_info[1]
+        if isinstance(error, FileNotFoundError):
+            ignored_missing_paths.append(str(failed_path))
+            return
+        raise error
+
+    if selected.exists():
+        tree_remover(selected, onerror=handle_error)
+    if selected.exists():
+        raise LocalEntryError("Generated build directory remains after cleanup.")
+    return {
+        "path": str(selected),
+        "removed": True,
+        "ignored_missing_paths": ignored_missing_paths,
+    }
+
+
 def _build_run_local_il_inspector(
     profile: CompiledArtifactInspectionProfile,
     *,
@@ -1300,9 +1332,22 @@ def run_local_request(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    for generated_directory in (target_copy / "bin", target_copy / "obj"):
-        if generated_directory.exists():
-            shutil.rmtree(generated_directory)
+    _run_pre_graph_step(
+        failure_stage="pre_graph_generated_directory_cleanup",
+        action=lambda: tuple(
+            _remove_generated_build_directory(generated_directory)
+            for generated_directory in (target_copy / "bin", target_copy / "obj")
+        ),
+        run_root=run_root,
+        run_id=run_id,
+        request_id=request_id,
+        source_revision_binding=source_revision_binding,
+        model_admission=model_admission,
+        extra={
+            "baseline_build": baseline_result,
+            "verification_tool_build": verification_tool_build,
+        },
+    )
 
     graph = build_graph(
         artifact_store,

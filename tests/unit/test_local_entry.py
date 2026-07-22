@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -23,6 +24,7 @@ from src.mod_agent.local_entry import (
     _persist_local_failure_diagnostics,
     _project_text_property,
     _read_ollama_server_version,
+    _remove_generated_build_directory,
     _resolve_project_path_property,
     _run_nuget_isolated_build,
     _sanitized_endpoint_url,
@@ -228,6 +230,51 @@ def test_nuget_isolated_runner_propagates_timeout_fail_closed(
 
     with pytest.raises(subprocess.TimeoutExpired):
         _run_nuget_isolated_build(profile, command_runner=time_out)
+
+
+def test_generated_build_cleanup_tolerates_only_vanished_entries(
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "obj"
+    generated.mkdir()
+    (generated / "remaining.tmp").write_bytes(b"generated")
+    vanished = generated / "already-gone.tmp"
+
+    def remove(path: Path, *, onerror):
+        error = FileNotFoundError(str(vanished))
+        onerror(Path.unlink, str(vanished), (FileNotFoundError, error, None))
+        shutil.rmtree(path)
+
+    result = _remove_generated_build_directory(
+        generated,
+        tree_remover=remove,
+    )
+
+    assert result == {
+        "path": str(generated.resolve()),
+        "removed": True,
+        "ignored_missing_paths": [str(vanished)],
+    }
+    assert not generated.exists()
+
+
+def test_generated_build_cleanup_propagates_other_io_errors(
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "obj"
+    generated.mkdir()
+
+    def deny(_path: Path, *, onerror):
+        error = PermissionError("denied")
+        onerror(Path.unlink, str(generated / "locked.tmp"), (PermissionError, error, None))
+
+    with pytest.raises(PermissionError, match="denied"):
+        _remove_generated_build_directory(
+            generated,
+            tree_remover=deny,
+        )
+
+    assert generated.exists()
 
 
 def test_run_local_inspector_build_is_source_and_output_hash_bound(
@@ -547,6 +594,77 @@ def test_pre_graph_restore_failure_records_exact_stage_and_stops(
     assert failure["baseline_build"]["build_executed"] is False
     assert failure["model_call_count"] == 0
     assert failure["graph_invoked"] is False
+    assert not (run_root / "a").exists()
+
+
+def test_pre_graph_cleanup_failure_is_terminally_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _local_run_test_target(tmp_path)
+    workspace = tmp_path / "runs"
+    _install_local_ollama_factory(monkeypatch)
+
+    def build(profile):
+        artifact = profile.working_directory / "bin" / "Debug" / "BetterHitFeedback.dll"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_bytes(b"baseline")
+        (profile.working_directory / "obj" / "Debug").mkdir(parents=True)
+        return NuGetIsolatedBuildExecution(
+            restore_exit_code=0,
+            build_exit_code=0,
+            restore_stdout="restore ok",
+            restore_stderr="",
+            build_stdout="build ok",
+            build_stderr="",
+            duration_ms=8,
+        )
+
+    monkeypatch.setattr("src.mod_agent.local_entry._run_nuget_isolated_build", build)
+
+    def deny_cleanup(_directory: Path) -> dict[str, object]:
+        raise PermissionError("cleanup denied")
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._remove_generated_build_directory",
+        deny_cleanup,
+    )
+
+    with pytest.raises(PermissionError, match="cleanup denied"):
+        run_local_request(
+            description="make General.Enabled control startup patch registration",
+            target_project=source,
+            workspace_base=workspace,
+            settings_path=Path("config/settings.yaml"),
+            confirm_isolated_write=True,
+            allow_build=True,
+            allow_source_disclosure=False,
+            diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
+            local_ollama=True,
+            ollama_model="qwen3:4b-instruct",
+            ollama_model_identity_reader=lambda *_: _ollama_identity(),
+            ollama_server_version_reader=lambda *_: "0.32.1",
+        )
+
+    run_root = next(path for path in workspace.iterdir() if path.is_dir())
+    manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
+    failure_path = run_root / "run_failure.json"
+    failure_bytes = failure_path.read_bytes()
+    failure = json.loads(failure_bytes)
+    assert manifest["status"] == "failed"
+    assert manifest["terminal_failure_stage"] == (
+        "pre_graph_generated_directory_cleanup"
+    )
+    assert manifest["terminal_record"]["sha256"] == hashlib.sha256(
+        failure_bytes
+    ).hexdigest()
+    assert failure["failure_stage"] == "pre_graph_generated_directory_cleanup"
+    assert failure["error_type"] == "PermissionError"
+    assert failure["model_call_count"] == 0
+    assert failure["graph_invoked"] is False
+    assert failure["patch_payload_parser_entered"] is False
+    assert failure["actual_write_performed"] is False
+    assert failure["baseline_build"]["artifact_exists"] is True
     assert not (run_root / "a").exists()
 
 

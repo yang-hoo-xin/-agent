@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 current_documentation_task: None
 selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
-phase_2b_execution_status: ready_for_fresh_local_run
+phase_2b_execution_status: awaiting_explicit_new_run_authorization
 most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
@@ -144,13 +144,35 @@ call was created. This removes the observed clean-worktree verifier and
 pre-graph terminal-record gaps only; it does not claim a fully hermetic build,
 product runtime behavior, Phase 2B completion, or V2 completion.
 
+Fresh run `58df438b` consumed the one authorized replacement run. Its tracked
+inspector build, BetterHitFeedback baseline restore/build, and compiled identity
+inspection passed, but cleanup of isolated build outputs failed before graph
+invocation because one `obj` entry disappeared during `shutil.rmtree`. No model
+or provider invocation occurred, no ArtifactStore business artifact or source
+change was produced, and canonical/isolated `Plugin.cs` remained at raw SHA256
+`b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`.
+The same run was terminally sealed as
+`pre_graph_generated_directory_cleanup`; it remains immutable.
+
+The bounded cleanup repair now ignores only `FileNotFoundError` reported while
+removing generated `bin`/`obj` entries, propagates all other I/O errors, checks
+that each selected directory is absent after cleanup, and routes cleanup
+exceptions through the existing pre-graph terminal handler. The affected suite
+passed 142 tests. No-model canary `pre_graph_cleanup_canary_001` used real
+`shutil.rmtree`, removed one entry immediately before its unlink error, then
+completed cleanup; a simulated `PermissionError` remained fail-closed. No new
+run, model call, graph invocation, product source change, or architecture
+change occurred. A replacement Phase 2B run requires new explicit
+authorization.
+
 That automation limit is not a new permanent platform prerequisite. For this
 bounded product slice, semantic closure remains assigned to the existing
 controlled chain: current-run Proposal and complete no-write diff, independent
 exact-diff approval, compiled `Plugin.Load` inspection, and the separately
-authorized false/true runtime acceptance. One fresh platform-generated local
-run is authorized; it must stop at immutable failure or the no-write exact-diff
-approval boundary, without automatic approval, Apply, final build, or runtime.
+authorized false/true runtime acceptance. Run `58df438b` consumed the previously
+authorized fresh local run. No automatic replacement run is authorized; any
+later run must receive new explicit authorization and retain the
+immutable-failure/no-write exact-diff stop boundary.
 
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four
