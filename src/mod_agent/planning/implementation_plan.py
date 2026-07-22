@@ -299,6 +299,11 @@ class ImplementationPlanner:
             ),
             "return_type": item.get("return_type"),
             "method_kind": item.get("method_kind"),
+            "declared_member_types": (
+                dict(item["declared_member_types"])
+                if isinstance(item.get("declared_member_types"), dict)
+                else None
+            ),
             "retrieval_method": item.get("retrieval_method"),
             "claim_supported": item.get("claim_supported"),
             "authority": item.get("authority"),

@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 current_documentation_task: None
 selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
-phase_2b_execution_status: awaiting_explicit_new_run_authorization
+phase_2b_execution_status: awaiting_explicit_new_run_authorization_after_6ea884bf_rejection
 most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
@@ -255,6 +255,30 @@ results update the same run manifest with terminal stage, result hash,
 The focused terminal suite passed 121 tests. These repairs do not approve a
 replacement run and do not prove product runtime behavior, Phase 2B completion,
 or V2 completion.
+
+Fresh run `6ea884bf` then passed the run-local inspector, NuGet-isolated
+baseline, one bound local Ollama Patch Generation call, Proposal Review, and
+no-write Dry-run. The displayed diff used `if (!ConfigEnabled)` even though the
+same current source declares `ConfigEnabled` as `ConfigEntry<bool>`; read-only
+inspection of the bound BepInEx assembly confirmed `ConfigEntry<T>.get_Value`
+and no implicit Boolean or unary-not operator. The user explicitly rejected the
+diff. The immutable run is truthfully terminal as `EXACT_DIFF_REJECTED` with
+`model_call_count=1` and `actual_write_performed=false`; canonical and isolated
+`Plugin.cs` remain at raw SHA256
+`b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`.
+
+The resulting bounded semantic-admission repair extracts exact class-level C#
+field/property declared types from the same live source and declaring type,
+carries them through Evidence and the Implementation Plan edit binding, and
+rejects unary `!` applied directly to a bound non-Boolean member before Proposal
+materialization. It contains no BetterHitFeedback, `ConfigEnabled`,
+`ConfigEntry`, or `.Value` special case and does not claim full C# compilation
+or general member-resolution coverage. A no-model replay of the preserved
+`6ea884bf` diff now fails as
+`csharp_boolean_operator_operand_type_mismatch`; 157 direct and affected tests
+passed. No run file, product source, model call, graph route, or architecture
+boundary changed during the repair. A replacement real run still requires new
+explicit authorization.
 
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four

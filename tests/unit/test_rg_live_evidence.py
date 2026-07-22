@@ -81,3 +81,38 @@ def test_rg_live_provider_binds_enclosing_csharp_method_declaration(
     assert item.method_kind == "method"
     assert item.span is not None
     assert item.span["start_line"] == 3
+
+
+def test_rg_live_provider_binds_declared_member_types_from_containing_type(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "generated_mods" / "Example" / "Plugin.cs"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "public sealed class Plugin\n"
+        "{\n"
+        "    public static ConfigEntry<bool> ConfigEnabled { get; private set; } = null!;\n"
+        "    private bool PrimitiveEnabled = true;\n"
+        "\n"
+        "    public override void Load()\n"
+        "    {\n"
+        "        var ConfigEnabled = Config.Bind(\"General\", \"Enabled\", true);\n"
+        "        ApplyStartup();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="ApplyStartup",
+        search_root="generated_mods/Example",
+    )
+
+    assert pack.items[0].declared_member_types == {
+        "ConfigEnabled": "ConfigEntry<bool>",
+        "PrimitiveEnabled": "bool",
+    }
+    assert pack.items[0].to_dict()["declared_member_types"] == {
+        "ConfigEnabled": "ConfigEntry<bool>",
+        "PrimitiveEnabled": "bool",
+    }

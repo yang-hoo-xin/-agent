@@ -40,6 +40,10 @@ def _authoritative_item(**overrides: object) -> dict[str, object]:
         "parameter_types": [],
         "return_type": "void",
         "method_kind": "method",
+        "declared_member_types": {
+            "ConfigEnabled": "ConfigEntry<bool>",
+            "PrimitiveEnabled": "bool",
+        },
     }
     item.update(overrides)
     return item
@@ -354,6 +358,10 @@ def test_implementation_plan_binds_every_change_to_evidence() -> None:
     assert edit_binding["parameter_types"] == []
     assert edit_binding["return_type"] == "void"
     assert edit_binding["method_kind"] == "method"
+    assert edit_binding["declared_member_types"] == {
+        "ConfigEnabled": "ConfigEntry<bool>",
+        "PrimitiveEnabled": "bool",
+    }
     assert implementation.binding_registry["supporting_bindings"] == []
     assert implementation.rollback_plan
 

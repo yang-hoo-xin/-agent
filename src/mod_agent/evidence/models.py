@@ -53,6 +53,7 @@ class EvidenceItem:
     parameter_types: tuple[str, ...] | None = None
     return_type: str | None = None
     method_kind: str | None = None
+    declared_member_types: dict[str, str] | None = None
     authority: EvidenceAuthority = LEGACY_RAG_AUXILIARY_AUTHORITY
     risk_notes: tuple[str, ...] = ()
 
@@ -85,6 +86,11 @@ class EvidenceItem:
             ),
             "return_type": self.return_type,
             "method_kind": self.method_kind,
+            "declared_member_types": (
+                dict(sorted(self.declared_member_types.items()))
+                if self.declared_member_types is not None
+                else None
+            ),
             "authority": self.authority,
             "risk_notes": list(self.risk_notes),
         }

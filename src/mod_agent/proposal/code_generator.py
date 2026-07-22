@@ -82,6 +82,7 @@ class LLMExactPatchGenerator:
                     ("parameter_types", "parameter_types"),
                     ("return_type", "return_type"),
                     ("method_kind", "method_kind"),
+                    ("declared_member_types", "declared_member_types"),
                 )
             }
 
@@ -422,23 +423,53 @@ def _validate_bound_language_semantics(
     return_type = context.get("return_type")
     if not isinstance(source_path, str) or not source_path.lower().endswith(".cs"):
         return
-    if return_type != "void":
-        return
     code_only = _strip_csharp_non_code(after)
-    invalid_returns = [
-        match.group(1).strip()
-        for match in re.finditer(r"\breturn\b\s*([^;]*);", code_only)
-        if match.group(1).strip()
-    ]
-    if invalid_returns:
+    if return_type == "void":
+        invalid_returns = [
+            match.group(1).strip()
+            for match in re.finditer(r"\breturn\b\s*([^;]*);", code_only)
+            if match.group(1).strip()
+        ]
+        if invalid_returns:
+            raise PatchGenerationError(
+                f"Change {index} returns a value from bound void method.",
+                diagnostics={
+                    "failure_boundary": "deterministic_patch_validation",
+                    "failure_classification": "csharp_return_value_in_void_method",
+                    "binding_id": binding_id,
+                    "method_name": context.get("method_name"),
+                    "return_type": return_type,
+                },
+            )
+
+    declared_member_types = context.get("declared_member_types")
+    if not isinstance(declared_member_types, Mapping):
+        return
+    for match in re.finditer(
+        r"!(?!=)\s*(?:this\s*\.\s*)?(?P<member>[A-Za-z_][A-Za-z0-9_]*)"
+        r"\b(?!\s*[.(])",
+        code_only,
+    ):
+        member_name = match.group("member")
+        declared_type = declared_member_types.get(member_name)
+        if not isinstance(declared_type, str):
+            continue
+        normalized_type = re.sub(r"\s+", "", declared_type)
+        if normalized_type in {"bool", "bool?", "System.Boolean", "System.Boolean?"}:
+            continue
         raise PatchGenerationError(
-            f"Change {index} returns a value from bound void method.",
+            f"Change {index} applies unary ! to bound non-boolean member "
+            f"{member_name} of type {declared_type}.",
             diagnostics={
                 "failure_boundary": "deterministic_patch_validation",
-                "failure_classification": "csharp_return_value_in_void_method",
+                "failure_classification": (
+                    "csharp_boolean_operator_operand_type_mismatch"
+                ),
                 "binding_id": binding_id,
                 "method_name": context.get("method_name"),
-                "return_type": return_type,
+                "operator": "!",
+                "member_name": member_name,
+                "declared_type": declared_type,
             },
         )
 

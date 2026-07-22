@@ -27,6 +27,13 @@ _CSHARP_TYPE_RE = re.compile(
     r"^(?:(?:public|private|protected|internal|static|abstract|sealed|partial)\s+)*"
     r"(?:class|struct|record)\s+(?P<type_name>[A-Za-z_][A-Za-z0-9_]*)\b"
 )
+_CSHARP_MEMBER_DECLARATION_RE = re.compile(
+    r"^(?:(?:public|private|protected|internal|static|readonly|const|volatile|"
+    r"required|new)\s+)*"
+    r"(?P<declared_type>[A-Za-z_][A-Za-z0-9_.]*(?:\s*<[^;={}()]+>)?"
+    r"(?:\s*\[\s*\])*\??)\s+"
+    r"(?P<member_name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\{|=|;)"
+)
 _STOP_WORDS = {
     "and",
     "change",
@@ -159,6 +166,15 @@ class RgLiveEvidenceProvider:
                 else None
             ),
             method_kind="method" if method_context is not None else None,
+            declared_member_types=(
+                _declared_csharp_member_types(
+                    lines,
+                    declaring_type=str(method_context["declaring_type"]),
+                )
+                if method_context is not None
+                and method_context.get("declaring_type") is not None
+                else None
+            ),
         )
         return EvidencePack(
             query=query,
@@ -280,3 +296,107 @@ def _nearest_csharp_type(lines: list[str], *, before_line: int) -> str | None:
         if match is not None:
             return match.group("type_name")
     return None
+
+
+def _declared_csharp_member_types(
+    lines: list[str],
+    *,
+    declaring_type: str,
+) -> dict[str, str]:
+    """Extract exact field/property types at one containing C# type level."""
+
+    declaration_index: int | None = None
+    for index, line in enumerate(lines):
+        match = _CSHARP_TYPE_RE.match(line.strip())
+        if match is not None and match.group("type_name") == declaring_type:
+            declaration_index = index
+            break
+    if declaration_index is None:
+        return {}
+
+    member_types: dict[str, str] = {}
+    brace_depth = 0
+    entered_type = False
+    lexical_state = "code"
+    for line in lines[declaration_index:]:
+        if entered_type and brace_depth == 1:
+            match = _CSHARP_MEMBER_DECLARATION_RE.match(line.strip())
+            if match is not None:
+                member_name = match.group("member_name")
+                declared_type = re.sub(r"\s+", "", match.group("declared_type"))
+                previous = member_types.get(member_name)
+                if previous is None or previous == declared_type:
+                    member_types[member_name] = declared_type
+                else:
+                    member_types.pop(member_name, None)
+        brace_delta, lexical_state = _csharp_brace_delta(
+            line,
+            initial_state=lexical_state,
+        )
+        brace_depth += brace_delta
+        if brace_depth > 0:
+            entered_type = True
+        elif entered_type:
+            break
+    return dict(sorted(member_types.items()))
+
+
+def _csharp_brace_delta(
+    value: str,
+    *,
+    initial_state: str,
+) -> tuple[int, str]:
+    """Count structural braces while ignoring C# comments and string literals."""
+
+    delta = 0
+    index = 0
+    state = initial_state
+    while index < len(value):
+        current = value[index]
+        following = value[index + 1] if index + 1 < len(value) else ""
+        if state == "code":
+            if current == "/" and following == "/":
+                break
+            if current == "/" and following == "*":
+                state = "block_comment"
+                index += 2
+                continue
+            if current == '"':
+                state = "verbatim_string" if index > 0 and value[index - 1] == "@" else "string"
+                index += 1
+                continue
+            if current == "'":
+                state = "character"
+                index += 1
+                continue
+            if current == "{":
+                delta += 1
+            elif current == "}":
+                delta -= 1
+            index += 1
+            continue
+        if state == "block_comment":
+            if current == "*" and following == "/":
+                state = "code"
+                index += 2
+            else:
+                index += 1
+            continue
+        if state == "verbatim_string":
+            if current == '"' and following == '"':
+                index += 2
+            elif current == '"':
+                state = "code"
+                index += 1
+            else:
+                index += 1
+            continue
+        if current == "\\":
+            index += 2
+            continue
+        if (state == "string" and current == '"') or (
+            state == "character" and current == "'"
+        ):
+            state = "code"
+        index += 1
+    return delta, state
