@@ -61,13 +61,12 @@ checkpoint integration. ArtifactStore owns durable business outputs and audit
 lineage. Deterministic policies retain authority over write scope, approval,
 verification, and claim promotion.
 
-### 2.1 V2 Real-Task Intelligence Architecture
+### 2.1 V2 Intelligence Experiment And Productization Boundary
 
 The control-plane diagram above is the implemented delivery baseline. It is not
-the V2 intelligence work list. `DEV_SPEC.md` section 51 defines the detailed
-capability program: controlled intelligent input, a bounded loop inside the
-Evidence specialist, a real WallCrawler run with no manual answers, and only
-failure-driven tool or loop growth.
+yet evidence of one canonical V2 runtime path. The diagram below records the
+V2-C experimental intelligence-loop structure and its failure-driven repair
+history; it is not the current product mainline or a continuing work list.
 
 ```mermaid
 flowchart TD
@@ -92,6 +91,20 @@ V2-D activates only from an exact observed failure and never authorizes a
 general decompiler, generic ReAct platform, new retrieval stack, multi-agent
 swarm, or long-term memory system.
 
+V2-C is now frozen as a `V2 intelligence-loop validation spike`. The repaired
+real run proves one observation-dependent loop closure and leaves capability,
+semantic, readiness, and convergence verdicts independent. It does not prove
+that this entry is the Agent's authoritative runtime, that one state owner
+exists, that retry/stop/completion ownership is unified, or that the source
+baseline is reconstructable. `source_binding_status=missing` remains binding.
+
+Before another gameplay capability or conditional delivery gate is selected,
+the repository must reconstruct one actual run's control path, intelligent
+execution path, and evidence path from readable source and runtime evidence.
+That read-only reconstruction is a pending task type only; no task id or queue
+entry exists before Source Registry, trace/EvidencePack, file-scope,
+authorization, and no-write acceptance checks.
+
 The current mapping is: deterministic WallCrawler work through
 `WALLCRAWLER-CURRENT-HOOK-EVIDENCE-003` established the request/source/tool
 baseline; `WALLCRAWLER-INTELLIGENT-EVIDENCE-004` implemented V2-A/V2-B and its
@@ -106,8 +119,8 @@ model-facing finish-schema and acceptance-progress repair.
 `WALLCRAWLER-INTELLIGENT-EVIDENCE-007` completed that repair locally by sharing
 one exact nested schema across response format, system context, and correction
 feedback, and by exposing current metadata/IL acceptance progress. It did not
-change tools, budgets, graph authority, or the evidence-only stop. Real-model
-acceptance remains unresolved and no rerun is active.
+change tools, budgets, graph authority, or the evidence-only stop. At that
+historical checkpoint, real-model acceptance remained unresolved.
 
 `WALLCRAWLER-INTELLIGENT-EVIDENCE-008` executed that rerun once. The structured
 finish and acceptance-progress repair changed the failure boundary: real Qwen
@@ -132,14 +145,16 @@ state recommends finishing unless one exact unresolved gap justifies another
 tool call, so `needs_more_evidence` does not require broad metadata expansion.
 This changes only the Evidence specialist context representation and stop
 signaling; the tools, production budgets, graph authority, and evidence-only
-boundary are unchanged. Real-model acceptance remains unresolved.
+boundary were unchanged. At that historical checkpoint, real-model acceptance
+remained unresolved.
 
-After the core intelligence gate, section 51 defines deeper conditional gates
-for evidence-to-implementation planning, Proposal-only generation and review,
-deterministic dry-run and approval, build-failure repair, runtime diagnosis,
-and delivery evaluation. Those gates specify decision capability, input
-representation, deterministic authority, failure boundary, and promotion
-evidence; they are not a preactivated consecutive queue.
+Section 51 retains deeper conditional gates for evidence-to-implementation
+planning, Proposal-only generation and review, deterministic dry-run and
+approval, build-failure repair, runtime diagnosis, and delivery evaluation.
+They remain inactive until the runtime-path reconstruction identifies the
+authoritative entry, run state, loop position, action/verification boundary,
+retry owner, stop owner, completion owner, and Artifact owner. They are not a
+preactivated consecutive queue.
 
 The local `plan-request` command is a bounded entry slice before this full
 graph. It runs RequestPlanner and ModPlanningBriefBuilder in memory, emits both

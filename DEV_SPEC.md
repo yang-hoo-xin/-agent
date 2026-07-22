@@ -6861,8 +6861,10 @@ promotion.
 
 ## 51.3 V2 Program Shape
 
-The V2 program has one current core gate and a set of later conditional product
-gates.
+V2-C was an experimental intelligence-loop gate and is now frozen after one
+real repaired-path core closure. It does not continue as the V2 product
+mainline. Later conditional product gates require a separate mainline
+reconstruction decision first.
 
 ### 51.3.1 Core Intelligence-Transfer Gate
 
@@ -6880,10 +6882,75 @@ WallCrawler Hook feasibility or Proposal readiness. It does require the model
 to perform an observation-dependent evidence sequence and finish truthfully
 within the configured boundary.
 
-### 51.3.2 Conditional Delivery-Intelligence Gates
+The repaired-path run recorded in section 51.6 resolves this experimental core
+claim once. That result is retained as feasibility evidence and reusable
+observation/decision/action/verification/stop contracts. It does not establish
+an authoritative Agent entry, unified run state, canonical runtime path,
+converged retry/termination ownership, reconstructable source baseline, or V2
+product completion. V2-D no longer derives work from that closure.
 
-Only after the core gate is resolved may the selected product request activate
-one later gate:
+### 51.3.2 Mainline Reconstruction Before Product Gates
+
+Before selecting another product capability, perform only a read-only,
+evidence-only reconstruction of one current real Agent run when its entry
+conditions are satisfied:
+
+```text
+control path:
+  admission -> source/authorization/scope -> queue -> readiness
+  -> retry/stop/abstain -> completion;
+intelligent execution path:
+  goal -> observation -> interpretation -> decision -> action
+  -> new observation -> verification -> continue/stop;
+evidence path:
+  run identity -> source revision -> model/tool calls -> state transitions
+  -> artifacts -> validation evidence -> final verdict.
+```
+
+Every path edge must be classified as `observed`, `source-confirmed`,
+`inferred`, or `unknown` and bound to source or trace where applicable. The
+reconstruction must identify entry points, state ownership, retry ownership,
+stop/completion ownership, Artifact ownership, the V2-C loop's actual position,
+legacy/experiment isolation, and the minimum evidence break when a canonical
+path cannot be selected.
+
+The read-only result must contain:
+
+```text
+one actual path map whose nodes record source, entry condition, state reads,
+state writes, next hop, runtime observation, and evidence location;
+an entry-point inventory separating production, experiment, legacy,
+retry/resume, callback, test, and unknown entries;
+a state-ownership table identifying creators, writers, authority, persistence,
+duplicate concepts, and memory/artifact/queue conflicts;
+a V2-C disposition for each component:
+  REUSE_AS_MAINLINE_COMPONENT
+  REUSE_AS_CONTRACT
+  REUSE_AS_TEST_FIXTURE
+  ARCHIVE_AS_EXPERIMENT
+  UNKNOWN_NEEDS_EVIDENCE;
+one reviewable mainline recommendation or the minimum evidence gap that blocks
+selection.
+```
+
+The reconstruction must abstain from a canonical-path claim when no real run
+can be matched, the run cannot be associated with source evidence, critical
+state exists only in an inaccessible system, multiple entries cannot be
+distinguished by trace, dynamic registration/reflection/external callbacks are
+not visible, further work requires an unauthorized external model, or the path
+could be asserted only from identifier names. `source_binding_status=missing`
+still permits a bounded runtime-path observation but not a reproducible
+source-level baseline.
+
+This is not an active task until the available Source Registry, readable
+trace/EvidencePack, files in scope, authorization boundary, and no-write
+acceptance conditions are checked. `current_queue` remains `None`.
+
+### 51.3.3 Conditional Delivery-Intelligence Gates
+
+Only after the experimental core gate is resolved and runtime-path
+reconstruction supports one authoritative mainline may a separately selected
+product request activate one later gate:
 
 ```text
 evidence-to-implementation planning
@@ -6899,6 +6966,33 @@ These are not a preapproved consecutive queue. Each gate has its own entry
 evidence, selected capability, permission boundary, verification, and stop
 condition. Dry-run and apply remain deterministic control mechanisms; no model
 role is added merely because a later stage exists.
+
+### 51.3.4 V2 Productization Acceptance Boundary
+
+V2 is not complete merely because V2-C closed once. Productized V2 requires:
+
+1. one declared authoritative mainline, with adapters, legacy paths, and
+   experiments classified explicitly;
+2. one authoritative run-state contract; the exact current schema and owner
+   must be established from source rather than invented in this document;
+3. the intelligent loop invoked from a real product entry instead of only a
+   test or experiment entry;
+4. every action followed by a new observation and verification rather than a
+   model self-report being accepted as environmental success;
+5. explicit terminal semantics for at least `completed`, `abstained`,
+   `blocked`, `failed`, `paused`, and `retryable`;
+6. reconstructable bindings for source revision, configuration, model/tool
+   identity, artifacts, and runtime trace;
+7. one real product capability traversing admission, semantic, capability,
+   readiness, intelligent loop, action, re-observation, verification,
+   convergence assessment, and terminal state through that mainline;
+8. every V2-C part either absorbed as a mainline component or formal contract,
+   retained as a regression fixture, archived as an experiment, or explicitly
+   left unknown pending evidence.
+
+Independent semantic, capability, readiness, and convergence verdicts do not
+constitute independent orchestration paths. One authoritative control path must
+consume them without allowing conflicting state ownership.
 
 ## 51.4 V2-A Controlled Intelligent Input
 
@@ -7274,9 +7368,41 @@ both overreaching observed conclusions rejected. Because that pack predates the
 fact catalog and no new real model run occurred, this repair is implemented and
 locally validated but does not establish semantic acceptance or V2-C completion.
 
+One later separately approved `qwen3.6-plus` run supplies single-run real
+evidence for the repaired core closure. Run
+`intelligent_evidence_36d25ed53f3447e3adeaa71f42fb7ec0` produced EvidencePack
+artifact hash
+`bb6dbc8303648d01ff84464e1ed5559ac46d4f697567ef8ec97adb406afb9cea`.
+Its first finish was rejected with
+`OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH`; the next and final model turn
+copied two exact observed facts, kept two interpretations classified as
+unverified inference with limitations, and completed a grounded
+`needs_more_evidence` result. The run preserves two metadata -> `candidate_ref`
+-> control-resolved method identity -> IL chains, and the provider-neutral
+post-run result is capability=true, semantic=true, convergence=false. Under the
+V2-C definition above, this is single-run real evidence for `core_complete`.
+It is not evidence sufficiency, task solution, implementation readiness,
+convergence, or full product completion; readiness remains `partial`,
+`can_generate_patch=false`, and Proposal remains locked.
+
+This run does not durably record `source_revision`, `git_commit`, or
+`modified_files_hash`. Future real-run artifacts must bind those code identities
+before results from different working-tree states are compared. This is an
+experiment-traceability limitation and does not authorize another semantic or
+validation expansion without a concrete false acceptance, false rejection,
+missing diagnostic, or gate conflict.
+
+V2-C is frozen at this point as a `V2 intelligence-loop validation spike`.
+Grounded/walkable behavior, collision/contact response, and every other
+gameplay direction remain unselected. No further V2-C rerun, V2-D capability,
+or Proposal-oriented continuation is implied by the closure.
+
 ## 51.7 V2-D Failure-Driven Capability Growth
 
-V2-D is `conditional_trigger`, not an open tool-building phase.
+V2-D records the bounded repair policy used while the V2-C experiment was
+active. It is `conditional_trigger`, not an open tool-building phase. After the
+recorded core closure, this path is frozen and cannot derive another product or
+gameplay task.
 
 | Observed failure class | Allowed response | Forbidden expansion |
 | --- | --- | --- |
@@ -7290,15 +7416,23 @@ V2-D is `conditional_trigger`, not an open tool-building phase.
 | grounded `needs_more_evidence` | select one exact evidence acquisition task | convert an unresolved gap into Proposal readiness |
 | semantic irrelevance | repair source projection, query choice, or the exact missing evidence tool | pass because the trajectory was structurally valid |
 
-Each repair has a finite retry budget and returns to the same V2-C acceptance
-run. Repeated failure at the stop condition yields an explicit unresolved or
-blocked handoff.
+During an explicitly active V2-C experiment, each repair has a finite retry
+budget and returns to the same acceptance run. Repeated failure at the stop
+condition yields an explicit unresolved or blocked handoff. The current frozen
+experiment authorizes no such return.
 
 ## 51.8 Conditional Post-Core Capability Gates
 
 The following design is deeper than a stage list. Each gate defines the
 decision capability to prove, its input representation, deterministic authority,
 failure boundary, and evidence required for promotion.
+
+These gates are not selectable until section 51.3.2 reconstructs enough of one
+real runtime path to identify an authoritative entry, run state, action and
+verification boundaries, retry owner, stop/completion owner, Artifact owner,
+and the V2-C integration or isolation point. Missing source-revision binding
+permits a runtime-path observation but forbids a reproducible source-level
+canonical-path claim.
 
 ### 51.8.1 Evidence-To-Implementation Planning
 
@@ -7493,6 +7627,7 @@ Current verified mapping:
 | `WALLCRAWLER-LOCAL-MODEL-EVIDENCE-015` | post-014 same-model local V2-C rerun | exact request/source/model/budget boundaries preserved; the removed placeholder was not copied, but identical zero-result query strings were used across both sources and repeat correction exhausted before method_id or IL; 4 turns, 2 metadata tools, no model conclusion, all hidden gates false, Proposal locked |
 | 2026-07-17 artifact persistence validation | infrastructure unblock plus one bounded local execution | short physical locators, complete-hash collision checks, legacy revision reads, atomic preflight, and structured CLI blocking are implemented; run `intelligent_evidence_5327cb5988774bc5aba6cfcc53f8d2ab` persisted all evidence-only artifacts and then ended `budget_exhausted`; all V2-C gates remain false |
 | 2026-07-18 external Qwen evidence-loop validation | attempt diagnostics plus real candidate_ref identity loop | checkpoint `5c78e06` durably binds pre-call and terminal attempt revisions and sanitized provider diagnostics; one approved `qwen3.6-plus` run completed four metadata searches, two candidate_ref-derived IL reads, and a grounded-abstention finish with complete provenance, but the current semantic evaluator produced a demonstrated false positive and is not invoked by this provider path; V2-C and implementation readiness remain false |
+| 2026-07-18 repaired semantic core closure | frozen V2 intelligence-loop validation spike | run `intelligent_evidence_36d25ed53f3447e3adeaa71f42fb7ec0` provides one real capability=true and semantic=true core closure with convergence=false, readiness=partial, Proposal locked, and `source_binding_status=missing`; reusable contracts are retained, but the experiment does not define the Agent mainline or derive another product task |
 
 The 006-exposed model-facing acceptance-contract repair is complete as 007 and
 was exercised exactly once by 008. The 008-exposed compact IL, inspection-
@@ -7507,17 +7642,14 @@ provenance-report coupling. 014 repairs those three structural defects locally.
 015 exercised prompt v6 once without copying the removed placeholder but failed
 before IL because it did not revise zero-result literal symbol queries and then
 exhausted repeat correction. It therefore does not validate the finish or
-provenance repairs and does not select another repair automatically. Any
-later external rerun requires new exact per-run disclosure approval; any local
-rerun requires a separately selected bounded task and the same loopback-only
-boundary. Both must stop at `evidence_retrieval`. The result selects only one of:
+provenance repairs and does not select another repair automatically.
 
-```text
-intelligence gate resolved with Proposal still locked;
-one exact evidence-capability task;
-one exact loop/provider/tool repair;
-explicit unresolved or blocked handoff.
-```
+The later repaired semantic core closure supersedes those unresolved historical
+states for the narrow feasibility claim. The V2-C branch is now frozen. Any
+future reuse must be classified through runtime-path reconstruction as a
+mainline component, reusable contract, regression fixture, archived experiment,
+or evidence gap; successful execution inside V2-C does not promote the whole
+path into the Agent runtime.
 
 ## 51.11 Non-Goals
 
@@ -7533,7 +7665,10 @@ a generic decompiler or native reverse-engineering platform;
 automatic source, Hook, path, permission, or write authority selection;
 automatic game copy, launch, process control, or gameplay claim;
 long-term memory, policy learning, or threshold tuning from chat history;
-framework installation as a substitute for a verified product capability.
+framework installation as a substitute for a verified product capability;
+treating V2-C as a parallel continuing product route after its frozen closure;
+selecting another gameplay capability before the authoritative runtime path is
+reconstructed and manually reviewed.
 ```
 
 

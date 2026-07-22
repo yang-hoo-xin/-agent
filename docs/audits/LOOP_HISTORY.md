@@ -4,6 +4,187 @@ This archive preserves historical loop details moved out of the active control d
 
 Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md`.
 
+## 2026-07-20 PHASE2A-DELIVERY-CANARY-001
+
+```text
+Status: completed
+Successful run:
+  - run_id 42c5d93c; feature_id feature_6765fe615cd8;
+  - approval_id PHASE2A-DELIVERY-CANARY-001-QWEN-EXTERNAL-RERUN2-20260720;
+  - provider adapter src.libs.llm.openai_llm.OpenAILLM;
+  - destination https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions;
+  - model qwen3.6-plus; no provider fallback or automatic external retry.
+Source binding:
+  - repository HEAD 0fd187246a437d43ceb539903275b9c8e77dad4b;
+  - BetterHitFeedback tree 6e8c3d5f704b7ede8a7fe9e13946a104e81d0676;
+  - complete snapshot SHA256 c6fa81b35ca6005dc9091beca601d82afcf180b593b9926b77f642fe37f4f30f;
+  - canonical Plugin.cs raw SHA256 b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c;
+  - the bound BetterHitFeedback subtree remained unchanged; unrelated pre-existing
+    changes elsewhere in the external repository are outside this claim.
+Lineage:
+  - fresh evidence_pack 55bf25614e66bdb737c6b151b4cd5bf8fe1e618bd003c75d5d3a8c97fcab2db8;
+  - fresh implementation_plan b3944ad491a66bb208cd9f1798904ecf;
+  - fresh patch_proposal a218fc722e4729bfecdd64bd3b7fda47;
+  - proposal_review 7f6a6579cd4cb8d86546d5e59717a35;
+  - no-write dry_run_result 638b4fbb81e46d22048795c2bfd3194e;
+  - isolated_apply_result 7ca6da546ef432826ad2444ef33dec3a;
+  - build_result 17cf3999f9032b9b767411d6f629bf0e;
+  - terminal record workspaces/phase2a_delivery_canary_001/42c5d93c/run_result.json.
+Exact diff and apply:
+  - only generated_mods/BetterHitFeedback/Plugin.cs changed;
+  - only VERSION = "0.1.0" changed to VERSION = "0.1.1";
+  - approved diff_hash sha256:43688b71e08227feb8d6517301636af658eed07ffdcb47a9eccbf11c56c5b109;
+  - raw before SHA256 b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c;
+  - raw after SHA256 ba54e3b58efd75b304cb8f678ac0a8f29ea6e0c437b73fd455daaf52823ca82c;
+  - dry-run wrote nothing; apply matched exactly once and wrote the approved bytes;
+  - all 62 CRLF line endings remained CRLF; no whole-file newline normalization occurred;
+  - the other four isolated source files retained their initial hashes.
+Build and compiled verification:
+  - baseline DLL SHA256 25b76fbaf25d76d538bab6440914282dddf165fd51a9d5e93e5adc46b1bd49f1,
+    size 86528, mtime UTC 2026-07-20T08:25:22.521466+00:00;
+  - baseline BepInPlugin GUID local.betterhitfeedback, Name BetterHitFeedback,
+    Version 0.1.0;
+  - final dotnet build exit code 0;
+  - final DLL SHA256 d5cb0f0a2b35316cfc90226a06c0bbb6a4ebce79a34f95e21522928642ceb1d9,
+    size 86528, mtime UTC 2026-07-20T08:44:46.220175+00:00;
+  - final BepInPlugin GUID local.betterhitfeedback, Name BetterHitFeedback,
+    Version 0.1.1; target_code_executed=false.
+Completion classification:
+  - delivery_canary_complete=true;
+  - product_slice_complete=false;
+  - runtime_behavior_verified=false;
+  - phase_2_complete=false;
+  - current_queue=None; selected_product_request=None;
+  - Phase 2B meaningful product-slice selection is next and remains unselected.
+Earlier immutable attempts:
+  - f7f4d706 failed before Proposal because Evidence and Plan did not bind the
+    approved Plugin.cs VERSION change;
+  - 4247ec6c reached no-write dry-run and failed closed after detecting the
+    old CRLF-to-LF expansion; neither attempt was resumed or overwritten.
+```
+
+## 2026-07-20 V2-PATCH-APPLIER-EOL-001
+
+```text
+Status: completed; READY_FOR_PHASE2A_RERUN
+Failure evidence:
+  - Phase 2A run 4247ec6c bound one Plugin.cs VERSION replacement;
+  - the old text read normalized 62 CRLF line endings before replacement;
+  - canonical raw before SHA256 was b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c;
+  - the required one-line raw after SHA256 was ba54e3b58efd75b304cb8f678ac0a8f29ea6e0c437b73fd455daaf52823ca82c;
+  - no source write or final build occurred in that run.
+Repair:
+  - ExactTextPatchApplier now validates UTF-8 and performs the unique exact replacement on raw bytes;
+  - dry-run and apply share raw before/after SHA256;
+  - temporary and applied bytes are checked against the staged bytes;
+  - LF, CRLF, mixed line endings, and UTF-8 BOM are preserved;
+  - unsupported encoding and zero/multiple matches fail closed.
+Verification:
+  - 17 focused patch-apply tests passed;
+  - 87 directly affected patch/artifact/workflow/local-entry tests passed;
+  - compileall passed;
+  - no canonical source, external model, Phase 2A rerun, Retry2, game, LangGraph,
+    ModAgentState, Evidence, Planning, Proposal, or RAG action occurred.
+Handoff:
+  - current_queue=None;
+  - Phase 2A remains incomplete;
+  - a future rerun requires separate authorization.
+```
+
+## 2026-07-18 V2-C Semantic Core Closure Real Run
+
+```text
+Run identity:
+  - run_id intelligent_evidence_36d25ed53f3447e3adeaa71f42fb7ec0;
+  - qwen_chat / qwen3.6-plus under one-run disclosure approval;
+  - EvidencePack artifact_hash
+    bb6dbc8303648d01ff84464e1ed5559ac46d4f697567ef8ec97adb406afb9cea;
+  - completed at evidence_retrieval with readiness=partial,
+    can_generate_patch=false, and no later-stage authority.
+Real trajectory:
+  - six autonomous read-only evidence actions;
+  - two metadata -> candidate_ref -> control-resolved internal method identity
+    -> IL observation chains;
+  - 10 deterministic observation facts;
+  - finish step 7 rejected with
+    OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH;
+  - finish step 8 accepted with two exact observed claims and two bounded
+    unverified inferred claims.
+Gate result:
+  - capability=true;
+  - semantic=true;
+  - convergence=false;
+  - V2-C core_complete has single-run real evidence;
+  - evidence sufficiency, task solution, implementation readiness, Proposal,
+    and complete V2 delivery are not established.
+Traceability limitation:
+  - the artifact does not bind source_revision, git_commit, or
+    modified_files_hash;
+  - future real-run comparisons require those code identities;
+  - no further semantic or general validation work is selected without a
+    concrete false acceptance, false rejection, missing diagnostic, or gate
+    conflict.
+Post-core disposition:
+  - V2-C is frozen as a V2 intelligence-loop validation spike;
+  - V2-C has no continuing product route;
+  - selected_product_request=None;
+  - source_binding_status=missing;
+  - the pending task type is read-only V2 Agent runtime path reconstruction,
+    not an approved task, active queue item, or permanent product gate;
+  - current_queue=None.
+```
+
+
+### V2-RUNTIME-BOUNDARY-001: Source-Bound No-Write Lineage Slice
+
+```text
+Status: completed
+Module: ART, RET, OBS
+Goal: Run one source-bound no-write live-source audit for
+      Player.PlayerCharacterController.Move through the existing intelligent
+      Evidence entry and persist a reconstructable admission-to-terminal lineage.
+Files modified:
+  src/mod_agent/intelligent_evidence_only.py
+  src/mod_agent/artifacts/registry.py
+  tests/unit/test_mod_agent_cli.py
+  tests/unit/test_artifact_contract.py
+  docs/IMPLEMENTATION_QUEUE.md
+  docs/PROJECT_STATE.md
+  docs/audits/LOOP_HISTORY.md
+Completed evidence:
+  - local Ollama model qwen3:4b-instruct only; external fallback disabled;
+  - run_id intelligent_evidence_4c811b6933d54a258b8ba0b2c4e14229;
+  - source_id gtfo-r8-modules-asm;
+  - Modules-ASM.dll SHA256
+    DD0C57D5C527E78B40FAB798456EDD73413DA0F140995A63FCA3619C36C32698;
+  - module MVID 28e7d845-eb8b-48af-a5b2-9b1addb278ae;
+  - platform manifest aggregate SHA256
+    55db7839932f325247711c354a27d6011c832ded99fb0759b7a0e83059a482c5
+    across 192 bound files;
+  - one metadata search and one observation-derived IL inspection produced an
+    EvidencePack item for Player.PlayerCharacterController.Move;
+  - eight workflow events share the same run_id and were persisted under
+    workflow_trace hash
+    590111e8493b4e1a1a1a007d8d9b7f6316da9abb9c2f42b2952aa486db22dad2;
+  - post-run validation hash
+    c425079e02e70d1a046d2c05044e0d2e24263f63c903c10618943723d65607a6
+    records all ten lineage checks true and affects_runtime_route=false;
+  - terminal evidence_run_attempt hash
+    7a5f0a5870f6b5d6bf4106f07a362f8f12e65b8a8ab134e2bd9a872f50faaed
+    binds the started attempt, EvidencePack, workflow trace, and post-run
+    validation by exact Artifact refs;
+  - artifact directory contains no implementation_plan, patch_proposal,
+    proposal_review, dry_run_result, isolated_apply_result, build_result, or
+    runtime_evidence;
+  - focused verification passed: 43 tests;
+  - compileall passed for both modified source files.
+Limitations:
+  - proves one local source-bound no-write lineage only;
+  - does not prove a gameplay mechanism, Hook, patch safety, build, or runtime
+    behavior;
+  - the older V2-C run remains source_binding_status=missing.
+```
+
 ## 2026-07-18 Durable Evidence Attempt And External Qwen Identity Loop
 
 ```text

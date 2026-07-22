@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-07-18
+Last updated: 2026-07-19
 
 ## 1. Product
 
@@ -295,51 +295,35 @@ fact's `canonical_claim`, keeps inferred conclusions unverified, permits bounded
 unknown conclusions, and invokes the same post-run evaluator for local and
 external providers. Related regression passed 154 tests. Offline reevaluation
 of the preserved run now reports capability true, convergence false, and
-semantic false, rejecting both unsupported observed conclusions. No new model
-run occurred, so semantic acceptance, evidence sufficiency, implementation
-readiness, and V2-C completion remain unresolved; Proposal remains locked.
+semantic false, rejecting both unsupported observed conclusions.
 
-### 2.1 Current V2 Intelligence Mainline
+A later separately approved repaired-path run,
+`intelligent_evidence_36d25ed53f3447e3adeaa71f42fb7ec0`, produced EvidencePack
+artifact hash
+`bb6dbc8303648d01ff84464e1ed5559ac46d4f697567ef8ec97adb406afb9cea`.
+Its first finish failed exact observed-fact validation and its one bounded
+correction produced two verified exact observed claims plus two bounded
+unverified inferences. The final provider-neutral result is capability=true,
+semantic=true, convergence=false; both metadata -> `candidate_ref` -> internal
+method identity -> IL chains are provenance-valid. This supplies single-run
+real evidence for V2-C `core_complete`. Here `core_complete` means only that
+one real run demonstrated the core behavior loop. Readiness remains `partial`,
+`can_generate_patch=false`, evidence sufficiency and implementation readiness
+remain false, and Proposal remains locked. The run does not record
+`source_revision`, `git_commit`, or `modified_files_hash`, so
+`source_binding_status=missing` and the run is not an independently
+reconstructable source baseline. Future real-run comparison requires those
+code-identity bindings.
 
-V2 now targets real-task intelligence transfer inside the existing controlled
-workflow. It is not another expansion pass over Proposal, dry-run, apply,
-build, runtime, or generic RAG infrastructure. The normative detailed program
-is `DEV_SPEC.md` section 51:
+### 2.1 V2-C Frozen Validation-Spike Status
 
-```text
-V2-A controlled intelligent input
--> V2-B bounded intelligent loop inside retrieve_evidence
--> V2-C approved real WallCrawler run with no manual answers
--> V2-D add only the exact capability or loop repair exposed by that run
--> rerun until the intelligence-transfer gate is truthfully resolved
--> only then select or reject a separate Proposal-only task
-```
+V2-C is frozen as a `V2 intelligence-loop validation spike`. Its one repaired-
+path real run established the bounded core closure recorded above, but V2-C has
+no continuing product route and `selected_product_request=None`.
 
-The deterministic WallCrawler slices through
-`WALLCRAWLER-CURRENT-HOOK-EVIDENCE-003` are the real request, evidence, and tool
-baseline, not intelligent-transfer proof. `WALLCRAWLER-INTELLIGENT-EVIDENCE-004`
-implemented V2-A/V2-B and exposed the first real-model failure. Its acceptance
-hardening plus `WALLCRAWLER-INTELLIGENT-EVIDENCE-005` are bounded repairs to
-that failure. `WALLCRAWLER-INTELLIGENT-EVIDENCE-006` performed the
-new-interface V2-C run and recorded the bounded schema/progress-contract
-failure above. `WALLCRAWLER-INTELLIGENT-EVIDENCE-007` repaired that exact local
-contract and passed focused regression. `WALLCRAWLER-INTELLIGENT-EVIDENCE-008`
-then exercised it once: convergence, dependent IL selection, and finish shape
-succeeded, while IL-aware compact interpretation and conclusion grounding
-failed. `WALLCRAWLER-INTELLIGENT-EVIDENCE-009` repaired that exact compact
-representation, inspection-citation, and post-IL convergence boundary locally.
-011 exercised the loop through a real local model but failed all three gates.
-013 reached metadata-derived IL but failed finish acceptance; 014 repaired that
-exact deterministic contract. 015 did not reproduce the removed placeholder,
-but failed earlier because zero-result literal symbol queries were not revised
-and repeat correction exhausted before IL. Intelligence transfer remains
-unresolved until a separately selected bounded response to this observed
-failure and later real-model acceptance resolve the gate.
-
-A grounded `needs_more_evidence` may satisfy the intelligence-transfer gate
-while Proposal remains locked. Every result stops at `evidence_retrieval` and
-may only recommend one bounded evidence capability, one bounded loop repair,
-or a separately selected Proposal-only task.
+The run remains `source_binding_status=missing`. `V2 Agent runtime path
+reconstruction` is a pending read-only task type only; it is not an approved
+task, active queue item, permanent product gate, or implementation requirement.
 
 ## 3. Non-Negotiable Authority Boundaries
 

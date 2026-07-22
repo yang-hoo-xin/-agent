@@ -1,18 +1,196 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-18
+Last updated: 2026-07-22
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
 ```text
-current_queue: None
+current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 current_documentation_task: None
-selected_product_request: None
-most_recent_completed_capability: WALLCRAWLER-INTELLIGENT-EVIDENCE-014
+selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
+phase_2b_execution_status: ready_for_fresh_local_run
+most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
+v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
+
+`V2-LOCAL-PROVIDER-ADMISSION-001` is complete. The existing complete
+`run-request` entry now accepts the same four local Ollama arguments as the
+evidence-only entry, requires an exact model selected from the current
+literal-loopback `/api/tags` response, rereads and compares the model digest
+before patch generation, creates `OllamaLLM` through run-level settings
+injection, and records `/api/chat`, local execution, no external disclosure,
+no API-key access, and no provider fallback. The external API-key and per-run
+source-disclosure gates remain fail-closed. The specified 76 focused tests and
+17 applier no-write/exact-hash tests passed; `git diff --check` passed, and no
+P0/P1 diff issue was found. Ruff was unavailable in the environment. This
+platform completion does not complete Phase 2B, product behavior runtime
+verification, or V2. The queue has returned directly to
+`PHASE2B-BETTERHITFEEDBACK-ENABLED-001`.
+
+`PHASE2B-BETTERHITFEEDBACK-ENABLED-001` is the selected meaningful product
+slice. Current source binds `ConfigEnabled` to `General.Enabled` with default
+`true`, but `Plugin.Load()` never reads its value and always calls
+`Harmony.PatchAll()`. The approved change is limited to the isolated copy of
+`Plugin.cs`: `false` must emit one structured disabled marker and return before
+patch registration; `true` must preserve current behavior. GUID, name, version,
+visual/audio behavior, and runtime hot-toggle support are out of scope.
+
+Fresh local run `abcf2669` re-bound repository HEAD
+`0fd187246a437d43ceb539903275b9c8e77dad4b`, BetterHitFeedback tree
+`6e8c3d5f704b7ede8a7fe9e13946a104e81d0676`, complete snapshot SHA256
+`c6fa81b35ca6005dc9091beca601d82afcf180b593b9926b77f642fe37f4f30f`,
+and `Plugin.cs` raw SHA256
+`b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`.
+Its baseline build and compiled identity verification passed. Admission bound
+the current literal-loopback `/api/tags` entry `qwen3:4b-instruct` with digest
+`0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0`,
+recorded destination `http://127.0.0.1:11434/api/chat`, and recorded no API-key
+access, external disclosure, provider fallback, or automatic retry. The one
+authorized patch-generation call failed strict JSON parsing at line 1 column
+2172 with `PatchGenerationError`. No Proposal, Review, Dry-run, Apply, final
+build, or runtime action occurred. Canonical and isolated `Plugin.cs` still
+have the bound raw SHA256. The one-call local run budget is exhausted, so this
+run is blocked before Proposal and cannot be retried without a new explicit
+run/model authorization. Because that immutable failed run did not preserve the
+complete `message.content`, its Patch failure attribution remains unknown; the
+observed fact remains the strict JSON parsing failure at line 1 column 2172.
+
+The bounded local Patch Generation admission repair is implemented and verified
+without changing LangGraph routing, Runtime, RunState, RAG, patch apply, exact
+diff approval, build, runtime, or external-provider behavior. The existing
+Ollama request timeout was confirmed as an explicit `120.0` seconds and was
+reused unchanged. The local structured path now persists the exact frozen
+provider request before invocation and sends those same bytes, separates
+provider-envelope admission from Patch payload parsing, and performs the
+post-response model/digest drift check after Response Admission and before
+Patch materialization. Failed `message.content` is measured and hashed over its
+complete UTF-8 bytes; content up to the product-policy limit of 262,144 bytes is
+preserved exactly in the isolated run workspace, while content above the limit
+is not preserved or truncated. The focused suite passed 94 tests and scoped
+`git diff --check` passed. No model call or new Phase 2B run was created during
+the repair; `abcf2669` remains immutable and failed before Proposal.
+
+Run `054fe2df` then re-bound the same canonical source and current local Ollama
+identity but failed the unmodified baseline build before graph invocation or any
+model call because the restricted process could not read
+`C:\Users\10160\AppData\Roaming\NuGet\NuGet.Config`. Its baseline exit code is
+1, no DLL was produced, and the run remains immutable. The single authorized
+permission canary redirected all outputs to a temporary directory and proved
+that the equivalent baseline succeeds when that user-level file is readable.
+
+The resulting limited NuGet-isolated build repair does not claim a fully
+hermetic build. The existing local delivery entry now binds one shared
+`v2_codegen_real_local_dotnet_nuget_isolated` profile for baseline and final
+build: explicit `dotnet restore --configfile <run-local config> --packages
+<run-local packages>`, run-local `NUGET_PACKAGES`, `NUGET_HTTP_CACHE_PATH`,
+`NUGET_SCRATCH`, and `NUGET_PLUGINS_CACHE_PATH`, followed by `dotnet build
+--no-restore`. Existing BepInExDir, 120-second timeout, DLL identity inspection,
+and fail-closed behavior remain. The focused suite passed 67 tests. Real
+canary `nuget_isolated_build_canary_001` passed restore and build without user
+NuGet-directory access, produced DLL SHA256
+`bb80ec3fe54fdb6ea416b5f313d87d0f4df07a73718e7cb5291357d78beeeb10`,
+and passed GUID/name/version plus `Plugin.Load` inspection. The canary created
+no Phase 2B run and called no model.
+
+Fresh local run `608f67d9` subsequently passed that baseline profile and made
+one bound `qwen3:4b-instruct` Patch Generation call. It produced current-run
+Feature Spec, EvidencePack, Implementation Plan, Proposal, and Proposal Review;
+the Review allowed no-write Dry-run, which then failed because the Proposal
+`before_text` used LF while the bound source used CRLF. No write occurred. A
+read-only replay additionally proved that the same Proposal omitted the
+configuration guard and disabled behavior it claimed to implement. The run
+remains immutable and failed; canonical and isolated `Plugin.cs` bytes remain
+unchanged.
+
+The resulting bounded Proposal validation repair does not hard-code
+BetterHitFeedback behavior. Patch Generation now receives the Implementation
+Plan's validation requirements by bound edit id and rejects a model response
+that omits any of them before Proposal materialization. ProposalReviewer
+independently applies the same upstream-coverage rule by bound edit id, so a
+non-model Proposal path cannot bypass it by rewriting a change id. A no-model
+replay of `608f67d9` after only correcting EOL now fails with
+`upstream_validation_omitted` for all five omitted plan requirements. The
+direct and affected suites passed 138 tests, the CLI suite passed 22 tests, and
+Python syntax checks passed. This proves upstream validation preservation, not
+C# branch semantics, runtime behavior, or Phase 2B completion. No model was
+called and no new run was created by this repair.
+
+That automation limit is not a new permanent platform prerequisite. For this
+bounded product slice, semantic closure remains assigned to the existing
+controlled chain: current-run Proposal and complete no-write diff, independent
+exact-diff approval, compiled `Plugin.Load` inspection, and the separately
+authorized false/true runtime acceptance. One fresh platform-generated local
+run is authorized; it must stop at immutable failure or the no-write exact-diff
+approval boundary, without automatic approval, Apply, final build, or runtime.
+
+The run was approved for one `qwen3.6-plus` call under approval id
+`PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four
+disclosed data classes, no fallback, and no automatic retry. Run `d3718a7e`
+bound the correct `Plugin.cs` Evidence and one-file Implementation Plan, and its
+baseline build plus compiled identity verification passed. The sole external
+call then failed with a 60-second read timeout. No Proposal, Review, Dry-run,
+Apply, final build, or runtime action occurred; canonical and isolated
+`Plugin.cs` remain at raw SHA256
+`b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`.
+At that checkpoint the one-run approval was exhausted and active execution was
+cleared. Exact-diff approval remains unused.
+
+On 2026-07-21 the user approved exactly one controlled external Retry1 under
+approval id
+`PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-RETRY1-20260721`.
+Retry1 must use a new run_id, repeat source/baseline binding, keep the exact
+`d3718a7e` request and `Plugin.cs` scope, use the same provider/model,
+destination, and four disclosed data classes, and perform no fallback or
+automatic Retry2. It must stop at no-write Dry-run for separate exact-diff
+approval. The previous run and its timeout artifacts remain immutable.
+
+The environment initially rejected Retry1 before process creation because the
+approved payload would disclose local source excerpts and run context to the
+external DashScope endpoint. No run_id, baseline build, external call, or
+Artifact was created, so the Retry1 call budget remained unused. On 2026-07-21
+the user explicitly acknowledged that disclosed risk and approved Retry1 again,
+but tenant policy rejected the same execution again before process creation
+because DashScope is not a trusted internal destination. Retry1 remains unused
+and must not execute. The later independent
+`V2-LOCAL-PROVIDER-ADMISSION-001` task established a separately authorized
+literal-loopback local provider path; this does not bypass or relax the blocked
+external disclosure path.
+
+`PHASE2A-DELIVERY-CANARY-001` completed as a source-bound delivery-pipeline
+canary in the new run `42c5d93c`. Mechanical review of the raw-byte applier
+found no P0/P1 issue and 17 focused tests passed before the run. Fresh Evidence,
+Implementation Plan, Proposal, Review, and no-write Dry-run artifacts bound one
+`Plugin.cs` replacement from `VERSION = "0.1.0"` to `VERSION = "0.1.1"`.
+The user approved exact diff hash
+`sha256:43688b71e08227feb8d6517301636af658eed07ffdcb47a9eccbf11c56c5b109`.
+Isolated Apply preserved all 62 CRLF line endings and produced raw SHA256
+`ba54e3b58efd75b304cb8f678ac0a8f29ea6e0c437b73fd455daaf52823ca82c`.
+The real local build succeeded; the final DLL SHA256 is
+`d5cb0f0a2b35316cfc90226a06c0bbb6a4ebce79a34f95e21522928642ceb1d9`,
+and read-only inspection confirmed GUID `local.betterhitfeedback`, name
+`BetterHitFeedback`, and version `0.1.1`. The bound canonical BetterHitFeedback
+subtree remained unchanged. Full attempts and artifact refs are archived in
+`docs/audits/LOOP_HISTORY.md`.
+
+Completion remains deliberately narrow:
+`delivery_canary_complete=true`, `product_slice_complete=false`,
+`runtime_behavior_verified=false`, and `phase_2_complete=false`. Phase 2B
+meaningful product-slice selection is next, but no request or queue item is
+selected.
+
+`V2-RUNTIME-BOUNDARY-001` completed one Phase 1 source-bound no-write lineage
+slice through the existing intelligent Evidence entry and local Ollama. Run
+`intelligent_evidence_4c811b6933d54a258b8ba0b2c4e14229` bound the registered
+`gtfo-r8-modules-asm` identity, persisted eight LangGraph trace events and a
+non-routing post-run validation, and ended with all ten lineage checks true.
+The EvidencePack contains the exact
+`Player.PlayerCharacterController.Move` metadata-to-IL observation. No
+implementation, Proposal, apply, build, game-runtime, or target-source-write
+artifact was produced. This does not reopen V2-C as a product route; the V2-C
+run keeps `source_binding_status=missing`.
 
 Checkpoint `5c78e06` implements durable `evidence_run_attempt` identity and
 sanitized provider diagnostics for the evidence-only entry. A `running`
@@ -55,6 +233,34 @@ both unsupported observed conclusions. No model rerun occurred. Semantic
 acceptance, evidence sufficiency, implementation readiness, and V2-C completion
 remain unresolved; Proposal remains locked and `most_recent_completed_capability`
 remains 014.
+
+The later repaired-path run
+`intelligent_evidence_36d25ed53f3447e3adeaa71f42fb7ec0` now supplies the
+missing real semantic evidence. Its EvidencePack artifact hash is
+`bb6dbc8303648d01ff84464e1ed5559ac46d4f697567ef8ec97adb406afb9cea`.
+The model autonomously executed six read-only evidence actions, including two
+metadata-bound IL inspections. Finish step 7 was rejected with
+`OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH`; step 8 corrected the two observed
+claims to exact deterministic facts and retained two interpretations only as
+bounded unverified inference. Provenance is valid, capability=true, and
+semantic=true, so V2-C `core_complete` has single-run real evidence. This state
+means only that one real run demonstrated the core behavior loop; it does not
+identify an independently reconstructable source baseline.
+Convergence=false is a separate non-blocking result. Readiness remains
+`partial`, `can_generate_patch=false`, evidence sufficiency and implementation
+readiness remain false, and Proposal remains locked.
+
+The run artifact does not bind `source_revision`, `git_commit`, or
+`modified_files_hash`; therefore `source_binding_status=missing`. Future real
+runs require those identities before cross-run code attribution. No further
+semantic or general validation work is selected without a concrete false
+acceptance, false rejection, missing diagnostic, or gate conflict.
+
+V2-C is frozen as a `V2 intelligence-loop validation spike`. It has no
+continuing product route, and `selected_product_request=None`.
+
+`V2 Agent runtime path reconstruction` is a pending read-only task type only.
+It is not an approved task, an active queue item, or a permanent product gate.
 
 The ArtifactStore path failure that blocked the next local V2-C execution
 before Agent logic is repaired for the current Windows, NTFS, and configured
@@ -244,10 +450,11 @@ forbidden later artifact or target write occurred, and Proposal remains locked.
 The exact 011 query-semantics/repeat repair completed as 012. Intelligence
 transfer remains unresolved until a separately selected real-model rerun.
 
-### 1.1 Current V2 Intelligence Completion Boundary
+### 1.1 Historical Pre-Closure V2 Intelligence Boundary
 
-`DEV_SPEC.md` section 51 now records the detailed V2 real-task intelligence
-program. Current status is:
+The table below preserves the state at the 015 checkpoint. It is superseded for
+current selection by the repaired-path core closure and frozen V2-C disposition
+in section 1; it is not the current queue or mainline status.
 
 | V2 step | Current state | Evidence boundary |
 | --- | --- | --- |

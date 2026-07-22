@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-16
+Last updated: 2026-07-22
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -10,9 +10,59 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: None
-selected_product_request: None
+current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
+selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
 ```
+
+```text
+task_id: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
+classification: Phase 2B meaningful product slice
+product_request: Make the existing BetterHitFeedback General.Enabled configuration control startup patch registration. When false, emit one structured disabled marker and return before Harmony.PatchAll. When true, preserve current behavior. Configuration changes take effect on the next plugin load; runtime hot-toggle support is not included.
+canonical_source: C:\Users\10160\PycharmProjects\pythonProject3\generated_mods\BetterHitFeedback
+source_revision: repository HEAD 0fd187246a437d43ceb539903275b9c8e77dad4b; BetterHitFeedback tree 6e8c3d5f704b7ede8a7fe9e13946a104e81d0676; complete snapshot SHA256 c6fa81b35ca6005dc9091beca601d82afcf180b593b9926b77f642fe37f4f30f; Plugin.cs raw SHA256 b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c
+write_scope: A fresh isolated workspace; only generated_mods/BetterHitFeedback/Plugin.cs may change. Canonical source remains read-only.
+model_authorization: Exactly one local Ollama patch-generation call after current /api/tags confirms model qwen3:4b-instruct and digest 0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0. Base URL is literal loopback http://127.0.0.1:11434; destination is /api/chat; external disclosure, provider fallback, automatic retry, and any external call are prohibited.
+build_authorization: Fresh isolated workspace, baseline and final dotnet build, and read-only DLL metadata/IL inspection are approved. No final source build before exact-diff approval.
+runtime_authorization: After an approved apply and verified build, controlled game-directory copy and two GTFO launch modes are approved for General.Enabled=false and true. Each mode must bind configuration state, DLL SHA256, run identity, current-run logs, process identity, and applicable acceptance markers. No gameplay claim may be inferred from build or IL alone.
+acceptance: Evidence proves ConfigEnabled is bound but unread and PatchAll is unconditional; one-file implementation binding; deterministic review; no-write dry-run; separate exact diff-hash approval; isolated apply; baseline/final build; compiled GUID local.betterhitfeedback, name BetterHitFeedback, version 0.1.0 unchanged; compiled Plugin.Load contains the approved false-before-PatchAll branch; canonical snapshot unchanged; false-mode real runtime records the disabled marker and no current-run PATCH_APPLIED/HOOK_TRIGGERED marker; true-mode real runtime records PATCH_APPLIED and preserves current enabled behavior.
+stop_condition: Stop on source drift, any edit outside Plugin.cs, GUID/name/version change, visual/audio change, runtime hot-toggle work, missing exact-diff approval, provider fallback/retry, build failure, compiled-identity mismatch, unbound runtime logs, or any need to modify platform code. Do not claim product-slice completion from build/IL evidence alone.
+status: ready_for_fresh_local_run; run 608f67d9 remains immutable after no-write Dry-run failure. Validation-preservation repair is complete. The existing string-only Feature Spec and Implementation Plan contracts still do not deterministically prove the required C# branch order or disabled behavior, but that limitation does not create a new permanent platform prerequisite. For this bounded slice, semantic closure is assigned to the current-run complete no-write diff, independent exact-diff approval, compiled Plugin.Load inspection, and the separately authorized false/true runtime acceptance. Exactly one new platform-generated local run is authorized and must stop at immutable failure or the no-write exact-diff approval boundary. The blocked external Retry1 remains unused and must not execute.
+```
+
+Run `054fe2df` is an immutable baseline-build failure caused by denied access to
+the user-level NuGet configuration; graph invocation and model-call count both
+remained zero. The limited NuGet-isolated build repair is verified: baseline
+and final build now share profile
+`v2_codegen_real_local_dotnet_nuget_isolated`, the focused suite passed 67
+tests, and real baseline canary `nuget_isolated_build_canary_001` passed restore,
+`--no-restore` build, and DLL identity inspection inside the restricted
+workspace. This removes the observed user-level NuGet config/cache dependency
+only; it does not claim a fully hermetic build. That build repair itself created
+no replacement Phase 2B run.
+
+Run `608f67d9` is the first post-build-repair local product run. Baseline and
+one local Patch Generation call completed, but no-write Dry-run failed on an
+LF/CRLF exact-source mismatch. No write occurred. Its Proposal also omitted the
+claimed configuration guard and disabled branch, while Review had allowed
+Dry-run. The bounded follow-up now requires every generated change to preserve
+all validation requirements from its bound Implementation Plan change and
+rechecks that coverage in ProposalReviewer by edit binding. A no-model replay
+blocks the preserved bad response as `upstream_validation_omitted`; 138 direct
+and affected tests plus 22 CLI tests pass. This is not control-flow semantic
+verification. `608f67d9` remains immutable, and no replacement run or model call
+was created during the repair.
+
+`V2-PATCH-APPLIER-EOL-001` and `PHASE2A-DELIVERY-CANARY-001` completed and
+moved to `docs/audits/LOOP_HISTORY.md`. Run `42c5d93c` remains the immutable
+successful Phase 2A record.
+
+V2-C is frozen as a `V2 intelligence-loop validation spike` and has no
+continuing product route. Its real-run record remains
+`source_binding_status=missing`.
+
+`V2 Agent runtime path reconstruction` is a pending read-only task type only.
+It has no task id, is not an active queue item, and is not a permanent product
+gate.
 
 `WALLCRAWLER-LOCAL-MODEL-EVIDENCE-015` completed exactly one authorized
 post-014 local real-model run and moved to `docs/audits/LOOP_HISTORY.md`. Prompt
@@ -77,23 +127,19 @@ tool calls after six metadata searches, no IL inspection, and two rejected
 finish objects. The exact bounded repair direction is to expose the full nested
 finish schema and current IL/conclusion acceptance state to the model;
 `WALLCRAWLER-INTELLIGENT-EVIDENCE-007` completed only that repair with 70
-focused tests passing. V2-C remains unresolved until a separately selected and
-approved real-model rerun exercises it. That rerun completed as 008: it fixed
+focused tests passing. At that historical checkpoint V2-C remained unresolved
+until a separately selected and approved real-model rerun exercised it. That
+rerun completed as 008: it fixed
 the 006 convergence and finish-shape failures but exposed one exact compact-IL
 representation and inspection-citation failure. No repair was selected
 automatically. The user then selected 009 to repair only that failure and
 the directly observed repeated-context growth. That repair is complete; a new
 real-model run is not implied or authorized.
 
-The confirmed V2 product direction is specified in `DEV_SPEC.md` section 51:
-controlled intelligent input, a bounded Evidence loop, an approved real
-WallCrawler model run, and only then one failure-driven capability or loop
-repair when the run proves it is needed. This direction is not a preactivated
-consecutive queue. A later external real-model rerun requires explicit task
-selection plus disclosure approval. A local real-model rerun requires a
-separately selected task and the literal-loopback boundary. Every result stops
-at `evidence_retrieval` and may only recommend a later bounded repair or
-separately selected Proposal-only task.
+`DEV_SPEC.md` section 51 now classifies that sequence as the frozen V2-C
+experiment and places read-only runtime-path reconstruction before any later
+product gate. The reconstruction itself is not preactivated and does not
+authorize another V2-C rerun or Proposal-only task.
 
 ## 2. Entry Rule
 
