@@ -254,8 +254,60 @@ def test_generated_build_cleanup_tolerates_only_vanished_entries(
         "path": str(generated.resolve()),
         "removed": True,
         "ignored_missing_paths": [str(vanished)],
+        "cleanup_attempt_count": 1,
+        "directory_not_empty_retry_count": 0,
     }
     assert not generated.exists()
+
+
+def test_generated_build_cleanup_retries_winerror_145_once(
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "obj"
+    generated.mkdir()
+    (generated / "late.tmp").write_bytes(b"generated")
+    calls = 0
+
+    def remove(path: Path, *, onerror):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError(41, "directory not empty", str(path), 145)
+        shutil.rmtree(path, onerror=onerror)
+
+    result = _remove_generated_build_directory(
+        generated,
+        tree_remover=remove,
+    )
+
+    assert calls == 2
+    assert result["removed"] is True
+    assert result["cleanup_attempt_count"] == 2
+    assert result["directory_not_empty_retry_count"] == 1
+    assert not generated.exists()
+
+
+def test_generated_build_cleanup_stops_after_second_winerror_145(
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "obj"
+    generated.mkdir()
+    calls = 0
+
+    def remain_nonempty(path: Path, *, onerror):
+        nonlocal calls
+        calls += 1
+        raise OSError(41, "directory not empty", str(path), 145)
+
+    with pytest.raises(OSError) as captured:
+        _remove_generated_build_directory(
+            generated,
+            tree_remover=remain_nonempty,
+        )
+
+    assert calls == 2
+    assert captured.value.winerror == 145
+    assert generated.exists()
 
 
 def test_generated_build_cleanup_propagates_other_io_errors(
@@ -263,8 +315,11 @@ def test_generated_build_cleanup_propagates_other_io_errors(
 ) -> None:
     generated = tmp_path / "obj"
     generated.mkdir()
+    calls = 0
 
     def deny(_path: Path, *, onerror):
+        nonlocal calls
+        calls += 1
         error = PermissionError("denied")
         onerror(Path.unlink, str(generated / "locked.tmp"), (PermissionError, error, None))
 
@@ -274,6 +329,7 @@ def test_generated_build_cleanup_propagates_other_io_errors(
             tree_remover=deny,
         )
 
+    assert calls == 1
     assert generated.exists()
 
 

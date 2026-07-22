@@ -316,6 +316,8 @@ def _remove_generated_build_directory(
 
     selected = directory.resolve()
     ignored_missing_paths: list[str] = []
+    cleanup_attempt_count = 0
+    directory_not_empty_retry_count = 0
 
     def handle_error(
         _operation: Callable[..., Any],
@@ -328,14 +330,27 @@ def _remove_generated_build_directory(
             return
         raise error
 
-    if selected.exists():
-        tree_remover(selected, onerror=handle_error)
+    while selected.exists():
+        cleanup_attempt_count += 1
+        try:
+            tree_remover(selected, onerror=handle_error)
+        except OSError as error:
+            if (
+                getattr(error, "winerror", None) == 145
+                and directory_not_empty_retry_count == 0
+            ):
+                directory_not_empty_retry_count = 1
+                continue
+            raise
+        break
     if selected.exists():
         raise LocalEntryError("Generated build directory remains after cleanup.")
     return {
         "path": str(selected),
         "removed": True,
         "ignored_missing_paths": ignored_missing_paths,
+        "cleanup_attempt_count": cleanup_attempt_count,
+        "directory_not_empty_retry_count": directory_not_empty_retry_count,
     }
 
 

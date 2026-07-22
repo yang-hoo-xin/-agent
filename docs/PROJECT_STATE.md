@@ -165,14 +165,35 @@ run, model call, graph invocation, product source change, or architecture
 change occurred. A replacement Phase 2B run requires new explicit
 authorization.
 
+Fresh run `f8e6c814` consumed the next explicit run authorization. Its tracked
+inspector build, baseline restore/build, and compiled identity inspection
+passed, then cleanup failed automatically and terminally before graph/model
+with `OSError` and Windows `winerror=145` because `obj\Debug` remained nonempty.
+Subsequent read-only inspection observed the generated editor-config entry
+disappear during enumeration, establishing continued directory mutation but
+not the responsible process. No provider invocation, business Artifact, or
+source change occurred; canonical and isolated snapshots remained equal. The
+run remains immutable.
+
+The bounded convergence repair now retries generated-directory cleanup
+immediately and exactly once only for `winerror=145`. It still ignores
+entry-level `FileNotFoundError`, never retries permission or other I/O errors,
+and fails closed if the second cleanup attempt does not converge. Cleanup
+results expose actual attempt and directory-not-empty retry counts. The
+affected suite passed 144 tests. No-model canary
+`pre_graph_cleanup_winerror145_canary_001` used real `shutil.rmtree`, converged
+after one injected `winerror=145`, and separately proved that two consecutive
+145 errors fail closed after exactly two attempts. No new run, model call,
+graph invocation, product source change, or architecture change occurred.
+
 That automation limit is not a new permanent platform prerequisite. For this
 bounded product slice, semantic closure remains assigned to the existing
 controlled chain: current-run Proposal and complete no-write diff, independent
 exact-diff approval, compiled `Plugin.Load` inspection, and the separately
-authorized false/true runtime acceptance. Run `58df438b` consumed the previously
-authorized fresh local run. No automatic replacement run is authorized; any
-later run must receive new explicit authorization and retain the
-immutable-failure/no-write exact-diff stop boundary.
+authorized false/true runtime acceptance. Run `f8e6c814` consumed the most
+recently authorized fresh local run. No automatic replacement run is
+authorized; any later run must receive new explicit authorization and retain
+the immutable-failure/no-write exact-diff stop boundary.
 
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four
