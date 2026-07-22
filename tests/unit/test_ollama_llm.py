@@ -6,6 +6,8 @@ to avoid requiring a running Ollama instance.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Any, Dict
 from unittest.mock import MagicMock, patch
@@ -316,6 +318,165 @@ class TestOllamaChat:
             call_args = mock_client.return_value.__enter__.return_value.post.call_args
             payload = call_args.kwargs["json"]
             assert payload["stream"] is False
+
+    def test_structured_patch_request_is_frozen_recorded_then_sent(
+        self,
+        llm,
+        tmp_path,
+    ):
+        schema = {
+            "type": "object",
+            "required": ["changes"],
+            "properties": {"changes": {"type": "array"}},
+        }
+        response = make_ollama_response(content='{"changes":[]}')
+        audit_path = tmp_path / "attempt.json"
+        recorded = {}
+
+        def record(request):
+            recorded.update(request)
+            audit_path.write_text(json.dumps(request), encoding="utf-8")
+
+        def post(*args, **kwargs):
+            assert audit_path.is_file()
+            return response
+
+        with patch("httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.side_effect = post
+            result = llm.chat(
+                [Message(role="user", content="return a patch")],
+                temperature=0.0,
+                max_tokens=4096,
+                response_format=schema,
+                provider_request_recorder=record,
+            )
+
+        mock_client.assert_called_once_with(
+            timeout=120.0,
+            trust_env=False,
+            follow_redirects=False,
+        )
+        call = mock_client.return_value.__enter__.return_value.post.call_args
+        sent_bytes = call.kwargs["content"]
+        payload = json.loads(sent_bytes.decode("utf-8"))
+        assert result.content == '{"changes":[]}'
+        assert payload["stream"] is False
+        assert payload["think"] is False
+        assert "tools" not in payload
+        assert payload["format"] == schema
+        assert payload["options"] == {"temperature": 0.0, "num_predict": 4096}
+        assert recorded["body_utf8"].encode("utf-8") == sent_bytes
+        assert recorded["body_sha256"] == hashlib.sha256(sent_bytes).hexdigest()
+        assert recorded["body_size_bytes"] == len(sent_bytes)
+        assert recorded["timeout_seconds"] == 120.0
+        assert recorded["trust_environment"] is False
+        assert recorded["follow_redirects"] is False
+
+    def test_structured_patch_request_persistence_failure_prevents_http_call(
+        self,
+        llm,
+    ):
+        def fail_record(_):
+            raise OSError("attempt persistence failed")
+
+        with patch("httpx.Client") as mock_client:
+            with pytest.raises(OllamaLLMError) as exc_info:
+                llm.chat(
+                    [Message(role="user", content="return a patch")],
+                    response_format={"type": "object"},
+                    provider_request_recorder=fail_record,
+                )
+
+        assert exc_info.value.diagnostics["failure_classification"] == (
+            "durable_provider_request_failure"
+        )
+        mock_client.return_value.__enter__.return_value.post.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("top_level_updates", "message_updates", "classification"),
+        [
+            ({"done": False}, {}, "provider_response_incomplete"),
+            (
+                {"done_reason": "length"},
+                {},
+                "provider_response_stop_reason_rejected",
+            ),
+            (
+                {"model": "another-model"},
+                {},
+                "response_model_identity_mismatch",
+            ),
+            ({}, {"content": "   "}, "provider_message_content_empty"),
+            ({}, {"thinking": "hidden"}, "provider_thinking_not_admitted"),
+            (
+                {},
+                {"tool_calls": [{"function": {"name": "x"}}]},
+                "provider_tool_calls_not_admitted",
+            ),
+        ],
+    )
+    def test_structured_patch_response_profile_fails_closed(
+        self,
+        llm,
+        top_level_updates,
+        message_updates,
+        classification,
+    ):
+        response = make_ollama_response(content='{"changes":[]}')
+        response.json.return_value.update(top_level_updates)
+        response.json.return_value["message"].update(message_updates)
+
+        with patch("httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = response
+            with pytest.raises(OllamaLLMError) as exc_info:
+                llm.chat(
+                    [Message(role="user", content="return a patch")],
+                    response_format={"type": "object"},
+                    provider_request_recorder=lambda _: None,
+                )
+
+        assert exc_info.value.diagnostics["failure_boundary"] == (
+            "provider_response_admission"
+        )
+        assert exc_info.value.diagnostics["failure_classification"] == classification
+        assert "thinking" not in exc_info.value.diagnostics
+        assert "tool_calls" not in exc_info.value.diagnostics
+
+    def test_provider_envelope_json_decoding_is_separate_admission_failure(
+        self,
+        llm,
+    ):
+        response = MagicMock()
+        response.status_code = 200
+        response.json.side_effect = ValueError("invalid envelope")
+
+        with patch("httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = response
+            with pytest.raises(OllamaLLMError) as exc_info:
+                llm.chat(
+                    [Message(role="user", content="return a patch")],
+                    response_format={"type": "object"},
+                    provider_request_recorder=lambda _: None,
+                )
+
+        assert exc_info.value.diagnostics["failure_classification"] == (
+            "provider_envelope_json_decoding_failure"
+        )
+
+    def test_structured_success_without_usage_remains_admissible(self, llm):
+        response = make_ollama_response(content='{"changes":[]}')
+        response.json.return_value.pop("prompt_eval_count")
+        response.json.return_value.pop("eval_count")
+
+        with patch("httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = response
+            result = llm.chat(
+                [Message(role="user", content="return a patch")],
+                response_format={"type": "object"},
+                provider_request_recorder=lambda _: None,
+            )
+
+        assert result.usage is None
 
 
 # -----------------------------------------------------------------------------

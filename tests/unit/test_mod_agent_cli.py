@@ -20,8 +20,10 @@ from src.mod_agent.artifacts.store import ArtifactStorePreflightError
 from src.mod_agent.cli import main, plan_request
 from src.mod_agent.evidence.discovery_tools import LocalAssemblyEvidenceToolExecutor
 from src.mod_agent.intelligent_evidence_only import (
+    IntelligentEvidenceEntryError,
     _evidence_run_failure_code,
     _failure_attribution,
+    run_intelligent_evidence_only,
 )
 
 
@@ -186,7 +188,9 @@ class _CliInjectedAgentAdapter:
                     "decision": "needs_more_evidence",
                     "evidence_conclusions": [
                         {
-                            "claim": "Observed.Type.Move has an inspected IL body.",
+                            "claim": (
+                                "Observed inspected symbol: Observed.Type.Move."
+                            ),
                             "claim_status": "observed",
                             "observation_ids": ["obs-002"],
                             "limitations": [],
@@ -274,6 +278,21 @@ class _CliRejectToolExecution:
     def execute(self, **kwargs):
         self.actions.append(dict(kwargs))
         raise AssertionError("an unknown model tool must not execute")
+
+
+class _CliFailSecondToolExecution:
+    def __init__(self, delegate: LocalAssemblyEvidenceToolExecutor) -> None:
+        self.delegate = delegate
+        self.dispatch_count = 0
+
+    def begin_run(self, *, run_id: str) -> None:
+        self.delegate.begin_run(run_id=run_id)
+
+    def execute(self, **kwargs):
+        self.dispatch_count += 1
+        if self.dispatch_count == 2:
+            raise ValueError("sensitive query text must not persist")
+        return self.delegate.execute(**kwargs)
 
 
 @pytest.mark.parametrize(
@@ -480,6 +499,56 @@ def test_cli_intelligent_evidence_request_emits_graph_stop_result(
     assert payload["source_roots_disclosed_to_model"] is False
 
 
+def test_cli_preserves_budget_exhausted_terminal_status_without_evidence_pack(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "src.mod_agent.cli.run_intelligent_evidence_only",
+        lambda **_: (_ for _ in ()).throw(
+            IntelligentEvidenceEntryError(
+                "EVIDENCE_RUN_VALIDATION_ERROR",
+                diagnostic={
+                    "run_status": "budget_exhausted",
+                    "failure_diagnostics": {
+                        "failure_stage": "finish_validation",
+                        "symbolic_failure_code": (
+                            "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+                        ),
+                        "correction_attempted": False,
+                        "correction_unavailable_reason": (
+                            "no_remaining_model_turn"
+                        ),
+                    },
+                },
+            )
+        ),
+    )
+
+    exit_code = main(
+        [
+            "intelligent-evidence-request",
+            "Discover WallCrawler hook evidence.",
+            "--source-registry",
+            "machine-local-sources.json",
+            "--allow-evidence-disclosure",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["status"] == "budget_exhausted"
+    assert "evidence_pack" not in payload
+    assert payload["diagnostic"]["failure_diagnostics"] == {
+        "failure_stage": "finish_validation",
+        "symbolic_failure_code": (
+            "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH"
+        ),
+        "correction_attempted": False,
+        "correction_unavailable_reason": "no_remaining_model_turn",
+    }
+
+
 def test_cli_intelligent_evidence_preflight_failure_is_structured_and_stops_execution(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -684,6 +753,135 @@ def test_cli_intelligent_evidence_request_persists_candidate_binding_provenance(
     assert attempt["tool_calls_executed"] == 2
 
 
+def test_phase1_source_bound_no_write_run_persists_complete_lineage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    assembly = source_root / "Modules-ASM.dll"
+    assembly.write_bytes(b"managed-cli-test-bytes")
+    assembly_sha256 = hashlib.sha256(assembly.read_bytes()).hexdigest().upper()
+    module_mvid = "00000000-0000-0000-0000-000000000042"
+    registry_path = tmp_path / "source-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "evidence_discovery_source_registry_v1",
+                "sources": [
+                    {
+                        "source_id": "cli-source",
+                        "source_type": "decompiled_api",
+                        "root_path": str(source_root),
+                        "metadata": {
+                            "evidence_discovery_kind": "unity_script_assembly",
+                            "evidence_class": "phase1_lineage_test",
+                            "description": "Phase 1 test source.",
+                            "allowed_tools": [
+                                "search_dotnet_metadata",
+                                "inspect_method_il",
+                            ],
+                            "assembly_relative_paths": ["Modules-ASM.dll"],
+                            "version_identity": {
+                                "assembly_sha256": assembly_sha256,
+                                "module_mvid": module_mvid,
+                            },
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "phase1.py").write_text("BOUND = True\n", encoding="utf-8")
+    executor = LocalAssemblyEvidenceToolExecutor(
+        metadata_runner=_CliMetadataRunner(),
+        il_runner_factory=_CliILRunner,
+    )
+    monkeypatch.setattr(
+        LocalAssemblyEvidenceToolExecutor,
+        "from_inspector",
+        classmethod(lambda cls, inspector_path: executor),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.OllamaChatAgentAdapter",
+        _CliInjectedAgentAdapter,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only._PROJECT_ROOT",
+        tmp_path,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only._PHASE1_SOURCE_ID",
+        "cli-source",
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only._PHASE1_ASSEMBLY_SHA256",
+        assembly_sha256,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only._PHASE1_MODULE_MVID",
+        module_mvid,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only._PHASE1_METHOD_SYMBOL",
+        "Observed.Type.Move",
+    )
+    uuid_values = iter(("7" * 32, "8" * 32))
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.uuid4",
+        lambda: SimpleNamespace(hex=next(uuid_values)),
+    )
+    _CliInjectedAgentAdapter.instances.clear()
+
+    output = run_intelligent_evidence_only(
+        description="Discover one exact movement method and inspect its IL.",
+        source_registry_path=registry_path,
+        artifact_root="artifacts",
+        settings_path=tmp_path / "unused-settings.yaml",
+        allow_evidence_disclosure=False,
+        local_ollama=True,
+        phase1_lineage=True,
+    )
+
+    assert output["phase1_lineage_passed"] is True
+    assert output["external_model_called"] is False
+    assert output["forbidden_artifacts_present"] == []
+    assert output["workflow_trace_artifact"]["artifact_type"] == "workflow_trace"
+    assert (
+        output["post_run_validation_artifact"]["artifact_type"]
+        == "evidence_post_run_validation"
+    )
+    terminal = json.loads(
+        Path(output["attempt_artifact"]["path"]).read_text(encoding="utf-8")
+    )["data"]
+    assert terminal["lineage_schema_version"] == "phase1_source_bound_no_write_v1"
+    assert terminal["target_source_binding"]["source_id"] == "cli-source"
+    assert terminal["target_source_binding"]["source_roots_persisted"] is False
+    assert terminal["authorization_boundary"] == {
+        "local_ollama": True,
+        "external_model_fallback": False,
+        "control_artifact_writes": True,
+        "target_source_writes": False,
+        "proposal": False,
+        "apply": False,
+        "build": False,
+        "game_runtime": False,
+    }
+    serialized = json.dumps(terminal)
+    assert str(source_root) not in serialized
+    assert "Discover one exact movement method" not in serialized
+    validation = json.loads(
+        Path(output["post_run_validation_artifact"]["path"]).read_text(
+            encoding="utf-8"
+        )
+    )["data"]
+    assert validation["lineage_passed"] is True
+    assert validation["affects_runtime_route"] is False
+    assert all(validation["lineage_checks"].values())
+
+
 def test_cli_unknown_external_tool_persists_invalid_attempt_without_execution_or_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -783,6 +981,20 @@ def test_cli_unknown_external_tool_persists_invalid_attempt_without_execution_or
     assert attempt["accepted_model_actions"] == 0
     assert attempt["tool_calls_executed"] == 0
     assert attempt["failure"]["code"] == "UNKNOWN_EVIDENCE_TOOL"
+    assert attempt["failure"]["symbolic_code"] == "UNKNOWN_EVIDENCE_TOOL"
+    failure_diagnostics = attempt["failure_diagnostics"]
+    assert failure_diagnostics["provider_tool_calls"] == 1
+    assert failure_diagnostics["adapter_accepted_actions"] == 0
+    assert failure_diagnostics["deterministic_validation_passed"] == 0
+    assert failure_diagnostics["dispatch_started"] == 0
+    assert failure_diagnostics["tool_execution_completed"] == 0
+    assert failure_diagnostics["observation_created"] == 0
+    assert failure_diagnostics["failure_stage"] == "adapter_action_conversion"
+    assert failure_diagnostics["symbolic_failure_code"] == "UNKNOWN_EVIDENCE_TOOL"
+    assert failure_diagnostics["traceback"]["recoverable_from_artifact"] is True
+    assert failure_diagnostics["traceback"]["source_lines_persisted"] is False
+    assert failure_diagnostics["traceback"]["locals_persisted"] is False
+    assert failure_diagnostics["traceback"]["exception_message_persisted"] is False
     assert attempt["provider_turns"][0]["streaming"] is False
     assert attempt["provider_turns"][0]["usage"]["total_tokens"] == 60
     serialized_attempt = json.dumps(attempt, ensure_ascii=False)
@@ -814,6 +1026,134 @@ def test_cli_unknown_external_tool_persists_invalid_attempt_without_execution_or
     assert not [
         path
         for path in artifact_root.rglob("*.json")
+        if json.loads(path.read_text(encoding="utf-8")).get("artifact_type")
+        == "evidence_pack"
+    ]
+
+
+def test_cli_failed_attempt_persists_partial_execution_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    (source_root / "Modules-ASM.dll").write_bytes(b"managed-cli-test-bytes")
+    registry_path = tmp_path / "source-registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "evidence_discovery_source_registry_v1",
+                "sources": [
+                    {
+                        "source_id": "cli-source",
+                        "source_type": "decompiled_api",
+                        "root_path": str(source_root),
+                        "metadata": {
+                            "evidence_discovery_kind": "unity_script_assembly",
+                            "evidence_class": "cli_failure_diagnostics_test",
+                            "description": "Generic CLI source capability view.",
+                            "allowed_tools": [
+                                "search_dotnet_metadata",
+                                "inspect_method_il",
+                            ],
+                            "assembly_relative_paths": ["Modules-ASM.dll"],
+                            "version_identity": {},
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    executor = _CliFailSecondToolExecution(
+        LocalAssemblyEvidenceToolExecutor(
+            metadata_runner=_CliMetadataRunner(),
+            il_runner_factory=_CliILRunner,
+        )
+    )
+    monkeypatch.setattr(
+        LocalAssemblyEvidenceToolExecutor,
+        "from_inspector",
+        classmethod(lambda cls, inspector_path: executor),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.OllamaChatAgentAdapter",
+        _CliInjectedAgentAdapter,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only._PROJECT_ROOT",
+        tmp_path,
+    )
+    uuid_values = iter(("5" * 32, "6" * 32))
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.uuid4",
+        lambda: SimpleNamespace(hex=next(uuid_values)),
+    )
+    _CliInjectedAgentAdapter.instances.clear()
+
+    exit_code = main(
+        [
+            "intelligent-evidence-request",
+            "Discover one exact movement method and inspect its IL.",
+            "--source-registry",
+            str(registry_path),
+            "--artifact-root",
+            "a",
+            "--local-ollama",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["reason"] == "EVIDENCE_RUN_VALIDATION_ERROR"
+    diagnostic = payload["diagnostic"]
+    assert diagnostic["accepted_model_actions"] == 2
+    assert diagnostic["tool_calls_executed"] == 1
+    failure_diagnostics = diagnostic["failure_diagnostics"]
+    assert failure_diagnostics["schema_version"] == (
+        "evidence_run_failure_diagnostics_v1"
+    )
+    assert failure_diagnostics["provider_tool_calls"] == 2
+    assert failure_diagnostics["adapter_accepted_actions"] == 2
+    assert failure_diagnostics["deterministic_validation_passed"] == 2
+    assert failure_diagnostics["dispatch_started"] == 2
+    assert failure_diagnostics["tool_execution_completed"] == 1
+    assert failure_diagnostics["observation_created"] == 1
+    assert failure_diagnostics["failure_stage"] == "tool_execution"
+    assert failure_diagnostics["symbolic_failure_code"] == (
+        "EVIDENCE_DISCOVERY_VALUE_ERROR"
+    )
+    traceback_data = failure_diagnostics["traceback"]
+    assert traceback_data["available_in_process"] is True
+    assert traceback_data["recoverable_from_artifact"] is True
+    assert traceback_data["source_lines_persisted"] is False
+    assert traceback_data["locals_persisted"] is False
+    assert traceback_data["exception_message_persisted"] is False
+    assert traceback_data["project_frames"]
+    assert all(
+        set(frame) == {"path", "line", "function"}
+        for frame in traceback_data["project_frames"]
+    )
+
+    attempt_envelope = json.loads(
+        Path(diagnostic["attempt_artifact"]["path"]).read_text(encoding="utf-8")
+    )
+    attempt = attempt_envelope["data"]
+    assert attempt["tool_calls_executed"] == 1
+    assert attempt["failure"]["code"] == "EVIDENCE_RUN_VALIDATION_ERROR"
+    assert attempt["failure"]["symbolic_code"] == "EVIDENCE_DISCOVERY_VALUE_ERROR"
+    assert attempt["failure_diagnostics"] == failure_diagnostics
+    serialized_attempt = json.dumps(attempt, ensure_ascii=False)
+    assert str(source_root) not in serialized_attempt
+    assert (
+        "Discover one exact movement method and inspect its IL."
+        not in serialized_attempt
+    )
+    assert "sensitive query text must not persist" not in serialized_attempt
+    assert not [
+        path
+        for path in (tmp_path / "a").rglob("*.json")
         if json.loads(path.read_text(encoding="utf-8")).get("artifact_type")
         == "evidence_pack"
     ]
@@ -895,6 +1235,51 @@ def test_cli_run_request_blocks_before_target_access_without_source_disclosure(
     assert exit_code == 2
     assert payload["status"] == "BLOCKED"
     assert "--allow-source-disclosure" in payload["reason"]
+
+
+def test_cli_run_request_passes_local_ollama_boundary_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def run(**kwargs):
+        captured.update(kwargs)
+        return {
+            "build_summary": {
+                "status": "not_run",
+                "claims_real_build_success": False,
+            }
+        }
+
+    monkeypatch.setattr("src.mod_agent.cli.run_local_request", run)
+
+    exit_code = main(
+        [
+            "run-request",
+            "change local source",
+            "--target-project",
+            "target",
+            "--local-ollama",
+            "--ollama-base-url",
+            "http://127.0.0.1:11434",
+            "--ollama-model",
+            "qwen3:4b-instruct",
+            "--ollama-max-output-tokens",
+            "3072",
+            "--confirm-isolated-write",
+            "--allow-build",
+        ]
+    )
+
+    assert exit_code == 1
+    json.loads(capsys.readouterr().out)
+    assert captured["local_ollama"] is True
+    assert captured["ollama_base_url"] == "http://127.0.0.1:11434"
+    assert captured["ollama_model"] == "qwen3:4b-instruct"
+    assert captured["ollama_max_output_tokens"] == 3072
+    assert captured["allow_source_disclosure"] is False
+    assert callable(captured["diff_approval_reader"])
 
 
 def test_cli_does_not_treat_non_real_success_status_as_success(

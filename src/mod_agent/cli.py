@@ -153,6 +153,21 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--api-key-env", default="DASHSCOPE_API_KEY")
     run_parser.add_argument("--base-url-env", default="DASHSCOPE_BASE_URL")
     run_parser.add_argument(
+        "--local-ollama",
+        action="store_true",
+        help=(
+            "Use Ollama through a literal loopback endpoint for this run; "
+            "no external source disclosure is authorized."
+        ),
+    )
+    run_parser.add_argument(
+        "--ollama-base-url", default="http://127.0.0.1:11434"
+    )
+    run_parser.add_argument("--ollama-model")
+    run_parser.add_argument(
+        "--ollama-max-output-tokens", type=int, default=4096
+    )
+    run_parser.add_argument(
         "--allow-source-disclosure",
         action="store_true",
         help=(
@@ -285,6 +300,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             }
             if isinstance(exc, IntelligentEvidenceEntryError) and exc.diagnostic:
                 blocked_payload["diagnostic"] = dict(exc.diagnostic)
+                if exc.diagnostic.get("run_status") == "budget_exhausted":
+                    blocked_payload["status"] = "budget_exhausted"
             print(
                 json.dumps(
                     blocked_payload,
@@ -330,6 +347,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 allow_build=bool(args.allow_build),
                 allow_source_disclosure=bool(args.allow_source_disclosure),
                 diff_approval_reader=read_diff_approval,
+                local_ollama=bool(args.local_ollama),
+                ollama_base_url=args.ollama_base_url,
+                ollama_model=args.ollama_model,
+                ollama_max_output_tokens=args.ollama_max_output_tokens,
             )
         except LocalEntryError as exc:
             print(json.dumps({"status": "BLOCKED", "reason": str(exc)}, ensure_ascii=False, indent=2))
