@@ -118,6 +118,32 @@ Python syntax checks passed. This proves upstream validation preservation, not
 C# branch semantics, runtime behavior, or Phase 2B completion. No model was
 called and no new run was created by this repair.
 
+Fresh split-worktree run `c213e978` subsequently passed the unmodified
+NuGet-isolated baseline build but failed before graph invocation and before any
+model call because its compiled-artifact verifier referenced an ignored,
+prebuilt `r8_il_inspector.dll` that was absent from the clean worktree. The old
+entry also failed before writing `run_manifest.json` or `run_failure.json`.
+That run remains immutable; its failure does not permanently block Phase 2B.
+
+The bounded follow-up now writes the admitted run manifest before workspace,
+build, or verifier work; a pre-graph failure writes `run_failure.json` and binds
+its SHA256 from the same manifest. The verifier is built inside the run
+workspace from the tracked `scripts/r8_il_inspector` source with explicit
+run-local NuGet configuration and caches, and records source-project,
+source-snapshot, and compiled-inspector SHA256 values. The same bound inspector
+is used for baseline and final compiled-artifact verification. The direct and
+affected suite passed 139 tests. No-model canary
+`run_local_inspector_build_canary_001` passed inspector restore/build,
+BetterHitFeedback baseline restore/build, and GUID/name/version plus
+`Plugin.Load` inspection. Its inspector SHA256 is
+`c6edbc003b3645560f40aaa89efef1037241155b8d740b3c5d43b6b252d76301` and
+baseline DLL SHA256 is
+`387806362f0347d2cf75e0c9d6d50f42f00c7e8c2a475eb85388c568b5516757`.
+The canonical snapshot remained unchanged; no Phase 2B run, graph, or model
+call was created. This removes the observed clean-worktree verifier and
+pre-graph terminal-record gaps only; it does not claim a fully hermetic build,
+product runtime behavior, Phase 2B completion, or V2 completion.
+
 That automation limit is not a new permanent platform prerequisite. For this
 bounded product slice, semantic closure remains assigned to the existing
 controlled chain: current-run Proposal and complete no-write diff, independent

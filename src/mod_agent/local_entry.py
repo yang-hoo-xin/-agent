@@ -146,6 +146,28 @@ class NuGetIsolatedBuildExecution:
         }
 
 
+@dataclass(frozen=True)
+class CompiledArtifactInspectionProfile:
+    """Tracked inspector source and expected plugin identity for one local run."""
+
+    project_path: Path
+    method_symbol: str
+    expected_guid: str
+    expected_name: str
+    expected_version: str
+    timeout_seconds: int = 120
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "project_path": str(self.project_path.resolve()),
+            "method_symbol": self.method_symbol,
+            "expected_guid": self.expected_guid,
+            "expected_name": self.expected_name,
+            "expected_version": self.expected_version,
+            "timeout_seconds": self.timeout_seconds,
+        }
+
+
 def _create_nuget_isolated_build_profile(
     *,
     run_root: Path,
@@ -285,6 +307,251 @@ def _join_build_phase_output(*phases: tuple[str, str]) -> str:
     return "\n".join(selected)
 
 
+def _build_run_local_il_inspector(
+    profile: CompiledArtifactInspectionProfile,
+    *,
+    run_root: Path,
+    command_runner: Callable[..., Any] = subprocess.run,
+) -> dict[str, Any]:
+    """Build the tracked inspector source inside one run-local tool workspace."""
+
+    root = run_root.resolve()
+    project = profile.project_path.resolve()
+    if not project.is_file() or project.suffix.lower() != ".csproj":
+        raise LocalEntryError("Configured IL inspector project is missing.")
+    if profile.timeout_seconds <= 0:
+        raise LocalEntryError("IL inspector build timeout must be positive.")
+
+    tool_root = root / "verification_tools" / "r8_il_inspector"
+    source_root = tool_root / "source"
+    output_root = tool_root / "output"
+    environment_root = tool_root / "build_environment"
+    nuget_root = environment_root / "nuget"
+    packages = nuget_root / "packages"
+    http_cache = nuget_root / "http-cache"
+    scratch = nuget_root / "scratch"
+    plugins_cache = nuget_root / "plugins-cache"
+    appdata = environment_root / "appdata"
+    additional_user_config = appdata / "NuGet" / "config"
+    user_config = appdata / "NuGet" / "NuGet.Config"
+    config = tool_root / "nuget.config"
+    restore_stdout = tool_root / "restore.stdout.log"
+    restore_stderr = tool_root / "restore.stderr.log"
+    build_stdout = tool_root / "build.stdout.log"
+    build_stderr = tool_root / "build.stderr.log"
+    record_path = tool_root / "verification_tool_build.json"
+
+    for path in (
+        tool_root,
+        packages,
+        http_cache,
+        scratch,
+        plugins_cache,
+        additional_user_config,
+        output_root,
+    ):
+        path.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        project.parent,
+        source_root,
+        ignore=shutil.ignore_patterns("bin", "obj", ".git", ".idea"),
+    )
+    copied_project = source_root / project.name
+    if not copied_project.is_file():
+        raise LocalEntryError("Run-local IL inspector project copy is missing.")
+    config_bytes = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        b"<configuration><packageSources><clear /></packageSources></configuration>\n"
+    )
+    config.write_bytes(config_bytes)
+    user_config.parent.mkdir(parents=True, exist_ok=True)
+    user_config.write_bytes(config_bytes)
+
+    environment = os.environ.copy()
+    isolated_environment = {
+        "NUGET_PACKAGES": str(packages),
+        "NUGET_HTTP_CACHE_PATH": str(http_cache),
+        "NUGET_SCRATCH": str(scratch),
+        "NUGET_PLUGINS_CACHE_PATH": str(plugins_cache),
+        "APPDATA": str(appdata),
+    }
+    environment.update(isolated_environment)
+    restore_command = (
+        "dotnet",
+        "restore",
+        str(copied_project),
+        "--configfile",
+        str(config),
+        "--packages",
+        str(packages),
+    )
+    build_command = (
+        "dotnet",
+        "build",
+        str(copied_project),
+        "--no-restore",
+        "--output",
+        str(output_root),
+    )
+    common = {
+        "cwd": source_root,
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": profile.timeout_seconds,
+        "check": False,
+        "env": environment,
+    }
+    started = time.perf_counter()
+    restore = command_runner(restore_command, **common)
+    restore_stdout.write_text(str(restore.stdout or ""), encoding="utf-8")
+    restore_stderr.write_text(str(restore.stderr or ""), encoding="utf-8")
+    build = None
+    if restore.returncode == 0:
+        build = command_runner(build_command, **common)
+        build_stdout.write_text(str(build.stdout or ""), encoding="utf-8")
+        build_stderr.write_text(str(build.stderr or ""), encoding="utf-8")
+    else:
+        build_stdout.write_text("", encoding="utf-8")
+        build_stderr.write_text("", encoding="utf-8")
+
+    inspector = output_root / f"{copied_project.stem}.dll"
+    source_snapshot = _source_snapshot(source_root)
+    record = {
+        "profile_id": "run_local_r8_il_inspector_dotnet_nuget_isolated",
+        "fully_hermetic_build_claimed": False,
+        "source_project": str(project),
+        "source_project_sha256": hashlib.sha256(project.read_bytes()).hexdigest(),
+        "source_snapshot_sha256": _source_snapshot_sha256(source_snapshot),
+        "copied_project": str(copied_project),
+        "restore_command": list(restore_command),
+        "build_command": list(build_command),
+        "environment": isolated_environment,
+        "timeout_seconds": profile.timeout_seconds,
+        "restore_exit_code": int(restore.returncode),
+        "build_exit_code": int(build.returncode) if build is not None else None,
+        "duration_ms": int((time.perf_counter() - started) * 1000),
+        "restore_stdout_path": str(restore_stdout),
+        "restore_stderr_path": str(restore_stderr),
+        "build_stdout_path": str(build_stdout),
+        "build_stderr_path": str(build_stderr),
+        "inspector_path": str(inspector),
+        "inspector_exists": inspector.is_file(),
+        "inspector_sha256": (
+            hashlib.sha256(inspector.read_bytes()).hexdigest()
+            if inspector.is_file()
+            else None
+        ),
+    }
+    record_path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if restore.returncode != 0:
+        raise LocalEntryError(
+            f"Run-local IL inspector restore failed with exit code {restore.returncode}."
+        )
+    if build is None or build.returncode != 0:
+        exit_code = None if build is None else build.returncode
+        raise LocalEntryError(
+            f"Run-local IL inspector build failed with exit code {exit_code}."
+        )
+    if not inspector.is_file():
+        raise LocalEntryError("Run-local IL inspector build produced no inspector DLL.")
+    return record
+
+
+def _persist_pre_graph_failure(
+    *,
+    run_root: Path,
+    run_id: str,
+    request_id: str,
+    failure_stage: str,
+    error: BaseException,
+    source_revision_binding: Mapping[str, str] | None,
+    model_admission: Mapping[str, Any],
+    extra: Mapping[str, Any] | None = None,
+) -> None:
+    failure = {
+        "run_id": run_id,
+        "request_id": request_id,
+        "current_stage": "failed_before_graph",
+        "failure_stage": failure_stage,
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "model_call_count": 0,
+        "graph_invoked": False,
+        "patch_payload_parser_entered": False,
+        "actual_write_performed": False,
+        "source_revision_binding": dict(source_revision_binding or {}),
+        "model_admission": dict(model_admission),
+        "run_root": str(run_root),
+    }
+    if extra:
+        failure.update(dict(extra))
+    try:
+        failure_path = run_root / "run_failure.json"
+        failure_bytes = (
+            json.dumps(failure, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        failure_path.write_bytes(failure_bytes)
+        manifest_path = run_root / "run_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if (
+            manifest.get("run_id") != run_id
+            or manifest.get("request_id") != request_id
+        ):
+            return
+        manifest.update(
+            {
+                "status": "failed",
+                "terminal_failure_stage": failure_stage,
+                "terminal_record": {
+                    "path": str(failure_path),
+                    "sha256": hashlib.sha256(failure_bytes).hexdigest(),
+                },
+                "model_call_count": 0,
+                "graph_invoked": False,
+                "patch_payload_parser_entered": False,
+                "actual_write_performed": False,
+            }
+        )
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+def _run_pre_graph_step(
+    *,
+    failure_stage: str,
+    action: Callable[[], Any],
+    run_root: Path,
+    run_id: str,
+    request_id: str,
+    source_revision_binding: Mapping[str, str] | None,
+    model_admission: Mapping[str, Any],
+    extra: Mapping[str, Any] | None = None,
+) -> Any:
+    try:
+        return action()
+    except Exception as exc:
+        _persist_pre_graph_failure(
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            failure_stage=failure_stage,
+            error=exc,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+            extra=extra,
+        )
+        raise
+
+
 def run_local_request(
     *,
     description: str,
@@ -300,6 +567,9 @@ def run_local_request(
     source_disclosure_approval_id: str | None = None,
     source_revision_binding: Mapping[str, str] | None = None,
     compiled_artifact_verifier: Callable[[Path, str], dict[str, Any]] | None = None,
+    compiled_artifact_inspection_profile: (
+        CompiledArtifactInspectionProfile | None
+    ) = None,
     source_change_verifier: (
         Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]] | None
     ) = None,
@@ -331,6 +601,14 @@ def run_local_request(
         raise LocalEntryError("run-request requires --allow-build for the real build step.")
     if diff_approval_reader is None:
         raise LocalEntryError("run-request requires an exact diff approval reader.")
+    if (
+        compiled_artifact_verifier is not None
+        and compiled_artifact_inspection_profile is not None
+    ):
+        raise LocalEntryError(
+            "Choose either an injected compiled artifact verifier or a run-local "
+            "inspection profile."
+        )
     settings = load_settings(settings_path)
     local_model_identity: dict[str, Any] | None = None
     local_ollama_server_version: str | None = None
@@ -431,41 +709,179 @@ def run_local_request(
     base = Path(workspace_base).resolve()
     base.mkdir(parents=True, exist_ok=True)
     run_id = uuid4().hex[:8]
+    request_id = f"request_{run_id}"
     run_root = (base / run_id).resolve()
+    run_root.mkdir(parents=True)
+    initial_manifest = {
+        "run_id": run_id,
+        "request_id": request_id,
+        "status": "admitted",
+        "started_at": started_at,
+        "request": description,
+        "target_source": str(source),
+        "target_source_provenance": "externally_produced_read_only_input",
+        "isolated_workspace": str(run_root),
+        "source_snapshot": initial_source_snapshot,
+        "source_snapshot_sha256": initial_source_snapshot_sha256,
+        "source_revision_binding": dict(source_revision_binding or {}),
+        "model": settings.llm.model,
+        "model_admission": model_admission,
+        "local_model_identity": local_model_identity,
+        "ollama_server_version": local_ollama_server_version,
+        "source_disclosure": source_disclosure,
+        "compiled_artifact_inspection_profile": (
+            compiled_artifact_inspection_profile.to_dict()
+            if compiled_artifact_inspection_profile is not None
+            else None
+        ),
+        "model_call_count": 0,
+        "graph_invoked": False,
+        "patch_payload_parser_entered": False,
+        "actual_write_performed": False,
+    }
+    (run_root / "run_manifest.json").write_text(
+        json.dumps(initial_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     target_copy = run_root / "generated_mods" / source.name
     target_copy.parent.mkdir(parents=True)
-    shutil.copytree(
-        source,
-        target_copy,
-        ignore=shutil.ignore_patterns("bin", "obj", ".git", ".idea"),
+    _run_pre_graph_step(
+        failure_stage="workspace_preparation",
+        action=lambda: shutil.copytree(
+            source,
+            target_copy,
+            ignore=shutil.ignore_patterns("bin", "obj", ".git", ".idea"),
+        ),
+        run_root=run_root,
+        run_id=run_id,
+        request_id=request_id,
+        source_revision_binding=source_revision_binding,
+        model_admission=model_admission,
     )
     source_projects = tuple(source.glob("*.csproj"))
     if len(source_projects) != 1:
-        raise LocalEntryError("Target project must contain exactly one top-level .csproj file.")
+        error = LocalEntryError(
+            "Target project must contain exactly one top-level .csproj file."
+        )
+        _persist_pre_graph_failure(
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            failure_stage="workspace_preparation",
+            error=error,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+        )
+        raise error
     source_project = source_projects[0]
-    assembly_name = _project_text_property(
-        source_project,
-        property_name="AssemblyName",
+    assembly_name = _run_pre_graph_step(
+        failure_stage="baseline_profile",
+        action=lambda: _project_text_property(
+            source_project,
+            property_name="AssemblyName",
+        ),
+        run_root=run_root,
+        run_id=run_id,
+        request_id=request_id,
+        source_revision_binding=source_revision_binding,
+        model_admission=model_admission,
     )
-    source_bepinex_dir = _resolve_project_path_property(
-        source_project,
-        property_name="BepInExDir",
+    source_bepinex_dir = _run_pre_graph_step(
+        failure_stage="baseline_profile",
+        action=lambda: _resolve_project_path_property(
+            source_project,
+            property_name="BepInExDir",
+        ),
+        run_root=run_root,
+        run_id=run_id,
+        request_id=request_id,
+        source_revision_binding=source_revision_binding,
+        model_admission=model_admission,
     )
     if not source_bepinex_dir.is_dir():
-        raise LocalEntryError(f"Resolved BepInExDir is missing: {source_bepinex_dir}")
+        error = LocalEntryError(f"Resolved BepInExDir is missing: {source_bepinex_dir}")
+        _persist_pre_graph_failure(
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            failure_stage="baseline_profile",
+            error=error,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+        )
+        raise error
     isolated_bepinex_dir = run_root / "build_dependencies" / "BepInEx"
     isolated_bepinex_dir.parent.mkdir(parents=True)
-    shutil.copytree(source_bepinex_dir, isolated_bepinex_dir)
-    nuget_build_profile = _create_nuget_isolated_build_profile(
+    _run_pre_graph_step(
+        failure_stage="build_dependency_preparation",
+        action=lambda: shutil.copytree(source_bepinex_dir, isolated_bepinex_dir),
         run_root=run_root,
-        working_directory=target_copy,
-        config_file=target_copy / "nuget.config",
-        bepinex_dir=isolated_bepinex_dir,
-        timeout_seconds=120,
+        run_id=run_id,
+        request_id=request_id,
+        source_revision_binding=source_revision_binding,
+        model_admission=model_admission,
     )
+    nuget_build_profile = _run_pre_graph_step(
+        failure_stage="baseline_profile",
+        action=lambda: _create_nuget_isolated_build_profile(
+            run_root=run_root,
+            working_directory=target_copy,
+            config_file=target_copy / "nuget.config",
+            bepinex_dir=isolated_bepinex_dir,
+            timeout_seconds=120,
+        ),
+        run_root=run_root,
+        run_id=run_id,
+        request_id=request_id,
+        source_revision_binding=source_revision_binding,
+        model_admission=model_admission,
+    )
+    verification_tool_build = None
+    active_compiled_artifact_verifier = compiled_artifact_verifier
+    if compiled_artifact_inspection_profile is not None:
+        verification_tool_build = _run_pre_graph_step(
+            failure_stage="verification_tool_build",
+            action=lambda: _build_run_local_il_inspector(
+                compiled_artifact_inspection_profile,
+                run_root=run_root,
+            ),
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+        )
+        inspector_path = Path(str(verification_tool_build["inspector_path"]))
+
+        def verify_compiled_artifact(artifact: Path, stage: str) -> dict[str, Any]:
+            return {
+                **_verify_bepin_plugin_identity(
+                    artifact,
+                    inspector_path=inspector_path,
+                    method_symbol=compiled_artifact_inspection_profile.method_symbol,
+                    expected_guid=compiled_artifact_inspection_profile.expected_guid,
+                    expected_name=compiled_artifact_inspection_profile.expected_name,
+                    expected_version=compiled_artifact_inspection_profile.expected_version,
+                ),
+                "verification_stage": stage,
+                "verification_tool_sha256": verification_tool_build[
+                    "inspector_sha256"
+                ],
+            }
+
+        active_compiled_artifact_verifier = verify_compiled_artifact
     baseline_stdout = run_root / "baseline_build.stdout.log"
     baseline_stderr = run_root / "baseline_build.stderr.log"
-    baseline = _run_nuget_isolated_build(nuget_build_profile)
+    baseline = _run_pre_graph_step(
+        failure_stage="baseline_build",
+        action=lambda: _run_nuget_isolated_build(nuget_build_profile),
+        run_root=run_root,
+        run_id=run_id,
+        request_id=request_id,
+        source_revision_binding=source_revision_binding,
+        model_admission=model_admission,
+        extra={"verification_tool_build": verification_tool_build},
+    )
     baseline_stdout.write_text(baseline.stdout, encoding="utf-8")
     baseline_stderr.write_text(baseline.stderr, encoding="utf-8")
     expected_artifact = f"bin/Debug/{assembly_name}.dll"
@@ -490,10 +906,47 @@ def run_local_request(
         "stderr_path": str(baseline_stderr),
         "build_profile": nuget_build_profile.to_dict(),
     }
-    if baseline_artifact.is_file() and compiled_artifact_verifier is not None:
-        baseline_result["compiled_artifact_verification"] = compiled_artifact_verifier(
-            baseline_artifact,
-            "baseline",
+    if baseline.exit_code != 0 or not baseline_result["artifact_exists"]:
+        failure_stage = (
+            "baseline_restore"
+            if baseline.restore_exit_code != 0
+            else "baseline_build"
+            if baseline.build_exit_code not in (None, 0)
+            else "baseline_artifact_missing"
+        )
+        error = LocalEntryError(
+            "Unmodified isolated baseline build failed; code generation was not started."
+        )
+        _persist_pre_graph_failure(
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            failure_stage=failure_stage,
+            error=error,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+            extra={
+                "baseline_build": baseline_result,
+                "verification_tool_build": verification_tool_build,
+            },
+        )
+        raise error
+    if baseline_artifact.is_file() and active_compiled_artifact_verifier is not None:
+        baseline_result["compiled_artifact_verification"] = _run_pre_graph_step(
+            failure_stage="baseline_artifact_verification",
+            action=lambda: active_compiled_artifact_verifier(
+                baseline_artifact,
+                "baseline",
+            ),
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+            extra={
+                "baseline_build": baseline_result,
+                "verification_tool_build": verification_tool_build,
+            },
         )
     generator = LLMExactPatchGenerator(llm)
     applier = ExactTextPatchApplier()
@@ -774,6 +1227,8 @@ def run_local_request(
 
     manifest = {
         "run_id": run_id,
+        "request_id": request_id,
+        "status": "baseline_verified",
         "started_at": started_at,
         "request": description,
         "target_source": str(source),
@@ -824,7 +1279,17 @@ def run_local_request(
             "build_uses_isolated_copy": True,
         },
         "nuget_isolated_build_profile": nuget_build_profile.to_dict(),
+        "compiled_artifact_inspection_profile": (
+            compiled_artifact_inspection_profile.to_dict()
+            if compiled_artifact_inspection_profile is not None
+            else None
+        ),
+        "verification_tool_build": verification_tool_build,
         "baseline_build": baseline_result,
+        "model_call_count": 0,
+        "graph_invoked": False,
+        "patch_payload_parser_entered": False,
+        "actual_write_performed": False,
         "limits": [
             "No claim that the external BetterHitFeedback project was generated by this platform.",
             "No real GTFO launch or gameplay validation is performed.",
@@ -835,10 +1300,6 @@ def run_local_request(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    if baseline.exit_code != 0 or not baseline_result["artifact_exists"]:
-        raise LocalEntryError(
-            "Unmodified isolated baseline build failed; code generation was not started."
-        )
     for generated_directory in (target_copy / "bin", target_copy / "obj"):
         if generated_directory.exists():
             shutil.rmtree(generated_directory)
@@ -855,7 +1316,7 @@ def run_local_request(
     )
     state = create_initial_state(
         run_id=run_id,
-        request_id=f"request_{run_id}",
+        request_id=request_id,
         user_request=description,
         target_domain="gtfo",
         target_mod=source.name,
@@ -888,10 +1349,10 @@ def run_local_request(
             raise LocalEntryError(f"Controlled graph failed: {type(exc).__name__}: {exc}") from exc
 
     final_artifact_verification = None
-    if compiled_artifact_verifier is not None:
+    if active_compiled_artifact_verifier is not None:
         if not baseline_artifact.is_file():
             raise LocalEntryError("Final compiled artifact is missing after the graph build.")
-        final_artifact_verification = compiled_artifact_verifier(
+        final_artifact_verification = active_compiled_artifact_verifier(
             baseline_artifact,
             "final",
         )
@@ -914,7 +1375,7 @@ def run_local_request(
     if selected_classification:
         if result.get("build_summary", {}).get("claims_real_build_success") is not True:
             raise LocalEntryError("Completion classification requires a real successful build.")
-        if compiled_artifact_verifier is None or source_change_verifier is None:
+        if active_compiled_artifact_verifier is None or source_change_verifier is None:
             raise LocalEntryError(
                 "Completion classification requires compiled artifact and source change verification."
             )
@@ -934,6 +1395,7 @@ def run_local_request(
         "local_model_input_audit": local_model_input_audit,
         "model_admission": model_admission,
         "local_model_identity": local_model_identity,
+        "verification_tool_build": verification_tool_build,
         "baseline_artifact_verification": baseline_result.get(
             "compiled_artifact_verification"
         ),
@@ -1130,6 +1592,7 @@ def _verify_bepin_plugin_identity(
             tz=timezone.utc,
         ).isoformat(),
         "inspector_path": str(inspector),
+        "inspector_sha256": hashlib.sha256(inspector.read_bytes()).hexdigest(),
         "inspector_schema_version": inspection.get("schema_version"),
         "method_symbol": method_symbol,
         "bepin_plugin": {
