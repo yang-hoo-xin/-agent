@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import os
@@ -35,7 +36,7 @@ class ExactTextPatchApplier:
             raise PatchApplyError("Patch workspace does not exist or is not a directory.")
 
         resolver = BindingResolver.from_implementation_plan(implementation_plan)
-        staged: dict[Path, str] = {}
+        staged: dict[Path, bytes] = {}
         file_results: list[dict[str, Any]] = []
         diff_preview: list[dict[str, Any]] = []
         for index, change in enumerate(proposal.get("diff_intent") or [], start=1):
@@ -60,21 +61,42 @@ class ExactTextPatchApplier:
             if not isinstance(before, str) or not isinstance(after, str) or before == after:
                 raise PatchApplyError(f"Change {index} patch text is invalid or a no-op.")
 
-            current = staged.get(target, target.read_text(encoding="utf-8"))
-            count = current.count(before)
+            current = staged.get(target)
+            if current is None:
+                current = target.read_bytes()
+                _validate_utf8(current, change_index=index)
+            try:
+                before_bytes = before.encode("utf-8")
+                after_bytes = after.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise PatchApplyError(
+                    f"Change {index} patch text is not valid UTF-8 text."
+                ) from exc
+            count = current.count(before_bytes)
             if patch.get("expected_occurrences") != 1 or count != 1:
                 raise PatchApplyError(
                     f"Change {index} expected one live source match but found {count}."
                 )
-            updated = current.replace(before, after, 1)
+            updated = current.replace(before_bytes, after_bytes, 1)
+            if current.startswith(codecs.BOM_UTF8) != updated.startswith(codecs.BOM_UTF8):
+                raise PatchApplyError(f"Change {index} must preserve the UTF-8 BOM.")
             staged[target] = updated
+            before_sha256 = _sha256_bytes(current)
+            after_sha256 = _sha256_bytes(updated)
+            encoding = "utf-8-bom" if current.startswith(codecs.BOM_UTF8) else "utf-8"
             file_results.append(
                 {
                     "change_id": change.get("change_id"),
                     "edit_binding_id": binding_id,
                     "path": relative.as_posix(),
-                    "before_sha256": _sha256_text(current),
-                    "after_sha256": _sha256_text(updated),
+                    "before_sha256": before_sha256,
+                    "after_sha256": after_sha256,
+                    "raw_before_sha256": before_sha256,
+                    "raw_after_sha256": after_sha256,
+                    "hash_mode": "raw_bytes",
+                    "encoding": encoding,
+                    "bom_preserved": current.startswith(codecs.BOM_UTF8)
+                    == updated.startswith(codecs.BOM_UTF8),
                     "matched_occurrences": count,
                 }
             )
@@ -86,8 +108,14 @@ class ExactTextPatchApplier:
                     "before_text": before,
                     "after_text": after,
                     "expected_occurrences": 1,
-                    "before_sha256": _sha256_text(current),
-                    "after_sha256": _sha256_text(updated),
+                    "before_sha256": before_sha256,
+                    "after_sha256": after_sha256,
+                    "raw_before_sha256": before_sha256,
+                    "raw_after_sha256": after_sha256,
+                    "hash_mode": "raw_bytes",
+                    "encoding": encoding,
+                    "bom_preserved": current.startswith(codecs.BOM_UTF8)
+                    == updated.startswith(codecs.BOM_UTF8),
                 }
             )
 
@@ -121,8 +149,20 @@ class ExactTextPatchApplier:
                 )
             for target, content in staged.items():
                 temporary = target.with_name(f".{target.name}.v2-codegen.tmp")
-                temporary.write_text(content, encoding="utf-8", newline="")
-                os.replace(temporary, target)
+                try:
+                    temporary.write_bytes(content)
+                    if temporary.read_bytes() != content:
+                        raise PatchApplyError(
+                            "Temporary patch output does not match dry-run bytes."
+                        )
+                    os.replace(temporary, target)
+                    if target.read_bytes() != content:
+                        raise PatchApplyError(
+                            "Applied patch bytes do not match dry-run bytes."
+                        )
+                finally:
+                    if temporary.exists():
+                        temporary.unlink()
 
         return {
             "execution_mode": "isolated_apply" if allow_write else "dry_run",
@@ -148,8 +188,17 @@ def _safe_relative_path(raw: str) -> Path:
     return Path(*normalized.parts)
 
 
-def _sha256_text(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+def _validate_utf8(value: bytes, *, change_index: int) -> None:
+    try:
+        value.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise PatchApplyError(
+            f"Change {change_index} target is not valid UTF-8; exact bytes were not changed."
+        ) from exc
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
 
 
 def _diff_hash(

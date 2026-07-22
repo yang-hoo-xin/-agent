@@ -428,6 +428,52 @@ def test_reviewer_approves_evidence_bound_dry_run_proposal() -> None:
     assert review.trace_metrics["num_changes_checked"] == 1
 
 
+def test_reviewer_blocks_proposal_that_omits_plan_validation_requirement() -> None:
+    proposal = _proposal_payload()
+    proposal["diff_intent"][0]["expected_validation"] = []
+
+    review = ProposalReviewer().review(
+        proposal,
+        implementation_plan=_implementation_payload(),
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+        permission_level="dry_run_write",
+    )
+
+    assert review.decision == "revise_proposal"
+    assert review.allowed_next_stage is None
+    assert any(
+        finding.rule_id == "validation_contract"
+        and finding.change_id == "chg_001"
+        for finding in review.findings
+    )
+
+
+def test_validation_contract_uses_plan_bound_edit_binding_not_change_id() -> None:
+    proposal = _proposal_payload()
+    proposal["diff_intent"][0]["change_id"] = "rewritten_change_id"
+    proposal["change_units"][0]["change_unit_id"] = "rewritten_change_id"
+    proposal["context_pack"]["change_unit_ids"] = ["rewritten_change_id"]
+    proposal["diff_intent"][0]["expected_validation"] = []
+
+    review = ProposalReviewer().review(
+        proposal,
+        implementation_plan=_implementation_payload(),
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+        permission_level="dry_run_write",
+    )
+
+    assert review.allowed_next_stage is None
+    assert any(
+        finding.rule_id == "validation_contract"
+        and finding.change_id == "rewritten_change_id"
+        for finding in review.findings
+    )
+
+
 def test_reviewer_blocks_evidence_bound_proposal_without_evidence_pack() -> None:
     review = ProposalReviewer().review(
         _proposal_payload(),

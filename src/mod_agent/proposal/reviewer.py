@@ -29,6 +29,7 @@ CHECKED_RULES = (
     "forbidden_paths",
     "permission_level",
     "test_plan_presence",
+    "validation_contract",
     "no_op_detection",
     "executable_patch",
 )
@@ -215,6 +216,13 @@ class ProposalReviewer:
                 )
             )
 
+        findings.extend(
+            self._review_validation_contract(
+                diff_intent=diff_intent,
+                implementation_plan=implementation_plan,
+            )
+        )
+
         if require_executable_patch:
             findings.extend(self._review_executable_patch(diff_intent))
 
@@ -385,6 +393,45 @@ class ProposalReviewer:
                         level="blocking",
                         message=f"Change {index} has invalid or no-op executable patch data.",
                         change_id=change.get("change_id"),
+                    )
+                )
+        return findings
+
+    @staticmethod
+    def _review_validation_contract(
+        *,
+        diff_intent: list[dict[str, Any]],
+        implementation_plan: dict[str, Any] | None,
+    ) -> list[ReviewFinding]:
+        if not isinstance(implementation_plan, dict):
+            return []
+        planned_changes = {
+            str(change["edit_binding_id"]): change
+            for change in implementation_plan.get("proposed_changes") or []
+            if isinstance(change, dict) and change.get("edit_binding_id")
+        }
+        findings: list[ReviewFinding] = []
+        for change in diff_intent:
+            change_id = str(change.get("change_id") or "")
+            binding_id = str(change.get("edit_binding_id") or "")
+            planned = planned_changes.get(binding_id)
+            if planned is None:
+                continue
+            required = [str(item) for item in planned.get("expected_validation") or []]
+            declared = {
+                str(item) for item in change.get("expected_validation") or []
+            }
+            missing = [item for item in required if item not in declared]
+            if missing:
+                findings.append(
+                    ReviewFinding(
+                        rule_id="validation_contract",
+                        level="blocking",
+                        message=(
+                            "Proposal change omits implementation-plan validation "
+                            "requirement(s): " + ", ".join(missing)
+                        ),
+                        change_id=change_id or None,
                     )
                 )
         return findings

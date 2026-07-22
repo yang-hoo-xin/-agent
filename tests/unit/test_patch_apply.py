@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import codecs
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -207,3 +209,268 @@ def test_apply_rejects_stale_or_ambiguous_before_text(tmp_path: Path) -> None:
             allow_write=True,
             approved_diff_hash="sha256:irrelevant-because-source-is-ambiguous",
         )
+
+
+def _dry_run_then_apply(
+    *,
+    workspace_root: Path,
+    proposal: dict[str, object] | None = None,
+    implementation_plan: dict[str, object] | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    applier = ExactTextPatchApplier()
+    selected_proposal = proposal or _proposal()
+    selected_plan = implementation_plan or _plan()
+    dry_run = applier.run(
+        workspace_root=workspace_root,
+        proposal=selected_proposal,
+        implementation_plan=selected_plan,
+        review=_review(),
+        allow_write=False,
+    )
+    applied = applier.run(
+        workspace_root=workspace_root,
+        proposal=selected_proposal,
+        implementation_plan=selected_plan,
+        review=_review(),
+        allow_write=True,
+        approved_diff_hash=str(dry_run["diff_hash"]),
+    )
+    return dry_run, applied
+
+
+def test_exact_apply_preserves_crlf_bytes(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    before = b"header\r\nvalue = Color.Red;\r\nfooter\r\n"
+    expected = b"header\r\nvalue = Color.Pink;\r\nfooter\r\n"
+    source.write_bytes(before)
+
+    dry_run, applied = _dry_run_then_apply(workspace_root=tmp_path)
+
+    assert source.read_bytes() == expected
+    assert source.read_bytes().count(b"\r\n") == before.count(b"\r\n")
+    assert dry_run["changes"][0]["raw_before_sha256"] == hashlib.sha256(
+        before
+    ).hexdigest()
+    assert applied["changes"][0]["raw_after_sha256"] == hashlib.sha256(
+        expected
+    ).hexdigest()
+
+
+def test_crlf_scope_hash_mismatch_remains_zero_write(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    before = b"header\r\nvalue = Color.Red;\r\nfooter\r\n"
+    source.write_bytes(before)
+
+    with pytest.raises(PatchApplyError, match="diff hash"):
+        ExactTextPatchApplier().run(
+            workspace_root=tmp_path,
+            proposal=_proposal(),
+            implementation_plan=_plan(),
+            review=_review(),
+            allow_write=True,
+            approved_diff_hash="sha256:normalized-scope-is-not-approved",
+        )
+
+    assert source.read_bytes() == before
+    assert not source.with_name(".Behavior.cs.v2-codegen.tmp").exists()
+
+
+def test_exact_apply_preserves_lf_bytes(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    before = b"header\nvalue = Color.Red;\nfooter\n"
+    expected = b"header\nvalue = Color.Pink;\nfooter\n"
+    source.write_bytes(before)
+
+    _dry_run_then_apply(workspace_root=tmp_path)
+
+    assert source.read_bytes() == expected
+    assert b"\r\n" not in source.read_bytes()
+
+
+def test_exact_apply_preserves_utf8_bom(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    before = codecs.BOM_UTF8 + b"value = Color.Red;\r\n"
+    expected = codecs.BOM_UTF8 + b"value = Color.Pink;\r\n"
+    source.write_bytes(before)
+
+    dry_run, applied = _dry_run_then_apply(workspace_root=tmp_path)
+
+    assert source.read_bytes() == expected
+    assert dry_run["changes"][0]["encoding"] == "utf-8-bom"
+    assert dry_run["changes"][0]["bom_preserved"] is True
+    assert applied["changes"][0]["bom_preserved"] is True
+
+
+def test_exact_apply_preserves_mixed_line_endings(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    before = b"header\r\nvalue = Color.Red;\nfooter\r\n"
+    expected = b"header\r\nvalue = Color.Pink;\nfooter\r\n"
+    source.write_bytes(before)
+
+    _dry_run_then_apply(workspace_root=tmp_path)
+
+    assert source.read_bytes() == expected
+
+
+@pytest.mark.parametrize(
+    ("content", "match_count"),
+    [
+        (b"value = Color.Blue;\n", 0),
+        (b"Color.Red Color.Red\n", 2),
+    ],
+)
+def test_dry_run_rejects_zero_or_multiple_raw_matches(
+    tmp_path: Path,
+    content: bytes,
+    match_count: int,
+) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    source.write_bytes(content)
+
+    with pytest.raises(PatchApplyError, match=f"found {match_count}"):
+        ExactTextPatchApplier().run(
+            workspace_root=tmp_path,
+            proposal=_proposal(),
+            implementation_plan=_plan(),
+            review=_review(),
+            allow_write=False,
+        )
+
+    assert source.read_bytes() == content
+
+
+def test_dry_run_and_apply_report_identical_raw_hashes(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    source.write_bytes(b"value = Color.Red;\r\n")
+
+    dry_run, applied = _dry_run_then_apply(workspace_root=tmp_path)
+
+    assert dry_run["diff_hash"] == applied["diff_hash"]
+    assert dry_run["changes"] == applied["changes"]
+    assert dry_run["changes"][0]["hash_mode"] == "raw_bytes"
+    assert dry_run["changes"][0]["raw_after_sha256"] == hashlib.sha256(
+        source.read_bytes()
+    ).hexdigest()
+
+
+def test_non_utf8_target_fails_closed_without_writing(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    content = codecs.BOM_UTF16_LE + "value = Color.Red;\r\n".encode("utf-16-le")
+    source.write_bytes(content)
+
+    with pytest.raises(PatchApplyError, match="not valid UTF-8"):
+        ExactTextPatchApplier().run(
+            workspace_root=tmp_path,
+            proposal=_proposal(),
+            implementation_plan=_plan(),
+            review=_review(),
+            allow_write=False,
+        )
+
+    assert source.read_bytes() == content
+
+
+def test_better_hit_feedback_version_fixture_has_expected_raw_after_hash(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Plugin.cs"
+    source.write_bytes(_better_hit_feedback_plugin_fixture())
+    plan = _plan()
+    plan["binding_registry"]["edit_bindings"][0]["canonical_target_path"] = (
+        "Plugin.cs"
+    )
+    proposal = _proposal()
+    proposal["diff_intent"][0]["patch"] = {
+        "kind": "exact_text_replace",
+        "before_text": '    public const string VERSION = "0.1.0";',
+        "after_text": '    public const string VERSION = "0.1.1";',
+        "expected_occurrences": 1,
+    }
+
+    dry_run, applied = _dry_run_then_apply(
+        workspace_root=tmp_path,
+        proposal=proposal,
+        implementation_plan=plan,
+    )
+
+    expected_before = "b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c"
+    expected_after = "ba54e3b58efd75b304cb8f678ac0a8f29ea6e0c437b73fd455daaf52823ca82c"
+    assert dry_run["changes"][0]["raw_before_sha256"] == expected_before
+    assert dry_run["changes"][0]["raw_after_sha256"] == expected_after
+    assert applied["changes"][0]["raw_after_sha256"] == expected_after
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == expected_after
+
+
+def _better_hit_feedback_plugin_fixture() -> bytes:
+    text = """using System;
+using BepInEx;
+using BepInEx.Configuration;
+using BepInEx.Logging;
+using BepInEx.Unity.IL2CPP;
+using HarmonyLib;
+
+namespace BetterHitFeedback;
+
+[BepInPlugin(GUID, MODNAME, VERSION)]
+[BepInProcess("GTFO.exe")]
+public sealed class Plugin : BasePlugin
+{
+    public const string GUID = "local.betterhitfeedback";
+    public const string MODNAME = "BetterHitFeedback";
+    public const string VERSION = "0.1.0";
+    public const string FEATURE_ID = "20260607_194645_create-betterhitfeedback-for-gtfo-non-we";
+
+    public static ManualLogSource LogSource { get; private set; } = null!;
+    public static ConfigEntry<bool> EnableDiagnosticLogging { get; private set; } = null!;
+    public static ConfigEntry<bool> ConfigEnabled { get; private set; } = null!;
+
+    private Harmony? _harmony;
+
+    public override void Load()
+    {
+        LogSource = Log;
+
+        EnableDiagnosticLogging = Config.Bind(
+            "General",
+            "EnableDiagnosticLogging",
+            false,
+            "Enable diagnostic logging for hit feedback.");
+        ConfigEnabled = Config.Bind(
+            "General",
+            "Enabled",
+            true,
+            "Enable the mod.");
+
+        LogSource.LogInfo(
+            $"[GTFO_MOD_AGENT] feature_id={FEATURE_ID} signal=PLUGIN_LOADED target=Plugin.Load message=runtime_evidence=present");
+
+        try
+        {
+            _harmony = new Harmony(GUID);
+            _harmony.PatchAll();
+            LogSource.LogInfo(
+                $"[GTFO_MOD_AGENT] feature_id={FEATURE_ID} signal=PATCH_APPLIED target=Harmony.PatchAll message=Diagnostic hit feedback patches registered.");
+        }
+        catch (Exception ex)
+        {
+            LogSource.LogError(
+                $"[GTFO_MOD_AGENT] feature_id={FEATURE_ID} signal=RUNTIME_FAILED target=Harmony.PatchAll message=Failed to apply patches: {ex.Message}");
+        }
+    }
+
+    public override bool Unload()
+    {
+        _harmony?.UnpatchSelf();
+        LogSource.LogInfo($"{MODNAME} unloaded.");
+        return base.Unload();
+    }
+}"""
+    return text.replace("\n", "\r\n").encode("utf-8")
