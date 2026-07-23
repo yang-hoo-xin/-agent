@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 current_documentation_task: None
 selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
-phase_2b_execution_status: awaiting_explicit_new_run_authorization_after_api_member_evidence_repair
+phase_2b_execution_status: awaiting_explicit_short_path_replacement_run_authorization_after_3360a57e
 most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
@@ -302,6 +302,23 @@ executed. The full unit suite also completed with 1725 passed, 7 skipped, and 34
 pre-existing unrelated failures. This repair does not prove a replacement model
 run, generated patch correctness, build/runtime behavior, or Phase 2B
 completion; a fresh run still requires explicit authorization.
+
+Fresh run `3360a57e` then re-bound the unchanged canonical source and exact
+local Ollama identity, built the tracked inspector, passed the unmodified
+baseline restore/build, and passed baseline GUID/name/version plus
+`Plugin.Load` inspection. Its first graph Artifact write failed before Evidence
+or any model call because the requested revision path was 261 characters and
+Windows `os.replace` returned `WinError 3`. The run is terminal at
+`graph_invocation`; `model_call_count=0`,
+`patch_payload_parser_entered=false`, `actual_write_performed=false`, no
+business Artifact was persisted, and no local-model input audit exists.
+Canonical, isolated business, and baseline `Plugin.cs` remain at raw SHA256
+`b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`.
+Its immutable `run_failure.json` is bound by SHA256
+`46fc81e58634026986ab8335e787ee25b7625dab239da09bf2518448034368e`.
+The observed failure can be avoided without a platform-code change by selecting
+a shorter run workspace root, but that requires a new run id and therefore a
+new explicit authorization; no automatic replacement run was created.
 
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four
