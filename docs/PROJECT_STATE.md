@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 current_documentation_task: None
 selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
-phase_2b_execution_status: blocked_on_bcc045f6_upstream_validation_omitted
+phase_2b_execution_status: ready_for_separately_authorized_fresh_local_run_after_validation_ownership_repair
 most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
@@ -387,15 +387,24 @@ stage after their bounded repairs may justify a focused simplification decision;
 one failure does not authorize a general Harness rewrite, weaker gates, a new
 Agent layer, or automatic retry.
 
-Run `bcc045f6` adds one concrete Harness question: Patch Generation currently
-requires the model to repeat every authoritative upstream validation string
-even though deterministic stages already own those requirements. That
-representation may create avoidable model-output friction, but it is not yet
-safe to remove or silently union the list: run `608f67d9` established that
-model-declared validation can otherwise shrink while claimed behavior is
-absent. The next action is a bounded product decision about preserving that
-regression detection while reducing redundant model authority. No repair,
-retry, or weaker admission rule is authorized by this record.
+The bounded validation-ownership repair now resolves that exact Harness
+question without weakening ProposalReviewer. The Implementation Plan still
+owns the complete validation list. Patch Generation no longer asks the model
+to repeat the exact deterministic entry `compile or static validation`; it
+inherits that entry into the generated change. Every other upstream behavior
+validation remains in `required_validation_by_binding` and omission still
+fails as `upstream_validation_omitted`. ProposalReviewer continues to compare
+the final generated change against the complete Implementation Plan list.
+Twenty-three direct Patch Generation tests and 184 affected Patch Generation,
+Proposal Review, local-entry, CLI, workflow, and Artifact tests passed. A
+no-model replay of the exact preserved `bcc045f6` response now admits its four
+behavior validations and produces the complete five-entry validation list. A
+regression representing the documented `608f67d9` all-behavior-omitted shape
+still fails with all four behavior validations reported missing. The separate
+E2E-001 test remains blocked by its pre-existing missing Git base revision
+binding; its Proposal carried the complete validation list and reported no
+validation-contract finding. No model, provider, Apply, Build, or Runtime
+action occurred. A fresh local run requires separate authorization.
 
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four

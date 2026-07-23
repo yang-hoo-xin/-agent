@@ -765,6 +765,101 @@ def test_generator_carries_required_validation_contract_in_prompt() -> None:
     ]
 
 
+def test_generator_inherits_compile_validation_without_model_repetition() -> None:
+    behavior_validation = [
+        "startup_loaded",
+        "target_path_executed",
+        "acceptance_evidence_observed",
+        "non_goals_preserved",
+    ]
+    payload = {
+        "changes": [
+            {
+                "change_id": "change_001",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_001",
+                "operation": "exact_text_replace",
+                "rationale": "bounded",
+                "expected_validation": behavior_validation,
+                "rollback_hint": "restore",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "old",
+                    "after_text": "new",
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+    llm = _RecordingLLM(json.dumps(payload))
+
+    generated = LLMExactPatchGenerator(llm).generate(
+        user_request="change it",
+        evidence_items=[{"excerpt": "old"}],
+        binding_registry=_registry(),
+        constraints=[],
+        required_validation_by_binding={
+            "edit_binding_001": [
+                "compile or static validation",
+                *behavior_validation,
+            ]
+        },
+    )
+
+    prompt_payload = json.loads(llm.messages[1].content)
+    assert prompt_payload["required_validation_by_binding"] == {
+        "edit_binding_001": behavior_validation
+    }
+    assert generated.changes[0]["expected_validation"] == [
+        "compile or static validation",
+        *behavior_validation,
+    ]
+
+
+def test_generator_still_rejects_missing_behavior_validation_after_inheritance() -> None:
+    payload = {
+        "changes": [
+            {
+                "edit_binding_id": "edit_binding_001",
+                "expected_validation": ["dotnet build"],
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "old",
+                    "after_text": "new",
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+    behavior_validation = [
+        "startup_loaded",
+        "target_path_executed",
+        "acceptance_evidence_observed",
+        "non_goals_preserved",
+    ]
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(_FakeLLM(json.dumps(payload))).generate(
+            user_request="change it",
+            evidence_items=[{"excerpt": "old"}],
+            binding_registry=_registry(),
+            constraints=[],
+            required_validation_by_binding={
+                "edit_binding_001": [
+                    "compile or static validation",
+                    *behavior_validation,
+                ]
+            },
+        )
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "upstream_validation_omitted"
+    )
+    assert exc_info.value.diagnostics["missing_upstream_validation"] == (
+        behavior_validation
+    )
+
+
 def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
     payload = {
         "changes": [

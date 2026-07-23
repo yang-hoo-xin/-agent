@@ -11,6 +11,9 @@ from typing import Any
 from src.libs.llm import BaseLLM, ChatResponse, Message
 
 _LITERAL_VALIDATION_MARKER_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
+_DETERMINISTICALLY_INHERITED_VALIDATION = frozenset(
+    {"compile or static validation"}
+)
 
 
 class PatchGenerationError(RuntimeError):
@@ -95,6 +98,14 @@ class LLMExactPatchGenerator:
             str(binding_id): tuple(str(item) for item in values)
             for binding_id, values in (required_validation_by_binding or {}).items()
         }
+        model_required_validation = {
+            binding_id: tuple(
+                item
+                for item in values
+                if item not in _DETERMINISTICALLY_INHERITED_VALIDATION
+            )
+            for binding_id, values in required_validation.items()
+        }
         unknown_required_bindings = set(required_validation) - allowed_bindings
         if unknown_required_bindings:
             raise PatchGenerationError(
@@ -178,7 +189,7 @@ class LLMExactPatchGenerator:
                             "required_validation_by_binding": {
                                 binding_id: list(values)
                                 for binding_id, values in sorted(
-                                    required_validation.items()
+                                    model_required_validation.items()
                                 )
                             },
                             "evidence": evidence_items,
@@ -367,13 +378,15 @@ def _validate_change(
     )
     if patch.get("expected_occurrences") != 1:
         raise PatchGenerationError(f"Change {index} expected_occurrences must equal 1.")
-    expected_validation = [
+    model_expected_validation = [
         str(item) for item in raw.get("expected_validation") or ["dotnet build"]
     ]
+    upstream_validation = required_validation.get(binding_id, ())
     missing_upstream_validation = [
         item
-        for item in required_validation.get(binding_id, ())
-        if item not in expected_validation
+        for item in upstream_validation
+        if item not in _DETERMINISTICALLY_INHERITED_VALIDATION
+        and item not in model_expected_validation
     ]
     if missing_upstream_validation:
         raise PatchGenerationError(
@@ -385,6 +398,13 @@ def _validate_change(
                 "missing_upstream_validation": missing_upstream_validation,
             },
         )
+    expected_validation = list(model_expected_validation)
+    for item in reversed(upstream_validation):
+        if (
+            item in _DETERMINISTICALLY_INHERITED_VALIDATION
+            and item not in expected_validation
+        ):
+            expected_validation.insert(0, item)
     missing_markers = [
         marker
         for marker in expected_validation

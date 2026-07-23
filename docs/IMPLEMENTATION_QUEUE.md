@@ -26,29 +26,27 @@ build_authorization: Fresh isolated workspace, baseline and final dotnet build, 
 runtime_authorization: After an approved apply and verified build, controlled game-directory copy and two GTFO launch modes are approved for General.Enabled=false and true. Each mode must bind configuration state, DLL SHA256, run identity, current-run logs, process identity, and applicable acceptance markers. No gameplay claim may be inferred from build or IL alone.
 acceptance: Evidence proves ConfigEnabled is bound but unread and PatchAll is unconditional; one-file implementation binding; deterministic review; no-write dry-run; separate exact diff-hash approval; isolated apply; baseline/final build; compiled GUID local.betterhitfeedback, name BetterHitFeedback, version 0.1.0 unchanged; compiled Plugin.Load contains the approved false-before-PatchAll branch; canonical snapshot unchanged; false-mode real runtime records the disabled marker and no current-run PATCH_APPLIED/HOOK_TRIGGERED marker; true-mode real runtime records PATCH_APPLIED and preserves current enabled behavior.
 stop_condition: Stop on source drift, any edit outside Plugin.cs, GUID/name/version change, visual/audio change, runtime hot-toggle work, missing exact-diff approval, provider fallback/retry, build failure, compiled-identity mismatch, unbound runtime logs, or any need to modify platform code. Do not claim product-slice completion from build/IL evidence alone.
-status: blocked_on_bcc045f6_upstream_validation_omitted; runs 608f67d9, c213e978, 58df438b, f8e6c814, ae6f408b, b237e35e, 6ea884bf, 230e70a6, 3360a57e, 34000b2b, and bcc045f6 remain immutable. The bounded source/member Evidence repair passes 213 direct and affected tests and the read-only 230e70a6 replay. The context-admission repair passes 202 affected tests and is verified by real run bcc045f6: `num_ctx=32768` admitted the 6,034-token prompt and Ollama completed normally. Deterministic Patch admission then rejected the parsed response as `upstream_validation_omitted` because it omitted the exact authoritative `compile or static validation` entry already present in the prompt and Implementation Plan. The run stopped before Proposal and Dry-run with no write. Its one-call authorization is exhausted; no retry or admission-rule change is authorized. The blocked external Retry1 remains unused and must not execute.
+status: ready_for_separately_authorized_fresh_local_run_after_validation_ownership_repair; runs 608f67d9, c213e978, 58df438b, f8e6c814, ae6f408b, b237e35e, 6ea884bf, 230e70a6, 3360a57e, 34000b2b, and bcc045f6 remain immutable. The bounded source/member Evidence and context-admission repairs remain verified. The bounded validation-ownership repair now inherits only the exact deterministic `compile or static validation` entry into each generated change while requiring every other Implementation Plan behavior validation in the model response. ProposalReviewer still checks the complete final list. Twenty-three direct and 184 affected tests pass; the exact preserved bcc045f6 response passes a no-model replay with the complete five-entry result, while the documented 608f67d9 all-behavior-omitted shape remains rejected. No model call, retry, source write, Apply, Build, or Runtime action was created by the repair. The blocked external Retry1 remains unused and must not execute.
 ```
 
-Working-tree update: the bounded context-admission repair is implemented,
-passes 121 direct and 202 affected no-model tests, and passed real request
-admission in run `bcc045f6`. The run sent `num_ctx=32768`, Ollama completed
-normally, and deterministic Patch admission correctly stopped the parsed
-response before Proposal because one authoritative validation entry was
-omitted. Current execution status is
-`blocked_on_bcc045f6_upstream_validation_omitted`; the next action is a bounded
-decision about validation ownership and regression preservation, not an
-automatic retry.
+Working-tree update: the bounded validation-ownership repair is implemented.
+The complete Implementation Plan validation list remains authoritative;
+Patch Generation inherits only `compile or static validation`, requires all
+remaining behavior validations from the model, and ProposalReviewer rechecks
+the complete result. Current execution status is
+`ready_for_separately_authorized_fresh_local_run_after_validation_ownership_repair`.
+The repair itself authorizes no model call or retry.
 
 Harness reliability is a tracked diagnostic consideration, not a new queue.
 Subsequent failures must distinguish workspace/build integration, provider
 request admission, model output, and correct deterministic rejection. Broader
 Harness simplification requires repeated cross-stage evidence after bounded
 repairs and may not weaken review, approval, write, build, or runtime gates.
-Run `bcc045f6` specifically exposes possible representation friction from
-requiring the model to repeat a deterministic upstream validation string.
-Changing that contract must preserve the behavior-omission detection established
-by run `608f67d9`; this record does not authorize silent list union, weaker
-admission, another model call, or platform expansion.
+Run `bcc045f6` exposed representation friction from requiring the model to
+repeat a deterministic upstream validation string. The bounded repair removes
+only that repetition and preserves the behavior-omission detection established
+by run `608f67d9`. It does not authorize general list union, weaker admission,
+another model call, or platform expansion.
 
 Run `054fe2df` is an immutable baseline-build failure caused by denied access to
 the user-level NuGet configuration; graph invocation and model-call count both
