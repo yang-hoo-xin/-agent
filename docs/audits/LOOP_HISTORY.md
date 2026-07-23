@@ -3398,3 +3398,69 @@ Stop condition:
   - Real Qwen WallCrawler semantic acceptance requires a new exact per-run
     disclosure approval and remains evidence-only; Proposal-only is locked.
 ```
+
+
+### PHASE2B-BETTERHITFEEDBACK-ENABLED-001: Real Two-Mode Runtime Closure
+
+```text
+Status: completed
+Module: PLAN, RET, REVIEW, APPLY, BUILD, RUN, OBS
+V2TA/M checkpoint: Phase 2B meaningful product behavior slice complete
+Product request:
+  Make BetterHitFeedback General.Enabled control startup patch registration.
+  False returns before Harmony.PatchAll after one structured disabled marker;
+  true preserves the existing enabled behavior; no runtime hot toggle.
+Run:
+  007b1b58
+Final DLL:
+  SHA256 f1ba5005658c3f53f9dff430ba4de927b249fd5150ce279276ead2fd98bdd38b
+  GUID local.betterhitfeedback
+  name BetterHitFeedback
+  version 0.1.0
+Approved diff:
+  sha256:51b6f0ae23a9fb66cbfac129c7a3d053ee9d8e89a92469be16c78202e0c02fa0
+Real-runtime evidence:
+  - read-only preflight result SHA256
+    82842468d77f666ef597ce88f00d018ed088145332d4c892361f3d7bd29812fb
+  - Enabled=false result SHA256
+    61970cd9ebf210c56385e75f9eed1c752bddd5b261aaf5a98e08b819157195a4
+  - Enabled=false recorded MOD_DISABLED=1, PLUGIN_LOADED=0,
+    PATCH_APPLIED=0, HOOK_TRIGGERED=0, BEHAVIOR_OBSERVED=0,
+    BetterHitFeedback RUNTIME_FAILED=0, and Chainloader completion.
+  - Enabled=true result SHA256
+    b6236d09f571c9ff4cf64317cc357508e9a3143307e9713e67830e5394619a2d
+  - Enabled=true recorded PLUGIN_LOADED=1, PATCH_APPLIED=2,
+    HOOK_TRIGGERED=54, BEHAVIOR_OBSERVED=15, MOD_DISABLED=0,
+    BetterHitFeedback RUNTIME_FAILED=0, and Chainloader completion.
+  - The representative death-indicator behavior marker bound native kill
+    color, a 14-line ring, damage accumulator value 174, and
+    AK.EVENTS.BULLETHITENEMYWEAKSPOTLOCALINDICATOR to current gameplay.
+  - The gameplay screenshot SHA256 is
+    2cd5fd0ab69cb0f5346863e40682157132aba42e012894a473ca6255411dbc9b
+    and was visually inspected as an in-level GTFO tutorial frame.
+Environment restoration:
+  - both runtime processes are absent;
+  - BetterHitFeedback.dll and local.betterhitfeedback.cfg are absent because
+    neither existed at preflight;
+  - BepInEx LogOutput.log was restored to preflight SHA256
+    2d3b359f5353da421de36a19df1d5d1c2fc23ae64cdaab148a667b9ccc30647c;
+  - canonical Plugin.cs remains unchanged at SHA256
+    b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c.
+Consolidated evidence:
+  r/007b1b58/runtime_phase2b/runtime_summary.json
+  SHA256 caf19263b5a87df98effa91abffad096c8be871e306292cca4167aa972ccd961
+Limitations:
+  - one GTFO executable and one installed mod environment;
+  - no cross-version, cross-pack, long-duration, or every-gameplay-route claim;
+  - 44 error lines from eight unrelated installed mod sources remain shared
+    environment background;
+  - runtime evidence was controlled and provenance-bound but not collected
+    through the settings-driven GTFO graph automation path;
+  - two known Harness observability defects remain non-blocking: missing
+    successful raw-response persistence and a stale nested pre-call model
+    count.
+Stop:
+  The selected Phase 2B slice is complete. Optional V2TA/M Phase 3 remains
+  inactive; another task requires a separately selected product request or
+  observed failure.
+```

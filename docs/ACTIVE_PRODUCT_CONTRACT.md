@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-07-19
+Last updated: 2026-07-23
 
 ## 1. Product
 
@@ -57,9 +57,20 @@ post-run hardening tests:
 - the external target source remained unchanged;
 - local-source disclosure to an external LLM required separate per-run consent.
 
-This proves one local request-to-compile workflow. It does not prove gameplay
-behavior, cross-project generality, production deployment, automatic repair,
-or promotion-grade retrieval quality.
+The later controlled run `007b1b58` extends this narrow capability through a
+meaningful BetterHitFeedback behavior change and real two-mode GTFO
+verification. The exact built DLL ran once with `General.Enabled=false`, where
+the plugin emitted the disabled marker and registered no patches or hooks, and
+once with `General.Enabled=true`, where patch registration plus bound gameplay
+hook and visual/audio behavior markers were observed. The canonical target
+source remained unchanged and the game directory was restored to the read-only
+preflight state after capture.
+
+This proves one local request-to-real-runtime product slice in one GTFO
+environment. It does not prove cross-project or cross-environment generality,
+production deployment, long-duration stability, every gameplay route,
+automatic repair, automated Harness runtime collection, or promotion-grade
+retrieval quality.
 
 The local `plan-request` CLI is also a tested planning-only entry. It now runs
 the deterministic RequestPlanner and ModPlanningBriefBuilder in memory, emits

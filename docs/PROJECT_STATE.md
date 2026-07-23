@@ -8,13 +8,43 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ## 1. Current Selection
 
 ```text
-current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
+current_queue: None
 current_documentation_task: None
-selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
-phase_2b_execution_status: isolated_apply_and_build_verified_runtime_not_run
-most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
+selected_product_request: None
+phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
+most_recent_completed_capability: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
+
+`PHASE2B-BETTERHITFEEDBACK-ENABLED-001` is complete for its selected claim
+boundary. A read-only preflight bound GTFO executable SHA256
+`0de368e8aaf0ba3e346a4c192e62e6fc5f19a6b3897ccbaed7868f9704d7f20e`,
+the previously absent target DLL and configuration paths, and the pre-existing
+BepInEx log SHA256
+`2d3b359f5353da421de36a19df1d5d1c2fc23ae64cdaab148a667b9ccc30647c`.
+The exact built DLL SHA256
+`f1ba5005658c3f53f9dff430ba4de927b249fd5150ce279276ead2fd98bdd38b`
+then ran in two separate real GTFO processes. `Enabled=false` emitted one
+`MOD_DISABLED`, emitted no `PLUGIN_LOADED`, `PATCH_APPLIED`,
+`HOOK_TRIGGERED`, or `BEHAVIOR_OBSERVED`, and recorded no BetterHitFeedback
+`RUNTIME_FAILED`. `Enabled=true` emitted one `PLUGIN_LOADED`, two
+`PATCH_APPLIED`, 54 `HOOK_TRIGGERED`, and 15 `BEHAVIOR_OBSERVED` markers with
+no BetterHitFeedback `RUNTIME_FAILED`; the bound death-indicator observation
+recorded the native kill color, 14-line ring, damage accumulator, and configured
+hit-audio path during gameplay. The gameplay screenshot was visually inspected.
+The shared environment also emitted 44 error lines from eight other installed
+mod sources; these are preserved as environment background and are not
+attributed to BetterHitFeedback. After capture, both processes were absent, the
+new DLL and configuration were removed, and the original BepInEx log was
+restored to its preflight hash. Canonical `Plugin.cs` remains unchanged at
+SHA256 `b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`.
+The consolidated evidence is
+`r/007b1b58/runtime_phase2b/runtime_summary.json`, SHA256
+`caf19263b5a87df98effa91abffad096c8be871e306292cca4167aa972ccd961`.
+This reaches the proposed V2TA/M Phase 2B checkpoint for one meaningful product
+behavior slice. It does not activate optional Phase 3 or establish
+cross-environment, long-duration, every-route, or fully automated Harness
+runtime verification.
 
 `V2-LOCAL-PROVIDER-ADMISSION-001` is complete. The existing complete
 `run-request` entry now accepts the same four local Ollama arguments as the

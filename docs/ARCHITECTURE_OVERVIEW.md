@@ -563,7 +563,7 @@ Current maturity is split deliberately:
 
 | Area | Current status | Allowed claim |
 | --- | --- | --- |
-| Local request entry | Verified for one BetterHitFeedback request-to-build run | Local synchronous entry works for the preserved run |
+| Local request entry | Verified for one BetterHitFeedback request-to-real-runtime slice | Local synchronous entry works for the preserved run through approved isolated apply, build, and separately controlled runtime verification |
 | LangGraph StateGraph and conditional routing | Tested | One controlled graph owns the implemented route matrix |
 | Structured Evidence Agent turns | Qwen Chat and OpenAI Responses request/response mappings locally tested | Provider-neutral tool/final/usage semantics work inside the Evidence specialist; no real-provider semantic-quality claim |
 | Artifact lineage and hash binding | Tested on focused paths | Registered outputs retain current upstream refs and hashes |
@@ -572,7 +572,7 @@ Current maturity is split deliberately:
 | Two-level Critic and same-level specialist fan-out | `documented_only`; `conditional_trigger` not satisfied | No Worker self-check, parallel specialist execution, deterministic fusion, clean-context second-level Critic, or two-level-review claim |
 | Business decision/action translation | Existing Mod workflow routes `implemented`; generic four-tier risk model `documented_only` | No generic business-risk engine, configurable domain thresholds, or automatic action tuning claim |
 | Real build | Verified for the preserved BetterHitFeedback run | The declared DLL compiled for that run |
-| Gameplay/runtime acceptance | Not verified for that run | No gameplay-success claim |
+| Gameplay/runtime acceptance | Verified for the selected BetterHitFeedback `General.Enabled` slice in one real GTFO environment | Disabled startup and enabled gameplay behavior are observed for the exact built DLL; no cross-environment, long-duration, every-route, or automated Harness claim |
 | Persistent cross-process checkpoint backend | Future/product-failure triggered | In-memory/local checkpoint behavior only |
 | MCP/API/webhook/scheduler trigger surfaces | Partial or future-triggered | They are not the current production entry |
 | Long-term experience and closed-loop learning | Audit storage `implemented`; learning design `documented_only`; `conditional_trigger` not satisfied | Artifact history is not automatic memory, feedback learning, or policy tuning |

@@ -249,8 +249,19 @@ pipeline canary for the BetterHitFeedback VERSION change. It established
 `runtime_behavior_verified=false`, and `phase_2_complete=false` remain explicit.
 
 [PROPOSED] Phase 2B selects a meaningful product behavior or maintenance slice
-whose acceptance boundary demonstrates more than pipeline mechanics. No Phase
-2B request is selected, and this draft does not select one.
+whose acceptance boundary demonstrates more than pipeline mechanics.
+
+[OBSERVED] `PHASE2B-BETTERHITFEEDBACK-ENABLED-001` later selected the meaningful
+BetterHitFeedback `General.Enabled` startup-registration behavior slice.
+Controlled run `007b1b58` bound one source and run lineage through Evidence,
+Implementation Plan, Proposal, deterministic review, no-write dry-run, exact
+diff approval, isolated apply, and real build. The exact final DLL then passed
+separate real GTFO `Enabled=false` and `Enabled=true` checks: the disabled mode
+returned before patch registration, while the enabled mode registered patches
+and produced bound gameplay Hook and behavior markers. The original game
+directory state was restored after capture. This satisfies the proposed Phase
+2B checkpoint for this selected slice; it does not turn every product-delivery
+case into a verified capability or activate optional Phase 3.
 
 ### Phase 3: Optional Lifecycle Evolution
 
