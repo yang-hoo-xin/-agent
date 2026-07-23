@@ -26,16 +26,16 @@ build_authorization: Fresh isolated workspace, baseline and final dotnet build, 
 runtime_authorization: After an approved apply and verified build, controlled game-directory copy and two GTFO launch modes are approved for General.Enabled=false and true. Each mode must bind configuration state, DLL SHA256, run identity, current-run logs, process identity, and applicable acceptance markers. No gameplay claim may be inferred from build or IL alone.
 acceptance: Evidence proves ConfigEnabled is bound but unread and PatchAll is unconditional; one-file implementation binding; deterministic review; no-write dry-run; separate exact diff-hash approval; isolated apply; baseline/final build; compiled GUID local.betterhitfeedback, name BetterHitFeedback, version 0.1.0 unchanged; compiled Plugin.Load contains the approved false-before-PatchAll branch; canonical snapshot unchanged; false-mode real runtime records the disabled marker and no current-run PATCH_APPLIED/HOOK_TRIGGERED marker; true-mode real runtime records PATCH_APPLIED and preserves current enabled behavior.
 stop_condition: Stop on source drift, any edit outside Plugin.cs, GUID/name/version change, visual/audio change, runtime hot-toggle work, missing exact-diff approval, provider fallback/retry, build failure, compiled-identity mismatch, unbound runtime logs, or any need to modify platform code. Do not claim product-slice completion from build/IL evidence alone.
-status: ready_for_separately_authorized_fresh_local_run_after_validation_ownership_repair; runs 608f67d9, c213e978, 58df438b, f8e6c814, ae6f408b, b237e35e, 6ea884bf, 230e70a6, 3360a57e, 34000b2b, and bcc045f6 remain immutable. The bounded source/member Evidence and context-admission repairs remain verified. The bounded validation-ownership repair now inherits only the exact deterministic `compile or static validation` entry into each generated change while requiring every other Implementation Plan behavior validation in the model response. ProposalReviewer still checks the complete final list. Twenty-three direct and 184 affected tests pass; the exact preserved bcc045f6 response passes a no-model replay with the complete five-entry result, while the documented 608f67d9 all-behavior-omitted shape remains rejected. No model call, retry, source write, Apply, Build, or Runtime action was created by the repair. The blocked external Retry1 remains unused and must not execute.
+status: isolated_apply_and_build_verified_runtime_not_run; controlled run 007b1b58 used one local qwen3:4b-instruct call, passed Proposal Review and no-write Dry-run, accepted exact diff hash sha256:51b6f0ae23a9fb66cbfac129c7a3d053ee9d8e89a92469be16c78202e0c02fa0, changed only isolated Plugin.cs, and completed the real final build. The final DLL SHA256 is f1ba5005658c3f53f9dff430ba4de927b249fd5150ce279276ead2fd98bdd38b; GUID/name/version remain local.betterhitfeedback/BetterHitFeedback/0.1.0. Read-only final IL inspection confirms ConfigEnabled.Value gates the disabled marker/exit before Harmony.PatchAll. Canonical Plugin.cs remains unchanged. No game-directory copy, GTFO launch, Runtime, or gameplay claim occurred. The next product action is the separately confirmed two-mode runtime verification using this final DLL; the blocked external Retry1 remains unused and must not execute.
 ```
 
-Working-tree update: the bounded validation-ownership repair is implemented.
-The complete Implementation Plan validation list remains authoritative;
-Patch Generation inherits only `compile or static validation`, requires all
-remaining behavior validations from the model, and ProposalReviewer rechecks
-the complete result. Current execution status is
-`ready_for_separately_authorized_fresh_local_run_after_validation_ownership_repair`.
-The repair itself authorizes no model call or retry.
+Run update: `007b1b58` proves the repaired local path through approved isolated
+Apply and final Build. The complete Implementation Plan validation list
+remained authoritative; the Proposal contained all five entries and
+ProposalReviewer returned `approve_dry_run`. The terminal manifest records one
+model call, one isolated write, terminal stage `build`, and no blocker. This
+does not complete the queue because neither disabled-mode nor enabled-mode
+runtime evidence exists.
 
 Harness reliability is a tracked diagnostic consideration, not a new queue.
 Subsequent failures must distinguish workspace/build integration, provider
@@ -46,7 +46,13 @@ Run `bcc045f6` exposed representation friction from requiring the model to
 repeat a deterministic upstream validation string. The bounded repair removes
 only that repetition and preserves the behavior-omission detection established
 by run `608f67d9`. It does not authorize general list union, weaker admission,
-another model call, or platform expansion.
+another model call, or platform expansion. Run `007b1b58` then crossed
+provider admission, Patch admission, Review, Dry-run, exact approval, isolated
+Apply, and Build successfully, so a broad Harness failure is not the current
+product blocker. The missing successful raw-response persistence and stale
+nested pre-call model count remain bounded observability defects for later
+selection; they did not alter this run's Proposal, approved bytes, or build
+result.
 
 Run `054fe2df` is an immutable baseline-build failure caused by denied access to
 the user-level NuGet configuration; graph invocation and model-call count both

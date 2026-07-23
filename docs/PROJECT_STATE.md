@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 current_documentation_task: None
 selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
-phase_2b_execution_status: ready_for_separately_authorized_fresh_local_run_after_validation_ownership_repair
+phase_2b_execution_status: isolated_apply_and_build_verified_runtime_not_run
 most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
@@ -405,6 +405,49 @@ E2E-001 test remains blocked by its pre-existing missing Git base revision
 binding; its Proposal carried the complete validation list and reported no
 validation-contract finding. No model, provider, Apply, Build, or Runtime
 action occurred. A fresh local run requires separate authorization.
+
+Controlled fresh local run `007b1b58` then exercised the repaired Phase 2B
+path once with the unchanged canonical snapshot and exact local
+`qwen3:4b-instruct` digest. The run-local inspector, NuGet-isolated baseline
+build, baseline identity inspection, Evidence, Implementation Plan, one local
+Patch Generation call, Proposal Review, and no-write Dry-run all passed. The
+frozen request sent `num_ctx=32768` and `num_predict=4096`; admission recorded
+a conservative requirement of 25,406, and Ollama reported 6,008 prompt tokens,
+560 completion tokens, no fallback, no retry, and no external disclosure. The
+Proposal contained the complete five-entry validation list and Review returned
+`approve_dry_run` with no blocking finding.
+
+The no-write Dry-run exposed exactly one `Plugin.cs` replacement with diff hash
+`sha256:51b6f0ae23a9fb66cbfac129c7a3d053ee9d8e89a92469be16c78202e0c02fa0`.
+After the user supplied that exact hash, isolated Apply changed only
+`generated_mods/BetterHitFeedback/Plugin.cs`, from raw SHA256
+`b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`
+to `10ddf3032058853bb41053f27a0bf7d09d0049169058b704d3eb3a86273f8286`.
+The final local build exited 0 and produced `BetterHitFeedback.dll` SHA256
+`f1ba5005658c3f53f9dff430ba4de927b249fd5150ce279276ead2fd98bdd38b`,
+size 87,040 bytes. Final inspection preserved GUID
+`local.betterhitfeedback`, name `BetterHitFeedback`, and version `0.1.0`.
+A separate read-only inspection of the final method body confirmed the compiled
+sequence `Plugin.get_ConfigEnabled` at `IL_004F`,
+`TypeSpec.get_Value` at `IL_0054`, the disabled marker and `LogError` before
+the exit branch, and `Harmony.PatchAll` only on the enabled path at `IL_0104`;
+`target_code_executed=false`. The exact inspector JSON stdout SHA256 is
+`d6fff234fdda920a93c1e3358932698e8de55447ff056d6e0ed7252f668f1f18`
+and the final module MVID is `b087ffb1-33c8-4fa2-804d-751feb7b2dda`.
+The canonical `Plugin.cs` independently remained at its original raw SHA256.
+The run terminal manifest records
+`model_call_count=1`, `actual_write_performed=true`, terminal stage `build`,
+and no blockers.
+
+This is successful isolated request-to-build evidence, not runtime acceptance
+or Phase 2B completion. No game-directory copy, GTFO launch, or Runtime stage
+was executed. Runtime still must bind the final DLL and configuration state to
+current-run logs for both disabled and enabled modes before the selected
+product slice can complete. Two Harness observability limitations remain
+separate from the successful product path: successful raw model
+`message.content` is not preserved, and the terminal result embeds the
+pre-call `local_model_input_audit` whose nested `model_call_count` remains 0
+even though the terminal manifest and result correctly record 1.
 
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four
