@@ -760,6 +760,7 @@ def run_local_request(
     ollama_base_url: str = "http://127.0.0.1:11434",
     ollama_model: str | None = None,
     ollama_max_output_tokens: int = 4096,
+    ollama_context_window: int | None = None,
     ollama_model_identity_reader: OllamaModelIdentityReader | None = None,
     ollama_server_version_reader: OllamaServerVersionReader | None = None,
 ) -> dict[str, Any]:
@@ -807,6 +808,22 @@ def run_local_request(
             )
         if ollama_max_output_tokens <= 0:
             raise LocalEntryError("--ollama-max-output-tokens must be positive.")
+        if ollama_context_window is None:
+            raise LocalEntryError(
+                "run-request --local-ollama requires an explicit "
+                "--ollama-context-window."
+            )
+        if (
+            isinstance(ollama_context_window, bool)
+            or not isinstance(ollama_context_window, int)
+            or ollama_context_window <= 0
+        ):
+            raise LocalEntryError("--ollama-context-window must be a positive integer.")
+        if ollama_context_window <= ollama_max_output_tokens:
+            raise LocalEntryError(
+                "--ollama-context-window must exceed "
+                "--ollama-max-output-tokens."
+            )
         try:
             llm_base_url = validate_loopback_http_base_url(ollama_base_url)
         except ValueError as exc:
@@ -816,6 +833,10 @@ def run_local_request(
             local_model_identity,
             expected_base_url=llm_base_url,
             expected_model=ollama_model,
+        )
+        local_model_context_limit = _validate_ollama_context_window(
+            local_model_identity,
+            requested_context_window=ollama_context_window,
         )
         local_ollama_server_version = server_version_reader(llm_base_url)
         settings = replace(
@@ -830,7 +851,11 @@ def run_local_request(
             ),
         )
         try:
-            llm = LLMFactory.create(settings, base_url=llm_base_url)
+            llm = LLMFactory.create(
+                settings,
+                base_url=llm_base_url,
+                context_window=ollama_context_window,
+            )
         except Exception as exc:
             raise LocalEntryError(
                 f"Local Ollama initialization failed: {type(exc).__name__}."
@@ -843,6 +868,7 @@ def run_local_request(
             provider_adapter=f"{type(llm).__module__}.{type(llm).__qualname__}",
         )
     else:
+        local_model_context_limit = None
         api_key = os.environ.get(api_key_env)
         if not api_key:
             raise LocalEntryError(
@@ -877,6 +903,33 @@ def run_local_request(
         )
         model_admission = _external_model_admission_record(source_disclosure)
 
+    ollama_patch_generation_profile = (
+        {
+            "stream": False,
+            "think": False,
+            "tools_sent": False,
+            "native_json_schema_required": True,
+            "output_budget": ollama_max_output_tokens,
+            "context_window": ollama_context_window,
+            "model_context_limit": local_model_context_limit,
+            "pre_call_context_admission": (
+                "provider_body_utf8_proxy_plus_output_budget_v1"
+            ),
+            "exact_prompt_tokens_available_pre_call": False,
+            "timeout_seconds": getattr(llm, "timeout", None),
+            "trust_environment": False,
+            "follow_redirects": False,
+            "automatic_provider_fallback": False,
+            "automatic_retry": False,
+            "model_switching": False,
+            "diagnostic_content_max_utf8_bytes": (
+                LOCAL_DIAGNOSTIC_CONTENT_MAX_BYTES
+            ),
+        }
+        if local_ollama
+        else None
+    )
+
     source = Path(target_project).resolve()
     if not source.is_dir() or not any(source.glob("*.csproj")):
         raise LocalEntryError("Target project must be an existing directory with a .csproj file.")
@@ -910,6 +963,7 @@ def run_local_request(
         "model_admission": model_admission,
         "local_model_identity": local_model_identity,
         "ollama_server_version": local_ollama_server_version,
+        "ollama_patch_generation_profile": ollama_patch_generation_profile,
         "source_disclosure": source_disclosure,
         "compiled_artifact_inspection_profile": (
             compiled_artifact_inspection_profile.to_dict()
@@ -1231,6 +1285,10 @@ def run_local_request(
                 expected=local_model_identity,
                 observed=current_identity,
             )
+            _validate_ollama_context_window(
+                current_identity,
+                requested_context_window=ollama_context_window,
+            )
         else:
             _verify_source_disclosure(
                 source_disclosure,
@@ -1291,6 +1349,8 @@ def run_local_request(
                 "model_call_count": 0,
                 "remaining_call_budget": 1,
                 "output_budget": ollama_max_output_tokens,
+                "context_window": ollama_context_window,
+                "model_context_limit": local_model_context_limit,
                 "ollama_server_version": local_ollama_server_version,
                 "model_identity": dict(local_model_identity),
                 "source_revision_binding": dict(source_revision_binding or {}),
@@ -1351,6 +1411,10 @@ def run_local_request(
             _assert_ollama_model_identity_stable(
                 expected=local_model_identity,
                 observed=observed_identity,
+            )
+            _validate_ollama_context_window(
+                observed_identity,
+                requested_context_window=ollama_context_window,
             )
 
         required_validation_by_binding = {
@@ -1491,26 +1555,7 @@ def run_local_request(
         "model_admission": model_admission,
         "local_model_identity": local_model_identity,
         "ollama_server_version": local_ollama_server_version,
-        "ollama_patch_generation_profile": (
-            {
-                "stream": False,
-                "think": False,
-                "tools_sent": False,
-                "native_json_schema_required": True,
-                "output_budget": ollama_max_output_tokens,
-                "timeout_seconds": getattr(llm, "timeout", None),
-                "trust_environment": False,
-                "follow_redirects": False,
-                "automatic_provider_fallback": False,
-                "automatic_retry": False,
-                "model_switching": False,
-                "diagnostic_content_max_utf8_bytes": (
-                    LOCAL_DIAGNOSTIC_CONTENT_MAX_BYTES
-                ),
-            }
-            if local_ollama
-            else None
-        ),
+        "ollama_patch_generation_profile": ollama_patch_generation_profile,
         "base_url": _sanitized_endpoint_url(llm_base_url),
         "base_url_env": None if local_ollama else base_url_env,
         "base_url_env_present": (
@@ -2151,6 +2196,33 @@ def _validate_ollama_model_identity(
         isinstance(item, str) for item in capabilities
     ):
         raise LocalEntryError("OLLAMA_MODEL_CAPABILITIES_INVALID")
+
+
+def _validate_ollama_context_window(
+    identity: Mapping[str, Any],
+    *,
+    requested_context_window: int | None,
+) -> int:
+    if (
+        requested_context_window is None
+        or isinstance(requested_context_window, bool)
+        or not isinstance(requested_context_window, int)
+        or requested_context_window <= 0
+    ):
+        raise LocalEntryError("OLLAMA_CONTEXT_WINDOW_INVALID")
+    details = identity.get("details")
+    context_limit = (
+        details.get("context_length") if isinstance(details, Mapping) else None
+    )
+    if (
+        isinstance(context_limit, bool)
+        or not isinstance(context_limit, int)
+        or context_limit <= 0
+    ):
+        raise LocalEntryError("OLLAMA_MODEL_CONTEXT_LENGTH_INVALID")
+    if requested_context_window > context_limit:
+        raise LocalEntryError("OLLAMA_CONTEXT_WINDOW_EXCEEDS_MODEL_LIMIT")
+    return context_limit
 
 
 def _assert_ollama_model_identity_stable(

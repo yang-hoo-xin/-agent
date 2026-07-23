@@ -167,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--ollama-max-output-tokens", type=int, default=4096
     )
+    run_parser.add_argument("--ollama-context-window", type=int)
     run_parser.add_argument(
         "--allow-source-disclosure",
         action="store_true",
@@ -352,6 +353,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ollama_base_url=args.ollama_base_url,
                 ollama_model=args.ollama_model,
                 ollama_max_output_tokens=args.ollama_max_output_tokens,
+                ollama_context_window=args.ollama_context_window,
             )
         except LocalEntryError as exc:
             print(json.dumps({"status": "BLOCKED", "reason": str(exc)}, ensure_ascii=False, indent=2))

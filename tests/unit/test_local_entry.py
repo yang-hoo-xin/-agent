@@ -38,6 +38,7 @@ from src.mod_agent.local_entry import (
     _verify_bepin_plugin_identity,
     _verify_exact_snapshot_change,
     _verify_final_compiled_artifact_if_built,
+    _validate_ollama_context_window,
     _verify_source_disclosure,
     run_local_request,
 )
@@ -202,6 +203,7 @@ def _ollama_identity(*, digest: str = _OLLAMA_DIGEST) -> dict[str, object]:
         "modified_at": "2026-07-16T14:06:42.9800065+08:00",
         "size": 2497293803,
         "details": {
+            "context_length": 262144,
             "parameter_size": "4.0B",
             "quantization_level": "Q4_K_M",
         },
@@ -711,6 +713,7 @@ def test_pre_graph_verifier_failure_persists_terminal_lineage(
             ),
             local_ollama=True,
             ollama_model="qwen3:4b-instruct",
+            ollama_context_window=32768,
             ollama_model_identity_reader=lambda *_: _ollama_identity(),
             ollama_server_version_reader=lambda *_: "0.32.1",
         )
@@ -724,6 +727,18 @@ def test_pre_graph_verifier_failure_persists_terminal_lineage(
     assert manifest["request_id"] == failure["request_id"]
     assert manifest["status"] == "failed"
     assert manifest["terminal_failure_stage"] == "baseline_artifact_verification"
+    assert manifest["ollama_patch_generation_profile"][
+        "context_window"
+    ] == 32768
+    assert manifest["ollama_patch_generation_profile"][
+        "model_context_limit"
+    ] == 262144
+    assert manifest["ollama_patch_generation_profile"][
+        "pre_call_context_admission"
+    ] == "provider_body_utf8_proxy_plus_output_budget_v1"
+    assert manifest["ollama_patch_generation_profile"][
+        "exact_prompt_tokens_available_pre_call"
+    ] is False
     assert manifest["terminal_record"] == {
         "path": str(failure_path),
         "sha256": hashlib.sha256(failure_bytes).hexdigest(),
@@ -777,6 +792,7 @@ def test_pre_graph_restore_failure_records_exact_stage_and_stops(
             diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
             local_ollama=True,
             ollama_model="qwen3:4b-instruct",
+            ollama_context_window=32768,
             ollama_model_identity_reader=lambda *_: _ollama_identity(),
             ollama_server_version_reader=lambda *_: "0.32.1",
         )
@@ -839,6 +855,7 @@ def test_pre_graph_cleanup_failure_is_terminally_bound(
             diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
             local_ollama=True,
             ollama_model="qwen3:4b-instruct",
+            ollama_context_window=32768,
             ollama_model_identity_reader=lambda *_: _ollama_identity(),
             ollama_server_version_reader=lambda *_: "0.32.1",
         )
@@ -923,6 +940,7 @@ def test_local_run_selects_ollama_without_api_key_or_external_disclosure(
             ollama_base_url="http://127.0.0.1:11434",
             ollama_model="qwen3:4b-instruct",
             ollama_max_output_tokens=3072,
+            ollama_context_window=32768,
             ollama_model_identity_reader=lambda *_: _ollama_identity(),
             ollama_server_version_reader=lambda *_: "0.32.1",
         )
@@ -932,7 +950,10 @@ def test_local_run_selects_ollama_without_api_key_or_external_disclosure(
     assert settings.llm.model == "qwen3:4b-instruct"
     assert settings.llm.max_tokens == 3072
     assert isinstance(captured["llm"], OllamaLLM)
-    assert captured["kwargs"] == {"base_url": "http://127.0.0.1:11434"}
+    assert captured["kwargs"] == {
+        "base_url": "http://127.0.0.1:11434",
+        "context_window": 32768,
+    }
     assert not (tmp_path / "runs").exists()
 
 
@@ -972,6 +993,54 @@ def test_local_run_requires_exact_model_without_inference(tmp_path: Path) -> Non
         )
 
 
+def test_local_run_requires_explicit_context_window_before_catalog_read(
+    tmp_path: Path,
+) -> None:
+    catalog_read = False
+
+    def read_identity(*_):
+        nonlocal catalog_read
+        catalog_read = True
+        return _ollama_identity()
+
+    with pytest.raises(LocalEntryError, match="--ollama-context-window"):
+        run_local_request(
+            description="change a local source file",
+            target_project=tmp_path / "missing-target",
+            workspace_base=tmp_path / "runs",
+            settings_path=Path("config/settings.yaml"),
+            confirm_isolated_write=True,
+            allow_build=True,
+            allow_source_disclosure=False,
+            diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
+            local_ollama=True,
+            ollama_model="qwen3:4b-instruct",
+            ollama_model_identity_reader=read_identity,
+        )
+
+    assert catalog_read is False
+
+
+def test_local_run_rejects_context_window_not_above_output_budget(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(LocalEntryError, match="must exceed"):
+        run_local_request(
+            description="change a local source file",
+            target_project=tmp_path / "missing-target",
+            workspace_base=tmp_path / "runs",
+            settings_path=Path("config/settings.yaml"),
+            confirm_isolated_write=True,
+            allow_build=True,
+            allow_source_disclosure=False,
+            diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
+            local_ollama=True,
+            ollama_model="qwen3:4b-instruct",
+            ollama_max_output_tokens=4096,
+            ollama_context_window=4096,
+        )
+
+
 def test_local_run_rejects_non_literal_loopback_before_catalog_read(
     tmp_path: Path,
 ) -> None:
@@ -998,6 +1067,7 @@ def test_local_run_rejects_non_literal_loopback_before_catalog_read(
             local_ollama=True,
             ollama_base_url="http://192.168.1.9:11434",
             ollama_model="qwen3:4b-instruct",
+            ollama_context_window=32768,
             ollama_model_identity_reader=read_identity,
         )
 
@@ -1028,6 +1098,7 @@ def test_local_provider_initialization_failure_has_no_fallback(
             diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
             local_ollama=True,
             ollama_model="qwen3:4b-instruct",
+            ollama_context_window=32768,
             ollama_model_identity_reader=lambda *_: _ollama_identity(),
             ollama_server_version_reader=lambda *_: "0.32.1",
         )
@@ -1205,6 +1276,7 @@ def test_ollama_catalog_binds_one_exact_model_identity() -> None:
                     "modified_at": "2026-07-16T14:06:42.9800065+08:00",
                     "size": 2497293803,
                     "details": {
+                        "context_length": 262144,
                         "parameter_size": "4.0B",
                         "quantization_level": "Q4_K_M",
                     },
@@ -1217,6 +1289,44 @@ def test_ollama_catalog_binds_one_exact_model_identity() -> None:
     )
 
     assert identity == _ollama_identity()
+
+
+def test_ollama_context_window_binds_declared_model_limit() -> None:
+    assert (
+        _validate_ollama_context_window(
+            _ollama_identity(),
+            requested_context_window=32768,
+        )
+        == 262144
+    )
+
+
+def test_ollama_context_window_rejects_value_above_declared_model_limit() -> None:
+    with pytest.raises(
+        LocalEntryError,
+        match="OLLAMA_CONTEXT_WINDOW_EXCEEDS_MODEL_LIMIT",
+    ):
+        _validate_ollama_context_window(
+            _ollama_identity(),
+            requested_context_window=262145,
+        )
+
+
+def test_ollama_context_window_requires_declared_model_limit() -> None:
+    identity = _ollama_identity()
+    identity["details"] = {
+        "parameter_size": "4.0B",
+        "quantization_level": "Q4_K_M",
+    }
+
+    with pytest.raises(
+        LocalEntryError,
+        match="OLLAMA_MODEL_CONTEXT_LENGTH_INVALID",
+    ):
+        _validate_ollama_context_window(
+            identity,
+            requested_context_window=32768,
+        )
 
 
 @pytest.mark.parametrize(

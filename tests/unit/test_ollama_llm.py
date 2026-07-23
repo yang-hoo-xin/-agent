@@ -178,6 +178,19 @@ class TestOllamaInit:
         settings = MockSettings()
         llm = OllamaLLM(settings, timeout=300.0)
         assert llm.timeout == 300.0
+
+    def test_init_explicit_context_window(self):
+        settings = MockSettings()
+        llm = OllamaLLM(settings, context_window=32768)
+
+        assert llm.context_window == 32768
+
+    @pytest.mark.parametrize("value", (0, -1, True, 1.5, "32768"))
+    def test_init_rejects_invalid_context_window(self, value):
+        settings = MockSettings()
+
+        with pytest.raises(ValueError, match="positive integer"):
+            OllamaLLM(settings, context_window=value)
     
     def test_init_default_timeout(self):
         """Should use default timeout when none specified."""
@@ -371,6 +384,70 @@ class TestOllamaChat:
         assert recorded["timeout_seconds"] == 120.0
         assert recorded["trust_environment"] is False
         assert recorded["follow_redirects"] is False
+
+    def test_structured_patch_request_sends_and_audits_explicit_num_ctx(self):
+        settings = MockSettings()
+        llm = OllamaLLM(settings, context_window=32768)
+        response = make_ollama_response(content='{"changes":[]}')
+        recorded = {}
+
+        with patch("httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = response
+            llm.chat(
+                [Message(role="user", content="return a patch")],
+                temperature=0.0,
+                max_tokens=4096,
+                response_format={"type": "object"},
+                provider_request_recorder=recorded.update,
+            )
+
+        sent_bytes = (
+            mock_client.return_value.__enter__.return_value.post.call_args.kwargs[
+                "content"
+            ]
+        )
+        payload = json.loads(sent_bytes.decode("utf-8"))
+        assert payload["options"] == {
+            "temperature": 0.0,
+            "num_predict": 4096,
+            "num_ctx": 32768,
+        }
+        assert recorded["context_admission"] == {
+            "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
+            "exact_prompt_tokens_available_pre_call": False,
+            "provider_body_utf8_bytes": len(sent_bytes),
+            "configured_num_ctx": 32768,
+            "num_predict": 4096,
+            "conservative_required_context": len(sent_bytes) + 4096,
+            "admitted": True,
+        }
+
+    def test_structured_patch_context_budget_blocks_before_http(self):
+        settings = MockSettings()
+        llm = OllamaLLM(settings, context_window=128)
+        recorded = []
+
+        with patch("httpx.Client") as mock_client:
+            with pytest.raises(OllamaLLMError) as exc_info:
+                llm.chat(
+                    [Message(role="user", content="x" * 256)],
+                    max_tokens=64,
+                    response_format={"type": "object"},
+                    provider_request_recorder=recorded.append,
+                )
+
+        assert exc_info.value.diagnostics["failure_boundary"] == (
+            "provider_request_gate"
+        )
+        assert exc_info.value.diagnostics["failure_classification"] == (
+            "provider_request_context_budget_exceeded"
+        )
+        admission = exc_info.value.diagnostics["context_admission"]
+        assert admission["configured_num_ctx"] == 128
+        assert admission["num_predict"] == 64
+        assert admission["admitted"] is False
+        assert recorded == []
+        mock_client.assert_not_called()
 
     def test_structured_patch_request_persistence_failure_prevents_http_call(
         self,

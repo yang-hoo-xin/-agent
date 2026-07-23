@@ -44,6 +44,7 @@ class OllamaLLM(BaseLLM):
         model: The model identifier to use (e.g., 'llama3', 'mistral').
         default_temperature: Default temperature for generation.
         default_max_tokens: Default max tokens for generation (num_predict in Ollama).
+        context_window: Explicit Ollama num_ctx request value when configured.
         timeout: Request timeout in seconds.
     
     Example:
@@ -61,6 +62,7 @@ class OllamaLLM(BaseLLM):
         settings: Any,
         base_url: Optional[str] = None,
         timeout: Optional[float] = None,
+        context_window: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the Ollama LLM provider.
@@ -69,6 +71,7 @@ class OllamaLLM(BaseLLM):
             settings: Application settings containing LLM configuration.
             base_url: Optional base URL override (falls back to env var OLLAMA_BASE_URL).
             timeout: Optional timeout override for requests.
+            context_window: Optional explicit Ollama num_ctx request value.
             **kwargs: Additional configuration overrides.
         
         Raises:
@@ -77,6 +80,16 @@ class OllamaLLM(BaseLLM):
         self.model = settings.llm.model
         self.default_temperature = settings.llm.temperature
         self.default_max_tokens = settings.llm.max_tokens
+        if (
+            context_window is not None
+            and (
+                isinstance(context_window, bool)
+                or not isinstance(context_window, int)
+                or context_window <= 0
+            )
+        ):
+            raise ValueError("Ollama context_window must be a positive integer.")
+        self.context_window = context_window
         
         # Base URL: explicit > env var > default
         self.base_url = (
@@ -135,6 +148,7 @@ class OllamaLLM(BaseLLM):
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                context_window=self.context_window,
                 response_format=(
                     dict(response_format) if response_format is not None else None
                 ),
@@ -180,6 +194,7 @@ class OllamaLLM(BaseLLM):
         model: str,
         temperature: float,
         max_tokens: int,
+        context_window: int | None = None,
         response_format: Dict[str, Any] | None = None,
         provider_request_recorder: Callable[[dict[str, Any]], None] | None = None,
     ) -> Dict[str, Any]:
@@ -192,6 +207,7 @@ class OllamaLLM(BaseLLM):
             model: Model identifier.
             temperature: Generation temperature.
             max_tokens: Maximum tokens to generate (num_predict in Ollama).
+            context_window: Explicit Ollama num_ctx request value when configured.
         
         Returns:
             Raw API response as dictionary.
@@ -208,14 +224,17 @@ class OllamaLLM(BaseLLM):
         
         # Ollama uses 'num_predict' instead of 'max_tokens'
         # and 'options' object for model parameters
+        options = {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        }
+        if context_window is not None:
+            options["num_ctx"] = context_window
         payload = {
             "model": model,
             "messages": messages,
             "stream": False,  # Disable streaming for synchronous response
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-            },
+            "options": options,
         }
         frozen_request_bytes: bytes | None = None
         if response_format is not None:
@@ -236,6 +255,50 @@ class OllamaLLM(BaseLLM):
                         "failure_classification": "durable_provider_request_missing",
                     },
                 )
+            context_admission: dict[str, Any] | None = None
+            if context_window is not None:
+                if (
+                    isinstance(max_tokens, bool)
+                    or not isinstance(max_tokens, int)
+                    or max_tokens <= 0
+                ):
+                    raise OllamaLLMError(
+                        "[Ollama] Structured request output budget must be a "
+                        "positive integer.",
+                        diagnostics={
+                            "failure_boundary": "provider_request_gate",
+                            "failure_classification": (
+                                "provider_request_output_budget_invalid"
+                            ),
+                        },
+                    )
+                provider_body_utf8_bytes = len(frozen_request_bytes)
+                conservative_required_context = (
+                    provider_body_utf8_bytes + max_tokens
+                )
+                context_admission = {
+                    "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
+                    "exact_prompt_tokens_available_pre_call": False,
+                    "provider_body_utf8_bytes": provider_body_utf8_bytes,
+                    "configured_num_ctx": context_window,
+                    "num_predict": max_tokens,
+                    "conservative_required_context": (
+                        conservative_required_context
+                    ),
+                    "admitted": conservative_required_context <= context_window,
+                }
+                if context_admission["admitted"] is not True:
+                    raise OllamaLLMError(
+                        "[Ollama] Structured request exceeds the configured "
+                        "pre-call context budget.",
+                        diagnostics={
+                            "failure_boundary": "provider_request_gate",
+                            "failure_classification": (
+                                "provider_request_context_budget_exceeded"
+                            ),
+                            "context_admission": context_admission,
+                        },
+                    )
             provider_request_recorder(
                 {
                     "method": "POST",
@@ -247,6 +310,7 @@ class OllamaLLM(BaseLLM):
                     "timeout_seconds": self.timeout,
                     "trust_environment": False,
                     "follow_redirects": False,
+                    "context_admission": context_admission,
                 }
             )
         

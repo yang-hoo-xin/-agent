@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 current_documentation_task: None
 selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
-phase_2b_execution_status: blocked_on_bound_ollama_context_admission_after_34000b2b
+phase_2b_execution_status: ready_for_separately_authorized_fresh_local_run_after_context_admission_repair
 most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
@@ -340,6 +340,31 @@ Canonical and isolated `Plugin.cs` remain unchanged. No retry, fallback,
 Proposal, Dry-run, Apply, final build, or runtime action occurred. Further
 Phase 2B execution first requires a bounded, explicitly reviewed Ollama context
 admission repair and then a separately authorized fresh run.
+
+The bounded Ollama context-admission repair is now implemented and directly
+tested without a model or network call. Local `run-request` requires an
+explicit `--ollama-context-window`, sends that exact value as `num_ctx`, rejects
+a value that does not exceed `--ollama-max-output-tokens`, and rejects a value
+above the exact current model identity's `details.context_length`. The frozen
+structured request records `num_ctx`, the model limit, request-body size, output
+budget, and a pre-call conservative admission result. The admitted `/api/chat`
+path exposes `prompt_eval_count` only after a successful call, so the pre-call
+policy uses frozen provider-body UTF-8 bytes plus the output budget as a
+deliberately conservative proxy and records
+`exact_prompt_tokens_available_pre_call=false`; it does not claim tokenizer
+equivalence. The direct Ollama, local-entry, and CLI suites pass
+121 tests; the affected Patch Generation, workflow, and Artifact contract set
+passes 202 tests. Run `34000b2b` remains immutable, and no replacement run or
+model call was created. A fresh run still requires separate authorization with
+an explicit context-window value.
+
+Harness reliability remains an active diagnostic consideration for Phase 2B.
+Recent records must continue to classify failures separately as workspace/build
+integration defects, provider-request defects, model-output defects, or correct
+deterministic gate rejections. Repeated verified failures across more than one
+stage after their bounded repairs may justify a focused simplification decision;
+one failure does not authorize a general Harness rewrite, weaker gates, a new
+Agent layer, or automatic retry.
 
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four

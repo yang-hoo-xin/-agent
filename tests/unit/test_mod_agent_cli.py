@@ -1267,6 +1267,8 @@ def test_cli_run_request_passes_local_ollama_boundary_unchanged(
             "qwen3:4b-instruct",
             "--ollama-max-output-tokens",
             "3072",
+            "--ollama-context-window",
+            "32768",
             "--confirm-isolated-write",
             "--allow-build",
         ]
@@ -1278,6 +1280,7 @@ def test_cli_run_request_passes_local_ollama_boundary_unchanged(
     assert captured["ollama_base_url"] == "http://127.0.0.1:11434"
     assert captured["ollama_model"] == "qwen3:4b-instruct"
     assert captured["ollama_max_output_tokens"] == 3072
+    assert captured["ollama_context_window"] == 32768
     assert captured["allow_source_disclosure"] is False
     assert callable(captured["diff_approval_reader"])
 
