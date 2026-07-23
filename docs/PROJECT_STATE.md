@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 current_documentation_task: None
 selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
-phase_2b_execution_status: awaiting_explicit_short_path_replacement_run_authorization_after_3360a57e
+phase_2b_execution_status: blocked_on_bound_ollama_context_admission_after_34000b2b
 most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
@@ -319,6 +319,27 @@ Its immutable `run_failure.json` is bound by SHA256
 The observed failure can be avoided without a platform-code change by selecting
 a shorter run workspace root, but that requires a new run id and therefore a
 new explicit authorization; no automatic replacement run was created.
+
+Authorized short-path replacement run `34000b2b` removed that filesystem
+boundary and persisted current Request Planning, Planning Brief, Feature Spec,
+EvidencePack, and Implementation Plan artifacts. Its EvidencePack is sufficient
+and binds both `ConfigEnabled.Value` and `EnableDiagnosticLogging.Value` through
+the exact source declaration, baseline consumer member, TypeRef/AssemblyRef,
+unique `core/BepInEx.Core.dll`, and closed `System.Boolean` result. The
+Implementation Plan is non-blocking and carries both verified facts under
+`edit_binding_001`. The sole local Ollama call then failed at
+`provider_response_admission` with HTTP 400: the exact request contained 6,018
+prompt tokens while the active session exposed `n_ctx=4096`. `/api/tags`
+reported model `context_length=262144`, but the persisted provider body options
+contain only `num_predict=4096` and `temperature=0.0`; no `num_ctx` was sent.
+The run is immutable with `model_call_count=1`,
+`patch_payload_parser_entered=false`, `actual_write_performed=false`, and
+terminal SHA256
+`20d42107b75fc923e37c54f93378e5da79a979ce6eab2d8389d34b26df613212`.
+Canonical and isolated `Plugin.cs` remain unchanged. No retry, fallback,
+Proposal, Dry-run, Apply, final build, or runtime action occurred. Further
+Phase 2B execution first requires a bounded, explicitly reviewed Ollama context
+admission repair and then a separately authorized fresh run.
 
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four
