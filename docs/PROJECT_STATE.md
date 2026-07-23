@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 current_documentation_task: None
 selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
-phase_2b_execution_status: ready_for_separately_authorized_fresh_local_run_after_context_admission_repair
+phase_2b_execution_status: blocked_on_bcc045f6_upstream_validation_omitted
 most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
@@ -358,6 +358,27 @@ passes 202 tests. Run `34000b2b` remains immutable, and no replacement run or
 model call was created. A fresh run still requires separate authorization with
 an explicit context-window value.
 
+Authorized fresh local run `bcc045f6` then verified the context-admission
+repair on the real Phase 2B request. It re-bound the unchanged canonical
+snapshot and exact `qwen3:4b-instruct` digest, passed the run-local inspector,
+baseline restore/build, compiled identity inspection, Evidence, and
+Implementation Plan. Its frozen provider body sent `num_ctx=32768` and
+`num_predict=4096`; the conservative pre-call requirement was 25,440 and was
+admitted. Ollama completed normally with `done_reason=stop`, 6,034 prompt
+tokens, 559 completion tokens, and no provider fallback or retry. The returned
+strict JSON entered Patch payload parsing, but deterministic Patch admission
+rejected it as `upstream_validation_omitted` because its
+`expected_validation` omitted the authoritative
+`compile or static validation` entry. The prompt and Implementation Plan both
+contained that exact entry. No Proposal, Review, Dry-run, Apply, final build,
+or runtime action occurred; `model_call_count=1` and
+`actual_write_performed=false`. Canonical, isolated business, and baseline
+`Plugin.cs` remain at raw SHA256
+`b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`.
+The run is immutable and terminally bound by `run_failure.json` SHA256
+`adaaa53783906dd1aa5bfb3aa999ae3ca9df15f54d2679940c14980e31365b2d`.
+The one-call authorization is exhausted.
+
 Harness reliability remains an active diagnostic consideration for Phase 2B.
 Recent records must continue to classify failures separately as workspace/build
 integration defects, provider-request defects, model-output defects, or correct
@@ -365,6 +386,16 @@ deterministic gate rejections. Repeated verified failures across more than one
 stage after their bounded repairs may justify a focused simplification decision;
 one failure does not authorize a general Harness rewrite, weaker gates, a new
 Agent layer, or automatic retry.
+
+Run `bcc045f6` adds one concrete Harness question: Patch Generation currently
+requires the model to repeat every authoritative upstream validation string
+even though deterministic stages already own those requirements. That
+representation may create avoidable model-output friction, but it is not yet
+safe to remove or silently union the list: run `608f67d9` established that
+model-declared validation can otherwise shrink while claimed behavior is
+absent. The next action is a bounded product decision about preserving that
+regression detection while reducing redundant model authority. No repair,
+retry, or weaker admission rule is authorized by this record.
 
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four
