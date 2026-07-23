@@ -49,6 +49,75 @@ def _registry() -> dict[str, object]:
     }
 
 
+def _verified_boolean_access(
+    *,
+    receiver_name: str = "ConfigEnabled",
+    receiver_type: str = "ConfigEntry<bool>",
+    member_name: str = "Value",
+) -> dict[str, object]:
+    compiled_receiver_type = "Shared.SettingBox`1<System.Boolean>"
+    return {
+        "edit_binding_id": "edit_binding_001",
+        "source_receiver": {
+            "evidence_id": "ev_load",
+            "source_path": "generated_mods/Example/Plugin.cs",
+            "source_hash": "source_hash_001",
+            "declaring_type": "Example.Plugin",
+            "member_name": receiver_name,
+            "member_kind": "property",
+            "declaration_span": {"start_line": 5, "end_line": 5},
+            "declared_type": receiver_type,
+            "receiver_closed_type": compiled_receiver_type,
+        },
+        "consumer": {
+            "declaring_type": "Example.Plugin",
+            "receiver_member": receiver_name,
+            "member_kind": "property",
+            "is_static": True,
+            "receiver_closed_type": compiled_receiver_type,
+        },
+        "type_reference": {
+            "symbol": "Shared.SettingBox`1",
+        },
+        "member_access": {
+            "declaring_type": "Shared.SettingBox`1",
+            "member_name": member_name,
+            "member_kind": "property",
+            "access_kind": "instance_property_get",
+            "closed_result_type": "System.Boolean",
+        },
+    }
+
+
+def _verified_binding_context(
+    *,
+    receiver_name: str,
+    receiver_type: str,
+    facts: list[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "binding_id": "edit_binding_001",
+        "evidence_id": "ev_load",
+        "source_hash": "source_hash_001",
+        "canonical_target_path": "generated_mods/Example/Plugin.cs",
+        "declaring_type_full_name": "Example.Plugin",
+        "method_name": "Load",
+        "return_type": "void",
+        "declared_member_types": {receiver_name: receiver_type},
+        "declared_members": {
+            receiver_name: {
+                "member_name": receiver_name,
+                "member_kind": "property",
+                "declared_type": receiver_type,
+                "declaring_type": "Example.Plugin",
+                "declaration_span": {"start_line": 5, "end_line": 5},
+                "is_static": True,
+            }
+        },
+        "verified_member_accesses": facts,
+    }
+
+
 def test_generator_accepts_strict_binding_only_exact_replacement() -> None:
     payload = {
         "changes": [
@@ -374,14 +443,15 @@ def test_generator_does_not_reject_supported_or_member_access_boolean_operands(
     }
     registry = {
         "edit_bindings": [
-            {
-                "binding_id": "edit_binding_001",
-                "evidence_id": "ev_load",
-                "canonical_target_path": "generated_mods/Example/Plugin.cs",
-                "method_name": "Load",
-                "return_type": "void",
-                "declared_member_types": {member_name: declared_type},
-            }
+            _verified_binding_context(
+                receiver_name=member_name,
+                receiver_type=declared_type,
+                facts=(
+                    [_verified_boolean_access()]
+                    if "." in condition
+                    else []
+                ),
+            )
         ]
     }
 
@@ -393,6 +463,229 @@ def test_generator_does_not_reject_supported_or_member_access_boolean_operands(
     )
 
     assert condition in generated.changes[0]["patch"]["after_text"]
+
+
+def test_generator_rejects_unverified_member_access_boolean_operand() -> None:
+    payload = {
+        "changes": [
+            {
+                "edit_binding_id": "edit_binding_001",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "Bind();",
+                    "after_text": "Bind();\nif (!SettingsHandle.IsReady) { return; }",
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+    registry = {
+        "edit_bindings": [
+            {
+                "binding_id": "edit_binding_001",
+                "canonical_target_path": "generated_mods/Example/Plugin.cs",
+                "method_name": "Load",
+                "return_type": "void",
+                "declared_member_types": {
+                    "SettingsHandle": "SettingBox<bool>",
+                },
+                "verified_member_accesses": [],
+            }
+        ]
+    }
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(_FakeLLM(json.dumps(payload))).generate(
+            user_request="disable startup",
+            evidence_items=[{"excerpt": "public void Load() { Bind(); }"}],
+            binding_registry=registry,
+            constraints=[],
+        )
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "csharp_unverified_boolean_member_operand"
+    )
+
+
+def test_generator_rejects_member_fact_with_wrong_source_hash() -> None:
+    payload = {
+        "changes": [
+            {
+                "edit_binding_id": "edit_binding_001",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "Bind();",
+                    "after_text": (
+                        "Bind();\nif (!SettingsHandle.IsReady) { return; }"
+                    ),
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+    fact = _verified_boolean_access(
+        receiver_name="SettingsHandle",
+        receiver_type="SettingBox<bool>",
+        member_name="IsReady",
+    )
+    fact["source_receiver"]["source_hash"] = "different_source_hash"
+    registry = {
+        "edit_bindings": [
+            _verified_binding_context(
+                receiver_name="SettingsHandle",
+                receiver_type="SettingBox<bool>",
+                facts=[fact],
+            )
+        ]
+    }
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(_FakeLLM(json.dumps(payload))).generate(
+            user_request="disable startup",
+            evidence_items=[{"excerpt": "public void Load() { Bind(); }"}],
+            binding_registry=registry,
+            constraints=[],
+        )
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "csharp_unverified_boolean_member_operand"
+    )
+
+
+def test_generator_rejects_shadowing_of_bound_receiver() -> None:
+    payload = {
+        "changes": [
+            {
+                "edit_binding_id": "edit_binding_001",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "Bind();",
+                    "after_text": (
+                        "Bind();\n"
+                        "var SettingsHandle = Other();\n"
+                        "if (!SettingsHandle.IsReady) { return; }"
+                    ),
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+    registry = {
+        "edit_bindings": [
+            _verified_binding_context(
+                receiver_name="SettingsHandle",
+                receiver_type="SettingBox<bool>",
+                facts=[
+                    _verified_boolean_access(
+                        receiver_name="SettingsHandle",
+                        receiver_type="SettingBox<bool>",
+                        member_name="IsReady",
+                    )
+                ],
+            )
+        ]
+    }
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(_FakeLLM(json.dumps(payload))).generate(
+            user_request="disable startup",
+            evidence_items=[{"excerpt": "public void Load() { Bind(); }"}],
+            binding_registry=registry,
+            constraints=[],
+        )
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "csharp_bound_member_shadowed"
+    )
+
+
+def test_generator_ignores_shadowing_text_inside_csharp_comment() -> None:
+    payload = {
+        "changes": [
+            {
+                "edit_binding_id": "edit_binding_001",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "Bind();",
+                    "after_text": (
+                        "Bind();\n"
+                        "// var SettingsHandle = Other();\n"
+                        "if (!SettingsHandle.IsReady) { return; }"
+                    ),
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+    registry = {
+        "edit_bindings": [
+            _verified_binding_context(
+                receiver_name="SettingsHandle",
+                receiver_type="SettingBox<bool>",
+                facts=[
+                    _verified_boolean_access(
+                        receiver_name="SettingsHandle",
+                        receiver_type="SettingBox<bool>",
+                        member_name="IsReady",
+                    )
+                ],
+            )
+        ]
+    }
+
+    generated = LLMExactPatchGenerator(_FakeLLM(json.dumps(payload))).generate(
+        user_request="disable startup",
+        evidence_items=[{"excerpt": "public void Load() { Bind(); }"}],
+        binding_registry=registry,
+        constraints=[],
+    )
+
+    assert "if (!SettingsHandle.IsReady)" in (
+        generated.changes[0]["patch"]["after_text"]
+    )
+
+
+def test_generator_carries_verified_member_access_in_binding_context() -> None:
+    payload = {
+        "changes": [
+            {
+                "edit_binding_id": "edit_binding_001",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "Bind();",
+                    "after_text": "Bind();\nif (!SettingsHandle.IsReady) { return; }",
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+    fact = _verified_boolean_access(
+        receiver_name="SettingsHandle",
+        receiver_type="SettingBox<bool>",
+        member_name="IsReady",
+    )
+    registry = {
+        "edit_bindings": [
+            _verified_binding_context(
+                receiver_name="SettingsHandle",
+                receiver_type="SettingBox<bool>",
+                facts=[fact],
+            )
+        ]
+    }
+    llm = _RecordingLLM(json.dumps(payload))
+
+    LLMExactPatchGenerator(llm).generate(
+        user_request="disable startup",
+        evidence_items=[{"excerpt": "public void Load() { Bind(); }"}],
+        binding_registry=registry,
+        constraints=[],
+    )
+
+    prompt_payload = json.loads(llm.messages[1].content)
+    assert prompt_payload["edit_binding_contexts"]["edit_binding_001"][
+        "verified_member_accesses"
+    ] == [fact]
 
 
 def test_generator_rejects_omitted_upstream_validation_requirement() -> None:

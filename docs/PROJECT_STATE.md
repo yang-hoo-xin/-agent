@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-22
+Last updated: 2026-07-23
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_queue: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
 current_documentation_task: None
 selected_product_request: Make BetterHitFeedback General.Enabled control startup patch registration
-phase_2b_execution_status: awaiting_explicit_new_run_authorization_after_6ea884bf_rejection
+phase_2b_execution_status: awaiting_explicit_new_run_authorization_after_api_member_evidence_repair
 most_recent_completed_capability: V2-RUNTIME-BOUNDARY-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
@@ -279,6 +279,29 @@ or general member-resolution coverage. A no-model replay of the preserved
 passed. No run file, product source, model call, graph route, or architecture
 boundary changed during the repair. A replacement real run still requires new
 explicit authorization.
+
+The next bounded API/member Evidence repair is now implemented without a model
+call or a new Phase 2B run. `rg_live.py` remains source-only and now binds each
+current declaration to its evidence id, source path/hash, full declaring type,
+member kind, exact declaration span, and declared type. A neutral run-local
+metadata enrichment module joins that fact to the same run's baseline consumer
+member, its TypeRef and direct AssemblyRef scope, the uniquely resolved
+dependency DLL, SHA256/MVID/AssemblyDefinition identity, and a public,
+non-static, readable, non-index property whose direct generic result closes to
+`System.Boolean`. The existing tracked inspector gained a separately versioned
+read-only report mode; the existing R8 report mode remains unchanged and Phase
+2B does not import the R8 evidence module. Implementation Plan bindings add the
+current edit binding id and source hash, while Patch Generation accepts
+`!receiver.member` only when all source, edit, compiled receiver, TypeRef, and
+member identities still match. Direct/affected suites passed 213 tests. The
+inspector rebuilt with zero warnings/errors, and a read-only replay against run
+`230e70a6` resolved both `ConfigEnabled` and `EnableDiagnosticLogging` to the
+raw metadata name ``BepInEx.Configuration.ConfigEntry`1<System.Boolean>`` and its
+`Value` property in the uniquely matched `core/BepInEx.Core.dll`; no target code
+executed. The full unit suite also completed with 1725 passed, 7 skipped, and 34
+pre-existing unrelated failures. This repair does not prove a replacement model
+run, generated patch correctness, build/runtime behavior, or Phase 2B
+completion; a fresh run still requires explicit authorization.
 
 The run was approved for one `qwen3.6-plus` call under approval id
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001-QWEN-EXTERNAL-20260720`, the same four

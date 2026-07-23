@@ -54,6 +54,9 @@ class EvidenceItem:
     return_type: str | None = None
     method_kind: str | None = None
     declared_member_types: dict[str, str] | None = None
+    declaring_type_full_name: str | None = None
+    declared_members: dict[str, dict[str, Any]] | None = None
+    verified_member_accesses: tuple[dict[str, Any], ...] = ()
     authority: EvidenceAuthority = LEGACY_RAG_AUXILIARY_AUTHORITY
     risk_notes: tuple[str, ...] = ()
 
@@ -91,6 +94,18 @@ class EvidenceItem:
                 if self.declared_member_types is not None
                 else None
             ),
+            "declaring_type_full_name": self.declaring_type_full_name,
+            "declared_members": (
+                {
+                    name: dict(value)
+                    for name, value in sorted(self.declared_members.items())
+                }
+                if self.declared_members is not None
+                else None
+            ),
+            "verified_member_accesses": [
+                dict(item) for item in self.verified_member_accesses
+            ],
             "authority": self.authority,
             "risk_notes": list(self.risk_notes),
         }

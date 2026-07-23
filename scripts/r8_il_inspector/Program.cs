@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Collections.Immutable;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Reflection.Metadata;
@@ -11,6 +12,7 @@ if (args.Length < 2)
 {
     Console.Error.WriteLine("usage: r8_il_inspector <assembly> <Type.Method> [<Type.Method> ...]");
     Console.Error.WriteLine("   or: r8_il_inspector <assembly> --find-metadata <literal-substring> [<literal-substring> ...]");
+    Console.Error.WriteLine("   or: r8_il_inspector <consumer-assembly> --resolve-direct-boolean-member-accesses <dependency-root> <consumer-declaring-type> <receiver-member>");
     return 2;
 }
 
@@ -26,6 +28,27 @@ if (!peReader.HasMetadata)
 var metadata = peReader.GetMetadataReader();
 var module = metadata.GetModuleDefinition();
 var assemblySha256 = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(assemblyPath)));
+if (args[1] == "--resolve-direct-boolean-member-accesses")
+{
+    try
+    {
+        return ResolveDirectBooleanMemberAccesses(
+            assemblyPath,
+            metadata,
+            assemblySha256,
+            args.Skip(2).ToArray());
+    }
+    catch (Exception exception) when (
+        exception is ArgumentException
+        or BadImageFormatException
+        or InvalidOperationException
+        or IOException
+        or UnauthorizedAccessException)
+    {
+        Console.Error.WriteLine(exception.Message);
+        return 5;
+    }
+}
 if (args[1] == "--find-metadata")
 {
     if (args.Length < 3)
@@ -181,6 +204,349 @@ var output = new
 };
 Console.WriteLine(JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true }));
 return missingSymbols.Length == 0 ? 0 : 4;
+
+static int ResolveDirectBooleanMemberAccesses(
+    string consumerAssemblyPath,
+    MetadataReader consumerMetadata,
+    string consumerAssemblySha256,
+    string[] arguments)
+{
+    if (arguments.Length != 3)
+    {
+        throw new ArgumentException(
+            "--resolve-direct-boolean-member-accesses requires dependency root, "
+            + "consumer declaring type, and receiver member");
+    }
+
+    var dependencyRoot = Path.GetFullPath(arguments[0]);
+    var consumerDeclaringType = arguments[1];
+    var receiverMember = arguments[2];
+    if (!Directory.Exists(dependencyRoot))
+    {
+        throw new InvalidOperationException("dependency root is missing");
+    }
+
+    var consumerTypeHandles = consumerMetadata.TypeDefinitions
+        .Where(handle => FullTypeName(consumerMetadata, handle) == consumerDeclaringType)
+        .ToArray();
+    if (consumerTypeHandles.Length != 1)
+    {
+        throw new InvalidOperationException(
+            "consumer declaring type did not resolve to one exact metadata type");
+    }
+
+    var provider = new ExactTypeShapeProvider();
+    var consumerType = consumerMetadata.GetTypeDefinition(consumerTypeHandles[0]);
+    var consumerMembers = new List<ConsumerMemberValue>();
+    foreach (var propertyHandle in consumerType.GetProperties())
+    {
+        var property = consumerMetadata.GetPropertyDefinition(propertyHandle);
+        if (consumerMetadata.GetString(property.Name) != receiverMember)
+        {
+            continue;
+        }
+        var accessors = property.GetAccessors();
+        if (accessors.Getter.IsNil)
+        {
+            continue;
+        }
+        var getter = consumerMetadata.GetMethodDefinition(accessors.Getter);
+        var signature = property.DecodeSignature(provider, GenericContextValue.Empty);
+        consumerMembers.Add(new ConsumerMemberValue(
+            "property",
+            (getter.Attributes & MethodAttributes.Static) != 0,
+            MetadataTokens.GetToken(propertyHandle),
+            Convert.ToHexString(consumerMetadata.GetBlobBytes(property.Signature)),
+            signature.ReturnType));
+    }
+    foreach (var fieldHandle in consumerType.GetFields())
+    {
+        var field = consumerMetadata.GetFieldDefinition(fieldHandle);
+        if (consumerMetadata.GetString(field.Name) != receiverMember)
+        {
+            continue;
+        }
+        consumerMembers.Add(new ConsumerMemberValue(
+            "field",
+            (field.Attributes & FieldAttributes.Static) != 0,
+            MetadataTokens.GetToken(fieldHandle),
+            Convert.ToHexString(consumerMetadata.GetBlobBytes(field.Signature)),
+            field.DecodeSignature(provider, GenericContextValue.Empty)));
+    }
+    if (consumerMembers.Count != 1)
+    {
+        throw new InvalidOperationException(
+            "receiver member did not resolve to one exact compiled property or field");
+    }
+
+    var consumerMember = consumerMembers[0];
+    var receiverType = consumerMember.ReceiverType;
+    if (receiverType.Kind != "generic_instance"
+        || receiverType.DefinitionHandle.Kind != HandleKind.TypeReference
+        || receiverType.TypeArguments.IsDefaultOrEmpty)
+    {
+        throw new InvalidOperationException(
+            "receiver member type is not a directly constructed external generic type");
+    }
+
+    var receiverTypeReferenceHandle = (TypeReferenceHandle)receiverType.DefinitionHandle;
+    var receiverTypeReference = consumerMetadata.GetTypeReference(
+        receiverTypeReferenceHandle);
+    if (receiverTypeReference.ResolutionScope.Kind != HandleKind.AssemblyReference)
+    {
+        throw new InvalidOperationException(
+            "receiver TypeRef resolution scope is not one direct AssemblyRef");
+    }
+    var assemblyReferenceHandle = (AssemblyReferenceHandle)receiverTypeReference.ResolutionScope;
+    var assemblyReference = AssemblyReferenceIdentity(
+        consumerMetadata,
+        assemblyReferenceHandle);
+    var resolvedAssembly = ResolvePhysicalAssembly(
+        dependencyRoot,
+        assemblyReference);
+
+    var verifiedMemberAccesses = ReadDirectBooleanPropertyAccesses(
+        resolvedAssembly.Path,
+        receiverType.DefinitionName,
+        receiverType.TypeArguments);
+    if (verifiedMemberAccesses.Count == 0)
+    {
+        throw new InvalidOperationException(
+            "receiver type exposes no public non-static readable non-index property "
+            + "whose direct generic return closes to System.Boolean");
+    }
+    if (Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(consumerAssemblyPath)))
+        != consumerAssemblySha256)
+    {
+        throw new InvalidOperationException(
+            "consumer assembly changed during member resolution");
+    }
+    if (Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(resolvedAssembly.Path)))
+        != resolvedAssembly.Sha256)
+    {
+        throw new InvalidOperationException(
+            "resolved assembly changed during member resolution");
+    }
+
+    var consumerModule = consumerMetadata.GetModuleDefinition();
+    var output = new
+    {
+        schema_version = "dotnet_direct_boolean_member_access_resolution_v1",
+        request = new
+        {
+            consumer_declaring_type = consumerDeclaringType,
+            receiver_member = receiverMember,
+        },
+        consumer = new
+        {
+            assembly_sha256 = consumerAssemblySha256,
+            module_name = consumerMetadata.GetString(consumerModule.Name),
+            module_mvid = consumerMetadata.GetGuid(consumerModule.Mvid).ToString("D"),
+            declaring_type = consumerDeclaringType,
+            receiver_member = receiverMember,
+            member_kind = consumerMember.MemberKind,
+            is_static = consumerMember.IsStatic,
+            member_metadata_token = $"0x{consumerMember.MetadataToken:X8}",
+            signature_blob = consumerMember.SignatureBlob,
+            receiver_closed_type = receiverType.DisplayName,
+        },
+        type_reference = new
+        {
+            symbol = receiverType.DefinitionName,
+            metadata_token = $"0x{MetadataTokens.GetToken(receiverTypeReferenceHandle):X8}",
+            resolution_scope_kind = receiverTypeReference.ResolutionScope.Kind.ToString(),
+            resolution_scope_metadata_token =
+                $"0x{MetadataTokens.GetToken(receiverTypeReference.ResolutionScope):X8}",
+        },
+        assembly_reference = new
+        {
+            metadata_token = $"0x{MetadataTokens.GetToken(assemblyReferenceHandle):X8}",
+            name = assemblyReference.Identity.Name,
+            version = assemblyReference.Identity.Version,
+            culture = assemblyReference.Identity.Culture,
+            public_key_token = assemblyReference.Identity.PublicKeyToken,
+            flags = assemblyReference.Flags,
+            hash_value = assemblyReference.HashValue,
+        },
+        resolved_assembly = new
+        {
+            relative_path = resolvedAssembly.RelativePath,
+            assembly_sha256 = resolvedAssembly.Sha256,
+            module_name = resolvedAssembly.ModuleName,
+            module_mvid = resolvedAssembly.ModuleMvid,
+            assembly_definition = new
+            {
+                name = resolvedAssembly.Identity.Name,
+                version = resolvedAssembly.Identity.Version,
+                culture = resolvedAssembly.Identity.Culture,
+                public_key_token = resolvedAssembly.Identity.PublicKeyToken,
+                flags = resolvedAssembly.Flags,
+            },
+        },
+        verified_member_accesses = verifiedMemberAccesses,
+        target_code_executed = false,
+    };
+    Console.WriteLine(JsonSerializer.Serialize(
+        output,
+        new JsonSerializerOptions { WriteIndented = true }));
+    return 0;
+}
+
+static AssemblyReferenceValue AssemblyReferenceIdentity(
+    MetadataReader metadata,
+    AssemblyReferenceHandle handle)
+{
+    var reference = metadata.GetAssemblyReference(handle);
+    var keyOrToken = metadata.GetBlobBytes(reference.PublicKeyOrToken);
+    var token = (reference.Flags & AssemblyFlags.PublicKey) != 0
+        ? ComputePublicKeyToken(keyOrToken)
+        : keyOrToken;
+    return new AssemblyReferenceValue(
+        new AssemblyIdentityValue(
+            metadata.GetString(reference.Name),
+            reference.Version.ToString(),
+            reference.Culture.IsNil ? "" : metadata.GetString(reference.Culture),
+            Convert.ToHexString(token)),
+        reference.Flags.ToString(),
+        Convert.ToHexString(metadata.GetBlobBytes(reference.HashValue)));
+}
+
+static ResolvedAssemblyValue ResolvePhysicalAssembly(
+    string dependencyRoot,
+    AssemblyReferenceValue reference)
+{
+    var matches = new List<ResolvedAssemblyValue>();
+    foreach (var path in Directory.EnumerateFiles(
+        dependencyRoot,
+        "*.dll",
+        SearchOption.AllDirectories))
+    {
+        try
+        {
+            using var stream = File.OpenRead(path);
+            using var peReader = new PEReader(stream);
+            if (!peReader.HasMetadata)
+            {
+                continue;
+            }
+            var metadata = peReader.GetMetadataReader();
+            if (!metadata.IsAssembly)
+            {
+                continue;
+            }
+            var definition = metadata.GetAssemblyDefinition();
+            var identity = new AssemblyIdentityValue(
+                metadata.GetString(definition.Name),
+                definition.Version.ToString(),
+                definition.Culture.IsNil ? "" : metadata.GetString(definition.Culture),
+                Convert.ToHexString(ComputePublicKeyToken(
+                    metadata.GetBlobBytes(definition.PublicKey))));
+            if (identity != reference.Identity)
+            {
+                continue;
+            }
+            var module = metadata.GetModuleDefinition();
+            matches.Add(new ResolvedAssemblyValue(
+                Path.GetFullPath(path),
+                Path.GetRelativePath(dependencyRoot, path).Replace('\\', '/'),
+                Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))),
+                metadata.GetString(module.Name),
+                metadata.GetGuid(module.Mvid).ToString("D"),
+                identity,
+                definition.Flags.ToString()));
+        }
+        catch (BadImageFormatException)
+        {
+            continue;
+        }
+    }
+    if (matches.Count != 1)
+    {
+        throw new InvalidOperationException(
+            "AssemblyRef identity did not resolve to one run-local physical assembly");
+    }
+    return matches[0];
+}
+
+static List<object> ReadDirectBooleanPropertyAccesses(
+    string assemblyPath,
+    string declaringTypeName,
+    ImmutableArray<TypeShape> closedTypeArguments)
+{
+    using var stream = File.OpenRead(assemblyPath);
+    using var peReader = new PEReader(stream);
+    var metadata = peReader.GetMetadataReader();
+    var typeHandles = metadata.TypeDefinitions
+        .Where(handle => FullTypeName(metadata, handle) == declaringTypeName)
+        .ToArray();
+    if (typeHandles.Length != 1)
+    {
+        throw new InvalidOperationException(
+            "declaration assembly does not contain one exact receiver type definition");
+    }
+    var typeHandle = typeHandles[0];
+    var type = metadata.GetTypeDefinition(typeHandle);
+    if (type.GetGenericParameters().Count != closedTypeArguments.Length)
+    {
+        throw new InvalidOperationException(
+            "receiver generic arity does not match the declaration type");
+    }
+
+    var provider = new ExactTypeShapeProvider();
+    var context = new GenericContextValue(closedTypeArguments);
+    var result = new List<object>();
+    foreach (var propertyHandle in type.GetProperties())
+    {
+        var property = metadata.GetPropertyDefinition(propertyHandle);
+        var accessors = property.GetAccessors();
+        if (accessors.Getter.IsNil)
+        {
+            continue;
+        }
+        var getter = metadata.GetMethodDefinition(accessors.Getter);
+        if ((getter.Attributes & MethodAttributes.MemberAccessMask) != MethodAttributes.Public
+            || (getter.Attributes & MethodAttributes.Static) != 0)
+        {
+            continue;
+        }
+        var signature = property.DecodeSignature(provider, context);
+        if (signature.ParameterTypes.Length != 0
+            || signature.ReturnType.DisplayName != "System.Boolean"
+            || signature.ReturnType.ClosedFromTypeParameterIndex is null)
+        {
+            continue;
+        }
+        result.Add(new
+        {
+            declaring_type = declaringTypeName,
+            declaring_type_metadata_token =
+                $"0x{MetadataTokens.GetToken(typeHandle):X8}",
+            member_name = metadata.GetString(property.Name),
+            member_kind = "property",
+            access_kind = "instance_property_get",
+            property_metadata_token =
+                $"0x{MetadataTokens.GetToken(propertyHandle):X8}",
+            getter_metadata_token =
+                $"0x{MetadataTokens.GetToken(accessors.Getter):X8}",
+            property_signature_blob =
+                Convert.ToHexString(metadata.GetBlobBytes(property.Signature)),
+            generic_result_type_parameter_index =
+                signature.ReturnType.ClosedFromTypeParameterIndex,
+            closed_result_type = signature.ReturnType.DisplayName,
+        });
+    }
+    return result;
+}
+
+static byte[] ComputePublicKeyToken(byte[] publicKey)
+{
+    if (publicKey.Length == 0)
+    {
+        return Array.Empty<byte>();
+    }
+    var hash = SHA1.HashData(publicKey);
+    return hash[^8..].Reverse().ToArray();
+}
 
 static Dictionary<ushort, OpCode> BuildOpcodeMap()
 {
@@ -438,4 +804,195 @@ static ushort ReadUInt16(byte[] bytes, ref int offset)
     var value = BinaryPrimitives.ReadUInt16LittleEndian(bytes.AsSpan(offset, 2));
     offset += 2;
     return value;
+}
+
+sealed record AssemblyIdentityValue(
+    string Name,
+    string Version,
+    string Culture,
+    string PublicKeyToken);
+
+sealed record AssemblyReferenceValue(
+    AssemblyIdentityValue Identity,
+    string Flags,
+    string HashValue);
+
+sealed record ResolvedAssemblyValue(
+    string Path,
+    string RelativePath,
+    string Sha256,
+    string ModuleName,
+    string ModuleMvid,
+    AssemblyIdentityValue Identity,
+    string Flags);
+
+sealed record ConsumerMemberValue(
+    string MemberKind,
+    bool IsStatic,
+    int MetadataToken,
+    string SignatureBlob,
+    TypeShape ReceiverType);
+
+readonly record struct GenericContextValue(ImmutableArray<TypeShape> TypeArguments)
+{
+    public static GenericContextValue Empty =>
+        new(ImmutableArray<TypeShape>.Empty);
+}
+
+sealed record TypeShape(
+    string Kind,
+    string DisplayName,
+    string DefinitionName,
+    EntityHandle DefinitionHandle,
+    ImmutableArray<TypeShape> TypeArguments,
+    int? ClosedFromTypeParameterIndex = null);
+
+sealed class ExactTypeShapeProvider :
+    ISignatureTypeProvider<TypeShape, GenericContextValue>
+{
+    public TypeShape GetArrayType(TypeShape elementType, ArrayShape shape) =>
+        Simple("array", $"{elementType.DisplayName}[{new string(',', shape.Rank - 1)}]");
+
+    public TypeShape GetByReferenceType(TypeShape elementType) =>
+        Simple("by_reference", $"{elementType.DisplayName}&");
+
+    public TypeShape GetFunctionPointerType(MethodSignature<TypeShape> signature) =>
+        Simple("function_pointer", "method");
+
+    public TypeShape GetGenericInstantiation(
+        TypeShape genericType,
+        ImmutableArray<TypeShape> typeArguments) =>
+        new(
+            "generic_instance",
+            $"{genericType.DefinitionName}<{string.Join(",", typeArguments.Select(
+                item => item.DisplayName))}>",
+            genericType.DefinitionName,
+            genericType.DefinitionHandle,
+            typeArguments);
+
+    public TypeShape GetGenericMethodParameter(
+        GenericContextValue genericContext,
+        int index) =>
+        Simple("generic_method_parameter", $"!!{index}");
+
+    public TypeShape GetGenericTypeParameter(
+        GenericContextValue genericContext,
+        int index)
+    {
+        if (index < 0 || index >= genericContext.TypeArguments.Length)
+        {
+            return Simple("generic_type_parameter", $"!{index}");
+        }
+        return genericContext.TypeArguments[index] with
+        {
+            ClosedFromTypeParameterIndex = index,
+        };
+    }
+
+    public TypeShape GetModifiedType(
+        TypeShape modifier,
+        TypeShape unmodifiedType,
+        bool isRequired) =>
+        unmodifiedType;
+
+    public TypeShape GetPinnedType(TypeShape elementType) =>
+        Simple("pinned", elementType.DisplayName);
+
+    public TypeShape GetPointerType(TypeShape elementType) =>
+        Simple("pointer", $"{elementType.DisplayName}*");
+
+    public TypeShape GetPrimitiveType(PrimitiveTypeCode typeCode) =>
+        Simple(
+            "primitive",
+            typeCode switch
+            {
+                PrimitiveTypeCode.Boolean => "System.Boolean",
+                PrimitiveTypeCode.Byte => "System.Byte",
+                PrimitiveTypeCode.Char => "System.Char",
+                PrimitiveTypeCode.Double => "System.Double",
+                PrimitiveTypeCode.Int16 => "System.Int16",
+                PrimitiveTypeCode.Int32 => "System.Int32",
+                PrimitiveTypeCode.Int64 => "System.Int64",
+                PrimitiveTypeCode.IntPtr => "System.IntPtr",
+                PrimitiveTypeCode.Object => "System.Object",
+                PrimitiveTypeCode.SByte => "System.SByte",
+                PrimitiveTypeCode.Single => "System.Single",
+                PrimitiveTypeCode.String => "System.String",
+                PrimitiveTypeCode.TypedReference => "System.TypedReference",
+                PrimitiveTypeCode.UInt16 => "System.UInt16",
+                PrimitiveTypeCode.UInt32 => "System.UInt32",
+                PrimitiveTypeCode.UInt64 => "System.UInt64",
+                PrimitiveTypeCode.UIntPtr => "System.UIntPtr",
+                PrimitiveTypeCode.Void => "System.Void",
+                _ => typeCode.ToString(),
+            });
+
+    public TypeShape GetSZArrayType(TypeShape elementType) =>
+        Simple("sz_array", $"{elementType.DisplayName}[]");
+
+    public TypeShape GetTypeFromDefinition(
+        MetadataReader reader,
+        TypeDefinitionHandle handle,
+        byte rawTypeKind)
+    {
+        var name = DefinitionName(reader, handle);
+        return Named(name, handle);
+    }
+
+    public TypeShape GetTypeFromReference(
+        MetadataReader reader,
+        TypeReferenceHandle handle,
+        byte rawTypeKind)
+    {
+        var name = ReferenceName(reader, handle);
+        return Named(name, handle);
+    }
+
+    public TypeShape GetTypeFromSpecification(
+        MetadataReader reader,
+        GenericContextValue genericContext,
+        TypeSpecificationHandle handle,
+        byte rawTypeKind) =>
+        reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
+
+    private static TypeShape Named(string name, EntityHandle handle) =>
+        new(
+            "named",
+            name,
+            name,
+            handle,
+            ImmutableArray<TypeShape>.Empty);
+
+    private static TypeShape Simple(string kind, string displayName) =>
+        new(
+            kind,
+            displayName,
+            displayName,
+            default,
+            ImmutableArray<TypeShape>.Empty);
+
+    private static string DefinitionName(
+        MetadataReader reader,
+        TypeDefinitionHandle handle)
+    {
+        var type = reader.GetTypeDefinition(handle);
+        var name = reader.GetString(type.Name);
+        var declaring = type.GetDeclaringType();
+        if (!declaring.IsNil)
+        {
+            return $"{DefinitionName(reader, declaring)}+{name}";
+        }
+        var ns = reader.GetString(type.Namespace);
+        return string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}";
+    }
+
+    private static string ReferenceName(
+        MetadataReader reader,
+        TypeReferenceHandle handle)
+    {
+        var type = reader.GetTypeReference(handle);
+        var name = reader.GetString(type.Name);
+        var ns = reader.GetString(type.Namespace);
+        return string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}";
+    }
 }

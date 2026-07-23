@@ -1150,12 +1150,14 @@ def test_source_disclosure_record_is_explicit_and_does_not_contain_api_key() -> 
         "approved_data_classes": [
             "natural_language_request",
             "retrieved_local_source_excerpts",
+            "run_local_api_member_metadata_facts",
             "binding_registry",
             "side_effect_boundaries",
         ],
         "requested_data_classes": [
             "natural_language_request",
             "retrieved_local_source_excerpts",
+            "run_local_api_member_metadata_facts",
             "binding_registry",
             "side_effect_boundaries",
         ],

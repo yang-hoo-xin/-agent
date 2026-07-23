@@ -23,6 +23,11 @@ from src.libs.llm import LLMFactory, OllamaLLM, validate_loopback_http_base_url
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import RgLiveEvidenceProvider
+from src.mod_agent.evidence.dotnet_metadata import (
+    DotNetMetadataEnrichmentError,
+    RunLocalMemberAccessResolver,
+    enrich_source_evidence_with_member_accesses,
+)
 from src.mod_agent.execution import ExactDiffApprovalRejectedError, ExactTextPatchApplier
 from src.mod_agent.planning.request_planner import requested_scope_text
 from src.mod_agent.proposal import LLMExactPatchGenerator
@@ -36,6 +41,7 @@ class LocalEntryError(RuntimeError):
 SOURCE_DISCLOSURE_DATA_CLASSES = (
     "natural_language_request",
     "retrieved_local_source_excerpts",
+    "run_local_api_member_metadata_facts",
     "binding_registry",
     "side_effect_boundaries",
 )
@@ -1033,6 +1039,7 @@ def run_local_request(
         model_admission=model_admission,
     )
     verification_tool_build = None
+    inspector_path: Path | None = None
     active_compiled_artifact_verifier = compiled_artifact_verifier
     if compiled_artifact_inspection_profile is not None:
         verification_tool_build = _run_pre_graph_step(
@@ -1147,6 +1154,14 @@ def run_local_request(
     generator = LLMExactPatchGenerator(llm)
     applier = ExactTextPatchApplier()
     evidence_provider = RgLiveEvidenceProvider(run_root)
+    member_access_resolver = (
+        RunLocalMemberAccessResolver(
+            inspector_path,
+            dependency_root=isolated_bepinex_dir,
+        )
+        if inspector_path is not None
+        else None
+    )
     artifact_store = ArtifactStore(run_root / "a")
     build_stdout = run_root / "build.stdout.log"
     build_stderr = run_root / "build.stderr.log"
@@ -1156,10 +1171,46 @@ def run_local_request(
     model_call_count = 0
 
     def evidence_factory(state: dict[str, Any], _: dict[str, Any]):
-        return evidence_provider.collect(
+        evidence_pack = evidence_provider.collect(
             query=requested_scope_text(state["user_request"]),
             search_root=f"generated_mods/{source.name}",
         )
+        if member_access_resolver is None:
+            return evidence_pack
+        try:
+            return enrich_source_evidence_with_member_accesses(
+                evidence_pack,
+                consumer_assembly=baseline_artifact,
+                resolver=member_access_resolver,
+            )
+        except DotNetMetadataEnrichmentError as exc:
+            blocker = {
+                "code": "DOTNET_MEMBER_ACCESS_UNRESOLVED",
+                "message": str(exc),
+                "needed_evidence": [
+                    "source-bound compiled receiver identity",
+                    "AssemblyRef-bound run-local dependency",
+                    "public readable direct Boolean property",
+                ],
+            }
+            return replace(
+                evidence_pack,
+                readiness="insufficient",
+                can_generate_patch=False,
+                blockers=(*evidence_pack.blockers, blocker),
+                missing_evidence=(
+                    *evidence_pack.missing_evidence,
+                    {
+                        "needed_evidence": "verified .NET member access",
+                        "blocker_code": blocker["code"],
+                        "reason": blocker["message"],
+                    },
+                ),
+                message=(
+                    "Source evidence was found, but run-local .NET member "
+                    f"semantics could not be bound: {exc}"
+                ),
+            )
 
     def patch_change_factory(
         state: dict[str, Any],

@@ -89,6 +89,8 @@ def test_rg_live_provider_binds_declared_member_types_from_containing_type(
     source = tmp_path / "generated_mods" / "Example" / "Plugin.cs"
     source.parent.mkdir(parents=True)
     source.write_text(
+        "namespace Example;\n"
+        "\n"
         "public sealed class Plugin\n"
         "{\n"
         "    public static ConfigEntry<bool> ConfigEnabled { get; private set; } = null!;\n"
@@ -115,4 +117,23 @@ def test_rg_live_provider_binds_declared_member_types_from_containing_type(
     assert pack.items[0].to_dict()["declared_member_types"] == {
         "ConfigEnabled": "ConfigEntry<bool>",
         "PrimitiveEnabled": "bool",
+    }
+    assert pack.items[0].declaring_type_full_name == "Example.Plugin"
+    assert pack.items[0].declared_members == {
+        "ConfigEnabled": {
+            "member_name": "ConfigEnabled",
+            "member_kind": "property",
+            "declared_type": "ConfigEntry<bool>",
+            "declaring_type": "Example.Plugin",
+            "declaration_span": {"start_line": 5, "end_line": 5},
+            "is_static": True,
+        },
+        "PrimitiveEnabled": {
+            "member_name": "PrimitiveEnabled",
+            "member_kind": "field",
+            "declared_type": "bool",
+            "declaring_type": "Example.Plugin",
+            "declaration_span": {"start_line": 6, "end_line": 6},
+            "is_static": False,
+        },
     }

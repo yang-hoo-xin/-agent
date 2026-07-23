@@ -76,6 +76,8 @@ class LLMExactPatchGenerator:
             binding_contexts[str(binding["binding_id"])] = {
                 field: binding.get(field) or evidence.get(evidence_field)
                 for field, evidence_field in (
+                    ("evidence_id", "evidence_id"),
+                    ("source_hash", "source_hash"),
                     ("canonical_target_path", "source_path"),
                     ("declaring_type", "declaring_type"),
                     ("method_name", "method_name"),
@@ -83,6 +85,9 @@ class LLMExactPatchGenerator:
                     ("return_type", "return_type"),
                     ("method_kind", "method_kind"),
                     ("declared_member_types", "declared_member_types"),
+                    ("declaring_type_full_name", "declaring_type_full_name"),
+                    ("declared_members", "declared_members"),
+                    ("verified_member_accesses", "verified_member_accesses"),
                 )
             }
 
@@ -154,6 +159,9 @@ class LLMExactPatchGenerator:
                         "required_validation_by_binding entries are authoritative upstream "
                         "requirements and must all be copied into the matching change's "
                         "expected_validation list. Any "
+                        "non-Boolean bound receiver may be used as a Boolean operand only "
+                        "through an exact verified_member_accesses entry. Do not invent "
+                        "API members. Any "
                         "expected_validation entry formatted as an uppercase identifier is "
                         "a literal marker and must appear in after_text. Do not include "
                         "markdown fences."
@@ -445,6 +453,13 @@ def _validate_bound_language_semantics(
     declared_member_types = context.get("declared_member_types")
     if not isinstance(declared_member_types, Mapping):
         return
+    _validate_bound_member_shadowing(
+        after=code_only,
+        declared_member_types=declared_member_types,
+        binding_id=binding_id,
+        context=context,
+        index=index,
+    )
     for match in re.finditer(
         r"!(?!=)\s*(?:this\s*\.\s*)?(?P<member>[A-Za-z_][A-Za-z0-9_]*)"
         r"\b(?!\s*[.(])",
@@ -468,6 +483,142 @@ def _validate_bound_language_semantics(
                 "binding_id": binding_id,
                 "method_name": context.get("method_name"),
                 "operator": "!",
+                "member_name": member_name,
+                "declared_type": declared_type,
+            },
+        )
+    for match in re.finditer(
+        r"!(?!=)\s*(?:this\s*\.\s*)?(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)"
+        r"\s*\.\s*(?P<member>[A-Za-z_][A-Za-z0-9_]*)\b(?!\s*[.(])",
+        code_only,
+    ):
+        receiver_name = match.group("receiver")
+        receiver_type = declared_member_types.get(receiver_name)
+        if not isinstance(receiver_type, str):
+            continue
+        normalized_type = re.sub(r"\s+", "", receiver_type)
+        if normalized_type in {"bool", "bool?", "System.Boolean", "System.Boolean?"}:
+            continue
+        member_name = match.group("member")
+        if _has_verified_boolean_member_access(
+            context=context,
+            binding_id=binding_id,
+            receiver_name=receiver_name,
+            receiver_type=receiver_type,
+            member_name=member_name,
+        ):
+            continue
+        raise PatchGenerationError(
+            f"Change {index} uses unverified Boolean member access "
+            f"{receiver_name}.{member_name} on bound type {receiver_type}.",
+            diagnostics={
+                "failure_boundary": "deterministic_patch_validation",
+                "failure_classification": (
+                    "csharp_unverified_boolean_member_operand"
+                ),
+                "binding_id": binding_id,
+                "method_name": context.get("method_name"),
+                "operator": "!",
+                "receiver_member_name": receiver_name,
+                "receiver_declared_type": receiver_type,
+                "accessed_member_name": member_name,
+            },
+        )
+
+
+def _has_verified_boolean_member_access(
+    *,
+    context: Mapping[str, Any],
+    binding_id: str,
+    receiver_name: str,
+    receiver_type: str,
+    member_name: str,
+) -> bool:
+    declared_members = context.get("declared_members")
+    if not isinstance(declared_members, Mapping):
+        return False
+    declared_identity = declared_members.get(receiver_name)
+    if not isinstance(declared_identity, Mapping):
+        return False
+    for fact in context.get("verified_member_accesses") or []:
+        if not isinstance(fact, Mapping):
+            continue
+        source_receiver = fact.get("source_receiver")
+        consumer = fact.get("consumer")
+        type_reference = fact.get("type_reference")
+        member_access = fact.get("member_access")
+        if (
+            not isinstance(source_receiver, Mapping)
+            or not isinstance(consumer, Mapping)
+            or not isinstance(type_reference, Mapping)
+            or not isinstance(member_access, Mapping)
+        ):
+            continue
+        compiled_receiver_type = consumer.get("receiver_closed_type")
+        if (
+            fact.get("edit_binding_id") == binding_id
+            and source_receiver.get("evidence_id") == context.get("evidence_id")
+            and source_receiver.get("source_path")
+            == context.get("canonical_target_path")
+            and source_receiver.get("source_hash") == context.get("source_hash")
+            and source_receiver.get("declaring_type")
+            == context.get("declaring_type_full_name")
+            and source_receiver.get("member_name") == receiver_name
+            and source_receiver.get("member_kind")
+            == declared_identity.get("member_kind")
+            and source_receiver.get("declaration_span")
+            == declared_identity.get("declaration_span")
+            and source_receiver.get("declared_type") == receiver_type
+            and source_receiver.get("receiver_closed_type")
+            == compiled_receiver_type
+            and consumer.get("declaring_type")
+            == context.get("declaring_type_full_name")
+            and consumer.get("receiver_member") == receiver_name
+            and consumer.get("member_kind")
+            == declared_identity.get("member_kind")
+            and consumer.get("is_static")
+            is declared_identity.get("is_static")
+            and member_access.get("member_name") == member_name
+            and member_access.get("declaring_type")
+            == type_reference.get("symbol")
+            and member_access.get("member_kind") == "property"
+            and member_access.get("access_kind") == "instance_property_get"
+            and member_access.get("closed_result_type") == "System.Boolean"
+        ):
+            return True
+    return False
+
+
+def _validate_bound_member_shadowing(
+    *,
+    after: str,
+    declared_member_types: Mapping[str, Any],
+    binding_id: str,
+    context: Mapping[str, Any],
+    index: int,
+) -> None:
+    for member_name, declared_type in declared_member_types.items():
+        if not isinstance(member_name, str) or not isinstance(declared_type, str):
+            continue
+        normalized_type = re.sub(r"\s+", "", declared_type)
+        if normalized_type in {"bool", "bool?", "System.Boolean", "System.Boolean?"}:
+            continue
+        escaped = re.escape(member_name)
+        shadow_patterns = (
+            rf"\b(?:var|[A-Za-z_][A-Za-z0-9_.<>,?\[\]]*)\s+{escaped}\b",
+            rf"\bout\s+var\s+{escaped}\b",
+            rf"\bis\s+[A-Za-z_][A-Za-z0-9_.<>,?\[\]]*\s+{escaped}\b",
+            rf"\bforeach\s*\([^)]*\b{escaped}\s+in\b",
+        )
+        if not any(re.search(pattern, after) for pattern in shadow_patterns):
+            continue
+        raise PatchGenerationError(
+            f"Change {index} shadows bound member {member_name}.",
+            diagnostics={
+                "failure_boundary": "deterministic_patch_validation",
+                "failure_classification": "csharp_bound_member_shadowed",
+                "binding_id": binding_id,
+                "method_name": context.get("method_name"),
                 "member_name": member_name,
                 "declared_type": declared_type,
             },

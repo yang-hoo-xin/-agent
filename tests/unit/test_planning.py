@@ -44,6 +44,53 @@ def _authoritative_item(**overrides: object) -> dict[str, object]:
             "ConfigEnabled": "ConfigEntry<bool>",
             "PrimitiveEnabled": "bool",
         },
+        "declaring_type_full_name": "BetterHitFeedback.Plugin",
+        "declared_members": {
+            "ConfigEnabled": {
+                "member_name": "ConfigEnabled",
+                "member_kind": "property",
+                "declared_type": "ConfigEntry<bool>",
+                "declaring_type": "BetterHitFeedback.Plugin",
+                "declaration_span": {"start_line": 5, "end_line": 5},
+                "is_static": True,
+            }
+        },
+        "verified_member_accesses": [
+            {
+                "source_receiver": {
+                    "evidence_id": "ev_001",
+                    "source_path": "mods/BetterHitFeedback/Plugin.cs",
+                    "source_hash": "file_hash_001",
+                    "declaring_type": "BetterHitFeedback.Plugin",
+                    "member_name": "ConfigEnabled",
+                    "member_kind": "property",
+                    "declaration_span": {"start_line": 5, "end_line": 5},
+                    "declared_type": "ConfigEntry<bool>",
+                    "receiver_closed_type": (
+                        "BepInEx.Configuration.ConfigEntry`1<System.Boolean>"
+                    ),
+                },
+                "consumer": {
+                    "declaring_type": "BetterHitFeedback.Plugin",
+                    "receiver_member": "ConfigEnabled",
+                    "member_kind": "property",
+                    "is_static": True,
+                    "receiver_closed_type": (
+                        "BepInEx.Configuration.ConfigEntry`1<System.Boolean>"
+                    ),
+                },
+                "type_reference": {
+                    "symbol": "BepInEx.Configuration.ConfigEntry`1",
+                },
+                "member_access": {
+                    "declaring_type": "BepInEx.Configuration.ConfigEntry`1",
+                    "member_name": "Value",
+                    "member_kind": "property",
+                    "access_kind": "instance_property_get",
+                    "closed_result_type": "System.Boolean",
+                },
+            }
+        ],
     }
     item.update(overrides)
     return item
@@ -351,6 +398,7 @@ def test_implementation_plan_binds_every_change_to_evidence() -> None:
     assert "target_file" not in implementation.proposed_changes[0]
     edit_binding = implementation.binding_registry["edit_bindings"][0]
     assert edit_binding["evidence_id"] == "ev_001"
+    assert edit_binding["source_hash"] == "file_hash_001"
     assert edit_binding["canonical_target_path"] == "mods/BetterHitFeedback/Plugin.cs"
     assert edit_binding["target_span"] == {"start_line": 10, "end_line": 20}
     assert edit_binding["declaring_type"] == "Plugin"
@@ -362,6 +410,17 @@ def test_implementation_plan_binds_every_change_to_evidence() -> None:
         "ConfigEnabled": "ConfigEntry<bool>",
         "PrimitiveEnabled": "bool",
     }
+    assert edit_binding["declaring_type_full_name"] == "BetterHitFeedback.Plugin"
+    assert edit_binding["declared_members"]["ConfigEnabled"]["declaration_span"] == {
+        "start_line": 5,
+        "end_line": 5,
+    }
+    assert edit_binding["verified_member_accesses"][0]["edit_binding_id"] == (
+        "edit_binding_001"
+    )
+    assert edit_binding["verified_member_accesses"][0]["member_access"][
+        "closed_result_type"
+    ] == "System.Boolean"
     assert implementation.binding_registry["supporting_bindings"] == []
     assert implementation.rollback_plan
 

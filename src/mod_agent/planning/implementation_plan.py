@@ -283,9 +283,15 @@ class ImplementationPlanner:
         index: int,
         item: dict[str, Any],
     ) -> dict[str, Any]:
+        binding_id = f"edit_binding_{index:03d}"
         return {
-            "binding_id": f"edit_binding_{index:03d}",
+            "binding_id": binding_id,
             "evidence_id": item.get("evidence_id"),
+            "source_hash": (
+                item.get("source_hash")
+                or item.get("file_hash")
+                or item.get("doc_hash")
+            ),
             "canonical_target_path": item.get("source_path"),
             "source_type": item.get("source_type"),
             "target_symbol": item.get("symbol"),
@@ -304,6 +310,24 @@ class ImplementationPlanner:
                 if isinstance(item.get("declared_member_types"), dict)
                 else None
             ),
+            "declaring_type_full_name": item.get("declaring_type_full_name"),
+            "declared_members": (
+                {
+                    str(name): dict(identity)
+                    for name, identity in item["declared_members"].items()
+                    if isinstance(identity, dict)
+                }
+                if isinstance(item.get("declared_members"), dict)
+                else None
+            ),
+            "verified_member_accesses": [
+                {
+                    **dict(access),
+                    "edit_binding_id": binding_id,
+                }
+                for access in item.get("verified_member_accesses") or []
+                if isinstance(access, dict)
+            ],
             "retrieval_method": item.get("retrieval_method"),
             "claim_supported": item.get("claim_supported"),
             "authority": item.get("authority"),

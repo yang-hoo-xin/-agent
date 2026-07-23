@@ -27,12 +27,19 @@ _CSHARP_TYPE_RE = re.compile(
     r"^(?:(?:public|private|protected|internal|static|abstract|sealed|partial)\s+)*"
     r"(?:class|struct|record)\s+(?P<type_name>[A-Za-z_][A-Za-z0-9_]*)\b"
 )
+_CSHARP_FILE_SCOPED_NAMESPACE_RE = re.compile(
+    r"^namespace\s+(?P<namespace>[A-Za-z_][A-Za-z0-9_.]*)\s*;\s*$"
+)
+_CSHARP_BLOCK_NAMESPACE_RE = re.compile(
+    r"^namespace\s+(?P<namespace>[A-Za-z_][A-Za-z0-9_.]*)\s*(?:\{|$)"
+)
 _CSHARP_MEMBER_DECLARATION_RE = re.compile(
     r"^(?:(?:public|private|protected|internal|static|readonly|const|volatile|"
     r"required|new)\s+)*"
     r"(?P<declared_type>[A-Za-z_][A-Za-z0-9_.]*(?:\s*<[^;={}()]+>)?"
     r"(?:\s*\[\s*\])*\??)\s+"
-    r"(?P<member_name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\{|=|;)"
+    r"(?P<member_name>[A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"(?P<declaration_suffix>\{|=|;)"
 )
 _STOP_WORDS = {
     "and",
@@ -125,6 +132,19 @@ class RgLiveEvidenceProvider:
             if method_context is not None
             else _best_symbol(excerpt, tokens)
         )
+        declared_members = (
+            _declared_csharp_members(
+                lines,
+                declaring_type=str(method_context["declaring_type"]),
+                declaring_type_full_name=str(
+                    method_context["declaring_type_full_name"]
+                ),
+            )
+            if method_context is not None
+            and method_context.get("declaring_type") is not None
+            and method_context.get("declaring_type_full_name") is not None
+            else None
+        )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         item = EvidenceItem(
             evidence_id=evidence_id,
@@ -167,14 +187,20 @@ class RgLiveEvidenceProvider:
             ),
             method_kind="method" if method_context is not None else None,
             declared_member_types=(
-                _declared_csharp_member_types(
-                    lines,
-                    declaring_type=str(method_context["declaring_type"]),
-                )
-                if method_context is not None
-                and method_context.get("declaring_type") is not None
+                {
+                    name: str(identity["declared_type"])
+                    for name, identity in (declared_members or {}).items()
+                }
+                if declared_members is not None
                 else None
             ),
+            declaring_type_full_name=(
+                str(method_context["declaring_type_full_name"])
+                if method_context is not None
+                and method_context.get("declaring_type_full_name") is not None
+                else None
+            ),
+            declared_members=declared_members,
         )
         return EvidencePack(
             query=query,
@@ -280,9 +306,16 @@ def _enclosing_csharp_method(
             continue
         parameters = match.group("parameters").strip()
         declaring_type = _nearest_csharp_type(lines, before_line=index + 1)
+        namespace = _nearest_csharp_namespace(lines, before_line=index + 1)
+        declaring_type_full_name = (
+            f"{namespace}.{declaring_type}"
+            if namespace is not None and declaring_type is not None
+            else declaring_type
+        )
         return {
             "declaration_line": index + 1,
             "declaring_type": declaring_type,
+            "declaring_type_full_name": declaring_type_full_name,
             "method_name": match.group("method_name"),
             "parameter_types": () if not parameters else None,
             "return_type": match.group("return_type"),
@@ -298,12 +331,45 @@ def _nearest_csharp_type(lines: list[str], *, before_line: int) -> str | None:
     return None
 
 
+def _nearest_csharp_namespace(lines: list[str], *, before_line: int) -> str | None:
+    for index in range(min(before_line, len(lines)) - 1, -1, -1):
+        value = lines[index].strip()
+        match = _CSHARP_FILE_SCOPED_NAMESPACE_RE.match(value)
+        if match is None:
+            match = _CSHARP_BLOCK_NAMESPACE_RE.match(value)
+        if match is not None:
+            return match.group("namespace")
+    return None
+
+
 def _declared_csharp_member_types(
     lines: list[str],
     *,
     declaring_type: str,
 ) -> dict[str, str]:
     """Extract exact field/property types at one containing C# type level."""
+
+    namespace = _nearest_csharp_namespace(lines, before_line=len(lines))
+    declaring_type_full_name = (
+        f"{namespace}.{declaring_type}" if namespace is not None else declaring_type
+    )
+    return {
+        name: str(identity["declared_type"])
+        for name, identity in _declared_csharp_members(
+            lines,
+            declaring_type=declaring_type,
+            declaring_type_full_name=declaring_type_full_name,
+        ).items()
+    }
+
+
+def _declared_csharp_members(
+    lines: list[str],
+    *,
+    declaring_type: str,
+    declaring_type_full_name: str,
+) -> dict[str, dict[str, object]]:
+    """Extract source-bound class-level member declarations for one C# type."""
 
     declaration_index: int | None = None
     for index, line in enumerate(lines):
@@ -314,21 +380,44 @@ def _declared_csharp_member_types(
     if declaration_index is None:
         return {}
 
-    member_types: dict[str, str] = {}
+    members: dict[str, dict[str, object]] = {}
     brace_depth = 0
     entered_type = False
     lexical_state = "code"
-    for line in lines[declaration_index:]:
+    for line_index, line in enumerate(
+        lines[declaration_index:],
+        start=declaration_index + 1,
+    ):
         if entered_type and brace_depth == 1:
             match = _CSHARP_MEMBER_DECLARATION_RE.match(line.strip())
             if match is not None:
                 member_name = match.group("member_name")
                 declared_type = re.sub(r"\s+", "", match.group("declared_type"))
-                previous = member_types.get(member_name)
-                if previous is None or previous == declared_type:
-                    member_types[member_name] = declared_type
+                identity = {
+                    "member_name": member_name,
+                    "member_kind": (
+                        "property"
+                        if match.group("declaration_suffix") == "{"
+                        else "field"
+                    ),
+                    "declared_type": declared_type,
+                    "declaring_type": declaring_type_full_name,
+                    "declaration_span": {
+                        "start_line": line_index,
+                        "end_line": line_index,
+                    },
+                    "is_static": bool(
+                        re.search(
+                            r"\bstatic\b",
+                            line.strip()[: match.start("declared_type")],
+                        )
+                    ),
+                }
+                previous = members.get(member_name)
+                if previous is None or previous == identity:
+                    members[member_name] = identity
                 else:
-                    member_types.pop(member_name, None)
+                    members.pop(member_name, None)
         brace_delta, lexical_state = _csharp_brace_delta(
             line,
             initial_state=lexical_state,
@@ -338,7 +427,7 @@ def _declared_csharp_member_types(
             entered_type = True
         elif entered_type:
             break
-    return dict(sorted(member_types.items()))
+    return dict(sorted(members.items()))
 
 
 def _csharp_brace_delta(
