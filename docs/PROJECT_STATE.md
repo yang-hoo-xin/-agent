@@ -8,13 +8,37 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ## 1. Current Selection
 
 ```text
-current_queue: None
+current_queue: AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
 current_documentation_task: None
 selected_product_request: None
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
+
+`AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001` has passed H3 admission and is
+active for implementation on its isolated branch. The entry basis is preserved
+real run `ec71c3a5`: a Harness observation truncation lost the earlier
+Chainloader marker, yet the generic Runtime route sent the unverified result to
+`RepairPlanner.from_runtime_failure` and the run terminated through
+`REPAIR_SCOPE_UNRESOLVED`. The accepted follow-up repaired Runtime marker
+observation, not Mod source. Current source confirms that
+`route_after_runtime_evidence` sends every `acceptance_verified=false` result
+to `create_repair_plan`, while the Runtime planner has no explicit failure-owner
+decision before source-scope resolution.
+
+Admission evidence tests for the existing behavior passed 5 tests in 1.38
+seconds without a model call, GTFO launch, or game-directory write. A wider
+80-test baseline passed 79 and retained the already documented
+`test_graph_failed_build_enters_repair_and_stops_at_retry_budget` failure:
+the assertion expects `retry_exhausted=true` while the current result is false.
+That same-path baseline must be reconciled during H3; it is not evidence that
+H3 is implemented. The selected postcondition is provider-neutral failure
+ownership that permits the existing source Proposal/Review route only for
+product-behavior failures with bound source evidence. Observation,
+environment, provider, permission, and unknown failures must stop with their
+actual owner and must not repeat model, Proposal, Apply, or Build work.
+Automatic Runtime retry, side-effect recovery, and H1.2 remain out of scope.
 
 `AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001` completed the bounded H1.1
 postcondition. A successful real Build may now persist a Build-stage

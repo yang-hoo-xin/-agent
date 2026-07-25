@@ -734,16 +734,96 @@ wholesale into mainline authority.
 
 ```text
 program_id: AGENT-ENGINEERING-HARNESS-EVOLUTION
-program_status: active_direction_h1_1_complete
+program_status: active_direction_h3_admitted
 control_plane: existing LangGraph StateGraph
 contract_foundation: F0
 first_selected_boundary: H1.1 / AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001
 implementation_entry: H1.1 Phase A and Phase B complete
-active_later_boundary: None
+active_later_boundary: H3 / AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
 automatic_next_boundary: forbidden
 round_closure: capability evidence, then authority-document repair
-next_boundary_admission: required after round closure
+next_boundary_admission: H3 admitted; Phase A not started
 ```
+
+### H3 Admission: Runtime Failure Ownership And Source-Repair Routing
+
+1. **Concrete entry basis**: preserved real run `ec71c3a5` lost an earlier
+   Chainloader marker through Harness output truncation, then stopped at
+   `blocked` through `REPAIR_SCOPE_UNRESOLVED`. The later accepted repair
+   changed Runtime observation, not Mod source.
+2. **Current failing seam**:
+   `route_after_runtime_evidence` maps every
+   `acceptance_verified=false` result to `create_repair_plan`;
+   `_run_create_repair_plan` maps every RuntimeEvidence failure to
+   `RepairPlanner.from_runtime_failure`; the planner derives
+   `failure_class` from `acceptance_status` or `verification_status` and has no
+   owner decision before resolving a source edit binding.
+3. **Evidence**: RuntimeEvidence Artifact hash
+   `566a8a6554da0211bf7307d499803bea2592f7b3b927d1d6dcc6abe0abe574a6`;
+   `run_result.json` hash
+   `98a94df597e5f8c05b2acdf3b9767c3bffe4ac923c9588bf61e6fa134d6d1797`;
+   focused existing-behavior tests passed 5/5. A wider 80-test command retained
+   one already documented retry-budget failure and is not a green baseline.
+4. **Input representation**: current RuntimeEvidence preserves acceptance,
+   trust, evidence items, provider-specific failure detail, limitations, and
+   Artifact lineage, but it does not preserve one provider-neutral decision
+   about which layer owns the failure. Reducing all failures to
+   `failed`/`inconclusive` loses the distinction required by repair routing.
+5. **Target postcondition**: every failed RuntimeEvidence reaching repair
+   planning has a durable, inspectable ownership decision. Only a
+   product-behavior failure with current bound source evidence may enter the
+   existing Proposal/Review repair path. Observation, environment, provider,
+   permission, and unknown failures end with owner-specific required actions
+   and no source repair.
+6. **Reused contracts**: existing RuntimeEvidence and its Artifact hash,
+   `RepairPlanner`, `repair_plan`, `route_after_runtime_evidence`,
+   `create_repair_plan`, `blocked_report`, Eval, Terminal, ArtifactStore
+   freshness, and current permission/admission contracts.
+7. **State/Artifact delta**: add the smallest provider-neutral ownership fact
+   needed by RuntimeEvidence and persist the decision through existing
+   `repair_plan` fields and blockers. Do not add a Workflow state service,
+   exception hierarchy, or repair controller.
+8. **Context and tool-I/O effect**: ownership is a bounded structured summary,
+   not raw log duplication. Existing raw-output truncation and Artifact
+   persistence remain unchanged; detailed provider output stays in its current
+   evidence location.
+9. **Side effects and idempotence**: classification and planning are
+   deterministic and no-write outside ArtifactStore. H3 does not automatically
+   repeat Runtime, model, Proposal, Apply, or Build. Any later Runtime action
+   still requires fresh current admission.
+10. **Failure ownership**: product behavior may authorize bounded source repair
+    only after existing binding checks; Runtime observation belongs to the
+    observation layer; environment belongs to the execution environment;
+    provider belongs to the selected Runtime provider; permission belongs to
+    Admission/human authority; Build remains on the existing Build route;
+    unknown fails closed without source authority.
+11. **Focused acceptance**: prove product-behavior positive routing;
+    observation, environment, provider, permission, and unknown negative
+    routing; missing or malformed ownership fail-closed behavior; Artifact
+    hash/tamper rejection; unchanged Proposal/Apply/Build revision counts for
+    non-source owners; and preservation of the existing Build repair route.
+12. **Claim ceiling**: local deterministic routing only. It does not prove
+    semantic root-cause accuracy, real Runtime recovery, cross-environment
+    operation, autonomous provider retry, or production concurrency.
+13. **Non-goals**: H1.2 side-effect recovery, H2 lifecycle unification, H4
+    provider hierarchy, H5 evaluation expansion, H6 tracing expansion,
+    additional Runtime providers, model changes, and GTFO acceptance reruns.
+14. **Stop condition**: stop at the first focused result that satisfies item 11
+    or at one immutable conflict requiring a second control plane, new external
+    authority, or unrepresentable provider fact. Then perform Phase B document
+    repair and do not select another boundary in the same round.
+15. **Rollback/removal**: the deterministic classifier and current GTFO mapping
+    remain replaceable modules. Persisted RuntimeEvidence and repair-plan
+    Artifacts must remain readable; removal may not reinterpret historical
+    hashes or grant source-repair authority to older ownerless evidence.
+16. **Authority-document repair plan**: after Phase A, repair
+    `PROJECT_STATE`, affected `SPEC_COVERAGE_MATRIX` rows,
+    `ARCHITECTURE_OVERVIEW` only if responsibility actually changes,
+    `ACTIVE_PRODUCT_CONTRACT` only if the daily contract changes,
+    `IMPLEMENTATION_QUEUE`, `LOOP_HISTORY`, and this Transition.
+
+This admission activates only the bounded H3 task above. It does not claim that
+H3 is implemented and does not activate H1.2, H2, or H4-H6.
 
 H1.1 closed with this observed result:
 

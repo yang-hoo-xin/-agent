@@ -10,7 +10,7 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: None
+current_queue: AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
 selected_product_request: None
 ```
 
@@ -18,6 +18,63 @@ selected_product_request: None
 `docs/audits/LOOP_HISTORY.md`. No H1.2 or H2-H6 task is selected
 automatically. A later Harness boundary requires a new section 9 admission
 review from `docs/audits/AGENT_HARNESS_TRANSITION.md`.
+
+### AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
+
+```text
+task_id: AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
+product_request_or_failure:
+  H3 bounded Runtime failure ownership and repair routing. Preserved real run
+  ec71c3a5 lost the earlier Chainloader marker through Harness output
+  truncation, then stopped at blocked through REPAIR_SCOPE_UNRESOLVED even
+  though the later accepted repair changed Runtime observation rather than Mod
+  source.
+exact_evidence:
+  docs/PROJECT_STATE.md records RuntimeEvidence hash
+  566a8a6554da0211bf7307d499803bea2592f7b3b927d1d6dcc6abe0abe574a6
+  and run_result.json hash
+  98a94df597e5f8c05b2acdf3b9767c3bffe4ac923c9588bf61e6fa134d6d1797;
+  route_after_runtime_evidence sends every acceptance_verified=false result to
+  create_repair_plan; _run_create_repair_plan sends every RuntimeEvidence
+  failure to RepairPlanner.from_runtime_failure; that planner derives
+  failure_class only from acceptance_status or verification_status and has no
+  failure-owner decision before source-repair scope resolution.
+affected_coverage_ids: WF-003, WF-005, EXEC-009, EXEC-010, MISS-008
+dependencies:
+  existing RuntimeEvidence, ArtifactStore hashes and lineage, RepairPlanner,
+  repair_plan, conditional graph routes, blocked_report, Eval, Terminal, and
+  current permission/admission contracts; H1.2 is not a dependency.
+permissions_and_disclosure:
+  local source edits and focused tests only; no external model disclosure,
+  model call, GTFO launch, game-directory read/write, or gameplay evidence.
+files_in_scope:
+  src/mod_agent/runtime/evidence.py;
+  src/mod_agent/runtime/gtfo_automation.py;
+  src/mod_agent/repair/planner.py;
+  src/mod_agent/workflow/graph.py;
+  src/mod_agent/workflow/transitions.py;
+  src/mod_agent/artifacts/registry.py;
+  focused RuntimeEvidence, repair-loop, workflow-graph, and GTFO-provider tests.
+focused_verification:
+  python -m pytest -q tests/unit/test_runtime_evidence.py
+  tests/unit/test_repair_loop.py tests/unit/test_workflow_graph.py
+  tests/unit/test_gtfo_runtime_automation.py --tb=short -p no:cacheprovider;
+  python -m compileall -q src; git diff --check.
+stop_condition:
+  stop after focused tests prove durable provider-neutral Runtime failure
+  ownership; only product-behavior failures with existing bound source evidence
+  may enter the current Proposal/Review path; observation, environment,
+  provider, permission, and unknown failures produce an owner-specific
+  fail-closed repair/terminal result without another model, Proposal, Apply, or
+  Build; then perform Phase B authority-document repair.
+status: active
+```
+
+The affected baseline currently has one separately recorded failure:
+`test_graph_failed_build_enters_repair_and_stops_at_retry_budget` expects
+`retry_exhausted=true` while the current result is false. H3 implementation
+must reconcile that existing same-path baseline without weakening its
+assertion or counting it as a new H3 regression.
 
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001` completed its selected real-runtime
 claim boundary and moved to `docs/audits/LOOP_HISTORY.md`.
