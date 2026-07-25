@@ -178,6 +178,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--confirm-isolated-write", action="store_true")
     run_parser.add_argument("--allow-build", action="store_true")
+    run_parser.add_argument(
+        "--run-gtfo-runtime",
+        action="store_true",
+        help=(
+            "Continue the admitted run after Build through configured GTFO Runtime "
+            "Verification, Evaluation, and Terminal Record."
+        ),
+    )
+    run_parser.add_argument(
+        "--allow-game-launch",
+        action="store_true",
+        help=(
+            "Authorize this run only to launch GTFO through the configured Runtime "
+            "profile; requires --run-gtfo-runtime."
+        ),
+    )
+    run_parser.add_argument(
+        "--runtime-plugin-destination",
+        help=(
+            "Absolute game-directory DLL path for the verified final Build; "
+            "requires Runtime and game-directory write approval."
+        ),
+    )
+    run_parser.add_argument(
+        "--allow-game-directory-write",
+        action="store_true",
+        help=(
+            "Authorize this run only to deploy the verified final DLL and restore "
+            "the destination after Runtime capture."
+        ),
+    )
 
     return parser
 
@@ -348,6 +379,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 confirm_isolated_write=bool(args.confirm_isolated_write),
                 allow_build=bool(args.allow_build),
                 allow_source_disclosure=bool(args.allow_source_disclosure),
+                run_gtfo_runtime=bool(args.run_gtfo_runtime),
+                allow_game_launch=bool(args.allow_game_launch),
+                runtime_plugin_destination=args.runtime_plugin_destination,
+                allow_game_directory_write=bool(args.allow_game_directory_write),
                 diff_approval_reader=read_diff_approval,
                 local_ollama=bool(args.local_ollama),
                 ollama_base_url=args.ollama_base_url,
@@ -356,9 +391,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ollama_context_window=args.ollama_context_window,
             )
         except LocalEntryError as exc:
-            print(json.dumps({"status": "BLOCKED", "reason": str(exc)}, ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    {"status": "BLOCKED", "reason": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.run_gtfo_runtime:
+            return (
+                0
+                if (
+                    result.get("current_stage") == "done"
+                    and result.get("runtime_summary", {}).get(
+                        "claims_real_runtime_success"
+                    )
+                    is True
+                )
+                else 1
+            )
         return (
             0
             if result.get("build_summary", {}).get("claims_real_build_success") is True

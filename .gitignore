@@ -102,6 +102,7 @@ cache/
 logs/
 /artifacts/
 /workspaces/
+/r/
 generated_mods/
 *.dll
 *.pdb

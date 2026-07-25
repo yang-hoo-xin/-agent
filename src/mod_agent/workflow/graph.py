@@ -1285,6 +1285,7 @@ def _run_runtime_evidence(
         "plugin_marker_binding": payload["plugin_marker_binding"],
         "screenshot_refs": payload["screenshot_refs"],
         "runtime_trust_binding": payload["runtime_trust_binding"],
+        "plugin_deployment_binding": payload.get("plugin_deployment_binding"),
         "non_goal_preservation": payload["non_goal_preservation"],
     }
     _record_artifact(next_state, "runtime_evidence", artifact_ref)

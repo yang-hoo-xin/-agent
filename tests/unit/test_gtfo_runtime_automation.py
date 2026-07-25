@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,6 +20,7 @@ from src.mod_agent.runtime import (
     make_gtfo_runtime_evidence_factory_from_settings,
     profile_from_settings,
 )
+from src.mod_agent.runtime import gtfo_automation as gtfo_automation_module
 
 
 ACCEPTANCE_CRITERION = "Requested behavior is implemented: make Load enable diagnostics"
@@ -326,6 +328,368 @@ def test_gtfo_runtime_missing_acceptance_marker_is_inconclusive(tmp_path: Path) 
         ]
         == "blocked"
     )
+
+
+def test_gtfo_runtime_default_collector_rejects_prelaunch_marker_history(
+    tmp_path: Path,
+) -> None:
+    profile = replace(
+        _profile(tmp_path),
+        timeout_seconds=0.03,
+        poll_interval_seconds=0.01,
+    )
+    log_path = tmp_path / "BepInEx" / "LogOutput.log"
+    log_path.parent.mkdir()
+    log_path.write_text(
+        f"OLD_SENTINEL\n{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
+        encoding="utf-8",
+    )
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=lambda _: GTFOProcessHandle(pid=4242),
+        screenshot_capturer=lambda _, __: None,
+    )
+
+    assert payload["acceptance_verified"] is False
+    assert payload["raw_supplied_output"] == ""
+    current_logs = payload["runtime_trust_binding"]["checks"]["current_run_logs"]
+    assert current_logs["run_boundary_status"] == "prelaunch_byte_boundary"
+    assert current_logs["source_windows"][0]["run_local_size_bytes"] == 0
+
+
+def test_gtfo_runtime_default_collector_accepts_only_post_launch_appended_markers(
+    tmp_path: Path,
+) -> None:
+    profile = replace(
+        _profile(tmp_path),
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.01,
+    )
+    log_path = tmp_path / "BepInEx" / "LogOutput.log"
+    log_path.parent.mkdir()
+    log_path.write_text(
+        f"OLD_SENTINEL\n{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
+        encoding="utf-8",
+    )
+
+    def launcher(_: GTFORealRuntimeProfile) -> GTFOProcessHandle:
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(f"NEW_RUN\n{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n")
+        return GTFOProcessHandle(pid=4242)
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=launcher,
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_001",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_001",
+        ),
+    )
+
+    assert payload["acceptance_verified"] is True
+    assert "NEW_RUN" in payload["raw_supplied_output"]
+    assert "OLD_SENTINEL" not in payload["raw_supplied_output"]
+    current_logs = payload["runtime_trust_binding"]["checks"]["current_run_logs"]
+    assert current_logs["status"] == "passed"
+    assert current_logs["run_boundary_status"] == "prelaunch_byte_boundary"
+    assert (
+        current_logs["source_windows"][0]["mode"]
+        == "appended_after_prelaunch_boundary"
+    )
+
+
+def test_gtfo_runtime_log_boundary_allows_one_unused_pending_log_path(
+    tmp_path: Path,
+) -> None:
+    profile = replace(
+        _profile(tmp_path),
+        log_paths=("BepInEx/LogOutput.log", "BepInEx/logs/LogOutput.log"),
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.01,
+    )
+    log_path = tmp_path / "BepInEx" / "LogOutput.log"
+    log_path.parent.mkdir()
+    log_path.write_text("OLD_SENTINEL\n", encoding="utf-8")
+
+    def launcher(_: GTFORealRuntimeProfile) -> GTFOProcessHandle:
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write(f"{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n")
+        return GTFOProcessHandle(pid=4242)
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=launcher,
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_001",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_001",
+        ),
+    )
+
+    current_logs = payload["runtime_trust_binding"]["checks"]["current_run_logs"]
+    assert payload["acceptance_verified"] is True
+    assert current_logs["status"] == "passed"
+    assert [window["status"] for window in current_logs["source_windows"]] == [
+        "passed",
+        "pending",
+    ]
+
+
+def test_gtfo_runtime_log_limit_preserves_newest_marker_tail(
+    tmp_path: Path,
+) -> None:
+    profile = replace(
+        _profile(tmp_path),
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.01,
+        output_limit_chars=80,
+    )
+    log_path = tmp_path / "BepInEx" / "LogOutput.log"
+    log_path.parent.mkdir()
+    log_path.write_text("OLD_SENTINEL\n", encoding="utf-8")
+
+    def launcher(_: GTFORealRuntimeProfile) -> GTFOProcessHandle:
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write("x" * 200)
+            stream.write(f"\n{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n")
+        return GTFOProcessHandle(pid=4242)
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=launcher,
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_001",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_001",
+        ),
+    )
+
+    assert payload["acceptance_verified"] is True
+    assert STARTUP_MARKER in payload["raw_supplied_output"]
+    assert payload["raw_supplied_output"].rstrip().endswith(ACCEPTANCE_MARKER)
+    assert payload["runtime_trust_binding"]["checks"]["current_run_logs"][
+        "truncated"
+    ] is True
+
+
+def test_gtfo_runtime_marker_observations_survive_head_tail_split(
+    tmp_path: Path,
+) -> None:
+    profile = replace(
+        _profile(tmp_path),
+        timeout_seconds=0.2,
+        poll_interval_seconds=0.01,
+        output_limit_chars=80,
+    )
+    log_path = tmp_path / "BepInEx" / "LogOutput.log"
+    log_path.parent.mkdir()
+    full_content = f"{STARTUP_MARKER}\n{'x' * 200}\n{ACCEPTANCE_MARKER}\n"
+
+    def launcher(_: GTFORealRuntimeProfile) -> GTFOProcessHandle:
+        log_path.write_text(full_content, encoding="utf-8")
+        return GTFOProcessHandle(pid=4242)
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=launcher,
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_001",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_001",
+        ),
+    )
+
+    assert STARTUP_MARKER not in payload["raw_supplied_output"]
+    assert payload["raw_supplied_output"].rstrip().endswith(ACCEPTANCE_MARKER)
+    assert payload["acceptance_verified"] is True
+    assert payload["runtime_trust_binding"]["checks"]["plugin_load_marker"][
+        "status"
+    ] == "passed"
+    observations = payload["gtfo_markers"]["marker_observations"]
+    assert [item["marker"] for item in observations] == [
+        STARTUP_MARKER,
+        ACCEPTANCE_MARKER,
+    ]
+    assert all(item["observed"] is True for item in observations)
+    assert observations[0]["run_local_character_offset"] == 0
+    assert (
+        observations[1]["run_local_character_offset"]
+        > observations[0]["run_local_character_offset"]
+    )
+    assert [item["excerpt"] for item in observations] == [
+        STARTUP_MARKER,
+        ACCEPTANCE_MARKER,
+    ]
+    assert all(item["excerpt_truncated"] is False for item in observations)
+    assert {
+        item["observation_scope"] for item in observations
+    } == {"pre_truncation_run_local_content"}
+    assert payload["evidence_items"][0]["raw_excerpt"] == ACCEPTANCE_MARKER
+
+
+def test_gtfo_runtime_marker_observations_do_not_invent_missing_startup(
+    tmp_path: Path,
+) -> None:
+    profile = replace(
+        _profile(tmp_path),
+        timeout_seconds=0.05,
+        poll_interval_seconds=0.01,
+        output_limit_chars=80,
+    )
+    log_path = tmp_path / "BepInEx" / "LogOutput.log"
+    log_path.parent.mkdir()
+    full_content = f"{'x' * 200}\n{ACCEPTANCE_MARKER}\n"
+
+    def launcher(_: GTFORealRuntimeProfile) -> GTFOProcessHandle:
+        log_path.write_text(full_content, encoding="utf-8")
+        return GTFOProcessHandle(pid=4242)
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=launcher,
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_001",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_001",
+        ),
+    )
+
+    assert payload["startup_loaded"] is False
+    assert payload["acceptance_verified"] is False
+    startup_check = payload["runtime_trust_binding"]["checks"][
+        "plugin_load_marker"
+    ]
+    assert startup_check["status"] == "blocked"
+    assert startup_check["marker_observations"] == [
+        {
+            "marker": STARTUP_MARKER,
+            "observed": False,
+            "run_local_character_offset": None,
+            "excerpt": None,
+            "excerpt_truncated": False,
+            "observation_scope": "pre_truncation_run_local_content",
+        }
+    ]
+
+
+def test_gtfo_runtime_records_liveness_before_configured_termination(
+    tmp_path: Path,
+) -> None:
+    profile = replace(_profile(tmp_path), terminate_after_capture=True)
+
+    class Process:
+        def __init__(self) -> None:
+            self.terminated = False
+
+        def poll(self) -> int | None:
+            return 0 if self.terminated else None
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def wait(self, timeout: int) -> int:
+            return 0
+
+    process = Process()
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=lambda _: GTFOProcessHandle(pid=4242, process=process),
+        log_collector=lambda _, __: GTFOLogSnapshot(
+            content=f"{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
+            sources=(str(tmp_path / "BepInEx" / "LogOutput.log"),),
+        ),
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_001",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_001",
+        ),
+    )
+
+    assert process.terminated is True
+    assert payload["runtime_process"]["liveness_observed"] is True
+    assert (
+        payload["runtime_trust_binding"]["checks"]["runtime_process_identity"][
+            "status"
+        ]
+        == "passed"
+    )
+
+
+def test_desktop_screenshot_passes_output_path_through_dedicated_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = _profile(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_run(command: tuple[str, ...], **kwargs: object) -> SimpleNamespace:
+        captured["command"] = command
+        captured["env"] = kwargs["env"]
+        output = Path(str(kwargs["env"]["MOD_AGENT_SCREENSHOT_OUTPUT"]))
+        output.write_bytes(b"png")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(gtfo_automation_module.subprocess, "run", fake_run)
+
+    screenshot = gtfo_automation_module._capture_desktop_screenshot(
+        profile,
+        "feature_001",
+    )
+
+    expected = (tmp_path / "screenshots" / "feature_001_gtfo_runtime.png").resolve()
+    assert screenshot is not None
+    assert screenshot.file_path == str(tmp_path / "screenshots" / expected.name)
+    assert captured["command"][:3] == ("powershell", "-NoProfile", "-Command")
+    assert captured["env"]["MOD_AGENT_SCREENSHOT_OUTPUT"] == str(expected)
 
 
 def test_gtfo_runtime_missing_acceptance_marker_blocks_before_launch(

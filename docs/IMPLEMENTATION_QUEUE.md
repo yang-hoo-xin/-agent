@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -19,6 +19,10 @@ claim boundary and moved to `docs/audits/LOOP_HISTORY.md`. No replacement task
 is selected automatically. The next queue item requires a concrete product
 request, an observed failure, or a bounded product decision with current
 evidence and explicit permissions.
+
+`V2-RUNTIME-TERMINAL-CHAIN-001` also completed and moved to
+`docs/audits/LOOP_HISTORY.md`; it does not leave a continuing infrastructure
+task in the active queue.
 
 The two known Harness observability defects remain recorded but do not activate
 a platform task by themselves: successful raw Patch Generation response

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import time
 from collections.abc import Callable, Mapping
@@ -65,6 +66,21 @@ class GTFOLogSnapshot:
     content: str
     sources: tuple[str, ...]
     truncated: bool = False
+    run_boundary_status: str = "collector_asserted_current_run"
+    source_windows: tuple[Mapping[str, Any], ...] = ()
+    marker_observations: tuple[Mapping[str, Any], ...] | None = None
+
+
+@dataclass(frozen=True)
+class _GTFOLogFileBaseline:
+    """Pre-launch byte identity for one configured persistent log."""
+
+    path: str
+    existed: bool
+    size_bytes: int
+    content_sha256: str | None
+    mtime_ns: int | None
+    captured_at_ns: int
 
 
 ProcessLauncher = Callable[[GTFORealRuntimeProfile], GTFOProcessHandle]
@@ -248,10 +264,18 @@ class GTFORealRuntimeAutomationRunner:
             _validate_real_profile(profile)
 
             launcher = process_launcher or _launch_gtfo_process
-            collector = log_collector or _collect_persistent_logs
             capturer = screenshot_capturer or _capture_desktop_screenshot
+            log_baselines = _capture_log_baselines(profile)
+            collector = log_collector or (
+                lambda active_profile, criteria: _collect_persistent_logs(
+                    active_profile,
+                    criteria,
+                    baselines=log_baselines,
+                )
+            )
 
             process_handle = launcher(profile)
+            process_liveness_observed = _process_liveness_observed(process_handle)
             log_snapshot = collector(profile, acceptance_criteria)
             screenshot = capturer(profile, feature_id)
         except Exception as exc:
@@ -273,6 +297,7 @@ class GTFORealRuntimeAutomationRunner:
             feature_id=feature_id,
             profile=profile,
             process_handle=process_handle,
+            process_liveness_observed=process_liveness_observed,
             log_snapshot=log_snapshot,
             screenshot=screenshot,
             acceptance_criteria=acceptance_criteria,
@@ -413,10 +438,14 @@ def _launch_gtfo_process(profile: GTFORealRuntimeProfile) -> GTFOProcessHandle:
 def _collect_persistent_logs(
     profile: GTFORealRuntimeProfile,
     acceptance_criteria: tuple[str, ...],
+    *,
+    baselines: tuple[_GTFOLogFileBaseline, ...] | None = None,
 ) -> GTFOLogSnapshot:
+    active_baselines = baselines or _capture_log_baselines(profile)
     started = time.monotonic()
     latest_content = ""
     latest_sources: tuple[str, ...] = ()
+    latest_windows: tuple[Mapping[str, Any], ...] = ()
     wanted_markers = tuple(
         marker
         for marker in (
@@ -430,28 +459,137 @@ def _collect_persistent_logs(
         if marker
     )
     while time.monotonic() - started <= profile.timeout_seconds:
-        latest_content, latest_sources = _read_runtime_logs(profile)
+        latest_content, latest_sources, latest_windows = _read_run_local_runtime_logs(
+            active_baselines
+        )
         if wanted_markers and all(marker in latest_content for marker in wanted_markers):
             break
         time.sleep(profile.poll_interval_seconds)
     content, truncated = _limit_text(latest_content, profile.output_limit_chars)
-    return GTFOLogSnapshot(content=content, sources=latest_sources, truncated=truncated)
+    passed_windows = tuple(
+        window for window in latest_windows if window.get("status") == "passed"
+    )
+    blocked_windows = tuple(
+        window for window in latest_windows if window.get("status") == "blocked"
+    )
+    boundary_passed = bool(passed_windows) and not blocked_windows
+    return GTFOLogSnapshot(
+        content=content,
+        sources=latest_sources,
+        truncated=truncated,
+        run_boundary_status=(
+            "prelaunch_byte_boundary" if boundary_passed else "blocked"
+        ),
+        source_windows=latest_windows,
+        marker_observations=_observe_markers(
+            latest_content,
+            wanted_markers,
+            observation_scope="pre_truncation_run_local_content",
+        ),
+    )
 
 
-def _read_runtime_logs(profile: GTFORealRuntimeProfile) -> tuple[str, tuple[str, ...]]:
+def _capture_log_baselines(
+    profile: GTFORealRuntimeProfile,
+) -> tuple[_GTFOLogFileBaseline, ...]:
     working_directory = Path(profile.working_directory)
-    parts: list[str] = []
-    sources: list[str] = []
+    captured_at_ns = time.time_ns()
+    baselines: list[_GTFOLogFileBaseline] = []
     for configured_path in profile.log_paths:
         path = Path(configured_path)
         if not path.is_absolute():
             path = working_directory / path
-        if not path.exists() or not path.is_file():
+        if path.is_file():
+            content = path.read_bytes()
+            stat_result = path.stat()
+            baselines.append(
+                _GTFOLogFileBaseline(
+                    path=str(path),
+                    existed=True,
+                    size_bytes=len(content),
+                    content_sha256=hashlib.sha256(content).hexdigest(),
+                    mtime_ns=stat_result.st_mtime_ns,
+                    captured_at_ns=captured_at_ns,
+                )
+            )
+        else:
+            baselines.append(
+                _GTFOLogFileBaseline(
+                    path=str(path),
+                    existed=False,
+                    size_bytes=0,
+                    content_sha256=None,
+                    mtime_ns=None,
+                    captured_at_ns=captured_at_ns,
+                )
+            )
+    return tuple(baselines)
+
+
+def _read_run_local_runtime_logs(
+    baselines: tuple[_GTFOLogFileBaseline, ...],
+) -> tuple[str, tuple[str, ...], tuple[Mapping[str, Any], ...]]:
+    parts: list[str] = []
+    sources: list[str] = []
+    windows: list[Mapping[str, Any]] = []
+    for baseline in baselines:
+        path = Path(baseline.path)
+        if not path.is_file():
+            windows.append(
+                {
+                    "path": baseline.path,
+                    "status": "pending",
+                    "mode": "not_created_after_launch",
+                    "baseline_size_bytes": baseline.size_bytes,
+                    "current_size_bytes": None,
+                }
+            )
             continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        parts.append(text)
-        sources.append(str(path))
-    return ("\n".join(parts), tuple(sources))
+        content = path.read_bytes()
+        stat_result = path.stat()
+        current_size = len(content)
+        run_bytes: bytes | None = None
+        mode: str
+        if baseline.existed and current_size >= baseline.size_bytes:
+            prefix = content[: baseline.size_bytes]
+            if hashlib.sha256(prefix).hexdigest() == baseline.content_sha256:
+                run_bytes = content[baseline.size_bytes :]
+                mode = "appended_after_prelaunch_boundary"
+            elif stat_result.st_mtime_ns >= baseline.captured_at_ns:
+                run_bytes = content
+                mode = "replaced_or_truncated_after_prelaunch_boundary"
+            else:
+                mode = "prefix_identity_mismatch"
+        elif stat_result.st_mtime_ns >= baseline.captured_at_ns:
+            run_bytes = content
+            mode = "created_or_truncated_after_prelaunch_boundary"
+        else:
+            mode = "no_verified_post_launch_window"
+        if run_bytes is None:
+            windows.append(
+                {
+                    "path": baseline.path,
+                    "status": "blocked",
+                    "mode": mode,
+                    "baseline_size_bytes": baseline.size_bytes,
+                    "current_size_bytes": current_size,
+                }
+            )
+            continue
+        parts.append(run_bytes.decode("utf-8", errors="replace"))
+        sources.append(baseline.path)
+        windows.append(
+            {
+                "path": baseline.path,
+                "status": "passed",
+                "mode": mode,
+                "baseline_size_bytes": baseline.size_bytes,
+                "current_size_bytes": current_size,
+                "run_local_size_bytes": len(run_bytes),
+                "run_local_sha256": hashlib.sha256(run_bytes).hexdigest(),
+            }
+        )
+    return ("\n".join(parts), tuple(sources), tuple(windows))
 
 
 def _capture_desktop_screenshot(
@@ -468,16 +606,20 @@ def _capture_desktop_screenshot(
         "$bitmap=New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height; "
         "$graphics=[System.Drawing.Graphics]::FromImage($bitmap); "
         "$graphics.CopyFromScreen($bounds.Location,[System.Drawing.Point]::Empty,$bounds.Size); "
-        "$bitmap.Save($args[0],[System.Drawing.Imaging.ImageFormat]::Png); "
+        "$bitmap.Save($env:MOD_AGENT_SCREENSHOT_OUTPUT,[System.Drawing.Imaging.ImageFormat]::Png); "
         "$graphics.Dispose(); $bitmap.Dispose();"
     )
     completed = subprocess.run(
-        ("powershell", "-NoProfile", "-Command", script, str(output_path)),
+        ("powershell", "-NoProfile", "-Command", script),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         check=False,
         timeout=profile.screenshot_timeout_seconds,
+        env={
+            **os.environ,
+            "MOD_AGENT_SCREENSHOT_OUTPUT": str(output_path.resolve()),
+        },
     )
     if completed.returncode != 0 or not output_path.exists():
         return None
@@ -498,6 +640,7 @@ def _payload_from_runtime_observations(
     feature_id: str,
     profile: GTFORealRuntimeProfile,
     process_handle: GTFOProcessHandle,
+    process_liveness_observed: bool,
     log_snapshot: GTFOLogSnapshot,
     screenshot: ScreenshotMetadata | None,
     acceptance_criteria: tuple[str, ...],
@@ -505,14 +648,32 @@ def _payload_from_runtime_observations(
     input_execution_mode: str | None,
     capability_report: Mapping[str, Any],
 ) -> dict[str, Any]:
+    marker_observations = (
+        tuple(dict(item) for item in log_snapshot.marker_observations)
+        if log_snapshot.marker_observations is not None
+        else _observe_markers(
+            log_snapshot.content,
+            (
+                *profile.startup_markers,
+                *(
+                    profile.acceptance_markers[criterion]
+                    for criterion in acceptance_criteria
+                    if criterion in profile.acceptance_markers
+                ),
+            ),
+            observation_scope="collector_snapshot_content",
+        )
+    )
     startup_loaded = _startup_loaded(
         log_snapshot.content,
         startup_markers=profile.startup_markers,
+        marker_observations=marker_observations,
     )
     supported_criteria = _supported_criteria(
         log_snapshot.content,
         acceptance_criteria=acceptance_criteria,
         acceptance_markers=profile.acceptance_markers,
+        marker_observations=marker_observations,
     )
     missing_marker_config = [
         criterion
@@ -542,8 +703,8 @@ def _payload_from_runtime_observations(
                 if criterion in supported_criteria
             ),
             confidence=1.0,
-            raw_excerpt=_first_marker_line(
-                log_snapshot.content,
+            raw_excerpt=_first_observed_marker_excerpt(
+                marker_observations,
                 tuple(
                     profile.acceptance_markers[criterion]
                     for criterion in supported_criteria
@@ -569,7 +730,7 @@ def _payload_from_runtime_observations(
         "profile_id": profile.profile_id,
         "pid": process_handle.pid,
         "launched": True,
-        "liveness_observed": _process_liveness_observed(process_handle),
+        "liveness_observed": process_liveness_observed,
     }
     runtime_trust_binding = _runtime_trust_binding(
         feature_id=feature_id,
@@ -582,6 +743,7 @@ def _payload_from_runtime_observations(
         missing_marker_config=missing_marker_config,
         missing_observations=missing_observations,
         plugin_marker_binding=plugin_marker_binding,
+        marker_observations=marker_observations,
     )
     payload = build_real_runtime_evidence_payload(
         feature_id=feature_id,
@@ -619,6 +781,7 @@ def _payload_from_runtime_observations(
     payload["gtfo_markers"] = {
         "startup_markers": list(profile.startup_markers),
         "startup_loaded": startup_loaded,
+        "marker_observations": [dict(item) for item in marker_observations],
         "acceptance_markers_configured": [
             {
                 "acceptance_criterion": criterion,
@@ -743,9 +906,19 @@ def _payload_from_runtime_failure(
     return payload
 
 
-def _startup_loaded(output: str, *, startup_markers: tuple[str, ...]) -> bool:
+def _startup_loaded(
+    output: str,
+    *,
+    startup_markers: tuple[str, ...],
+    marker_observations: tuple[Mapping[str, Any], ...] | None = None,
+) -> bool:
     if not startup_markers:
         return bool(output.strip())
+    if marker_observations is not None:
+        return all(
+            _marker_was_observed(marker_observations, marker)
+            for marker in startup_markers
+        )
     return all(marker in output for marker in startup_markers)
 
 
@@ -754,20 +927,97 @@ def _supported_criteria(
     *,
     acceptance_criteria: tuple[str, ...],
     acceptance_markers: Mapping[str, str],
+    marker_observations: tuple[Mapping[str, Any], ...] | None = None,
 ) -> set[str]:
     return {
         criterion
         for criterion in acceptance_criteria
         if acceptance_markers.get(criterion)
-        and acceptance_markers[criterion] in output
+        and (
+            _marker_was_observed(
+                marker_observations,
+                acceptance_markers[criterion],
+            )
+            if marker_observations is not None
+            else acceptance_markers[criterion] in output
+        )
     }
 
 
-def _first_marker_line(output: str, markers: tuple[str, ...]) -> str | None:
-    for line in output.splitlines():
-        if any(marker in line for marker in markers):
-            return line
+def _first_observed_marker_excerpt(
+    marker_observations: tuple[Mapping[str, Any], ...],
+    markers: tuple[str, ...],
+) -> str | None:
+    for marker in markers:
+        for observation in marker_observations:
+            if (
+                observation.get("marker") == marker
+                and observation.get("observed") is True
+                and isinstance(observation.get("excerpt"), str)
+                and observation["excerpt"]
+            ):
+                return str(observation["excerpt"])
     return None
+
+
+def _observe_markers(
+    output: str,
+    markers: tuple[str, ...],
+    *,
+    observation_scope: str,
+) -> tuple[Mapping[str, Any], ...]:
+    observations: list[Mapping[str, Any]] = []
+    for marker in dict.fromkeys(item for item in markers if item):
+        offset = output.find(marker)
+        excerpt, excerpt_truncated = _marker_excerpt(
+            output,
+            marker=marker,
+            offset=offset,
+        )
+        observations.append(
+            {
+                "marker": marker,
+                "observed": offset >= 0,
+                "run_local_character_offset": offset if offset >= 0 else None,
+                "excerpt": excerpt,
+                "excerpt_truncated": excerpt_truncated,
+                "observation_scope": observation_scope,
+            }
+        )
+    return tuple(observations)
+
+
+def _marker_was_observed(
+    marker_observations: tuple[Mapping[str, Any], ...],
+    marker: str,
+) -> bool:
+    return any(
+        observation.get("marker") == marker
+        and observation.get("observed") is True
+        for observation in marker_observations
+    )
+
+
+def _marker_excerpt(
+    output: str,
+    *,
+    marker: str,
+    offset: int,
+    max_chars: int = 1_000,
+) -> tuple[str | None, bool]:
+    if offset < 0:
+        return None, False
+    line_start = output.rfind("\n", 0, offset) + 1
+    line_end = output.find("\n", offset)
+    if line_end < 0:
+        line_end = len(output)
+    line = output[line_start:line_end].rstrip("\r")
+    if len(line) <= max_chars:
+        return line, False
+    marker_offset = offset - line_start
+    excerpt_start = max(0, marker_offset - (max_chars // 4))
+    excerpt_start = min(excerpt_start, len(line) - max_chars)
+    return line[excerpt_start : excerpt_start + max_chars], True
 
 
 def _plugin_marker_binding(
@@ -802,6 +1052,7 @@ def _runtime_trust_binding(
     missing_marker_config: list[str],
     missing_observations: list[str],
     plugin_marker_binding: Mapping[str, Any],
+    marker_observations: tuple[Mapping[str, Any], ...],
 ) -> dict[str, Any]:
     screenshot_ref = screenshot.to_dict() if screenshot is not None else None
     screenshot_feature_id = (
@@ -835,7 +1086,10 @@ def _runtime_trust_binding(
         "current_run_logs": {
             "status": (
                 "passed"
-                if process_handle.pid > 0 and bool(log_snapshot.sources)
+                if process_handle.pid > 0
+                and bool(log_snapshot.sources)
+                and log_snapshot.run_boundary_status
+                in {"prelaunch_byte_boundary", "collector_asserted_current_run"}
                 else "blocked"
             ),
             "marker_source": "gtfo_persistent_log",
@@ -843,11 +1097,18 @@ def _runtime_trust_binding(
             "collected_after_process_start": True,
             "process_pid": process_handle.pid,
             "truncated": log_snapshot.truncated,
+            "run_boundary_status": log_snapshot.run_boundary_status,
+            "source_windows": [dict(item) for item in log_snapshot.source_windows],
         },
         "plugin_load_marker": {
             "status": "passed" if startup_loaded else "blocked",
             "startup_markers": list(profile.startup_markers),
             "startup_loaded": startup_loaded,
+            "marker_observations": [
+                dict(item)
+                for item in marker_observations
+                if item.get("marker") in profile.startup_markers
+            ],
         },
         "acceptance_markers": {
             "status": (
@@ -859,6 +1120,11 @@ def _runtime_trust_binding(
             "missing_marker_config": list(missing_marker_config),
             "missing_observations": list(missing_observations),
             "markers": list(plugin_marker_binding.get("markers") or []),
+            "marker_observations": [
+                dict(item)
+                for item in marker_observations
+                if item.get("marker") in profile.acceptance_markers.values()
+            ],
         },
         "screenshot_runtime_artifact_linkage": {
             "status": (
@@ -890,7 +1156,7 @@ def _runtime_trust_binding(
 def _limit_text(text: str, limit: int) -> tuple[str, bool]:
     if len(text) <= limit:
         return text, False
-    return text[:limit], True
+    return text[-limit:], True
 
 
 def _limitations(
@@ -906,6 +1172,10 @@ def _limitations(
         limitations.append("GTFO process id was not captured.")
     if not log_snapshot.sources:
         limitations.append("No configured GTFO runtime log file was available.")
+    if log_snapshot.run_boundary_status == "blocked":
+        limitations.append(
+            "Configured GTFO logs did not establish a post-launch byte boundary."
+        )
     if log_snapshot.truncated:
         limitations.append("GTFO runtime log output was truncated before artifact storage.")
     if missing_marker_config:
@@ -928,6 +1198,16 @@ def _terminate_process(process_handle: GTFOProcessHandle) -> None:
     terminate = getattr(process, "terminate", None)
     if callable(terminate):
         terminate()
+    wait = getattr(process, "wait", None)
+    if not callable(wait):
+        return
+    try:
+        wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        kill = getattr(process, "kill", None)
+        if callable(kill):
+            kill()
+        wait(timeout=15)
 
 
 def _process_liveness_observed(process_handle: GTFOProcessHandle) -> bool:

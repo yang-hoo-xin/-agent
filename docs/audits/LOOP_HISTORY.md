@@ -3464,3 +3464,47 @@ Stop:
   inactive; another task requires a separately selected product request or
   observed failure.
 ```
+
+
+### V2-RUNTIME-TERMINAL-CHAIN-001: Admission And Same-Chain Runtime Closure
+
+```text
+Status: completed
+Module: WF, RUN, EVAL, OBS
+Product capability:
+  Let the existing run-request entry explicitly admit a configured GTFO
+  Runtime run and continue the same LangGraph/run lineage from Build through
+  Runtime Evidence, Evaluation, Workflow Summary, and run_result.json.
+Implemented:
+  - --run-gtfo-runtime selects the Runtime path.
+  - --allow-game-launch grants launch authority for that run only.
+  - Admission requires runtime.gtfo.enabled=true and a ready read-only Harness
+    capability report before graph construction.
+  - Both run manifest revisions preserve the admitted profile, capability
+    report, launch authority, and non-deployment boundary.
+  - Compile-only remains stop_after_build=true.
+  - Runtime selection injects existing settings and launch authority and uses
+    the existing graph Runtime provider.
+  - run_result.json includes runtime_summary plus build_result,
+    runtime_evidence, eval_report, and workflow_summary refs.
+  - Runtime CLI success requires terminal done plus
+    claims_real_runtime_success=true; Build success alone fails.
+Verification:
+  python -m pytest tests/unit/test_local_entry.py
+    tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py -q
+  -> 117 passed
+  python -m compileall -q src/mod_agent tests/unit/test_local_entry.py
+    tests/unit/test_mod_agent_cli.py
+  -> passed
+Permissions and actions:
+  - no GTFO process launched;
+  - no game-directory copy or deletion;
+  - no external model call.
+Limitations:
+  - run-request does not deploy the built plugin;
+  - no physical deployed-DLL hash is bound to the build output;
+  - user-supplied and system-captured screenshot trust weighting is not added;
+  - a real run through this newly connected entry remains unexecuted.
+Stop:
+  Admission and terminal-chain wiring are complete. The queue returns to None.
+```

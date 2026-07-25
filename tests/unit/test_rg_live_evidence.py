@@ -49,6 +49,118 @@ def test_rg_live_provider_preserves_crlf_for_raw_exact_patch_binding(
     assert excerpt.encode("utf-8") in raw_source
 
 
+def test_rg_live_provider_honors_one_exact_requested_source_filename(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "generated_mods" / "BetterHitFeedback"
+    plugin = root / "Plugin.cs"
+    reference = root / "Patches" / "Behavior.cs"
+    reference.parent.mkdir(parents=True)
+    plugin.write_text(
+        "public sealed class Plugin\n"
+        "{\n"
+        "    public static object LogSource { get; private set; }\n"
+        "\n"
+        "    public void Load()\n"
+        "    {\n"
+        '        LogSource.Info("signal=PLUGIN_LOADED");\n'
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    reference.write_text(
+        "public static class Behavior\n"
+        "{\n"
+        "    private static object Log => Plugin.LogSource;\n"
+        "    private static object ConfigEnabled;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query=(
+            "PLUGIN_LOADED LogSource ConfigEnabled Plugin Load startup marker. "
+            "Modify only Plugin.cs."
+        ),
+        search_root="generated_mods/BetterHitFeedback",
+    )
+
+    assert pack.can_generate_patch is True
+    assert pack.items[0].source_path == "generated_mods/BetterHitFeedback/Plugin.cs"
+    assert pack.items[0].method_name == "Load"
+    assert "signal=PLUGIN_LOADED" in pack.items[0].excerpt
+
+
+def test_rg_live_provider_preserves_exact_filename_identity_from_raw_request(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "generated_mods" / "BetterHitFeedback"
+    root.mkdir(parents=True)
+    (root / "Plugin.cs").write_text(
+        'public sealed class Plugin { string marker = "PLUGIN_LOADED"; }\n',
+        encoding="utf-8",
+    )
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="modify only plugin.cs plugin_loaded.",
+        source_identity_query="Modify only Plugin.cs PLUGIN_LOADED.",
+        search_root="generated_mods/BetterHitFeedback",
+    )
+
+    assert pack.can_generate_patch is True
+    assert pack.items[0].source_path == "generated_mods/BetterHitFeedback/Plugin.cs"
+
+
+def test_rg_live_provider_blocks_duplicate_exact_requested_source_filename(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "generated_mods" / "BetterHitFeedback"
+    for relative in ("Plugin.cs", "Nested/Plugin.cs"):
+        source = root / relative
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(
+            'public sealed class Plugin { string marker = "PLUGIN_LOADED"; }\n',
+            encoding="utf-8",
+        )
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="Modify only Plugin.cs PLUGIN_LOADED.",
+        search_root="generated_mods/BetterHitFeedback",
+    )
+
+    assert pack.can_generate_patch is False
+    assert pack.blockers[0]["message"].startswith(
+        "The explicitly requested C# filename did not resolve to exactly one current source file."
+    )
+    assert "filename='Plugin.cs'; resolved_count=2;" in pack.blockers[0]["message"]
+
+
+def test_rg_live_provider_blocks_requested_file_without_request_term_match(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "generated_mods" / "BetterHitFeedback"
+    root.mkdir(parents=True)
+    (root / "Plugin.cs").write_text(
+        "public sealed class Empty {}\n",
+        encoding="utf-8",
+    )
+    (root / "Behavior.cs").write_text(
+        'public sealed class Behavior { string marker = "PLUGIN_LOADED"; }\n',
+        encoding="utf-8",
+    )
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="Modify only Plugin.cs PLUGIN_LOADED.",
+        search_root="generated_mods/BetterHitFeedback",
+    )
+
+    assert pack.can_generate_patch is False
+    assert (
+        pack.blockers[0]["message"]
+        == "The explicitly requested C# source file contained no request-term match."
+    )
+
+
 def test_rg_live_provider_binds_enclosing_csharp_method_declaration(
     tmp_path: Path,
 ) -> None:

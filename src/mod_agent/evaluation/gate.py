@@ -566,6 +566,13 @@ def _has_trusted_runtime_binding(value: Any) -> bool:
         "acceptance_markers",
         "screenshot_runtime_artifact_linkage",
     }
+    if value.get("deployment_required") is True:
+        required_checks.update(
+            {
+                "deployed_plugin_artifact_hash",
+                "game_directory_restoration",
+            }
+        )
     return all(
         isinstance(checks.get(check_name), Mapping)
         and checks[check_name].get("status") == "passed"

@@ -9,6 +9,12 @@ from .evidence import (
     build_supplied_runtime_evidence_payload,
     bind_runtime_evidence_context,
 )
+from .deployment import (
+    RuntimePluginDeploymentError,
+    RuntimePluginDeploymentRecord,
+    bind_plugin_deployment_to_runtime_payload,
+    temporarily_deploy_verified_plugin,
+)
 from .gtfo_automation import (
     GTFOLogSnapshot,
     GTFOProcessHandle,
@@ -38,6 +44,8 @@ from .screenshots import (
 __all__ = [
     "RuntimeEvidenceError",
     "RuntimeEvidenceItem",
+    "RuntimePluginDeploymentError",
+    "RuntimePluginDeploymentRecord",
     "GTFOLogSnapshot",
     "GTFOProcessHandle",
     "GTFORealRuntimeAutomationRunner",
@@ -57,9 +65,11 @@ __all__ = [
     "build_screenshot_registry_payload",
     "build_supplied_runtime_evidence_payload",
     "bind_runtime_evidence_context",
+    "bind_plugin_deployment_to_runtime_payload",
     "make_gtfo_runtime_evidence_factory",
     "make_gtfo_runtime_evidence_factory_from_settings",
     "make_runtime_probe_evidence_factory",
     "profile_from_settings",
     "screenshot_registry_to_runtime_item",
+    "temporarily_deploy_verified_plugin",
 ]

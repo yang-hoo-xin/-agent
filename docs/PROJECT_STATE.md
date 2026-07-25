@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-23
+Last updated: 2026-07-25
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -12,9 +12,68 @@ current_queue: None
 current_documentation_task: None
 selected_product_request: None
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: PHASE2B-BETTERHITFEEDBACK-ENABLED-001
+most_recent_completed_capability: V2-RUNTIME-TERMINAL-CHAIN-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
+
+`V2-RUNTIME-TERMINAL-CHAIN-001` is implemented and focused-tested. The existing
+`run-request` entry now has an explicit Runtime Admission boundary:
+`--run-gtfo-runtime` selects the existing settings-driven GTFO Runtime provider,
+and `--allow-game-launch` grants launch authority for that run only. Runtime
+selection requires `runtime.gtfo.enabled=true`, a ready read-only Harness
+capability report, and the same-run launch authorization before the graph is
+constructed. At this capability's completion checkpoint, the admitted profile,
+capability report, authorization, and the then-current absence of plugin
+deployment and deployed-DLL hash verification were persisted in both manifest
+revisions.
+
+Compile-only requests retain `stop_after_build=true`. An admitted Runtime
+request instead injects the selected settings and launch authority into the
+same LangGraph and continues through `build_result -> runtime_evidence ->
+eval_report -> workflow_summary`. `run_result.json` now projects the Runtime
+summary and all four Artifact refs under one `run_id`; the chain-complete flag
+requires terminal stage `done` and every ref. The CLI returns Runtime success
+only when the terminal stage is `done` and
+`claims_real_runtime_success=true`; Build success alone is insufficient. The
+focused command covering local entry, CLI, and workflow graph passed 117 tests,
+and compileall passed. No GTFO process was launched and no game-directory file
+was copied during that implementation verification.
+
+Current working-tree source subsequently extended the same admitted Runtime
+path with run-scoped DLL deployment, source/expected/destination SHA256
+verification, and post-run restoration. Real automated run `e1edc4f9`
+under `workspaces/runtime_chain_001/e1edc4f9` exercised those physical actions
+and launched GTFO, but ended `inconclusive` because the observation path missed
+a marker beyond the retained log prefix.
+The log-tail, unused-fallback-path, pre-termination liveness, and screenshot
+output-path repairs passed 147 affected local tests. Post-repair real run
+`ec71c3a5` under `workspaces/runtime_chain_postfix_001/ec71c3a5` then proved
+tail retention of `chain_probe=true`, current-log acceptance despite one unused
+pending fallback, process liveness, screenshot path isolation, deployed-DLL
+SHA256 binding, and restoration. It still ended `inconclusive`: the retained
+20,000-character tail omitted the earlier `Chainloader` startup marker, so
+`plugin_load_marker` blocked even though the acceptance marker passed. The
+current bounded repair now derives structured startup and acceptance marker
+observations from the complete run-local log content before raw-output
+truncation. It persists only the observed flag, run-local character offset,
+bounded excerpt, excerpt-truncation flag, and observation scope; the raw log
+projection remains limited to its newest 20,000 characters. The affected local
+command passes 149 tests, including a head-startup/tail-acceptance regression
+and a missing-startup negative case. No real run after this exact repair has
+reached accepted same-run terminal closure.
+Deterministic authority distinguishing user-supplied from system-captured
+screenshots also remains unproved.
+
+A 2026-07-25 read-only preflight against the exact `ec71c3a5` Runtime profile,
+with launch authority deliberately disabled, found the physical executable,
+working directory, log configuration, screenshot configuration, startup
+markers, and acceptance-marker mapping ready; its only capability blocker was
+the absent explicit launch authorization, and no process was launched. The
+current repository settings remain Runtime-disabled and require a reviewed
+run-local profile before any later run. A separate resume audit found no
+checkpoint, resume report, or CLI entry capable of resuming `ec71c3a5` at
+`collect_runtime_evidence`; its historical Artifacts support diagnosis but not
+Runtime-boundary continuation.
 
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001` is complete for its selected claim
 boundary. A read-only preflight bound GTFO executable SHA256
@@ -45,6 +104,13 @@ This reaches the proposed V2TA/M Phase 2B checkpoint for one meaningful product
 behavior slice. It does not activate optional Phase 3 or establish
 cross-environment, long-duration, every-route, or fully automated Harness
 runtime verification.
+
+### 1.1 Historical Phase 2B Execution Records
+
+The records below preserve the exact progression and then-current claim
+boundaries that led to the completed state above. Statements that a run had not
+yet reached Runtime or Phase 2B completion apply to that recorded checkpoint;
+they do not override the current selection at the top of this section.
 
 `V2-LOCAL-PROVIDER-ADMISSION-001` is complete. The existing complete
 `run-request` entry now accepts the same four local Ollama arguments as the
@@ -409,13 +475,13 @@ The run is immutable and terminally bound by `run_failure.json` SHA256
 `adaaa53783906dd1aa5bfb3aa999ae3ca9df15f54d2679940c14980e31365b2d`.
 The one-call authorization is exhausted.
 
-Harness reliability remains an active diagnostic consideration for Phase 2B.
-Recent records must continue to classify failures separately as workspace/build
-integration defects, provider-request defects, model-output defects, or correct
-deterministic gate rejections. Repeated verified failures across more than one
-stage after their bounded repairs may justify a focused simplification decision;
-one failure does not authorize a general Harness rewrite, weaker gates, a new
-Agent layer, or automatic retry.
+At this pre-closure checkpoint, Harness reliability remained an active
+diagnostic consideration for Phase 2B. The records classify failures separately
+as workspace/build integration defects, provider-request defects, model-output
+defects, or correct deterministic gate rejections. Repeated verified failures
+across more than one stage after their bounded repairs could justify a focused
+simplification decision; one failure did not authorize a general Harness
+rewrite, weaker gates, a new Agent layer, or automatic retry.
 
 The bounded validation-ownership repair now resolves that exact Harness
 question without weakening ProposalReviewer. The Implementation Plan still
@@ -803,7 +869,7 @@ forbidden later artifact or target write occurred, and Proposal remains locked.
 The exact 011 query-semantics/repeat repair completed as 012. Intelligence
 transfer remains unresolved until a separately selected real-model rerun.
 
-### 1.1 Historical Pre-Closure V2 Intelligence Boundary
+### 1.2 Historical Pre-Closure V2 Intelligence Boundary
 
 The table below preserves the state at the 015 checkpoint. It is superseded for
 current selection by the repaired-path core closure and frozen V2-C disposition
@@ -989,21 +1055,39 @@ new exact per-run disclosure approval.
 
 The repository has a tested controlled chain for request planning, evidence
 binding, implementation planning, patch proposal, deterministic review,
-no-write dry-run, isolated apply, build evidence, and explicit blocked/repair
-routes.
+no-write dry-run, isolated apply, build evidence, Runtime Admission, runtime
+evidence, evaluation, terminal summary, and explicit blocked/repair routes.
 
-The preserved real BetterHitFeedback run proves one local request-to-build
-execution with:
+The consolidated BetterHitFeedback record
+`r/007b1b58/runtime_phase2b/runtime_summary.json`, SHA256
+`caf19263b5a87df98effa91abffad096c8be871e306292cca4167aa972ccd961`,
+proves one bounded request-to-real-runtime product slice in one GTFO
+environment. It binds current-source inspection, an evidence-bound patch,
+deterministic review, no-write dry-run, isolated apply, a verified built DLL,
+separate `Enabled=false` and `Enabled=true` real processes, their required
+markers and gameplay observations, cleanup, log restoration, and unchanged
+canonical source.
 
-- an externally produced, read-only source input;
-- current-source inspection with `rg` plus live file reads;
-- an evidence-bound generated patch;
-- deterministic review, dry-run, isolated apply, and real build;
-- unchanged external input and a verified built DLL.
+The current working-tree automated GTFO path implements Runtime Admission,
+run-scoped DLL deployment, source/expected/destination SHA256 verification,
+post-run restoration, log and process observation, screenshot collection, and
+same-run terminal projection. Run `e1edc4f9` real-exercised deployment, hash
+verification, GTFO launch, marker production, and restoration, but correctly
+remained `inconclusive` after the old observation path failed to retain the
+marker. The first bounded observation repairs passed 147 affected local tests.
+Post-repair real run `ec71c3a5` passed acceptance-marker, current-log,
+process-liveness, deployed-hash, and restoration trust checks, but its retained
+tail omitted the earlier `Chainloader` marker and therefore blocked
+`plugin_load_marker`. The current implementation now records bounded structured
+marker observations before raw-output truncation and uses those observations
+for startup and acceptance trust. The affected local command passes 149 tests,
+but this exact repair has not yet been exercised by another real GTFO run and
+does not prove accepted automated same-run closure.
 
-It does not prove GTFO gameplay behavior, general Mod quality, production
-runtime automation, production RAG, cross-project generality, or autonomous
-delivery.
+This boundary does not prove production-mature runtime automation,
+deterministic user-versus-system screenshot authority, general Mod quality,
+cross-environment or long-duration behavior, every gameplay route, automatic
+repair, production RAG, cross-project generality, or autonomous delivery.
 
 The bounded `V2-RET-DIRECTIONAL-001` result retains `rg` plus live reads as the
 current retrieval direction. The existing SymbolIndexer remains locally
@@ -1058,7 +1142,7 @@ verified.
 | Proposal review and dry-run | tested | Dry-run proves no-write validation, not compilation or gameplay |
 | Isolated apply and real build | verified on the narrow BetterHitFeedback run | Build success does not prove GTFO runtime behavior |
 | ProposalCritic local/injected boundary | tested for not-required, required-success, and required-failure | External model assessment quality remains unverified |
-| Runtime/evaluation | interfaces and focused tests exist | Real GTFO gameplay success remains unproven |
+| Runtime/evaluation | one bounded BetterHitFeedback slice is real-verified; terminal-chain and current working-tree deployment/observation mechanisms are implemented | Real acceptance is limited to `007b1b58`; `e1edc4f9` missed the tail marker and `ec71c3a5` retained that marker but lost the earlier `Chainloader` startup marker, so both automated runs ended `inconclusive`; the pre-truncation structured-marker repair is locally tested but has no subsequent real run; no automated accepted closure, deterministic screenshot-source authority, cross-environment, long-duration, or every-route claim is established |
 | Retrieval direction | bounded local decision completed | Keep `rg` plus live reads; no production RAG claim |
 
 Open implementation gaps remain tracked by Status, Provenance, and Trigger in
@@ -1067,7 +1151,66 @@ recorded trigger is satisfied.
 
 ## 5. Verification Snapshot
 
-The ProposalCritic-affected unit command currently passes 111 tests:
+The current Runtime/Harness-affected local command passes 149 tests:
+
+```text
+python -m pytest -q tests/unit/test_gtfo_runtime_automation.py tests/unit/test_runtime_deployment.py tests/unit/test_runtime_evidence.py tests/unit/test_transition_eval_gate.py tests/unit/test_workflow_graph.py tests/unit/test_local_entry.py
+149 passed in 18.85s
+```
+
+This command proves the current working-tree admission, deployment, observation,
+evaluation, graph, and terminal regressions covered by those tests. The two new
+marker regressions prove that a startup marker at the head and an acceptance
+marker at the tail both remain available to trust checks after raw-output
+truncation, while a genuinely absent startup marker remains blocked. The
+command did not launch GTFO or prove a post-repair accepted real same-run
+closure.
+
+A broader verification pass found two independent limits:
+
+```text
+python -m pytest -q tests/unit
+collection stopped with 13 errors across 1,394 collected items because the
+current environment lacks the declared jieba and mcp dependencies
+
+40 unit files importing src.mod_agent
+6 failed, 543 passed in 30.78s
+```
+
+The six executable product-path failures are three MCP-tool fixtures missing
+the required `binding_registry`, one Git-repository fixture missing required
+Implementation Plan fields, one end-to-end expectation using an older Runtime
+verification plan, and one repair-loop expectation that requires
+`retry_exhausted=true` while the current result is `false`. No dependency was
+installed and none of these six failures was modified in this documentation
+and preflight turn. The focused 149-test marker repair remains valid, but the
+whole repository and the wider product contract suite are not currently green.
+
+The exact rerun prerequisites, permission boundary, success facts, stop rule,
+resume limitation, and V2TA/M completion interpretation are recorded in
+`docs/audits/HARNESS_EXPANSION_DECISION_PACKET.md`. V2TA/M Phase 2B is complete
+for the selected BetterHitFeedback slice; this is not a claim that every later
+target responsibility, optional Phase 3, or whole-repository test is complete.
+
+Post-repair real run `ec71c3a5` launched GTFO and produced Runtime Evidence
+Artifact hash
+`566a8a6554da0211bf7307d499803bea2592f7b3b927d1d6dcc6abe0abe574a6`.
+The exact built/deployed DLL SHA256 was
+`ef26dc08aa386266a8a39f58a9531987db3fab7aeed57daa5ad159da475c74a5`.
+The `chain_probe=true` acceptance marker, current log boundary, process
+liveness, deployed hash, and restoration checks passed. The retained
+20,000-character tail contained no `Chainloader` marker, so
+`plugin_load_marker` blocked and the run stopped at `blocked` through
+`REPAIR_SCOPE_UNRESOLVED`; no Eval or WorkflowSummary success Artifact was
+created. `run_result.json` SHA256 is
+`98a94df597e5f8c05b2acdf3b9767c3bffe4ac923c9588bf61e6fa134d6d1797`.
+
+The older commands below preserve focused subsystem snapshots from their
+recorded checkpoints. They do not override the current selection or the current
+Runtime evidence boundary above.
+
+At its recorded checkpoint, the ProposalCritic-affected unit command passed 111
+tests:
 
 ```text
 .\.venv\Scripts\python.exe -m pytest tests/unit/test_proposal_review.py tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py tests/unit/test_dashboard_projection.py tests/unit/test_repair_loop.py tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_domain_adapter.py -q --tb=short
@@ -1077,8 +1220,8 @@ This count applies only to the touched proposal/artifact/workflow behavior. It
 is not a claim that the full repository test suite or any real gameplay path is
 green.
 
-The planning-only slice and affected downstream gates pass this current focused
-command:
+At its recorded checkpoint, the planning-only slice and affected downstream
+gates passed this focused command:
 
 ```text
 python -B -m pytest tests/unit/test_mod_agent_cli.py tests/unit/test_planning.py tests/unit/test_workflow_graph.py tests/unit/test_evidence_retrieval.py tests/unit/test_artifact_contract.py tests/unit/test_domain_adapter.py -q -p no:cacheprovider
@@ -1088,7 +1231,8 @@ python -B -m pytest tests/unit/test_mod_agent_cli.py tests/unit/test_planning.py
 These tests prove local planning/routing and existing downstream gate
 regressions only. They do not prove a WallCrawler Hook or GTFO runtime behavior.
 
-The evidence-only graph and CLI boundary pass the current focused command:
+At its recorded checkpoint, the evidence-only graph and CLI boundary passed
+this focused command:
 
 ```text
 python -m pytest tests/unit/test_gtfo_r8_evidence.py tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py -q
@@ -1100,8 +1244,8 @@ The real CLI run produced `request_planning_report`, `mod_planning_brief`,
 downstream artifact. This proves supplied-file reading and control-plane
 stopping only, not a usable Hook or gameplay behavior.
 
-The intelligent Evidence loop, CLI boundary, R8 reader, and workflow
-regressions pass the current focused command:
+At its recorded checkpoint, the intelligent Evidence loop, CLI boundary, R8
+reader, and workflow regressions passed this focused command:
 
 ```text
 python -m pytest tests/unit/test_agent_turn_adapters.py tests/unit/test_intelligent_evidence_discovery.py tests/unit/test_mod_agent_cli.py tests/unit/test_gtfo_r8_evidence.py tests/unit/test_evidence_retrieval.py tests/unit/test_artifact_contract.py tests/unit/test_planning.py tests/unit/test_domain_adapter.py tests/unit/test_workflow_graph.py tests/unit/test_llm_providers_smoke.py -q -p no:cacheprovider

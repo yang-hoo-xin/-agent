@@ -31,6 +31,14 @@ from src.mod_agent.evidence.dotnet_metadata import (
 from src.mod_agent.execution import ExactDiffApprovalRejectedError, ExactTextPatchApplier
 from src.mod_agent.planning.request_planner import requested_scope_text
 from src.mod_agent.proposal import LLMExactPatchGenerator
+from src.mod_agent.runtime import (
+    GTFORuntimeAutomationError,
+    bind_plugin_deployment_to_runtime_payload,
+    build_gtfo_runtime_capability_report,
+    make_gtfo_runtime_evidence_factory_from_settings,
+    profile_from_settings,
+    temporarily_deploy_verified_plugin,
+)
 from src.mod_agent.workflow import build_graph, create_initial_state
 
 
@@ -734,6 +742,250 @@ def _verify_final_compiled_artifact_if_built(
     return verifier(final_artifact, "final")
 
 
+def _runtime_admission_record(
+    settings: Any,
+    *,
+    run_gtfo_runtime: bool,
+    allow_game_launch: bool,
+    runtime_plugin_destination: str | Path | None,
+    allow_game_directory_write: bool,
+) -> dict[str, Any]:
+    """Bind one run's requested Runtime boundary before any mutable action."""
+
+    runtime = getattr(settings, "runtime", None)
+    gtfo = getattr(runtime, "gtfo", None)
+    settings_enabled = bool(gtfo is not None and getattr(gtfo, "enabled", False))
+    if allow_game_launch and not run_gtfo_runtime:
+        raise LocalEntryError(
+            "--allow-game-launch requires --run-gtfo-runtime for the same run."
+        )
+    if (
+        runtime_plugin_destination is not None or allow_game_directory_write
+    ) and not run_gtfo_runtime:
+        raise LocalEntryError(
+            "Runtime plugin deployment requires --run-gtfo-runtime for the same run."
+        )
+    if not run_gtfo_runtime:
+        return {
+            "requested": False,
+            "evidence_source": None,
+            "allow_game_launch": False,
+            "authorization_scope": None,
+            "settings_enabled": settings_enabled,
+            "profile": None,
+            "capability_report": None,
+            "plugin_deployment": {
+                "requested": False,
+                "destination_path": None,
+                "allow_game_directory_write": False,
+                "restore_after_runtime": False,
+                "performed_by_run_request": False,
+                "verified_deployed_artifact_hash": False,
+            },
+        }
+    if not settings_enabled:
+        raise LocalEntryError(
+            "--run-gtfo-runtime requires runtime.gtfo.enabled=true in the selected "
+            "settings file."
+        )
+    if runtime_plugin_destination is None:
+        raise LocalEntryError(
+            "--run-gtfo-runtime requires --runtime-plugin-destination so the "
+            "physical DLL loaded by GTFO can be bound to this run's Build."
+        )
+    if not allow_game_directory_write:
+        raise LocalEntryError(
+            "--run-gtfo-runtime requires --allow-game-directory-write for "
+            "run-scoped plugin deployment and restoration."
+        )
+    try:
+        profile = profile_from_settings(settings)
+        capability_report = build_gtfo_runtime_capability_report(
+            profile,
+            allow_game_launch=allow_game_launch,
+        )
+    except GTFORuntimeAutomationError as exc:
+        raise LocalEntryError(f"GTFO Runtime admission failed: {exc}") from exc
+    if capability_report["status"] != "ready":
+        raise LocalEntryError(
+            "GTFO Runtime admission blocked: "
+            + "; ".join(str(item) for item in capability_report["blockers"])
+        )
+    destination_input = Path(runtime_plugin_destination)
+    if not destination_input.is_absolute():
+        raise LocalEntryError(
+            "--runtime-plugin-destination must be an absolute .dll path."
+        )
+    destination = destination_input.resolve()
+    working_directory = Path(profile.working_directory).resolve()
+    try:
+        destination.relative_to(working_directory)
+    except ValueError as exc:
+        raise LocalEntryError(
+            "--runtime-plugin-destination must remain inside the configured "
+            "runtime.gtfo.working_directory."
+        ) from exc
+    if destination.suffix.lower() != ".dll":
+        raise LocalEntryError(
+            "--runtime-plugin-destination must identify one .dll file."
+        )
+    if not destination.parent.is_dir():
+        raise LocalEntryError(
+            "Runtime plugin destination directory does not exist: "
+            f"{destination.parent}"
+        )
+    if profile.terminate_after_capture is not True:
+        raise LocalEntryError(
+            "Run-scoped plugin deployment requires "
+            "runtime.gtfo.terminate_after_capture=true before launch."
+        )
+    return {
+        "requested": True,
+        "evidence_source": "gtfo_real_runtime_automation",
+        "capability_scope": "runtime_harness_preflight",
+        "allow_game_launch": allow_game_launch,
+        "authorization_scope": "this_run_only" if allow_game_launch else None,
+        "settings_enabled": True,
+        "profile": {
+            "profile_id": profile.profile_id,
+            "game_executable": profile.game_executable,
+            "working_directory": profile.working_directory,
+            "launch_args": list(profile.launch_args),
+            "log_paths": list(profile.log_paths),
+            "screenshot_directory": profile.screenshot_directory,
+            "screenshot_timeout_seconds": profile.screenshot_timeout_seconds,
+            "startup_markers": list(profile.startup_markers),
+            "acceptance_markers": dict(profile.acceptance_markers),
+            "timeout_seconds": profile.timeout_seconds,
+            "poll_interval_seconds": profile.poll_interval_seconds,
+            "output_limit_chars": profile.output_limit_chars,
+            "terminate_after_capture": profile.terminate_after_capture,
+        },
+        "capability_report": capability_report,
+        "plugin_deployment": {
+            "requested": True,
+            "destination_path": str(destination),
+            "allow_game_directory_write": True,
+            "restore_after_runtime": True,
+            "performed_by_run_request": True,
+            "verified_deployed_artifact_hash": False,
+        },
+    }
+
+
+def _runtime_graph_options(
+    settings: Any,
+    *,
+    run_gtfo_runtime: bool,
+    allow_game_launch: bool,
+) -> dict[str, Any]:
+    """Select compile-only or Runtime-through-terminal graph routing."""
+
+    return {
+        "settings": settings if run_gtfo_runtime else None,
+        "allow_game_launch": allow_game_launch if run_gtfo_runtime else False,
+        "stop_after_build": not run_gtfo_runtime,
+    }
+
+
+def _runtime_verification_chain(
+    graph_result: Mapping[str, Any],
+    *,
+    requested: bool,
+) -> dict[str, Any]:
+    """Project the Runtime-to-terminal Artifact chain into the run result."""
+
+    artifacts = graph_result.get("artifacts") or {}
+    refs = {
+        artifact_type: artifacts.get(artifact_type)
+        for artifact_type in (
+            "build_result",
+            "runtime_evidence",
+            "eval_report",
+            "workflow_summary",
+        )
+    }
+    return {
+        "requested": requested,
+        "artifact_refs": refs,
+        "workflow_chain_completed": bool(
+            requested
+            and graph_result.get("current_stage") == "done"
+            and all(isinstance(ref, str) and ref for ref in refs.values())
+        ),
+    }
+
+
+def _verified_build_artifact_sha256(
+    build: Mapping[str, Any],
+    *,
+    expected_artifact: str,
+) -> str:
+    """Read the one verified physical build hash used for deployment."""
+
+    if build.get("claims_real_build_success") is not True:
+        raise LocalEntryError(
+            "Runtime plugin deployment requires a successful real Build."
+        )
+    matches = [
+        item
+        for item in build.get("verified_artifacts") or ()
+        if isinstance(item, Mapping) and item.get("path") == expected_artifact
+    ]
+    if len(matches) != 1:
+        raise LocalEntryError(
+            "Runtime plugin deployment requires exactly one verified expected artifact."
+        )
+    artifact_sha256 = matches[0].get("sha256")
+    if not isinstance(artifact_sha256, str) or not artifact_sha256:
+        raise LocalEntryError(
+            "Verified expected artifact is missing its physical SHA256."
+        )
+    return artifact_sha256
+
+
+def _make_deploying_runtime_evidence_factory(
+    *,
+    settings: Any,
+    allow_game_launch: bool,
+    allow_game_directory_write: bool,
+    build_artifact_path: Path,
+    expected_artifact: str,
+    destination_path: Path,
+    backup_directory: Path,
+) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
+    """Wrap the existing GTFO runner with verified temporary deployment."""
+
+    base_factory = make_gtfo_runtime_evidence_factory_from_settings(
+        settings,
+        allow_game_launch=allow_game_launch,
+    )
+
+    def runtime_evidence_factory(
+        feature_id: str,
+        build: dict[str, Any],
+        feature_spec: dict[str, Any],
+    ) -> dict[str, Any]:
+        expected_sha256 = _verified_build_artifact_sha256(
+            build,
+            expected_artifact=expected_artifact,
+        )
+        with temporarily_deploy_verified_plugin(
+            source_path=build_artifact_path,
+            destination_path=destination_path,
+            backup_directory=backup_directory,
+            expected_source_sha256=expected_sha256,
+            allow_game_directory_write=allow_game_directory_write,
+        ) as deployment:
+            payload = base_factory(feature_id, build, feature_spec)
+        return bind_plugin_deployment_to_runtime_payload(
+            payload,
+            deployment=deployment,
+        )
+
+    return runtime_evidence_factory
+
+
 def run_local_request(
     *,
     description: str,
@@ -745,6 +997,10 @@ def run_local_request(
     confirm_isolated_write: bool,
     allow_build: bool,
     allow_source_disclosure: bool,
+    run_gtfo_runtime: bool = False,
+    allow_game_launch: bool = False,
+    runtime_plugin_destination: str | Path | None = None,
+    allow_game_directory_write: bool = False,
     diff_approval_reader: Callable[[dict[str, Any]], str] | None = None,
     source_disclosure_approval_id: str | None = None,
     source_revision_binding: Mapping[str, str] | None = None,
@@ -793,6 +1049,18 @@ def run_local_request(
             "inspection profile."
         )
     settings = load_settings(settings_path)
+    runtime_admission = _runtime_admission_record(
+        settings,
+        run_gtfo_runtime=run_gtfo_runtime,
+        allow_game_launch=allow_game_launch,
+        runtime_plugin_destination=runtime_plugin_destination,
+        allow_game_directory_write=allow_game_directory_write,
+    )
+    runtime_graph_options = _runtime_graph_options(
+        settings,
+        run_gtfo_runtime=run_gtfo_runtime,
+        allow_game_launch=allow_game_launch,
+    )
     local_model_identity: dict[str, Any] | None = None
     local_ollama_server_version: str | None = None
     identity_reader = ollama_model_identity_reader or _read_ollama_model_identity
@@ -965,6 +1233,7 @@ def run_local_request(
         "ollama_server_version": local_ollama_server_version,
         "ollama_patch_generation_profile": ollama_patch_generation_profile,
         "source_disclosure": source_disclosure,
+        "runtime_admission": runtime_admission,
         "compiled_artifact_inspection_profile": (
             compiled_artifact_inspection_profile.to_dict()
             if compiled_artifact_inspection_profile is not None
@@ -1142,6 +1411,25 @@ def run_local_request(
     baseline_stdout.write_text(baseline.stdout, encoding="utf-8")
     baseline_stderr.write_text(baseline.stderr, encoding="utf-8")
     expected_artifact = f"bin/Debug/{assembly_name}.dll"
+    if run_gtfo_runtime:
+        admitted_destination = Path(
+            str(runtime_admission["plugin_deployment"]["destination_path"])
+        )
+        if admitted_destination.name != f"{assembly_name}.dll":
+            error = LocalEntryError(
+                "Runtime plugin destination filename must exactly match the "
+                f"built assembly name: {assembly_name}.dll"
+            )
+            _persist_pre_graph_failure(
+                run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                failure_stage="runtime_admission",
+                error=error,
+                source_revision_binding=source_revision_binding,
+                model_admission=model_admission,
+            )
+            raise error
     baseline_artifact = baseline_copy / expected_artifact
     baseline_stat = baseline_artifact.stat() if baseline_artifact.is_file() else None
     baseline_result = {
@@ -1228,6 +1516,7 @@ def run_local_request(
         evidence_pack = evidence_provider.collect(
             query=requested_scope_text(state["user_request"]),
             search_root=f"generated_mods/{source.name}",
+            source_identity_query=state["user_request"],
         )
         if member_access_resolver is None:
             return evidence_pack
@@ -1539,6 +1828,22 @@ def run_local_request(
             input_execution_mode=input_execution_mode,
         )
 
+    runtime_evidence_factory = (
+        _make_deploying_runtime_evidence_factory(
+            settings=settings,
+            allow_game_launch=allow_game_launch,
+            allow_game_directory_write=allow_game_directory_write,
+            build_artifact_path=target_copy / expected_artifact,
+            expected_artifact=expected_artifact,
+            destination_path=Path(
+                str(runtime_admission["plugin_deployment"]["destination_path"])
+            ),
+            backup_directory=run_root / "runtime_deployment_backup",
+        )
+        if run_gtfo_runtime
+        else None
+    )
+
     manifest = {
         "run_id": run_id,
         "request_id": request_id,
@@ -1567,6 +1872,7 @@ def run_local_request(
         "api_key_present": False if local_ollama else True,
         "api_key_value_persisted": False,
         "source_disclosure": source_disclosure,
+        "runtime_admission": runtime_admission,
         "assembly_name": assembly_name,
         "build_dependency": {
             "source": str(source_bepinex_dir),
@@ -1587,8 +1893,29 @@ def run_local_request(
         "actual_write_performed": False,
         "limits": [
             "No claim that the external BetterHitFeedback project was generated by this platform.",
-            "No real GTFO launch or gameplay validation is performed.",
-            "The dotnet process executes user-authorized project build logic and is not an OS sandbox.",
+            (
+                "No real GTFO launch or gameplay validation is performed."
+                if not run_gtfo_runtime
+                else (
+                    "Runtime evidence proves only the process, logs, markers, and "
+                    "screenshot facts bound by this run."
+                )
+            ),
+            (
+                (
+                    "run-request does not deploy the built plugin into the GTFO "
+                    "game directory or verify a deployed DLL hash."
+                )
+                if not run_gtfo_runtime
+                else (
+                    "The verified built plugin is deployed only for this Runtime "
+                    "capture and the destination is restored afterward."
+                )
+            ),
+            (
+                "The dotnet process executes user-authorized project build logic "
+                "and is not an OS sandbox."
+            ),
         ],
     }
     (run_root / "run_manifest.json").write_text(
@@ -1619,8 +1946,9 @@ def run_local_request(
         dry_run_factory=dry_run_factory,
         isolated_apply_factory=isolated_apply_factory,
         build_result_factory=build_result_factory,
+        runtime_evidence_factory=runtime_evidence_factory,
         use_default_proposal_git_binding=False,
-        stop_after_build=True,
+        **runtime_graph_options,
     )
     state = create_initial_state(
         run_id=run_id,
@@ -1682,7 +2010,9 @@ def run_local_request(
     selected_classification = dict(completion_classification or {})
     if selected_classification:
         if result.get("build_summary", {}).get("claims_real_build_success") is not True:
-            raise LocalEntryError("Completion classification requires a real successful build.")
+            raise LocalEntryError(
+                "Completion classification requires a real successful build."
+            )
         if active_compiled_artifact_verifier is None or source_change_verifier is None:
             raise LocalEntryError(
                 "Completion classification requires compiled artifact and source change verification."
@@ -1695,6 +2025,12 @@ def run_local_request(
         "blockers": result.get("blockers") or [],
         "artifacts": result.get("artifacts") or {},
         "build_summary": result.get("build_summary") or {},
+        "runtime_summary": result.get("runtime_summary") or {},
+        "runtime_admission": runtime_admission,
+        "runtime_verification_chain": _runtime_verification_chain(
+            result,
+            requested=run_gtfo_runtime,
+        ),
         "run_root": str(run_root),
         "build_stdout": str(build_stdout) if build_stdout.exists() else None,
         "build_stderr": str(build_stderr) if build_stderr.exists() else None,

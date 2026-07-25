@@ -15,6 +15,7 @@ from .models import (
 )
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
+_CSHARP_FILENAME_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_.-]*\.cs\b")
 _RG_LINE_RE = re.compile(r"^(.*\.cs):(\d+):(.*)$", re.IGNORECASE)
 _CSHARP_METHOD_RE = re.compile(
     r"^(?:(?:public|private|protected|internal|static|virtual|override|abstract|"
@@ -61,7 +62,13 @@ class RgLiveEvidenceProvider:
         self.workspace_root = Path(workspace_root).resolve()
         self.rg_executable = rg_executable
 
-    def collect(self, *, query: str, search_root: str | Path) -> EvidencePack:
+    def collect(
+        self,
+        *,
+        query: str,
+        search_root: str | Path,
+        source_identity_query: str | None = None,
+    ) -> EvidencePack:
         started = time.perf_counter()
         root = (self.workspace_root / search_root).resolve()
         try:
@@ -104,7 +111,47 @@ class RgLiveEvidenceProvider:
         if not matches:
             return EvidencePack.empty(query=query, reason="rg found no live C# source matches.")
 
-        selected_path, selected_line = _select_file(matches, tokens)
+        requested_filename = _requested_csharp_filename(
+            source_identity_query if source_identity_query is not None else query
+        )
+        requested_path: Path | None = None
+        if requested_filename is not None:
+            requested_paths = tuple(
+                sorted(
+                    (
+                        path.resolve()
+                        for path in root.rglob("*.cs")
+                        if path.name == requested_filename
+                    ),
+                    key=lambda path: path.as_posix(),
+                )
+            )
+            if len(requested_paths) != 1:
+                return EvidencePack.empty(
+                    query=query,
+                    reason=(
+                        "The explicitly requested C# filename did not resolve to "
+                        "exactly one current source file. "
+                        f"filename={requested_filename!r}; "
+                        f"resolved_count={len(requested_paths)}; "
+                        "resolved_paths="
+                        f"{[path.as_posix() for path in requested_paths]!r}."
+                    ),
+                )
+            requested_path = requested_paths[0]
+            if not any(path == requested_path for path, _, _ in matches):
+                return EvidencePack.empty(
+                    query=query,
+                    reason=(
+                        "The explicitly requested C# source file contained no "
+                        "request-term match."
+                    ),
+                )
+        selected_path, selected_line = _select_file(
+            matches,
+            tokens,
+            requested_path=requested_path,
+        )
         source_bytes = selected_path.read_bytes()
         try:
             source = source_bytes.decode("utf-8")
@@ -250,15 +297,31 @@ def _parse_matches(raw: str) -> list[tuple[Path, int, str]]:
     return matches
 
 
+def _requested_csharp_filename(query: str) -> str | None:
+    filenames = tuple(dict.fromkeys(_CSHARP_FILENAME_RE.findall(query)))
+    return filenames[0] if len(filenames) == 1 else None
+
+
 def _select_file(
     matches: list[tuple[Path, int, str]],
     tokens: list[str],
+    *,
+    requested_path: Path | None = None,
 ) -> tuple[Path, int]:
     by_path: dict[Path, list[tuple[int, str]]] = {}
     for path, line_number, text in matches:
         by_path.setdefault(path, []).append((line_number, text))
+    eligible = (
+        {
+            path: path_matches
+            for path, path_matches in by_path.items()
+            if path == requested_path
+        }
+        if requested_path is not None
+        else by_path
+    )
     ranked = sorted(
-        by_path.items(),
+        eligible.items(),
         key=lambda item: (
             -sum(
                 sum(1 for token in tokens if token in text.lower())
@@ -269,7 +332,22 @@ def _select_file(
         ),
     )
     path, path_matches = ranked[0]
-    return path, min(line_number for line_number, _ in path_matches)
+    selected_line, _ = sorted(
+        path_matches,
+        key=lambda match: (
+            -sum(1 for token in tokens if token in match[1].lower()),
+            min(
+                (
+                    index
+                    for index, token in enumerate(tokens)
+                    if token in match[1].lower()
+                ),
+                default=len(tokens),
+            ),
+            match[0],
+        ),
+    )[0]
+    return path, selected_line
 
 
 def _best_symbol(excerpt: str, tokens: list[str]) -> str | None:

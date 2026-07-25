@@ -3,6 +3,7 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,6 +32,9 @@ from src.mod_agent.local_entry import (
     _read_ollama_server_version,
     _remove_generated_build_directory,
     _resolve_project_path_property,
+    _runtime_admission_record,
+    _runtime_graph_options,
+    _runtime_verification_chain,
     _run_nuget_isolated_build,
     _sanitized_endpoint_url,
     _select_ollama_model_identity,
@@ -44,6 +48,193 @@ from src.mod_agent.local_entry import (
 )
 
 _OLLAMA_DIGEST = "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
+
+
+def _runtime_settings(
+    tmp_path: Path,
+    *,
+    enabled: bool = True,
+) -> SimpleNamespace:
+    executable = tmp_path / "GTFO.exe"
+    executable.write_bytes(b"test executable")
+    return SimpleNamespace(
+        runtime=SimpleNamespace(
+            gtfo=SimpleNamespace(
+                enabled=enabled,
+                game_executable=str(executable),
+                working_directory=str(tmp_path),
+                launch_args=["-test"],
+                log_paths=["BepInEx/LogOutput.log"],
+                screenshot_directory=str(tmp_path / "screenshots"),
+                screenshot_timeout_seconds=15,
+                startup_markers=["Chainloader startup complete"],
+                acceptance_markers={"behavior works": "BEHAVIOR_OK"},
+                timeout_seconds=120,
+                poll_interval_seconds=1.0,
+                output_limit_chars=20_000,
+                terminate_after_capture=True,
+            )
+        )
+    )
+
+
+def _runtime_destination(tmp_path: Path) -> Path:
+    destination = tmp_path / "BepInEx" / "plugins" / "BetterHitFeedback.dll"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    return destination
+
+
+def test_runtime_admission_and_graph_options_select_one_same_run_chain(
+    tmp_path: Path,
+) -> None:
+    settings = _runtime_settings(tmp_path)
+
+    admission = _runtime_admission_record(
+        settings,
+        run_gtfo_runtime=True,
+        allow_game_launch=True,
+        runtime_plugin_destination=_runtime_destination(tmp_path),
+        allow_game_directory_write=True,
+    )
+    options = _runtime_graph_options(
+        settings,
+        run_gtfo_runtime=True,
+        allow_game_launch=True,
+    )
+
+    assert admission["requested"] is True
+    assert admission["evidence_source"] == "gtfo_real_runtime_automation"
+    assert admission["capability_scope"] == "runtime_harness_preflight"
+    assert admission["allow_game_launch"] is True
+    assert admission["authorization_scope"] == "this_run_only"
+    assert admission["capability_report"]["status"] == "ready"
+    assert admission["plugin_deployment"] == {
+        "requested": True,
+        "destination_path": str(_runtime_destination(tmp_path).resolve()),
+        "allow_game_directory_write": True,
+        "restore_after_runtime": True,
+        "performed_by_run_request": True,
+        "verified_deployed_artifact_hash": False,
+    }
+    assert options == {
+        "settings": settings,
+        "allow_game_launch": True,
+        "stop_after_build": False,
+    }
+
+
+def test_compile_only_admission_keeps_runtime_out_of_graph(
+    tmp_path: Path,
+) -> None:
+    settings = _runtime_settings(tmp_path)
+
+    admission = _runtime_admission_record(
+        settings,
+        run_gtfo_runtime=False,
+        allow_game_launch=False,
+        runtime_plugin_destination=None,
+        allow_game_directory_write=False,
+    )
+    options = _runtime_graph_options(
+        settings,
+        run_gtfo_runtime=False,
+        allow_game_launch=False,
+    )
+
+    assert admission["requested"] is False
+    assert admission["allow_game_launch"] is False
+    assert admission["capability_report"] is None
+    assert admission["plugin_deployment"]["requested"] is False
+    assert options == {
+        "settings": None,
+        "allow_game_launch": False,
+        "stop_after_build": True,
+    }
+
+
+def test_runtime_admission_rejects_unbound_launch_authorization(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(LocalEntryError, match="requires --run-gtfo-runtime"):
+        _runtime_admission_record(
+            _runtime_settings(tmp_path),
+            run_gtfo_runtime=False,
+            allow_game_launch=True,
+            runtime_plugin_destination=None,
+            allow_game_directory_write=False,
+        )
+
+
+def test_runtime_admission_requires_enabled_settings(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(LocalEntryError, match="runtime.gtfo.enabled=true"):
+        _runtime_admission_record(
+            _runtime_settings(tmp_path, enabled=False),
+            run_gtfo_runtime=True,
+            allow_game_launch=False,
+            runtime_plugin_destination=_runtime_destination(tmp_path),
+            allow_game_directory_write=True,
+        )
+
+
+def test_runtime_admission_requires_explicit_launch_approval(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        LocalEntryError,
+        match="GTFO game launch requires explicit approval",
+    ):
+        _runtime_admission_record(
+            _runtime_settings(tmp_path),
+            run_gtfo_runtime=True,
+            allow_game_launch=False,
+            runtime_plugin_destination=_runtime_destination(tmp_path),
+            allow_game_directory_write=True,
+        )
+
+
+def test_runtime_admission_requires_physical_deployment_authorization(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(LocalEntryError, match="allow-game-directory-write"):
+        _runtime_admission_record(
+            _runtime_settings(tmp_path),
+            run_gtfo_runtime=True,
+            allow_game_launch=True,
+            runtime_plugin_destination=_runtime_destination(tmp_path),
+            allow_game_directory_write=False,
+        )
+
+
+def test_runtime_verification_chain_requires_all_bound_artifacts() -> None:
+    complete = _runtime_verification_chain(
+        {
+            "current_stage": "done",
+            "artifacts": {
+                "build_result": "artifact://build",
+                "runtime_evidence": "artifact://runtime",
+                "eval_report": "artifact://eval",
+                "workflow_summary": "artifact://summary",
+            },
+        },
+        requested=True,
+    )
+    incomplete = _runtime_verification_chain(
+        {
+            "current_stage": "blocked",
+            "artifacts": {
+                "build_result": "artifact://build",
+                "runtime_evidence": "artifact://runtime",
+            },
+        },
+        requested=True,
+    )
+
+    assert complete["workflow_chain_completed"] is True
+    assert incomplete["workflow_chain_completed"] is False
+    assert incomplete["artifact_refs"]["eval_report"] is None
+    assert incomplete["artifact_refs"]["workflow_summary"] is None
 
 
 def test_exact_diff_rejection_is_distinct_from_hash_mismatch() -> None:

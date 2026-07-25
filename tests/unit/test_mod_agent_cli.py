@@ -1282,7 +1282,88 @@ def test_cli_run_request_passes_local_ollama_boundary_unchanged(
     assert captured["ollama_max_output_tokens"] == 3072
     assert captured["ollama_context_window"] == 32768
     assert captured["allow_source_disclosure"] is False
+    assert captured["run_gtfo_runtime"] is False
+    assert captured["allow_game_launch"] is False
+    assert captured["runtime_plugin_destination"] is None
+    assert captured["allow_game_directory_write"] is False
     assert callable(captured["diff_approval_reader"])
+
+
+def test_cli_run_request_passes_runtime_admission_and_requires_runtime_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def run(**kwargs):
+        captured.update(kwargs)
+        return {
+            "current_stage": "done",
+            "build_summary": {"claims_real_build_success": True},
+            "runtime_summary": {"claims_real_runtime_success": True},
+        }
+
+    monkeypatch.setattr("src.mod_agent.cli.run_local_request", run)
+
+    exit_code = main(
+        [
+            "run-request",
+            "change local source and verify runtime",
+            "--target-project",
+            "target",
+            "--allow-source-disclosure",
+            "--confirm-isolated-write",
+            "--allow-build",
+            "--run-gtfo-runtime",
+            "--allow-game-launch",
+            "--runtime-plugin-destination",
+            r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll",
+            "--allow-game-directory-write",
+        ]
+    )
+
+    assert exit_code == 0
+    json.loads(capsys.readouterr().out)
+    assert captured["run_gtfo_runtime"] is True
+    assert captured["allow_game_launch"] is True
+    assert captured["runtime_plugin_destination"] == (
+        r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll"
+    )
+    assert captured["allow_game_directory_write"] is True
+
+
+def test_cli_runtime_request_does_not_exit_success_on_build_only(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "src.mod_agent.cli.run_local_request",
+        lambda **_: {
+            "current_stage": "build",
+            "build_summary": {"claims_real_build_success": True},
+            "runtime_summary": {},
+        },
+    )
+
+    exit_code = main(
+        [
+            "run-request",
+            "change local source and verify runtime",
+            "--target-project",
+            "target",
+            "--allow-source-disclosure",
+            "--confirm-isolated-write",
+            "--allow-build",
+            "--run-gtfo-runtime",
+            "--allow-game-launch",
+            "--runtime-plugin-destination",
+            r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll",
+            "--allow-game-directory-write",
+        ]
+    )
+
+    assert exit_code == 1
+    json.loads(capsys.readouterr().out)
 
 
 def test_cli_does_not_treat_non_real_success_status_as_success(

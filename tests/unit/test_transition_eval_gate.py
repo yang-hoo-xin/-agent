@@ -305,6 +305,40 @@ def test_transition_eval_gate_requires_gtfo_runtime_trust_binding() -> None:
     assert _case_status(report, "runtime_claim_boundary_binding") == "failed"
 
 
+def test_transition_eval_gate_requires_declared_plugin_deployment_checks() -> None:
+    runtime = {
+        **_real_runtime(),
+        "evidence_source": "gtfo_real_runtime_automation",
+        "runtime_trust_binding": {
+            "status": "trusted",
+            "deployment_required": True,
+            "checks": {
+                "run_id": {"status": "passed"},
+                "feature_id": {"status": "passed"},
+                "build_artifact_hash": {"status": "passed"},
+                "runtime_process_identity": {"status": "passed"},
+                "current_run_logs": {"status": "passed"},
+                "plugin_load_marker": {"status": "passed"},
+                "acceptance_markers": {"status": "passed"},
+                "screenshot_runtime_artifact_linkage": {"status": "passed"},
+            },
+            "blockers": [],
+        },
+    }
+
+    report = build_transition_eval_gate_report(
+        review=_review(),
+        dry_run=_dry_run(),
+        build=_fake_build(),
+        runtime=runtime,
+        v1_boundary={"v1_acceptance_status": "blocked"},
+        claims_real_success=False,
+    )
+
+    assert report["status"] == "failed"
+    assert _case_status(report, "runtime_claim_boundary_binding") == "failed"
+
+
 def test_transition_eval_gate_detects_unpreserved_non_goals() -> None:
     runtime = {
         **_real_runtime(),
