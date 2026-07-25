@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -49,6 +50,9 @@ class ResumePayload:
     artifact_refs: tuple[str, ...]
     diff_hash: str | None = None
     notes: str = ""
+    request_id: str | None = None
+    feature_id: str | None = None
+    runtime_admission: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable resume payload."""
@@ -63,6 +67,9 @@ class ResumePayload:
             "artifact_refs": list(self.artifact_refs),
             "diff_hash": self.diff_hash,
             "notes": self.notes,
+            "request_id": self.request_id,
+            "feature_id": self.feature_id,
+            "runtime_admission": self.runtime_admission,
         }
 
 
@@ -127,6 +134,12 @@ class ResumeValidator:
                     "message": "Resume payload stage does not match checkpoint.",
                 }
             )
+        if payload.stage == "build":
+            self._validate_build_runtime_resume(
+                payload,
+                checkpoint=checkpoint,
+                blockers=blockers,
+            )
         if payload.decision not in self.ALLOWED_DECISIONS:
             blockers.append(
                 {
@@ -153,7 +166,11 @@ class ResumeValidator:
                 }
             )
         expected_diff_hash = (checkpoint.get("resume_binding") or {}).get("diff_hash")
-        if expected_diff_hash and payload.diff_hash != expected_diff_hash:
+        if (
+            payload.stage in {"proposal_review", "review_proposal", "dry_run_apply"}
+            and expected_diff_hash
+            and payload.diff_hash != expected_diff_hash
+        ):
             blockers.append(
                 {
                     "code": "RESUME_DIFF_HASH_MISMATCH",
@@ -177,6 +194,65 @@ class ResumeValidator:
             applied_updates=self._updates_for(payload, checkpoint=checkpoint),
         )
 
+    @staticmethod
+    def _validate_build_runtime_resume(
+        payload: ResumePayload,
+        *,
+        checkpoint: Mapping[str, Any],
+        blockers: list[dict[str, Any]],
+    ) -> None:
+        if payload.request_id != checkpoint.get("request_id"):
+            blockers.append(
+                {
+                    "code": "RESUME_REQUEST_MISMATCH",
+                    "message": "Resume payload request_id does not match checkpoint.",
+                }
+            )
+        if payload.feature_id != checkpoint.get("feature_id"):
+            blockers.append(
+                {
+                    "code": "RESUME_FEATURE_MISMATCH",
+                    "message": "Resume payload feature_id does not match checkpoint.",
+                }
+            )
+        if payload.decision != "approve":
+            blockers.append(
+                {
+                    "code": "RUNTIME_CONTINUATION_APPROVAL_REQUIRED",
+                    "message": "Build-to-Runtime continuation requires approve.",
+                }
+            )
+        admission = payload.runtime_admission
+        if not isinstance(admission, Mapping):
+            blockers.append(
+                {
+                    "code": "FRESH_RUNTIME_ADMISSION_MISSING",
+                    "message": "Build-to-Runtime continuation requires fresh Runtime admission.",
+                }
+            )
+            return
+        requested = admission.get("requested_side_effects")
+        authorized = admission.get("authorized_side_effects")
+        if (
+            admission.get("status") != "admitted"
+            or admission.get("authorization_scope") != "this_resume_only"
+            or not isinstance(requested, list)
+            or not isinstance(authorized, list)
+            or "runtime_execution" not in requested
+            or any(not isinstance(item, str) or not item for item in requested)
+            or any(not isinstance(item, str) or not item for item in authorized)
+            or not set(requested).issubset(set(authorized))
+        ):
+            blockers.append(
+                {
+                    "code": "FRESH_RUNTIME_ADMISSION_INVALID",
+                    "message": (
+                        "Runtime admission must authorize every requested side effect "
+                        "for this resume only."
+                    ),
+                }
+            )
+
     def _updates_for(
         self,
         payload: ResumePayload,
@@ -199,6 +275,13 @@ class ResumeValidator:
                 "approvals": {"dry_run": True},
                 "allowed_fields": list(allowed_fields),
                 "restored_state": restored_state,
+            }
+        if payload.decision == "approve" and payload.stage == "build":
+            return {
+                "allowed_fields": [],
+                "restored_state": restored_state,
+                "clear_checkpointed_approvals": True,
+                "runtime_admission": dict(payload.runtime_admission or {}),
             }
         return {
             "allowed_fields": list(allowed_fields),

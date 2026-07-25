@@ -25,6 +25,7 @@ from src.mod_agent.intelligent_evidence_only import (
     _failure_attribution,
     run_intelligent_evidence_only,
 )
+from src.mod_agent.local_entry import LocalEntryError
 
 
 def test_mod_agent_package_imports() -> None:
@@ -1396,3 +1397,93 @@ def test_cli_does_not_treat_non_real_success_status_as_success(
     assert json.loads(capsys.readouterr().out)["build_summary"][
         "claims_real_build_success"
     ] is False
+
+
+def test_cli_resume_runtime_passes_fresh_authority_and_handoff_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def resume(**kwargs):
+        captured.update(kwargs)
+        return {
+            "current_stage": "done",
+            "runtime_summary": {"claims_real_runtime_success": True},
+        }
+
+    monkeypatch.setattr("src.mod_agent.cli.resume_local_runtime", resume)
+
+    exit_code = main(
+        [
+            "resume-runtime",
+            "--run-root",
+            "run-root",
+            "--feature-id",
+            "feature_001",
+            "--checkpoint-path",
+            "checkpoint.json",
+            "--checkpoint-hash",
+            "a" * 64,
+            "--resume-id",
+            "resume_001",
+            "--approved-by",
+            "human",
+            "--settings",
+            "runtime.yaml",
+            "--allow-game-launch",
+            "--runtime-plugin-destination",
+            r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll",
+            "--allow-game-directory-write",
+        ]
+    )
+
+    assert exit_code == 0
+    json.loads(capsys.readouterr().out)
+    assert captured == {
+        "run_root": "run-root",
+        "feature_id": "feature_001",
+        "checkpoint_path": "checkpoint.json",
+        "checkpoint_hash": "a" * 64,
+        "resume_id": "resume_001",
+        "approved_by": "human",
+        "settings_path": "runtime.yaml",
+        "allow_game_launch": True,
+        "runtime_plugin_destination": (
+            r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll"
+        ),
+        "allow_game_directory_write": True,
+    }
+
+
+def test_cli_resume_runtime_reports_blocked_admission(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def blocked(**_: object):
+        raise LocalEntryError("fresh Runtime authorization is missing")
+
+    monkeypatch.setattr("src.mod_agent.cli.resume_local_runtime", blocked)
+
+    exit_code = main(
+        [
+            "resume-runtime",
+            "--run-root",
+            "run-root",
+            "--feature-id",
+            "feature_001",
+            "--checkpoint-path",
+            "checkpoint.json",
+            "--checkpoint-hash",
+            "a" * 64,
+            "--approved-by",
+            "human",
+            "--runtime-plugin-destination",
+            r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["command"] == "resume-runtime"
+    assert payload["status"] == "BLOCKED"

@@ -115,6 +115,8 @@ def test_runtime_admission_and_graph_options_select_one_same_run_chain(
         "restore_after_runtime": True,
         "performed_by_run_request": True,
         "verified_deployed_artifact_hash": False,
+        "destination_existed_at_admission": False,
+        "destination_sha256_at_admission": None,
     }
     assert options == {
         "settings": settings,

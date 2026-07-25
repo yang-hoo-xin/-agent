@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from src.mod_agent.artifacts import ArtifactStore
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import EvidencePack, FakeDenseRetrievalProvider
 from src.mod_agent.execution import ExactDiffApprovalRejectedError
@@ -24,12 +25,14 @@ from src.mod_agent.knowledge import (
     SourceRecord,
     SourceRegistry,
 )
+from src.mod_agent.local_entry import resume_local_runtime
 from src.mod_agent.proposal import RuleBasedProposalCritic
 from src.mod_agent.runtime import (
     GTFOLogSnapshot,
     GTFOProcessHandle,
     RuntimeEvidenceItem,
     RuntimeProbeProfile,
+    build_fake_runtime_evidence_payload,
     build_manual_runtime_evidence_payload,
     build_real_runtime_evidence_payload,
     build_screenshot_metadata,
@@ -55,6 +58,16 @@ def test_external_evaluation_requirement_requires_factory(tmp_path: Path) -> Non
         build_graph(
             ArtifactStore(tmp_path / "artifacts"),
             require_external_evaluation=True,
+        )
+
+
+def test_build_handoff_requires_graph_to_stop_before_runtime(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="stop_after_build=True"):
+        build_graph(
+            ArtifactStore(tmp_path / "artifacts"),
+            persist_build_runtime_handoff=True,
         )
 
 
@@ -247,6 +260,353 @@ def _revision_count(tmp_path: Path, feature_id: str, artifact_type: str) -> int:
         / artifact_type
     )
     return len(list(revision_dir.glob("*.json"))) if revision_dir.exists() else 0
+
+
+def _build_runtime_resume_payload(
+    *,
+    checkpoint: dict[str, object],
+    resume_id: str,
+) -> ResumePayload:
+    return ResumePayload(
+        resume_id=resume_id,
+        run_id=str(checkpoint["run_id"]),
+        request_id=str(checkpoint["request_id"]),
+        feature_id=str(checkpoint["feature_id"]),
+        stage="build",
+        decision="approve",
+        approved_by="human",
+        approved_at="2026-07-25T00:00:00Z",
+        artifact_refs=tuple(checkpoint["artifact_refs"]),  # type: ignore[arg-type]
+        runtime_admission={
+            "status": "admitted",
+            "authorization_scope": "this_resume_only",
+            "requested_side_effects": ["runtime_execution"],
+            "authorized_side_effects": ["runtime_execution"],
+            "provider": "injected_test",
+        },
+    )
+
+
+def _successful_build_handoff(
+    tmp_path: Path,
+    *,
+    artifact_directory: str = "artifacts",
+) -> tuple[ArtifactStore, dict[str, object], object]:
+    store = ArtifactStore(tmp_path / artifact_directory)
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        build_result_factory=_real_build_result_factory(tmp_path),
+        stop_after_build=True,
+        persist_build_runtime_handoff=True,
+    )
+    state = create_initial_state(
+        run_id="run_build_runtime_handoff_001",
+        request_id="req_build_runtime_handoff_001",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+    result = graph.invoke(state)
+    checkpoint_ref = ArtifactRef(
+        feature_id=str(result["feature_id"]),
+        artifact_type="workflow_checkpoint",
+        path=result["artifacts"]["workflow_checkpoint"],
+        artifact_hash=result["artifact_hashes"]["workflow_checkpoint"],
+    )
+    return store, result, checkpoint_ref
+
+
+def test_fresh_process_continues_build_handoff_without_repeating_upstream_stages(
+    tmp_path: Path,
+) -> None:
+    first_store, build_result, checkpoint_ref = _successful_build_handoff(tmp_path)
+    checkpoint = first_store.read(checkpoint_ref)["data"]
+    before_counts = {
+        artifact_type: _revision_count(
+            tmp_path,
+            str(build_result["feature_id"]),
+            artifact_type,
+        )
+        for artifact_type in (
+            "evidence_pack",
+            "patch_proposal",
+            "proposal_review",
+            "dry_run_result",
+            "build_result",
+        )
+    }
+
+    fresh_store = ArtifactStore(tmp_path / "artifacts")
+    fresh_checkpoint_store = WorkflowCheckpointStore(fresh_store)
+    decision, resume_report_ref = fresh_checkpoint_store.resume(
+        checkpoint_ref,
+        _build_runtime_resume_payload(
+            checkpoint=checkpoint,
+            resume_id="resume_build_runtime_handoff_001",
+        ),
+    )
+    resumed_state = resumed_state_from_decision(
+        decision,
+        checkpoint_ref=checkpoint_ref,
+        resume_report_ref=resume_report_ref,
+    )
+
+    def forbidden_build(_: str, __: str | None):
+        raise AssertionError("Build must not repeat during Runtime continuation.")
+
+    fresh_graph = build_graph(
+        fresh_store,
+        build_result_factory=forbidden_build,
+        runtime_continuation_checkpoint_id=checkpoint["checkpoint_id"],
+    )
+    result = fresh_graph.invoke(resumed_state)
+
+    assert decision.allowed is True
+    assert resumed_state["approvals"] == {}
+    assert result["current_stage"] == "done"
+    assert result["run_id"] == build_result["run_id"]
+    runtime = _artifact_data(fresh_store, result, "runtime_evidence")
+    assert runtime["run_id"] == build_result["run_id"]
+    assert runtime["build_artifact_hash"] == build_result["artifact_hashes"][
+        "build_result"
+    ]
+    assert "eval_report" in result["artifacts"]
+    assert "workflow_summary" in result["artifacts"]
+    assert {
+        artifact_type: _revision_count(
+            tmp_path,
+            str(build_result["feature_id"]),
+            artifact_type,
+        )
+        for artifact_type in before_counts
+    } == before_counts
+
+
+def test_supported_local_entry_resumes_build_handoff_without_model_or_gtfo(
+    tmp_path: Path,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    (tmp_path / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": checkpoint["run_id"],
+                "request_id": checkpoint["request_id"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def runtime_factory(
+        feature_id: str,
+        build: dict[str, object],
+        feature_spec: dict[str, object],
+    ) -> dict[str, object]:
+        return build_fake_runtime_evidence_payload(
+            feature_id=feature_id,
+            input_execution_mode=str(build.get("execution_mode")),
+            acceptance_criteria=tuple(feature_spec.get("acceptance_criteria") or ()),
+            runtime_verification_plan=tuple(
+                feature_spec.get("runtime_verification_plan") or ()
+            ),
+        )
+
+    summary = resume_local_runtime(
+        run_root=tmp_path,
+        feature_id=str(build_result["feature_id"]),
+        checkpoint_path=checkpoint_ref.path,
+        checkpoint_hash=checkpoint_ref.artifact_hash,
+        settings_path=tmp_path / "unused-settings.yaml",
+        approved_by="human",
+        allow_game_launch=False,
+        runtime_plugin_destination=None,
+        allow_game_directory_write=False,
+        resume_id="resume_supported_entry_001",
+        runtime_evidence_factory=runtime_factory,
+        injected_runtime_admission={
+            "status": "admitted",
+            "authorization_scope": "this_resume_only",
+            "requested_side_effects": ["runtime_execution"],
+            "authorized_side_effects": ["runtime_execution"],
+            "provider": "injected_test",
+        },
+    )
+
+    assert summary["current_stage"] == "done"
+    assert summary["run_id"] == checkpoint["run_id"]
+    assert summary["model_call_count"] == 0
+    assert summary["upstream_stages_repeated"] is False
+    assert (tmp_path / "runtime_resume_result.json").is_file()
+
+
+def test_fresh_process_rejects_consumed_build_handoff(tmp_path: Path) -> None:
+    first_store, _, checkpoint_ref = _successful_build_handoff(tmp_path)
+    checkpoint = first_store.read(checkpoint_ref)["data"]
+    first_payload = _build_runtime_resume_payload(
+        checkpoint=checkpoint,
+        resume_id="resume_build_runtime_once_001",
+    )
+    first_decision, _ = WorkflowCheckpointStore(first_store).resume(
+        checkpoint_ref,
+        first_payload,
+    )
+
+    fresh_store = ArtifactStore(tmp_path / "artifacts")
+    second_decision, second_report_ref = WorkflowCheckpointStore(fresh_store).resume(
+        checkpoint_ref,
+        _build_runtime_resume_payload(
+            checkpoint=checkpoint,
+            resume_id="resume_build_runtime_twice_001",
+        ),
+    )
+    second_report = fresh_store.read(second_report_ref)["data"]
+
+    assert first_decision.allowed is True
+    assert second_decision.allowed is False
+    assert second_report["blockers"][0]["code"] == "DOUBLE_RESUME_REJECTED"
+
+
+def test_build_handoff_rejects_missing_fresh_runtime_admission(
+    tmp_path: Path,
+) -> None:
+    store, _, checkpoint_ref = _successful_build_handoff(tmp_path)
+    checkpoint = store.read(checkpoint_ref)["data"]
+    payload = _build_runtime_resume_payload(
+        checkpoint=checkpoint,
+        resume_id="resume_build_runtime_no_admission_001",
+    )
+    payload = ResumePayload(
+        **{
+            **payload.to_dict(),
+            "runtime_admission": None,
+        }
+    )
+
+    decision, report_ref = WorkflowCheckpointStore(
+        ArtifactStore(tmp_path / "artifacts")
+    ).resume(checkpoint_ref, payload)
+    report = store.read(report_ref)["data"]
+
+    assert decision.allowed is False
+    assert any(
+        blocker["code"] == "FRESH_RUNTIME_ADMISSION_MISSING"
+        for blocker in report["blockers"]
+    )
+
+
+def test_build_handoff_rejects_changed_verified_build_bytes(
+    tmp_path: Path,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(tmp_path)
+    build = _artifact_data(store, build_result, "build_result")
+    Path(build["verified_artifacts"][0]["resolved_path"]).write_bytes(b"changed")
+    checkpoint = store.read(checkpoint_ref)["data"]
+
+    decision, report_ref = WorkflowCheckpointStore(
+        ArtifactStore(tmp_path / "artifacts")
+    ).resume(
+        checkpoint_ref,
+        _build_runtime_resume_payload(
+            checkpoint=checkpoint,
+            resume_id="resume_build_runtime_changed_bytes_001",
+        ),
+    )
+    report = store.read(report_ref)["data"]
+
+    assert decision.allowed is False
+    assert report["blockers"][0]["code"] == "BUILD_OUTPUT_BYTES_CHANGED"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_code"),
+    [
+        ("run_id", "wrong_run", "RESUME_RUN_MISMATCH"),
+        ("request_id", "wrong_request", "RESUME_REQUEST_MISMATCH"),
+        ("feature_id", "wrong_feature", "RESUME_FEATURE_MISMATCH"),
+        ("stage", "runtime_evidence", "RESUME_STAGE_MISMATCH"),
+    ],
+)
+def test_build_handoff_rejects_wrong_resume_identity(
+    tmp_path: Path,
+    field: str,
+    value: str,
+    expected_code: str,
+) -> None:
+    store, _, checkpoint_ref = _successful_build_handoff(tmp_path)
+    checkpoint = store.read(checkpoint_ref)["data"]
+    payload_data = _build_runtime_resume_payload(
+        checkpoint=checkpoint,
+        resume_id=f"resume_wrong_{field}",
+    ).to_dict()
+    payload_data[field] = value
+
+    decision, report_ref = WorkflowCheckpointStore(
+        ArtifactStore(tmp_path / "artifacts")
+    ).resume(checkpoint_ref, ResumePayload(**payload_data))
+    report = store.read(report_ref)["data"]
+
+    assert decision.allowed is False
+    assert any(
+        blocker["code"] == expected_code for blocker in report["blockers"]
+    )
+
+
+def test_build_handoff_rejects_missing_checkpoint_artifact_ref(
+    tmp_path: Path,
+) -> None:
+    store, _, checkpoint_ref = _successful_build_handoff(tmp_path)
+    checkpoint = store.read(checkpoint_ref)["data"]
+    payload_data = _build_runtime_resume_payload(
+        checkpoint=checkpoint,
+        resume_id="resume_missing_build_ref_001",
+    ).to_dict()
+    payload_data["artifact_refs"] = [
+        ref
+        for ref in payload_data["artifact_refs"]
+        if ref != checkpoint["resume_binding"]["build_result_ref"]
+    ]
+
+    decision, report_ref = WorkflowCheckpointStore(
+        ArtifactStore(tmp_path / "artifacts")
+    ).resume(checkpoint_ref, ResumePayload(**payload_data))
+    report = store.read(report_ref)["data"]
+
+    assert decision.allowed is False
+    assert any(
+        blocker["code"] == "RESUME_ARTIFACT_REFS_MISSING"
+        for blocker in report["blockers"]
+    )
+
+
+def test_build_handoff_rejects_stale_artifact_lineage(tmp_path: Path) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(tmp_path)
+    checkpoint = store.read(checkpoint_ref)["data"]
+    feature_spec = _artifact_data(store, build_result, "feature_spec")
+    changed_feature_spec = dict(feature_spec)
+    changed_feature_spec["message"] = "Feature specification changed after Build."
+    store.write(
+        feature_id=str(build_result["feature_id"]),
+        artifact_type="feature_spec",
+        payload=changed_feature_spec,
+    )
+
+    decision, report_ref = WorkflowCheckpointStore(
+        ArtifactStore(tmp_path / "artifacts")
+    ).resume(
+        checkpoint_ref,
+        _build_runtime_resume_payload(
+            checkpoint=checkpoint,
+            resume_id="resume_stale_build_handoff_001",
+        ),
+    )
+    report = store.read(report_ref)["data"]
+
+    assert decision.allowed is False
+    assert report["blockers"][0]["code"] == "STALE_RESUME_REJECTED"
+    assert "feature_spec hash changed" in report["stale_reasons"]
 
 
 def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:

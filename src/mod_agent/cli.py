@@ -15,7 +15,7 @@ from .intelligent_evidence_only import (
     IntelligentEvidenceEntryError,
     run_intelligent_evidence_only,
 )
-from .local_entry import LocalEntryError, run_local_request
+from .local_entry import LocalEntryError, resume_local_runtime, run_local_request
 from .planning import ModPlanningBriefBuilder, RequestPlanner
 from .tools import PermissionModel
 
@@ -208,6 +208,29 @@ def build_parser() -> argparse.ArgumentParser:
             "Authorize this run only to deploy the verified final DLL and restore "
             "the destination after Runtime capture."
         ),
+    )
+    resume_runtime_parser = subparsers.add_parser(
+        "resume-runtime",
+        help=(
+            "Continue a validated successful Build checkpoint through the "
+            "existing Runtime, Evaluation, and Terminal graph path."
+        ),
+    )
+    resume_runtime_parser.add_argument("--run-root", required=True)
+    resume_runtime_parser.add_argument("--feature-id", required=True)
+    resume_runtime_parser.add_argument("--checkpoint-path", required=True)
+    resume_runtime_parser.add_argument("--checkpoint-hash", required=True)
+    resume_runtime_parser.add_argument("--resume-id")
+    resume_runtime_parser.add_argument("--approved-by", required=True)
+    resume_runtime_parser.add_argument("--settings", default="config/settings.yaml")
+    resume_runtime_parser.add_argument("--allow-game-launch", action="store_true")
+    resume_runtime_parser.add_argument(
+        "--runtime-plugin-destination",
+        required=True,
+    )
+    resume_runtime_parser.add_argument(
+        "--allow-game-directory-write",
+        action="store_true",
     )
 
     return parser
@@ -415,6 +438,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         return (
             0
             if result.get("build_summary", {}).get("claims_real_build_success") is True
+            else 1
+        )
+
+    if args.command == "resume-runtime":
+        try:
+            result = resume_local_runtime(
+                run_root=args.run_root,
+                feature_id=args.feature_id,
+                checkpoint_path=args.checkpoint_path,
+                checkpoint_hash=args.checkpoint_hash,
+                resume_id=args.resume_id,
+                approved_by=args.approved_by,
+                settings_path=args.settings,
+                allow_game_launch=bool(args.allow_game_launch),
+                runtime_plugin_destination=args.runtime_plugin_destination,
+                allow_game_directory_write=bool(args.allow_game_directory_write),
+            )
+        except LocalEntryError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "command": "resume-runtime",
+                        "reason": str(exc),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return (
+            0
+            if (
+                result.get("current_stage") == "done"
+                and result.get("runtime_summary", {}).get(
+                    "claims_real_runtime_success"
+                )
+                is True
+            )
             else 1
         )
 

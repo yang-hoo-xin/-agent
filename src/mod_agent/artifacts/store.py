@@ -383,6 +383,56 @@ class ArtifactStore:
             )
         return refs
 
+    def list_feature_artifact_revisions(
+        self,
+        feature_id: str,
+        artifact_type: str,
+    ) -> list[ArtifactRef]:
+        """List every immutable revision for one feature artifact type."""
+
+        self._validate_feature_id(feature_id)
+        self._validate_artifact_type(artifact_type)
+        revision_directories = (
+            self._guard_path(
+                self.root
+                / "features"
+                / feature_id
+                / _REVISION_DIRECTORY
+                / artifact_type
+            ),
+            self._guard_path(
+                self.root
+                / "features"
+                / feature_id
+                / "revisions"
+                / artifact_type
+            ),
+        )
+        refs: list[ArtifactRef] = []
+        seen: set[tuple[str, str]] = set()
+        for revision_directory in revision_directories:
+            if not revision_directory.exists():
+                continue
+            for path in sorted(revision_directory.glob("*.json")):
+                envelope = json.loads(path.read_text(encoding="utf-8"))
+                artifact_hash = envelope.get("artifact_hash")
+                if not isinstance(artifact_hash, str):
+                    raise ArtifactStoreError(
+                        "Artifact revision envelope missing artifact_hash"
+                    )
+                ref = ArtifactRef(
+                    feature_id=feature_id,
+                    artifact_type=artifact_type,
+                    path=str(path),
+                    artifact_hash=artifact_hash,
+                )
+                self.read(ref)
+                key = (ref.path, ref.artifact_hash)
+                if key not in seen:
+                    refs.append(ref)
+                    seen.add(key)
+        return refs
+
     def list_feature_ids(self) -> list[str]:
         """List feature ids with artifact directories."""
 

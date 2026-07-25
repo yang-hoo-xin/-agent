@@ -122,6 +122,8 @@ def build_graph(
     isolated_apply_factory: PatchExecutionFactory | None = None,
     stop_after_evidence: bool = False,
     stop_after_build: bool = False,
+    persist_build_runtime_handoff: bool = False,
+    runtime_continuation_checkpoint_id: str | None = None,
     evaluation_context_factory: EvaluationContextFactory | None = None,
     require_external_evaluation: bool = False,
     require_review_approval_for_dry_run: bool = False,
@@ -139,6 +141,10 @@ def build_graph(
 
     if enable_dynamic_review_interrupt and checkpointer is None:
         raise ValueError("Dynamic review interrupt requires a LangGraph checkpointer.")
+    if persist_build_runtime_handoff and not stop_after_build:
+        raise ValueError(
+            "Build-to-Runtime handoff persistence requires stop_after_build=True."
+        )
     if require_external_evaluation and evaluation_context_factory is None:
         raise ValueError("require_external_evaluation requires evaluation_context_factory")
     if critic_requirement not in {"not_required", "required"}:
@@ -274,7 +280,12 @@ def build_graph(
         "build",
         _make_real_graph_node(
             "build",
-            lambda state: _run_build(state, artifact_store, build_result_factory),
+            lambda state: _run_build(
+                state,
+                artifact_store,
+                build_result_factory,
+                persist_build_runtime_handoff=persist_build_runtime_handoff,
+            ),
         ),
     )
     graph.add_node(
@@ -316,7 +327,20 @@ def build_graph(
     )
     graph.add_node("blocked", _make_stub_graph_node("blocked", stub_runner))
 
-    graph.add_edge(START, "plan_request")
+    if runtime_continuation_checkpoint_id is None:
+        graph.add_edge(START, "plan_request")
+    else:
+        graph.add_conditional_edges(
+            START,
+            lambda state: _route_runtime_continuation_entry(
+                state,
+                artifact_store,
+                checkpoint_id=runtime_continuation_checkpoint_id,
+            ),
+            {
+                "continue": "collect_runtime_evidence",
+            },
+        )
     registry = route_registry()
     graph.add_conditional_edges(
         "plan_request",
@@ -1088,6 +1112,8 @@ def _run_build(
     state: ModAgentState,
     artifact_store: ArtifactStore,
     build_result_factory: BuildResultFactory | None,
+    *,
+    persist_build_runtime_handoff: bool = False,
 ) -> ModAgentState:
     dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
     feature_id = state["feature_id"] or state["request_id"]
@@ -1136,7 +1162,75 @@ def _run_build(
         "claims_real_build_success": payload["claims_real_build_success"],
     }
     _record_artifact(next_state, "build_result", artifact_ref)
+    if (
+        persist_build_runtime_handoff
+        and payload["status"] == "success"
+        and payload["claims_real_build_success"] is True
+    ):
+        next_state["next_stage"] = "runtime_evidence"
+        checkpoint_ref = WorkflowCheckpointStore(artifact_store).create_checkpoint(
+            next_state,
+            interrupt_reason=(
+                "Successful Build is ready for fresh-process Runtime continuation."
+            ),
+            resume_allowed_fields=(),
+        )
+        _record_artifact(next_state, "workflow_checkpoint", checkpoint_ref)
     return next_state
+
+
+def _route_runtime_continuation_entry(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    *,
+    checkpoint_id: str,
+) -> str:
+    """Admit only a validated Build checkpoint into the existing Runtime node."""
+
+    if state.get("current_stage") != "build":
+        raise ValueError("Runtime continuation state must restore the Build boundary.")
+    if state.get("next_stage") != "runtime_evidence":
+        raise ValueError("Runtime continuation state has an unexpected next_stage.")
+    if state.get("blockers"):
+        raise ValueError("Runtime continuation state contains unresolved blockers.")
+    for artifact_type in (
+        "workflow_checkpoint",
+        "resume_report",
+        "feature_spec",
+        "build_result",
+    ):
+        if artifact_type not in state.get("artifacts", {}):
+            raise ValueError(
+                f"Runtime continuation state is missing {artifact_type}."
+            )
+        if artifact_type not in state.get("artifact_hashes", {}):
+            raise ValueError(
+                f"Runtime continuation state is missing {artifact_type} hash."
+            )
+    checkpoint_ref = _artifact_ref_from_state(state, "workflow_checkpoint")
+    report_ref = _artifact_ref_from_state(state, "resume_report")
+    checkpoint = artifact_store.read_for_stage(
+        checkpoint_ref,
+        consumer_stage="resume",
+    )["data"]
+    report = artifact_store.read(report_ref)["data"]
+    if (
+        checkpoint.get("checkpoint_id") != checkpoint_id
+        or checkpoint.get("checkpoint_stage") != "build"
+        or checkpoint.get("run_id") != state.get("run_id")
+        or checkpoint.get("request_id") != state.get("request_id")
+        or checkpoint.get("feature_id") != state.get("feature_id")
+        or report.get("checkpoint_id") != checkpoint_id
+        or report.get("run_id") != state.get("run_id")
+        or report.get("resume_stage") != "build"
+        or report.get("decision") != "approve"
+        or report.get("allowed") is not True
+    ):
+        raise ValueError(
+            "Runtime continuation checkpoint and resume report are not bound "
+            "to the restored state."
+        )
+    return "continue"
 
 
 def _run_create_repair_plan(

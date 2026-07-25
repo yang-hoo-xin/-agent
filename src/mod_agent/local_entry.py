@@ -20,7 +20,7 @@ from uuid import uuid4
 
 from src.core.settings import load_settings
 from src.libs.llm import LLMFactory, OllamaLLM, validate_loopback_http_base_url
-from src.mod_agent.artifacts import ArtifactStore
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import RgLiveEvidenceProvider
 from src.mod_agent.evidence.dotnet_metadata import (
@@ -39,7 +39,13 @@ from src.mod_agent.runtime import (
     profile_from_settings,
     temporarily_deploy_verified_plugin,
 )
-from src.mod_agent.workflow import build_graph, create_initial_state
+from src.mod_agent.workflow import (
+    ResumePayload,
+    WorkflowCheckpointStore,
+    build_graph,
+    create_initial_state,
+    resumed_state_from_decision,
+)
 
 
 class LocalEntryError(RuntimeError):
@@ -869,6 +875,12 @@ def _runtime_admission_record(
             "restore_after_runtime": True,
             "performed_by_run_request": True,
             "verified_deployed_artifact_hash": False,
+            "destination_existed_at_admission": destination.is_file(),
+            "destination_sha256_at_admission": (
+                hashlib.sha256(destination.read_bytes()).hexdigest()
+                if destination.is_file()
+                else None
+            ),
         },
     }
 
@@ -953,6 +965,8 @@ def _make_deploying_runtime_evidence_factory(
     expected_artifact: str,
     destination_path: Path,
     backup_directory: Path,
+    expected_destination_existed: bool | None = None,
+    expected_destination_sha256: str | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Wrap the existing GTFO runner with verified temporary deployment."""
 
@@ -976,6 +990,8 @@ def _make_deploying_runtime_evidence_factory(
             backup_directory=backup_directory,
             expected_source_sha256=expected_sha256,
             allow_game_directory_write=allow_game_directory_write,
+            expected_destination_existed=expected_destination_existed,
+            expected_destination_sha256=expected_destination_sha256,
         ) as deployment:
             payload = base_factory(feature_id, build, feature_spec)
         return bind_plugin_deployment_to_runtime_payload(
@@ -1839,6 +1855,14 @@ def run_local_request(
                 str(runtime_admission["plugin_deployment"]["destination_path"])
             ),
             backup_directory=run_root / "runtime_deployment_backup",
+            expected_destination_existed=bool(
+                runtime_admission["plugin_deployment"][
+                    "destination_existed_at_admission"
+                ]
+            ),
+            expected_destination_sha256=runtime_admission["plugin_deployment"][
+                "destination_sha256_at_admission"
+            ],
         )
         if run_gtfo_runtime
         else None
@@ -1948,6 +1972,7 @@ def run_local_request(
         build_result_factory=build_result_factory,
         runtime_evidence_factory=runtime_evidence_factory,
         use_default_proposal_git_binding=False,
+        persist_build_runtime_handoff=not run_gtfo_runtime,
         **runtime_graph_options,
     )
     state = create_initial_state(
@@ -2062,6 +2087,225 @@ def run_local_request(
         model_call_count=model_call_count,
         patch_payload_parser_entered=patch_payload_parser_entered,
         actual_write_performed=actual_write_performed,
+    )
+    return summary
+
+
+def resume_local_runtime(
+    *,
+    run_root: str | Path,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    settings_path: str | Path,
+    approved_by: str,
+    allow_game_launch: bool,
+    runtime_plugin_destination: str | Path | None,
+    allow_game_directory_write: bool,
+    resume_id: str | None = None,
+    runtime_evidence_factory: (
+        Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None
+    ) = None,
+    injected_runtime_admission: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Continue one validated Build handoff through the existing Runtime graph."""
+
+    root = Path(run_root).resolve()
+    if not root.is_dir():
+        raise LocalEntryError("Runtime continuation run_root does not exist.")
+    if not approved_by.strip():
+        raise LocalEntryError("Runtime continuation requires approved_by.")
+    artifact_store = ArtifactStore(root / "a")
+    checkpoint_ref = ArtifactRef(
+        feature_id=feature_id,
+        artifact_type="workflow_checkpoint",
+        path=str(Path(checkpoint_path).resolve()),
+        artifact_hash=checkpoint_hash,
+    )
+    try:
+        checkpoint = artifact_store.read(checkpoint_ref)["data"]
+    except (OSError, ValueError) as exc:
+        raise LocalEntryError(f"Runtime continuation checkpoint is invalid: {exc}") from exc
+    if checkpoint.get("feature_id") != feature_id:
+        raise LocalEntryError(
+            "Runtime continuation feature_id does not match checkpoint."
+        )
+    if checkpoint.get("checkpoint_stage") != "build":
+        raise LocalEntryError(
+            "Runtime continuation requires a Build-stage checkpoint."
+        )
+
+    manifest_path = root / "run_manifest.json"
+    if not manifest_path.is_file():
+        raise LocalEntryError("Runtime continuation run_manifest.json is missing.")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        manifest.get("run_id") != checkpoint.get("run_id")
+        or manifest.get("request_id") != checkpoint.get("request_id")
+    ):
+        raise LocalEntryError(
+            "Runtime continuation manifest identity does not match checkpoint."
+        )
+
+    if injected_runtime_admission is not None:
+        if runtime_evidence_factory is None:
+            raise LocalEntryError(
+                "Injected Runtime admission requires an injected Runtime factory."
+            )
+        runtime_admission = dict(injected_runtime_admission)
+        graph_runtime_factory = runtime_evidence_factory
+    else:
+        settings = load_settings(settings_path)
+        runtime_admission = _runtime_admission_record(
+            settings,
+            run_gtfo_runtime=True,
+            allow_game_launch=allow_game_launch,
+            runtime_plugin_destination=runtime_plugin_destination,
+            allow_game_directory_write=allow_game_directory_write,
+        )
+        build_ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type="build_result",
+            path=checkpoint["state_snapshot"]["artifacts"]["build_result"],
+            artifact_hash=checkpoint["state_snapshot"]["artifact_hashes"][
+                "build_result"
+            ],
+        )
+        build = artifact_store.read(build_ref)["data"]
+        verified_artifacts = [
+            item
+            for item in build.get("verified_artifacts") or []
+            if isinstance(item, Mapping)
+        ]
+        if len(verified_artifacts) != 1:
+            raise LocalEntryError(
+                "Runtime continuation requires exactly one verified Build output."
+            )
+        verified_artifact = verified_artifacts[0]
+        resolved_path = verified_artifact.get("resolved_path")
+        relative_path = verified_artifact.get("path")
+        if not isinstance(resolved_path, str) or not isinstance(relative_path, str):
+            raise LocalEntryError(
+                "Runtime continuation Build output binding is incomplete."
+            )
+        destination = Path(
+            str(runtime_admission["plugin_deployment"]["destination_path"])
+        )
+        if destination.name != Path(relative_path).name:
+            raise LocalEntryError(
+                "Runtime continuation destination filename does not match Build output."
+            )
+        backup_directory = root / "runtime_continuation_deployment_backup"
+        if backup_directory.exists() and any(backup_directory.iterdir()):
+            raise LocalEntryError(
+                "Runtime continuation found unresolved prior deployment backup state."
+            )
+        graph_runtime_factory = _make_deploying_runtime_evidence_factory(
+            settings=settings,
+            allow_game_launch=allow_game_launch,
+            allow_game_directory_write=allow_game_directory_write,
+            build_artifact_path=Path(resolved_path),
+            expected_artifact=relative_path,
+            destination_path=destination,
+            backup_directory=backup_directory,
+            expected_destination_existed=bool(
+                runtime_admission["plugin_deployment"][
+                    "destination_existed_at_admission"
+                ]
+            ),
+            expected_destination_sha256=runtime_admission["plugin_deployment"][
+                "destination_sha256_at_admission"
+            ],
+        )
+
+    admission_snapshot = {
+        "status": "admitted",
+        "authorization_scope": "this_resume_only",
+        "requested_side_effects": list(
+            runtime_admission.get("requested_side_effects")
+            or ["runtime_execution", "process_launch", "game_directory_write"]
+        ),
+        "authorized_side_effects": list(
+            runtime_admission.get("authorized_side_effects")
+            or (
+                ["runtime_execution", "process_launch", "game_directory_write"]
+                if (
+                    runtime_admission.get("allow_game_launch") is True
+                    and (
+                        runtime_admission.get("plugin_deployment") or {}
+                    ).get("allow_game_directory_write")
+                    is True
+                )
+                else []
+            )
+        ),
+        "provider": runtime_admission.get("evidence_source")
+        or runtime_admission.get("provider"),
+        "runtime_admission": runtime_admission,
+    }
+    payload = ResumePayload(
+        resume_id=resume_id or f"resume_{uuid4().hex}",
+        run_id=str(checkpoint["run_id"]),
+        request_id=str(checkpoint["request_id"]),
+        feature_id=str(checkpoint["feature_id"]),
+        stage="build",
+        decision="approve",
+        approved_by=approved_by,
+        approved_at=datetime.now(timezone.utc).isoformat(),
+        artifact_refs=tuple(checkpoint["artifact_refs"]),
+        notes="Fresh-process Build-to-Runtime continuation.",
+        runtime_admission=admission_snapshot,
+    )
+    checkpoint_store = WorkflowCheckpointStore(artifact_store)
+    decision, resume_report_ref = checkpoint_store.resume(checkpoint_ref, payload)
+    if not decision.allowed:
+        blocker_codes = [
+            str(blocker.get("code"))
+            for blocker in decision.blockers
+            if isinstance(blocker, Mapping)
+        ]
+        raise LocalEntryError(
+            "Runtime continuation resume was blocked: " + ", ".join(blocker_codes)
+        )
+    resumed_state = resumed_state_from_decision(
+        decision,
+        checkpoint_ref=checkpoint_ref,
+        resume_report_ref=resume_report_ref,
+    )
+    graph = build_graph(
+        artifact_store,
+        runtime_evidence_factory=graph_runtime_factory,
+        runtime_continuation_checkpoint_id=str(checkpoint["checkpoint_id"]),
+        use_default_proposal_git_binding=False,
+    )
+    try:
+        result = graph.invoke(resumed_state)
+    except Exception as exc:
+        raise LocalEntryError(
+            f"Runtime continuation graph failed: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    summary = {
+        "run_id": result["run_id"],
+        "request_id": result["request_id"],
+        "feature_id": result["feature_id"],
+        "resume_id": payload.resume_id,
+        "checkpoint_id": checkpoint["checkpoint_id"],
+        "current_stage": result["current_stage"],
+        "artifacts": result["artifacts"],
+        "runtime_summary": result["runtime_summary"],
+        "runtime_admission": runtime_admission,
+        "runtime_verification_chain": _runtime_verification_chain(
+            result,
+            requested=True,
+        ),
+        "model_call_count": 0,
+        "upstream_stages_repeated": False,
+    }
+    result_path = root / "runtime_resume_result.json"
+    result_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
     return summary
 

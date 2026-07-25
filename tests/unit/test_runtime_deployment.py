@@ -184,6 +184,34 @@ def test_temporary_plugin_deployment_requires_write_approval(
             raise AssertionError("deployment must not start")
 
 
+def test_temporary_plugin_deployment_blocks_destination_drift_after_admission(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "build" / "BetterHitFeedback.dll"
+    destination = tmp_path / "game" / "BepInEx" / "plugins" / source.name
+    source.parent.mkdir()
+    destination.parent.mkdir(parents=True)
+    source.write_bytes(b"build")
+    destination.write_bytes(b"changed after admission")
+
+    with pytest.raises(
+        RuntimePluginDeploymentError,
+        match="existence changed after admission",
+    ):
+        with temporarily_deploy_verified_plugin(
+            source_path=source,
+            destination_path=destination,
+            backup_directory=tmp_path / "backup",
+            expected_source_sha256=_sha256(source.read_bytes()),
+            allow_game_directory_write=True,
+            expected_destination_existed=False,
+            expected_destination_sha256=None,
+        ):
+            raise AssertionError("deployment must not start")
+
+    assert destination.read_bytes() == b"changed after admission"
+
+
 def test_runtime_payload_requires_deployment_hash_and_restoration_checks(
     tmp_path: Path,
 ) -> None:

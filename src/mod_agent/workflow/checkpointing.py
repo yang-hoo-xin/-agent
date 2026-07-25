@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ class CheckpointPolicy:
         "proposal_review",
         "review_proposal",
         "dry_run_apply",
+        "build",
         "collect_runtime_evidence",
     )
     backend: str = "langgraph_memory"
@@ -123,6 +125,7 @@ class ResumeReport:
 def resumed_state_from_decision(
     decision: ResumeDecision,
     *,
+    checkpoint_ref: ArtifactRef | None = None,
     resume_report_ref: ArtifactRef | None = None,
 ) -> ModAgentState:
     """Build a graph-resumable state from an accepted resume decision."""
@@ -133,11 +136,22 @@ def resumed_state_from_decision(
     if not isinstance(restored_state, dict):
         raise ValueError("Accepted resume decision does not contain restored_state.")
     state = ModAgentState(**restored_state)
+    if decision.applied_updates.get("clear_checkpointed_approvals") is True:
+        state["approvals"] = {}
     approvals = decision.applied_updates.get("approvals")
     if isinstance(approvals, dict):
         state["approvals"] = {
             **dict(state["approvals"]),
             **approvals,
+        }
+    if checkpoint_ref is not None:
+        state["artifacts"] = {
+            **dict(state["artifacts"]),
+            "workflow_checkpoint": checkpoint_ref.path,
+        }
+        state["artifact_hashes"] = {
+            **dict(state["artifact_hashes"]),
+            "workflow_checkpoint": checkpoint_ref.artifact_hash,
         }
     if resume_report_ref is not None:
         state["artifacts"] = {
@@ -210,8 +224,29 @@ class WorkflowCheckpointStore:
 
         checkpoint_envelope = self.artifact_store.read(checkpoint_ref)
         checkpoint = checkpoint_envelope["data"]
-        freshness = self.artifact_store.check_direct_freshness(checkpoint_ref)
-        if not freshness.is_fresh:
+        lineage_blockers = self._checkpoint_lineage_blockers(
+            checkpoint_ref,
+            checkpoint_envelope,
+        )
+        freshness = (
+            self.artifact_store.check_freshness(checkpoint_ref)
+            if checkpoint.get("checkpoint_stage") == "build"
+            else self.artifact_store.check_direct_freshness(checkpoint_ref)
+        )
+        consumed, seen_resume_id = self._durable_consumption_state(
+            checkpoint_ref.feature_id,
+            checkpoint_id=str(checkpoint.get("checkpoint_id") or ""),
+            resume_id=payload.resume_id,
+        )
+        if lineage_blockers:
+            decision = ResumeDecision(
+                status="blocked",
+                allowed=False,
+                reason="Resume blocked because checkpoint lineage is invalid.",
+                applied_updates={},
+                blockers=tuple(lineage_blockers),
+            )
+        elif not freshness.is_fresh:
             decision = ResumeDecision(
                 status="blocked",
                 allowed=False,
@@ -228,6 +263,8 @@ class WorkflowCheckpointStore:
         elif (
             payload.resume_id in self._seen_resume_ids
             or checkpoint["checkpoint_id"] in self._consumed_checkpoint_ids
+            or seen_resume_id
+            or consumed
         ):
             decision = ResumeDecision(
                 status="blocked",
@@ -268,6 +305,7 @@ class WorkflowCheckpointStore:
             status="success" if decision.allowed else "blocked",
             upstream_refs=[checkpoint_ref],
             allow_stale_upstreams=not decision.allowed and bool(decision.stale_reasons),
+            exact_revision_upstream_types={"workflow_checkpoint"},
         )
         return decision, report_ref
 
@@ -310,6 +348,11 @@ class WorkflowCheckpointStore:
             "proposal_review_ref": None,
             "proposal_review_hash": None,
             "diff_hash": None,
+            "feature_spec_ref": None,
+            "feature_spec_hash": None,
+            "build_result_ref": None,
+            "build_result_hash": None,
+            "next_graph_node": None,
         }
         if "patch_proposal" in state["artifacts"]:
             proposal_ref = self._artifact_ref_from_state(state, "patch_proposal")
@@ -323,7 +366,215 @@ class WorkflowCheckpointStore:
             review_ref = self._artifact_ref_from_state(state, "proposal_review")
             binding["proposal_review_ref"] = review_ref.path
             binding["proposal_review_hash"] = review_ref.artifact_hash
+        if "feature_spec" in state["artifacts"]:
+            feature_ref = self._artifact_ref_from_state(state, "feature_spec")
+            binding["feature_spec_ref"] = feature_ref.path
+            binding["feature_spec_hash"] = feature_ref.artifact_hash
+        if "build_result" in state["artifacts"]:
+            build_ref = self._artifact_ref_from_state(state, "build_result")
+            binding["build_result_ref"] = build_ref.path
+            binding["build_result_hash"] = build_ref.artifact_hash
+        if state["current_stage"] == "build":
+            binding["next_graph_node"] = "collect_runtime_evidence"
         return binding
+
+    def _durable_consumption_state(
+        self,
+        feature_id: str,
+        *,
+        checkpoint_id: str,
+        resume_id: str,
+    ) -> tuple[bool, bool]:
+        consumed = False
+        seen_resume_id = False
+        for ref in self.artifact_store.list_feature_artifact_revisions(
+            feature_id,
+            "resume_report",
+        ):
+            report = self.artifact_store.read(ref)["data"]
+            if report.get("allowed") is not True:
+                continue
+            consumed = consumed or report.get("checkpoint_id") == checkpoint_id
+            seen_resume_id = seen_resume_id or report.get("resume_id") == resume_id
+        return consumed, seen_resume_id
+
+    def _checkpoint_lineage_blockers(
+        self,
+        checkpoint_ref: ArtifactRef,
+        checkpoint_envelope: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        checkpoint = checkpoint_envelope["data"]
+        snapshot = checkpoint.get("state_snapshot")
+        artifact_hashes = checkpoint.get("artifact_hashes")
+        artifact_refs = checkpoint.get("artifact_refs")
+        upstream = checkpoint_envelope.get("inputs", {}).get("upstream_artifacts", [])
+        blockers: list[dict[str, Any]] = []
+        if (
+            not isinstance(snapshot, dict)
+            or not isinstance(snapshot.get("artifacts"), dict)
+            or not isinstance(snapshot.get("artifact_hashes"), dict)
+            or not isinstance(artifact_hashes, dict)
+            or not isinstance(artifact_refs, list)
+        ):
+            return [
+                {
+                    "code": "CHECKPOINT_LINEAGE_INVALID",
+                    "message": "Checkpoint state and Artifact bindings are incomplete.",
+                }
+            ]
+        upstream_by_type = {
+            item.get("artifact_type"): item
+            for item in upstream
+            if isinstance(item, dict) and isinstance(item.get("artifact_type"), str)
+        }
+        snapshot_artifacts = snapshot["artifacts"]
+        snapshot_hashes = snapshot["artifact_hashes"]
+        if (
+            checkpoint.get("run_id") != snapshot.get("run_id")
+            or checkpoint.get("request_id") != snapshot.get("request_id")
+            or checkpoint.get("feature_id") != snapshot.get("feature_id")
+            or checkpoint_ref.feature_id != checkpoint.get("feature_id")
+            or checkpoint.get("checkpoint_stage") != snapshot.get("current_stage")
+            or set(artifact_refs) != set(snapshot_artifacts.values())
+            or artifact_hashes != snapshot_hashes
+            or set(upstream_by_type) != set(snapshot_artifacts)
+        ):
+            blockers.append(
+                {
+                    "code": "CHECKPOINT_LINEAGE_MISMATCH",
+                    "message": "Checkpoint identity, state, or Artifact bindings disagree.",
+                }
+            )
+            return blockers
+        for artifact_type, path in snapshot_artifacts.items():
+            item = upstream_by_type.get(artifact_type)
+            if (
+                item is None
+                or item.get("path") != path
+                or item.get("artifact_hash") != snapshot_hashes.get(artifact_type)
+            ):
+                blockers.append(
+                    {
+                        "code": "CHECKPOINT_ARTIFACT_BINDING_MISMATCH",
+                        "message": (
+                            f"Checkpoint Artifact binding disagrees for {artifact_type}."
+                        ),
+                    }
+                )
+        if checkpoint.get("checkpoint_stage") == "build":
+            blockers.extend(self._build_handoff_blockers(checkpoint))
+        return blockers
+
+    def _build_handoff_blockers(
+        self,
+        checkpoint: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        snapshot = checkpoint["state_snapshot"]
+        required = {"feature_spec", "build_result"}
+        missing = sorted(required - set(snapshot["artifacts"]))
+        if missing:
+            return [
+                {
+                    "code": "BUILD_HANDOFF_ARTIFACT_MISSING",
+                    "message": f"Build handoff is missing required Artifacts: {missing}",
+                }
+            ]
+        binding = checkpoint.get("resume_binding") or {}
+        if (
+            binding.get("feature_spec_ref") != snapshot["artifacts"]["feature_spec"]
+            or binding.get("feature_spec_hash")
+            != snapshot["artifact_hashes"]["feature_spec"]
+            or binding.get("build_result_ref") != snapshot["artifacts"]["build_result"]
+            or binding.get("build_result_hash")
+            != snapshot["artifact_hashes"]["build_result"]
+            or binding.get("next_graph_node") != "collect_runtime_evidence"
+        ):
+            return [
+                {
+                    "code": "BUILD_HANDOFF_BINDING_MISMATCH",
+                    "message": "Build handoff does not bind the expected Runtime graph entry.",
+                }
+            ]
+        build_ref = ArtifactRef(
+            feature_id=checkpoint["feature_id"],
+            artifact_type="build_result",
+            path=snapshot["artifacts"]["build_result"],
+            artifact_hash=snapshot["artifact_hashes"]["build_result"],
+        )
+        build = self.artifact_store.read(build_ref)["data"]
+        if (
+            build.get("status") != "success"
+            or build.get("claims_real_build_success") is not True
+        ):
+            return [
+                {
+                    "code": "BUILD_HANDOFF_NOT_SUCCESSFUL",
+                    "message": "Runtime continuation requires a successful real Build.",
+                }
+            ]
+        verified_artifacts = build.get("verified_artifacts")
+        if (
+            not isinstance(verified_artifacts, list)
+            or not verified_artifacts
+            or (build.get("artifact_verification") or {}).get("status") != "verified"
+        ):
+            return [
+                {
+                    "code": "BUILD_OUTPUT_VERIFICATION_MISSING",
+                    "message": (
+                        "Runtime continuation requires at least one verified "
+                        "physical Build output."
+                    ),
+                }
+            ]
+        blockers: list[dict[str, Any]] = []
+        for runtime_ref in self.artifact_store.list_feature_artifact_revisions(
+            checkpoint["feature_id"],
+            "runtime_evidence",
+        ):
+            runtime = self.artifact_store.read(runtime_ref)["data"]
+            if runtime.get("run_id") == checkpoint.get("run_id"):
+                blockers.append(
+                    {
+                        "code": "PRIOR_RUNTIME_STATE_PRESENT",
+                        "message": (
+                            "Runtime evidence already exists for this handoff run; "
+                            "automatic repetition is blocked."
+                        ),
+                    }
+                )
+                return blockers
+        for artifact in verified_artifacts:
+            if not isinstance(artifact, dict):
+                blockers.append(
+                    {
+                        "code": "BUILD_OUTPUT_BINDING_INVALID",
+                        "message": "Build output binding is not structured.",
+                    }
+                )
+                continue
+            resolved_path = artifact.get("resolved_path")
+            expected_hash = artifact.get("sha256")
+            if not isinstance(resolved_path, str) or not isinstance(expected_hash, str):
+                blockers.append(
+                    {
+                        "code": "BUILD_OUTPUT_BINDING_INVALID",
+                        "message": "Build output path or SHA256 is missing.",
+                    }
+                )
+                continue
+            path = Path(resolved_path)
+            if (
+                not path.is_file()
+                or hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash
+            ):
+                blockers.append(
+                    {
+                        "code": "BUILD_OUTPUT_BYTES_CHANGED",
+                        "message": f"Verified Build output changed: {resolved_path}",
+                    }
+                )
+        return blockers
 
     @staticmethod
     def _diff_hash_from_patch_proposal(proposal_payload: dict[str, Any]) -> str:

@@ -73,6 +73,8 @@ def temporarily_deploy_verified_plugin(
     backup_directory: str | Path,
     expected_source_sha256: str,
     allow_game_directory_write: bool,
+    expected_destination_existed: bool | None = None,
+    expected_destination_sha256: str | None = None,
 ) -> Iterator[RuntimePluginDeploymentRecord]:
     """Deploy verified bytes for one Runtime call and restore in ``finally``."""
 
@@ -107,6 +109,20 @@ def temporarily_deploy_verified_plugin(
     destination_hash_before = (
         _sha256_file(destination) if destination_existed else None
     )
+    if (
+        expected_destination_existed is not None
+        and destination_existed != expected_destination_existed
+    ):
+        raise RuntimePluginDeploymentError(
+            "Runtime plugin destination existence changed after admission."
+        )
+    if (
+        expected_destination_existed is not None
+        and destination_hash_before != expected_destination_sha256
+    ):
+        raise RuntimePluginDeploymentError(
+            "Runtime plugin destination SHA256 changed after admission."
+        )
     backup_path = (
         backup_root / f"{destination.name}.before"
         if destination_existed
