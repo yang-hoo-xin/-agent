@@ -12,7 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .evidence import RuntimeEvidenceItem, build_real_runtime_evidence_payload
+from .evidence import (
+    RuntimeEvidenceItem,
+    build_real_runtime_evidence_payload,
+    build_runtime_failure_ownership,
+)
 from .screenshots import ScreenshotMetadata, build_screenshot_metadata
 
 
@@ -259,7 +263,9 @@ class GTFORealRuntimeAutomationRunner:
                 runtime_verification_plan=runtime_verification_plan,
                 input_execution_mode=input_execution_mode,
                 capability_report=capability_report,
+                failure_stage="capability_admission",
             )
+        failure_stage = "profile_validation"
         try:
             _validate_real_profile(profile)
 
@@ -274,9 +280,12 @@ class GTFORealRuntimeAutomationRunner:
                 )
             )
 
+            failure_stage = "process_launch"
             process_handle = launcher(profile)
             process_liveness_observed = _process_liveness_observed(process_handle)
+            failure_stage = "log_collection"
             log_snapshot = collector(profile, acceptance_criteria)
+            failure_stage = "screenshot_capture"
             screenshot = capturer(profile, feature_id)
         except Exception as exc:
             return _payload_from_runtime_failure(
@@ -288,6 +297,7 @@ class GTFORealRuntimeAutomationRunner:
                 runtime_verification_plan=runtime_verification_plan,
                 input_execution_mode=input_execution_mode,
                 capability_report=capability_report,
+                failure_stage=failure_stage,
             )
         finally:
             if "process_handle" in locals() and profile.terminate_after_capture:
@@ -760,6 +770,18 @@ def _payload_from_runtime_observations(
         plugin_marker_binding=plugin_marker_binding,
         screenshot_refs=(screenshot_ref,) if screenshot_ref is not None else (),
         runtime_trust_binding=runtime_trust_binding,
+        failure_ownership=(
+            None
+            if verification_status == "verified"
+            else build_runtime_failure_ownership(
+                owner="observation",
+                failure_class="runtime_observation_incomplete",
+                reason=(
+                    "GTFO Runtime observations did not establish every required "
+                    "startup, acceptance, and trust fact."
+                ),
+            )
+        ),
     )
     payload["evidence_source"] = "gtfo_real_runtime_automation"
     payload["sources"] = [
@@ -813,9 +835,14 @@ def _payload_from_runtime_failure(
     runtime_verification_plan: tuple[str, ...],
     input_execution_mode: str | None,
     capability_report: Mapping[str, Any],
+    failure_stage: str,
 ) -> dict[str, Any]:
     failure_type = type(failure).__name__
     failure_message = str(failure)
+    failure_ownership = _gtfo_failure_ownership(
+        failure_stage=failure_stage,
+        capability_report=capability_report,
+    )
     payload = build_real_runtime_evidence_payload(
         feature_id=feature_id,
         input_execution_mode=input_execution_mode,
@@ -830,6 +857,7 @@ def _payload_from_runtime_failure(
         ),
         acceptance_criteria=acceptance_criteria,
         runtime_verification_plan=runtime_verification_plan,
+        failure_ownership=failure_ownership,
     )
     payload["real_runtime_performed"] = process_handle is not None
     payload["evidence_source"] = "gtfo_real_runtime_automation"
@@ -904,6 +932,53 @@ def _payload_from_runtime_failure(
     }
     payload["gtfo_capability_report"] = dict(capability_report)
     return payload
+
+
+def _gtfo_failure_ownership(
+    *,
+    failure_stage: str,
+    capability_report: Mapping[str, Any],
+) -> dict[str, Any]:
+    checks = capability_report.get("checks")
+    explicit_launch_check = (
+        checks.get("explicit_launch_approval")
+        if isinstance(checks, Mapping)
+        else None
+    )
+    if (
+        failure_stage == "capability_admission"
+        and isinstance(explicit_launch_check, Mapping)
+        and explicit_launch_check.get("status") == "blocked"
+    ):
+        return build_runtime_failure_ownership(
+            owner="permission",
+            failure_class="runtime_launch_not_authorized",
+            reason="GTFO launch authority was not admitted for this Runtime attempt.",
+        )
+    if failure_stage in {
+        "capability_admission",
+        "profile_validation",
+        "process_launch",
+    }:
+        return build_runtime_failure_ownership(
+            owner="environment",
+            failure_class=f"{failure_stage}_failed",
+            reason=(
+                "The GTFO execution environment failed before Runtime "
+                "observation could complete."
+            ),
+        )
+    if failure_stage in {"log_collection", "screenshot_capture"}:
+        return build_runtime_failure_ownership(
+            owner="observation",
+            failure_class=f"{failure_stage}_failed",
+            reason="The GTFO Runtime observation path failed after process admission.",
+        )
+    return build_runtime_failure_ownership(
+        owner="provider",
+        failure_class="gtfo_runtime_provider_failed",
+        reason="The GTFO Runtime provider failed outside a classified stage.",
+    )
 
 
 def _startup_loaded(

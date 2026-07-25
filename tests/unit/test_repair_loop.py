@@ -15,6 +15,7 @@ from src.mod_agent.knowledge import (
 )
 from src.mod_agent.proposal import ProposalReviewer
 from src.mod_agent.repair import RepairPatchProposalBuilder, RepairPlanner
+from src.mod_agent.runtime import build_runtime_failure_ownership
 from src.mod_agent.workflow import build_graph, create_initial_state
 from src.mod_agent.workflow.transitions import (
     route_after_build,
@@ -224,7 +225,7 @@ def test_hook_binding_review_failure_requires_new_evidence() -> None:
     ]
 
 
-def test_unresolved_runtime_failure_requests_target_bound_evidence() -> None:
+def test_ownerless_runtime_failure_fails_closed_without_source_repair() -> None:
     payload = RepairPlanner(retry_budget=2).from_runtime_failure(
         runtime_evidence={
             "feature_id": "feature_001",
@@ -244,11 +245,92 @@ def test_unresolved_runtime_failure_requests_target_bound_evidence() -> None:
     ).to_artifact_payload()
 
     assert payload["allowed_next_stage"] is None
-    assert payload["blockers"][0]["code"] == "REPAIR_SCOPE_UNRESOLVED"
+    assert payload["minimal_changes"] == []
+    assert payload["retry_count"] == 0
+    assert payload["blockers"][0]["code"] == "RUNTIME_FAILURE_OWNER_UNKNOWN"
+    assert payload["blockers"][0]["source_repair_allowed"] is False
     assert payload["repair_context"]["repair_decision"] == (
-        "runtime_evidence_required"
+        "collect_failure_evidence"
     )
+    assert payload["repair_context"]["failure_owner"] == "unknown"
     assert payload["repair_context"]["scoped_edit_binding_ids"] == []
+
+
+def test_non_product_runtime_owners_cannot_enter_source_repair() -> None:
+    blocker_codes = {
+        "observation": "RUNTIME_OBSERVATION_REPAIR_REQUIRED",
+        "environment": "RUNTIME_ENVIRONMENT_REPAIR_REQUIRED",
+        "provider": "RUNTIME_PROVIDER_REPAIR_REQUIRED",
+        "permission": "RUNTIME_PERMISSION_REQUIRED",
+    }
+    for owner, blocker_code in blocker_codes.items():
+        payload = RepairPlanner(retry_budget=2).from_runtime_failure(
+            runtime_evidence={
+                "feature_id": "feature_001",
+                "verification_status": "failed",
+                "acceptance_status": "failed",
+                "message": "Runtime failed.",
+                "failure_ownership": build_runtime_failure_ownership(
+                    owner=owner,
+                    failure_class=f"{owner}_failed",
+                    reason=f"{owner} owns this failure.",
+                ),
+                "evidence_items": [
+                    {
+                        "source": "mods/BetterHitFeedback/Plugin.cs",
+                        "locator": "mods/BetterHitFeedback/Plugin.cs:12",
+                    }
+                ],
+            },
+            runtime_evidence_ref=(
+                "artifacts/features/feature_001/runtime_evidence.json"
+            ),
+            retry_count=0,
+            proposal_context_pack=_proposal_context_pack(),
+            implementation_plan=_implementation_plan_payload(),
+        ).to_artifact_payload()
+
+        assert payload["minimal_changes"] == []
+        assert payload["retry_count"] == 0
+        assert payload["allowed_next_stage"] is None
+        assert payload["blockers"][0]["code"] == blocker_code
+        assert payload["repair_context"]["failure_owner"] == owner
+        assert payload["repair_context"]["source_repair_allowed"] is False
+
+
+def test_product_behavior_owner_with_bound_source_can_enter_repair_review() -> None:
+    payload = RepairPlanner(retry_budget=2).from_runtime_failure(
+        runtime_evidence={
+            "feature_id": "feature_001",
+            "verification_status": "failed",
+            "acceptance_status": "failed",
+            "message": "Bound product behavior failed at Runtime.",
+            "failure_ownership": build_runtime_failure_ownership(
+                owner="product_behavior",
+                failure_class="acceptance_behavior_failed",
+                reason="A bound product behavior emitted an explicit failure.",
+            ),
+            "evidence_items": [
+                {
+                    "source": "mods/BetterHitFeedback/Plugin.cs",
+                    "locator": "mods/BetterHitFeedback/Plugin.cs:12",
+                }
+            ],
+        },
+        runtime_evidence_ref="artifacts/features/feature_001/runtime_evidence.json",
+        retry_count=0,
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=_implementation_plan_payload(),
+    ).to_artifact_payload()
+
+    assert payload["failure_class"] == "acceptance_behavior_failed"
+    assert payload["minimal_changes"][0]["edit_binding_id"] == "edit_binding_001"
+    assert payload["retry_count"] == 1
+    assert payload["allowed_next_stage"] == "generate_patch_proposal"
+    assert payload["blockers"] == []
+    assert payload["repair_context"]["failure_owner"] == "product_behavior"
+    assert payload["repair_context"]["source_repair_allowed"] is True
+    assert payload["repair_context"]["repair_decision"] == "scoped_patch_repair"
 
 
 def test_repair_proposal_reenters_review_gate() -> None:
@@ -360,7 +442,7 @@ def test_repair_routes_are_explicit() -> None:
     assert route_after_review(state) == "blocked"
 
 
-def test_graph_failed_build_enters_repair_and_stops_at_retry_budget(tmp_path: Path) -> None:
+def test_graph_repair_uses_current_proposal_review_failure_owner(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
     diagnostic_file = str(tmp_path / "source" / "Plugin.cs")
 
@@ -400,8 +482,11 @@ def test_graph_failed_build_enters_repair_and_stops_at_retry_budget(tmp_path: Pa
 
     assert result["current_stage"] == "blocked"
     assert "repair_plan" in result["artifacts"]
-    assert repair_plan["failure_source"] == "build"
-    assert repair_plan["retry_exhausted"] is True
+    assert repair_plan["failure_source"] == "proposal_review"
+    assert repair_plan["failure_class"] == "proposal_review:validation_contract"
+    assert repair_plan["retry_exhausted"] is False
+    assert repair_plan["allowed_next_stage"] is None
+    assert repair_plan["blockers"][0]["code"] == "REVIEW_REPLAN_REQUIRED"
     assert repair_plan["source_proposal"]["ref"] == (
         result["artifacts"]["patch_proposal"]
     )
@@ -415,7 +500,7 @@ def test_graph_failed_build_enters_repair_and_stops_at_retry_budget(tmp_path: Pa
         and event["event_type"] == "node_finished"
         for event in result["trace_events"]
     )
-    assert result["blockers"][0]["code"] == "RETRY_BUDGET_EXHAUSTED"
+    assert result["blockers"][-1]["code"] == "REVIEW_REPLAN_REQUIRED"
 
 
 def test_graph_review_revision_creates_repair_plan_without_success_artifacts(

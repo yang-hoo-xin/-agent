@@ -6,8 +6,10 @@ from .evidence import (
     build_fake_runtime_evidence_payload,
     build_manual_runtime_evidence_payload,
     build_real_runtime_evidence_payload,
+    build_runtime_failure_ownership,
     build_supplied_runtime_evidence_payload,
     bind_runtime_evidence_context,
+    normalize_runtime_failure_ownership,
 )
 from .deployment import (
     RuntimePluginDeploymentError,
@@ -58,6 +60,7 @@ __all__ = [
     "ScreenshotMetadata",
     "ScreenshotRegistryError",
     "build_fake_runtime_evidence_payload",
+    "build_runtime_failure_ownership",
     "build_gtfo_runtime_capability_report",
     "build_manual_runtime_evidence_payload",
     "build_real_runtime_evidence_payload",
@@ -69,6 +72,7 @@ __all__ = [
     "make_gtfo_runtime_evidence_factory",
     "make_gtfo_runtime_evidence_factory_from_settings",
     "make_runtime_probe_evidence_factory",
+    "normalize_runtime_failure_ownership",
     "profile_from_settings",
     "screenshot_registry_to_runtime_item",
     "temporarily_deploy_verified_plugin",

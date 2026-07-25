@@ -11,6 +11,17 @@ class RuntimeEvidenceError(ValueError):
     """Raised when runtime evidence would overclaim acceptance."""
 
 
+_RUNTIME_FAILURE_ACTIONS = {
+    "product_behavior": "repair_product_source",
+    "observation": "repair_runtime_observation",
+    "environment": "repair_runtime_environment",
+    "provider": "repair_runtime_provider",
+    "permission": "request_runtime_permission",
+    "unknown": "collect_failure_evidence",
+    "none": "none",
+}
+
+
 @dataclass(frozen=True)
 class RuntimeEvidenceItem:
     """One runtime evidence item from logs, screenshots, manual notes, or vision."""
@@ -33,6 +44,99 @@ class RuntimeEvidenceItem:
             "confidence": self.confidence,
             "raw_excerpt": self.raw_excerpt,
         }
+
+
+def build_runtime_failure_ownership(
+    *,
+    owner: str,
+    failure_class: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Build one provider-neutral, fail-closed Runtime failure decision."""
+
+    if owner not in _RUNTIME_FAILURE_ACTIONS or owner == "none":
+        raise RuntimeEvidenceError(f"Unsupported runtime failure owner: {owner}")
+    if not failure_class.strip():
+        raise RuntimeEvidenceError("Runtime failure_class must not be empty")
+    if not reason.strip():
+        raise RuntimeEvidenceError("Runtime failure ownership reason must not be empty")
+    return {
+        "owner": owner,
+        "failure_class": failure_class,
+        "source_repair_allowed": owner == "product_behavior",
+        "required_action": _RUNTIME_FAILURE_ACTIONS[owner],
+        "reason": reason,
+    }
+
+
+def normalize_runtime_failure_ownership(
+    value: Any,
+    *,
+    verification_status: str,
+) -> dict[str, Any]:
+    """Normalize Runtime failure ownership without granting implicit source repair."""
+
+    if verification_status == "verified":
+        return {
+            "owner": "none",
+            "failure_class": "none",
+            "source_repair_allowed": False,
+            "required_action": "none",
+            "reason": "Runtime acceptance is verified.",
+        }
+    if not isinstance(value, Mapping):
+        return {
+            "owner": "unknown",
+            "failure_class": verification_status or "runtime_unverified",
+            "source_repair_allowed": False,
+            "required_action": _RUNTIME_FAILURE_ACTIONS["unknown"],
+            "reason": (
+                "Runtime evidence did not provide a structured failure-owner "
+                "decision."
+            ),
+        }
+    owner = value.get("owner")
+    failure_class = value.get("failure_class")
+    reason = value.get("reason")
+    if not isinstance(owner, str) or owner not in _RUNTIME_FAILURE_ACTIONS:
+        return {
+            "owner": "unknown",
+            "failure_class": (
+                failure_class
+                if isinstance(failure_class, str) and failure_class.strip()
+                else verification_status or "runtime_unverified"
+            ),
+            "source_repair_allowed": False,
+            "required_action": _RUNTIME_FAILURE_ACTIONS["unknown"],
+            "reason": "Runtime evidence supplied an unsupported failure owner.",
+        }
+    if owner == "none":
+        return {
+            "owner": "unknown",
+            "failure_class": (
+                failure_class
+                if isinstance(failure_class, str) and failure_class.strip()
+                else verification_status or "runtime_unverified"
+            ),
+            "source_repair_allowed": False,
+            "required_action": _RUNTIME_FAILURE_ACTIONS["unknown"],
+            "reason": "Unverified Runtime evidence cannot use owner none.",
+        }
+    return {
+        "owner": owner,
+        "failure_class": (
+            failure_class
+            if isinstance(failure_class, str) and failure_class.strip()
+            else verification_status or "runtime_unverified"
+        ),
+        "source_repair_allowed": owner == "product_behavior",
+        "required_action": _RUNTIME_FAILURE_ACTIONS[owner],
+        "reason": (
+            reason
+            if isinstance(reason, str) and reason.strip()
+            else "Runtime failure ownership was normalized without a provider reason."
+        ),
+    }
 
 
 def build_fake_runtime_evidence_payload(
@@ -93,6 +197,7 @@ def build_fake_runtime_evidence_payload(
         screenshot_refs=tuple(screenshot_refs),
         runtime_trust_binding=runtime_trust_binding,
         non_goal_preservation=non_goal_preservation,
+        failure_ownership=None,
     )
 
 
@@ -115,6 +220,7 @@ def build_supplied_runtime_evidence_payload(
     screenshot_refs: Iterable[Mapping[str, Any]] = (),
     runtime_trust_binding: Mapping[str, Any] | None = None,
     non_goal_preservation: Mapping[str, Any] | None = None,
+    failure_ownership: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build runtime evidence from user-supplied logs or observations."""
 
@@ -143,6 +249,7 @@ def build_supplied_runtime_evidence_payload(
         screenshot_refs=tuple(screenshot_refs),
         runtime_trust_binding=runtime_trust_binding,
         non_goal_preservation=non_goal_preservation,
+        failure_ownership=failure_ownership,
     )
 
 
@@ -166,6 +273,7 @@ def build_real_runtime_evidence_payload(
     screenshot_refs: Iterable[Mapping[str, Any]] = (),
     runtime_trust_binding: Mapping[str, Any] | None = None,
     non_goal_preservation: Mapping[str, Any] | None = None,
+    failure_ownership: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build runtime evidence from an explicitly executed runtime probe."""
 
@@ -194,6 +302,7 @@ def build_real_runtime_evidence_payload(
         screenshot_refs=tuple(screenshot_refs),
         runtime_trust_binding=runtime_trust_binding,
         non_goal_preservation=non_goal_preservation,
+        failure_ownership=failure_ownership,
     )
 
 
@@ -215,6 +324,7 @@ def build_manual_runtime_evidence_payload(
     screenshot_refs: Iterable[Mapping[str, Any]] = (),
     runtime_trust_binding: Mapping[str, Any] | None = None,
     non_goal_preservation: Mapping[str, Any] | None = None,
+    failure_ownership: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build runtime evidence from explicit manual verification notes."""
 
@@ -243,6 +353,7 @@ def build_manual_runtime_evidence_payload(
         screenshot_refs=tuple(screenshot_refs),
         runtime_trust_binding=runtime_trust_binding,
         non_goal_preservation=non_goal_preservation,
+        failure_ownership=failure_ownership,
     )
 
 
@@ -274,6 +385,12 @@ def bind_runtime_evidence_context(
         "non_goal_preservation",
         _non_goal_preservation(bound.get("non_goals_checked") or ()),
     )
+    bound["failure_ownership"] = normalize_runtime_failure_ownership(
+        bound.get("failure_ownership"),
+        verification_status=str(
+            bound.get("verification_status") or "runtime_unverified"
+        ),
+    )
     return bound
 
 
@@ -302,6 +419,7 @@ def _build_runtime_payload(
     screenshot_refs: Iterable[Mapping[str, Any]],
     runtime_trust_binding: Mapping[str, Any] | None,
     non_goal_preservation: Mapping[str, Any] | None,
+    failure_ownership: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     items = tuple(evidence_items)
     marker_binding = dict(plugin_marker_binding or {})
@@ -334,6 +452,10 @@ def _build_runtime_payload(
         "screenshot_refs": [dict(item) for item in screenshot_refs],
         "runtime_trust_binding": dict(
             runtime_trust_binding or _default_runtime_trust_binding()
+        ),
+        "failure_ownership": normalize_runtime_failure_ownership(
+            failure_ownership,
+            verification_status=verification_status,
         ),
         "startup_loaded": startup_loaded,
         "gameplay_behavior_verified": gameplay_behavior_verified,

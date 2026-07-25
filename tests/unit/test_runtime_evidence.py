@@ -8,6 +8,7 @@ from src.mod_agent.artifacts import ArtifactRef
 from src.mod_agent.runtime import (
     RuntimeEvidenceError,
     RuntimeEvidenceItem,
+    build_runtime_failure_ownership,
     build_manual_runtime_evidence_payload,
     build_real_runtime_evidence_payload,
     build_supplied_runtime_evidence_payload,
@@ -75,6 +76,13 @@ def test_manual_runtime_evidence_verifies_matching_acceptance_contract() -> None
         "checks": {},
         "blockers": [],
     }
+    assert payload["failure_ownership"] == {
+        "owner": "none",
+        "failure_class": "none",
+        "source_repair_allowed": False,
+        "required_action": "none",
+        "reason": "Runtime acceptance is verified.",
+    }
     assert payload["non_goal_preservation"]["status"] == "not_checked"
 
 
@@ -140,10 +148,59 @@ def test_supplied_runtime_evidence_keeps_contract_when_unverified() -> None:
     assert payload["acceptance_verified"] is False
     assert payload["acceptance_status"] == "inconclusive"
     assert payload["claims_real_runtime_success"] is False
+    assert payload["failure_ownership"]["owner"] == "unknown"
+    assert payload["failure_ownership"]["source_repair_allowed"] is False
+    assert (
+        payload["failure_ownership"]["required_action"]
+        == "collect_failure_evidence"
+    )
     assert payload["acceptance_contract"] == {
         "acceptance_criteria": [ACCEPTANCE_CRITERION],
         "runtime_verification_plan": [RUNTIME_PLAN_STEP],
     }
+
+
+def test_runtime_failure_ownership_is_normalized_fail_closed() -> None:
+    payload = build_supplied_runtime_evidence_payload(
+        feature_id="feature_001",
+        raw_supplied_output="Runtime output did not establish acceptance.",
+        verification_status="failed",
+        failure_ownership={
+            "owner": "unsupported_owner",
+            "failure_class": "forged_source_failure",
+            "source_repair_allowed": True,
+            "required_action": "repair_product_source",
+            "reason": "Attempt to grant source authority.",
+        },
+    )
+
+    assert payload["failure_ownership"] == {
+        "owner": "unknown",
+        "failure_class": "forged_source_failure",
+        "source_repair_allowed": False,
+        "required_action": "collect_failure_evidence",
+        "reason": "Runtime evidence supplied an unsupported failure owner.",
+    }
+
+
+def test_explicit_product_behavior_failure_preserves_bounded_source_authority() -> None:
+    ownership = build_runtime_failure_ownership(
+        owner="product_behavior",
+        failure_class="acceptance_behavior_failed",
+        reason="A bound Runtime behavior emitted an explicit failure.",
+    )
+    payload = build_real_runtime_evidence_payload(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        evidence_items=(),
+        startup_loaded=True,
+        gameplay_behavior_verified=False,
+        verification_status="failed",
+        failure_ownership=ownership,
+    )
+
+    assert payload["failure_ownership"] == ownership
+    assert payload["failure_ownership"]["source_repair_allowed"] is True
 
 
 def test_real_runtime_evidence_can_verify_full_acceptance_contract() -> None:

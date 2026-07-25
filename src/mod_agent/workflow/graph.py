@@ -1255,7 +1255,8 @@ def _run_create_repair_plan(
     )
     planner = RepairPlanner()
     feature_id = state["feature_id"] or state["request_id"]
-    if state["build_summary"].get("status") == "failed":
+    failed_stage = state["current_stage"]
+    if failed_stage == "build" and state["build_summary"].get("status") == "failed":
         build_ref = _artifact_ref_from_state(state, "build_result")
         plan = planner.from_build_failure(
             build_result=_read_artifact_data(state, artifact_store, "build_result"),
@@ -1270,7 +1271,7 @@ def _run_create_repair_plan(
             ),
         )
         upstream_refs = [build_ref, proposal_ref]
-    elif "runtime_evidence" in state["artifacts"]:
+    elif failed_stage == "runtime_evidence":
         runtime_ref = _artifact_ref_from_state(state, "runtime_evidence")
         plan = planner.from_runtime_failure(
             runtime_evidence=_read_artifact_data(
@@ -1289,7 +1290,7 @@ def _run_create_repair_plan(
             ),
         )
         upstream_refs = [runtime_ref, proposal_ref]
-    else:
+    elif failed_stage == "proposal_review":
         review_ref = _artifact_ref_from_state(state, "proposal_review")
         plan = planner.from_review_failure(
             proposal_review=_read_artifact_data(
@@ -1308,6 +1309,10 @@ def _run_create_repair_plan(
             ),
         )
         upstream_refs = [review_ref, proposal_ref]
+    else:
+        raise ValueError(
+            f"Unsupported repair-plan source stage: {failed_stage}"
+        )
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
         artifact_type="repair_plan",
@@ -1379,6 +1384,7 @@ def _run_runtime_evidence(
         "plugin_marker_binding": payload["plugin_marker_binding"],
         "screenshot_refs": payload["screenshot_refs"],
         "runtime_trust_binding": payload["runtime_trust_binding"],
+        "failure_ownership": payload["failure_ownership"],
         "plugin_deployment_binding": payload.get("plugin_deployment_binding"),
         "non_goal_preservation": payload["non_goal_preservation"],
     }

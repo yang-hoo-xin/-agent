@@ -15,6 +15,7 @@ from src.mod_agent.proposal.models import (
     build_rollback_hints,
     stable_proposal_id,
 )
+from src.mod_agent.runtime.evidence import normalize_runtime_failure_ownership
 
 FailureSource = Literal["build", "runtime", "eval", "proposal_review"]
 
@@ -195,10 +196,19 @@ class RepairPlanner:
         """Create a repair plan from failed runtime evidence."""
 
         feature_id = str(runtime_evidence.get("feature_id") or "unknown_feature")
-        failure_class = str(
-            runtime_evidence.get("acceptance_status")
-            or runtime_evidence.get("verification_status")
-            or "runtime_unverified"
+        ownership = normalize_runtime_failure_ownership(
+            runtime_evidence.get("failure_ownership"),
+            verification_status=str(
+                runtime_evidence.get("verification_status")
+                or runtime_evidence.get("acceptance_status")
+                or "runtime_unverified"
+            ),
+        )
+        failure_owner = str(ownership["owner"])
+        failure_class = str(ownership["failure_class"])
+        source_repair_allowed = (
+            failure_owner == "product_behavior"
+            and ownership["source_repair_allowed"] is True
         )
         evidence_refs = _unique_strings(
             [
@@ -212,24 +222,30 @@ class RepairPlanner:
         )
         allowed_binding_ids = _allowed_binding_ids_from_context(proposal_context_pack)
         resolver = BindingResolver.from_implementation_plan(implementation_plan)
-        exhausted = retry_count >= self.retry_budget
+        exhausted = source_repair_allowed and retry_count >= self.retry_budget
         minimal_changes = (
             ()
-            if exhausted
+            if exhausted or not source_repair_allowed
             else self._minimal_runtime_changes(
                 runtime_evidence,
                 resolver=resolver,
                 allowed_binding_ids=allowed_binding_ids,
             )
         )
-        blockers = self._blockers(
+        blockers = self._runtime_blockers(
+            ownership=ownership,
             exhausted=exhausted,
             evidence_refs=evidence_refs,
             minimal_changes=minimal_changes,
         )
-        next_retry_count = retry_count if exhausted else retry_count + 1
-        repair_context = _failure_repair_context(
-            failure_source="runtime",
+        source_repair_ready = source_repair_allowed and bool(minimal_changes)
+        next_retry_count = (
+            retry_count + 1
+            if source_repair_ready and not exhausted
+            else retry_count
+        )
+        repair_context = _runtime_failure_repair_context(
+            ownership=ownership,
             failure_class=failure_class,
             exhausted=exhausted,
             evidence_refs=evidence_refs,
@@ -247,19 +263,24 @@ class RepairPlanner:
             failure_source="runtime",
             failure_class=failure_class,
             evidence_refs=evidence_refs,
-            hypothesis="Runtime evidence did not prove the requested acceptance criteria.",
+            hypothesis=_runtime_failure_hypothesis(ownership),
             minimal_changes=minimal_changes,
             retry_count=next_retry_count,
             retry_budget=self.retry_budget,
             retry_budget_remaining=max(self.retry_budget - retry_count, 0),
             retry_exhausted=exhausted,
             scope_expansion_allowed=False,
-            stop_condition="Stop if runtime acceptance remains unverified after retry budget.",
+            stop_condition=_runtime_failure_stop_condition(ownership),
             forbidden_regressions=(
                 "Do not claim gameplay success without acceptance evidence.",
                 "Do not broaden runtime behavior without new evidence.",
+                "Do not grant source-repair authority to a non-product owner.",
             ),
-            requires_new_evidence=True,
+            requires_new_evidence=failure_owner in {
+                "product_behavior",
+                "observation",
+                "unknown",
+            },
             allowed_next_stage=None if exhausted or blockers else "generate_patch_proposal",
             blockers=blockers,
             target_behavior=target_behavior,
@@ -483,6 +504,39 @@ class RepairPlanner:
                 }
             )
         return tuple(blockers)
+
+    @staticmethod
+    def _runtime_blockers(
+        *,
+        ownership: dict[str, Any],
+        exhausted: bool,
+        evidence_refs: tuple[str, ...],
+        minimal_changes: tuple[dict[str, Any], ...],
+    ) -> tuple[dict[str, Any], ...]:
+        owner = str(ownership["owner"])
+        if owner == "product_behavior":
+            return RepairPlanner._blockers(
+                exhausted=exhausted,
+                evidence_refs=evidence_refs,
+                minimal_changes=minimal_changes,
+            )
+        blocker_codes = {
+            "observation": "RUNTIME_OBSERVATION_REPAIR_REQUIRED",
+            "environment": "RUNTIME_ENVIRONMENT_REPAIR_REQUIRED",
+            "provider": "RUNTIME_PROVIDER_REPAIR_REQUIRED",
+            "permission": "RUNTIME_PERMISSION_REQUIRED",
+            "unknown": "RUNTIME_FAILURE_OWNER_UNKNOWN",
+        }
+        return (
+            {
+                "stage": "repair_plan",
+                "code": blocker_codes.get(owner, "RUNTIME_FAILURE_OWNER_UNKNOWN"),
+                "message": str(ownership["reason"]),
+                "failure_owner": owner,
+                "required_action": str(ownership["required_action"]),
+                "source_repair_allowed": False,
+            },
+        )
 
     @staticmethod
     def _review_blockers(
@@ -752,6 +806,92 @@ def _failure_repair_context(
         "failure_evidence_available": bool(evidence_refs),
         "reason": reason,
     }
+
+
+def _runtime_failure_repair_context(
+    *,
+    ownership: dict[str, Any],
+    failure_class: str,
+    exhausted: bool,
+    evidence_refs: tuple[str, ...],
+    minimal_changes: tuple[dict[str, Any], ...],
+) -> dict[str, Any]:
+    """Bind Runtime repair routing to the normalized failure owner."""
+
+    owner = str(ownership["owner"])
+    scoped_binding_ids = _unique_strings(
+        [change.get("edit_binding_id") for change in minimal_changes]
+    )
+    if exhausted:
+        repair_decision = "retry_budget_exhausted"
+        required_actions = ["request_human_review_or_new_evidence"]
+        reason = "The product-source repair budget is exhausted."
+    elif owner == "product_behavior" and minimal_changes:
+        repair_decision = "scoped_patch_repair"
+        required_actions = [
+            "generate_evidence_bound_repair_proposal",
+            "rerun_proposal_review",
+            "rerun_failed_validation_stage",
+        ]
+        reason = (
+            "A product-behavior failure resolves to source bindings already "
+            "allowed by the source patch proposal."
+        )
+    elif owner == "product_behavior":
+        repair_decision = "runtime_source_binding_required"
+        required_actions = [
+            "collect_target_bound_runtime_evidence",
+            "resolve_failure_to_allowed_edit_binding",
+        ]
+        reason = (
+            "The product-behavior failure does not resolve to an allowed source "
+            "edit binding."
+        )
+    else:
+        repair_decision = str(ownership["required_action"])
+        required_actions = [str(ownership["required_action"])]
+        reason = str(ownership["reason"])
+    return {
+        "failure_source": "runtime",
+        "failure_class": failure_class,
+        "failure_owner": owner,
+        "source_repair_allowed": bool(ownership["source_repair_allowed"]),
+        "repair_decision": repair_decision,
+        "required_actions": required_actions,
+        "scoped_edit_binding_ids": list(scoped_binding_ids),
+        "failure_evidence_available": bool(evidence_refs),
+        "reason": reason,
+    }
+
+
+def _runtime_failure_hypothesis(ownership: dict[str, Any]) -> str:
+    owner = str(ownership["owner"])
+    hypotheses = {
+        "product_behavior": (
+            "Runtime evidence attributes the acceptance failure to product behavior."
+        ),
+        "observation": (
+            "The Runtime observation path did not establish the required facts."
+        ),
+        "environment": (
+            "The Runtime execution environment failed before acceptance could be "
+            "established."
+        ),
+        "provider": "The selected Runtime provider failed to produce valid evidence.",
+        "permission": "Runtime execution lacked current required authorization.",
+        "unknown": "Runtime evidence cannot attribute the failure to one repair owner.",
+    }
+    return hypotheses.get(owner, hypotheses["unknown"])
+
+
+def _runtime_failure_stop_condition(ownership: dict[str, Any]) -> str:
+    owner = str(ownership["owner"])
+    if owner == "product_behavior":
+        return "Stop if the same product-behavior failure persists after retry budget."
+    return (
+        "Stop source repair and hand off to the recorded Runtime failure owner; "
+        "a new Runtime action requires fresh admission."
+    )
 
 
 def _review_repair_decision(

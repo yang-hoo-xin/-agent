@@ -1916,6 +1916,7 @@ def test_gtfo_runtime_factory_from_settings_without_launch_approval_blocks_graph
     result = graph.invoke(state)
 
     runtime = _artifact_data(store, result, "runtime_evidence")
+    repair_plan = _artifact_data(store, result, "repair_plan")
 
     assert called == {"launcher": False, "collector": False, "capturer": False}
     assert "workflow_summary" not in result["artifacts"]
@@ -1934,6 +1935,19 @@ def test_gtfo_runtime_factory_from_settings_without_launch_approval_blocks_graph
         "allow_game_launch": False,
     }
     assert runtime["failure"]["type"] == "GTFORuntimeAutomationError"
+    assert result["runtime_summary"]["failure_ownership"]["owner"] == "permission"
+    assert repair_plan["repair_context"]["failure_owner"] == "permission"
+    assert repair_plan["repair_context"]["source_repair_allowed"] is False
+    assert repair_plan["minimal_changes"] == []
+    assert repair_plan["retry_count"] == 0
+    assert repair_plan["blockers"][0]["code"] == "RUNTIME_PERMISSION_REQUIRED"
+    feature_id = result["feature_id"]
+    assert _revision_count(tmp_path, feature_id, "patch_proposal") == 1
+    assert _revision_count(tmp_path, feature_id, "dry_run_result") == 1
+    assert _revision_count(tmp_path, feature_id, "isolated_apply_result") == 0
+    assert _revision_count(tmp_path, feature_id, "build_result") == 1
+    assert _revision_count(tmp_path, feature_id, "runtime_evidence") == 1
+    assert _revision_count(tmp_path, feature_id, "repair_plan") == 1
 
 
 def test_build_graph_uses_gtfo_runtime_factory_from_enabled_settings(

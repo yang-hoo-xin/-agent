@@ -147,6 +147,13 @@ def test_gtfo_runtime_requires_explicit_launch_approval(tmp_path: Path) -> None:
     assert payload["runtime_process"]["launched"] is False
     assert payload["failure"]["type"] == "GTFORuntimeAutomationError"
     assert "GTFO game launch requires explicit approval" in payload["failure"]["message"]
+    assert payload["failure_ownership"] == {
+        "owner": "permission",
+        "failure_class": "runtime_launch_not_authorized",
+        "source_repair_allowed": False,
+        "required_action": "request_runtime_permission",
+        "reason": "GTFO launch authority was not admitted for this Runtime attempt.",
+    }
     assert payload["gtfo_capability_report"]["status"] == "blocked"
     assert payload["gtfo_capability_report"]["checks"]["explicit_launch_approval"] == {
         "status": "blocked",
@@ -183,6 +190,8 @@ def test_gtfo_runtime_rejects_missing_executable(tmp_path: Path) -> None:
     }
     assert payload["failure"]["type"] == "GTFORuntimeAutomationError"
     assert "GTFO executable does not exist" in payload["failure"]["message"]
+    assert payload["failure_ownership"]["owner"] == "environment"
+    assert payload["failure_ownership"]["source_repair_allowed"] is False
     assert payload["gtfo_capability_report"]["status"] == "blocked"
     assert payload["gtfo_capability_report"]["would_launch"] is False
     assert (
@@ -759,6 +768,8 @@ def test_gtfo_runtime_launcher_exception_becomes_failed_payload(tmp_path: Path) 
         "type": "OSError",
         "message": "process launch denied",
     }
+    assert payload["failure_ownership"]["owner"] == "environment"
+    assert payload["failure_ownership"]["failure_class"] == "process_launch_failed"
     assert payload["gtfo_markers"]["acceptance_markers_observed"] == []
     assert payload["runtime_trust_binding"]["status"] == "blocked"
 
@@ -795,6 +806,8 @@ def test_gtfo_runtime_collector_failure_preserves_launched_process(tmp_path: Pat
         "type": "PermissionError",
         "message": "log access denied",
     }
+    assert payload["failure_ownership"]["owner"] == "observation"
+    assert payload["failure_ownership"]["failure_class"] == "log_collection_failed"
     assert payload["runtime_trust_binding"]["status"] == "blocked"
 
 
