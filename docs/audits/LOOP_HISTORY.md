@@ -4,6 +4,47 @@ This archive preserves historical loop details moved out of the active control d
 
 Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md`.
 
+## 2026-07-25 AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001
+
+```text
+Status: completed; H1.1 Phase A and Phase B closed
+Capability:
+  - successful real Build can persist a Build-stage workflow_checkpoint;
+  - resume-runtime loads the immutable handoff in a fresh process, requires
+    fresh side-effect admission, and enters the existing LangGraph at
+    collect_runtime_evidence;
+  - original run/request/feature and exact Build hash continue through
+    RuntimeEvidence, Eval, and WorkflowSummary;
+  - checkpointed approvals are cleared.
+Fail-closed checks:
+  - exact checkpoint, state, Artifact ref/hash, and intended-node binding;
+  - recursive freshness and current physical Build bytes;
+  - wrong run/request/feature/stage and missing Artifact refs;
+  - durable consumed checkpoint/resume id across new store instances;
+  - prior same-run Runtime evidence, unresolved prior backup state, missing
+    fresh Runtime admission, and deployment destination drift.
+Non-repetition:
+  - the accepted continuation adds no EvidencePack, Proposal, Review, Dry-run,
+    Apply, or Build revision and makes no model call.
+Verification:
+  - python -m pytest -q tests/unit/test_artifact_store.py
+    tests/unit/test_artifact_contract.py tests/unit/test_workflow_graph.py
+    tests/unit/test_repair_checkpoint_smoke.py
+    tests/unit/test_runtime_evidence.py tests/unit/test_runtime_deployment.py
+    tests/unit/test_local_entry.py tests/unit/test_mod_agent_cli.py
+    --tb=short -> 204 passed in 22.54s;
+  - python -m compileall -q src -> passed;
+  - git diff --check -> passed.
+Permissions:
+  - no model call, GTFO launch, or game-directory write occurred.
+Claim ceiling:
+  - pre-side-effect Build-to-Runtime continuation only;
+  - no general persistent graph backend, arbitrary-node resume, concurrent
+    exactly-once protocol, or post-side-effect crash recovery.
+Next selection:
+  - None; H1.2 and H2-H6 remain inactive pending separate admission.
+```
+
 ## 2026-07-20 PHASE2A-DELIVERY-CANARY-001
 
 ```text

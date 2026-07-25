@@ -61,7 +61,25 @@ checkpoint integration. ArtifactStore owns durable business outputs and audit
 lineage. Deterministic policies retain authority over write scope, approval,
 verification, and claim promotion.
 
-### 2.1 V2 Intelligence Experiment And Productization Boundary
+### 2.1 Bounded Build-To-Runtime Continuation
+
+The same control plane now has one durable cross-process boundary after a
+successful real Build. `WorkflowCheckpointStore` persists the Build state and
+exact Artifact lineage through `workflow_checkpoint`; `ResumeValidator` binds
+the original run, request, feature, intended Runtime entry, fresh side-effect
+admission, and `resume_report`. `ArtifactStore` provides immutable revision
+reads, recursive freshness, physical Build-byte verification inputs, and
+durable consumed-resume lookup. The `resume-runtime` entry reacquires current
+GTFO capability, launch, and game-directory-write authority and then compiles
+the existing graph with its start routed to `collect_runtime_evidence`.
+
+This boundary does not add a second workflow or lifecycle store. It does not
+make the in-memory LangGraph checkpointer persistent, resume arbitrary nodes,
+recover an interrupted external side effect, or guarantee concurrent
+exactly-once consumption. Runtime attempt journaling and arbitrary-crash
+recovery remain outside H1.1.
+
+### 2.2 V2 Intelligence Experiment And Productization Boundary
 
 The control-plane diagram above is the implemented delivery baseline. It is not
 yet evidence of one canonical V2 runtime path. The diagram below records the

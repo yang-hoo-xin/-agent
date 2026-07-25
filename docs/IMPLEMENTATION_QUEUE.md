@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-24
+Last updated: 2026-07-25
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -14,11 +14,13 @@ current_queue: None
 selected_product_request: None
 ```
 
+`AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001` completed H1.1 and moved to
+`docs/audits/LOOP_HISTORY.md`. No H1.2 or H2-H6 task is selected
+automatically. A later Harness boundary requires a new section 9 admission
+review from `docs/audits/AGENT_HARNESS_TRANSITION.md`.
+
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001` completed its selected real-runtime
-claim boundary and moved to `docs/audits/LOOP_HISTORY.md`. No replacement task
-is selected automatically. The next queue item requires a concrete product
-request, an observed failure, or a bounded product decision with current
-evidence and explicit permissions.
+claim boundary and moved to `docs/audits/LOOP_HISTORY.md`.
 
 `V2-RUNTIME-TERMINAL-CHAIN-001` also completed and moved to
 `docs/audits/LOOP_HISTORY.md`; it does not leave a continuing infrastructure

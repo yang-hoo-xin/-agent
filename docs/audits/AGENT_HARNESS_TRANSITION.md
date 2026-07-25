@@ -6,12 +6,12 @@ Program direction: user-approved bounded product decision
 
 Prepared: 2026-07-25
 
-Current implementation authority effect: none
+Current implementation authority effect: H1.1 promoted through Phase B
 
 First selected migration boundary:
 H1.1 / `AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001`
 
-Implementation entry status: pending baseline reconciliation
+Implementation entry status: H1.1 complete; no later boundary active
 
 ## 1. Purpose And Authority
 
@@ -734,18 +734,18 @@ wholesale into mainline authority.
 
 ```text
 program_id: AGENT-ENGINEERING-HARNESS-EVOLUTION
-program_status: approved_direction_pending_baseline
+program_status: active_direction_h1_1_complete
 control_plane: existing LangGraph StateGraph
 contract_foundation: F0
 first_selected_boundary: H1.1 / AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001
-implementation_entry: pending baseline reconciliation
+implementation_entry: H1.1 Phase A and Phase B complete
 active_later_boundary: None
 automatic_next_boundary: forbidden
 round_closure: capability evidence, then authority-document repair
 next_boundary_admission: required after round closure
 ```
 
-After baseline reconciliation, the first queue record may select only:
+H1.1 closed with this observed result:
 
 ```text
 task_id: AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001
@@ -753,9 +753,12 @@ classification: Agent Engineering Harness Migration Boundary H1.1
 capability: Continue a fresh process from a validated BuildResult handoff into
   the existing RuntimeEvidence/Eval/Terminal chain without repeating upstream
   model or delivery stages
-stop_condition: Focused acceptance passes and the authority-document repair
-  pass closes the round, or the first immutable implementation/real-runtime
-  failure is recorded
+result: implemented and focused-tested through injected local Runtime evidence
+verification: 204 focused tests passed; compileall and git diff --check passed
+claim_ceiling: pre-side-effect continuation only; no arbitrary crash recovery,
+  concurrent exactly-once guarantee, model call, GTFO launch, or game-directory
+  write was exercised
+stop_condition: satisfied by Phase A evidence and this Phase B repair
 ```
 
 This task must not automatically select H1.2 or H2-H6.

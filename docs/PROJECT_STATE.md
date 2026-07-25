@@ -12,9 +12,25 @@ current_queue: None
 current_documentation_task: None
 selected_product_request: None
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: V2-RUNTIME-TERMINAL-CHAIN-001
+most_recent_completed_capability: AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
+
+`AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001` completed the bounded H1.1
+postcondition. A successful real Build may now persist a Build-stage
+`workflow_checkpoint`; a fresh process can submit a separately authorized
+`resume-runtime` request, validate the immutable checkpoint, recursive Artifact
+freshness, physical Build bytes, current destination pre-state, and durable
+consumption history, then enter the existing LangGraph at
+`collect_runtime_evidence`. The restored state clears checkpointed approvals.
+The accepted path keeps the original run/request/feature and Build hash through
+RuntimeEvidence, Eval, and WorkflowSummary without adding Evidence, Proposal,
+Review, Dry-run, Apply, or Build revisions. Focused verification used only
+injected local Runtime evidence: no model call, GTFO launch, or game-directory
+write occurred. This implements pre-side-effect continuation, not arbitrary
+crash recovery or concurrent exactly-once execution. H1.2 and H2-H6 remain
+inactive. The final focused command passed 204 tests in 22.54 seconds;
+compileall and `git diff --check` passed.
 
 `V2-RUNTIME-TERMINAL-CHAIN-001` is implemented and focused-tested. The existing
 `run-request` entry now has an explicit Runtime Admission boundary:
@@ -70,10 +86,10 @@ working directory, log configuration, screenshot configuration, startup
 markers, and acceptance-marker mapping ready; its only capability blocker was
 the absent explicit launch authorization, and no process was launched. The
 current repository settings remain Runtime-disabled and require a reviewed
-run-local profile before any later run. A separate resume audit found no
-checkpoint, resume report, or CLI entry capable of resuming `ec71c3a5` at
-`collect_runtime_evidence`; its historical Artifacts support diagnosis but not
-Runtime-boundary continuation.
+run-local profile before any later run. The earlier resume audit correctly
+found that preserved run `ec71c3a5` had no checkpoint or resume report. H1.1
+does not retrofit or mutate that historical run; only runs that persist the new
+Build handoff can use `resume-runtime`.
 
 `PHASE2B-BETTERHITFEEDBACK-ENABLED-001` is complete for its selected claim
 boundary. A read-only preflight bound GTFO executable SHA256
