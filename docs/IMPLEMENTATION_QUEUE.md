@@ -10,8 +10,21 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: None
-selected_product_request: None
+current_queue: AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001
+selected_product_request: Prove the implemented H3 observation-failure ownership route in one controlled real GTFO Runtime resume without re-entering source repair
+```
+
+```text
+task_id: AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001
+product_request_or_failure: Real run e7daa266 proved the accepted automated Runtime route, while WF-005 records that no failing non-source owner route has been real-exercised. Run one fresh Build-to-Runtime lineage whose startup, process, deployment, restoration, and screenshot collection remain valid while one deliberately defined acceptance marker is absent. The expected terminal result is blocked observation ownership, not product source repair.
+exact_evidence: Current src/mod_agent/runtime/gtfo_automation.py maps incomplete acceptance observation to owner observation and failure_class runtime_observation_incomplete; src/mod_agent/repair/planner.py maps observation to RUNTIME_OBSERVATION_REPAIR_REQUIRED with source_repair_allowed false. Tests exercise this locally. Accepted real run e7daa266 proves the corresponding deployment, launch, marker collection, restoration, and Build-checkpoint resume path, but docs/SPEC_COVERAGE_MATRIX.md WF-005 explicitly records that a failing non-source owner route remains without real execution evidence.
+affected_coverage_ids: WF-005, EXEC-006, EXEC-009, EXEC-010, MISS-026E, MISS-026F
+dependencies: Repository HEAD 2f0d0aa49e23218a463188e12d129862fa7783d2; completed H1.1 Build-to-Runtime handoff; completed H3 failure ownership; a new compile-only run and fresh Build checkpoint; one run-local Runtime configuration whose exact deliberately absent marker is verified absent from current source and pre-run logs.
+permissions_and_disclosure: No external model or external source disclosure is authorized. One local Ollama compile-only delivery lineage may be prepared under the existing local-provider gates and must stop for its new exact-diff approval. DLL deployment, game-directory write, GTFO launch, process termination, log/screenshot collection, and restoration require a later separate one-run approval after no-launch preflight and Build checkpoint. No retry is authorized.
+files_in_scope: docs/IMPLEMENTATION_QUEUE.md and docs/PROJECT_STATE.md for admission; one ignored run-local settings file and normal ignored run Artifacts for execution. Platform source, canonical Mod source, and game files are not implementation edit targets.
+focused_verification: Before Runtime, verify current source/log absence of the deliberate marker, no GTFO process, destination/restoration state, configuration SHA256, Build Artifact identity, and checkpoint freshness. After resume, verify RuntimeEvidence failure_ownership, RepairPlan blocker and retry state, zero resume-stage model calls, no repeated upstream stage or new Proposal/Dry-run/Apply/Build revision, blocked terminal result, process exit, destination restoration, and configuration hash preservation.
+stop_condition: Stop at the new exact-diff approval boundary; then stop again before deployment/launch for separate physical Runtime approval. After one approved Runtime attempt, record either the first bound negative-path result or one immutable failure, clean the environment, return the queue to None, and do not activate H1.2, H2, H4-H6, Phase 2C, or any new Migration Boundary.
+status: active
 ```
 
 `AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001` completed H3 Phase A and Phase B

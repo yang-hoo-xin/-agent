@@ -8,13 +8,24 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ## 1. Current Selection
 
 ```text
-current_queue: None
+current_queue: AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001
 current_documentation_task: None
-selected_product_request: None
+selected_product_request: Prove the implemented H3 observation-failure ownership route in one controlled real GTFO Runtime resume without re-entering source repair
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
+
+`AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001` is a bounded
+post-implementation Runtime acceptance task. It does not reopen Phase 2B,
+activate Phase 2C, select a later Harness Migration Boundary, or authorize H3
+source changes. Its single claim is that a real, deliberately incomplete
+acceptance observation is owned by `observation`, keeps
+`source_repair_allowed=false`, produces
+`RUNTIME_OBSERVATION_REPAIR_REQUIRED`, and reaches a blocked terminal result
+without repeating Proposal, Dry-run, Apply, or Build. Preparation may establish
+a fresh compile-only Build checkpoint; physical DLL deployment and GTFO launch
+remain subject to a separate exact one-run approval.
 
 `AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001` completed the bounded H3
 postcondition. New RuntimeEvidence payloads carry normalized
