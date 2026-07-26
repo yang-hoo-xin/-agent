@@ -8,13 +8,39 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ## 1. Current Selection
 
 ```text
-current_queue: None
+current_queue: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 current_documentation_task: None
-selected_product_request: None
+selected_product_request: Prove the repaired multi-generation Runtime observation path in one controlled real GTFO negative acceptance without re-entering source repair
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: RUNTIME-OBSERVATION-MULTISNAPSHOT-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
+
+`AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001` is the selected
+one-run V2TA/M acceptance for the repair in commit
+`c8c91b31dcc344ff08960ecc3d4c83980c35a6d2`. It must use a new lineage and
+Build, retain `BepInEx`, `Chainloader`, and `chain_probe=true` from verified
+current-run source windows, and leave only
+`h3_observation_negative_probe=absent` missing. The expected terminal result is
+blocked with owner `observation`, `source_repair_allowed=false`,
+`RUNTIME_OBSERVATION_REPAIR_REQUIRED`, no resume-stage model call, and no
+repeated Proposal, Dry-run, Apply, or Build revision.
+
+The user authorized exactly this full one-run scope on 2026-07-26, including
+local Ollama use, isolated write and Build, DLL deployment, GTFO launch and
+termination, evidence collection, restoration, documentation, and Git closure.
+No external provider or source disclosure is authorized. Unattended isolated
+Apply remains limited to a fresh no-write diff that is byte-for-byte identical
+to the previously approved `chain_probe=true` `Plugin.cs` replacement and
+passes all current binding checks; any different bytes stop before write.
+
+The no-launch preflight found no GTFO process, no deployed
+`BetterHitFeedback.dll`, canonical `Plugin.cs` SHA256
+`b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`
+with neither test marker, zero deliberate-marker occurrences in the current
+BepInEx log, and `BepInEx.cfg` SHA256
+`cad94700be6c79cbe6efbf6e953fead502b9c5723ee67cc1fb19e63c94326616`
+with exactly `AppendLog = false` under `[Logging.Disk]`.
 
 `RUNTIME-OBSERVATION-MULTISNAPSHOT-001` completed the bounded observation
 repair triggered by real run `06c09532`. The GTFO collector now accumulates

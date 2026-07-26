@@ -10,14 +10,27 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: None
-selected_product_request: None
+current_queue: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
+selected_product_request: Prove the repaired multi-generation Runtime observation path in one controlled real GTFO negative acceptance without re-entering source repair
+```
+
+```text
+task_id: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
+product_request_or_failure: Real run 06c09532 proved deterministic observation-owner routing but could not establish the intended single-missing-marker condition because its final current-run window also lacked Chainloader and chain_probe=true. Commit c8c91b31dcc344ff08960ecc3d4c83980c35a6d2 repairs cross-poll and cross-generation marker retention. Run one new Build-to-Runtime lineage in which h3_observation_negative_probe=absent is deliberately absent and the other current-run markers remain bound.
+exact_evidence: Preflight on 2026-07-26 found no GTFO process, no deployed BetterHitFeedback.dll, canonical Plugin.cs SHA256 b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c with neither test marker, zero h3_observation_negative_probe=absent occurrences in the current BepInEx log, BepInEx.cfg SHA256 cad94700be6c79cbe6efbf6e953fead502b9c5723ee67cc1fb19e63c94326616, and exactly AppendLog = false under [Logging.Disk]. Commit c8c91b3 and 244 focused tests provide the local repair evidence; run 06c09532 remains immutable inconclusive history.
+affected_coverage_ids: WF-005, EXEC-006, EXEC-009, EXEC-010, MISS-026E, MISS-026F, MISS-026G
+dependencies: Repository HEAD c8c91b31dcc344ff08960ecc3d4c83980c35a6d2; completed H1.1 handoff/resume; completed H3 ownership routing; completed RUNTIME-OBSERVATION-MULTISNAPSHOT-001; one new isolated delivery lineage, exact-diff binding, Build checkpoint, and run-local GTFO settings.
+permissions_and_disclosure: The user authorized this complete one-run scope on 2026-07-26, including local Ollama use, isolated write and Build, DLL deployment, game-directory write, GTFO launch and termination, log/process-diagnostic/screenshot collection, restoration, evidence documentation, and Git closure. No external provider or external source disclosure is authorized. Isolated Apply may continue unattended only if the fresh no-write diff is byte-for-byte identical to the previously user-approved chain_probe=true Plugin.cs replacement and all fresh binding checks pass; otherwise the run must stop before write. No Runtime retry is authorized.
+files_in_scope: docs/IMPLEMENTATION_QUEUE.md and docs/PROJECT_STATE.md for admission and later closure; one ignored run-local settings file and normal ignored run Artifacts; isolated BetterHitFeedback Plugin.cs for the exact previously reviewed replacement. Canonical Mod source and other platform source are not edit targets.
+focused_verification: Before Runtime, verify fresh source/binding identity, exact no-write diff equality, successful Build Artifact and checkpoint, deliberate-marker absence, GTFO process absence, destination pre-state, BepInEx.cfg binding, and configuration hash. After Runtime, require BepInEx, Chainloader, and chain_probe=true observations bound to current-run source_window identities; only h3_observation_negative_probe=absent may remain missing. Verify owner observation, source_repair_allowed false, RUNTIME_OBSERVATION_REPAIR_REQUIRED, retry_count zero, no resume-stage model call or repeated upstream stage, no new Proposal/Dry-run/Apply/Build revision, blocked terminal, bounded non-authoritative process_diagnostics, process exit, destination restoration, and configuration hash preservation.
+stop_condition: After exactly one Runtime attempt, preserve its result whether the stronger condition passes or fails, clean the physical environment, return the queue to None, record the evidence boundary, and do not activate Phase 2C, H1.2, H2, H4-H6, a retry, or a broader Harness expansion.
+status: active
 ```
 
 `RUNTIME-OBSERVATION-MULTISNAPSHOT-001` completed the bounded observation
 repair triggered by `06c09532` and moved to `docs/audits/LOOP_HISTORY.md`.
-No Runtime rerun is selected in this page. The next real acceptance must use a
-new V2TA/M lineage, a new Build, and separate GTFO/game-directory permission.
+The selected post-fix Runtime acceptance uses a new V2TA/M lineage and new
+Build under the explicit one-run permission recorded above.
 
 `AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001` completed one separately
 authorized real Runtime attempt and moved to `docs/audits/LOOP_HISTORY.md`.
