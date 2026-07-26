@@ -866,6 +866,17 @@ remain inactive because no new observed failure or approved postcondition
 currently satisfies their entry rule. The Program returns to the product
 mainline with no active queue item.
 
+The subsequent product-mainline validation did not reopen this Program. Real
+run `e7daa266` used a fresh compile-only process plus separately authorized
+H1.1 `resume-runtime` continuation. It retained the original
+run/request/feature and Build Artifact identity, made zero resume-stage model
+calls, repeated no upstream stage, deployed and hash-verified the exact DLL,
+observed BepInEx, Chainloader, and `chain_probe=true` from complete run-local
+content before raw truncation, reached accepted Runtime/Eval/Terminal closure,
+and restored the game directory. This satisfies the previously deferred real
+Runtime validation described in section 8; it does not activate H1.2, H2, or
+H4-H6.
+
 H1.1 closed with this observed result:
 
 ```text

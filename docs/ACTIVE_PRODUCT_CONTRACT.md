@@ -75,11 +75,24 @@ with an owner-specific RepairPlan result and do not repeat model, Proposal,
 Apply, or Build work. Older ownerless RuntimeEvidence remains readable but has
 no source-repair authority.
 
-This proves one local request-to-real-runtime product slice in one GTFO
-environment. It does not prove cross-project or cross-environment generality,
-production deployment, long-duration stability, every gameplay route,
-automatic Runtime recovery, semantic root-cause accuracy, automated Harness
-runtime collection, or promotion-grade retrieval quality.
+Post-H3 mainline run `e7daa266` real-exercised the bounded Build-to-Runtime
+continuation. A fresh compile-only process persisted a Build checkpoint; a
+separately authorized `resume-runtime` process retained the original
+run/request/feature and Build Artifact hash, deployed the exact built DLL,
+verified source/expected/destination SHA256 equality, launched GTFO, observed
+the startup and `chain_probe=true` markers, wrote RuntimeEvidence, Eval, and
+WorkflowSummary, then restored the game directory. The continuation made zero
+model calls and reported `upstream_stages_repeated=false`. The acceptance
+marker occurred at run-local character offset 22,826, proving the current
+pre-truncation structured-marker repair against the real failure shape that
+defeated the older 20,000-character projection.
+
+This proves one local request-to-real-runtime gameplay slice and one bounded
+automatically collected startup-marker slice in one GTFO environment. It does
+not prove cross-project or cross-environment generality, production
+deployment, long-duration stability, every gameplay route, automatic Runtime
+recovery, semantic root-cause accuracy, generalized Runtime Harness behavior,
+or promotion-grade retrieval quality.
 
 The local `plan-request` CLI is also a tested planning-only entry. It now runs
 the deterministic RequestPlanner and ModPlanningBriefBuilder in memory, emits

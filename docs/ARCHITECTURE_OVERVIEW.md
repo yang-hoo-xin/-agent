@@ -73,6 +73,14 @@ durable consumed-resume lookup. The `resume-runtime` entry reacquires current
 GTFO capability, launch, and game-directory-write authority and then compiles
 the existing graph with its start routed to `collect_runtime_evidence`.
 
+Real run `e7daa266` exercised this boundary with the current GTFO provider.
+Fresh-process resume retained the original run/request/feature and Build
+Artifact hash, performed no model call or upstream-stage repetition, deployed
+and hash-verified the exact DLL, collected trusted startup-marker evidence,
+completed Eval and WorkflowSummary, and restored the destination. This is
+real-execution evidence for the bounded H1.1 path, not a general persistence or
+Runtime-provider claim.
+
 This boundary does not add a second workflow or lifecycle store. It does not
 make the in-memory LangGraph checkpointer persistent, resume arbitrary nodes,
 recover an interrupted external side effect, or guarantee concurrent
@@ -617,8 +625,8 @@ Current maturity is split deliberately:
 | Two-level Critic and same-level specialist fan-out | `documented_only`; `conditional_trigger` not satisfied | No Worker self-check, parallel specialist execution, deterministic fusion, clean-context second-level Critic, or two-level-review claim |
 | Business decision/action translation | Existing Mod workflow routes `implemented`; generic four-tier risk model `documented_only` | No generic business-risk engine, configurable domain thresholds, or automatic action tuning claim |
 | Real build | Verified for the preserved BetterHitFeedback run | The declared DLL compiled for that run |
-| Gameplay/runtime acceptance | Verified for the selected BetterHitFeedback `General.Enabled` slice in one real GTFO environment | Disabled startup and enabled gameplay behavior are observed for the exact built DLL; no cross-environment, long-duration, every-route, or automated Harness claim |
-| Persistent cross-process checkpoint backend | Future/product-failure triggered | In-memory/local checkpoint behavior only |
+| Gameplay/runtime acceptance | Verified for the selected BetterHitFeedback `General.Enabled` slice plus one bounded automated startup-marker slice in one real GTFO environment | Disabled startup and enabled gameplay behavior are observed for the Phase 2B DLL; `e7daa266` separately proves automated deployment, exact DLL binding, startup-marker collection, terminal evaluation, and restoration. No cross-environment, long-duration, every-route, second-profile, or production-mature Harness claim |
+| Bounded Build-stage cross-process continuation | `implemented` and real-exercised | One pre-side-effect local checkpoint resumed into the existing Runtime/Eval/Terminal graph without upstream repetition; no general persistent graph backend, arbitrary-node resume, post-side-effect recovery, or concurrent exactly-once claim |
 | MCP/API/webhook/scheduler trigger surfaces | Partial or future-triggered | They are not the current production entry |
 | Long-term experience and closed-loop learning | Audit storage `implemented`; learning design `documented_only`; `conditional_trigger` not satisfied | Artifact history is not automatic memory, feedback learning, or policy tuning |
 | ReAct/Agentic routing | Deferred | No active architecture migration |

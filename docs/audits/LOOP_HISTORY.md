@@ -4,6 +4,58 @@ This archive preserves historical loop details moved out of the active control d
 
 Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md`.
 
+## 2026-07-26 Post-H3 automated Runtime closure `e7daa266`
+
+```text
+Status: accepted real same-lineage closure
+Entry:
+  - a fresh compile-only run persisted Build-stage checkpoint
+    e4a927a0c4ec480713136c8e2d9c325118b124fe1aa0bf0fc217862cb368021e;
+  - separately authorized resume-runtime continued the same
+    run/request/feature through the existing LangGraph at
+    collect_runtime_evidence;
+  - resume_id resume_2871c38795144f1cb86d88ae9828161c.
+Non-repetition:
+  - resume-stage model_call_count=0;
+  - upstream_stages_repeated=false;
+  - no second Evidence, Proposal, Review, Dry-run, Apply, or Build execution.
+Physical Runtime:
+  - exact source/expected/deployed DLL SHA256
+    efa8bb89e0240da5bb13a63345e3e026f8d30c15d5c17e063ccbbbab98092200;
+  - GTFO PID 37468 launched and liveness was observed;
+  - BepInEx observed at run-local character offset 21;
+  - Chainloader observed at offset 645;
+  - chain_probe=true observed at offset 22826 before the raw log projection
+    was truncated to its newest 20000 characters.
+Terminal artifacts:
+  - RuntimeEvidence
+    ea8073f029770a1ac18e859c1fc0c9f375bf7e6c4635a6b8122d2e5a7c60506c;
+  - Eval
+    2f99f0ff1be2dece089fa8c3c13d0a826eed06de6623b09fcbe8671d2a5dc8f2;
+  - WorkflowSummary
+    76e8fc827fc56922c93edbcc48eb37d75bca3980e38873b7d026ae62d26335dc;
+  - runtime_resume_result.json SHA256
+    9358f6c2268217295bd6788000cb6533db4cb8d37a6635e9e98f5df74ddc6b73.
+Cleanup:
+  - GTFO process absent after capture;
+  - temporary plugin destination absent after restoration;
+  - existing game configuration SHA256 remained
+    717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e.
+Screenshot boundary:
+  - system desktop screenshot SHA256
+    4ad03493a025664b4291d04153a60455d27916e6d772d9ebb42894d0efc0e06e;
+  - source=desktop_screenshot and verification_status=visual_evidence_only;
+  - it supports no acceptance criterion.
+Claim ceiling:
+  - one BetterHitFeedback startup-marker profile in one GTFO environment;
+  - no user-screenshot authority rule, second Runtime profile,
+    cross-environment, long-duration, every-route, automatic recovery, or
+    production-mature Harness claim.
+Next selection:
+  - None; this product-mainline validation does not activate H1.2, H2, or
+    H4-H6.
+```
+
 ## 2026-07-26 AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
 
 ```text

@@ -49,6 +49,31 @@ or gameplay evidence occurred. Automatic Runtime retry, semantic root-cause
 accuracy, side-effect recovery, cross-environment operation, and concurrency
 remain outside H3.
 
+Post-H3 product-mainline run `e7daa266` under
+`workspaces/runtime_chain_post_h3_001/e7daa266` then real-exercised H1.1 and
+the repaired Runtime observation path together. The compile-only process
+persisted Build checkpoint
+`e4a927a0c4ec480713136c8e2d9c325118b124fe1aa0bf0fc217862cb368021e`;
+fresh-process resume
+`resume_2871c38795144f1cb86d88ae9828161c` retained the original run, request,
+feature, and Build Artifact identity, made zero model calls, repeated no
+upstream stage, and reached `done`. The exact built/deployed DLL SHA256 was
+`efa8bb89e0240da5bb13a63345e3e026f8d30c15d5c17e063ccbbbab98092200`.
+Runtime trust observed BepInEx at run-local character offset 21, Chainloader at
+645, and `chain_probe=true` at 22,826 before truncating the raw projection to
+its newest 20,000 characters. RuntimeEvidence Artifact
+`ea8073f029770a1ac18e859c1fc0c9f375bf7e6c4635a6b8122d2e5a7c60506c`,
+Eval Artifact
+`2f99f0ff1be2dece089fa8c3c13d0a826eed06de6623b09fcbe8671d2a5dc8f2`,
+and WorkflowSummary Artifact
+`76e8fc827fc56922c93edbcc48eb37d75bca3980e38873b7d026ae62d26335dc`
+form the accepted terminal chain. GTFO exited, the temporary destination DLL
+was absent after restoration, and the existing game configuration retained
+SHA256
+`717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`.
+The system desktop screenshot remains `visual_evidence_only` and supplies no
+acceptance criterion.
+
 `AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001` completed the bounded H1.1
 postcondition. A successful real Build may now persist a Build-stage
 `workflow_checkpoint`; a fresh process can submit a separately authorized
@@ -108,8 +133,11 @@ truncation. It persists only the observed flag, run-local character offset,
 bounded excerpt, excerpt-truncation flag, and observation scope; the raw log
 projection remains limited to its newest 20,000 characters. The affected local
 command passes 149 tests, including a head-startup/tail-acceptance regression
-and a missing-startup negative case. No real run after this exact repair has
-reached accepted same-run terminal closure.
+and a missing-startup negative case. Real run `e7daa266` subsequently exercised
+this exact repair: it retained the earlier BepInEx and Chainloader observations,
+found `chain_probe=true` at offset 22,826 beyond the raw-output limit, and
+reached accepted same-lineage terminal closure through fresh-process H1.1
+resume.
 Deterministic authority distinguishing user-supplied from system-captured
 screenshots also remains unproved.
 
@@ -1129,9 +1157,12 @@ process-liveness, deployed-hash, and restoration trust checks, but its retained
 tail omitted the earlier `Chainloader` marker and therefore blocked
 `plugin_load_marker`. The current implementation now records bounded structured
 marker observations before raw-output truncation and uses those observations
-for startup and acceptance trust. The affected local command passes 149 tests,
-but this exact repair has not yet been exercised by another real GTFO run and
-does not prove accepted automated same-run closure.
+for startup and acceptance trust. The affected local command passes 149 tests.
+Run `e7daa266` then proved that exact repair through a separately authorized
+fresh-process Build-to-Runtime continuation: the complete run-local log yielded
+BepInEx, Chainloader, and an acceptance marker at offset 22,826; the same
+run/request/feature lineage reached accepted RuntimeEvidence, Eval, and
+WorkflowSummary without repeating upstream stages.
 
 This boundary does not prove production-mature runtime automation,
 deterministic user-versus-system screenshot authority, general Mod quality,
@@ -1191,7 +1222,7 @@ verified.
 | Proposal review and dry-run | tested | Dry-run proves no-write validation, not compilation or gameplay |
 | Isolated apply and real build | verified on the narrow BetterHitFeedback run | Build success does not prove GTFO runtime behavior |
 | ProposalCritic local/injected boundary | tested for not-required, required-success, and required-failure | External model assessment quality remains unverified |
-| Runtime/evaluation | one bounded BetterHitFeedback slice is real-verified; terminal-chain and current working-tree deployment/observation mechanisms are implemented | Real acceptance is limited to `007b1b58`; `e1edc4f9` missed the tail marker and `ec71c3a5` retained that marker but lost the earlier `Chainloader` startup marker, so both automated runs ended `inconclusive`; the pre-truncation structured-marker repair is locally tested but has no subsequent real run; no automated accepted closure, deterministic screenshot-source authority, cross-environment, long-duration, or every-route claim is established |
+| Runtime/evaluation | one BetterHitFeedback gameplay slice and one automated startup-marker slice are real-verified; terminal-chain, H1.1 resume, deployment, observation, and restoration mechanisms are implemented | `007b1b58` proves the false/true gameplay slice. `e7daa266` proves one accepted fresh-process Build-to-Runtime continuation with exact deployed-DLL binding and pre-truncation marker observation. This does not establish deterministic screenshot-source authority, another Runtime profile, cross-environment use, long-duration stability, every route, or production-mature Runtime automation |
 | Retrieval direction | bounded local decision completed | Keep `rg` plus live reads; no production RAG claim |
 
 Open implementation gaps remain tracked by Status, Provenance, and Trigger in
@@ -1212,8 +1243,8 @@ evaluation, graph, and terminal regressions covered by those tests. The two new
 marker regressions prove that a startup marker at the head and an acceptance
 marker at the tail both remain available to trust checks after raw-output
 truncation, while a genuinely absent startup marker remains blocked. The
-command did not launch GTFO or prove a post-repair accepted real same-run
-closure.
+command itself did not launch GTFO. The later real run `e7daa266` separately
+proved the post-repair accepted same-lineage closure.
 
 A broader verification pass found two independent limits:
 
@@ -1235,13 +1266,16 @@ installed and none of these six failures was modified in this documentation
 and preflight turn. The focused 149-test marker repair remains valid, but the
 whole repository and the wider product contract suite are not currently green.
 
-The exact rerun prerequisites, permission boundary, success facts, stop rule,
-resume limitation, and V2TA/M completion interpretation are recorded in
-`docs/audits/HARNESS_EXPANSION_DECISION_PACKET.md`. V2TA/M Phase 2B is complete
-for the selected BetterHitFeedback slice; this is not a claim that every later
-target responsibility, optional Phase 3, or whole-repository test is complete.
+The permission boundary, H1.1 limitation, stop rule, and later-boundary
+re-admission rules are recorded in
+`docs/audits/AGENT_HARNESS_TRANSITION.md`; the real run facts are preserved in
+the current section and `docs/audits/LOOP_HISTORY.md`. V2TA/M Phase 2B is
+complete for the selected BetterHitFeedback slice; this is not a claim that
+every later target responsibility, optional Phase 3, or whole-repository test
+is complete.
 
-Post-repair real run `ec71c3a5` launched GTFO and produced Runtime Evidence
+The preserved earlier post-repair run `ec71c3a5` launched GTFO and produced
+Runtime Evidence
 Artifact hash
 `566a8a6554da0211bf7307d499803bea2592f7b3b927d1d6dcc6abe0abe574a6`.
 The exact built/deployed DLL SHA256 was
