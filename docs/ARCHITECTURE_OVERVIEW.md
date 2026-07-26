@@ -114,6 +114,16 @@ provider registry, or second StateGraph. Automatic Runtime retry, semantic
 root-cause inference, side-effect recovery, and cross-provider execution proof
 remain outside this boundary.
 
+Real run `06c09532` exercised this H3 route through the current GTFO provider.
+The RuntimeEvidence owner was `observation`; RepairPlan emitted
+`RUNTIME_OBSERVATION_REPAIR_REQUIRED`, preserved `retry_count=0`, authorized no
+source change or next stage, and reached the existing blocked terminal without
+a resume-stage model call or another Proposal, Dry-run, Apply, or Build
+revision. Deployment hash binding and restoration passed. This real routing
+evidence does not prove semantic root-cause accuracy: the intended absent
+marker was not the only missing fact because the current-run log window also
+lacked `Chainloader` and the product marker.
+
 ### 2.3 V2 Intelligence Experiment And Productization Boundary
 
 The control-plane diagram above is the implemented delivery baseline. It is not

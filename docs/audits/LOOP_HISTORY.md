@@ -4,6 +4,65 @@ This archive preserves historical loop details moved out of the active control d
 
 Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md`.
 
+## 2026-07-26 H3 real Runtime negative-path acceptance `06c09532`
+
+```text
+Status: completed real observation-owner route; stronger single-marker
+  isolation not established
+Entry:
+  - task AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001;
+  - fresh compile-only lineage used one local Ollama call, exact-diff approval
+    sha256:454ae5f957e1584a084a385da2278a68bb92b1023f027a110e9bfe5e41968b99,
+    and Build checkpoint checkpoint_fdff2bad0c174464bd37321e6019be1e;
+  - separately authorized fresh-process resume
+    resume_4a5a06d386d345289b17f79a3c477e92.
+Physical Runtime:
+  - exact source/expected/deployed DLL SHA256
+    47e6d921e648ba89383a46e3d18ca142be7aa4dfe1929eb20a52432142ad991a;
+  - GTFO PID 13696 launched and liveness was observed;
+  - the destination was absent before deployment and after restoration;
+  - game configuration SHA256 remained
+    717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e.
+Runtime result:
+  - RuntimeEvidence Artifact
+    ce480a2e1448151de03e00c8f8f6eea255759285cd106b89f6ede055fab925ea;
+  - failure_ownership owner=observation,
+    failure_class=runtime_observation_incomplete,
+    source_repair_allowed=false,
+    required_action=repair_runtime_observation;
+  - RepairPlan Artifact
+    14f5affbd02592e9684033cda5112e673c4908bc03fa4477c50f02d144025cb4
+    emitted RUNTIME_OBSERVATION_REPAIR_REQUIRED, retry_count=0,
+    minimal_changes=[], and allowed_next_stage=null;
+  - BlockedReport Artifact
+    50f0086f66394b948f16424a7c9cab273977e2ae72ba6db39dda69562fa1b72f;
+  - runtime_resume_result.json SHA256
+    87af28ad729c858c93dd5777972189722c1e87f62855602ada0a90df4b49c3ab.
+Non-repetition:
+  - resume-stage model_call_count=0;
+  - upstream_stages_repeated=false;
+  - Proposal, Dry-run, Apply, and Build each remained at one revision;
+  - no source-repair Proposal or retry was created.
+Observation boundary:
+  - the verified post-launch append window was 14,888 bytes;
+  - it did not contain Chainloader, chain_probe=true, or the deliberately
+    absent h3_observation_negative_probe=absent marker;
+  - the complete post-run file contained historical Chainloader and
+    chain_probe=true text only inside its first 24,425 bytes;
+  - SHA256 of that prefix exactly equalled the complete prelaunch log SHA256
+    acb586949590bcca5886513c68921fa431ab04107ed192e5d64a52e351598e42,
+    so the collector correctly excluded those stale markers;
+  - system screenshot SHA256
+    74f50acab842ed26f30e81f074102e4ad31692a0fab8b18f69b7e89cec11bb6a
+    remained visual_evidence_only and supported no acceptance criterion.
+Claim ceiling:
+  - real H3 observation-owner routing is exercised;
+  - semantic root-cause accuracy and the stronger single-missing-marker
+    experiment are not proved;
+  - no retry, Phase 2C, H1.2, H2, H4-H6, or later Migration Boundary is
+    selected.
+```
+
 ## 2026-07-26 Post-H3 automated Runtime closure `e7daa266`
 
 ```text

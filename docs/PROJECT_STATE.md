@@ -8,24 +8,47 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ## 1. Current Selection
 
 ```text
-current_queue: AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001
+current_queue: None
 current_documentation_task: None
-selected_product_request: Prove the implemented H3 observation-failure ownership route in one controlled real GTFO Runtime resume without re-entering source repair
+selected_product_request: None
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
+most_recent_completed_capability: AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
-`AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001` is a bounded
-post-implementation Runtime acceptance task. It does not reopen Phase 2B,
-activate Phase 2C, select a later Harness Migration Boundary, or authorize H3
-source changes. Its single claim is that a real, deliberately incomplete
-acceptance observation is owned by `observation`, keeps
-`source_repair_allowed=false`, produces
-`RUNTIME_OBSERVATION_REPAIR_REQUIRED`, and reaches a blocked terminal result
-without repeating Proposal, Dry-run, Apply, or Build. Preparation may establish
-a fresh compile-only Build checkpoint; physical DLL deployment and GTFO launch
-remain subject to a separate exact one-run approval.
+`AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001` completed one bounded
+post-implementation Runtime acceptance attempt as run `06c09532`.
+Fresh-process resume `resume_4a5a06d386d345289b17f79a3c477e92`
+continued checkpoint `checkpoint_fdff2bad0c174464bd37321e6019be1e`
+and Build Artifact
+`4040c961dd60cab5101435c92bb89bc0e1099bf2546543e730f38102b7a00446`
+without a resume-stage model call or upstream-stage repetition. The exact DLL
+SHA256 `47e6d921e648ba89383a46e3d18ca142be7aa4dfe1929eb20a52432142ad991a`
+was deployed, verified, and restored to the prior absent destination state.
+
+RuntimeEvidence
+`ce480a2e1448151de03e00c8f8f6eea255759285cd106b89f6ede055fab925ea`
+recorded `failure_ownership.owner=observation`,
+`failure_class=runtime_observation_incomplete`,
+`source_repair_allowed=false`, and
+`required_action=repair_runtime_observation`. RepairPlan
+`14f5affbd02592e9684033cda5112e673c4908bc03fa4477c50f02d144025cb4`
+kept `retry_count=0`, emitted
+`RUNTIME_OBSERVATION_REPAIR_REQUIRED`, had no minimal source changes or allowed
+next stage, and the graph ended at `blocked`. Proposal, Dry-run, Apply, and
+Build each remained at one revision.
+
+The planned stronger condition that only
+`h3_observation_negative_probe=absent` would be missing was not established.
+The 14,888-byte verified current-run append window also lacked `Chainloader`
+and `chain_probe=true`. The complete post-run log still contained historical
+copies of those markers, but its first 24,425 bytes exactly matched the
+complete prelaunch log SHA256 and were correctly excluded from current-run
+authority. The screenshot is `visual_evidence_only`; it does not replace the
+missing current-run markers. This proves the real H3 observation-owner routing
+mechanism, not semantic root-cause accuracy or a single-variable marker test.
+No retry, H3 source change, Phase 2C, or later Harness Migration Boundary is
+selected.
 
 `AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001` completed the bounded H3
 postcondition. New RuntimeEvidence payloads carry normalized
@@ -1233,7 +1256,7 @@ verified.
 | Proposal review and dry-run | tested | Dry-run proves no-write validation, not compilation or gameplay |
 | Isolated apply and real build | verified on the narrow BetterHitFeedback run | Build success does not prove GTFO runtime behavior |
 | ProposalCritic local/injected boundary | tested for not-required, required-success, and required-failure | External model assessment quality remains unverified |
-| Runtime/evaluation | one BetterHitFeedback gameplay slice and one automated startup-marker slice are real-verified; terminal-chain, H1.1 resume, deployment, observation, and restoration mechanisms are implemented | `007b1b58` proves the false/true gameplay slice. `e7daa266` proves one accepted fresh-process Build-to-Runtime continuation with exact deployed-DLL binding and pre-truncation marker observation. This does not establish deterministic screenshot-source authority, another Runtime profile, cross-environment use, long-duration stability, every route, or production-mature Runtime automation |
+| Runtime/evaluation | one BetterHitFeedback gameplay slice and one automated startup-marker slice are real-verified; one real observation-owner blocked route is also exercised; terminal-chain, H1.1 resume, deployment, observation, restoration, and H3 routing mechanisms are implemented | `007b1b58` proves the false/true gameplay slice. `e7daa266` proves one accepted fresh-process Build-to-Runtime continuation with exact deployed-DLL binding and pre-truncation marker observation. `06c09532` proves a real incomplete-observation result cannot enter source repair, but its current-run window lacked both the deliberately absent marker and normal startup/product markers, so it is not a single-variable negative test. This does not establish deterministic screenshot-source authority, semantic root-cause accuracy, another Runtime profile, cross-environment use, long-duration stability, every route, or production-mature Runtime automation |
 | Retrieval direction | bounded local decision completed | Keep `rg` plus live reads; no production RAG claim |
 
 Open implementation gaps remain tracked by Status, Provenance, and Trigger in

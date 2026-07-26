@@ -877,6 +877,17 @@ and restored the game directory. This satisfies the previously deferred real
 Runtime validation described in section 8; it does not activate H1.2, H2, or
 H4-H6.
 
+A later bounded post-implementation acceptance run `06c09532` real-exercised
+the opposite H3 route. Its incomplete RuntimeEvidence normalized to
+`owner=observation`, denied source repair, produced
+`RUNTIME_OBSERVATION_REPAIR_REQUIRED`, preserved the retry count, and reached
+the blocked terminal without a model call or repeated upstream stage. The
+physical deployment hash and restoration checks passed. The planned
+single-missing-marker condition did not hold because the verified current-run
+append window lacked both normal startup/product markers and the deliberately
+absent marker. This proves H3's real deterministic routing, not semantic
+root-cause accuracy, and it does not activate another Program boundary.
+
 H1.1 closed with this observed result:
 
 ```text
