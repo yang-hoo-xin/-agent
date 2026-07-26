@@ -1444,6 +1444,86 @@ def test_zero_result_metadata_requires_query_recovery_or_grounded_finish(
     assert result.run_status == "completed"
 
 
+def test_first_zero_result_finish_requires_one_bounded_recovery_search(
+    tmp_path: Path,
+) -> None:
+    model = _ScriptedModel(
+        [
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("enemy wall movement behavior"),
+                "evidence_need": "Search for movement behavior.",
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "finish",
+                "decision": "needs_more_evidence",
+                "evidence_conclusions": [],
+                "unresolved_questions": [
+                    "The first literal metadata query returned no method reference."
+                ],
+                "missing_capabilities": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("movement"),
+                "evidence_need": "Try one different literal symbol substring.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            {
+                "action": "finish",
+                "decision": "needs_more_evidence",
+                "evidence_conclusions": [],
+                "unresolved_questions": [
+                    "The recovered method still requires exact IL inspection."
+                ],
+                "missing_capabilities": [],
+            },
+        ]
+    )
+    executor = _QueryAwareObservedToolExecutor()
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+    ).discover(
+        replace(
+            _request(tmp_path, include_second_source=False),
+            max_tool_calls=3,
+            max_model_steps=4,
+        )
+    )
+
+    assert len(executor.actions) == 2
+    assert executor.actions[1]["arguments"] == _metadata_arguments("movement")
+    assert result.run_status == "completed"
+    assert [item["status"] for item in result.pack.model_action_trace] == [
+        "accepted",
+        "rejected",
+        "accepted",
+        "accepted",
+    ]
+    assert result.pack.model_action_trace[1]["validation_error"] == (
+        "ZERO_RESULT_RECOVERY_REQUIRED"
+    )
+    correction = model.calls[2][-2]["content"]
+    assert correction["message_type"] == "tool_action_validation_error"
+    assert correction["error_code"] == "ZERO_RESULT_RECOVERY_REQUIRED"
+    assert correction["finish_allowed"] is False
+    assert correction["required_change"].startswith(
+        "Use search_dotnet_metadata once with a materially different"
+    )
+    budget_state = model.calls[2][-1]["content"]
+    assert budget_state["required_next_action"] == "use_tool"
+    serialized_correction = json.dumps(correction, ensure_ascii=False)
+    assert "ES_Hitreact" not in serialized_correction
+    assert "DoHitReact" not in serialized_correction
+
+
 def test_invalid_finish_decision_receives_one_bounded_correction_step(
     tmp_path: Path,
 ) -> None:

@@ -167,6 +167,7 @@ class EvidenceDiscoverySpecialist:
         finish_validation_error: str | None = None
         finish_correction_used = False
         tool_action_validation_error: dict[str, object] | None = None
+        zero_result_recovery_correction_used = False
         repeated_action_correction_used = False
         executed_tool_action_signatures: set[str] = set()
 
@@ -220,6 +221,50 @@ class EvidenceDiscoverySpecialist:
                     model_action_attempts=model_action_attempts,
                 )
             if action["action"] == "finish":
+                if _zero_result_recovery_required(
+                    actions=actions,
+                    observations=observations,
+                    request=request,
+                    model_step=model_step,
+                ):
+                    model_action_attempts.append(
+                        _model_action_attempt(
+                            model_step=model_step,
+                            action=action,
+                            status="rejected",
+                            validation_error="ZERO_RESULT_RECOVERY_REQUIRED",
+                        )
+                    )
+                    if zero_result_recovery_correction_used:
+                        return self._budget_result(
+                            request=request,
+                            actions=actions,
+                            observations=observations,
+                            candidate_origins=candidate_origins,
+                            reason=(
+                                "The single zero-result recovery opportunity was "
+                                "not used for a different metadata search."
+                            ),
+                            prompt_contract=prompt_contract,
+                            model_steps_used=model_steps_used,
+                            total_observation_bytes=total_observation_bytes,
+                            discovery_message_bytes_by_turn=(
+                                discovery_message_bytes_by_turn
+                            ),
+                            model_action_attempts=model_action_attempts,
+                        )
+                    zero_result_recovery_correction_used = True
+                    tool_action_validation_error = {
+                        "error_code": "ZERO_RESULT_RECOVERY_REQUIRED",
+                        "rejected_action_signature_sha256": _json_sha256(action),
+                        "required_change": (
+                            "Use search_dotnet_metadata once with a materially "
+                            "different literal managed-symbol substring, result_kinds, "
+                            "or authorized source. Do not infer a hidden symbol."
+                        ),
+                        "finish_allowed": False,
+                    }
+                    continue
                 self._runtime_diagnostics["failure_stage"] = "finish_validation"
                 try:
                     _validate_finish(action, observations_by_id)
@@ -742,6 +787,14 @@ def _build_turn_messages(
             }
         )
     if tool_action_validation_error is not None:
+        required_change = str(
+            tool_action_validation_error.get("required_change")
+            or (
+                "Choose a different source, tool, or arguments, or finish. "
+                "Changing only evidence_need or derived observation ids does "
+                "not make the action different."
+            )
+        )
         messages.append(
             {
                 "role": "user",
@@ -749,11 +802,7 @@ def _build_turn_messages(
                     "message_type": "tool_action_validation_error",
                     **tool_action_validation_error,
                     "executed_tool_call_count": len(actions),
-                    "required_change": (
-                        "Choose a different source, tool, or arguments, or finish. "
-                        "Changing only evidence_need or derived observation ids does "
-                        "not make the action different."
-                    ),
+                    "required_change": required_change,
                     "metadata_query_semantics": (
                         "search_dotnet_metadata uses case-insensitive literal-substring "
                         "matching against fully qualified managed type, method, and "
@@ -786,11 +835,19 @@ def _build_turn_messages(
                     "finish"
                     if remaining_tool_calls == 0 or finish_validation_error is not None
                     else (
-                        "finish_or_use_tool_for_exact_gap"
-                        if acceptance_progress["progress"][
-                            "inspect_method_il_observation_ids"
-                        ]
-                        else "use_tool_or_finish"
+                        "use_tool"
+                        if (
+                            tool_action_validation_error is not None
+                            and tool_action_validation_error.get("finish_allowed")
+                            is False
+                        )
+                        else (
+                            "finish_or_use_tool_for_exact_gap"
+                            if acceptance_progress["progress"][
+                                "inspect_method_il_observation_ids"
+                            ]
+                            else "use_tool_or_finish"
+                        )
                     )
                 ),
             },
@@ -870,6 +927,33 @@ def _metadata_candidate_refs(
             if isinstance(raw, dict) and raw.get("candidate_ref"):
                 refs.append(str(raw["candidate_ref"]))
     return refs
+
+
+def _zero_result_recovery_required(
+    *,
+    actions: list[dict[str, object]],
+    observations: list[ToolObservation],
+    request: EvidenceDiscoveryRequest,
+    model_step: int,
+) -> bool:
+    """Require one bounded alternate search before accepting a first zero-result stop."""
+
+    if (
+        len(actions) != 1
+        or len(observations) != 1
+        or len(actions) >= request.max_tool_calls
+        or model_step >= request.max_model_steps
+    ):
+        return False
+    action = actions[0]
+    observation = observations[0]
+    if (
+        action.get("action") != "use_tool"
+        or action.get("tool") != "search_dotnet_metadata"
+        or observation.tool != "search_dotnet_metadata"
+    ):
+        return False
+    return not _metadata_candidate_refs(observations)
 
 
 def _finish_validation_repair_focus(error_code: str) -> dict[str, object]:

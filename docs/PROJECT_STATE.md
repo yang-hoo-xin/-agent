@@ -8,13 +8,132 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ## 1. Current Selection
 
 ```text
-current_queue: None
+current_queue: GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001
 current_documentation_task: None
-selected_product_request: None
+selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio feedback
+stagger_feature_spec_status: operator_guided_feature_spec_complete
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
+
+`GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001` is the selected second real GTFO
+product slice. It requires one yellow X at the weapon-hit position, one short
+sound, and one exact `STAGGER_FEEDBACK_SHOWN` marker only when the local
+player's hit actually produces an enemy hit reaction. `General.Enabled=false`
+must produce none of those effects. The task has completed its bounded
+read-only Hook-discovery comparison and operator-guided FeatureSpec and is
+ready for fresh source materialization plus a bound EvidencePack; it is not an
+Agent Harness Migration Boundary.
+
+The explicit source-lineage input is the preserved final Phase 2B tree at
+`r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B
+canonical baseline. Its `Plugin.cs` SHA256 is
+`10DDF3032058853BB41053F27A0BF7D09D0049169058B704D3EB3A86273F8286`
+and retains the real-verified startup `General.Enabled` gate. The behavior
+source SHA256 is
+`92EAB8010EED49E8C84094DC6EB5376D5F995414C40CF7D2C44FC1955D405E1A`;
+it already observes `Dam_EnemyDamageBase.BulletDamage`, hit position, and the
+input `staggerMulti`, plus reusable HUD and sound paths. `staggerMulti` is only
+an input and is not authority that a hit reaction occurred.
+
+Read-only current-install metadata inspection bound `Modules-ASM.dll` SHA256
+`B0127EB1E9228A61B7ED04EA0152348E24DA693636711D03A248049618BB74BB`
+and MVID `85155e68-33a5-4fa5-a419-c563e7ea5e60`. It established exact current
+metadata for `Enemies.EnemyAgent.OnTakeDamage` token `0x0600F223`,
+`ES_Hitreact.ActivateState` token `0x06001387`, and
+`ES_Hitreact.DoHitReact` token `0x0600138A`, plus the current
+`ES_HitreactType` members. Exact follow-up metadata found
+`Dam_EnemyDamageBase.get_Owner` token `0x060023A3` and
+`Enemies.ES_Base.get_m_enemyAgent` token `0x0600F41A`. Current installed
+`EnemyAnimationFix.dll` SHA256
+`6367AF9BF155675AA8EEED6CA32C398144A7AAB6790F1AD10CBCDC2FFD4E87AC`,
+MVID `4ca43650-39a3-4399-b2e8-cd45ce386963`, independently patches
+`ES_Hitreact.DoHitReact` through exact method token `0x0600001E`.
+
+Operator-guided Hook discovery therefore recorded a falsifiable technical
+hypothesis: `Dam_EnemyDamageBase.BulletDamage` may supply the input/correlation
+facts and `ES_Hitreact.DoHitReact` may supply the actual result event; `Owner`
+and `m_enemyAgent` may bridge enemy identity; `ES_HitreactType.Micro`, `Light`,
+and `Heavy` may describe the intended non-death reaction scope. These names
+are not product authority. Fresh current source plus physical-assembly
+metadata/IL may support, reject, or leave any mapping unresolved. Rejected or
+unresolved essential mappings must block before Implementation Plan and return
+for operator review rather than being forced by the FeatureSpec.
+`automation_claim: not_proven`. Fresh source materialization and a bound
+EvidencePack remain required before any model disclosure or write. Apply,
+Build, game launch, and Runtime claims remain closed. H1.2 and H2/H4-H6 remain
+inactive.
+
+The bounded internal-Agent experiment then ran without operator-supplied
+symbols, tool order, reports, or intervention. Pre-repair local run
+`intelligent_evidence_f66e69cc385a477b9e738f9838874f6f` used one metadata
+search for `StaggerFeedback`, `StiffFeedback`, and `HitFeedback`, observed zero
+results, and ended `needs_more_evidence` after one accepted finish correction.
+EvidencePack
+`dd21a23a4a3fdd9a2bee5cd68c83c8cb8d05775b65b80dadc00e89d1d56c0ab7`
+was `insufficient`, `can_generate_patch=false`, and contained no IL
+inspection. This exposed a concrete first-zero-result early-stop failure.
+
+The smallest repair now rejects one premature finish when the first metadata
+search returns no method reference while both tool and model budgets remain.
+It requires one materially different literal substring, result kind, or
+authorized source without disclosing a hidden symbol. The focused discovery
+suite passed `44` tests. Post-repair local run
+`intelligent_evidence_cad5aa77e5214883a258be4d0bc02068` proved that recovery
+route: the first finish was rejected with
+`ZERO_RESULT_RECOVERY_REQUIRED`, and a second different metadata search ran.
+The local `qwen3:4b-instruct` model still elaborated the same unsupported
+feedback-name guess, found no method, selected no IL inspection, and produced
+EvidencePack
+`3bbdc8b150a25fe1be17093fecc698173f8b12c1815047a5a6be2b87e9a2c214`
+with `readiness=insufficient` and `can_generate_patch=false`. Both runs used
+local loopback inference, made no external model call, executed no target code,
+and produced no Proposal, source write, Build, game launch, or Runtime claim.
+The experiment therefore proves bounded zero-result recovery mechanics but
+does not prove autonomous Hook mapping. Product delivery returned to the
+operator-guided product path rather than expanding the experimental
+intelligence loop.
+
+The revised operator-guided FeatureSpec is registered under ArtifactStore lineage
+`workspaces/stagger_feedback_feature_spec_001/stgfs001/a` with feature id
+`feature_4f4c63c3802d`. Its exact Artifact hash is
+`81830b22ab6ec0c07c45be895906677facc270e65f5266d8f24add4353214f09`;
+it supersedes the earlier FeatureSpec Artifact
+`d463563884f3fd79fd9883a69b9b3b87e88be45cfee0fe09bfcb833de2d6f486`
+without rewriting that historical revision.
+The upstream request-planning Artifact hash is
+`2aa1a32f6f9ef6260d31fb9481ce8bfafd0ef861fd3b629ede080d85b05872d4`.
+The specification records seven acceptance criteria, seven evidence
+requirements, and eight Runtime verification steps. Seven operator-guided
+technical hypotheses are explicitly advisory and may be supported, rejected,
+or left unresolved by current evidence. The `STAGGER_FEEDBACK_SHOWN` marker
+requires code-level `visual_spawn_succeeded=true` and
+`audio_event_accepted=true`; it does not by itself prove screen visibility or
+player-observable audibility. Those product facts remain separate Runtime
+requirements. The Artifact's `admission_boundary` also states that it is a
+governance record rather than graph-route authority; the next execution must
+use the selected evidence-only entry and deterministic EvidencePack gates.
+ArtifactStore accepted the contract for `retrieve_evidence`, the raw Chinese
+request round-tripped to the stable feature id, and all four selected
+source-lineage hashes revalidated. Proposal, source write, external-model
+disclosure, Build, game-directory write, and GTFO launch remain unauthorized.
+
+The final affected verification command for the revised FeatureSpec and the
+bounded discovery repair was
+`python -m pytest -q tests/unit/test_intelligent_evidence_discovery.py
+tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py
+tests/unit/test_planning.py tests/unit/test_artifact_contract.py
+tests/unit/test_artifact_store.py --tb=short -p no:cacheprovider`; it passed
+`199` tests in `21.19s`. `python -m compileall -q src` and
+`git diff --check` also passed.
+
+The affected verification command was
+`python -m pytest -q tests/unit/test_intelligent_evidence_discovery.py
+tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py
+tests/unit/test_planning.py tests/unit/test_artifact_contract.py --tb=short -p
+no:cacheprovider`; it passed `169` tests in `29.77s`.
+`python -m compileall -q src` and `git diff --check` also passed.
 
 `AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001` completed as real
 run `95efb988`. Fresh Build Artifact
