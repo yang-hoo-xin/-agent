@@ -96,14 +96,29 @@ exact_evidence:
   Runtime requirements. Direct ArtifactStore/lineage checks passed, and the
   final affected discovery, planning, graph, CLI, and Artifact suite passed
   199 tests in 21.19s. Source compilation and diff checks also passed.
+  Fresh evidence-only run sfe_99ca8e29 materialized the selected Phase 2B
+  source bytes with snapshot SHA256
+  E82C26667A82CB207FBFF0B9DCB2198A8CC2B1DF3BF52FE510C59BF3B8EBC2E0
+  and reread both registered current assemblies without target execution.
+  EvidencePack
+  1fc2d8129d45d03fb16bc31fea015df3c228e35caf3ea307180d7bae8a6ea01d
+  is fresh and supports input_event_mapping, result_event_mapping,
+  enemy_identity_mapping, and yellow_x_visual_path. reaction_type_scope,
+  exactly_once_correlation, and feature_audio_path remain unresolved. The
+  pack is partial, can_generate_patch=false, authoritative_for_patch=false,
+  and blocks deterministically before Implementation Plan. The post-run
+  ArtifactStore, Artifact contract, Planning, and Workflow suite passed
+  129 tests in 22.64s; diff checks passed.
 affected_coverage_ids:
   PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
   EXEC-002, EXEC-003, EXEC-005, EXEC-006
 dependencies:
-  Fresh run-local materialization from the exact selected source-lineage
-  bytes; current live GTFO interop metadata; an EvidencePack that independently
-  supports or rejects every essential technical hypothesis; existing
-  single-StateGraph review/apply/build/runtime gates.
+  Resolve the three remaining essential hypotheses through current semantic
+  evidence or an explicit operator-reviewed bounded implementation decision:
+  the reaction-type product scope, a collision-safe exactly-once correlation
+  rule, and one feature-attributable short audio event. Then produce a new
+  EvidencePack revision before Implementation Plan. Existing single-StateGraph
+  review/apply/build/runtime gates remain unchanged.
 permissions_and_disclosure:
   Current admission authorizes local read-only source, metadata, and IL
   discovery only. No external model disclosure, source write, Apply, game
@@ -115,12 +130,10 @@ files_in_scope:
   A writable target path is not admitted until current source is freshly
   materialized and Hook evidence resolves an exact edit binding.
 focused_verification:
-  Evaluate every operator-guided technical hypothesis against fresh
-  hash/MVID-bound source, metadata, and IL evidence without treating its names
-  as predetermined truth; then run affected planning/evidence/proposal tests,
-  an isolated dotnet build, and separately authorized Enabled=false plus
-  Enabled=true real GTFO acceptance with visible, audible, and exact
-  STAGGER_FEEDBACK_SHOWN evidence.
+  Preserve the four supported findings while resolving the three exact gaps.
+  Revalidate all seven statuses and current hashes in a new EvidencePack
+  revision. Only after every essential hypothesis is supported may the normal
+  Implementation Plan and affected planning/evidence/proposal tests begin.
 stop_condition:
   Stop before Proposal if fresh source materialization cannot preserve the
   exact selected lineage, or if the FeatureSpec/EvidencePack cannot bind the
@@ -128,7 +141,7 @@ stop_condition:
   one-hit deduplication rule. After accepted two-mode Runtime evidence, return
   to the product mainline and perform Harness re-admission only if this slice
   exposed a concrete generic Harness failure.
-status: operator_guided_feature_spec_complete_ready_for_fresh_materialization_and_evidence_pack
+status: evidence_pack_partial_blocked_for_three_operator_evidence_resolutions
 automation_claim: not_proven
 ```
 

@@ -3820,3 +3820,62 @@ Limitations:
 Stop:
   Admission and terminal-chain wiring are complete. The queue returns to None.
 ```
+
+
+### GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001: First Bound EvidencePack
+
+```text
+Status: evidence checkpoint complete; product task remains active and blocked
+Module: PLAN, RET
+Run:
+  sfe_99ca8e29
+FeatureSpec:
+  81830b22ab6ec0c07c45be895906677facc270e65f5266d8f24add4353214f09
+Materialization:
+  workspaces/stagger_feedback_evidence_001/sfe_99ca8e29/materialized_source/BetterHitFeedback
+  snapshot SHA256
+  E82C26667A82CB207FBFF0B9DCB2198A8CC2B1DF3BF52FE510C59BF3B8EBC2E0
+EvidencePack:
+  1fc2d8129d45d03fb16bc31fea015df3c228e35caf3ea307180d7bae8a6ea01d
+Supported:
+  input_event_mapping
+  result_event_mapping
+  enemy_identity_mapping
+  yellow_x_visual_path
+Unresolved:
+  reaction_type_scope
+  exactly_once_correlation
+  feature_audio_path
+Deterministic result:
+  readiness=partial
+  can_generate_patch=false
+  authoritative_for_patch=false
+  stopped before Implementation Plan
+Integrity:
+  - all four FeatureSpec-required materialized source hashes equal the selected
+    Phase 2B lineage;
+  - the original lineage remained unchanged after copy;
+  - current Modules-ASM.dll and EnemyAnimationFix.dll SHA256/MVID identities
+    match the registered values;
+  - four raw metadata/IL JSON report hashes revalidated;
+  - ArtifactStore freshness is fresh;
+  - no Implementation Plan or later Artifact was produced.
+Verification:
+  python -m pytest -q tests/unit/test_artifact_store.py
+    tests/unit/test_artifact_contract.py tests/unit/test_planning.py
+    tests/unit/test_workflow_graph.py --tb=short -p no:cacheprovider
+  -> 129 passed in 22.64s
+  git diff --check
+  -> passed
+Permissions and actions:
+  - zero model and external-model calls;
+  - no target-source write;
+  - no target-code execution;
+  - no Proposal, Apply, Build, game-directory write, GTFO launch, screenshot,
+    or gameplay claim.
+Next boundary:
+  Resolve the exact reaction-type product semantics, collision-safe one-hit
+  correlation rule, and feature-attributable short audio event. Produce a new
+  EvidencePack revision; do not enter Implementation Plan while any essential
+  hypothesis remains unresolved.
+```

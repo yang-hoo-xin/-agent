@@ -12,6 +12,8 @@ current_queue: GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001
 current_documentation_task: None
 selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio feedback
 stagger_feature_spec_status: operator_guided_feature_spec_complete
+stagger_evidence_status: partial_4_supported_3_unresolved_blocked_before_implementation_plan
+most_recent_evidence_run: sfe_99ca8e29
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -22,9 +24,10 @@ product slice. It requires one yellow X at the weapon-hit position, one short
 sound, and one exact `STAGGER_FEEDBACK_SHOWN` marker only when the local
 player's hit actually produces an enemy hit reaction. `General.Enabled=false`
 must produce none of those effects. The task has completed its bounded
-read-only Hook-discovery comparison and operator-guided FeatureSpec and is
-ready for fresh source materialization plus a bound EvidencePack; it is not an
-Agent Harness Migration Boundary.
+read-only Hook-discovery comparison, operator-guided FeatureSpec, fresh source
+materialization, and first bound EvidencePack. The EvidencePack remains partial
+and blocks before Implementation Plan; this is not an Agent Harness Migration
+Boundary.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B
@@ -118,6 +121,46 @@ ArtifactStore accepted the contract for `retrieve_evidence`, the raw Chinese
 request round-tripped to the stable feature id, and all four selected
 source-lineage hashes revalidated. Proposal, source write, external-model
 disclosure, Build, game-directory write, and GTFO launch remain unauthorized.
+
+Evidence-only run `sfe_99ca8e29` freshly materialized the selected Phase 2B
+lineage under
+`workspaces/stagger_feedback_evidence_001/sfe_99ca8e29/materialized_source/BetterHitFeedback`.
+The run-local snapshot SHA256 is
+`E82C26667A82CB207FBFF0B9DCB2198A8CC2B1DF3BF52FE510C59BF3B8EBC2E0`;
+all four FeatureSpec-required files match their exact source-lineage hashes,
+and the copied `nuget.config` SHA256 is
+`2A60D41E8C9C839A51092416C96E70E0DBFF10AFE3022A9C063CCB4EB9AACDEE`.
+The original lineage remained unchanged after materialization.
+
+The same run reread current installed `Modules-ASM.dll` and
+`EnemyAnimationFix.dll` through the existing bounded metadata/IL inspector.
+Both physical assembly SHA256/MVID pairs still match the registered current
+identities, all four raw JSON report hashes revalidated, and
+`target_code_executed=false`. The resulting EvidencePack Artifact hash is
+`1fc2d8129d45d03fb16bc31fea015df3c228e35caf3ea307180d7bae8a6ea01d`.
+ArtifactStore freshness is `fresh`.
+
+The EvidencePack supports `input_event_mapping`, `result_event_mapping`,
+`enemy_identity_mapping`, and `yellow_x_visual_path`. It leaves
+`reaction_type_scope`, `exactly_once_correlation`, and `feature_audio_path`
+unresolved. Exact enum literals exist, but current wrapper metadata does not
+prove their requested product semantics. Current source has a bounded
+sequence/time freshness check, but no verified shared hit identity that
+prevents rapid or multi-hit misassociation across `BulletDamage` and
+`DoHitReact`. Existing Wwise submission returns a nonzero playing id, but no
+feature-attributable short event has been bound independently of existing hit
+audio. The pack is therefore `readiness=partial`,
+`can_generate_patch=false`, and `authoritative_for_patch=false`; deterministic
+Admission stops before Implementation Plan. The run made zero model calls,
+wrote no target source, executed no target code, generated no Proposal or
+Build, and did not write to or launch GTFO.
+
+The post-run ArtifactStore, Artifact contract, Planning, and Workflow focused
+command was
+`python -m pytest -q tests/unit/test_artifact_store.py
+tests/unit/test_artifact_contract.py tests/unit/test_planning.py
+tests/unit/test_workflow_graph.py --tb=short -p no:cacheprovider`; it passed
+`129` tests in `22.64s`. `git diff --check` also passed.
 
 The final affected verification command for the revised FeatureSpec and the
 bounded discovery repair was
