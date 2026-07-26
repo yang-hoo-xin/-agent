@@ -4,6 +4,68 @@ This archive preserves historical loop details moved out of the active control d
 
 Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md`.
 
+## 2026-07-26 H3 post-fix real Runtime negative acceptance `95efb988`
+
+```text
+Task: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
+Status: completed; stronger single-missing-marker condition established
+Entry and Build:
+  - admission commit fca4b87;
+  - local Ollama produced one fresh no-write diff whose only edit was
+    byte-for-byte identical to the previously reviewed chain_probe=true
+    replacement;
+  - current diff hash
+    sha256:358842dcc042277a065aaf27b15d24ebf4cb21b54c788ab419a92eba5129c4f8;
+  - Build Artifact
+    2256e9d58628f9386d765ed6bbb08394157d98f2b44ce8c8cfbe8b1617b3ee6b;
+  - Build checkpoint checkpoint_86db0eba328d447db6cf5fdf223befe8;
+  - exact built/deployed DLL SHA256
+    74868b5b00d31effff5bb088bca9955df0e16553c0bdb6824113e179bddfbe29.
+Observation proof:
+  - BepInEx observed at current-run character offset 21;
+  - Chainloader observed at offset 645;
+  - both facts bind generation 2 source-window SHA256
+    f9cd52a4a79a98f86cd56e32ac6ca19f03936871525fa22a52c6b1fca769029d;
+  - chain_probe=true observed at offset 22,826 and binds generation 2
+    source-window SHA256
+    73a4e7cbb0a968220fb454164f2da8470c93e248a78b351b3edc08ffafe3aa81;
+  - only h3_observation_negative_probe=absent remained missing.
+Terminal evidence:
+  - RuntimeEvidence Artifact
+    40241730c3531a8167e791c4ef7d6ea33dd1e4d71a2017b3de76da3adc3076a0;
+  - RepairPlan Artifact
+    900a014e8424ff7e7d12ae173ab3b0a3de2c299179ce04998495ec37170d8761;
+  - BlockedReport Artifact
+    fa0322f63a2d064fd5dd28663c260c4afcd1373a72e9fdbb1d91ca0517f7bc4d;
+  - owner=observation, failure_class=runtime_observation_incomplete,
+    source_repair_allowed=false, required_action=repair_runtime_observation;
+  - RUNTIME_OBSERVATION_REPAIR_REQUIRED, retry_count=0,
+    minimal_changes=[], allowed_next_stage=null;
+  - resume-stage model_call_count=0 and upstream_stages_repeated=false;
+  - Proposal, Review, Dry-run, Apply, and Build each remained at one revision;
+  - runtime_resume_result.json SHA256
+    04943fbeea94aa665b5de908f00cf23a601c823b3b33680826a4b550f53b7fb8.
+Independent channels and cleanup:
+  - process_diagnostics was captured with supports_acceptance=[] and empty
+    stdout/stderr;
+  - system desktop screenshot SHA256
+    d55154945b84bd622469ad7b5b9e61406c1703e92170a62f5168142bc1c7f0e3
+    remained visual_evidence_only;
+  - BepInEx.cfg SHA256 remained
+    cad94700be6c79cbe6efbf6e953fead502b9c5723ee67cc1fb19e63c94326616
+    with AppendLog=false;
+  - canonical Plugin.cs SHA256 remained
+    b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c;
+  - GTFO and UnityCrashHandler64 were absent after capture;
+  - deployed BetterHitFeedback.dll was restored to the prior absent state.
+Claim ceiling:
+  - bounded post-fix multi-generation observation and H3 negative routing are
+    real-exercised for this one GTFO environment and request;
+  - no retry, semantic root-cause accuracy, deterministic screenshot-source
+    authority, second Runtime profile, cross-environment, long-duration,
+    generalized Harness, Phase 2C, or later Migration Boundary claim.
+```
+
 ## 2026-07-26 Runtime observation multi-snapshot repair
 
 ```text

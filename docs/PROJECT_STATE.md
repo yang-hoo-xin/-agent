@@ -8,39 +8,56 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ## 1. Current Selection
 
 ```text
-current_queue: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
+current_queue: None
 current_documentation_task: None
-selected_product_request: Prove the repaired multi-generation Runtime observation path in one controlled real GTFO negative acceptance without re-entering source repair
+selected_product_request: None
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: RUNTIME-OBSERVATION-MULTISNAPSHOT-001
+most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
-`AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001` is the selected
-one-run V2TA/M acceptance for the repair in commit
-`c8c91b31dcc344ff08960ecc3d4c83980c35a6d2`. It must use a new lineage and
-Build, retain `BepInEx`, `Chainloader`, and `chain_probe=true` from verified
-current-run source windows, and leave only
-`h3_observation_negative_probe=absent` missing. The expected terminal result is
-blocked with owner `observation`, `source_repair_allowed=false`,
-`RUNTIME_OBSERVATION_REPAIR_REQUIRED`, no resume-stage model call, and no
-repeated Proposal, Dry-run, Apply, or Build revision.
+`AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001` completed as real
+run `95efb988`. Fresh Build Artifact
+`2256e9d58628f9386d765ed6bbb08394157d98f2b44ce8c8cfbe8b1617b3ee6b`
+and checkpoint `checkpoint_86db0eba328d447db6cf5fdf223befe8` bound DLL
+SHA256 `74868b5b00d31effff5bb088bca9955df0e16553c0bdb6824113e179bddfbe29`.
+Fresh-process resume `resume_h3_postfix_95efb988` deployed that exact DLL,
+launched GTFO, collected the bounded Runtime result, terminated the process,
+and restored the previously absent destination.
 
-The user authorized exactly this full one-run scope on 2026-07-26, including
-local Ollama use, isolated write and Build, DLL deployment, GTFO launch and
-termination, evidence collection, restoration, documentation, and Git closure.
-No external provider or source disclosure is authorized. Unattended isolated
-Apply remains limited to a fresh no-write diff that is byte-for-byte identical
-to the previously approved `chain_probe=true` `Plugin.cs` replacement and
-passes all current binding checks; any different bytes stop before write.
+The post-fix collector retained `BepInEx` at current-run character offset 21
+and `Chainloader` at 645 from generation 2 source-window SHA256
+`f9cd52a4a79a98f86cd56e32ac6ca19f03936871525fa22a52c6b1fca769029d`.
+It retained `chain_probe=true` at offset 22,826 from generation 2 source-window
+SHA256 `73a4e7cbb0a968220fb454164f2da8470c93e248a78b351b3edc08ffafe3aa81`.
+Only `h3_observation_negative_probe=absent` remained unobserved. These facts
+prove the real single-missing-marker condition that `06c09532` could not
+establish.
 
-The no-launch preflight found no GTFO process, no deployed
-`BetterHitFeedback.dll`, canonical `Plugin.cs` SHA256
-`b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`
-with neither test marker, zero deliberate-marker occurrences in the current
-BepInEx log, and `BepInEx.cfg` SHA256
+RuntimeEvidence
+`40241730c3531a8167e791c4ef7d6ea33dd1e4d71a2017b3de76da3adc3076a0`
+recorded owner `observation`, failure class
+`runtime_observation_incomplete`, `source_repair_allowed=false`, and required
+action `repair_runtime_observation`. RepairPlan
+`900a014e8424ff7e7d12ae173ab3b0a3de2c299179ce04998495ec37170d8761`
+emitted `RUNTIME_OBSERVATION_REPAIR_REQUIRED`, kept `retry_count=0`, and
+provided no minimal change or next stage. BlockedReport
+`fa0322f63a2d064fd5dd28663c260c4afcd1373a72e9fdbb1d91ca0517f7bc4d`
+ended the graph at `blocked`. Resume-stage `model_call_count=0`,
+`upstream_stages_repeated=false`, and Proposal, Review, Dry-run, Apply, and
+Build each remained at one revision.
+
+`process_diagnostics` was captured with empty
+`supports_acceptance`; its stdout and stderr were both empty and did not
+contribute marker authority. The system desktop screenshot SHA256
+`d55154945b84bd622469ad7b5b9e61406c1703e92170a62f5168142bc1c7f0e3`
+remained `visual_evidence_only`. `BepInEx.cfg` SHA256 remained
 `cad94700be6c79cbe6efbf6e953fead502b9c5723ee67cc1fb19e63c94326616`
-with exactly `AppendLog = false` under `[Logging.Disk]`.
+with `AppendLog = false`; the canonical `Plugin.cs` SHA256 remained
+`b51afbdd3b426628c96431171e9299d767fe422f7b036adfc28596404bfbdf2c`.
+No GTFO or Unity crash-handler process and no deployed DLL remained after
+cleanup. No retry, Phase 2C, later Harness Migration Boundary, or generalized
+Harness claim is selected.
 
 `RUNTIME-OBSERVATION-MULTISNAPSHOT-001` completed the bounded observation
 repair triggered by real run `06c09532`. The GTFO collector now accumulates
@@ -1312,7 +1329,7 @@ verified.
 | Proposal review and dry-run | tested | Dry-run proves no-write validation, not compilation or gameplay |
 | Isolated apply and real build | verified on the narrow BetterHitFeedback run | Build success does not prove GTFO runtime behavior |
 | ProposalCritic local/injected boundary | tested for not-required, required-success, and required-failure | External model assessment quality remains unverified |
-| Runtime/evaluation | one BetterHitFeedback gameplay slice and one automated startup-marker slice are real-verified; one real observation-owner blocked route is also exercised; terminal-chain, H1.1 resume, deployment, observation, restoration, and H3 routing mechanisms are implemented | `007b1b58` proves the false/true gameplay slice. `e7daa266` proves one accepted fresh-process Build-to-Runtime continuation with exact deployed-DLL binding and pre-truncation marker observation. `06c09532` proves a real incomplete-observation result cannot enter source repair, but its current-run window lacked both the deliberately absent marker and normal startup/product markers, so it is not a single-variable negative test. This does not establish deterministic screenshot-source authority, semantic root-cause accuracy, another Runtime profile, cross-environment use, long-duration stability, every route, or production-mature Runtime automation |
+| Runtime/evaluation | one BetterHitFeedback gameplay slice, one accepted automated startup-marker slice, and one post-fix single-missing-marker negative slice are real-verified; terminal-chain, H1.1 resume, deployment, multi-generation observation, restoration, and H3 routing mechanisms are implemented | `007b1b58` proves the false/true gameplay slice. `e7daa266` proves accepted fresh-process Build-to-Runtime continuation. `95efb988` proves current-run marker facts survive the full negative timeout and route only the deliberately absent marker to observation-owned blocked terminal without source repair or upstream repetition. `06c09532` remains immutable inconclusive history. This does not establish deterministic screenshot-source authority, semantic root-cause accuracy, another Runtime profile, cross-environment use, long-duration stability, every route, automatic retry/recovery, or production-mature Runtime automation |
 | Retrieval direction | bounded local decision completed | Keep `rg` plus live reads; no production RAG claim |
 
 Open implementation gaps remain tracked by Status, Provenance, and Trigger in

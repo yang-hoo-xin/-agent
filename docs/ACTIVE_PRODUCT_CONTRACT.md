@@ -87,10 +87,18 @@ marker occurred at run-local character offset 22,826, proving the current
 pre-truncation structured-marker repair against the real failure shape that
 defeated the older 20,000-character projection.
 
-This proves one local request-to-real-runtime gameplay slice and one bounded
-automatically collected startup-marker slice in one GTFO environment. It does
-not prove cross-project or cross-environment generality, production
-deployment, long-duration stability, every gameplay route, automatic Runtime
+Post-fix negative run `95efb988` real-exercised the multi-generation
+observation repair. The collector retained current-run `BepInEx`,
+`Chainloader`, and `chain_probe=true` facts through the full timeout while only
+the deliberately absent marker remained missing. The same graph emitted an
+observation-owned RepairPlan, authorized no source repair, repeated no upstream
+stage, reached blocked terminal, and restored the deployed DLL.
+
+This proves one local request-to-real-runtime gameplay slice, one bounded
+automatically collected accepted startup-marker slice, and one bounded
+single-missing-marker negative slice in one GTFO environment. It does not prove
+cross-project or cross-environment generality, production deployment,
+long-duration stability, every gameplay route, automatic Runtime retry or
 recovery, semantic root-cause accuracy, generalized Runtime Harness behavior,
 or promotion-grade retrieval quality.
 

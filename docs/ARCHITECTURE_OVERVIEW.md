@@ -124,6 +124,15 @@ evidence does not prove semantic root-cause accuracy: the intended absent
 marker was not the only missing fact because the current-run log window also
 lacked `Chainloader` and the product marker.
 
+Post-fix real run `95efb988` exercised the repaired observation boundary under
+the same H3 route. Current-run generation 2 bound `BepInEx`, `Chainloader`, and
+`chain_probe=true` to exact source windows while only the deliberately absent
+marker remained missing. The graph again emitted
+`RUNTIME_OBSERVATION_REPAIR_REQUIRED`, authorized no source repair, repeated no
+upstream stage, and restored the exact deployed DLL. This real-exercises the
+bounded multi-generation negative path; it does not add automatic retry,
+semantic diagnosis, another provider, or generalized Harness behavior.
+
 ### 2.3 V2 Intelligence Experiment And Productization Boundary
 
 The control-plane diagram above is the implemented delivery baseline. It is not
@@ -635,7 +644,7 @@ Current maturity is split deliberately:
 | Two-level Critic and same-level specialist fan-out | `documented_only`; `conditional_trigger` not satisfied | No Worker self-check, parallel specialist execution, deterministic fusion, clean-context second-level Critic, or two-level-review claim |
 | Business decision/action translation | Existing Mod workflow routes `implemented`; generic four-tier risk model `documented_only` | No generic business-risk engine, configurable domain thresholds, or automatic action tuning claim |
 | Real build | Verified for the preserved BetterHitFeedback run | The declared DLL compiled for that run |
-| Gameplay/runtime acceptance | Verified for the selected BetterHitFeedback `General.Enabled` slice plus one bounded automated startup-marker slice in one real GTFO environment | Disabled startup and enabled gameplay behavior are observed for the Phase 2B DLL; `e7daa266` separately proves automated deployment, exact DLL binding, startup-marker collection, terminal evaluation, and restoration. No cross-environment, long-duration, every-route, second-profile, or production-mature Harness claim |
+| Gameplay/runtime acceptance | Verified for the selected BetterHitFeedback `General.Enabled` slice plus one bounded accepted startup-marker slice and one bounded single-missing-marker negative slice in one real GTFO environment | Disabled startup and enabled gameplay behavior are observed for the Phase 2B DLL; `e7daa266` proves accepted automated deployment and terminal closure; `95efb988` proves multi-generation observation retention and observation-owned blocked closure when only the designated marker is absent. No cross-environment, long-duration, every-route, second-profile, automatic retry/recovery, or production-mature Harness claim |
 | Bounded Build-stage cross-process continuation | `implemented` and real-exercised | One pre-side-effect local checkpoint resumed into the existing Runtime/Eval/Terminal graph without upstream repetition; no general persistent graph backend, arbitrary-node resume, post-side-effect recovery, or concurrent exactly-once claim |
 | MCP/API/webhook/scheduler trigger surfaces | Partial or future-triggered | They are not the current production entry |
 | Long-term experience and closed-loop learning | Audit storage `implemented`; learning design `documented_only`; `conditional_trigger` not satisfied | Artifact history is not automatic memory, feedback learning, or policy tuning |
