@@ -1,44 +1,53 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-25
+Last updated: 2026-07-26
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
 ```text
-current_queue: AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
+current_queue: None
 current_documentation_task: None
 selected_product_request: None
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001
+most_recent_completed_capability: AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
-`AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001` has passed H3 admission and is
-active for implementation on its isolated branch. The entry basis is preserved
-real run `ec71c3a5`: a Harness observation truncation lost the earlier
-Chainloader marker, yet the generic Runtime route sent the unverified result to
-`RepairPlanner.from_runtime_failure` and the run terminated through
-`REPAIR_SCOPE_UNRESOLVED`. The accepted follow-up repaired Runtime marker
-observation, not Mod source. Current source confirms that
-`route_after_runtime_evidence` sends every `acceptance_verified=false` result
-to `create_repair_plan`, while the Runtime planner has no explicit failure-owner
-decision before source-scope resolution.
+`AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001` completed the bounded H3
+postcondition. New RuntimeEvidence payloads carry normalized
+`failure_ownership` with one owner, failure class, required action, and a
+deterministically derived `source_repair_allowed` decision. Only
+`product_behavior` with evidence that resolves to an existing allowed edit
+binding may enter the current Proposal/Review source-repair path.
+`observation`, `environment`, `provider`, `permission`, malformed, missing, and
+unknown ownership fail closed through owner-specific RepairPlan blockers,
+preserve retry_count, and do not repeat Proposal, Dry-run, Apply, or Build.
+Older ownerless RuntimeEvidence remains readable and normalizes to `unknown`
+without source authority.
 
-Admission evidence tests for the existing behavior passed 5 tests in 1.38
-seconds without a model call, GTFO launch, or game-directory write. A wider
-80-test baseline passed 79 and retained the already documented
-`test_graph_failed_build_enters_repair_and_stops_at_retry_budget` failure:
-the assertion expects `retry_exhausted=true` while the current result is false.
-That same-path baseline must be reconciled during H3; it is not evidence that
-H3 is implemented. The selected postcondition is provider-neutral failure
-ownership that permits the existing source Proposal/Review route only for
-product-behavior failures with bound source evidence. Observation,
-environment, provider, permission, and unknown failures must stop with their
-actual owner and must not repeat model, Proposal, Apply, or Build work.
-Automatic Runtime retry, side-effect recovery, and H1.2 remain out of scope.
+The same H3 repair also makes `_run_create_repair_plan` select Build, Runtime,
+or ProposalReview evidence from the current failing stage rather than a stale
+summary left by an earlier attempt. This reconciles the prior retry-budget
+baseline: the observed second failure belongs to ProposalReview validation and
+now produces `proposal_review:validation_contract` plus
+`REVIEW_REPLAN_REQUIRED`, rather than being falsely reported as exhausted
+Build repair. GTFO Runtime automation maps current permission, environment,
+process-launch, log-collection, screenshot, and incomplete-observation failures
+into the provider-neutral contract; no second Runtime provider was implemented
+or real-exercised.
+
+The final local command passed 238 focused and cross-boundary tests in 32.61
+seconds; compileall and `git diff --check` passed. Ruff and Black were absent
+from the current environment and were not installed. A whole-unit collection
+attempt stopped before execution with 13 import errors because `jieba` and
+`mcp` are not installed; this is an environment limitation, not a green
+repository-wide claim. No model call, GTFO launch, game-directory read/write,
+or gameplay evidence occurred. Automatic Runtime retry, semantic root-cause
+accuracy, side-effect recovery, cross-environment operation, and concurrency
+remain outside H3.
 
 `AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001` completed the bounded H1.1
 postcondition. A successful real Build may now persist a Build-stage

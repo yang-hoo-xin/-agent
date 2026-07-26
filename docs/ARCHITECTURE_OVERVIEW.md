@@ -79,7 +79,34 @@ recover an interrupted external side effect, or guarantee concurrent
 exactly-once consumption. Runtime attempt journaling and arbitrary-crash
 recovery remain outside H1.1.
 
-### 2.2 V2 Intelligence Experiment And Productization Boundary
+### 2.2 Runtime Failure Ownership And Repair Routing
+
+Current maturity: `implemented` for the bounded H3 Runtime failure path.
+
+RuntimeEvidence now carries a normalized `failure_ownership` decision with an
+owner, failure class, required action, and deterministic
+`source_repair_allowed` value. The provider-neutral owners are product
+behavior, observation, environment, provider, permission, and unknown.
+Verified acceptance records no failure owner. Missing, malformed, or historical
+ownerless evidence normalizes to unknown and cannot authorize source repair.
+
+The existing `RepairPlanner`, `repair_plan`, conditional routes, and blocked
+terminal remain the only repair control path. Product behavior may re-enter
+Proposal/Review only when current evidence resolves to an allowed edit binding.
+Observation, environment, provider, permission, and unknown outcomes generate
+owner-specific blockers, preserve the source-repair retry count, and do not
+repeat Proposal, Dry-run, Apply, or Build. GTFO maps its current admission,
+environment, launch, log, screenshot, and observation stages into this
+contract; GTFO does not choose the LangGraph route or authorize source edits.
+
+Repair-plan source selection uses the current failing graph stage. A stale
+Build or Runtime summary from an earlier attempt cannot override a later
+ProposalReview failure. This adds no exception hierarchy, repair controller,
+provider registry, or second StateGraph. Automatic Runtime retry, semantic
+root-cause inference, side-effect recovery, and cross-provider execution proof
+remain outside this boundary.
+
+### 2.3 V2 Intelligence Experiment And Productization Boundary
 
 The control-plane diagram above is the implemented delivery baseline. It is not
 yet evidence of one canonical V2 runtime path. The diagram below records the

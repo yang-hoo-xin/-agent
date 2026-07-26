@@ -6,12 +6,15 @@ Program direction: user-approved bounded product decision
 
 Prepared: 2026-07-25
 
-Current implementation authority effect: H1.1 promoted through Phase B
+Last reviewed: 2026-07-26
+
+Current implementation authority effect: H1.1 and H3 promoted through Phase B;
+no later boundary active
 
 First selected migration boundary:
 H1.1 / `AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001`
 
-Implementation entry status: H1.1 complete; no later boundary active
+Implementation entry status: H1.1 and H3 complete; no later boundary active
 
 ## 1. Purpose And Authority
 
@@ -734,15 +737,15 @@ wholesale into mainline authority.
 
 ```text
 program_id: AGENT-ENGINEERING-HARNESS-EVOLUTION
-program_status: active_direction_h3_admitted
+program_status: active_direction_h3_complete_no_boundary_selected
 control_plane: existing LangGraph StateGraph
 contract_foundation: F0
 first_selected_boundary: H1.1 / AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001
-implementation_entry: H1.1 Phase A and Phase B complete
-active_later_boundary: H3 / AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
+implementation_entry: H1.1 and H3 Phase A and Phase B complete
+active_later_boundary: None
 automatic_next_boundary: forbidden
 round_closure: capability evidence, then authority-document repair
-next_boundary_admission: H3 admitted; Phase A not started
+next_boundary_admission: completed after H3; no boundary selected
 ```
 
 ### H3 Admission: Runtime Failure Ownership And Source-Repair Routing
@@ -822,8 +825,46 @@ next_boundary_admission: H3 admitted; Phase A not started
     `ACTIVE_PRODUCT_CONTRACT` only if the daily contract changes,
     `IMPLEMENTATION_QUEUE`, `LOOP_HISTORY`, and this Transition.
 
-This admission activates only the bounded H3 task above. It does not claim that
-H3 is implemented and does not activate H1.2, H2, or H4-H6.
+This admission activated only the bounded H3 task above. The completed result
+is recorded below and does not activate H1.2, H2, or H4-H6.
+
+H3 closed with this observed result:
+
+```text
+task_id: AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
+classification: Agent Engineering Harness Migration Boundary H3
+capability:
+  Normalize Runtime failure ownership; allow source repair only for
+  product_behavior with an existing evidence-bound edit binding; stop
+  observation, environment, provider, permission, malformed, missing, and
+  unknown ownership with exact RepairPlan actions and no repeated upstream
+  delivery work
+result:
+  implemented and focused-tested through generic injected Runtime ownership,
+  current GTFO provider mappings, existing ArtifactStore/RepairPlan contracts,
+  and the same LangGraph conditional routes
+verification:
+  238 focused and cross-boundary tests passed in 32.61 seconds; compileall and
+  git diff --check passed; no model call, GTFO launch, or game-directory
+  read/write occurred
+compatibility:
+  historical ownerless RuntimeEvidence remains readable and normalizes to
+  unknown without source-repair authority
+claim_ceiling:
+  local deterministic ownership and routing only; no semantic root-cause
+  accuracy, automatic Runtime retry, side-effect recovery, second Runtime
+  provider execution, cross-environment proof, or concurrency guarantee
+environment_limits:
+  Ruff and Black were not installed; whole-unit collection stopped with 13
+  import errors because jieba and mcp were absent
+stop_condition:
+  satisfied by Phase A evidence and the Phase B authority-document repair
+```
+
+The post-H3 re-admission review selected no next boundary. H1.2, H2, and H4-H6
+remain inactive because no new observed failure or approved postcondition
+currently satisfies their entry rule. The Program returns to the product
+mainline with no active queue item.
 
 H1.1 closed with this observed result:
 
@@ -845,11 +886,12 @@ This task must not automatically select H1.2 or H2-H6.
 
 ## 12. Round And Program Stop Conditions
 
-Stop the active H1.1 implementation round when any of the following is true:
+Stop an active Migration Boundary implementation round when any of the
+following is true:
 
-1. H1.1 Phase A and Phase B are complete;
-2. H1.1 reaches one immutable blocker requiring new user authority or external
-   state;
+1. the selected boundary's Phase A and Phase B are complete;
+2. the selected boundary reaches one immutable blocker requiring new user
+   authority or external state;
 3. baseline reconciliation cannot establish a truthful source/document/test
    state;
 4. implementation would require a second control plane or parallel domain

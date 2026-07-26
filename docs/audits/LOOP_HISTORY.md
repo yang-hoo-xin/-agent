@@ -4,6 +4,67 @@ This archive preserves historical loop details moved out of the active control d
 
 Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md`.
 
+## 2026-07-26 AGENT-HARNESS-RUNTIME-FAILURE-OWNERSHIP-001
+
+```text
+Status: completed; H3 Phase A and Phase B closed
+Trigger:
+  - real run ec71c3a5 lost an earlier Chainloader marker through Runtime
+    observation truncation;
+  - the run stopped through REPAIR_SCOPE_UNRESOLVED even though the accepted
+    repair changed Runtime observation rather than Mod source;
+  - a same-path baseline also showed a later ProposalReview failure being
+    reassigned to Build because stale build_summary took priority.
+Capability:
+  - new RuntimeEvidence normalizes failure_ownership to product_behavior,
+    observation, environment, provider, permission, unknown, or none for
+    verified acceptance;
+  - owner, failure class, required action, and source_repair_allowed are
+    persisted in the RuntimeEvidence payload and carried into repair_context;
+  - only product_behavior evidence resolving to an existing allowed edit
+    binding may enter Proposal/Review source repair;
+  - non-source and unknown owners stop with exact blockers, preserve
+    retry_count, and do not repeat Proposal, Dry-run, Apply, or Build;
+  - repair planning selects its source from the current failing graph stage,
+    not a stale summary from an earlier attempt.
+GTFO mapping:
+  - missing launch authority -> permission;
+  - capability/profile/process launch failures -> environment;
+  - log, screenshot, and incomplete observation failures -> observation;
+  - the provider supplies facts but does not choose the graph route or
+    authorize source edits.
+Compatibility:
+  - the Artifact schema version was not changed;
+  - ownerless historical RuntimeEvidence remains readable and normalizes to
+    unknown with no source-repair authority;
+  - the existing StateGraph, RuntimeEvidence, RepairPlanner, repair_plan,
+    blocked_report, Eval, Terminal, and ArtifactStore contracts remain the
+    control path.
+Verification:
+  - python -m pytest -q tests/unit/test_artifact_store.py
+    tests/unit/test_artifact_contract.py tests/unit/test_runtime_evidence.py
+    tests/unit/test_repair_loop.py tests/unit/test_workflow_graph.py
+    tests/unit/test_gtfo_runtime_automation.py tests/unit/test_local_entry.py
+    tests/unit/test_mod_agent_cli.py tests/unit/test_runtime_deployment.py
+    tests/unit/test_repair_checkpoint_smoke.py --tb=short
+    -p no:cacheprovider -> 238 passed in 32.61s;
+  - python -m compileall -q src -> passed;
+  - git diff --check -> passed.
+Environment limits:
+  - Ruff and Black were not installed and were not added;
+  - whole-unit collection stopped before execution with 13 import errors
+    because jieba and mcp were absent.
+Permissions:
+  - no model call, GTFO launch, game-directory read/write, or gameplay evidence.
+Claim ceiling:
+  - local deterministic ownership and routing only;
+  - no semantic root-cause accuracy, automatic Runtime retry, side-effect
+    recovery, second Runtime provider execution, cross-environment proof, or
+    concurrency guarantee.
+Next selection:
+  - None; H1.2, H2, and H4-H6 remain inactive pending separate admission.
+```
+
 ## 2026-07-25 AGENT-HARNESS-BUILD-RUNTIME-HANDOFF-001
 
 ```text

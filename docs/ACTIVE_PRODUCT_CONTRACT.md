@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-07-23
+Last updated: 2026-07-26
 
 ## 1. Product
 
@@ -66,11 +66,20 @@ hook and visual/audio behavior markers were observed. The canonical target
 source remained unchanged and the game directory was restored to the read-only
 preflight state after capture.
 
+The bounded Agent Engineering Harness path now also distinguishes Runtime
+failure ownership before granting source-repair authority. New RuntimeEvidence
+normalizes product-behavior, observation, environment, provider, permission,
+and unknown outcomes. Only product behavior with evidence that resolves to an
+existing allowed edit binding may re-enter Proposal/Review. Other owners stop
+with an owner-specific RepairPlan result and do not repeat model, Proposal,
+Apply, or Build work. Older ownerless RuntimeEvidence remains readable but has
+no source-repair authority.
+
 This proves one local request-to-real-runtime product slice in one GTFO
 environment. It does not prove cross-project or cross-environment generality,
 production deployment, long-duration stability, every gameplay route,
-automatic repair, automated Harness runtime collection, or promotion-grade
-retrieval quality.
+automatic Runtime recovery, semantic root-cause accuracy, automated Harness
+runtime collection, or promotion-grade retrieval quality.
 
 The local `plan-request` CLI is also a tested planning-only entry. It now runs
 the deterministic RequestPlanner and ModPlanningBriefBuilder in memory, emits
