@@ -1727,6 +1727,12 @@ def test_gtfo_runtime_factory_from_settings_can_feed_graph_runtime_branch(
     )
     executable = tmp_path / "GTFO.exe"
     executable.write_bytes(b"fake exe for path validation")
+    config_path = tmp_path / "BepInEx" / "config" / "BepInEx.cfg"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        "[Logging.Disk]\nAppendLog = false\n",
+        encoding="utf-8",
+    )
     acceptance_markers = {
         acceptance_criteria[0]: "GTFO_ACCEPTANCE_BEHAVIOR",
         acceptance_criteria[1]: "GTFO_ACCEPTANCE_EVIDENCE",
@@ -2034,6 +2040,12 @@ def test_gtfo_runtime_missing_screenshot_trust_binding_blocks_graph_acceptance(
     )
     executable = tmp_path / "GTFO.exe"
     executable.write_bytes(b"fake exe for path validation")
+    config_path = tmp_path / "BepInEx" / "config" / "BepInEx.cfg"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        "[Logging.Disk]\nAppendLog = false\n",
+        encoding="utf-8",
+    )
     acceptance_markers = {
         acceptance_criteria[0]: "GTFO_ACCEPTANCE_BEHAVIOR",
         acceptance_criteria[1]: "GTFO_ACCEPTANCE_EVIDENCE",

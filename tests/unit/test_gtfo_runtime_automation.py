@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +34,12 @@ ACCEPTANCE_MARKER = "BETTER_HIT_FEEDBACK_ACCEPTANCE_OK"
 def _profile(tmp_path: Path) -> GTFORealRuntimeProfile:
     executable = tmp_path / "GTFO.exe"
     executable.write_bytes(b"fake exe for path validation")
+    config_path = tmp_path / "BepInEx" / "config" / "BepInEx.cfg"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "[Logging.Disk]\nAppendLog = false\n",
+        encoding="utf-8",
+    )
     return GTFORealRuntimeProfile(
         profile_id="gtfo_real_runtime",
         game_executable=str(executable),
@@ -77,9 +85,25 @@ def test_gtfo_runtime_capability_report_checks_profile_without_launch(
         }
     ]
     assert report["checks"]["acceptance_markers"]["status"] == "passed"
+    assert report["checks"]["bepinex_log_config"] == {
+        "status": "passed",
+        "configured_path": "BepInEx/config/BepInEx.cfg",
+        "resolved_path": str(tmp_path / "BepInEx" / "config" / "BepInEx.cfg"),
+        "exists": True,
+        "is_file": True,
+        "content_sha256": hashlib.sha256(
+            (tmp_path / "BepInEx" / "config" / "BepInEx.cfg").read_bytes()
+        ).hexdigest(),
+        "section": "Logging.Disk",
+        "key": "AppendLog",
+        "append_log_value": "false",
+        "append_log_enabled": False,
+    }
     assert report["planned_evidence_sources"] == {
         "process": True,
+        "process_diagnostics": True,
         "persistent_logs": True,
+        "bepinex_log_config": True,
         "desktop_screenshot": True,
         "plugin_markers": True,
     }
@@ -97,6 +121,29 @@ def test_gtfo_runtime_capability_report_is_ready_with_launch_approval(
     assert report["status"] == "ready"
     assert report["would_launch"] is True
     assert report["blockers"] == []
+
+
+def test_gtfo_runtime_capability_report_blocks_missing_bepinex_log_config(
+    tmp_path: Path,
+) -> None:
+    profile = _profile(tmp_path)
+    (tmp_path / "BepInEx" / "config" / "BepInEx.cfg").unlink()
+
+    report = build_gtfo_runtime_capability_report(
+        profile,
+        allow_game_launch=True,
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+    )
+
+    assert report["status"] == "blocked"
+    assert report["would_launch"] is False
+    assert report["checks"]["bepinex_log_config"]["status"] == "blocked"
+    assert report["checks"]["bepinex_log_config"]["content_sha256"] is None
+    assert report["checks"]["bepinex_log_config"]["append_log_value"] is None
+    assert report["blockers"] == [
+        "BepInEx/config/BepInEx.cfg must contain exactly one "
+        "[Logging.Disk] AppendLog boolean value"
+    ]
 
 
 def test_gtfo_runtime_requires_explicit_launch_approval(tmp_path: Path) -> None:
@@ -290,6 +337,9 @@ def test_gtfo_runtime_logs_and_screenshot_can_verify_acceptance(tmp_path: Path) 
         payload["runtime_trust_binding"]["checks"]["current_run_logs"]["status"]
         == "passed"
     )
+    assert payload["runtime_trust_binding"]["checks"]["bepinex_log_config"][
+        "append_log_value"
+    ] == "false"
     assert (
         payload["runtime_trust_binding"]["checks"]["screenshot_runtime_artifact_linkage"][
             "status"
@@ -348,7 +398,7 @@ def test_gtfo_runtime_default_collector_rejects_prelaunch_marker_history(
         poll_interval_seconds=0.01,
     )
     log_path = tmp_path / "BepInEx" / "LogOutput.log"
-    log_path.parent.mkdir()
+    log_path.parent.mkdir(exist_ok=True)
     log_path.write_text(
         f"OLD_SENTINEL\n{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
         encoding="utf-8",
@@ -381,7 +431,7 @@ def test_gtfo_runtime_default_collector_accepts_only_post_launch_appended_marker
         poll_interval_seconds=0.01,
     )
     log_path = tmp_path / "BepInEx" / "LogOutput.log"
-    log_path.parent.mkdir()
+    log_path.parent.mkdir(exist_ok=True)
     log_path.write_text(
         f"OLD_SENTINEL\n{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
         encoding="utf-8",
@@ -431,7 +481,7 @@ def test_gtfo_runtime_log_boundary_allows_one_unused_pending_log_path(
         poll_interval_seconds=0.01,
     )
     log_path = tmp_path / "BepInEx" / "LogOutput.log"
-    log_path.parent.mkdir()
+    log_path.parent.mkdir(exist_ok=True)
     log_path.write_text("OLD_SENTINEL\n", encoding="utf-8")
 
     def launcher(_: GTFORealRuntimeProfile) -> GTFOProcessHandle:
@@ -475,7 +525,7 @@ def test_gtfo_runtime_log_limit_preserves_newest_marker_tail(
         output_limit_chars=80,
     )
     log_path = tmp_path / "BepInEx" / "LogOutput.log"
-    log_path.parent.mkdir()
+    log_path.parent.mkdir(exist_ok=True)
     log_path.write_text("OLD_SENTINEL\n", encoding="utf-8")
 
     def launcher(_: GTFORealRuntimeProfile) -> GTFOProcessHandle:
@@ -519,7 +569,7 @@ def test_gtfo_runtime_marker_observations_survive_head_tail_split(
         output_limit_chars=80,
     )
     log_path = tmp_path / "BepInEx" / "LogOutput.log"
-    log_path.parent.mkdir()
+    log_path.parent.mkdir(exist_ok=True)
     full_content = f"{STARTUP_MARKER}\n{'x' * 200}\n{ACCEPTANCE_MARKER}\n"
 
     def launcher(_: GTFORealRuntimeProfile) -> GTFOProcessHandle:
@@ -567,8 +617,122 @@ def test_gtfo_runtime_marker_observations_survive_head_tail_split(
     assert all(item["excerpt_truncated"] is False for item in observations)
     assert {
         item["observation_scope"] for item in observations
-    } == {"pre_truncation_run_local_content"}
+    } == {"accumulated_run_local_window"}
     assert payload["evidence_items"][0]["raw_excerpt"] == ACCEPTANCE_MARKER
+
+
+def test_gtfo_runtime_marker_observations_accumulate_across_log_generations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chain_criterion = "chain probe was observed"
+    negative_criterion = "negative probe remains absent"
+    negative_marker = "h3_observation_negative_probe=absent"
+    profile = replace(
+        _profile(tmp_path),
+        startup_markers=("BepInEx", "Chainloader"),
+        acceptance_markers={
+            chain_criterion: "chain_probe=true",
+            negative_criterion: negative_marker,
+        },
+        timeout_seconds=0.04,
+        poll_interval_seconds=0.01,
+    )
+    log_path = tmp_path / "BepInEx" / "LogOutput.log"
+    log_path.write_text("OLD_SENTINEL\n", encoding="utf-8")
+
+    def launcher(_: GTFORealRuntimeProfile) -> GTFOProcessHandle:
+        with log_path.open("a", encoding="utf-8") as stream:
+            stream.write("BepInEx\nChainloader\nchain_probe=true\n")
+        return GTFOProcessHandle(pid=4242)
+
+    original_sleep = gtfo_automation_module.time.sleep
+    rotated = False
+
+    def rotate_after_first_snapshot(delay: float) -> None:
+        nonlocal rotated
+        if not rotated:
+            log_path.write_text(
+                "CURRENT_RUN_LATER_GENERATION_WITHOUT_MARKERS\n",
+                encoding="utf-8",
+            )
+            rotated = True
+        original_sleep(delay)
+
+    monkeypatch.setattr(
+        gtfo_automation_module.time,
+        "sleep",
+        rotate_after_first_snapshot,
+    )
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(chain_criterion, negative_criterion),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=launcher,
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_multigeneration",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_multigeneration",
+        ),
+    )
+
+    assert "Chainloader" not in payload["raw_supplied_output"]
+    assert "chain_probe=true" not in payload["raw_supplied_output"]
+    assert negative_marker not in payload["raw_supplied_output"]
+    observations = {
+        item["marker"]: item
+        for item in payload["gtfo_markers"]["marker_observations"]
+    }
+    assert observations["BepInEx"]["observed"] is True
+    assert observations["Chainloader"]["observed"] is True
+    assert observations["chain_probe=true"]["observed"] is True
+    assert observations[negative_marker]["observed"] is False
+    assert observations[negative_marker].get("source_window") is None
+    assert {
+        observations[marker]["source_window"]["generation"]
+        for marker in ("BepInEx", "Chainloader", "chain_probe=true")
+    } == {1}
+    assert payload["startup_loaded"] is True
+    assert payload["acceptance_verified"] is False
+    assert payload["failure_ownership"]["owner"] == "observation"
+    acceptance_check = payload["runtime_trust_binding"]["checks"][
+        "acceptance_markers"
+    ]
+    assert acceptance_check["missing_observations"] == [negative_criterion]
+    assert payload["runtime_trust_binding"]["blockers"] == [
+        "acceptance_markers trust check did not pass"
+    ]
+    assert payload["limitations"] == [
+        "GTFO runtime logs did not contain every configured acceptance marker."
+    ]
+    assert payload["gtfo_markers"]["acceptance_markers_observed"] == [
+        {
+            "acceptance_criterion": chain_criterion,
+            "marker": "chain_probe=true",
+        }
+    ]
+    windows = payload["runtime_trust_binding"]["checks"]["current_run_logs"][
+        "source_windows"
+    ]
+    passed = [window for window in windows if window["status"] == "passed"]
+    assert [window["generation"] for window in passed] == [1, 2]
+    assert [window["mode"] for window in passed] == [
+        "appended_after_prelaunch_boundary",
+        "replaced_or_truncated_after_prelaunch_boundary",
+    ]
+    assert [window["prefix_identity_status"] for window in passed] == [
+        "matched",
+        "replaced_after_launch",
+    ]
+    assert all(window["observation_count"] >= 1 for window in passed)
+    assert all(window["first_observed_at_ns"] > 0 for window in passed)
+    assert all(window["last_observed_at_ns"] > 0 for window in passed)
 
 
 def test_gtfo_runtime_marker_observations_do_not_invent_missing_startup(
@@ -581,7 +745,7 @@ def test_gtfo_runtime_marker_observations_do_not_invent_missing_startup(
         output_limit_chars=80,
     )
     log_path = tmp_path / "BepInEx" / "LogOutput.log"
-    log_path.parent.mkdir()
+    log_path.parent.mkdir(exist_ok=True)
     full_content = f"{'x' * 200}\n{ACCEPTANCE_MARKER}\n"
 
     def launcher(_: GTFORealRuntimeProfile) -> GTFOProcessHandle:
@@ -618,7 +782,7 @@ def test_gtfo_runtime_marker_observations_do_not_invent_missing_startup(
             "run_local_character_offset": None,
             "excerpt": None,
             "excerpt_truncated": False,
-            "observation_scope": "pre_truncation_run_local_content",
+            "observation_scope": "accumulated_run_local_window",
         }
     ]
 
@@ -671,6 +835,77 @@ def test_gtfo_runtime_records_liveness_before_configured_termination(
         ]
         == "passed"
     )
+
+
+def test_gtfo_runtime_process_diagnostics_are_bounded_and_not_acceptance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = replace(
+        _profile(tmp_path),
+        timeout_seconds=0.01,
+        output_limit_chars=32,
+    )
+    captured: dict[str, object] = {}
+    stdout_content = (
+        b"x" * 80
+        + f"\n{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n".encode("utf-8")
+    )
+
+    class Process:
+        pid = 4242
+
+        def __init__(self) -> None:
+            self.stdout = io.BytesIO(stdout_content)
+            self.stderr = io.BytesIO(b"diagnostic stderr")
+
+        def poll(self) -> None:
+            return None
+
+    def fake_popen(command: tuple[str, ...], **kwargs: object) -> Process:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return Process()
+
+    monkeypatch.setattr(
+        gtfo_automation_module.subprocess,
+        "Popen",
+        fake_popen,
+    )
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        log_collector=lambda _, __: GTFOLogSnapshot(content="", sources=()),
+        screenshot_capturer=lambda _, __: None,
+        process_diagnostic_directory=(
+            tmp_path / "run_001" / "runtime_process_diagnostics"
+        ),
+    )
+
+    kwargs = captured["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["stdout"] == gtfo_automation_module.subprocess.PIPE
+    assert kwargs["stderr"] == gtfo_automation_module.subprocess.PIPE
+    diagnostics = payload["process_diagnostics"]
+    assert diagnostics["status"] == "captured"
+    assert diagnostics["observation_scope"] == "run_local_process_output"
+    assert diagnostics["supports_acceptance"] == []
+    assert diagnostics["stdout"]["retained_size_bytes"] == 32
+    assert diagnostics["stdout"]["total_size_bytes"] > 32
+    assert diagnostics["stdout"]["truncated"] is True
+    stdout_path = Path(diagnostics["stdout"]["file_path"])
+    assert stdout_path.parent == (
+        tmp_path / "run_001" / "runtime_process_diagnostics"
+    )
+    assert stdout_path.read_bytes() == stdout_content[-32:]
+    assert payload["startup_loaded"] is False
+    assert payload["acceptance_verified"] is False
+    assert payload["claims_real_runtime_success"] is False
 
 
 def test_desktop_screenshot_passes_output_path_through_dedicated_environment(

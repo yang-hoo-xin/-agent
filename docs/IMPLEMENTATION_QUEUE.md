@@ -14,6 +14,11 @@ current_queue: None
 selected_product_request: None
 ```
 
+`RUNTIME-OBSERVATION-MULTISNAPSHOT-001` completed the bounded observation
+repair triggered by `06c09532` and moved to `docs/audits/LOOP_HISTORY.md`.
+No Runtime rerun is selected in this page. The next real acceptance must use a
+new V2TA/M lineage, a new Build, and separate GTFO/game-directory permission.
+
 `AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001` completed one separately
 authorized real Runtime attempt and moved to `docs/audits/LOOP_HISTORY.md`.
 Run `06c09532` real-exercised the implemented observation-owner blocked route
@@ -45,13 +50,9 @@ persistence is missing, and the nested pre-call model count can remain stale.
 They may enter the queue only when a selected product run is blocked or its
 claim cannot be reconstructed because of one of those defects.
 
-Run `06c09532` also leaves one bounded Runtime diagnosis input, not an active
-task: its verified post-launch append window contained 14,888 bytes and no
-current-run `Chainloader` or BetterHitFeedback startup marker, while its system
-screenshot remained visual-only. The old 24,425-byte log prefix was excluded
-correctly because its SHA256 exactly matched the complete prelaunch log. Any
-diagnosis or rerun requires a separately selected task and fresh Runtime
-permission.
+Run `06c09532` remains immutable historical inconclusive evidence. Its bounded
+observation diagnosis produced `RUNTIME-OBSERVATION-MULTISNAPSHOT-001`; the
+repair does not rewrite that run or promote its result.
 
 ## 2. Entry Rule
 

@@ -4,6 +4,43 @@ This archive preserves historical loop details moved out of the active control d
 
 Active execution should start from `docs/PROJECT_STATE.md` and `docs/IMPLEMENTATION_QUEUE.md`.
 
+## 2026-07-26 Runtime observation multi-snapshot repair
+
+```text
+Task: RUNTIME-OBSERVATION-MULTISNAPSHOT-001
+Trigger:
+  - immutable real run 06c09532 proved observation-owner routing but its final
+    run-local window lost normal markers that may have existed earlier;
+  - _collect_persistent_logs retained only latest_content/latest_windows and
+    derived marker facts from that final snapshot.
+Repair:
+  - accumulate marker observations only from verified post-launch windows;
+  - bind each true marker fact to its source_window and retain bounded
+    per-generation lifecycle summaries;
+  - keep raw Runtime output as the bounded newest final snapshot;
+  - bind prelaunch BepInEx.cfg SHA256 and exact [Logging.Disk] AppendLog value;
+  - replace DEVNULL with bounded run-local stdout/stderr diagnostics that
+    explicitly support no acceptance criteria.
+Focused proof:
+  - an early current-run generation contains BepInEx, Chainloader, and
+    chain_probe=true;
+  - a later generation contains none of them;
+  - h3_observation_negative_probe=absent never appears;
+  - only the designated marker remains missing and the three earlier facts
+    retain generation/window bindings;
+  - prelaunch marker history remains excluded.
+Verification:
+  - 244 affected Runtime/Harness/config tests passed;
+  - python -m compileall -q src passed;
+  - git diff --check passed;
+  - Black and Ruff were absent and were not installed.
+Permissions and stop:
+  - no Mod source change, model call, Proposal, Apply, Build, GTFO launch, or
+    game-directory write;
+  - 06c09532 remains immutable inconclusive history;
+  - stop before a new V2TA/M lineage, Build, deployment, or Runtime launch.
+```
+
 ## 2026-07-26 H3 real Runtime negative-path acceptance `06c09532`
 
 ```text

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -61,6 +62,7 @@ class GTFOProcessHandle:
 
     pid: int
     process: Any = None
+    diagnostics: Any = None
 
 
 @dataclass(frozen=True)
@@ -87,9 +89,163 @@ class _GTFOLogFileBaseline:
     captured_at_ns: int
 
 
+class _BoundedProcessOutput:
+    """Thread-safe newest-byte buffer for one launched process stream."""
+
+    def __init__(self, *, limit_bytes: int) -> None:
+        self._limit_bytes = limit_bytes
+        self._content = bytearray()
+        self._total_size_bytes = 0
+        self._lock = threading.Lock()
+
+    def append(self, content: bytes) -> None:
+        if not content:
+            return
+        with self._lock:
+            self._total_size_bytes += len(content)
+            self._content.extend(content)
+            if len(self._content) > self._limit_bytes:
+                del self._content[: len(self._content) - self._limit_bytes]
+
+    def snapshot(self) -> tuple[bytes, int, bool]:
+        with self._lock:
+            retained = bytes(self._content)
+            total_size = self._total_size_bytes
+        return retained, total_size, total_size > len(retained)
+
+
+class _GTFOProcessDiagnosticsCapture:
+    """Drain stdout/stderr without feeding either stream into acceptance."""
+
+    def __init__(
+        self,
+        *,
+        output_directory: Path,
+        feature_id: str,
+        output_limit_chars: int,
+    ) -> None:
+        self._output_directory = output_directory
+        self._feature_id = feature_id
+        self._capture_id = str(time.time_ns())
+        self._stdout = _BoundedProcessOutput(limit_bytes=output_limit_chars)
+        self._stderr = _BoundedProcessOutput(limit_bytes=output_limit_chars)
+        self._threads: list[threading.Thread] = []
+
+    def start(self, process: Any) -> None:
+        for name, stream, output in (
+            ("stdout", getattr(process, "stdout", None), self._stdout),
+            ("stderr", getattr(process, "stderr", None), self._stderr),
+        ):
+            if stream is None:
+                continue
+            thread = threading.Thread(
+                target=self._drain,
+                args=(stream, output),
+                name=f"gtfo-{name}-diagnostic-drain",
+                daemon=True,
+            )
+            thread.start()
+            self._threads.append(thread)
+
+    @staticmethod
+    def _drain(stream: Any, output: _BoundedProcessOutput) -> None:
+        while True:
+            chunk = stream.read(4096)
+            if not chunk:
+                return
+            output.append(bytes(chunk))
+
+    def snapshot(self) -> dict[str, Any]:
+        for thread in self._threads:
+            thread.join(timeout=0.2)
+        self._output_directory.mkdir(parents=True, exist_ok=True)
+        return {
+            "status": "captured",
+            "observation_scope": "run_local_process_output",
+            "supports_acceptance": [],
+            "stdout": self._stream_snapshot("stdout", self._stdout),
+            "stderr": self._stream_snapshot("stderr", self._stderr),
+        }
+
+    def _stream_snapshot(
+        self,
+        stream_name: str,
+        output: _BoundedProcessOutput,
+    ) -> dict[str, Any]:
+        retained, total_size, truncated = output.snapshot()
+        path = (
+            self._output_directory
+            / f"{self._feature_id}_{self._capture_id}.{stream_name}.log"
+        )
+        path.write_bytes(retained)
+        return {
+            "file_path": str(path),
+            "content_sha256": hashlib.sha256(retained).hexdigest(),
+            "retained_size_bytes": len(retained),
+            "total_size_bytes": total_size,
+            "truncated": truncated,
+        }
+
+
 ProcessLauncher = Callable[[GTFORealRuntimeProfile], GTFOProcessHandle]
 LogCollector = Callable[[GTFORealRuntimeProfile, tuple[str, ...]], GTFOLogSnapshot]
 ScreenshotCapturer = Callable[[GTFORealRuntimeProfile, str], ScreenshotMetadata | None]
+
+
+def _bepinex_log_config_binding(
+    working_directory: Path | None,
+) -> dict[str, Any]:
+    configured_path = "BepInEx/config/BepInEx.cfg"
+    resolved_path = (
+        None
+        if working_directory is None
+        else working_directory / Path(configured_path)
+    )
+    binding: dict[str, Any] = {
+        "status": "blocked",
+        "configured_path": configured_path,
+        "resolved_path": None if resolved_path is None else str(resolved_path),
+        "exists": False,
+        "is_file": False,
+        "content_sha256": None,
+        "section": "Logging.Disk",
+        "key": "AppendLog",
+        "append_log_value": None,
+        "append_log_enabled": None,
+    }
+    if resolved_path is None or not resolved_path.is_file():
+        return binding
+    binding["exists"] = True
+    binding["is_file"] = True
+    try:
+        content = resolved_path.read_bytes()
+    except OSError as exc:
+        binding["read_error"] = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
+        return binding
+    binding["content_sha256"] = hashlib.sha256(content).hexdigest()
+    section: str | None = None
+    values: list[str] = []
+    for raw_line in content.decode("utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        if section != "Logging.Disk" or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() == "AppendLog":
+            values.append(value.split("#", 1)[0].strip())
+    if len(values) != 1 or values[0].lower() not in {"true", "false"}:
+        return binding
+    binding["status"] = "passed"
+    binding["append_log_value"] = values[0]
+    binding["append_log_enabled"] = values[0].lower() == "true"
+    return binding
 
 
 def build_gtfo_runtime_capability_report(
@@ -128,6 +284,7 @@ def build_gtfo_runtime_capability_report(
             "configured_paths": list(profile.log_paths),
             "resolved_paths": [],
         },
+        "bepinex_log_config": _bepinex_log_config_binding(working_directory),
         "screenshot_directory": {
             "status": "passed",
             "configured_path": profile.screenshot_directory,
@@ -188,6 +345,12 @@ def build_gtfo_runtime_capability_report(
             )
         checks["log_paths"]["resolved_paths"] = resolved_paths
 
+    if checks["bepinex_log_config"]["status"] != "passed":
+        blockers.append(
+            "BepInEx/config/BepInEx.cfg must contain exactly one "
+            "[Logging.Disk] AppendLog boolean value"
+        )
+
     if not profile.screenshot_directory:
         checks["screenshot_directory"]["status"] = "blocked"
         blockers.append("runtime.gtfo.screenshot_directory is required")
@@ -220,7 +383,9 @@ def build_gtfo_runtime_capability_report(
         "checks": checks,
         "planned_evidence_sources": {
             "process": bool(profile.game_executable and profile.working_directory),
+            "process_diagnostics": bool(profile.screenshot_directory),
             "persistent_logs": bool(profile.log_paths),
+            "bepinex_log_config": True,
             "desktop_screenshot": bool(profile.screenshot_directory),
             "plugin_markers": bool(profile.acceptance_markers),
         },
@@ -242,6 +407,7 @@ class GTFORealRuntimeAutomationRunner:
         process_launcher: ProcessLauncher | None = None,
         log_collector: LogCollector | None = None,
         screenshot_capturer: ScreenshotCapturer | None = None,
+        process_diagnostic_directory: str | Path | None = None,
     ) -> dict[str, Any]:
         """Run real GTFO automation only after explicit approval."""
 
@@ -264,12 +430,26 @@ class GTFORealRuntimeAutomationRunner:
                 input_execution_mode=input_execution_mode,
                 capability_report=capability_report,
                 failure_stage="capability_admission",
+                process_diagnostics=_unavailable_process_diagnostics(),
             )
         failure_stage = "profile_validation"
+        failure: Exception | None = None
+        process_handle: GTFOProcessHandle | None = None
+        process_diagnostics = _unavailable_process_diagnostics()
         try:
             _validate_real_profile(profile)
 
-            launcher = process_launcher or _launch_gtfo_process
+            launcher = process_launcher or (
+                lambda active_profile: _launch_gtfo_process(
+                    active_profile,
+                    feature_id=feature_id,
+                    output_directory=(
+                        Path(process_diagnostic_directory)
+                        if process_diagnostic_directory is not None
+                        else Path(active_profile.screenshot_directory)
+                    ),
+                )
+            )
             capturer = screenshot_capturer or _capture_desktop_screenshot
             log_baselines = _capture_log_baselines(profile)
             collector = log_collector or (
@@ -288,20 +468,25 @@ class GTFORealRuntimeAutomationRunner:
             failure_stage = "screenshot_capture"
             screenshot = capturer(profile, feature_id)
         except Exception as exc:
+            failure = exc
+        finally:
+            if process_handle is not None and profile.terminate_after_capture:
+                _terminate_process(process_handle)
+            process_diagnostics = _snapshot_process_diagnostics(process_handle)
+
+        if failure is not None:
             return _payload_from_runtime_failure(
                 feature_id=feature_id,
                 profile=profile,
-                failure=exc,
-                process_handle=locals().get("process_handle"),
+                failure=failure,
+                process_handle=process_handle,
                 acceptance_criteria=acceptance_criteria,
                 runtime_verification_plan=runtime_verification_plan,
                 input_execution_mode=input_execution_mode,
                 capability_report=capability_report,
                 failure_stage=failure_stage,
+                process_diagnostics=process_diagnostics,
             )
-        finally:
-            if "process_handle" in locals() and profile.terminate_after_capture:
-                _terminate_process(process_handle)
 
         return _payload_from_runtime_observations(
             feature_id=feature_id,
@@ -314,6 +499,7 @@ class GTFORealRuntimeAutomationRunner:
             runtime_verification_plan=runtime_verification_plan,
             input_execution_mode=input_execution_mode,
             capability_report=capability_report,
+            process_diagnostics=process_diagnostics,
         )
 
 
@@ -358,6 +544,7 @@ def make_gtfo_runtime_evidence_factory(
     process_launcher: ProcessLauncher | None = None,
     log_collector: LogCollector | None = None,
     screenshot_capturer: ScreenshotCapturer | None = None,
+    process_diagnostic_directory: str | Path | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Build a graph-compatible runtime evidence factory for real GTFO runs."""
 
@@ -386,6 +573,7 @@ def make_gtfo_runtime_evidence_factory(
             process_launcher=process_launcher,
             log_collector=log_collector,
             screenshot_capturer=screenshot_capturer,
+            process_diagnostic_directory=process_diagnostic_directory,
         )
 
     return runtime_evidence_factory
@@ -399,6 +587,7 @@ def make_gtfo_runtime_evidence_factory_from_settings(
     process_launcher: ProcessLauncher | None = None,
     log_collector: LogCollector | None = None,
     screenshot_capturer: ScreenshotCapturer | None = None,
+    process_diagnostic_directory: str | Path | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Build a graph-compatible GTFO runtime evidence factory from settings."""
 
@@ -411,6 +600,7 @@ def make_gtfo_runtime_evidence_factory_from_settings(
         process_launcher=process_launcher,
         log_collector=log_collector,
         screenshot_capturer=screenshot_capturer,
+        process_diagnostic_directory=process_diagnostic_directory,
     )
 
 
@@ -433,16 +623,65 @@ def _validate_real_profile(profile: GTFORealRuntimeProfile) -> None:
         raise GTFORuntimeAutomationError("runtime.gtfo.log_paths must not be empty")
 
 
-def _launch_gtfo_process(profile: GTFORealRuntimeProfile) -> GTFOProcessHandle:
+def _launch_gtfo_process(
+    profile: GTFORealRuntimeProfile,
+    *,
+    feature_id: str,
+    output_directory: Path,
+) -> GTFOProcessHandle:
     command = (profile.game_executable, *profile.launch_args)
     process = subprocess.Popen(
         command,
         cwd=profile.working_directory,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=False,
     )
-    return GTFOProcessHandle(pid=int(process.pid), process=process)
+    diagnostics = _GTFOProcessDiagnosticsCapture(
+        output_directory=output_directory,
+        feature_id=feature_id,
+        output_limit_chars=profile.output_limit_chars,
+    )
+    diagnostics.start(process)
+    return GTFOProcessHandle(
+        pid=int(process.pid),
+        process=process,
+        diagnostics=diagnostics,
+    )
+
+
+def _unavailable_process_diagnostics() -> dict[str, Any]:
+    return {
+        "status": "not_available",
+        "observation_scope": "run_local_process_output",
+        "supports_acceptance": [],
+        "stdout": None,
+        "stderr": None,
+    }
+
+
+def _snapshot_process_diagnostics(
+    process_handle: GTFOProcessHandle | None,
+) -> dict[str, Any]:
+    if process_handle is None or process_handle.diagnostics is None:
+        return _unavailable_process_diagnostics()
+    snapshot = getattr(process_handle.diagnostics, "snapshot", None)
+    if not callable(snapshot):
+        return _unavailable_process_diagnostics()
+    try:
+        return dict(snapshot())
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "observation_scope": "run_local_process_output",
+            "supports_acceptance": [],
+            "stdout": None,
+            "stderr": None,
+            "failure": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
 
 
 def _collect_persistent_logs(
@@ -454,48 +693,134 @@ def _collect_persistent_logs(
     active_baselines = baselines or _capture_log_baselines(profile)
     started = time.monotonic()
     latest_content = ""
-    latest_sources: tuple[str, ...] = ()
     latest_windows: tuple[Mapping[str, Any], ...] = ()
+    observed_sources: list[str] = []
+    generation_state: dict[str, dict[str, Any]] = {}
+    lifecycle_windows: dict[tuple[str, int], dict[str, Any]] = {}
+    accumulated_observations: dict[str, Mapping[str, Any]] = {}
     wanted_markers = tuple(
-        marker
-        for marker in (
-            *profile.startup_markers,
-            *(
-                profile.acceptance_markers[criterion]
-                for criterion in acceptance_criteria
-                if criterion in profile.acceptance_markers
-            ),
+        dict.fromkeys(
+            marker
+            for marker in (
+                *profile.startup_markers,
+                *(
+                    profile.acceptance_markers[criterion]
+                    for criterion in acceptance_criteria
+                    if criterion in profile.acceptance_markers
+                ),
+            )
+            if marker
         )
-        if marker
     )
     while time.monotonic() - started <= profile.timeout_seconds:
-        latest_content, latest_sources, latest_windows = _read_run_local_runtime_logs(
-            active_baselines
-        )
-        if wanted_markers and all(marker in latest_content for marker in wanted_markers):
+        (
+            latest_content,
+            _latest_sources,
+            current_windows,
+            current_window_content,
+        ) = _read_run_local_runtime_logs(active_baselines)
+        enriched_windows: list[Mapping[str, Any]] = []
+        for window in current_windows:
+            if window.get("status") != "passed":
+                enriched_windows.append(window)
+                continue
+            path = str(window["path"])
+            run_local_content = current_window_content[path]
+            previous = generation_state.get(path)
+            same_generation = (
+                previous is not None
+                and previous["mode"] == window["mode"]
+                and run_local_content.startswith(previous["run_local_content"])
+            )
+            generation = (
+                int(previous["generation"])
+                if same_generation
+                else (0 if previous is None else int(previous["generation"])) + 1
+            )
+            enriched = {
+                **dict(window),
+                "generation": generation,
+            }
+            generation_state[path] = {
+                "generation": generation,
+                "mode": window["mode"],
+                "run_local_content": run_local_content,
+            }
+            lifecycle_key = (path, generation)
+            lifecycle = lifecycle_windows.get(lifecycle_key)
+            if lifecycle is None:
+                lifecycle = {
+                    **enriched,
+                    "first_observed_at_ns": window["observed_at_ns"],
+                    "last_observed_at_ns": window["observed_at_ns"],
+                    "observation_count": 1,
+                    "first_current_size_bytes": window["current_size_bytes"],
+                    "first_run_local_size_bytes": window["run_local_size_bytes"],
+                    "first_run_local_sha256": window["run_local_sha256"],
+                }
+                lifecycle_windows[lifecycle_key] = lifecycle
+            else:
+                lifecycle.update(enriched)
+                lifecycle["last_observed_at_ns"] = window["observed_at_ns"]
+                lifecycle["observation_count"] = int(
+                    lifecycle["observation_count"]
+                ) + 1
+            enriched_windows.append(enriched)
+            if path not in observed_sources:
+                observed_sources.append(path)
+            for observation in _observe_markers(
+                run_local_content,
+                wanted_markers,
+                observation_scope="accumulated_run_local_window",
+            ):
+                marker = str(observation["marker"])
+                if (
+                    observation.get("observed") is True
+                    and marker not in accumulated_observations
+                ):
+                    accumulated_observations[marker] = {
+                        **dict(observation),
+                        "source_window": dict(enriched),
+                    }
+        latest_windows = tuple(enriched_windows)
+        if wanted_markers and all(
+            marker in accumulated_observations for marker in wanted_markers
+        ):
             break
         time.sleep(profile.poll_interval_seconds)
     content, truncated = _limit_text(latest_content, profile.output_limit_chars)
-    passed_windows = tuple(
-        window for window in latest_windows if window.get("status") == "passed"
-    )
     blocked_windows = tuple(
         window for window in latest_windows if window.get("status") == "blocked"
     )
-    boundary_passed = bool(passed_windows) and not blocked_windows
+    boundary_passed = bool(lifecycle_windows) and not blocked_windows
+    final_windows = (
+        *lifecycle_windows.values(),
+        *(
+            window
+            for window in latest_windows
+            if window.get("status") != "passed"
+        ),
+    )
+    marker_observations = tuple(
+        accumulated_observations.get(marker)
+        or _observe_markers(
+            "",
+            (marker,),
+            observation_scope="accumulated_run_local_window",
+        )[0]
+        for marker in (
+            wanted_markers
+        )
+    )
     return GTFOLogSnapshot(
         content=content,
-        sources=latest_sources,
+        sources=tuple(observed_sources),
         truncated=truncated,
         run_boundary_status=(
             "prelaunch_byte_boundary" if boundary_passed else "blocked"
         ),
-        source_windows=latest_windows,
-        marker_observations=_observe_markers(
-            latest_content,
-            wanted_markers,
-            observation_scope="pre_truncation_run_local_content",
-        ),
+        source_windows=tuple(final_windows),
+        marker_observations=marker_observations,
     )
 
 
@@ -538,11 +863,18 @@ def _capture_log_baselines(
 
 def _read_run_local_runtime_logs(
     baselines: tuple[_GTFOLogFileBaseline, ...],
-) -> tuple[str, tuple[str, ...], tuple[Mapping[str, Any], ...]]:
+) -> tuple[
+    str,
+    tuple[str, ...],
+    tuple[Mapping[str, Any], ...],
+    Mapping[str, str],
+]:
     parts: list[str] = []
     sources: list[str] = []
     windows: list[Mapping[str, Any]] = []
+    window_content: dict[str, str] = {}
     for baseline in baselines:
+        observed_at_ns = time.time_ns()
         path = Path(baseline.path)
         if not path.is_file():
             windows.append(
@@ -552,6 +884,10 @@ def _read_run_local_runtime_logs(
                     "mode": "not_created_after_launch",
                     "baseline_size_bytes": baseline.size_bytes,
                     "current_size_bytes": None,
+                    "observed_at_ns": observed_at_ns,
+                    "baseline_content_sha256": baseline.content_sha256,
+                    "observed_prefix_sha256": None,
+                    "prefix_identity_status": "not_observed",
                 }
             )
             continue
@@ -560,21 +896,38 @@ def _read_run_local_runtime_logs(
         current_size = len(content)
         run_bytes: bytes | None = None
         mode: str
+        observed_prefix_sha256: str | None = None
+        prefix_identity_status: str
+        run_local_start_byte: int | None = None
         if baseline.existed and current_size >= baseline.size_bytes:
             prefix = content[: baseline.size_bytes]
-            if hashlib.sha256(prefix).hexdigest() == baseline.content_sha256:
+            observed_prefix_sha256 = hashlib.sha256(prefix).hexdigest()
+            if observed_prefix_sha256 == baseline.content_sha256:
                 run_bytes = content[baseline.size_bytes :]
                 mode = "appended_after_prelaunch_boundary"
+                prefix_identity_status = "matched"
+                run_local_start_byte = baseline.size_bytes
             elif stat_result.st_mtime_ns >= baseline.captured_at_ns:
                 run_bytes = content
                 mode = "replaced_or_truncated_after_prelaunch_boundary"
+                prefix_identity_status = "replaced_after_launch"
+                run_local_start_byte = 0
             else:
                 mode = "prefix_identity_mismatch"
+                prefix_identity_status = "mismatched"
         elif stat_result.st_mtime_ns >= baseline.captured_at_ns:
             run_bytes = content
             mode = "created_or_truncated_after_prelaunch_boundary"
+            observed_prefix_sha256 = (
+                hashlib.sha256(content).hexdigest() if content else None
+            )
+            prefix_identity_status = (
+                "replaced_after_launch" if baseline.existed else "not_applicable"
+            )
+            run_local_start_byte = 0
         else:
             mode = "no_verified_post_launch_window"
+            prefix_identity_status = "not_verified"
         if run_bytes is None:
             windows.append(
                 {
@@ -583,11 +936,19 @@ def _read_run_local_runtime_logs(
                     "mode": mode,
                     "baseline_size_bytes": baseline.size_bytes,
                     "current_size_bytes": current_size,
+                    "observed_at_ns": observed_at_ns,
+                    "current_mtime_ns": stat_result.st_mtime_ns,
+                    "baseline_captured_at_ns": baseline.captured_at_ns,
+                    "baseline_content_sha256": baseline.content_sha256,
+                    "observed_prefix_sha256": observed_prefix_sha256,
+                    "prefix_identity_status": prefix_identity_status,
                 }
             )
             continue
-        parts.append(run_bytes.decode("utf-8", errors="replace"))
+        decoded = run_bytes.decode("utf-8", errors="replace")
+        parts.append(decoded)
         sources.append(baseline.path)
+        window_content[baseline.path] = decoded
         windows.append(
             {
                 "path": baseline.path,
@@ -597,9 +958,26 @@ def _read_run_local_runtime_logs(
                 "current_size_bytes": current_size,
                 "run_local_size_bytes": len(run_bytes),
                 "run_local_sha256": hashlib.sha256(run_bytes).hexdigest(),
+                "run_local_start_byte": run_local_start_byte,
+                "run_local_end_byte": (
+                    None
+                    if run_local_start_byte is None
+                    else run_local_start_byte + len(run_bytes)
+                ),
+                "observed_at_ns": observed_at_ns,
+                "current_mtime_ns": stat_result.st_mtime_ns,
+                "baseline_captured_at_ns": baseline.captured_at_ns,
+                "baseline_content_sha256": baseline.content_sha256,
+                "observed_prefix_sha256": observed_prefix_sha256,
+                "prefix_identity_status": prefix_identity_status,
             }
         )
-    return ("\n".join(parts), tuple(sources), tuple(windows))
+    return (
+        "\n".join(parts),
+        tuple(sources),
+        tuple(windows),
+        window_content,
+    )
 
 
 def _capture_desktop_screenshot(
@@ -657,6 +1035,7 @@ def _payload_from_runtime_observations(
     runtime_verification_plan: tuple[str, ...],
     input_execution_mode: str | None,
     capability_report: Mapping[str, Any],
+    process_diagnostics: Mapping[str, Any],
 ) -> dict[str, Any]:
     marker_observations = (
         tuple(dict(item) for item in log_snapshot.marker_observations)
@@ -754,6 +1133,7 @@ def _payload_from_runtime_observations(
         missing_observations=missing_observations,
         plugin_marker_binding=plugin_marker_binding,
         marker_observations=marker_observations,
+        bepinex_log_config=capability_report["checks"]["bepinex_log_config"],
     )
     payload = build_real_runtime_evidence_payload(
         feature_id=feature_id,
@@ -821,6 +1201,7 @@ def _payload_from_runtime_observations(
         ],
     }
     payload["screenshot"] = screenshot_ref
+    payload["process_diagnostics"] = dict(process_diagnostics)
     payload["gtfo_capability_report"] = dict(capability_report)
     return payload
 
@@ -836,6 +1217,7 @@ def _payload_from_runtime_failure(
     input_execution_mode: str | None,
     capability_report: Mapping[str, Any],
     failure_stage: str,
+    process_diagnostics: Mapping[str, Any],
 ) -> dict[str, Any]:
     failure_type = type(failure).__name__
     failure_message = str(failure)
@@ -886,6 +1268,7 @@ def _payload_from_runtime_failure(
         "acceptance_markers_observed": [],
     }
     payload["screenshot"] = None
+    payload["process_diagnostics"] = dict(process_diagnostics)
     payload["runtime_trust_binding"] = {
         "profile_id": profile.profile_id,
         "evidence_source": "gtfo_real_runtime_automation",
@@ -1128,6 +1511,7 @@ def _runtime_trust_binding(
     missing_observations: list[str],
     plugin_marker_binding: Mapping[str, Any],
     marker_observations: tuple[Mapping[str, Any], ...],
+    bepinex_log_config: Mapping[str, Any],
 ) -> dict[str, Any]:
     screenshot_ref = screenshot.to_dict() if screenshot is not None else None
     screenshot_feature_id = (
@@ -1175,6 +1559,7 @@ def _runtime_trust_binding(
             "run_boundary_status": log_snapshot.run_boundary_status,
             "source_windows": [dict(item) for item in log_snapshot.source_windows],
         },
+        "bepinex_log_config": dict(bepinex_log_config),
         "plugin_load_marker": {
             "status": "passed" if startup_loaded else "blocked",
             "startup_markers": list(profile.startup_markers),

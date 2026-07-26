@@ -12,9 +12,39 @@ current_queue: None
 current_documentation_task: None
 selected_product_request: None
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001
+most_recent_completed_capability: RUNTIME-OBSERVATION-MULTISNAPSHOT-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
+
+`RUNTIME-OBSERVATION-MULTISNAPSHOT-001` completed the bounded observation
+repair triggered by real run `06c09532`. The GTFO collector now accumulates
+structured marker observations across verified post-launch log generations
+instead of rebuilding marker facts only from the final poll. Each observed
+marker is bound to its exact `source_window`; generation summaries retain
+`mode`, byte range, current and run-local sizes, run-local SHA256, observation
+times, observation count, baseline/prefix SHA256, and
+`prefix_identity_status`. Blocked or prelaunch-only windows cannot contribute
+marker facts. Raw Runtime output remains the bounded newest final snapshot.
+
+The launch boundary now binds the exact prelaunch
+`BepInEx/config/BepInEx.cfg` SHA256 and the single `[Logging.Disk]`
+`AppendLog` value. A missing, unreadable, ambiguous, or non-boolean value blocks
+Runtime Admission. Default process launch captures bounded newest-byte
+stdout/stderr files under the current run directory and records their hashes,
+retained/total sizes, and truncation status as `process_diagnostics`;
+`supports_acceptance=[]` keeps that channel separate from BepInEx marker
+acceptance.
+
+The multi-generation regression observes `BepInEx`, `Chainloader`, and
+`chain_probe=true` in an early current-run window, replaces that window with a
+later marker-free generation, and leaves
+`h3_observation_negative_probe=absent` absent throughout. The final result
+reports only the designated acceptance marker missing while retaining the
+three earlier current-run facts. The final affected command passed 244 tests;
+compileall and `git diff --check` passed. No Mod source, model call, Proposal,
+Apply, Build, GTFO process, or game-directory write was involved. Run
+`06c09532` remains immutable historical inconclusive evidence and was not
+reinterpreted.
 
 `AGENT-HARNESS-H3-REAL-RUNTIME-ACCEPTANCE-001` completed one bounded
 post-implementation Runtime acceptance attempt as run `06c09532`.

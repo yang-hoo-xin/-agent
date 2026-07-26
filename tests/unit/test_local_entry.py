@@ -57,6 +57,12 @@ def _runtime_settings(
 ) -> SimpleNamespace:
     executable = tmp_path / "GTFO.exe"
     executable.write_bytes(b"test executable")
+    config_path = tmp_path / "BepInEx" / "config" / "BepInEx.cfg"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "[Logging.Disk]\nAppendLog = false\n",
+        encoding="utf-8",
+    )
     return SimpleNamespace(
         runtime=SimpleNamespace(
             gtfo=SimpleNamespace(

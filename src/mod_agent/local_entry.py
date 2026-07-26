@@ -973,6 +973,9 @@ def _make_deploying_runtime_evidence_factory(
     base_factory = make_gtfo_runtime_evidence_factory_from_settings(
         settings,
         allow_game_launch=allow_game_launch,
+        process_diagnostic_directory=(
+            backup_directory.parent / "runtime_process_diagnostics"
+        ),
     )
 
     def runtime_evidence_factory(
