@@ -159,24 +159,43 @@ exact_evidence:
   actual_write_performed=false. No PatchProposal, ProposalReview, Dry-run,
   Apply, Build, Runtime, or Evaluation Artifact was created. The failed run is
   immutable and does not authorize a hidden retry.
+  Synthetic-only local Provider probe provider_probe_qwen3_4b_001 then used
+  exact installed qwen3:4b-instruct digest
+  0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0.
+  Its single 4805-byte loopback request was context-admitted and returned to
+  deterministic Patch parsing in 6843 milliseconds. Parsing failed closed
+  because the response declared RETURN_VALUE_TRUE as a literal validation
+  marker but omitted that marker from after_text. The probe did not supply an
+  authoritative required_validation_by_binding even though the response
+  schema requires at least one expected_validation entry. It therefore proves
+  local Provider transport, identity, native-schema response arrival, and the
+  deterministic guardrail, but it does not qualify the 4B profile for a real
+  stagger Proposal. It used synthetic input only, persisted no provider body,
+  raw response, or patch text, and performed no ArtifactStore, source, game
+  directory, or launch action.
 affected_coverage_ids:
   PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
   PROP-002, EXEC-002, EXEC-003, EXEC-005, EXEC-006
 dependencies:
   The EvidencePack, Implementation Plan, fresh binding gates, and bounded
   Proposal context budget are complete for this revision. Proposal remains
-  absent because the single authorized local provider call timed out.
-  A later attempt requires a new explicit authorization and exact local-model
-  execution profile; it must reuse the same single StateGraph and must not
-  repeat upstream planning or evidence work. Existing review, exact approval,
-  apply, build, and product Runtime gates remain unchanged.
+  absent. The 27B profile timed out under material CPU/system-memory offload;
+  the 4B profile returned quickly but its first synthetic qualification had an
+  incomplete validation input and failed deterministic Patch admission.
+  Before a real Proposal, select and separately authorize either a corrected
+  synthetic qualification with one exact required validation or an explicitly
+  accepted direct 4B Proposal risk. Any later continuation must reuse the same
+  single StateGraph and must not repeat upstream planning or evidence work.
+  Existing review, exact approval, apply, build, and product Runtime gates
+  remain unchanged.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
-  no external disclosure occurred. Current admission authorizes no retry,
-  source write, Apply, Build, game-directory copy, GTFO launch, screenshot
-  capture, or product-behavior claim. Each later side effect retains its
-  existing separate approval boundary.
+  one later synthetic-only 4B Provider probe was also authorized and consumed.
+  Neither run disclosed externally. Current admission authorizes no additional
+  model call, real Proposal, source write, Apply, Build, game-directory copy,
+  GTFO launch, screenshot capture, or product-behavior claim. Each later side
+  effect retains its existing separate approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
   The Implementation Plan resolves exactly one future writable target:
@@ -191,15 +210,17 @@ focused_verification:
   A later product Runtime must separately prove visible and audible behavior,
   General.Enabled=false suppression, and exact marker behavior.
 stop_condition:
-  Stop at immutable failed run sfp_qwen36_27b_001. Do not reinterpret its
-  timeout as a Proposal result and do not retry automatically. A new attempt
-  must separately authorize one exact local-model execution profile and repeat
-  only fresh binding admission plus Proposal/Review continuation. Stop again
-  if source, assembly, Artifact, or binding identity drifts. After accepted
+  Stop with immutable failed runs sfp_qwen36_27b_001 and
+  provider_probe_qwen3_4b_001. Do not reinterpret either failure as a
+  PatchProposal or retry automatically. The next model call requires a new
+  explicit authorization and must be identified as either corrected synthetic
+  profile qualification or real Proposal continuation. A real continuation
+  repeats only fresh binding admission plus Proposal/Review and stops if
+  source, assembly, Artifact, or binding identity drifts. After accepted
   two-mode product Runtime evidence, return to the product mainline and perform
   Harness re-admission only if this slice exposes a concrete generic Harness
   failure.
-status: implementation_plan_created_local_proposal_attempt_timed_out
+status: implementation_plan_created_proposal_absent_provider_selection_pending
 automation_claim: not_proven
 ```
 

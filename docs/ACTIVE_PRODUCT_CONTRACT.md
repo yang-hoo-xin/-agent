@@ -105,6 +105,22 @@ failed run grants no retry authority. A later attempt must be separately
 authorized and must continue from the existing Implementation Plan without
 repeating upstream stages.
 
+Synthetic-only local Provider probe `provider_probe_qwen3_4b_001` then bound
+the installed `qwen3:4b-instruct` digest
+`0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0`
+and returned through the loopback native-schema path in 6.843 seconds. The
+deterministic Patch parser rejected the response because it declared
+`RETURN_VALUE_TRUE` as a literal validation marker without placing that marker
+in `after_text`. The synthetic probe supplied no
+`required_validation_by_binding` even though the response schema requires at
+least one `expected_validation` entry, so this run proves local transport,
+identity, context admission, response arrival, and fail-closed parsing; it
+does not qualify the 4B profile for the real stagger Proposal. The run included
+no project or commercial source, persisted neither provider body nor raw
+response or patch text, made no ArtifactStore or target write, and did not
+launch the game. Stagger therefore remains at the existing EvidencePack and
+Implementation Plan with Proposal absent.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove
