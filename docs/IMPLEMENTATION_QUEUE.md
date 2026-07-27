@@ -237,23 +237,44 @@ exact_evidence:
   warning. The old blocked Review remained immutable. No model or upstream
   stage ran, source hashes remained unchanged, and no Dry-run or later
   Artifact was created.
+  Human semantic review later rejected the one-change diff after isolated
+  Apply but before Build. Read-only replay proved that Patch Generation had
+  not received the complete three-change Implementation Plan, accepted
+  before_text from any evidence excerpt, and allowed ProposalReview to validate
+  only the returned subset. The old Proposal omitted chg_002/edit_binding_002
+  and chg_003/edit_binding_003 and crossed edit_binding_001. Its run-local
+  Apply remains immutable historical evidence, not an accepted implementation.
+  Commits d71f255 and b31d7bc now require exact Plan change coverage,
+  binding-local source, target-span locality, full pre-write unified diff,
+  correct diff statistics, and a low-cost lexical C# delimiter check.
+  One new loopback-only 4B attempt sfp_qwen3_4b_repair_002 timed out after its
+  single 600-second call before parser entry; it performed no retry or source
+  write. No-model runs sfp_manual_repair_003 and sfp_manual_repair_004 remain
+  preserved as, respectively, a pre-Proposal driver-signature failure and a
+  target-alignment revise_proposal result.
+  No-model run sfp_manual_repair_005 then produced exact three-change
+  PatchProposal
+  d3737a8679c9e64fe7c6ea13985334419810b58799d4cb477aade842f9e09a3a
+  and ProposalReview
+  e50f938ae7317fc959f20df8366b6192e8d9a10ac163c1105b3267f50e5fbe1
+  with approve_dry_run and no blocking finding. Its no-write preapproval diff
+  changes only Patches/HitFeedbackBehaviorPatch.cs through three change units,
+  173 insertions, zero deletions, raw unified-diff SHA256
+  6164c0fb966321badd69f3b1e63cd2c3c4e5153c1c28d4578daa1cde55d1fafe,
+  and future exact approval hash
+  sha256:c9e7903739f5b99422a6b6b130a6bbb0acfba41d47e6d2a4148ad33f3469cdaa.
+  All three binding-span checks and the lexical delimiter check passed. The
+  selected source remains unchanged and the diff awaits human semantic review.
 affected_coverage_ids:
   GOV-005, PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
-  PROP-002, REVIEW-001, DOM-004, DOM-006, EXEC-002, EXEC-003, EXEC-005,
-  EXEC-006
+  PROP-002, PROP-005, REVIEW-001, REVIEW-004, DOM-004, DOM-006, EXEC-002,
+  EXEC-003, EXEC-005, EXEC-006, EXEC-011
 dependencies:
-  The EvidencePack, Implementation Plan, fresh binding gates, and bounded
-  Proposal context budget, bound local Provider call, and PatchProposal are
-  complete for this revision. The bounded domain-policy context repair and
-  deterministic re-review are also complete. Authorized no-write run
-  sfp_qwen3_4b_002_dry_run_001 reused the exact Proposal and Review, matched one
-  current-source occurrence, and materialized exact diff hash
-  sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db
-  without changing source. The user then supplied that exact hash. Run
-  sfp_qwen3_4b_002_isolated_apply_001 atomically applied only the approved
-  change in the run-local materialization and wrote Isolated Apply Artifact
-  be03b9a981e27e4bc8098e144990ce762890d4dd6fa3cac421751de9dd2e325e.
-  Existing Build and product Runtime gates remain unchanged.
+  The FeatureSpec, EvidencePack, Implementation Plan, binding/domain gates,
+  complete repair Proposal, deterministic Review, and no-write preapproval
+  diff are complete. Human semantic approval of the displayed repair diff is
+  the only current entry gate. Apply, Build, and product Runtime remain later
+  separately authorized stages.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -267,16 +288,20 @@ permissions_and_disclosure:
   no-write Dry-run; it wrote only the dry_run_result and run-local audit files.
   The exact hash supplied by the user then authorized and was consumed by one
   isolated Apply, which wrote only the bound target and
-  isolated_apply_result. None disclosed externally. Current admission
-  authorizes no additional model call, source write, Build, game-directory
-  copy, GTFO launch, screenshot capture, or product-behavior claim. Each later
-  side effect retains its existing separate approval boundary.
+  isolated_apply_result. The later bounded guard repair and manual Proposal
+  path disclosed nothing externally. The new 4B authorization was consumed by
+  exactly one timed-out loopback call. sfp_manual_repair_005 made zero model
+  calls and only wrote ArtifactStore/run-local Proposal, Review, and
+  preapproval diff records. Current admission authorizes no additional model
+  call, source write, Apply, Build, game-directory copy, GTFO launch,
+  screenshot capture, or product-behavior claim. Each later side effect
+  retains its existing separate approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
   The Implementation Plan resolved exactly one writable target:
-  Patches/HitFeedbackBehaviorPatch.cs in the run-local materialization. That
-  exact approved write is complete. Plugin.cs and the preserved lineage remain
-  read-only.
+  Patches/HitFeedbackBehaviorPatch.cs in a future approved run-local
+  materialization. The current repair run has no write authority. Plugin.cs,
+  the preserved lineage, and the historical rejected Apply remain read-only.
 focused_verification:
   python -B
   workspaces/stagger_feedback_proposal_001/proposal_continuation_driver.py
@@ -335,22 +360,28 @@ focused_verification:
   Implementation Plan
   db13ebc8f8acfaa8b0b42dea761e42a443f483aaa5f8014c4eb23a1d61bf31a6,
   the selected assembly identity, and all three edit bindings before Proposal.
+  python -m pytest tests/unit/test_patch_code_generator.py
+  tests/unit/test_proposal_review.py tests/unit/test_patch_apply.py
+  tests/unit/test_local_entry.py tests/unit/test_workflow_graph.py -q passed
+  186 tests in 21.93s. The real rejected Proposal replay now returns
+  revise_proposal with both missing Plan units and binding-source locality
+  findings. sfp_manual_repair_005 returns approve_dry_run for exactly three
+  Plan/binding pairs, produces the full preapproval diff, passes all three
+  target-span checks plus C# delimiter balance, and records
+  actual_write_performed=false.
   A later product Runtime must separately prove visible and audible behavior,
   General.Enabled=false suppression, and exact marker behavior.
 stop_condition:
-  Stop with immutable failed runs sfp_qwen36_27b_001,
-  sfp_qwen3_4b_001, and
-  provider_probe_qwen3_4b_001 plus probe-outer-assertion failure
-  provider_probe_qwen3_4b_002. Preserve sfp_qwen3_4b_002 as the immutable
-  completed Proposal/blocked Review run and preserve
-  sfp_qwen3_4b_002_rereview_001 as the successful no-model Review revision.
-  Preserve sfp_qwen3_4b_002_dry_run_001 as the successful no-write exact-diff
-  run and sfp_qwen3_4b_002_isolated_apply_001 as the successful exact-approved
-  isolated source write. Do not call a model again or repeat Apply. Stop before
-  Build until a separate authorization selects the real build. Later stages
-  must retain exact Proposal, Review, Dry-run, Apply, source, Artifact, Build,
-  and Runtime gates.
-status: isolated_apply_complete_build_authorization_pending
+  Preserve every prior model, Review, Dry-run, and Apply result as immutable
+  history, including the semantically rejected isolated Apply and failed repair
+  runs sfp_qwen3_4b_repair_002, sfp_manual_repair_003, and
+  sfp_manual_repair_004. Stop at sfp_manual_repair_005 before source write.
+  Present preapproval_repair.patch for human semantic review. A future Apply
+  requires explicit approval of the displayed bytes and current exact diff
+  hash; Build remains a later separate authorization. Do not call another
+  model, reuse the rejected approval hash, start GTFO, or claim visible/audible
+  product success.
+status: repair_diff_awaiting_human_semantic_approval
 automation_claim: not_proven
 ```
 

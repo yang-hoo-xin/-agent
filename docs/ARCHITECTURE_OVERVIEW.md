@@ -175,7 +175,37 @@ hashes, and the one changed path. The graph interrupted before Build. This is
 execution evidence for the existing approval/write boundary, not a new control
 plane or authority to Build or run the product.
 
-### 2.4 V2 Intelligence Experiment And Productization Boundary
+### 2.4 Complete Proposal Admission And Preapproval Diff
+
+Current maturity: `implemented` for exact Implementation Plan coverage,
+binding-local exact-text source, and pre-write diff/static-check preparation.
+
+The selected stagger failure proved that validating only the changes returned
+by a Generator is insufficient. Patch Generation now receives a compact list
+of required Plan change units and must return the exact
+`(change_id, edit_binding_id)` set. Each `before_text` must come from the
+evidence bound to that edit binding. ProposalReviewer independently repeats
+both checks; a legal subset or a cross-binding source excerpt cannot reach
+Dry-run.
+
+`ExactTextPatchApplier` retains the existing no-write/write split. Before any
+approval or write it now validates each exact replacement against the binding's
+registered target span, stages the complete result in memory, emits a unified
+diff with raw SHA256 and line statistics, and runs a low-cost lexical C#
+delimiter check. The check intentionally does not claim symbol, type, overload,
+or complete control-flow validation. The CLI displays the unified diff,
+statistics, and checks before requesting the existing exact diff approval.
+Human semantic approval therefore follows inspectable bytes and still precedes
+isolated Apply and Build.
+
+Run `sfp_manual_repair_005` exercised this boundary without a model or source
+write. Its Proposal covers all three selected Plan units, deterministic Review
+returned `approve_dry_run`, and its one-file preapproval diff passed three
+target-span checks plus lexical delimiter balance. This is bounded Proposal
+admission and reviewability evidence; it is not compilation, semantic approval,
+Apply, or Runtime evidence.
+
+### 2.5 V2 Intelligence Experiment And Productization Boundary
 
 The control-plane diagram above is the implemented delivery baseline. It is not
 yet evidence of one canonical V2 runtime path. The diagram below records the

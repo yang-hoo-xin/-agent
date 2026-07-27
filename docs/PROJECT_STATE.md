@@ -14,10 +14,10 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: evidence_bound_plan_isolated_apply_complete_build_pending
-local_proposal_provider_status: real_4b_completed_no_model_isolated_apply_complete
+stagger_implementation_plan_status: repair_proposal_reviewed_preapproval_diff_awaiting_human_semantic_approval
+local_proposal_provider_status: real_4b_patch_rejected_no_model_repair_proposal_ready
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
+most_recent_completed_capability: PROPOSAL-ADMISSION-PLAN-COVERAGE-PREAPPROVAL-DIFF-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -28,11 +28,13 @@ player's hit actually produces an enemy hit reaction. `General.Enabled=false`
 must produce none of those effects. The task has completed its bounded
 read-only Hook-discovery comparison, operator-guided FeatureSpec, fresh source
 materialization, one diagnostic Runtime, a sufficient EvidencePack revision,
-and an evidence-bound Implementation Plan. PatchProposal, deterministic
-ProposalReview, successful no-write Dry-run, and approved isolated Apply now
-exist. The run-local materialized target contains the exact approved bytes.
-Build and product Runtime acceptance remain pending; this is not an Agent
-Harness Migration Boundary.
+and an evidence-bound Implementation Plan. The first PatchProposal,
+deterministic Review, no-write Dry-run, and isolated Apply remain immutable
+historical evidence, but later human semantic review rejected those bytes
+before Build. A new three-change repair Proposal and full preapproval unified
+diff now exist without a source write. Human semantic approval, Apply, Build,
+and product Runtime acceptance remain pending; this is not an Agent Harness
+Migration Boundary.
 
 Separately authorized local Proposal continuation
 `sfp_qwen36_27b_001` revalidated the exact four upstream Artifact hashes,
@@ -211,6 +213,64 @@ No temporary file remained, no model or upstream stage ran, and the graph
 stopped before Build. No Build, Runtime, Evaluation, or terminal Artifact
 exists. A later real Build requires separate authorization and must bind these
 exact applied bytes.
+
+Human semantic review subsequently rejected that isolated diff before Build:
+it did not create a visible yellow X, emitted a false success marker, omitted
+the direct `ES_Hitreact.ActivateState` implementation, used the wrong audio
+path, and replaced existing feedback behavior. The applied run-local bytes
+remain immutable execution evidence but are no longer the selected
+implementation.
+
+Read-only root-cause replay proved why the old Review passed. Patch Generation
+received allowed bindings and evidence but not the complete three-change Plan;
+its response contained only `chg_001/edit_binding_001`.
+`BindingResolver.validate_proposal_changes()` and ProposalReview validated that
+returned subset without requiring missing Plan units, and Generator source
+locality accepted `before_text` from any supplied evidence excerpt. The old
+change therefore used source outside `edit_binding_001` while omitting
+`chg_002/edit_binding_002` and `chg_003/edit_binding_003`.
+
+Commits `d71f255` and `b31d7bc` implement the bounded control repair. Generator
+input now includes compact required Plan units; generation fails unless the
+exact `(change_id, edit_binding_id)` set is returned; source text must come
+from the selected binding's evidence. ProposalReview repeats both checks.
+`ExactTextPatchApplier` enforces the bound target span, produces a full unified
+diff with raw SHA256 and correct line statistics before write, and performs a
+lexical C# delimiter check. The CLI displays those facts before exact approval.
+The focused command
+`python -m pytest tests\unit\test_patch_code_generator.py
+tests\unit\test_proposal_review.py tests\unit\test_patch_apply.py
+tests\unit\test_local_entry.py tests\unit\test_workflow_graph.py -q`
+passes `186` tests in `21.93s`.
+
+The one newly authorized local 4B attempt `sfp_qwen3_4b_repair_002` timed out
+after 600 seconds before parser entry. It made one loopback-only call, used no
+fallback or retry, and wrote no Proposal or source. No-model repair run
+`sfp_manual_repair_003` then stopped on a driver signature error before
+Proposal. Run `sfp_manual_repair_004` produced a complete three-change
+Proposal, and the existing target-alignment rule correctly returned
+`revise_proposal` because its generic repair rationale omitted the FeatureSpec
+target behavior. Both failed runs remain preserved.
+
+Run `sfp_manual_repair_005` inherited the authoritative Plan rationale and used
+the same LangGraph, ArtifactStore, Binding Registry, domain policy, Generator
+validation, and ProposalReviewer without calling a model. PatchProposal
+`d3737a8679c9e64fe7c6ea13985334419810b58799d4cb477aade842f9e09a3a`
+contains exactly `chg_001/edit_binding_001`,
+`chg_002/edit_binding_002`, and `chg_003/edit_binding_003`.
+ProposalReview
+`e50f938ae7317fc959f20df8366b6192e8d9a10ac163c1105b3267f50e5fbe1`
+returned `approve_dry_run` with no blocking finding. The no-write projection
+created an 8,805-byte unified diff for only
+`Patches/HitFeedbackBehaviorPatch.cs`: 173 insertions, zero deletions,
+SHA256 `6164c0fb966321badd69f3b1e63cd2c3c4e5153c1c28d4578daa1cde55d1fafe`,
+and future exact approval hash
+`sha256:c9e7903739f5b99422a6b6b130a6bbb0acfba41d47e6d2a4148ad33f3469cdaa`.
+All three binding-span checks and the lexical delimiter check passed. The
+materialized source remains at
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`;
+model calls, external disclosure, source writes, Build, and Runtime are zero.
+Current state is `awaiting_human_semantic_approval`.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

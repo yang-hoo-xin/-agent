@@ -19,9 +19,9 @@ request
 -> live target evidence
 -> implementation bindings
 -> generated patch
--> proposal review
--> no-write dry-run
--> exact-diff approval
+-> complete Plan/binding deterministic proposal review
+-> no-write unified diff and low-cost static checks
+-> human semantic review and exact-diff approval
 -> isolated apply
 -> real build
 -> required verification, repair, or explicit blocked result
@@ -231,6 +231,51 @@ The preserved source lineage was not changed, no temporary patch file
 remained, and no Build, Runtime, Evaluation, or terminal Artifact was
 produced. This proves only the exact approved isolated source write. A real
 Build requires separate authorization and verification.
+
+Subsequent human semantic review rejected that applied run-local diff before
+Build. The immutable Apply remains evidence that the old bytes were written
+only in isolation; it is not an accepted implementation and grants no Build
+authority. The rejection exposed a general admission defect: Patch Generation
+had not received the complete Implementation Plan change set, accepted
+`before_text` from any evidence excerpt instead of the selected edit binding,
+and ProposalReview checked only the returned subset. The one-change Proposal
+therefore omitted `chg_002/edit_binding_002` and
+`chg_003/edit_binding_003`, crossed the selected binding for `chg_001`, and
+still reached an approving Review after the separate domain-context repair.
+
+The bounded repair keeps the same graph and Artifact contracts. Patch
+Generation now receives compact required change units and must return exactly
+one `(change_id, edit_binding_id)` pair for every planned change.
+ProposalReview independently enforces complete Plan coverage and binding-local
+source. The exact-text applier additionally enforces target-span locality,
+builds a full unified diff before any write, reports real insertion/deletion
+counts and raw diff SHA256, and runs a low-cost C# delimiter check whose
+recorded limitation is that it does not resolve symbols, types, overloads, or
+all control flow. The CLI displays those pre-write facts before requesting the
+exact approval hash. Focused Generator, Review, Apply, local-entry, and Workflow
+tests pass `186` cases.
+
+One new loopback-only 4B repair attempt
+`sfp_qwen3_4b_repair_002` timed out at its single 600-second boundary before
+parser entry and produced no Proposal. No retry or fallback occurred.
+No-model run `sfp_manual_repair_005` then reused the existing FeatureSpec,
+EvidencePack, Implementation Plan, domain policy, LangGraph, and ArtifactStore.
+It produced three-change PatchProposal
+`d3737a8679c9e64fe7c6ea13985334419810b58799d4cb477aade842f9e09a3a`
+and approving ProposalReview
+`e50f938ae7317fc959f20df8366b6192e8d9a10ac163c1105b3267f50e5fbe1`.
+Its preapproval no-write projection changes only
+`Patches/HitFeedbackBehaviorPatch.cs`, with three change units, 173 insertions,
+zero deletions, unified-diff SHA256
+`6164c0fb966321badd69f3b1e63cd2c3c4e5153c1c28d4578daa1cde55d1fafe`,
+and future exact-approval hash
+`sha256:c9e7903739f5b99422a6b6b130a6bbb0acfba41d47e6d2a4148ad33f3469cdaa`.
+All three binding-span checks and the lexical C# check passed. The source
+remains at SHA256
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`;
+no model, external disclosure, source write, Build, or Runtime occurred. The
+current stop is human semantic review of the full diff. Approval of these new
+bytes has not been given.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
