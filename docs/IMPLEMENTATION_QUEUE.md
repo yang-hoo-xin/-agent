@@ -206,21 +206,34 @@ exact_evidence:
   exactly. Bound identity
   1680f893d40dea804b3bb190ab31c6663a9a3c4913fa23c8d8651ea5436b90b9
   admits 17866 + 8192 = 26058 inside num_ctx 32768; drift blocks before HTTP.
-  Prepared run sfp_qwen3_4b_002 has not been executed.
+  Separately authorized run sfp_qwen3_4b_002 then revalidated those exact
+  identities and made one loopback-only call. The 62186-byte request had
+  SHA256
+  7740a890725b648fa0aef3265d7bb39c12df4e7ecbf17608b9a795b9ea211f74,
+  completed in about 182.5 seconds, and reported 17866 prompt plus 1344
+  completion tokens. Patch parsing succeeded and wrote PatchProposal
+  63b21873458088d8c26a44acc5a0f6d428967d5a5848d5899713f7be2ff2b67d.
+  ProposalReview
+  8c24dca68f1dace6e971f5e98efc608ed2c54ccf3c4519e1c2959c3f16ddb258
+  returned blocked_scope_risk with no allowed next stage. The displayed target
+  Patches/HitFeedbackBehaviorPatch.cs was outside the GTFO policy's
+  root-qualified allowed paths, and review identified the marker-free branch
+  root rather than the run-local materialized project, so the GameProfile was
+  unsupported. No target source or later-stage Artifact was written.
 affected_coverage_ids:
   GOV-005, PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
-  PROP-002, EXEC-002, EXEC-003, EXEC-005, EXEC-006
+  PROP-002, REVIEW-001, DOM-004, DOM-006, EXEC-002, EXEC-003, EXEC-005,
+  EXEC-006
 dependencies:
   The EvidencePack, Implementation Plan, fresh binding gates, and bounded
-  Proposal context budget are complete for this revision. Proposal remains
-  absent. The 27B profile timed out under material CPU/system-memory offload;
-  the synthetic probes verified the local Provider and actual product Patch
-  parser. The first real 4B run then exposed and triggered the bounded
-  context-admission repair described above. Semantic Proposal quality remains
-  unproven and is owned by a later real Proposal plus ProposalReview boundary.
-  The prepared bound-context continuation requires separate authorization,
-  must reuse the same single StateGraph, and must not repeat upstream planning
-  or evidence work.
+  Proposal context budget, bound local Provider call, and PatchProposal are
+  complete for this revision. The Proposal is blocked before Dry-run by the
+  deterministic domain-policy context described above. Repair must reuse the
+  existing StateGraph, GTFOAdapter, DomainReviewPolicy, Artifact refs, and
+  ProposalReview boundary. It must preserve root-qualified allowed paths,
+  resolve the policy from the authoritative materialized project identity, and
+  re-review the existing Proposal without another model call or repeated
+  upstream planning/evidence work.
   Existing review, exact approval, apply, build, and product Runtime gates
   remain unchanged.
 permissions_and_disclosure:
@@ -228,17 +241,28 @@ permissions_and_disclosure:
   restored. One local-only Proposal model call was authorized and consumed;
   two later synthetic-only 4B Provider probes were also separately authorized
   and consumed. One real local 4B Proposal call was then authorized and
-  consumed without producing a Proposal. None disclosed externally. Current
-  admission authorizes no additional model call, real Proposal, source write,
-  Apply, Build, game-directory copy, GTFO launch, screenshot capture, or
-  product-behavior claim. Each later side effect retains its existing separate
-  approval boundary.
+  consumed without producing a Proposal. The separately authorized
+  sfp_qwen3_4b_002 call was also consumed and produced the blocked Proposal and
+  Review described above. None disclosed externally. Current admission
+  authorizes no additional model call, source write, Dry-run, Apply, Build,
+  game-directory copy, GTFO launch, screenshot capture, or product-behavior
+  claim. Each later side effect retains its existing separate approval
+  boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
   The Implementation Plan resolves exactly one future writable target:
   Patches/HitFeedbackBehaviorPatch.cs in a fresh materialization of that
   lineage. Plugin.cs and the preserved lineage remain read-only.
 focused_verification:
+  python -B
+  workspaces/stagger_feedback_proposal_001/proposal_continuation_driver.py
+  --profile qwen3-4b --preflight-only passed with 17 snippets, 25098
+  characters, zero omissions, and no forbidden later Artifact.
+  The authorized non-preflight command completed with model_call_count=1,
+  patch_proposal_status=success, proposal_review_status=blocked,
+  proposal_review_decision=blocked_scope_risk,
+  actual_write_performed=false, external_disclosure_occurred=false, and no
+  forbidden later Artifact.
   python -m pytest tests/unit/test_ollama_llm.py
   tests/unit/test_patch_code_generator.py tests/unit/test_local_entry.py
   -q --tb=short passed 141 tests in 1.56s after the bound context repair.
@@ -253,15 +277,13 @@ stop_condition:
   Stop with immutable failed runs sfp_qwen36_27b_001,
   sfp_qwen3_4b_001, and
   provider_probe_qwen3_4b_001 plus probe-outer-assertion failure
-  provider_probe_qwen3_4b_002. Do not reinterpret any run as a PatchProposal
-  and do not run another synthetic probe automatically. The next model call
-  requires new explicit authorization for prepared real continuation
-  sfp_qwen3_4b_002. It repeats only fresh binding admission plus Proposal/Review
-  and stops if request identity, source, assembly, Artifact, or binding identity
-  drifts. After accepted two-mode product Runtime evidence, return to the
-  product mainline and perform Harness re-admission only if this slice exposes
-  a concrete generic Harness failure.
-status: implementation_plan_created_proposal_absent_bound_context_replay_ready_authorization_pending
+  provider_probe_qwen3_4b_002. Preserve sfp_qwen3_4b_002 as the immutable
+  completed Proposal/blocked Review run. Do not call a model again. The next
+  bounded implementation stops after the existing Proposal is re-reviewed
+  under a correctly bound GTFO project/domain policy. It must not add
+  workspaces to generic allowed roots, weaken GameProfile or path admission,
+  enter Dry-run, write source, Build, or launch GTFO.
+status: proposal_created_review_blocked_domain_policy_context_repair_required
 automation_claim: not_proven
 ```
 

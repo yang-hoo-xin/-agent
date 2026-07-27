@@ -14,8 +14,8 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: evidence_bound_plan_ready_proposal_absent
-local_proposal_provider_status: real_4b_timeout_bound_context_replay_ready_authorization_pending
+stagger_implementation_plan_status: evidence_bound_plan_ready_proposal_created_review_blocked
+local_proposal_provider_status: real_4b_completed_review_blocked_scope_risk
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -28,7 +28,8 @@ player's hit actually produces an enemy hit reaction. `General.Enabled=false`
 must produce none of those effects. The task has completed its bounded
 read-only Hook-discovery comparison, operator-guided FeatureSpec, fresh source
 materialization, one diagnostic Runtime, a sufficient EvidencePack revision,
-and an evidence-bound Implementation Plan. Proposal, source modification,
+and an evidence-bound Implementation Plan. A PatchProposal now exists, but
+deterministic ProposalReview blocks it before Dry-run. Source modification,
 Build, and product Runtime acceptance remain pending; this is not an Agent
 Harness Migration Boundary.
 
@@ -118,8 +119,31 @@ request identity is
 `1680f893d40dea804b3bb190ab31c6663a9a3c4913fa23c8d8651ea5436b90b9`.
 The 17,866 observed prompt tokens plus 8,192 output tokens require 26,058 and
 are admitted within `num_ctx=32768`; identity drift blocks before HTTP.
-Affected tests passed 141 cases. Prepared run `sfp_qwen3_4b_002` remains
-unexecuted pending separate authorization.
+Affected tests passed 141 cases.
+
+Separately authorized run `sfp_qwen3_4b_002` revalidated all four upstream
+Artifacts, all three edit bindings, source snapshot
+`E82C26667A82CB207FBFF0B9DCB2198A8CC2B1DF3BF52FE510C59BF3B8EBC2E0`,
+the selected Runtime assembly, and all 17 Proposal snippets before one local
+4B call. Its 62,186-byte request had SHA256
+`7740a890725b648fa0aef3265d7bb39c12df4e7ecbf17608b9a795b9ea211f74`,
+used `num_ctx=32768`, and matched bound prompt identity
+`1680f893d40dea804b3bb190ab31c6663a9a3c4913fa23c8d8651ea5436b90b9`.
+The response completed in about 182.5 seconds with 17,866 prompt tokens and
+1,344 completion tokens. Patch parsing succeeded and produced PatchProposal
+`63b21873458088d8c26a44acc5a0f6d428967d5a5848d5899713f7be2ff2b67d`.
+ProposalReview
+`8c24dca68f1dace6e971f5e98efc608ed2c54ccf3c4519e1c2959c3f16ddb258`
+returned `blocked_scope_risk`, `allowed_next_stage=null`: the relative target
+`Patches/HitFeedbackBehaviorPatch.cs` did not match the GTFO policy's
+root-qualified allowed paths, and review resolved the marker-free branch root
+rather than the run-local materialized GTFO project, yielding an
+`unsupported` GameProfile. The run made exactly one local model call, entered
+the parser, disclosed nothing externally, wrote no target source, and emitted
+no Dry-run, Apply, Build, Runtime, Evaluation, or terminal Artifact. It must
+not be retried or sent to another model. The next bounded action is a no-model
+repair of ProposalReview domain-policy context and path identity, without
+adding `workspaces` to generic allowed roots or weakening the GameProfile gate.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

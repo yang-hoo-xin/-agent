@@ -156,8 +156,27 @@ excludes only `num_ctx`. Reconstruction of `sfp_qwen3_4b_001` matched its
 recorded provider-body SHA256 and byte count exactly. The bound observation
 therefore admits the same prompt plus the 8,192 output budget as 26,058 tokens
 inside `num_ctx=32768`, while any input/schema/profile drift blocks before
-HTTP. Focused affected tests pass. No retry is authorized by this repair;
-Stagger remains at the Implementation Plan with Proposal absent.
+HTTP. Focused affected tests pass.
+
+Separately authorized continuation `sfp_qwen3_4b_002` then used that exact
+bound identity for one loopback-only call to the installed
+`qwen3:4b-instruct` digest. The call completed in about 182.5 seconds, reported
+17,866 prompt tokens and 1,344 completion tokens, entered the Patch parser, and
+wrote PatchProposal
+`63b21873458088d8c26a44acc5a0f6d428967d5a5848d5899713f7be2ff2b67d`.
+Deterministic ProposalReview
+`8c24dca68f1dace6e971f5e98efc608ed2c54ccf3c4519e1c2959c3f16ddb258`
+returned `blocked_scope_risk` with no allowed next stage. It found the
+proposal path `Patches/HitFeedbackBehaviorPatch.cs` outside the GTFO policy's
+root-qualified allowed paths and found that review resolved the current branch
+root to an `unsupported` GameProfile, even though the bound source was the
+run-local materialization of the preserved GTFO lineage. This is a
+continuation/domain-policy context mismatch, not authority to weaken path or
+GameProfile gates. The run made exactly one model call, disclosed nothing
+externally, wrote no target source, and produced no Dry-run, Apply, Build,
+Runtime, Evaluation, or terminal Artifact. No further model call is authorized;
+the existing Proposal may be reconsidered only through a separately bounded
+no-model review-context repair and a fresh deterministic ProposalReview.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
