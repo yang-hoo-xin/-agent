@@ -102,6 +102,46 @@ def test_gtfo_domain_policy_allows_safe_root_for_dry_run_review() -> None:
     assert review.allowed_next_stage == "dry_run_apply"
 
 
+def test_gtfo_domain_policy_binds_project_relative_path_to_exact_target_root(
+    tmp_path: Path,
+) -> None:
+    policy = (
+        build_gtfo_profile(tmp_path)
+        .review_policy()
+        .bind_target_root("generated_mods/BetterHitFeedback")
+    )
+
+    allowed = policy.review_path("Patches/HitFeedbackBehaviorPatch.cs")
+    other_project = policy.review_path("generated_mods/OtherMod/Plugin.cs")
+    forbidden = policy.review_path("interop/GTFO.API.dll")
+    absolute = policy.review_path(r"C:\outside\Plugin.cs")
+
+    assert policy.project_root == str(tmp_path.resolve())
+    assert policy.target_root == "generated_mods/BetterHitFeedback"
+    assert allowed.allowed is True
+    assert other_project == type(other_project)(
+        allowed=False,
+        rule_id="scope_boundary",
+        reason="Target path is outside bound domain target root.",
+    )
+    assert forbidden.allowed is False
+    assert forbidden.rule_id == "forbidden_paths"
+    assert absolute.allowed is False
+    assert absolute.rule_id == "forbidden_paths"
+
+
+def test_gtfo_domain_policy_rejects_disallowed_target_root() -> None:
+    policy = build_gtfo_profile(".").review_policy()
+
+    with pytest.raises(
+        ValueError,
+        match="Domain target root is not allowed by the domain policy",
+    ):
+        policy.bind_target_root("workspaces/materialized_source/BetterHitFeedback")
+    with pytest.raises(ValueError, match="Domain target root must be relative"):
+        policy.bind_target_root(r"C:\generated_mods\BetterHitFeedback")
+
+
 def test_domain_adapter_registry_accepts_new_profile_without_workflow_change(
     tmp_path: Path,
 ) -> None:

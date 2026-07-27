@@ -14,8 +14,8 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: evidence_bound_plan_ready_proposal_created_review_blocked
-local_proposal_provider_status: real_4b_completed_review_blocked_scope_risk
+stagger_implementation_plan_status: evidence_bound_plan_proposal_review_approved_dry_run_pending
+local_proposal_provider_status: real_4b_completed_no_model_rereview_approved
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -28,10 +28,11 @@ player's hit actually produces an enemy hit reaction. `General.Enabled=false`
 must produce none of those effects. The task has completed its bounded
 read-only Hook-discovery comparison, operator-guided FeatureSpec, fresh source
 materialization, one diagnostic Runtime, a sufficient EvidencePack revision,
-and an evidence-bound Implementation Plan. A PatchProposal now exists, but
-deterministic ProposalReview blocks it before Dry-run. Source modification,
-Build, and product Runtime acceptance remain pending; this is not an Agent
-Harness Migration Boundary.
+and an evidence-bound Implementation Plan. PatchProposal and deterministic
+ProposalReview now exist; the current Review permits no-write Dry-run, but
+Dry-run has not been authorized or executed. Source modification, Build, and
+product Runtime acceptance remain pending; this is not an Agent Harness
+Migration Boundary.
 
 Separately authorized local Proposal continuation
 `sfp_qwen36_27b_001` revalidated the exact four upstream Artifact hashes,
@@ -144,6 +145,34 @@ no Dry-run, Apply, Build, Runtime, Evaluation, or terminal Artifact. It must
 not be retried or sent to another model. The next bounded action is a no-model
 repair of ProposalReview domain-policy context and path identity, without
 adding `workspaces` to generic allowed roots or weakening the GameProfile gate.
+
+Authorized no-model run `sfp_qwen3_4b_002_rereview_001` implemented and
+real-exercised that bounded repair. `DomainReviewPolicy.bind_target_root(...)`
+now projects project-relative Proposal paths under exactly one caller-supplied
+domain target root. A bound absolute path must remain inside the exact
+`project_root`; another allowed project root, traversal, forbidden path, or
+disallowed target root still blocks. `build_graph(domain_review_policy=...)`
+injects this read-only Review context and rejects simultaneous explicit
+`domain_adapter_registry` configuration, leaving default graph resolution
+unchanged.
+
+The run revalidated the four upstream Artifacts, all three edit bindings,
+selected Runtime assembly, existing PatchProposal
+`63b21873458088d8c26a44acc5a0f6d428967d5a5848d5899713f7be2ff2b67d`,
+prior blocked Review
+`8c24dca68f1dace6e971f5e98efc608ed2c54ccf3c4519e1c2959c3f16ddb258`,
+and the unchanged materialized source. It identified that source as
+`gtfo/experimental`, uniquely derived
+`generated_mods/BetterHitFeedback` from exact FeatureSpec lineage
+`r/007b1b58/generated_mods/BetterHitFeedback`, and admitted all three relative
+bindings under the unchanged GTFO allowed roots. New ProposalReview
+`fa0557a0e9ceea114f19e84cd062d019907a0454cc18237ca85d4e6161f70dc1`
+returned `approve_dry_run`, `allowed_next_stage=dry_run_apply`, no required
+change, and only the existing manual-review warning. The run made zero model
+calls, repeated no upstream stage, preserved the old Review, changed no source,
+and emitted no Dry-run or later Artifact. Related DomainAdapter,
+ProposalReview, and Workflow tests passed 92 cases. Dry-run requires a later
+explicit authorization.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

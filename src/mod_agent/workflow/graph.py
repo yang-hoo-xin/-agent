@@ -109,6 +109,7 @@ def build_graph(
     dense_required: bool = False,
     dense_top_k: int | None = None,
     domain_adapter_registry: DomainAdapterRegistry | None = None,
+    domain_review_policy: DomainReviewPolicy | None = None,
     build_result_factory: BuildResultFactory | None = None,
     runtime_evidence_factory: RuntimeEvidenceFactory | None = None,
     allow_game_launch: bool = False,
@@ -162,6 +163,11 @@ def build_graph(
         raise ValueError(
             "proposal_critic requires critic_requirement='required'; "
             "implicit triggering is not supported."
+        )
+    if domain_review_policy is not None and domain_adapter_registry is not None:
+        raise ValueError(
+            "domain_review_policy and domain_adapter_registry cannot both "
+            "be supplied."
         )
 
     stub_runner = StubNodeRunner(artifact_store)
@@ -245,6 +251,7 @@ def build_graph(
                 state,
                 artifact_store,
                 domain_adapter_registry=effective_domain_registry,
+                domain_review_policy=domain_review_policy,
                 require_executable_patch=patch_change_factory is not None,
                 proposal_critic=proposal_critic,
                 critic_requirement=critic_requirement,
@@ -779,6 +786,7 @@ def _run_review_proposal(
     artifact_store: ArtifactStore,
     *,
     domain_adapter_registry: DomainAdapterRegistry | None = None,
+    domain_review_policy: DomainReviewPolicy | None = None,
     require_executable_patch: bool = False,
     proposal_critic: ProposalCritic | None = None,
     critic_requirement: CriticRequirement = "not_required",
@@ -847,9 +855,13 @@ def _run_review_proposal(
         artifact_hashes=dict(state["artifact_hashes"]),
         critic_assessment=critic_payload,
         require_critic_assessment=critic_requirement == "required",
-        domain_policy=_domain_review_policy_from_state(
-            state,
-            domain_adapter_registry,
+        domain_policy=(
+            domain_review_policy
+            if domain_review_policy is not None
+            else _domain_review_policy_from_state(
+                state,
+                domain_adapter_registry,
+            )
         ),
         permission_level="dry_run_write",
         require_executable_patch=require_executable_patch,

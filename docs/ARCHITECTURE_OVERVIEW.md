@@ -133,7 +133,32 @@ upstream stage, and restored the exact deployed DLL. This real-exercises the
 bounded multi-generation negative path; it does not add automatic retry,
 semantic diagnosis, another provider, or generalized Harness behavior.
 
-### 2.3 V2 Intelligence Experiment And Productization Boundary
+### 2.3 Bound ProposalReview Project Context
+
+Current maturity: `implemented` for explicit, read-only ProposalReview context
+on a materialized domain project.
+
+`DomainReviewPolicy` retains the GameProfile status, allowed roots, forbidden
+paths, and project root. A caller may bind one exact domain target root so that
+project-relative Proposal paths are reviewed as root-qualified domain paths.
+The bound target root must itself pass the existing policy. Root-qualified
+paths for another project, traversal, forbidden paths, and absolute paths
+outside the bound materialized project remain blocked.
+
+`build_graph(domain_review_policy=...)` supplies this policy only to the
+existing `review_proposal` node. It is mutually exclusive with an explicitly
+supplied DomainAdapter registry, adds no graph node or route, and does not
+authorize Dry-run or writes. Default graph construction continues to resolve
+DomainPolicy through the existing registry.
+
+Run `sfp_qwen3_4b_002_rereview_001` bound an exact hash-validated materialized
+GTFO project plus target root `generated_mods/BetterHitFeedback`, reused the
+existing PatchProposal, and produced an approving ProposalReview with zero
+model calls and no upstream repetition. It stopped before Dry-run. This proves
+the bounded review-context path, not generic workspace remapping or broader
+DomainAdapter onboarding.
+
+### 2.4 V2 Intelligence Experiment And Productization Boundary
 
 The control-plane diagram above is the implemented delivery baseline. It is not
 yet evidence of one canonical V2 runtime path. The diagram below records the

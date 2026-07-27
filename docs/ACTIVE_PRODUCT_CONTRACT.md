@@ -178,6 +178,26 @@ Runtime, Evaluation, or terminal Artifact. No further model call is authorized;
 the existing Proposal may be reconsidered only through a separately bounded
 no-model review-context repair and a fresh deterministic ProposalReview.
 
+Authorized no-model run `sfp_qwen3_4b_002_rereview_001` completed that repair
+without changing the existing Proposal or either source tree. The existing
+`DomainReviewPolicy` can now bind one explicit target root while preserving its
+allowed-root, forbidden-path, traversal, absolute-path, and GameProfile gates;
+`build_graph()` accepts that explicit policy only as an alternative to its
+existing DomainAdapter registry resolution. The run identified the exact
+materialized BetterHitFeedback project as `gtfo/experimental` and uniquely
+projected FeatureSpec lineage
+`r/007b1b58/generated_mods/BetterHitFeedback` to policy target root
+`generated_mods/BetterHitFeedback`. All three project-relative edit bindings
+then passed the unchanged GTFO root policy. Re-review reused PatchProposal
+`63b21873458088d8c26a44acc5a0f6d428967d5a5848d5899713f7be2ff2b67d`
+and wrote ProposalReview
+`fa0557a0e9ceea114f19e84cd062d019907a0454cc18237ca85d4e6161f70dc1`
+with `approve_dry_run` and one manual-review warning. The prior blocked Review
+remains immutable. The run made zero model calls, repeated no upstream stage,
+changed no source, and stopped before Dry-run with no Apply, Build, Runtime,
+Evaluation, or terminal Artifact. `approve_dry_run` is review evidence, not
+permission to execute Dry-run or any later stage.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove

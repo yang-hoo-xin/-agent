@@ -11,6 +11,7 @@ import pytest
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
+from src.mod_agent.domain import DomainAdapterRegistry, build_gtfo_profile
 from src.mod_agent.evidence import EvidencePack, FakeDenseRetrievalProvider
 from src.mod_agent.execution import ExactDiffApprovalRejectedError
 from src.mod_agent.knowledge import (
@@ -58,6 +59,23 @@ def test_external_evaluation_requirement_requires_factory(tmp_path: Path) -> Non
         build_graph(
             ArtifactStore(tmp_path / "artifacts"),
             require_external_evaluation=True,
+        )
+
+
+def test_explicit_domain_policy_rejects_simultaneous_registry(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "domain_review_policy and domain_adapter_registry cannot both "
+            "be supplied"
+        ),
+    ):
+        build_graph(
+            ArtifactStore(tmp_path / "artifacts"),
+            domain_review_policy=build_gtfo_profile(tmp_path).review_policy(),
+            domain_adapter_registry=DomainAdapterRegistry(),
         )
 
 
@@ -2489,6 +2507,48 @@ def test_default_graph_uses_domain_policy_for_unsupported_domain(tmp_path: Path)
     review = _artifact_data(store, result, "proposal_review")
     assert review["decision"] == "blocked_requires_human"
     assert any(finding["rule_id"] == "domain_profile" for finding in review["findings"])
+
+
+def test_graph_uses_explicit_bound_domain_policy_for_project_relative_paths(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    knowledge_database = _knowledge_with_load_symbol(tmp_path)
+    policy = (
+        build_gtfo_profile(tmp_path / "source")
+        .review_policy()
+        .bind_target_root("mods/BetterHitFeedback")
+    )
+    graph = build_graph(
+        store,
+        knowledge_database=knowledge_database,
+        domain_review_policy=policy,
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+        interrupt_after=["review_proposal"],
+    )
+    state = create_initial_state(
+        run_id="run_explicit_domain_policy",
+        request_id="req_explicit_domain_policy",
+        user_request="make Load enable diagnostics",
+        target_domain="unsupported",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(
+        state,
+        {"configurable": {"thread_id": "run_explicit_domain_policy"}},
+    )
+
+    assert result["current_stage"] == "proposal_review"
+    assert result["review_summary"]["allowed_next_stage"] == "dry_run_apply"
+    assert "proposal_review" in result["artifacts"]
+    assert "dry_run_result" not in result["artifacts"]
+    review = _artifact_data(store, result, "proposal_review")
+    assert review["decision"] == "approve_dry_run"
+    assert not any(
+        finding["rule_id"] in {"domain_profile", "scope_boundary"}
+        for finding in review["findings"]
+    )
 
 
 def _artifact_data(

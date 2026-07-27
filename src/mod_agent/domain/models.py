@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from dataclasses import dataclass, replace
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, Protocol
 
 from src.mod_agent.build import BuildProfile
@@ -144,6 +144,7 @@ class DomainProfile:
             status=self.status,
             allowed_roots=self.allowed_roots,
             forbidden_paths=self.forbidden_paths,
+            project_root=self.project_root,
         )
 
 
@@ -164,12 +165,71 @@ class DomainReviewPolicy:
     status: GameProfileStatus
     allowed_roots: tuple[str, ...]
     forbidden_paths: tuple[str, ...]
+    project_root: str = "."
+    target_root: str | None = None
 
     def allows_runtime_change(self) -> bool:
         return self.status in {"experimental", "supported"}
 
+    def bind_target_root(self, target_root: str) -> "DomainReviewPolicy":
+        """Bind project-relative proposal paths to one allowed domain root."""
+
+        if _is_absolute_path(target_root):
+            raise ValueError("Domain target root must be relative.")
+        normalized = _normalize_path(target_root)
+        if normalized in {"", "."}:
+            raise ValueError("Domain target root must be a non-empty path.")
+        decision = self._review_normalized_path(normalized)
+        if not decision.allowed:
+            raise ValueError(
+                "Domain target root is not allowed by the domain policy: "
+                f"{decision.reason}"
+            )
+        return replace(self, target_root=normalized)
+
     def review_path(self, path: str) -> DomainPathDecision:
-        normalized = _normalize_path(path)
+        if self.target_root and _is_absolute_path(path):
+            try:
+                relative_path = Path(path).resolve().relative_to(
+                    Path(self.project_root).resolve()
+                )
+            except ValueError:
+                return DomainPathDecision(
+                    allowed=False,
+                    rule_id="forbidden_paths",
+                    reason=(
+                        "Domain policy blocks absolute target paths outside "
+                        "the bound project root."
+                    ),
+                )
+            normalized = _normalize_path(relative_path.as_posix())
+        else:
+            normalized = _normalize_path(path)
+        unscoped_forbidden = self._review_forbidden_path(normalized)
+        if unscoped_forbidden is not None:
+            return unscoped_forbidden
+
+        if self.target_root:
+            if _matches_path(normalized, self.target_root):
+                scoped_path = normalized
+            elif any(
+                _matches_path(normalized, root) for root in self.allowed_roots
+            ):
+                return DomainPathDecision(
+                    allowed=False,
+                    rule_id="scope_boundary",
+                    reason="Target path is outside bound domain target root.",
+                )
+            else:
+                scoped_path = _normalize_path(f"{self.target_root}/{normalized}")
+            return self._review_normalized_path(scoped_path)
+
+        return self._review_normalized_path(normalized)
+
+    def _review_forbidden_path(
+        self,
+        normalized: str,
+    ) -> DomainPathDecision | None:
         parts = set(PurePosixPath(normalized).parts)
         if ".." in parts:
             return DomainPathDecision(
@@ -184,6 +244,12 @@ class DomainReviewPolicy:
                     rule_id="forbidden_paths",
                     reason=f"Domain policy forbids {blocked}.",
                 )
+        return None
+
+    def _review_normalized_path(self, normalized: str) -> DomainPathDecision:
+        forbidden = self._review_forbidden_path(normalized)
+        if forbidden is not None:
+            return forbidden
         if self.allowed_roots and not any(
             _matches_path(normalized, root) for root in self.allowed_roots
         ):
@@ -249,6 +315,14 @@ class DomainAdapterRegistry:
 
 def _normalize_path(path: str) -> str:
     return str(PurePosixPath(path.replace("\\", "/"))).strip("/")
+
+
+def _is_absolute_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    return (
+        PurePosixPath(normalized).is_absolute()
+        or PureWindowsPath(path).is_absolute()
+    )
 
 
 def _matches_path(path: str, boundary: str) -> bool:

@@ -220,6 +220,23 @@ exact_evidence:
   root-qualified allowed paths, and review identified the marker-free branch
   root rather than the run-local materialized project, so the GameProfile was
   unsupported. No target source or later-stage Artifact was written.
+  Authorized no-model run sfp_qwen3_4b_002_rereview_001 then implemented the
+  bounded context repair. DomainReviewPolicy now binds one explicit target
+  root while retaining allowed roots, forbidden paths, traversal rejection,
+  absolute-path containment, and GameProfile status. build_graph accepts this
+  explicit policy only as an alternative to an explicit DomainAdapter
+  registry. The run identified the exact materialized project as
+  gtfo/experimental and uniquely projected exact FeatureSpec lineage
+  r/007b1b58/generated_mods/BetterHitFeedback to target root
+  generated_mods/BetterHitFeedback. All three relative edit bindings passed.
+  It reused PatchProposal
+  63b21873458088d8c26a44acc5a0f6d428967d5a5848d5899713f7be2ff2b67d
+  and wrote ProposalReview
+  fa0557a0e9ceea114f19e84cd062d019907a0454cc18237ca85d4e6161f70dc1
+  with approve_dry_run, no required changes, and only the manual-review
+  warning. The old blocked Review remained immutable. No model or upstream
+  stage ran, source hashes remained unchanged, and no Dry-run or later
+  Artifact was created.
 affected_coverage_ids:
   GOV-005, PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
   PROP-002, REVIEW-001, DOM-004, DOM-006, EXEC-002, EXEC-003, EXEC-005,
@@ -227,13 +244,10 @@ affected_coverage_ids:
 dependencies:
   The EvidencePack, Implementation Plan, fresh binding gates, and bounded
   Proposal context budget, bound local Provider call, and PatchProposal are
-  complete for this revision. The Proposal is blocked before Dry-run by the
-  deterministic domain-policy context described above. Repair must reuse the
-  existing StateGraph, GTFOAdapter, DomainReviewPolicy, Artifact refs, and
-  ProposalReview boundary. It must preserve root-qualified allowed paths,
-  resolve the policy from the authoritative materialized project identity, and
-  re-review the existing Proposal without another model call or repeated
-  upstream planning/evidence work.
+  complete for this revision. The bounded domain-policy context repair and
+  deterministic re-review are also complete. The current ProposalReview allows
+  Dry-run, but no Dry-run permission has been granted and no diff has been
+  materialized for approval.
   Existing review, exact approval, apply, build, and product Runtime gates
   remain unchanged.
 permissions_and_disclosure:
@@ -243,11 +257,12 @@ permissions_and_disclosure:
   and consumed. One real local 4B Proposal call was then authorized and
   consumed without producing a Proposal. The separately authorized
   sfp_qwen3_4b_002 call was also consumed and produced the blocked Proposal and
-  Review described above. None disclosed externally. Current admission
-  authorizes no additional model call, source write, Dry-run, Apply, Build,
-  game-directory copy, GTFO launch, screenshot capture, or product-behavior
-  claim. Each later side effect retains its existing separate approval
-  boundary.
+  Review described above. The current turn also authorized and consumed one
+  no-model re-review, which wrote only the new ProposalReview and run-local
+  audit files. None disclosed externally. Current admission authorizes no
+  additional model call, source write, Dry-run, Apply, Build, game-directory
+  copy, GTFO launch, screenshot capture, or product-behavior claim. Each later
+  side effect retains its existing separate approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
   The Implementation Plan resolves exactly one future writable target:
@@ -263,6 +278,18 @@ focused_verification:
   proposal_review_decision=blocked_scope_risk,
   actual_write_performed=false, external_disclosure_occurred=false, and no
   forbidden later Artifact.
+  python -m pytest tests/unit/test_domain_adapter.py
+  tests/unit/test_proposal_review.py tests/unit/test_workflow_graph.py
+  -q --tb=short passed 92 tests in 17.40s after the domain-policy context
+  repair.
+  python -B
+  workspaces/stagger_feedback_proposal_001/proposal_rereview_driver.py
+  --preflight-only admitted gtfo/experimental project identity, exact
+  generated_mods/BetterHitFeedback target root, three edit bindings, the bound
+  Proposal, and prior Review with model_call_count=0.
+  The authorized non-preflight re-review returned approve_dry_run, wrote one
+  new ProposalReview revision, preserved the old Review and both source hashes,
+  repeated no upstream stage, and emitted no Dry-run or later Artifact.
   python -m pytest tests/unit/test_ollama_llm.py
   tests/unit/test_patch_code_generator.py tests/unit/test_local_entry.py
   -q --tb=short passed 141 tests in 1.56s after the bound context repair.
@@ -278,12 +305,12 @@ stop_condition:
   sfp_qwen3_4b_001, and
   provider_probe_qwen3_4b_001 plus probe-outer-assertion failure
   provider_probe_qwen3_4b_002. Preserve sfp_qwen3_4b_002 as the immutable
-  completed Proposal/blocked Review run. Do not call a model again. The next
-  bounded implementation stops after the existing Proposal is re-reviewed
-  under a correctly bound GTFO project/domain policy. It must not add
-  workspaces to generic allowed roots, weaken GameProfile or path admission,
-  enter Dry-run, write source, Build, or launch GTFO.
-status: proposal_created_review_blocked_domain_policy_context_repair_required
+  completed Proposal/blocked Review run and preserve
+  sfp_qwen3_4b_002_rereview_001 as the successful no-model Review revision.
+  Do not call a model again. Stop before Dry-run until a separate authorization
+  selects no-write diff validation. Later stages must retain exact Proposal,
+  Review, source, Artifact, approval, Build, and Runtime gates.
+status: proposal_review_approved_dry_run_authorization_pending
 automation_claim: not_proven
 ```
 
