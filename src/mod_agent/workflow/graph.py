@@ -116,6 +116,7 @@ def build_graph(
     use_default_proposal_git_binding: bool = True,
     evidence_pack_factory: EvidencePackFactory | None = None,
     patch_change_factory: PatchChangeFactory | None = None,
+    proposal_source_snippet_char_limit: int = 6000,
     proposal_critic: ProposalCritic | None = None,
     critic_requirement: CriticRequirement = "not_required",
     dry_run_factory: PatchExecutionFactory | None = None,
@@ -147,6 +148,12 @@ def build_graph(
         )
     if require_external_evaluation and evaluation_context_factory is None:
         raise ValueError("require_external_evaluation requires evaluation_context_factory")
+    if (
+        isinstance(proposal_source_snippet_char_limit, bool)
+        or not isinstance(proposal_source_snippet_char_limit, int)
+        or proposal_source_snippet_char_limit <= 0
+    ):
+        raise ValueError("proposal_source_snippet_char_limit must be a positive integer.")
     if critic_requirement not in {"not_required", "required"}:
         raise ValueError(
             "critic_requirement must be exactly 'not_required' or 'required'."
@@ -226,6 +233,7 @@ def build_graph(
                 artifact_store,
                 proposal_git_binding_factory=effective_proposal_git_binding_factory,
                 patch_change_factory=patch_change_factory,
+                source_snippet_char_limit=proposal_source_snippet_char_limit,
             ),
         ),
     )
@@ -681,6 +689,7 @@ def _run_generate_patch_proposal(
     *,
     proposal_git_binding_factory: ProposalGitBindingFactory | None = None,
     patch_change_factory: PatchChangeFactory | None = None,
+    source_snippet_char_limit: int = 6000,
 ) -> ModAgentState:
     if state["current_stage"] == "repair_plan" and "repair_plan" in state["artifacts"]:
         repair_plan = _read_artifact_data(state, artifact_store, "repair_plan")
@@ -710,6 +719,7 @@ def _run_generate_patch_proposal(
                 else None
             ),
             require_git_binding=proposal_git_binding_factory is not None,
+            source_snippet_char_limit=source_snippet_char_limit,
         )
         upstream_refs = [
             _artifact_ref_from_state(state, "implementation_plan"),

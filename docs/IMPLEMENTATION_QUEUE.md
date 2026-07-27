@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-26
+Last updated: 2026-07-27
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -139,21 +139,44 @@ exact_evidence:
   STAGGER_FEEDBACK_SHOWN exactly-once claim remain product Runtime obligations.
   The affected Planning, ArtifactStore, Artifact contract, Workflow, and
   ProposalReview suite passed 159 tests in 18.10s.
+  Authorized local Proposal continuation sfp_qwen36_27b_001 then revalidated
+  the exact Artifact, source, edit-binding, and selected Runtime assembly
+  identities. It exposed a deterministic Proposal context conflict before
+  consuming the model: the fixed 6000-character snippet budget omitted 15 of
+  17 required evidence refs, which ProposalReviewer necessarily blocked.
+  build_graph now accepts an explicit positive
+  proposal_source_snippet_char_limit while retaining the default 6000.
+  The run-specific 32768 limit preserved all 17 snippets and 25098 characters
+  with no omission blocker; a no-model continuation probe reached
+  proposal_review and produced no later-stage Artifact. The Workflow suite
+  passed 52 tests.
+  The one admitted loopback-only qwen3.6:27b call used exact digest
+  a50eda8ed977ab48a12431878896b27ffd5cef552c17af3317d9623b939a7f1e,
+  request body 62181 UTF-8 bytes, output budget 8192, num_ctx 131072, and
+  conservative required context 70373. It timed out at the explicit 1800.0
+  second provider boundary before a response or patch parser entry.
+  model_call_count=1, external_disclosure_occurred=false, and
+  actual_write_performed=false. No PatchProposal, ProposalReview, Dry-run,
+  Apply, Build, Runtime, or Evaluation Artifact was created. The failed run is
+  immutable and does not authorize a hidden retry.
 affected_coverage_ids:
   PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
-  EXEC-002, EXEC-003, EXEC-005, EXEC-006
+  PROP-002, EXEC-002, EXEC-003, EXEC-005, EXEC-006
 dependencies:
-  The EvidencePack and Implementation Plan gates are complete for this
-  revision. The next controlled stage is Proposal generation only after fresh
-  live-source and binding revalidation plus separate authorization for the
-  required model disclosure. Existing single-StateGraph review, exact approval,
+  The EvidencePack, Implementation Plan, fresh binding gates, and bounded
+  Proposal context budget are complete for this revision. Proposal remains
+  absent because the single authorized local provider call timed out.
+  A later attempt requires a new explicit authorization and exact local-model
+  execution profile; it must reuse the same single StateGraph and must not
+  repeat upstream planning or evidence work. Existing review, exact approval,
   apply, build, and product Runtime gates remain unchanged.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
-  restored. Current admission authorizes no external model disclosure,
-  Proposal generation, source write, Apply, Build, game-directory copy, GTFO
-  launch, screenshot capture, or product-behavior claim. Each later side
-  effect retains its existing separate approval boundary.
+  restored. One local-only Proposal model call was authorized and consumed;
+  no external disclosure occurred. Current admission authorizes no retry,
+  source write, Apply, Build, game-directory copy, GTFO launch, screenshot
+  capture, or product-behavior claim. Each later side effect retains its
+  existing separate approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
   The Implementation Plan resolves exactly one future writable target:
@@ -168,12 +191,15 @@ focused_verification:
   A later product Runtime must separately prove visible and audible behavior,
   General.Enabled=false suppression, and exact marker behavior.
 stop_condition:
-  Stop at the Implementation Plan until Proposal disclosure and generation are
-  separately authorized. Stop again if fresh source, assembly, Artifact, or
-  binding identity drifts. After accepted two-mode product Runtime evidence,
-  return to the product mainline and perform Harness re-admission only if this
-  slice exposes a concrete generic Harness failure.
-status: implementation_plan_created_pending_proposal_authorization
+  Stop at immutable failed run sfp_qwen36_27b_001. Do not reinterpret its
+  timeout as a Proposal result and do not retry automatically. A new attempt
+  must separately authorize one exact local-model execution profile and repeat
+  only fresh binding admission plus Proposal/Review continuation. Stop again
+  if source, assembly, Artifact, or binding identity drifts. After accepted
+  two-mode product Runtime evidence, return to the product mainline and perform
+  Harness re-admission only if this slice exposes a concrete generic Harness
+  failure.
+status: implementation_plan_created_local_proposal_attempt_timed_out
 automation_claim: not_proven
 ```
 

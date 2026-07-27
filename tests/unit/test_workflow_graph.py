@@ -87,6 +87,19 @@ def test_proposal_critic_requirement_rejects_unknown_value(tmp_path: Path) -> No
         )
 
 
+def test_proposal_source_snippet_char_limit_must_be_positive(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match="proposal_source_snippet_char_limit must be a positive integer",
+    ):
+        build_graph(
+            ArtifactStore(tmp_path / "artifacts"),
+            proposal_source_snippet_char_limit=0,
+        )
+
+
 def _knowledge_with_load_symbol(
     tmp_path: Path,
     *,
@@ -662,6 +675,30 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
         proposal["context_pack"]["git_binding"]["dirty_tree_policy"],
         dict,
     )
+
+
+def test_graph_forwards_explicit_proposal_source_snippet_char_limit(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        proposal_source_snippet_char_limit=1234,
+    )
+    state = create_initial_state(
+        run_id="run_explicit_proposal_context_budget",
+        request_id="req_explicit_proposal_context_budget",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state)
+    proposal = _artifact_data(store, result, "patch_proposal")
+
+    assert proposal["context_pack"]["context_budget"][
+        "source_snippet_char_limit"
+    ] == 1234
 
 
 def test_graph_can_persist_independent_critic_and_keep_routing_deterministic(

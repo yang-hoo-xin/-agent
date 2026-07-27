@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-26
+Last updated: 2026-07-27
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -14,7 +14,7 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: evidence_bound_pending_proposal_authorization
+stagger_implementation_plan_status: evidence_bound_proposal_attempt_timed_out
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -30,6 +30,32 @@ materialization, one diagnostic Runtime, a sufficient EvidencePack revision,
 and an evidence-bound Implementation Plan. Proposal, source modification,
 Build, and product Runtime acceptance remain pending; this is not an Agent
 Harness Migration Boundary.
+
+Separately authorized local Proposal continuation
+`sfp_qwen36_27b_001` revalidated the exact four upstream Artifact hashes,
+all five source-file hashes, all three edit bindings, and the selected
+`Modules-ASM.dll` SHA256 before model invocation. A concrete Proposal context
+conflict was repaired without changing the default policy:
+`build_graph()` now accepts an explicit positive
+`proposal_source_snippet_char_limit`, while its default remains `6000`.
+The selected run used `32768`, retained all `17` source snippets and `25098`
+characters with zero omission blockers, and a no-model continuation probe
+stopped after `proposal_review` with no later-stage Artifact. The Workflow
+suite passed `52` tests.
+
+The exact local `qwen3.6:27b` digest
+`a50eda8ed977ab48a12431878896b27ffd5cef552c17af3317d9623b939a7f1e`
+then received one loopback-only structured request. Its provider body was
+`62181` UTF-8 bytes, output budget `8192`, configured context `131072`, and
+conservative required context `70373`, so pre-call admission passed. The
+single request reached the explicit `1800.0` second timeout and ended with
+`provider_timeout` before any response or patch parser entry. The run records
+`model_call_count=1`, `actual_write_performed=false`, and no external
+disclosure. No PatchProposal, ProposalReview, Dry-run, Apply, Build, Runtime,
+or Evaluation Artifact was created. Both preserved and materialized behavior
+source remain at SHA256
+`92EAB8010EED49E8C84094DC6EB5376D5F995414C40CF7D2C44FC1955D405E1A`.
+The failed attempt is immutable and does not authorize a retry.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

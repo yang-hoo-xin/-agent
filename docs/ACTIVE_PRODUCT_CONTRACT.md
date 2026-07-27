@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-07-26
+Last updated: 2026-07-27
 
 ## 1. Product
 
@@ -93,6 +93,17 @@ observation repair. The collector retained current-run `BepInEx`,
 the deliberately absent marker remained missing. The same graph emitted an
 observation-owned RepairPlan, authorized no source repair, repeated no upstream
 stage, reached blocked terminal, and restored the deployed DLL.
+
+The selected stagger-feedback product slice remains at its evidence-bound
+Implementation Plan. Local Proposal continuation `sfp_qwen36_27b_001`
+revalidated the current source, Artifact, edit-binding, and Runtime assembly
+identities and used an explicit graph-level snippet budget to retain all 17
+required evidence refs. Its one authorized loopback-only `qwen3.6:27b` call
+timed out at 1800 seconds before any response or parser entry. Therefore no
+PatchProposal or later-stage Artifact exists, no source was written, and the
+failed run grants no retry authority. A later attempt must be separately
+authorized and must continue from the existing Implementation Plan without
+repeating upstream stages.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
