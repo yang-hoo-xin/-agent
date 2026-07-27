@@ -146,6 +146,129 @@ def test_generator_accepts_strict_binding_only_exact_replacement() -> None:
     assert generated.changes[0]["patch"]["after_text"] == "KillMarkerColor = pink;"
 
 
+def test_generator_rejects_incomplete_plan_change_coverage() -> None:
+    registry = {
+        "edit_bindings": [
+            {
+                "binding_id": "edit_binding_001",
+                "evidence_id": "ev_001",
+                "canonical_target_path": "Patches/Behavior.cs",
+            },
+            {
+                "binding_id": "edit_binding_002",
+                "evidence_id": "ev_002",
+                "canonical_target_path": "Patches/Behavior.cs",
+            },
+        ]
+    }
+    payload = {
+        "changes": [
+            {
+                "change_id": "chg_001",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_001",
+                "operation": "exact_text_replace",
+                "rationale": "Implement the first planned operation.",
+                "expected_validation": ["dotnet build"],
+                "rollback_hint": "Restore the first source text.",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "First();",
+                    "after_text": "FirstChanged();",
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(_FakeLLM(json.dumps(payload))).generate(
+            user_request="Implement both planned changes.",
+            evidence_items=[
+                {"evidence_id": "ev_001", "excerpt": "First();"},
+                {"evidence_id": "ev_002", "excerpt": "Second();"},
+            ],
+            binding_registry=registry,
+            constraints=[],
+            required_change_units=[
+                {
+                    "change_id": "chg_001",
+                    "edit_binding_id": "edit_binding_001",
+                    "operation": "Change the first behavior.",
+                },
+                {
+                    "change_id": "chg_002",
+                    "edit_binding_id": "edit_binding_002",
+                    "operation": "Change the second behavior.",
+                },
+            ],
+        )
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "plan_change_coverage_incomplete"
+    )
+    assert exc_info.value.diagnostics["missing_plan_changes"] == [
+        {"change_id": "chg_002", "edit_binding_id": "edit_binding_002"}
+    ]
+
+
+def test_generator_rejects_before_text_from_another_binding() -> None:
+    registry = {
+        "edit_bindings": [
+            {
+                "binding_id": "edit_binding_001",
+                "evidence_id": "ev_001",
+                "canonical_target_path": "Patches/Behavior.cs",
+            },
+            {
+                "binding_id": "edit_binding_002",
+                "evidence_id": "ev_002",
+                "canonical_target_path": "Patches/Behavior.cs",
+            },
+        ]
+    }
+    payload = {
+        "changes": [
+            {
+                "change_id": "chg_001",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_001",
+                "operation": "exact_text_replace",
+                "rationale": "Claim the first binding while editing the second.",
+                "expected_validation": ["dotnet build"],
+                "rollback_hint": "Restore source.",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "Second();",
+                    "after_text": "SecondChanged();",
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(_FakeLLM(json.dumps(payload))).generate(
+            user_request="Change only the first behavior.",
+            evidence_items=[
+                {"evidence_id": "ev_001", "excerpt": "First();"},
+                {"evidence_id": "ev_002", "excerpt": "Second();"},
+            ],
+            binding_registry=registry,
+            constraints=[],
+            required_change_units=[
+                {
+                    "change_id": "chg_001",
+                    "edit_binding_id": "edit_binding_001",
+                }
+            ],
+        )
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "before_text_outside_edit_binding"
+    )
+
+
 def test_generator_rejects_model_selected_path() -> None:
     payload = {
         "changes": [

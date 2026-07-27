@@ -436,6 +436,56 @@ def test_reviewer_approves_evidence_bound_dry_run_proposal() -> None:
     assert review.trace_metrics["num_changes_checked"] == 1
 
 
+def test_reviewer_blocks_incomplete_implementation_plan_change_coverage() -> None:
+    implementation_plan = _implementation_payload()
+    implementation_plan["proposed_changes"].append(
+        {
+            **implementation_plan["proposed_changes"][0],
+            "change_id": "chg_002",
+        }
+    )
+
+    review = ProposalReviewer().review(
+        _proposal_payload(),
+        implementation_plan=implementation_plan,
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+        permission_level="dry_run_write",
+    )
+
+    assert review.decision == "revise_proposal"
+    assert review.allowed_next_stage is None
+    assert review.trace_metrics["num_plan_changes_expected"] == 2
+    assert any(
+        finding.rule_id == "plan_change_coverage"
+        and "chg_002/edit_binding_001" in finding.message
+        for finding in review.findings
+    )
+
+
+def test_reviewer_blocks_patch_text_from_another_binding_evidence() -> None:
+    proposal = _proposal_payload()
+    proposal["diff_intent"][0]["patch"]["before_text"] = "unbound source text"
+
+    review = ProposalReviewer().review(
+        proposal,
+        implementation_plan=_implementation_payload(),
+        evidence_pack=_evidence_pack(),
+        feature_spec=_feature_spec(),
+        artifact_hashes=_artifact_hashes(),
+        permission_level="dry_run_write",
+    )
+
+    assert review.decision == "revise_proposal"
+    assert review.allowed_next_stage is None
+    assert any(
+        finding.rule_id == "binding_source_locality"
+        and finding.change_id == "chg_001"
+        for finding in review.findings
+    )
+
+
 def test_reviewer_blocks_proposal_that_omits_plan_validation_requirement() -> None:
     proposal = _proposal_payload()
     proposal["diff_intent"][0]["expected_validation"] = []

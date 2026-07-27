@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import difflib
 import hashlib
 import json
 import os
@@ -41,8 +42,10 @@ class ExactTextPatchApplier:
 
         resolver = BindingResolver.from_implementation_plan(implementation_plan)
         staged: dict[Path, bytes] = {}
+        original_by_target: dict[Path, bytes] = {}
         file_results: list[dict[str, Any]] = []
         diff_preview: list[dict[str, Any]] = []
+        binding_span_checks: list[dict[str, Any]] = []
         for index, change in enumerate(proposal.get("diff_intent") or [], start=1):
             binding_id = str(change.get("edit_binding_id") or "")
             paths = resolver.display_files_for_edit_ids([binding_id])
@@ -65,10 +68,12 @@ class ExactTextPatchApplier:
             if not isinstance(before, str) or not isinstance(after, str) or before == after:
                 raise PatchApplyError(f"Change {index} patch text is invalid or a no-op.")
 
-            current = staged.get(target)
-            if current is None:
-                current = target.read_bytes()
-                _validate_utf8(current, change_index=index)
+            original = original_by_target.get(target)
+            if original is None:
+                original = target.read_bytes()
+                _validate_utf8(original, change_index=index)
+                original_by_target[target] = original
+            current = staged.get(target, original)
             try:
                 before_bytes = before.encode("utf-8")
                 after_bytes = after.encode("utf-8")
@@ -76,6 +81,15 @@ class ExactTextPatchApplier:
                 raise PatchApplyError(
                     f"Change {index} patch text is not valid UTF-8 text."
                 ) from exc
+            binding_span_check = _validate_bound_source_span(
+                original=original,
+                before=before_bytes,
+                binding=resolver.edit_bindings.get(binding_id) or {},
+                change_index=index,
+                binding_id=binding_id,
+            )
+            if binding_span_check is not None:
+                binding_span_checks.append(binding_span_check)
             count = current.count(before_bytes)
             if patch.get("expected_occurrences") != 1 or count != 1:
                 raise PatchApplyError(
@@ -125,6 +139,14 @@ class ExactTextPatchApplier:
 
         if not staged:
             raise PatchApplyError("Proposal contains no executable changes.")
+        structural_checks = _run_low_cost_static_checks(staged)
+        unified_diff = _build_unified_diff(
+            root=root,
+            original_by_target=original_by_target,
+            staged=staged,
+        )
+        unified_diff_bytes = unified_diff.encode("utf-8")
+        diff_stats = _unified_diff_stats(unified_diff)
         context_hashes = {
             "proposal_payload_sha256": _sha256_json(proposal),
             "implementation_plan_payload_sha256": _sha256_json(implementation_plan),
@@ -180,6 +202,18 @@ class ExactTextPatchApplier:
             "approved_by_user": allow_write and approved_diff_hash == diff_hash,
             "context_hashes": context_hashes,
             "diff_preview": diff_preview,
+            "unified_diff": unified_diff,
+            "unified_diff_sha256": hashlib.sha256(unified_diff_bytes).hexdigest(),
+            "unified_diff_bytes": len(unified_diff_bytes),
+            "diff_stats": {
+                "files": len(staged),
+                "change_units": len(diff_preview),
+                **diff_stats,
+            },
+            "static_checks": [
+                *binding_span_checks,
+                *structural_checks,
+            ],
             "changed_files": sorted({item["path"] for item in file_results}),
             "changes": file_results,
         }
@@ -199,6 +233,211 @@ def _validate_utf8(value: bytes, *, change_index: int) -> None:
         raise PatchApplyError(
             f"Change {change_index} target is not valid UTF-8; exact bytes were not changed."
         ) from exc
+
+
+def _validate_bound_source_span(
+    *,
+    original: bytes,
+    before: bytes,
+    binding: dict[str, Any],
+    change_index: int,
+    binding_id: str,
+) -> dict[str, Any] | None:
+    span = binding.get("target_span")
+    if not isinstance(span, dict):
+        return None
+    start_line = span.get("start_line")
+    end_line = span.get("end_line")
+    if (
+        not isinstance(start_line, int)
+        or isinstance(start_line, bool)
+        or not isinstance(end_line, int)
+        or isinstance(end_line, bool)
+        or start_line <= 0
+        or end_line < start_line
+    ):
+        raise PatchApplyError(
+            f"Change {change_index} edit binding has an invalid target_span."
+        )
+    positions: list[int] = []
+    offset = 0
+    while True:
+        position = original.find(before, offset)
+        if position < 0:
+            break
+        positions.append(position)
+        offset = position + max(len(before), 1)
+    if len(positions) != 1:
+        raise PatchApplyError(
+            f"Change {change_index} before_text is not unique in the bound source."
+        )
+    observed_start = original[: positions[0]].count(b"\n") + 1
+    content = before.rstrip(b"\r\n")
+    observed_end = observed_start + content.count(b"\n")
+    if observed_start < start_line or observed_end > end_line:
+        raise PatchApplyError(
+            f"Change {change_index} before_text is outside edit binding target_span."
+        )
+    return {
+        "check_id": "binding_target_span",
+        "status": "passed",
+        "change_index": change_index,
+        "binding_id": binding_id,
+        "bound_start_line": start_line,
+        "bound_end_line": end_line,
+        "observed_start_line": observed_start,
+        "observed_end_line": observed_end,
+    }
+
+
+def _run_low_cost_static_checks(staged: dict[Path, bytes]) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    for target, content in staged.items():
+        if target.suffix.lower() != ".cs":
+            continue
+        text = content.decode("utf-8-sig")
+        error = _csharp_delimiter_error(text)
+        if error is not None:
+            raise PatchApplyError(
+                f"C# low-cost structural check failed for {target.name}: {error}"
+            )
+        checks.append(
+            {
+                "check_id": "csharp_delimiter_balance",
+                "status": "passed",
+                "path": target.name,
+                "limitations": (
+                    "This lexical check does not resolve symbols, types, overloads, "
+                    "or all control-flow errors."
+                ),
+            }
+        )
+    return checks
+
+
+def _csharp_delimiter_error(text: str) -> str | None:
+    stack: list[tuple[str, int]] = []
+    pairs = {")": "(", "]": "[", "}": "{"}
+    state = "code"
+    index = 0
+    while index < len(text):
+        current = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+        if state == "line_comment":
+            if current == "\n":
+                state = "code"
+            index += 1
+            continue
+        if state == "block_comment":
+            if current == "*" and following == "/":
+                state = "code"
+                index += 2
+            else:
+                index += 1
+            continue
+        if state == "string":
+            if current == "\\":
+                index += 2
+            elif current == '"':
+                state = "code"
+                index += 1
+            else:
+                index += 1
+            continue
+        if state == "verbatim_string":
+            if current == '"' and following == '"':
+                index += 2
+            elif current == '"':
+                state = "code"
+                index += 1
+            else:
+                index += 1
+            continue
+        if state == "char":
+            if current == "\\":
+                index += 2
+            elif current == "'":
+                state = "code"
+                index += 1
+            else:
+                index += 1
+            continue
+        if current == "/" and following == "/":
+            state = "line_comment"
+            index += 2
+            continue
+        if current == "/" and following == "*":
+            state = "block_comment"
+            index += 2
+            continue
+        if text.startswith('$@"', index) or text.startswith('@$"', index):
+            state = "verbatim_string"
+            index += 3
+            continue
+        if current == "@" and following == '"':
+            state = "verbatim_string"
+            index += 2
+            continue
+        if current == "$" and following == '"':
+            state = "string"
+            index += 2
+            continue
+        if current == '"':
+            state = "string"
+            index += 1
+            continue
+        if current == "'":
+            state = "char"
+            index += 1
+            continue
+        if current in "([{":
+            stack.append((current, index))
+        elif current in ")]}":
+            if not stack or stack[-1][0] != pairs[current]:
+                return f"unmatched {current!r} at character {index}"
+            stack.pop()
+        index += 1
+    if state in {"block_comment", "string", "verbatim_string", "char"}:
+        return f"unterminated {state.replace('_', ' ')}"
+    if stack:
+        delimiter, position = stack[-1]
+        return f"unclosed {delimiter!r} at character {position}"
+    return None
+
+
+def _build_unified_diff(
+    *,
+    root: Path,
+    original_by_target: dict[Path, bytes],
+    staged: dict[Path, bytes],
+) -> str:
+    chunks: list[str] = []
+    for target in sorted(staged, key=lambda item: item.as_posix()):
+        relative = target.relative_to(root).as_posix()
+        before_lines = original_by_target[target].decode("utf-8-sig").splitlines()
+        after_lines = staged[target].decode("utf-8-sig").splitlines()
+        chunks.extend(
+            difflib.unified_diff(
+                before_lines,
+                after_lines,
+                fromfile=f"a/{relative}",
+                tofile=f"b/{relative}",
+                lineterm="",
+            )
+        )
+    return "\n".join(chunks) + ("\n" if chunks else "")
+
+
+def _unified_diff_stats(unified_diff: str) -> dict[str, int]:
+    lines = unified_diff.splitlines()
+    return {
+        "insertions": sum(
+            1 for line in lines if line.startswith("+") and not line.startswith("+++")
+        ),
+        "deletions": sum(
+            1 for line in lines if line.startswith("-") and not line.startswith("---")
+        ),
+    }
 
 
 def _sha256_bytes(value: bytes) -> str:

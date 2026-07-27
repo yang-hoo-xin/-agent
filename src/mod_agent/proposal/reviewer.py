@@ -20,6 +20,8 @@ from .models import ProposalReview, ReviewFinding
 CHECKED_RULES = (
     "schema_validity",
     "context_pack",
+    "plan_change_coverage",
+    "binding_source_locality",
     "evidence_binding",
     "hook_target_binding",
     "scope_boundary",
@@ -181,6 +183,20 @@ class ProposalReviewer:
             )
         )
         findings.extend(
+            self._review_plan_change_coverage(
+                proposal=proposal,
+                implementation_plan=implementation_plan,
+                repair_plan=repair_plan,
+            )
+        )
+        findings.extend(
+            self._review_binding_source_locality(
+                diff_intent=diff_intent,
+                implementation_plan=implementation_plan,
+                evidence_pack=evidence_pack,
+            )
+        )
+        findings.extend(
             self._review_hook_target_bindings(
                 diff_intent=diff_intent,
                 implementation_plan=implementation_plan,
@@ -339,6 +355,14 @@ class ProposalReviewer:
                         )
                     )
 
+        planned_change_count = len(
+            (
+                implementation_plan.get("proposed_changes")
+                if isinstance(implementation_plan, dict)
+                else []
+            )
+            or []
+        )
         blocking = [finding for finding in findings if finding.level == "blocking"]
         if blocking:
             decision = self._blocked_decision(blocking)
@@ -350,6 +374,7 @@ class ProposalReviewer:
                 checked_rules=checked_rules,
                 trace_metrics={
                     "num_changes_checked": len(diff_intent),
+                    "num_plan_changes_expected": planned_change_count,
                     "num_blocking_findings": len(blocking),
                 },
                 critic_gate=critic_gate,
@@ -363,6 +388,7 @@ class ProposalReviewer:
             checked_rules=checked_rules,
             trace_metrics={
                 "num_changes_checked": len(diff_intent),
+                "num_plan_changes_expected": planned_change_count,
                 "num_blocking_findings": 0,
             },
             critic_gate=critic_gate,
@@ -606,6 +632,132 @@ class ProposalReviewer:
                     ),
                 )
             )
+        return tuple(findings)
+
+    @staticmethod
+    def _review_plan_change_coverage(
+        *,
+        proposal: dict[str, Any],
+        implementation_plan: dict[str, Any] | None,
+        repair_plan: dict[str, Any] | None,
+    ) -> tuple[ReviewFinding, ...]:
+        if repair_plan is not None or not isinstance(implementation_plan, dict):
+            return ()
+        planned = [
+            (
+                str(change.get("change_id") or ""),
+                str(change.get("edit_binding_id") or ""),
+            )
+            for change in implementation_plan.get("proposed_changes") or []
+            if isinstance(change, dict)
+        ]
+        proposed = [
+            (
+                str(change.get("change_id") or ""),
+                str(change.get("edit_binding_id") or ""),
+            )
+            for change in proposal.get("diff_intent") or []
+            if isinstance(change, dict)
+        ]
+        missing = [pair for pair in planned if pair not in proposed]
+        unexpected = [pair for pair in proposed if pair not in planned]
+        duplicates = sorted({pair for pair in proposed if proposed.count(pair) > 1})
+        if (
+            not missing
+            and not unexpected
+            and not duplicates
+            and len(planned) == len(proposed)
+        ):
+            return ()
+        details: list[str] = []
+        if missing:
+            details.append(
+                "missing "
+                + ", ".join(
+                    f"{change_id}/{binding_id}" for change_id, binding_id in missing
+                )
+            )
+        if unexpected:
+            details.append(
+                "unexpected "
+                + ", ".join(
+                    f"{change_id}/{binding_id}"
+                    for change_id, binding_id in unexpected
+                )
+            )
+        if duplicates:
+            details.append(
+                "duplicate "
+                + ", ".join(
+                    f"{change_id}/{binding_id}"
+                    for change_id, binding_id in duplicates
+                )
+            )
+        return (
+            ReviewFinding(
+                rule_id="plan_change_coverage",
+                level="blocking",
+                message=(
+                    "Proposal does not exactly cover implementation_plan change units: "
+                    + "; ".join(details)
+                    + "."
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _review_binding_source_locality(
+        *,
+        diff_intent: list[dict[str, Any]],
+        implementation_plan: dict[str, Any] | None,
+        evidence_pack: dict[str, Any] | None,
+    ) -> tuple[ReviewFinding, ...]:
+        resolver = BindingResolver.from_implementation_plan(
+            implementation_plan,
+            evidence_pack=evidence_pack,
+        )
+        evidence_items = {
+            str(item["evidence_id"]): item
+            for item in (evidence_pack or {}).get("items") or []
+            if isinstance(item, dict) and item.get("evidence_id")
+        }
+        findings: list[ReviewFinding] = []
+        for change in diff_intent:
+            if not isinstance(change, dict):
+                continue
+            change_id = (
+                str(change["change_id"])
+                if change.get("change_id") is not None
+                else None
+            )
+            binding_id = str(change.get("edit_binding_id") or "")
+            binding = resolver.edit_bindings.get(binding_id)
+            if binding is None:
+                continue
+            evidence_id = str(binding.get("evidence_id") or "")
+            evidence = evidence_items.get(evidence_id)
+            excerpt = evidence.get("excerpt") if isinstance(evidence, dict) else None
+            patch = change.get("patch")
+            before_text = patch.get("before_text") if isinstance(patch, dict) else None
+            if not isinstance(before_text, str) or not before_text:
+                continue
+            if (
+                not isinstance(excerpt, str)
+                or not excerpt
+                or before_text not in excerpt
+            ):
+                findings.append(
+                    ReviewFinding(
+                        rule_id="binding_source_locality",
+                        level="blocking",
+                        message=(
+                            "Executable before_text is not contained in the current "
+                            "evidence bound to its edit_binding_id."
+                        ),
+                        change_id=change_id,
+                        evidence_refs=((evidence_id,) if evidence_id else ()),
+                    )
+                )
         return tuple(findings)
 
     def _review_context_pack_depth(

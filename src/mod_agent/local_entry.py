@@ -1605,10 +1605,30 @@ def run_local_request(
         external_evidence = _external_evidence_items(
             list(evidence_pack.get("items") or [])
         )
+        required_change_units = [
+            {
+                key: item.get(key)
+                for key in (
+                    "change_id",
+                    "change_type",
+                    "edit_binding_id",
+                    "hook_target_binding_id",
+                    "supporting_binding_ids",
+                    "operation",
+                    "rationale",
+                    "evidence_refs",
+                    "expected_validation",
+                    "rollback_hint",
+                )
+            }
+            for item in implementation.get("proposed_changes") or []
+            if isinstance(item, dict)
+        ]
         model_input = {
             "request": state["user_request"],
             "evidence": external_evidence,
             "binding_registry": dict(implementation.get("binding_registry") or {}),
+            "required_change_units": required_change_units,
             "side_effect_boundaries": [
                 str(item) for item in implementation.get("side_effect_boundaries") or []
             ],
@@ -1737,6 +1757,7 @@ def run_local_request(
             evidence_items=list(model_input["evidence"]),
             binding_registry=dict(model_input["binding_registry"]),
             constraints=list(model_input["side_effect_boundaries"]),
+            required_change_units=required_change_units,
             required_validation_by_binding=required_validation_by_binding,
             require_native_schema=local_ollama,
             provider_request_recorder=(
@@ -1748,17 +1769,25 @@ def run_local_request(
         )
         if local_ollama and generated.model != ollama_model:
             raise LocalEntryError("OLLAMA_RESPONSE_MODEL_IDENTITY_MISMATCH")
-        planned_by_binding = {
-            str(item.get("edit_binding_id")): item
+        planned_by_unit = {
+            (
+                str(item.get("change_id") or ""),
+                str(item.get("edit_binding_id") or ""),
+            ): item
             for item in implementation.get("proposed_changes") or []
-            if isinstance(item, dict) and item.get("edit_binding_id")
+            if isinstance(item, dict)
+            and item.get("change_id")
+            and item.get("edit_binding_id")
         }
         changes: list[dict[str, Any]] = []
         for generated_change in generated.changes:
             binding_id = str(generated_change["edit_binding_id"])
-            planned = planned_by_binding.get(binding_id)
+            change_id = str(generated_change["change_id"])
+            planned = planned_by_unit.get((change_id, binding_id))
             if planned is None:
-                raise LocalEntryError("Generated patch is outside implementation-plan bindings.")
+                raise LocalEntryError(
+                    "Generated patch is outside implementation-plan change units."
+                )
             changes.append(
                 {
                     **planned,

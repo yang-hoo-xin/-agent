@@ -60,7 +60,65 @@ def test_dry_run_validates_without_writing(tmp_path: Path) -> None:
     assert result["actual_write_performed"] is False
     assert result["diff_hash"].startswith("sha256:")
     assert result["approved_by_user"] is False
+    assert result["unified_diff"].startswith("--- a/Patches/Behavior.cs\n")
+    assert result["unified_diff_sha256"] == hashlib.sha256(
+        result["unified_diff"].encode("utf-8")
+    ).hexdigest()
+    assert result["diff_stats"] == {
+        "files": 1,
+        "change_units": 1,
+        "insertions": 1,
+        "deletions": 1,
+    }
+    assert result["static_checks"] == [
+        {
+            "check_id": "csharp_delimiter_balance",
+            "status": "passed",
+            "path": "Behavior.cs",
+            "limitations": (
+                "This lexical check does not resolve symbols, types, overloads, "
+                "or all control-flow errors."
+            ),
+        }
+    ]
     assert source.read_text(encoding="utf-8") == "value = Color.Red;\n"
+
+
+def test_dry_run_rejects_change_outside_bound_source_span(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    source.write_text("value = Color.Red;\nother = true;\n", encoding="utf-8")
+    plan = _plan()
+    plan["binding_registry"]["edit_bindings"][0]["target_span"] = {
+        "start_line": 2,
+        "end_line": 2,
+    }
+
+    with pytest.raises(PatchApplyError, match="outside edit binding target_span"):
+        ExactTextPatchApplier().run(
+            workspace_root=tmp_path,
+            proposal=_proposal(),
+            implementation_plan=plan,
+            review=_review(),
+            allow_write=False,
+        )
+
+
+def test_dry_run_rejects_unbalanced_csharp_replacement(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    source.write_text("value = Color.Red;\n", encoding="utf-8")
+    proposal = _proposal()
+    proposal["diff_intent"][0]["patch"]["after_text"] = "Color.Pink }"
+
+    with pytest.raises(PatchApplyError, match="structural check failed"):
+        ExactTextPatchApplier().run(
+            workspace_root=tmp_path,
+            proposal=proposal,
+            implementation_plan=_plan(),
+            review=_review(),
+            allow_write=False,
+        )
 
 
 def test_approved_isolated_apply_writes_exactly_once(tmp_path: Path) -> None:

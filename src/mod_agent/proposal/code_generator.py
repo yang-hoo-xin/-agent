@@ -52,6 +52,9 @@ class LLMExactPatchGenerator:
         evidence_items: list[dict[str, Any]],
         binding_registry: dict[str, Any],
         constraints: list[str],
+        required_change_units: list[dict[str, Any]]
+        | tuple[dict[str, Any], ...]
+        | None = None,
         required_validation_by_binding: Mapping[str, list[str] | tuple[str, ...]]
         | None = None,
         require_native_schema: bool = False,
@@ -72,11 +75,13 @@ class LLMExactPatchGenerator:
             if isinstance(item, dict) and item.get("evidence_id")
         }
         binding_contexts: dict[str, dict[str, Any]] = {}
+        binding_evidence_excerpts: dict[str, str] = {}
         for binding in binding_registry.get("edit_bindings") or []:
             if not isinstance(binding, dict) or not binding.get("binding_id"):
                 continue
             evidence = evidence_by_id.get(str(binding.get("evidence_id") or "")) or {}
-            binding_contexts[str(binding["binding_id"])] = {
+            binding_id = str(binding["binding_id"])
+            binding_contexts[binding_id] = {
                 field: binding.get(field) or evidence.get(evidence_field)
                 for field, evidence_field in (
                     ("evidence_id", "evidence_id"),
@@ -93,6 +98,9 @@ class LLMExactPatchGenerator:
                     ("verified_member_accesses", "verified_member_accesses"),
                 )
             }
+            excerpt = evidence.get("excerpt")
+            if isinstance(excerpt, str) and excerpt:
+                binding_evidence_excerpts[binding_id] = excerpt
 
         required_validation = {
             str(binding_id): tuple(str(item) for item in values)
@@ -111,8 +119,15 @@ class LLMExactPatchGenerator:
             raise PatchGenerationError(
                 "Required validation references an unknown edit binding id."
             )
+        normalized_required_changes = _normalize_required_change_units(
+            required_change_units,
+            allowed_bindings=allowed_bindings,
+        )
 
-        response_schema = _patch_response_schema(allowed_bindings)
+        response_schema = _patch_response_schema(
+            allowed_bindings,
+            required_change_count=len(normalized_required_changes) or None,
+        )
         evidence_excerpts = tuple(
             excerpt
             for item in evidence_items
@@ -166,7 +181,10 @@ class LLMExactPatchGenerator:
                         "Return strict JSON only. Never invent a file path, symbol, API, or "
                         "binding id. Each change must use one allowed edit_binding_id and an "
                         "exact_text_replace patch whose before_text is copied verbatim from "
-                        "the evidence, including its exact line endings. Any "
+                        "the evidence bound to that edit_binding_id, including its exact "
+                        "line endings. Return exactly one change for every "
+                        "required_change_units entry and preserve its exact change_id and "
+                        "edit_binding_id. Any "
                         "required_validation_by_binding entries are authoritative upstream "
                         "requirements and must all be copied into the matching change's "
                         "expected_validation list. Any "
@@ -186,6 +204,9 @@ class LLMExactPatchGenerator:
                             "constraints": constraints,
                             "allowed_edit_binding_ids": sorted(allowed_bindings),
                             "edit_binding_contexts": binding_contexts,
+                            "required_change_units": [
+                                dict(item) for item in normalized_required_changes
+                            ],
                             "required_validation_by_binding": {
                                 binding_id: list(values)
                                 for binding_id, values in sorted(
@@ -216,11 +237,16 @@ class LLMExactPatchGenerator:
                     item,
                     allowed_bindings=allowed_bindings,
                     evidence_excerpts=evidence_excerpts,
+                    binding_evidence_excerpts=binding_evidence_excerpts,
                     required_validation=required_validation,
                     binding_contexts=binding_contexts,
                     index=index,
                 )
                 for index, item in enumerate(raw_changes, start=1)
+            )
+            _validate_required_change_coverage(
+                changes,
+                required_change_units=normalized_required_changes,
             )
         except Exception as exc:
             diagnostics = _response_diagnostics(response)
@@ -245,7 +271,11 @@ class LLMExactPatchGenerator:
         )
 
 
-def _patch_response_schema(allowed_bindings: set[str]) -> dict[str, Any]:
+def _patch_response_schema(
+    allowed_bindings: set[str],
+    *,
+    required_change_count: int | None = None,
+) -> dict[str, Any]:
     """Return the single schema used by the local prompt and native format."""
 
     return {
@@ -255,7 +285,12 @@ def _patch_response_schema(allowed_bindings: set[str]) -> dict[str, Any]:
         "properties": {
             "changes": {
                 "type": "array",
-                "minItems": 1,
+                "minItems": required_change_count or 1,
+                **(
+                    {"maxItems": required_change_count}
+                    if required_change_count is not None
+                    else {}
+                ),
                 "items": {
                     "type": "object",
                     "additionalProperties": False,
@@ -307,6 +342,98 @@ def _patch_response_schema(allowed_bindings: set[str]) -> dict[str, Any]:
     }
 
 
+def _normalize_required_change_units(
+    raw_units: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
+    *,
+    allowed_bindings: set[str],
+) -> tuple[dict[str, Any], ...]:
+    if raw_units is None:
+        return ()
+    normalized: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    seen_pairs: set[tuple[str, str]] = set()
+    for index, raw in enumerate(raw_units, start=1):
+        if not isinstance(raw, dict):
+            raise PatchGenerationError(
+                f"Required change unit {index} must be an object."
+            )
+        change_id = str(raw.get("change_id") or "")
+        binding_id = str(raw.get("edit_binding_id") or "")
+        if not change_id or not binding_id:
+            raise PatchGenerationError(
+                f"Required change unit {index} requires change_id and edit_binding_id."
+            )
+        if binding_id not in allowed_bindings:
+            raise PatchGenerationError(
+                f"Required change unit {index} uses an unknown edit binding id."
+            )
+        pair = (change_id, binding_id)
+        if change_id in seen_ids or pair in seen_pairs:
+            raise PatchGenerationError(
+                "Required change units must have unique change_id values."
+            )
+        seen_ids.add(change_id)
+        seen_pairs.add(pair)
+        normalized.append(
+            {
+                key: raw.get(key)
+                for key in (
+                    "change_id",
+                    "change_type",
+                    "edit_binding_id",
+                    "hook_target_binding_id",
+                    "supporting_binding_ids",
+                    "operation",
+                    "rationale",
+                    "evidence_refs",
+                    "expected_validation",
+                    "rollback_hint",
+                )
+            }
+        )
+    return tuple(normalized)
+
+
+def _validate_required_change_coverage(
+    changes: tuple[dict[str, Any], ...],
+    *,
+    required_change_units: tuple[dict[str, Any], ...],
+) -> None:
+    if not required_change_units:
+        return
+    expected = [
+        (str(item["change_id"]), str(item["edit_binding_id"]))
+        for item in required_change_units
+    ]
+    actual = [
+        (str(item.get("change_id") or ""), str(item.get("edit_binding_id") or ""))
+        for item in changes
+    ]
+    missing = [pair for pair in expected if pair not in actual]
+    unexpected = [pair for pair in actual if pair not in expected]
+    duplicates = sorted({pair for pair in actual if actual.count(pair) > 1})
+    if missing or unexpected or duplicates or len(actual) != len(expected):
+        raise PatchGenerationError(
+            "Model output does not exactly cover required implementation-plan changes.",
+            diagnostics={
+                "failure_boundary": "deterministic_patch_validation",
+                "failure_classification": "plan_change_coverage_incomplete",
+                "missing_plan_changes": [
+                    {"change_id": change_id, "edit_binding_id": binding_id}
+                    for change_id, binding_id in missing
+                ],
+                "unexpected_plan_changes": [
+                    {"change_id": change_id, "edit_binding_id": binding_id}
+                    for change_id, binding_id in unexpected
+                ],
+                "duplicate_plan_changes": [
+                    {"change_id": change_id, "edit_binding_id": binding_id}
+                    for change_id, binding_id in duplicates
+                ],
+            },
+        )
+
+
 def _response_diagnostics(response: ChatResponse) -> dict[str, Any]:
     raw = response.raw_response if isinstance(response.raw_response, Mapping) else {}
     return {
@@ -342,6 +469,7 @@ def _validate_change(
     *,
     allowed_bindings: set[str],
     evidence_excerpts: tuple[str, ...],
+    binding_evidence_excerpts: Mapping[str, str],
     required_validation: Mapping[str, tuple[str, ...]],
     binding_contexts: Mapping[str, Mapping[str, Any]],
     index: int,
@@ -360,7 +488,19 @@ def _validate_change(
     after = patch.get("after_text")
     if not isinstance(before, str) or not before:
         raise PatchGenerationError(f"Change {index} before_text must be non-empty.")
-    if not any(before in excerpt for excerpt in evidence_excerpts):
+    binding_excerpt = binding_evidence_excerpts.get(binding_id)
+    if binding_excerpt is not None and before not in binding_excerpt:
+        raise PatchGenerationError(
+            f"Change {index} before_text is outside its edit binding evidence.",
+            diagnostics={
+                "failure_boundary": "deterministic_patch_validation",
+                "failure_classification": "before_text_outside_edit_binding",
+                "binding_id": binding_id,
+            },
+        )
+    if binding_excerpt is None and not any(
+        before in excerpt for excerpt in evidence_excerpts
+    ):
         raise PatchGenerationError(
             f"Change {index} before_text is not verbatim current evidence.",
             diagnostics={

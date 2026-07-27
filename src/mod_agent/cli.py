@@ -376,6 +376,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "status": "AWAITING_EXACT_DIFF_APPROVAL",
                         "diff_hash": dry_run.get("diff_hash"),
                         "context_hashes": dry_run.get("context_hashes"),
+                        "unified_diff": dry_run.get("unified_diff"),
+                        "unified_diff_sha256": dry_run.get(
+                            "unified_diff_sha256"
+                        ),
+                        "unified_diff_bytes": dry_run.get("unified_diff_bytes"),
+                        "diff_stats": dry_run.get("diff_stats"),
+                        "static_checks": dry_run.get("static_checks"),
                         "diff_preview": dry_run.get("diff_preview"),
                         "instruction": (
                             "Paste the exact diff_hash to approve isolated apply; "
