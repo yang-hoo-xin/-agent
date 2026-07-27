@@ -1615,10 +1615,6 @@ def run_local_request(
                     "hook_target_binding_id",
                     "supporting_binding_ids",
                     "operation",
-                    "rationale",
-                    "evidence_refs",
-                    "expected_validation",
-                    "rollback_hint",
                 )
             }
             for item in implementation.get("proposed_changes") or []

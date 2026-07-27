@@ -384,10 +384,6 @@ def _normalize_required_change_units(
                     "hook_target_binding_id",
                     "supporting_binding_ids",
                     "operation",
-                    "rationale",
-                    "evidence_refs",
-                    "expected_validation",
-                    "rollback_hint",
                 )
             }
         )
