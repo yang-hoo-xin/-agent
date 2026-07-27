@@ -173,6 +173,21 @@ exact_evidence:
   stagger Proposal. It used synthetic input only, persisted no provider body,
   raw response, or patch text, and performed no ArtifactStore, source, game
   directory, or launch action.
+  Corrected synthetic run provider_probe_qwen3_4b_002 supplied exact required
+  validation provider_probe_edit_001 -> ["dotnet build"]. Its one 4942-byte
+  request was admitted at conservative requirement 6990 against configured
+  context 16384 and returned in 5371 milliseconds. The run reached and
+  returned from LLMExactPatchGenerator.generate, proving native-schema parsing,
+  stable post-response model identity, allowed binding, verbatim evidence
+  substring, real replacement, and required-validation admission. It then
+  failed the probe-only assertion that before_text equal the entire synthetic
+  file. Product source requires only an exact non-empty substring of a
+  registered evidence excerpt. The current 4B Provider and product Patch
+  parser boundary are therefore verified, but the later return-true semantic
+  assertion was not reached and raw response/Patch text was not retained.
+  This is not real stagger Proposal-quality evidence. The run again included
+  no project or commercial input and performed no ArtifactStore, source, game
+  directory, or launch action.
 affected_coverage_ids:
   PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
   PROP-002, EXEC-002, EXEC-003, EXEC-005, EXEC-006
@@ -180,28 +195,31 @@ dependencies:
   The EvidencePack, Implementation Plan, fresh binding gates, and bounded
   Proposal context budget are complete for this revision. Proposal remains
   absent. The 27B profile timed out under material CPU/system-memory offload;
-  the 4B profile returned quickly but its first synthetic qualification had an
-  incomplete validation input and failed deterministic Patch admission.
-  Before a real Proposal, select and separately authorize either a corrected
-  synthetic qualification with one exact required validation or an explicitly
-  accepted direct 4B Proposal risk. Any later continuation must reuse the same
-  single StateGraph and must not repeat upstream planning or evidence work.
+  the first 4B probe had incomplete validation input, while the corrected
+  second probe verified the local Provider through the actual product Patch
+  parser. Semantic Proposal quality remains unproven and is owned by the real
+  Proposal plus ProposalReview boundary. A later real continuation requires
+  separate authorization, must reuse the same single StateGraph, and must not
+  repeat upstream planning or evidence work.
   Existing review, exact approval, apply, build, and product Runtime gates
   remain unchanged.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
-  one later synthetic-only 4B Provider probe was also authorized and consumed.
-  Neither run disclosed externally. Current admission authorizes no additional
-  model call, real Proposal, source write, Apply, Build, game-directory copy,
-  GTFO launch, screenshot capture, or product-behavior claim. Each later side
-  effect retains its existing separate approval boundary.
+  two later synthetic-only 4B Provider probes were also separately authorized
+  and consumed. None disclosed externally. Current admission authorizes no
+  additional model call, real Proposal, source write, Apply, Build,
+  game-directory copy, GTFO launch, screenshot capture, or product-behavior
+  claim. Each later side effect retains its existing separate approval
+  boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
   The Implementation Plan resolves exactly one future writable target:
   Patches/HitFeedbackBehaviorPatch.cs in a fresh materialization of that
   lineage. Plugin.cs and the preserved lineage remain read-only.
 focused_verification:
+  python -m pytest tests/unit/test_patch_code_generator.py -q --tb=short
+  passed 23 tests in 0.20s after the synthetic Provider closure.
   Revalidate EvidencePack
   c9db43852eb91f711282753daca180ef49e7eaef0ad32784db954554df7c39e5,
   Implementation Plan
@@ -211,16 +229,16 @@ focused_verification:
   General.Enabled=false suppression, and exact marker behavior.
 stop_condition:
   Stop with immutable failed runs sfp_qwen36_27b_001 and
-  provider_probe_qwen3_4b_001. Do not reinterpret either failure as a
-  PatchProposal or retry automatically. The next model call requires a new
-  explicit authorization and must be identified as either corrected synthetic
-  profile qualification or real Proposal continuation. A real continuation
+  provider_probe_qwen3_4b_001 plus probe-outer-assertion failure
+  provider_probe_qwen3_4b_002. Do not reinterpret any run as a PatchProposal
+  and do not run another synthetic probe automatically. The next model call
+  requires new explicit authorization for real Proposal continuation. It
   repeats only fresh binding admission plus Proposal/Review and stops if
   source, assembly, Artifact, or binding identity drifts. After accepted
   two-mode product Runtime evidence, return to the product mainline and perform
   Harness re-admission only if this slice exposes a concrete generic Harness
   failure.
-status: implementation_plan_created_proposal_absent_provider_selection_pending
+status: implementation_plan_created_proposal_absent_real_proposal_authorization_pending
 automation_claim: not_proven
 ```
 

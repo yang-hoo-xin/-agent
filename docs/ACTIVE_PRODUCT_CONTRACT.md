@@ -121,6 +121,23 @@ response or patch text, made no ArtifactStore or target write, and did not
 launch the game. Stagger therefore remains at the existing EvidencePack and
 Implementation Plan with Proposal absent.
 
+Separately authorized corrected synthetic probe
+`provider_probe_qwen3_4b_002` supplied exact
+`provider_probe_edit_001 -> ["dotnet build"]` validation ownership. Its one
+4,942-byte request was admitted at conservative context requirement 6,990
+against configured 16,384 and returned in 5.371 seconds. The actual
+`LLMExactPatchGenerator` completed native-schema parsing, post-response model
+identity admission, binding validation, verbatim evidence-substring
+validation, real-replacement validation, and required-validation checks. The
+run then failed only in the probe's stricter outer assertion that
+`before_text` equal the entire synthetic file, while the product contract
+accepts an exact non-empty substring of a registered evidence excerpt. This
+qualifies the 4B local Provider through the current product Patch parser, but
+does not prove that the unpersisted generated `after_text` satisfied the
+requested `return true;` behavior or that 4B can produce an acceptable real
+stagger Proposal. No additional synthetic call is selected. Real Proposal
+continuation remains separately authorized work.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove

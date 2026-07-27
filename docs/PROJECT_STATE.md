@@ -15,7 +15,7 @@ stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
 stagger_implementation_plan_status: evidence_bound_plan_ready_proposal_absent
-local_proposal_provider_status: 27b_timeout_4b_transport_verified_patch_qualification_incomplete
+local_proposal_provider_status: 27b_timeout_4b_provider_and_product_parser_verified_semantic_quality_unproven
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -73,6 +73,26 @@ the local Provider transport and identity boundary without project or
 commercial data, external disclosure, retained provider/response/patch
 content, ArtifactStore writes, target writes, or game actions. The EvidencePack
 and Implementation Plan remain the current Stagger handoff; Proposal is absent.
+
+Corrected synthetic run `provider_probe_qwen3_4b_002` then supplied exact
+required validation `provider_probe_edit_001 -> ["dotnet build"]`. Its single
+4,942-byte loopback body was admitted at conservative requirement `6990`
+against configured context `16384`, and the response returned in `5371`
+milliseconds. The failure `Provider probe before_text drifted.` was raised
+after `LLMExactPatchGenerator.generate(...)` returned. Current source proves
+that return occurs only after native-schema parsing, post-response model
+identity admission, allowed-binding enforcement, exact evidence-substring
+validation, non-no-op replacement validation, and required-validation checks.
+The probe subsequently required `before_text` to equal the entire synthetic
+file, which is stricter than the product rule `before_text in excerpt`.
+Therefore the 4B Provider and current product Patch parser boundary are
+verified. The probe did not reach its later `return true;` assertion, and raw
+response/Patch text was deliberately not persisted, so semantic request
+fulfilment and real stagger Proposal quality remain unproven. The run used no
+project or commercial data and performed no ArtifactStore, source, game
+directory, or launch action. No further synthetic call is selected; the next
+decision is separate authorization for real Proposal continuation from the
+existing Implementation Plan.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B
