@@ -138,6 +138,27 @@ requested `return true;` behavior or that 4B can produce an acceptable real
 stagger Proposal. No additional synthetic call is selected. Real Proposal
 continuation remains separately authorized work.
 
+The first real 4B continuation `sfp_qwen3_4b_001` then revalidated all four
+upstream Artifacts, the three edit bindings, source snapshot, selected Runtime
+assembly, and the 17-snippet Proposal context before making one local call.
+The 62,187-byte request used `num_ctx=131072` because the default conservative
+byte proxy reported required context 70,379. Ollama later reported the exact
+prompt as only 17,866 tokens, but the oversized context reserved 18,432 MiB,
+offloaded most context plus 28 of 37 model layers to host memory, and timed out
+at 300 seconds before Patch parsing. No PatchProposal or later Artifact was
+created, no provider body or raw failure response was persisted, and no target
+source or game state changed.
+
+The bounded repair keeps that default fail-closed byte proxy unchanged. A new
+optional admission mode accepts a prior observed prompt count only when a
+normalized structured-request identity SHA256 also matches; the identity
+excludes only `num_ctx`. Reconstruction of `sfp_qwen3_4b_001` matched its
+recorded provider-body SHA256 and byte count exactly. The bound observation
+therefore admits the same prompt plus the 8,192 output budget as 26,058 tokens
+inside `num_ctx=32768`, while any input/schema/profile drift blocks before
+HTTP. Focused affected tests pass. No retry is authorized by this repair;
+Stagger remains at the Implementation Plan with Proposal absent.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove

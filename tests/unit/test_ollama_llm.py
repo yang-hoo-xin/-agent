@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.libs.llm import LLMFactory, Message, OllamaLLM, OllamaLLMError
+from src.libs.llm.ollama_llm import _context_request_identity_sha256
 
 
 # -----------------------------------------------------------------------------
@@ -191,6 +192,40 @@ class TestOllamaInit:
 
         with pytest.raises(ValueError, match="positive integer"):
             OllamaLLM(settings, context_window=value)
+
+    def test_init_rejects_partial_observed_prompt_admission(self):
+        settings = MockSettings()
+
+        with pytest.raises(ValueError, match="requires tokens"):
+            OllamaLLM(
+                settings,
+                observed_prompt_tokens=32,
+                observed_prompt_identity_sha256="0" * 64,
+            )
+
+    @pytest.mark.parametrize("value", (0, -1, True, 1.5, "32"))
+    def test_init_rejects_invalid_observed_prompt_tokens(self, value):
+        settings = MockSettings()
+
+        with pytest.raises(ValueError, match="positive integer"):
+            OllamaLLM(
+                settings,
+                observed_prompt_tokens=value,
+                observed_prompt_identity_sha256="0" * 64,
+                observed_prompt_token_source="bound_test_observation",
+            )
+
+    @pytest.mark.parametrize("value", ("", "A" * 64, "g" * 64, "0" * 63))
+    def test_init_rejects_invalid_observed_prompt_identity(self, value):
+        settings = MockSettings()
+
+        with pytest.raises(ValueError, match="lowercase SHA256"):
+            OllamaLLM(
+                settings,
+                observed_prompt_tokens=32,
+                observed_prompt_identity_sha256=value,
+                observed_prompt_token_source="bound_test_observation",
+            )
     
     def test_init_default_timeout(self):
         """Should use default timeout when none specified."""
@@ -446,6 +481,82 @@ class TestOllamaChat:
         assert admission["configured_num_ctx"] == 128
         assert admission["num_predict"] == 64
         assert admission["admitted"] is False
+        assert recorded == []
+        mock_client.assert_not_called()
+
+    def test_bound_observed_prompt_tokens_allow_exact_smaller_context(self):
+        settings = MockSettings()
+        schema = {"type": "object"}
+        messages = [{"role": "user", "content": "x" * 256}]
+        payload = {
+            "model": "llama3",
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": 0.7,
+                "num_predict": 64,
+                "num_ctx": 32768,
+            },
+            "think": False,
+            "format": schema,
+        }
+        identity = _context_request_identity_sha256(payload)
+        llm = OllamaLLM(
+            settings,
+            context_window=128,
+            observed_prompt_tokens=32,
+            observed_prompt_identity_sha256=identity,
+            observed_prompt_token_source="bound_test_observation",
+        )
+        recorded = {}
+
+        with patch("httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = (
+                make_ollama_response(content='{"changes":[]}')
+            )
+            llm.chat(
+                [Message(role="user", content="x" * 256)],
+                max_tokens=64,
+                response_format=schema,
+                provider_request_recorder=recorded.update,
+            )
+
+        assert recorded["context_admission"] == {
+            "mode": "bound_observed_prompt_tokens_plus_output_budget_v1",
+            "exact_prompt_tokens_available_pre_call": True,
+            "provider_body_utf8_bytes": recorded["body_size_bytes"],
+            "observed_prompt_tokens": 32,
+            "prompt_identity_sha256": identity,
+            "prompt_token_source": "bound_test_observation",
+            "configured_num_ctx": 128,
+            "num_predict": 64,
+            "observed_required_context": 96,
+            "admitted": True,
+        }
+
+    def test_bound_observed_prompt_tokens_block_identity_drift(self):
+        settings = MockSettings()
+        llm = OllamaLLM(
+            settings,
+            context_window=128,
+            observed_prompt_tokens=32,
+            observed_prompt_identity_sha256="0" * 64,
+            observed_prompt_token_source="bound_test_observation",
+        )
+        recorded = []
+
+        with patch("httpx.Client") as mock_client:
+            with pytest.raises(OllamaLLMError) as exc_info:
+                llm.chat(
+                    [Message(role="user", content="x" * 256)],
+                    max_tokens=64,
+                    response_format={"type": "object"},
+                    provider_request_recorder=recorded.append,
+                )
+
+        assert exc_info.value.diagnostics["failure_classification"] == (
+            "provider_request_prompt_identity_mismatch"
+        )
         assert recorded == []
         mock_client.assert_not_called()
 

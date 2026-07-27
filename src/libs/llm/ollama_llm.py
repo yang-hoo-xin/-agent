@@ -16,6 +16,23 @@ from typing import Any, Dict, List, Optional
 from src.libs.llm.base_llm import BaseLLM, ChatResponse, Message
 
 
+def _context_request_identity_sha256(payload: Mapping[str, Any]) -> str:
+    """Bind a structured request while allowing only num_ctx to change."""
+
+    normalized = dict(payload)
+    options = dict(normalized.get("options") or {})
+    options.pop("num_ctx", None)
+    normalized["options"] = options
+    return hashlib.sha256(
+        json.dumps(
+            normalized,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 class OllamaLLMError(RuntimeError):
     """Raised when Ollama API call fails.
     
@@ -63,6 +80,9 @@ class OllamaLLM(BaseLLM):
         base_url: Optional[str] = None,
         timeout: Optional[float] = None,
         context_window: int | None = None,
+        observed_prompt_tokens: int | None = None,
+        observed_prompt_identity_sha256: str | None = None,
+        observed_prompt_token_source: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize the Ollama LLM provider.
@@ -90,6 +110,47 @@ class OllamaLLM(BaseLLM):
         ):
             raise ValueError("Ollama context_window must be a positive integer.")
         self.context_window = context_window
+        prompt_observation = (
+            observed_prompt_tokens,
+            observed_prompt_identity_sha256,
+            observed_prompt_token_source,
+        )
+        if any(value is not None for value in prompt_observation):
+            if not all(value is not None for value in prompt_observation):
+                raise ValueError(
+                    "Ollama observed prompt admission requires tokens, "
+                    "identity SHA256, and source together."
+                )
+            if (
+                isinstance(observed_prompt_tokens, bool)
+                or not isinstance(observed_prompt_tokens, int)
+                or observed_prompt_tokens <= 0
+            ):
+                raise ValueError(
+                    "Ollama observed_prompt_tokens must be a positive integer."
+                )
+            if (
+                not isinstance(observed_prompt_identity_sha256, str)
+                or len(observed_prompt_identity_sha256) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in observed_prompt_identity_sha256
+                )
+            ):
+                raise ValueError(
+                    "Ollama observed_prompt_identity_sha256 must be lowercase "
+                    "SHA256 hex."
+                )
+            if (
+                not isinstance(observed_prompt_token_source, str)
+                or not observed_prompt_token_source.strip()
+            ):
+                raise ValueError(
+                    "Ollama observed_prompt_token_source must be non-empty."
+                )
+        self.observed_prompt_tokens = observed_prompt_tokens
+        self.observed_prompt_identity_sha256 = observed_prompt_identity_sha256
+        self.observed_prompt_token_source = observed_prompt_token_source
         
         # Base URL: explicit > env var > default
         self.base_url = (
@@ -273,20 +334,59 @@ class OllamaLLM(BaseLLM):
                         },
                     )
                 provider_body_utf8_bytes = len(frozen_request_bytes)
-                conservative_required_context = (
-                    provider_body_utf8_bytes + max_tokens
-                )
-                context_admission = {
-                    "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
-                    "exact_prompt_tokens_available_pre_call": False,
-                    "provider_body_utf8_bytes": provider_body_utf8_bytes,
-                    "configured_num_ctx": context_window,
-                    "num_predict": max_tokens,
-                    "conservative_required_context": (
-                        conservative_required_context
-                    ),
-                    "admitted": conservative_required_context <= context_window,
-                }
+                if self.observed_prompt_tokens is None:
+                    conservative_required_context = (
+                        provider_body_utf8_bytes + max_tokens
+                    )
+                    context_admission = {
+                        "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
+                        "exact_prompt_tokens_available_pre_call": False,
+                        "provider_body_utf8_bytes": provider_body_utf8_bytes,
+                        "configured_num_ctx": context_window,
+                        "num_predict": max_tokens,
+                        "conservative_required_context": (
+                            conservative_required_context
+                        ),
+                        "admitted": (
+                            conservative_required_context <= context_window
+                        ),
+                    }
+                else:
+                    observed_identity = _context_request_identity_sha256(payload)
+                    if observed_identity != self.observed_prompt_identity_sha256:
+                        raise OllamaLLMError(
+                            "[Ollama] Structured request does not match the "
+                            "bound prompt-token observation.",
+                            diagnostics={
+                                "failure_boundary": "provider_request_gate",
+                                "failure_classification": (
+                                    "provider_request_prompt_identity_mismatch"
+                                ),
+                                "expected_prompt_identity_sha256": (
+                                    self.observed_prompt_identity_sha256
+                                ),
+                                "observed_prompt_identity_sha256": (
+                                    observed_identity
+                                ),
+                            },
+                        )
+                    observed_required_context = (
+                        self.observed_prompt_tokens + max_tokens
+                    )
+                    context_admission = {
+                        "mode": (
+                            "bound_observed_prompt_tokens_plus_output_budget_v1"
+                        ),
+                        "exact_prompt_tokens_available_pre_call": True,
+                        "provider_body_utf8_bytes": provider_body_utf8_bytes,
+                        "observed_prompt_tokens": self.observed_prompt_tokens,
+                        "prompt_identity_sha256": observed_identity,
+                        "prompt_token_source": self.observed_prompt_token_source,
+                        "configured_num_ctx": context_window,
+                        "num_predict": max_tokens,
+                        "observed_required_context": observed_required_context,
+                        "admitted": observed_required_context <= context_window,
+                    }
                 if context_admission["admitted"] is not True:
                     raise OllamaLLMError(
                         "[Ollama] Structured request exceeds the configured "

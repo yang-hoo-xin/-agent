@@ -15,7 +15,7 @@ stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
 stagger_implementation_plan_status: evidence_bound_plan_ready_proposal_absent
-local_proposal_provider_status: 27b_timeout_4b_provider_and_product_parser_verified_semantic_quality_unproven
+local_proposal_provider_status: real_4b_timeout_bound_context_replay_ready_authorization_pending
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -93,6 +93,33 @@ project or commercial data and performed no ArtifactStore, source, game
 directory, or launch action. No further synthetic call is selected; the next
 decision is separate authorization for real Proposal continuation from the
 existing Implementation Plan.
+
+Real continuation `sfp_qwen3_4b_001` subsequently revalidated the same four
+Artifact hashes, all three edit bindings, source snapshot
+`E82C26667A82CB207FBFF0B9DCB2198A8CC2B1DF3BF52FE510C59BF3B8EBC2E0`,
+and selected Runtime assembly before one local 4B call. Its request body was
+62,187 bytes with SHA256
+`744cde59b4f8c7c0144ab02e879bcdad4f207023078a502fe5b271abd2d0311a`.
+The default byte proxy required 70,379 context units, so the run selected
+`num_ctx=131072`. Ollama measured the actual prompt at 17,866 tokens, reserved
+18,432 MiB for the oversized context, loaded only 9 of 37 layers on GPU, and
+timed out after 300 seconds. The run made one model call but entered no Patch
+parser, wrote no PatchProposal/ProposalReview or later Artifact, persisted no
+provider body or raw failure response, and changed no target source or game
+state. It is immutable failed evidence and does not authorize a retry.
+
+The resulting bounded context repair adds an optional
+`bound_observed_prompt_tokens_plus_output_budget_v1` admission mode. The
+existing byte proxy remains the default. The new mode requires a lowercase
+SHA256 over the complete structured request with only `num_ctx` normalized
+away, plus the observed prompt count and its source. Reconstructing the failed
+request reproduced both its exact body SHA256 and 62,187-byte size; the bound
+request identity is
+`1680f893d40dea804b3bb190ab31c6663a9a3c4913fa23c8d8651ea5436b90b9`.
+The 17,866 observed prompt tokens plus 8,192 output tokens require 26,058 and
+are admitted within `num_ctx=32768`; identity drift blocks before HTTP.
+Affected tests passed 141 cases. Prepared run `sfp_qwen3_4b_002` remains
+unexecuted pending separate authorization.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

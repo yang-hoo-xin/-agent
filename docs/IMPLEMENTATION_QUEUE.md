@@ -188,38 +188,60 @@ exact_evidence:
   This is not real stagger Proposal-quality evidence. The run again included
   no project or commercial input and performed no ArtifactStore, source, game
   directory, or launch action.
+  Real local run sfp_qwen3_4b_001 then revalidated the same four upstream
+  Artifact hashes, source snapshot, all three edit bindings, the selected
+  Runtime assembly, and all 17 Proposal snippets. Its one 62187-byte request
+  used body SHA256
+  744cde59b4f8c7c0144ab02e879bcdad4f207023078a502fe5b271abd2d0311a,
+  output budget 8192, and num_ctx 131072 because the default byte proxy
+  required 70379. Ollama measured the prompt at 17866 tokens, but the oversized
+  profile reserved 18432 MiB of context, loaded only 9/37 layers on GPU, and
+  timed out at 300 seconds. The run made one model call, entered no Patch
+  parser, created no PatchProposal or later Artifact, persisted no provider
+  body or raw failure response, and changed no target source or game state.
+  The bounded repair preserves the byte proxy as the default and adds an
+  optional bound-observation mode. It accepts observed prompt tokens only when
+  the normalized structured-request SHA256 matches, with only num_ctx allowed
+  to differ. Reconstruction matched the failed provider body hash and size
+  exactly. Bound identity
+  1680f893d40dea804b3bb190ab31c6663a9a3c4913fa23c8d8651ea5436b90b9
+  admits 17866 + 8192 = 26058 inside num_ctx 32768; drift blocks before HTTP.
+  Prepared run sfp_qwen3_4b_002 has not been executed.
 affected_coverage_ids:
-  PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
+  GOV-005, PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
   PROP-002, EXEC-002, EXEC-003, EXEC-005, EXEC-006
 dependencies:
   The EvidencePack, Implementation Plan, fresh binding gates, and bounded
   Proposal context budget are complete for this revision. Proposal remains
   absent. The 27B profile timed out under material CPU/system-memory offload;
-  the first 4B probe had incomplete validation input, while the corrected
-  second probe verified the local Provider through the actual product Patch
-  parser. Semantic Proposal quality remains unproven and is owned by the real
-  Proposal plus ProposalReview boundary. A later real continuation requires
-  separate authorization, must reuse the same single StateGraph, and must not
-  repeat upstream planning or evidence work.
+  the synthetic probes verified the local Provider and actual product Patch
+  parser. The first real 4B run then exposed and triggered the bounded
+  context-admission repair described above. Semantic Proposal quality remains
+  unproven and is owned by a later real Proposal plus ProposalReview boundary.
+  The prepared bound-context continuation requires separate authorization,
+  must reuse the same single StateGraph, and must not repeat upstream planning
+  or evidence work.
   Existing review, exact approval, apply, build, and product Runtime gates
   remain unchanged.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
   two later synthetic-only 4B Provider probes were also separately authorized
-  and consumed. None disclosed externally. Current admission authorizes no
-  additional model call, real Proposal, source write, Apply, Build,
-  game-directory copy, GTFO launch, screenshot capture, or product-behavior
-  claim. Each later side effect retains its existing separate approval
-  boundary.
+  and consumed. One real local 4B Proposal call was then authorized and
+  consumed without producing a Proposal. None disclosed externally. Current
+  admission authorizes no additional model call, real Proposal, source write,
+  Apply, Build, game-directory copy, GTFO launch, screenshot capture, or
+  product-behavior claim. Each later side effect retains its existing separate
+  approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
   The Implementation Plan resolves exactly one future writable target:
   Patches/HitFeedbackBehaviorPatch.cs in a fresh materialization of that
   lineage. Plugin.cs and the preserved lineage remain read-only.
 focused_verification:
-  python -m pytest tests/unit/test_patch_code_generator.py -q --tb=short
-  passed 23 tests in 0.20s after the synthetic Provider closure.
+  python -m pytest tests/unit/test_ollama_llm.py
+  tests/unit/test_patch_code_generator.py tests/unit/test_local_entry.py
+  -q --tb=short passed 141 tests in 1.56s after the bound context repair.
   Revalidate EvidencePack
   c9db43852eb91f711282753daca180ef49e7eaef0ad32784db954554df7c39e5,
   Implementation Plan
@@ -228,17 +250,18 @@ focused_verification:
   A later product Runtime must separately prove visible and audible behavior,
   General.Enabled=false suppression, and exact marker behavior.
 stop_condition:
-  Stop with immutable failed runs sfp_qwen36_27b_001 and
+  Stop with immutable failed runs sfp_qwen36_27b_001,
+  sfp_qwen3_4b_001, and
   provider_probe_qwen3_4b_001 plus probe-outer-assertion failure
   provider_probe_qwen3_4b_002. Do not reinterpret any run as a PatchProposal
   and do not run another synthetic probe automatically. The next model call
-  requires new explicit authorization for real Proposal continuation. It
-  repeats only fresh binding admission plus Proposal/Review and stops if
-  source, assembly, Artifact, or binding identity drifts. After accepted
-  two-mode product Runtime evidence, return to the product mainline and perform
-  Harness re-admission only if this slice exposes a concrete generic Harness
-  failure.
-status: implementation_plan_created_proposal_absent_real_proposal_authorization_pending
+  requires new explicit authorization for prepared real continuation
+  sfp_qwen3_4b_002. It repeats only fresh binding admission plus Proposal/Review
+  and stops if request identity, source, assembly, Artifact, or binding identity
+  drifts. After accepted two-mode product Runtime evidence, return to the
+  product mainline and perform Harness re-admission only if this slice exposes
+  a concrete generic Harness failure.
+status: implementation_plan_created_proposal_absent_bound_context_replay_ready_authorization_pending
 automation_claim: not_proven
 ```
 
