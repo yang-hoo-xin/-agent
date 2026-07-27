@@ -109,39 +109,71 @@ exact_evidence:
   and blocks deterministically before Implementation Plan. The post-run
   ArtifactStore, Artifact contract, Planning, and Workflow suite passed
   129 tests in 22.64s; diff checks passed.
+  That first EvidencePack remains immutable historical evidence. Separately
+  authorized diagnostic Runtime sfcp_001_runtime_001 then recorded 336
+  contiguous events: 144 BulletDamage, 124 EnemyAgent.OnTakeDamage, 34
+  ES_Hitreact.DoHitReact, and 34 ES_Hitreact.ActivateState, with zero probe
+  failures. Twenty-three of fifty-seven OnTakeDamage groups had no
+  ActivateState, while every DoHitReact/ActivateState result pair matched.
+  The operator-defined Micro/Light/Heavy scope retained nine Light and twelve
+  Heavy results, observed no Micro result, excluded thirteen ToDeath results,
+  and observed no duplicate accepted identity. The structured Runtime result
+  SHA256 is
+  467FD878A0A2F432177F95D68397E9E31520F100129BFBA2A8807534F11AE0E3.
+  The run exited and restored its temporary DLL, log, and configuration state.
+  Evidence revision sfe2_467fd878 combines that bounded Runtime record with
+  the operator scope and exact current metadata for
+  AK.EVENTS.get_HACKING_PUZZLE_CORRECT. EvidencePack
+  c9db43852eb91f711282753daca180ef49e7eaef0ad32784db954554df7c39e5
+  is fresh, supports all seven essential technical hypotheses, and has
+  can_generate_patch=true and authoritative_for_patch=true. It selects direct
+  ES_Hitreact.ActivateState token 0x06001387, signature blob
+  2006011184301184340212B9DC11511186F8, instead of the expiring
+  BulletDamage/result cache.
+  Deterministic Implementation Plan
+  db13ebc8f8acfaa8b0b42dea761e42a443f483aaa5f8014c4eb23a1d61bf31a6
+  is fresh and non-blocking. It binds only
+  Patches/HitFeedbackBehaviorPatch.cs and records the result Hook/gates,
+  short-lived yellow X, and exact Wwise event path. Audible attribution,
+  visible behavior, repeated valid reactions on the same enemy, and the final
+  STAGGER_FEEDBACK_SHOWN exactly-once claim remain product Runtime obligations.
+  The affected Planning, ArtifactStore, Artifact contract, Workflow, and
+  ProposalReview suite passed 159 tests in 18.10s.
 affected_coverage_ids:
   PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
   EXEC-002, EXEC-003, EXEC-005, EXEC-006
 dependencies:
-  Resolve the three remaining essential hypotheses through current semantic
-  evidence or an explicit operator-reviewed bounded implementation decision:
-  the reaction-type product scope, a collision-safe exactly-once correlation
-  rule, and one feature-attributable short audio event. Then produce a new
-  EvidencePack revision before Implementation Plan. Existing single-StateGraph
-  review/apply/build/runtime gates remain unchanged.
+  The EvidencePack and Implementation Plan gates are complete for this
+  revision. The next controlled stage is Proposal generation only after fresh
+  live-source and binding revalidation plus separate authorization for the
+  required model disclosure. Existing single-StateGraph review, exact approval,
+  apply, build, and product Runtime gates remain unchanged.
 permissions_and_disclosure:
-  Current admission authorizes local read-only source, metadata, and IL
-  discovery only. No external model disclosure, source write, Apply, game
-  directory copy, GTFO launch, screenshot capture, or gameplay claim is
-  authorized by this record. Each later side effect retains its existing
-  separate approval boundary.
+  The one diagnostic Runtime was separately authorized, completed, and
+  restored. Current admission authorizes no external model disclosure,
+  Proposal generation, source write, Apply, Build, game-directory copy, GTFO
+  launch, screenshot capture, or product-behavior claim. Each later side
+  effect retains its existing separate approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
-  A writable target path is not admitted until current source is freshly
-  materialized and Hook evidence resolves an exact edit binding.
+  The Implementation Plan resolves exactly one future writable target:
+  Patches/HitFeedbackBehaviorPatch.cs in a fresh materialization of that
+  lineage. Plugin.cs and the preserved lineage remain read-only.
 focused_verification:
-  Preserve the four supported findings while resolving the three exact gaps.
-  Revalidate all seven statuses and current hashes in a new EvidencePack
-  revision. Only after every essential hypothesis is supported may the normal
-  Implementation Plan and affected planning/evidence/proposal tests begin.
+  Revalidate EvidencePack
+  c9db43852eb91f711282753daca180ef49e7eaef0ad32784db954554df7c39e5,
+  Implementation Plan
+  db13ebc8f8acfaa8b0b42dea761e42a443f483aaa5f8014c4eb23a1d61bf31a6,
+  the selected assembly identity, and all three edit bindings before Proposal.
+  A later product Runtime must separately prove visible and audible behavior,
+  General.Enabled=false suppression, and exact marker behavior.
 stop_condition:
-  Stop before Proposal if fresh source materialization cannot preserve the
-  exact selected lineage, or if the FeatureSpec/EvidencePack cannot bind the
-  two-hook correlation, local-player source, enemy identity, hit position, and
-  one-hit deduplication rule. After accepted two-mode Runtime evidence, return
-  to the product mainline and perform Harness re-admission only if this slice
-  exposed a concrete generic Harness failure.
-status: evidence_pack_partial_blocked_for_three_operator_evidence_resolutions
+  Stop at the Implementation Plan until Proposal disclosure and generation are
+  separately authorized. Stop again if fresh source, assembly, Artifact, or
+  binding identity drifts. After accepted two-mode product Runtime evidence,
+  return to the product mainline and perform Harness re-admission only if this
+  slice exposes a concrete generic Harness failure.
+status: implementation_plan_created_pending_proposal_authorization
 automation_claim: not_proven
 ```
 

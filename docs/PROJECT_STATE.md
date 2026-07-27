@@ -12,8 +12,9 @@ current_queue: GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001
 current_documentation_task: None
 selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio feedback
 stagger_feature_spec_status: operator_guided_feature_spec_complete
-stagger_evidence_status: partial_4_supported_3_unresolved_blocked_before_implementation_plan
-most_recent_evidence_run: sfe_99ca8e29
+stagger_evidence_status: sufficient_7_supported_implementation_plan_created
+most_recent_evidence_run: sfe2_467fd878
+stagger_implementation_plan_status: evidence_bound_pending_proposal_authorization
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -25,9 +26,10 @@ sound, and one exact `STAGGER_FEEDBACK_SHOWN` marker only when the local
 player's hit actually produces an enemy hit reaction. `General.Enabled=false`
 must produce none of those effects. The task has completed its bounded
 read-only Hook-discovery comparison, operator-guided FeatureSpec, fresh source
-materialization, and first bound EvidencePack. The EvidencePack remains partial
-and blocks before Implementation Plan; this is not an Agent Harness Migration
-Boundary.
+materialization, one diagnostic Runtime, a sufficient EvidencePack revision,
+and an evidence-bound Implementation Plan. Proposal, source modification,
+Build, and product Runtime acceptance remain pending; this is not an Agent
+Harness Migration Boundary.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B
@@ -136,11 +138,11 @@ The same run reread current installed `Modules-ASM.dll` and
 `EnemyAnimationFix.dll` through the existing bounded metadata/IL inspector.
 Both physical assembly SHA256/MVID pairs still match the registered current
 identities, all four raw JSON report hashes revalidated, and
-`target_code_executed=false`. The resulting EvidencePack Artifact hash is
+`target_code_executed=false`. The first EvidencePack Artifact hash is
 `1fc2d8129d45d03fb16bc31fea015df3c228e35caf3ea307180d7bae8a6ea01d`.
-ArtifactStore freshness is `fresh`.
+That immutable revision remains readable as the pre-diagnostic blocked state.
 
-The EvidencePack supports `input_event_mapping`, `result_event_mapping`,
+The first EvidencePack supports `input_event_mapping`, `result_event_mapping`,
 `enemy_identity_mapping`, and `yellow_x_visual_path`. It leaves
 `reaction_type_scope`, `exactly_once_correlation`, and `feature_audio_path`
 unresolved. Exact enum literals exist, but current wrapper metadata does not
@@ -155,12 +157,60 @@ Admission stops before Implementation Plan. The run made zero model calls,
 wrote no target source, executed no target code, generated no Proposal or
 Build, and did not write to or launch GTFO.
 
+Separately authorized diagnostic Runtime `sfcp_001_runtime_001` then deployed
+probe DLL SHA256
+`3C5593E97DC1C0DD9AFC36A4E0E467C5B6586F6D2AC901B638578BBB45E2D7D5`
+and recorded `336` contiguous probe events. The run observed `144`
+`BulletDamage`, `124` `EnemyAgent.OnTakeDamage`, `34`
+`ES_Hitreact.DoHitReact`, and `34` `ES_Hitreact.ActivateState` events with
+zero probe failures. Twenty-three of fifty-seven `OnTakeDamage` groups did not
+activate a state, so damage input is not accepted as actual-reaction
+authority. All thirty-four `DoHitReact`/`ActivateState` result pairs matched.
+After applying the operator product rule, the run retained nine `Light` and
+twelve `Heavy` `ActivateState` events, observed zero duplicate accepted
+identities, and excluded thirteen `ToDeath` results. `Micro` was not observed.
+The structured Runtime result SHA256 is
+`467FD878A0A2F432177F95D68397E9E31520F100129BFBA2A8807534F11AE0E3`.
+GTFO exited, the temporary DLL was removed, log/config hashes were restored,
+and the selected source lineage remained unchanged.
+
+Evidence revision `sfe2_467fd878` combines that Runtime record with the
+operator-defined `Micro`/`Light`/`Heavy` scope and exact current
+`AK.EVENTS.get_HACKING_PUZZLE_CORRECT` metadata. The resulting EvidencePack
+Artifact hash is
+`c9db43852eb91f711282753daca180ef49e7eaef0ad32784db954554df7c39e5`;
+ArtifactStore freshness is `fresh`, all seven essential technical hypotheses
+are `supported`, and `can_generate_patch=true`. The original expiring
+`BulletDamage`/enemy cache design is not selected. The exact result Hook is
+`ES_Hitreact.ActivateState` token `0x06001387`, signature blob
+`2006011184301184340212B9DC11511186F8`, bound to `Modules-ASM.dll` SHA256
+`B0127EB1E9228A61B7ED04EA0152348E24DA693636711D03A248049618BB74BB`
+and MVID `85155e68-33a5-4fa5-a419-c563e7ea5e60`.
+
+Deterministic Implementation Planner admitted the revision and wrote
+Implementation Plan Artifact
+`db13ebc8f8acfaa8b0b42dea761e42a443f483aaa5f8014c4eb23a1d61bf31a6`.
+It is `fresh`, `blocking=false`, selects only
+`Patches/HitFeedbackBehaviorPatch.cs`, and records three bounded changes:
+the `ActivateState` Hook and gates, the short-lived yellow X, and the exact
+Wwise event path. Audible attribution, visible product behavior, repeated
+valid reactions on the same enemy, and the final
+`STAGGER_FEEDBACK_SHOWN` exactly-once claim remain later product Runtime
+obligations. No external model, Proposal, target-source write, Build, or new
+GTFO launch occurred while producing the revision and plan.
+
 The post-run ArtifactStore, Artifact contract, Planning, and Workflow focused
 command was
 `python -m pytest -q tests/unit/test_artifact_store.py
 tests/unit/test_artifact_contract.py tests/unit/test_planning.py
 tests/unit/test_workflow_graph.py --tb=short -p no:cacheprovider`; it passed
 `129` tests in `22.64s`. `git diff --check` also passed.
+
+The post-revision command
+`python -m pytest -q tests/unit/test_planning.py
+tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py
+tests/unit/test_workflow_graph.py tests/unit/test_proposal_review.py
+--tb=short -p no:cacheprovider` passed `159` tests in `18.10s`.
 
 The final affected verification command for the revised FeatureSpec and the
 bounded discovery repair was
