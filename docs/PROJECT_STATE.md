@@ -14,8 +14,8 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: evidence_bound_plan_dry_run_complete_exact_diff_approval_pending
-local_proposal_provider_status: real_4b_completed_no_model_dry_run_complete
+stagger_implementation_plan_status: evidence_bound_plan_isolated_apply_complete_build_pending
+local_proposal_provider_status: real_4b_completed_no_model_isolated_apply_complete
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -29,9 +29,9 @@ must produce none of those effects. The task has completed its bounded
 read-only Hook-discovery comparison, operator-guided FeatureSpec, fresh source
 materialization, one diagnostic Runtime, a sufficient EvidencePack revision,
 and an evidence-bound Implementation Plan. PatchProposal, deterministic
-ProposalReview, and successful no-write Dry-run now exist. The exact diff is
-materialized but has not been approved for isolated Apply. Source modification,
-Build, and product Runtime acceptance remain pending; this is not an Agent
+ProposalReview, successful no-write Dry-run, and approved isolated Apply now
+exist. The run-local materialized target contains the exact approved bytes.
+Build and product Runtime acceptance remain pending; this is not an Agent
 Harness Migration Boundary.
 
 Separately authorized local Proposal continuation
@@ -185,14 +185,32 @@ matched one live occurrence in `Patches/HitFeedbackBehaviorPatch.cs` and
 recorded exact diff hash
 `sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db`.
 The live before SHA256 remained
-`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf1955d405e1a`; the
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`;
+the
 in-memory proposed after SHA256 is
 `8a67511bd773353f34d9e527e2d6660c461d6a291da8c7576b29eee231ae5bc5`.
 The source snapshot remained unchanged, no temporary patch file was created,
 and no Apply, Build, Runtime, Evaluation, or terminal Artifact exists.
 Existing PatchApply, Workflow, and Artifact contract tests passed 93 cases.
-The next gate is separate user approval of that exact diff hash; current
-authorization does not permit a write.
+At that boundary, the next gate was separate user approval of that exact diff
+hash and the run had no write authority.
+
+The user then supplied the exact hash. Run
+`sfp_qwen3_4b_002_isolated_apply_001` revalidated the exact Proposal, latest
+Review, Dry-run Artifact, three bindings, and live before SHA256 before
+entering the existing `isolated_apply` node. The applier recomputed
+`sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db`,
+matched the approval, and atomically changed only
+`Patches/HitFeedbackBehaviorPatch.cs` in the run-local materialized project.
+Isolated Apply Artifact
+`be03b9a981e27e4bc8098e144990ce762890d4dd6fa3cac421751de9dd2e325e`
+records the source transition from
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`
+to `8a67511bd773353f34d9e527e2d6660c461d6a291da8c7576b29eee231ae5bc5`.
+No temporary file remained, no model or upstream stage ran, and the graph
+stopped before Build. No Build, Runtime, Evaluation, or terminal Artifact
+exists. A later real Build requires separate authorization and must bind these
+exact applied bytes.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

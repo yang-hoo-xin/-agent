@@ -208,13 +208,29 @@ and persisted successful Dry-run Artifact
 with exact diff hash
 `sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db`.
 The bound file remained at SHA256
-`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf1955d405e1a` and the
-project snapshot was unchanged; no temporary patch file, Apply, Build,
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`
+and the project snapshot was unchanged; no temporary patch file, Apply, Build,
 Runtime, Evaluation, or terminal Artifact was produced. The Dry-run proves
 only current-source exact-text applicability and the bytes proposed for a
 future isolated write. It does not authorize that write or establish compile
-or product behavior correctness. Isolated Apply now requires separate user
-approval of the exact diff hash above.
+or product behavior correctness. At that boundary, isolated Apply required
+separate user approval of the exact diff hash above.
+
+The user then supplied that exact hash. Run
+`sfp_qwen3_4b_002_isolated_apply_001` revalidated the complete Artifact
+lineage, three edit bindings, current source, and approved diff before
+atomically applying the single change inside the run-local materialization.
+Isolated Apply Artifact
+`be03b9a981e27e4bc8098e144990ce762890d4dd6fa3cac421751de9dd2e325e`
+records `actual_write_performed=true`, `real_patch_applied=true`, and matching
+approved/applied diff hashes. Only
+`Patches/HitFeedbackBehaviorPatch.cs` changed, from SHA256
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`
+to `8a67511bd773353f34d9e527e2d6660c461d6a291da8c7576b29eee231ae5bc5`.
+The preserved source lineage was not changed, no temporary patch file
+remained, and no Build, Runtime, Evaluation, or terminal Artifact was
+produced. This proves only the exact approved isolated source write. A real
+Build requires separate authorization and verification.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

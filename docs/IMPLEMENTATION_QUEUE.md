@@ -249,9 +249,11 @@ dependencies:
   sfp_qwen3_4b_002_dry_run_001 reused the exact Proposal and Review, matched one
   current-source occurrence, and materialized exact diff hash
   sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db
-  without changing source. Separate exact-diff approval is now pending.
-  Existing review, exact approval, apply, build, and product Runtime gates
-  remain unchanged.
+  without changing source. The user then supplied that exact hash. Run
+  sfp_qwen3_4b_002_isolated_apply_001 atomically applied only the approved
+  change in the run-local materialization and wrote Isolated Apply Artifact
+  be03b9a981e27e4bc8098e144990ce762890d4dd6fa3cac421751de9dd2e325e.
+  Existing Build and product Runtime gates remain unchanged.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -263,15 +265,18 @@ permissions_and_disclosure:
   no-model re-review, which wrote only the new ProposalReview and run-local
   audit files. The current turn separately authorized and consumed one
   no-write Dry-run; it wrote only the dry_run_result and run-local audit files.
-  None disclosed externally. Current admission authorizes no additional model
-  call, source write, Apply, Build, game-directory copy, GTFO launch,
-  screenshot capture, or product-behavior claim. Each later side effect retains
-  its existing separate approval boundary.
+  The exact hash supplied by the user then authorized and was consumed by one
+  isolated Apply, which wrote only the bound target and
+  isolated_apply_result. None disclosed externally. Current admission
+  authorizes no additional model call, source write, Build, game-directory
+  copy, GTFO launch, screenshot capture, or product-behavior claim. Each later
+  side effect retains its existing separate approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
-  The Implementation Plan resolves exactly one future writable target:
-  Patches/HitFeedbackBehaviorPatch.cs in a fresh materialization of that
-  lineage. Plugin.cs and the preserved lineage remain read-only.
+  The Implementation Plan resolved exactly one writable target:
+  Patches/HitFeedbackBehaviorPatch.cs in the run-local materialization. That
+  exact approved write is complete. Plugin.cs and the preserved lineage remain
+  read-only.
 focused_verification:
   python -B
   workspaces/stagger_feedback_proposal_001/proposal_continuation_driver.py
@@ -309,6 +314,19 @@ focused_verification:
   sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db,
   preserved the complete source snapshot, and emitted no Apply or later
   Artifact.
+  python -B
+  workspaces/stagger_feedback_proposal_001/proposal_isolated_apply_driver.py
+  --preflight-only first blocked before any write because a locally transcribed
+  expected before SHA256 was incomplete. The value was reread exactly from the
+  registered Dry-run Artifact; the corrected preflight then verified the exact
+  Proposal/Review/Dry-run lineage, supplied approval hash, three bindings, live
+  before SHA256, and zero Apply or later revisions. The separately authorized
+  non-preflight command recomputed the same diff hash, wrote only
+  Patches/HitFeedbackBehaviorPatch.cs, produced after SHA256
+  8a67511bd773353f34d9e527e2d6660c461d6a291da8c7576b29eee231ae5bc5,
+  wrote Isolated Apply Artifact
+  be03b9a981e27e4bc8098e144990ce762890d4dd6fa3cac421751de9dd2e325e,
+  left no temporary file, and emitted no Build or later Artifact.
   python -m pytest tests/unit/test_ollama_llm.py
   tests/unit/test_patch_code_generator.py tests/unit/test_local_entry.py
   -q --tb=short passed 141 tests in 1.56s after the bound context repair.
@@ -327,12 +345,12 @@ stop_condition:
   completed Proposal/blocked Review run and preserve
   sfp_qwen3_4b_002_rereview_001 as the successful no-model Review revision.
   Preserve sfp_qwen3_4b_002_dry_run_001 as the successful no-write exact-diff
-  run. Do not call a model again. Stop before isolated Apply until the user
-  separately approves exact diff hash
-  sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db.
-  Later stages must retain exact Proposal, Review, source, Artifact, approval,
-  Build, and Runtime gates.
-status: dry_run_complete_exact_diff_approval_pending
+  run and sfp_qwen3_4b_002_isolated_apply_001 as the successful exact-approved
+  isolated source write. Do not call a model again or repeat Apply. Stop before
+  Build until a separate authorization selects the real build. Later stages
+  must retain exact Proposal, Review, Dry-run, Apply, source, Artifact, Build,
+  and Runtime gates.
+status: isolated_apply_complete_build_authorization_pending
 automation_claim: not_proven
 ```
 

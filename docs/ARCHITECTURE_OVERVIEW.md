@@ -166,6 +166,15 @@ interrupted immediately after Dry-run. Source bytes were unchanged and no
 later Artifact was created. This is execution evidence for the existing
 no-write boundary; it adds no node, route, provider, or write authority.
 
+After the user supplied that exact hash, run
+`sfp_qwen3_4b_002_isolated_apply_001` resumed the same graph after
+`dry_run_apply`, used the existing `isolated_apply` node, and atomically wrote
+only the approved bytes inside the run-local materialization. The resulting
+Artifact binds Proposal, Review, Dry-run, approval hash, before/after source
+hashes, and the one changed path. The graph interrupted before Build. This is
+execution evidence for the existing approval/write boundary, not a new control
+plane or authority to Build or run the product.
+
 ### 2.4 V2 Intelligence Experiment And Productization Boundary
 
 The control-plane diagram above is the implemented delivery baseline. It is not
