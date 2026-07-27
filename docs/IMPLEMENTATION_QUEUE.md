@@ -245,9 +245,11 @@ dependencies:
   The EvidencePack, Implementation Plan, fresh binding gates, and bounded
   Proposal context budget, bound local Provider call, and PatchProposal are
   complete for this revision. The bounded domain-policy context repair and
-  deterministic re-review are also complete. The current ProposalReview allows
-  Dry-run, but no Dry-run permission has been granted and no diff has been
-  materialized for approval.
+  deterministic re-review are also complete. Authorized no-write run
+  sfp_qwen3_4b_002_dry_run_001 reused the exact Proposal and Review, matched one
+  current-source occurrence, and materialized exact diff hash
+  sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db
+  without changing source. Separate exact-diff approval is now pending.
   Existing review, exact approval, apply, build, and product Runtime gates
   remain unchanged.
 permissions_and_disclosure:
@@ -259,10 +261,12 @@ permissions_and_disclosure:
   sfp_qwen3_4b_002 call was also consumed and produced the blocked Proposal and
   Review described above. The current turn also authorized and consumed one
   no-model re-review, which wrote only the new ProposalReview and run-local
-  audit files. None disclosed externally. Current admission authorizes no
-  additional model call, source write, Dry-run, Apply, Build, game-directory
-  copy, GTFO launch, screenshot capture, or product-behavior claim. Each later
-  side effect retains its existing separate approval boundary.
+  audit files. The current turn separately authorized and consumed one
+  no-write Dry-run; it wrote only the dry_run_result and run-local audit files.
+  None disclosed externally. Current admission authorizes no additional model
+  call, source write, Apply, Build, game-directory copy, GTFO launch,
+  screenshot capture, or product-behavior claim. Each later side effect retains
+  its existing separate approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
   The Implementation Plan resolves exactly one future writable target:
@@ -290,6 +294,21 @@ focused_verification:
   The authorized non-preflight re-review returned approve_dry_run, wrote one
   new ProposalReview revision, preserved the old Review and both source hashes,
   repeated no upstream stage, and emitted no Dry-run or later Artifact.
+  python -m pytest tests/unit/test_patch_apply.py
+  tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py
+  -q --tb=short passed 93 tests in 27.87s.
+  python -B
+  workspaces/stagger_feedback_proposal_001/proposal_dry_run_driver.py
+  --preflight-only verified the exact Proposal/Review lineage, three bindings,
+  five source files, and zero Dry-run or later revisions.
+  The separately authorized non-preflight command wrote successful Dry-run
+  Artifact
+  ab42c7da8bd8e1a2a209fa51f3fd023e4c0dfaf7d9d5a3f8b6ad324aeeff632f,
+  matched one occurrence in Patches/HitFeedbackBehaviorPatch.cs, recorded
+  exact diff hash
+  sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db,
+  preserved the complete source snapshot, and emitted no Apply or later
+  Artifact.
   python -m pytest tests/unit/test_ollama_llm.py
   tests/unit/test_patch_code_generator.py tests/unit/test_local_entry.py
   -q --tb=short passed 141 tests in 1.56s after the bound context repair.
@@ -307,10 +326,13 @@ stop_condition:
   provider_probe_qwen3_4b_002. Preserve sfp_qwen3_4b_002 as the immutable
   completed Proposal/blocked Review run and preserve
   sfp_qwen3_4b_002_rereview_001 as the successful no-model Review revision.
-  Do not call a model again. Stop before Dry-run until a separate authorization
-  selects no-write diff validation. Later stages must retain exact Proposal,
-  Review, source, Artifact, approval, Build, and Runtime gates.
-status: proposal_review_approved_dry_run_authorization_pending
+  Preserve sfp_qwen3_4b_002_dry_run_001 as the successful no-write exact-diff
+  run. Do not call a model again. Stop before isolated Apply until the user
+  separately approves exact diff hash
+  sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db.
+  Later stages must retain exact Proposal, Review, source, Artifact, approval,
+  Build, and Runtime gates.
+status: dry_run_complete_exact_diff_approval_pending
 automation_claim: not_proven
 ```
 

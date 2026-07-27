@@ -198,6 +198,24 @@ changed no source, and stopped before Dry-run with no Apply, Build, Runtime,
 Evaluation, or terminal Artifact. `approve_dry_run` is review evidence, not
 permission to execute Dry-run or any later stage.
 
+Separately authorized no-write continuation
+`sfp_qwen3_4b_002_dry_run_001` then reused that exact Proposal and approving
+Review without calling a model or repeating an upstream stage. The existing
+`ExactTextPatchApplier` matched one live UTF-8 occurrence in
+`Patches/HitFeedbackBehaviorPatch.cs`, staged the replacement only in memory,
+and persisted successful Dry-run Artifact
+`ab42c7da8bd8e1a2a209fa51f3fd023e4c0dfaf7d9d5a3f8b6ad324aeeff632f`
+with exact diff hash
+`sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db`.
+The bound file remained at SHA256
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf1955d405e1a` and the
+project snapshot was unchanged; no temporary patch file, Apply, Build,
+Runtime, Evaluation, or terminal Artifact was produced. The Dry-run proves
+only current-source exact-text applicability and the bytes proposed for a
+future isolated write. It does not authorize that write or establish compile
+or product behavior correctness. Isolated Apply now requires separate user
+approval of the exact diff hash above.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove

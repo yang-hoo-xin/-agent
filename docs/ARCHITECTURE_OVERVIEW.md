@@ -158,6 +158,14 @@ model calls and no upstream repetition. It stopped before Dry-run. This proves
 the bounded review-context path, not generic workspace remapping or broader
 DomainAdapter onboarding.
 
+Run `sfp_qwen3_4b_002_dry_run_001` reused that exact Proposal/Review lineage
+and resumed the same graph boundary into the existing `dry_run_apply` node.
+`ExactTextPatchApplier` performed one in-memory exact-text replacement,
+persisted the structured before/after hashes and exact diff hash, and the graph
+interrupted immediately after Dry-run. Source bytes were unchanged and no
+later Artifact was created. This is execution evidence for the existing
+no-write boundary; it adds no node, route, provider, or write authority.
+
 ### 2.4 V2 Intelligence Experiment And Productization Boundary
 
 The control-plane diagram above is the implemented delivery baseline. It is not

@@ -14,8 +14,8 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: evidence_bound_plan_proposal_review_approved_dry_run_pending
-local_proposal_provider_status: real_4b_completed_no_model_rereview_approved
+stagger_implementation_plan_status: evidence_bound_plan_dry_run_complete_exact_diff_approval_pending
+local_proposal_provider_status: real_4b_completed_no_model_dry_run_complete
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: AGENT-HARNESS-H3-POSTFIX-REAL-RUNTIME-ACCEPTANCE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -28,11 +28,11 @@ player's hit actually produces an enemy hit reaction. `General.Enabled=false`
 must produce none of those effects. The task has completed its bounded
 read-only Hook-discovery comparison, operator-guided FeatureSpec, fresh source
 materialization, one diagnostic Runtime, a sufficient EvidencePack revision,
-and an evidence-bound Implementation Plan. PatchProposal and deterministic
-ProposalReview now exist; the current Review permits no-write Dry-run, but
-Dry-run has not been authorized or executed. Source modification, Build, and
-product Runtime acceptance remain pending; this is not an Agent Harness
-Migration Boundary.
+and an evidence-bound Implementation Plan. PatchProposal, deterministic
+ProposalReview, and successful no-write Dry-run now exist. The exact diff is
+materialized but has not been approved for isolated Apply. Source modification,
+Build, and product Runtime acceptance remain pending; this is not an Agent
+Harness Migration Boundary.
 
 Separately authorized local Proposal continuation
 `sfp_qwen36_27b_001` revalidated the exact four upstream Artifact hashes,
@@ -171,8 +171,28 @@ returned `approve_dry_run`, `allowed_next_stage=dry_run_apply`, no required
 change, and only the existing manual-review warning. The run made zero model
 calls, repeated no upstream stage, preserved the old Review, changed no source,
 and emitted no Dry-run or later Artifact. Related DomainAdapter,
-ProposalReview, and Workflow tests passed 92 cases. Dry-run requires a later
-explicit authorization.
+ProposalReview, and Workflow tests passed 92 cases. At that run boundary,
+Dry-run still required separate authorization.
+
+The separately authorized no-write continuation
+`sfp_qwen3_4b_002_dry_run_001` then revalidated the four upstream Artifacts,
+three edit bindings, exact Proposal and latest Review, and the unchanged
+five-file materialized source snapshot. It resumed the existing graph after
+`review_proposal`, called no model, and stopped immediately after
+`dry_run_apply`. Dry-run Artifact
+`ab42c7da8bd8e1a2a209fa51f3fd023e4c0dfaf7d9d5a3f8b6ad324aeeff632f`
+matched one live occurrence in `Patches/HitFeedbackBehaviorPatch.cs` and
+recorded exact diff hash
+`sha256:00172af268b605a7ea05e0197509cffbd581a16eb1c62ad4fe0ea54adc12e6db`.
+The live before SHA256 remained
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf1955d405e1a`; the
+in-memory proposed after SHA256 is
+`8a67511bd773353f34d9e527e2d6660c461d6a291da8c7576b29eee231ae5bc5`.
+The source snapshot remained unchanged, no temporary patch file was created,
+and no Apply, Build, Runtime, Evaluation, or terminal Artifact exists.
+Existing PatchApply, Workflow, and Artifact contract tests passed 93 cases.
+The next gate is separate user approval of that exact diff hash; current
+authorization does not permit a write.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B
