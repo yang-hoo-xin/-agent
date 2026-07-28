@@ -227,6 +227,18 @@ class PerformanceSettings:
 
 
 @dataclass(frozen=True)
+class GTFOStaggerAcceptanceSettings:
+    """Reviewed two-process settings for the selected GTFO stagger feature."""
+
+    enabled: bool = False
+    config_path: str = ""
+    disabled_config_path: str = ""
+    disabled_config_sha256: str = ""
+    enabled_config_path: str = ""
+    enabled_config_sha256: str = ""
+
+
+@dataclass(frozen=True)
 class GTFORuntimeSettings:
     enabled: bool = False
     game_executable: str = ""
@@ -241,6 +253,9 @@ class GTFORuntimeSettings:
     poll_interval_seconds: float = 1.0
     output_limit_chars: int = 20000
     terminate_after_capture: bool = False
+    operator_completion_required: bool = False
+    operator_completion_timeout_seconds: int = 900
+    stagger_acceptance: Optional[GTFOStaggerAcceptanceSettings] = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "launch_args", list(self.launch_args))
@@ -389,10 +404,53 @@ class Settings:
                     raise SettingsError(
                         "Expected positive integer for field: runtime.gtfo.screenshot_timeout_seconds"
                     )
+                operator_completion_timeout_seconds = _optional_int(
+                    gtfo,
+                    "operator_completion_timeout_seconds",
+                    gtfo_path,
+                )
+                if operator_completion_timeout_seconds is None:
+                    operator_completion_timeout_seconds = 900
+                if operator_completion_timeout_seconds <= 0:
+                    raise SettingsError(
+                        "Expected positive integer for field: "
+                        "runtime.gtfo.operator_completion_timeout_seconds"
+                    )
                 acceptance_markers_raw = gtfo.get("acceptance_markers", {})
                 if not isinstance(acceptance_markers_raw, dict):
                     raise SettingsError(
                         "Expected mapping for field: runtime.gtfo.acceptance_markers"
+                    )
+                stagger_acceptance_settings = None
+                if "stagger_acceptance" in gtfo:
+                    stagger_acceptance = _require_mapping(
+                        gtfo,
+                        "stagger_acceptance",
+                        gtfo_path,
+                    )
+                    stagger_path = "runtime.gtfo.stagger_acceptance"
+                    stagger_acceptance_settings = GTFOStaggerAcceptanceSettings(
+                        enabled=(
+                            _optional_bool(
+                                stagger_acceptance,
+                                "enabled",
+                                stagger_path,
+                            )
+                            or False
+                        ),
+                        config_path=str(stagger_acceptance.get("config_path", "")),
+                        disabled_config_path=str(
+                            stagger_acceptance.get("disabled_config_path", "")
+                        ),
+                        disabled_config_sha256=str(
+                            stagger_acceptance.get("disabled_config_sha256", "")
+                        ),
+                        enabled_config_path=str(
+                            stagger_acceptance.get("enabled_config_path", "")
+                        ),
+                        enabled_config_sha256=str(
+                            stagger_acceptance.get("enabled_config_sha256", "")
+                        ),
                     )
                 gtfo_settings = GTFORuntimeSettings(
                     enabled=_optional_bool(gtfo, "enabled", gtfo_path) or False,
@@ -415,6 +473,18 @@ class Settings:
                     terminate_after_capture=(
                         _optional_bool(gtfo, "terminate_after_capture", gtfo_path) or False
                     ),
+                    operator_completion_required=(
+                        _optional_bool(
+                            gtfo,
+                            "operator_completion_required",
+                            gtfo_path,
+                        )
+                        or False
+                    ),
+                    operator_completion_timeout_seconds=(
+                        operator_completion_timeout_seconds
+                    ),
+                    stagger_acceptance=stagger_acceptance_settings,
                 )
             runtime_settings = RuntimeAutomationSettings(gtfo=gtfo_settings)
 

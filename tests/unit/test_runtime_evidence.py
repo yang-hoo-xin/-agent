@@ -452,3 +452,57 @@ def test_bind_runtime_evidence_context_preserves_deployment_requirement() -> Non
 
     assert bound["runtime_trust_binding"]["deployment_required"] is True
     assert bound["runtime_trust_binding"]["status"] == "trusted"
+
+
+def test_bind_runtime_evidence_context_preserves_operator_completion_requirement() -> None:
+    payload = build_real_runtime_evidence_payload(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        evidence_items=(
+            RuntimeEvidenceItem(
+                item_type="manual_observation",
+                source="gtfo_operator_completion",
+                locator="sha256:operator-request",
+                supports_acceptance=(ACCEPTANCE_CRITERION,),
+                confidence=1.0,
+            ),
+        ),
+        startup_loaded=True,
+        gameplay_behavior_verified=True,
+        verification_status="verified",
+        acceptance_criteria=(ACCEPTANCE_CRITERION,),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        plugin_marker_binding=PLUGIN_MARKER_BINDING,
+        runtime_trust_binding={
+            "status": "pending_graph_binding",
+            "operator_completion_required": True,
+            "checks": {
+                "feature_id": {"status": "passed"},
+                "runtime_process_identity": {"status": "passed"},
+                "current_run_logs": {"status": "passed"},
+                "plugin_load_marker": {"status": "passed"},
+                "acceptance_markers": {"status": "passed"},
+                "operator_completion": {"status": "passed"},
+                "screenshot_runtime_artifact_linkage": {"status": "passed"},
+            },
+            "blockers": [],
+        },
+    )
+    build_ref = ArtifactRef(
+        feature_id="feature_001",
+        artifact_type="build_result",
+        path="features/feature_001/build_result.json",
+        artifact_hash=BUILD_ARTIFACT_HASH,
+    )
+
+    bound = bind_runtime_evidence_context(
+        payload,
+        run_id=RUN_ID,
+        build_artifact_ref=build_ref,
+    )
+
+    assert bound["runtime_trust_binding"]["operator_completion_required"] is True
+    assert bound["runtime_trust_binding"]["checks"]["operator_completion"] == {
+        "status": "passed"
+    }
+    assert bound["runtime_trust_binding"]["status"] == "trusted"

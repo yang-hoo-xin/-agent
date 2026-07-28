@@ -339,6 +339,90 @@ def test_transition_eval_gate_requires_declared_plugin_deployment_checks() -> No
     assert _case_status(report, "runtime_claim_boundary_binding") == "failed"
 
 
+def test_transition_eval_gate_accepts_bound_operator_completion_for_non_marker_criteria() -> None:
+    marker_criterion = "Requested behavior is implemented."
+    manual_criterion = "The requested visual behavior is directly observed."
+    runtime = {
+        **_real_runtime(),
+        "evidence_source": "gtfo_real_runtime_automation",
+        "acceptance_contract": {
+            "acceptance_criteria": [marker_criterion, manual_criterion],
+            "runtime_verification_plan": ["manual"],
+        },
+        "plugin_marker_binding": {
+            "markers": [
+                {
+                    "marker": "BETTER_HIT_FEEDBACK_ACCEPTANCE_OK",
+                    "acceptance_criterion": marker_criterion,
+                    "observed": True,
+                }
+            ]
+        },
+        "runtime_trust_binding": {
+            "status": "trusted",
+            "operator_completion_required": True,
+            "checks": {
+                "run_id": {"status": "passed"},
+                "feature_id": {"status": "passed"},
+                "build_artifact_hash": {"status": "passed"},
+                "runtime_process_identity": {"status": "passed"},
+                "current_run_logs": {"status": "passed"},
+                "plugin_load_marker": {"status": "passed"},
+                "acceptance_markers": {"status": "passed"},
+                "operator_completion": {"status": "passed"},
+                "screenshot_runtime_artifact_linkage": {"status": "passed"},
+            },
+            "blockers": [],
+        },
+    }
+
+    report = build_transition_eval_gate_report(
+        review=_review(),
+        dry_run=_dry_run(),
+        build=_verified_build(),
+        runtime=runtime,
+        v1_boundary={"v1_acceptance_status": "accepted"},
+        claims_real_success=True,
+    )
+
+    assert report["status"] == "passed"
+    assert _case_status(report, "runtime_claim_boundary") == "passed"
+
+
+def test_transition_eval_gate_requires_operator_completion_trust_check() -> None:
+    runtime = {
+        **_real_runtime(),
+        "evidence_source": "gtfo_real_runtime_automation",
+        "runtime_trust_binding": {
+            "status": "trusted",
+            "operator_completion_required": True,
+            "checks": {
+                "run_id": {"status": "passed"},
+                "feature_id": {"status": "passed"},
+                "build_artifact_hash": {"status": "passed"},
+                "runtime_process_identity": {"status": "passed"},
+                "current_run_logs": {"status": "passed"},
+                "plugin_load_marker": {"status": "passed"},
+                "acceptance_markers": {"status": "passed"},
+                "screenshot_runtime_artifact_linkage": {"status": "passed"},
+            },
+            "blockers": [],
+        },
+    }
+
+    report = build_transition_eval_gate_report(
+        review=_review(),
+        dry_run=_dry_run(),
+        build=_verified_build(),
+        runtime=runtime,
+        v1_boundary={"v1_acceptance_status": "accepted"},
+        claims_real_success=True,
+    )
+
+    assert report["status"] == "failed"
+    assert _case_status(report, "runtime_claim_boundary_binding") == "failed"
+
+
 def test_transition_eval_gate_detects_unpreserved_non_goals() -> None:
     runtime = {
         **_real_runtime(),

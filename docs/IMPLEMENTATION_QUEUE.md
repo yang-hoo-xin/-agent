@@ -467,36 +467,44 @@ focused_verification:
   process_launched=false, and dll_copied=false.
   Reviewed run-local files
   `workspaces/stagger_runtime_admission_001/runtime_profile.yaml` and
-  `runtime_profile_review.json` bind the current executable/working directory,
-  successful `e7daa266` startup/log settings, current
-  FeatureSpec/compiled marker fields, exact DLL destination, and absent-file
-  restoration boundary. Provider source inspection proves its timeout starts
-  after process launch returns and before startup-marker observation, so the
-  reviewed marker-smoke timeout is 600 seconds. The product marker is not a
-  startup marker and binds only the code-level marker criterion; visible,
-  audible, negative, deduplication, and preservation acceptance remain separate
-  observations.
+  `runtime_profile_review.json`, plus the two reviewed config files, bind the
+  current executable/working directory, successful GTFO Runtime history,
+  current FeatureSpec/compiled marker fields, exact DLL/config destinations,
+  reviewed config hashes, and per-attempt restoration boundaries.
+  The bounded GTFO Stagger factory runs `General.Enabled=false` first and
+  `General.Enabled=true` only after the first process passes. Each attempt
+  deploys and restores DLL/config independently, captures current-run logs and
+  one screenshot, terminates the process, and verifies restoration before the
+  graph can trust the combined evidence.
+  Operator completion binds a fresh request id, feature id, profile id, pid,
+  exact criteria, and criterion hashes. Every criterion must be reported as
+  passed, failed, or not_observed with operator identity and direct notes.
+  Only passed observations support acceptance. The provider recollects logs
+  after the operator reply. The existing 600-second timeout covers process
+  launch plus startup/product-marker wait; a separate 900-second timeout covers
+  operator work after that condition.
   The final `python -m src.main preflight-runtime` command with that profile
   returned `READY_FOR_EXTERNAL_AUTHORIZATION` with the same zero-side-effect
-  fields and a warning that six exact FeatureSpec criteria require separate
-  observation. Public preflight and actual continuation now pass the same seven
-  FeatureSpec criteria into provider admission, and actual continuation does so
-  before ResumeReport write or checkpoint consumption. A partial marker mapping
-  can admit one inconclusive smoke attempt; no-marker profiles remain blocked,
-  and full acceptance remains false until every criterion is separately proved.
+  fields and `stagger_acceptance.status=ready`. The disabled process owns the
+  exact `General.Enabled=false` criterion; the enabled process owns the remaining
+  six criteria. The product marker remains bound only to its exact code-level
+  criterion and does not replace visible or audible operator observation.
+  Public preflight and actual continuation pass the same seven FeatureSpec
+  criteria into provider admission before ResumeReport write or checkpoint
+  consumption.
   Focused tests also prove the Runtime profile path does not read LLM,
   Embedding, Vector Store, or Reranker settings. `python -m pytest
   tests/unit/test_workflow_graph.py tests/unit/test_mod_agent_cli.py
   tests/unit/test_local_entry.py tests/unit/test_artifact_contract.py
   tests/unit/test_artifact_store.py tests/unit/test_config_loading.py
-  tests/unit/test_gtfo_runtime_automation.py -q --tb=short` passed 236 tests in
-  37.71s.
-  One authorized marker smoke would consume the single current Build checkpoint
-  and still leave six criteria unproved. Do not launch until the operator
-  explicitly chooses that tradeoff or a bounded manual-completion path is
-  prepared first.
-  A later separately authorized product Runtime must prove visible and audible
-  behavior, General.Enabled=false suppression, and exact marker behavior.
+  tests/unit/test_gtfo_runtime_automation.py
+  tests/unit/test_gtfo_stagger_runtime.py
+  tests/unit/test_transition_eval_gate.py tests/unit/test_runtime_evidence.py
+  -q --tb=short` passed 281 tests in 26.96s.
+  The real-input no-write preflight bound the current config SHA256
+  `717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`;
+  the checkpoint remains unconsumed, downstream Artifact counts remain zero,
+  the plugin destination remains absent, and the config bytes remain unchanged.
 stop_condition:
   Preserve every prior model, Review, Dry-run, and Apply result as immutable
   history, including the semantically rejected isolated Apply and failed repair
@@ -506,11 +514,11 @@ stop_condition:
   isolated Apply. Preserve sfp_build_009 as the only current Build and its
   checkpoint as the only current Runtime handoff. P0 explicit ArtifactStore
   binding plus public no-write continuation preflight and P1 reviewed run-local
-  profile preparation/no-launch validation are complete. The current profile is
-  admitted only for one marker-smoke attempt and not full seven-criterion
-  acceptance. Stop at `READY_FOR_EXTERNAL_AUTHORIZATION` before ResumeReport,
-  game-directory copy, GTFO launch, screenshot capture, RuntimeEvidence, Eval,
-  or WorkflowSummary.
+  two-process operator-completion profile preparation/no-launch validation are
+  complete. Stop at `READY_FOR_EXTERNAL_AUTHORIZATION` before ResumeReport,
+  game-directory copy, config replacement, GTFO launch, screenshot capture,
+  RuntimeEvidence, Eval, or WorkflowSummary. This readiness does not prove any
+  of the seven Runtime criteria.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.

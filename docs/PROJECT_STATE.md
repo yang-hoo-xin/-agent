@@ -14,10 +14,10 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: runtime_not_started_preflight_ready_external_authorization_required
+stagger_implementation_plan_status: runtime_not_started_two_process_preflight_ready_external_authorization_required
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: STAGGER-RUNTIME-ADMISSION-PREFLIGHT-001
+most_recent_completed_capability: STAGGER-TWO-PROCESS-OPERATOR-COMPLETION-PREFLIGHT-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -384,19 +384,25 @@ copy a DLL, or launch a process.
 
 The real `sfp_build_009` checkpoint and original shared ArtifactStore passed
 P0 with `READY_FOR_RUNTIME_PROFILE`. P1 then prepared
-`workspaces/stagger_runtime_admission_001/runtime_profile.yaml` and
-`runtime_profile_review.json` from current machine reads, successful Runtime
-run `e7daa266`, FeatureSpec Artifact
+`workspaces/stagger_runtime_admission_001/runtime_profile.yaml`,
+`runtime_profile_review.json`, and two reviewed config inputs from current
+machine reads, successful two-mode Runtime history, FeatureSpec Artifact
 `bbd473ce1072b2f605afa9a3ef7822695249e4781f77ca810e6b61fcf3c8a190`,
-and the exact compiled marker source. The corrected final public preflight
-returned `READY_FOR_EXTERNAL_AUTHORIZATION` only for one marker-smoke attempt.
-It verified enabled profile, executable, working directory, log paths,
-`BepInEx.cfg` AppendLog binding, run-local screenshot directory, exact startup
-markers `BepInEx` and `Chainloader`, `timeout_seconds=600`, poll/output limits,
-`terminate_after_capture=true`, exact DLL destination, and the
-absent-destination restoration boundary. The 600-second timer starts after the
-process launcher returns and includes startup-marker wait; the current provider
-has no operator-completion signal.
+and the exact compiled marker source. The selected GTFO-domain Runtime factory
+now performs two bounded process attempts in one checkpoint continuation:
+`General.Enabled=false` first, followed by `General.Enabled=true` only if the
+first attempt passes. Each process independently deploys and restores the exact
+DLL and config bytes, uses a fresh current-run log boundary, captures one
+screenshot, and terminates before restoration.
+
+Operator completion is implemented as a unique request bound to
+`request_id`, `feature_id`, profile id, process id, and the SHA256 of every
+exact displayed criterion. The reply must identify the operator, report every
+criterion as `passed`, `failed`, or `not_observed`, and include direct notes.
+Only passed observations support Runtime acceptance. Logs are recollected after
+the reply before screenshot and termination. `timeout_seconds=600` covers the
+post-launch startup/product-marker wait; the separate
+`operator_completion_timeout_seconds=900` begins only after that log condition.
 
 `STAGGER_FEEDBACK_SHOWN` is not a startup marker. Its configured structured
 substring includes `target=ES_Hitreact.ActivateState`,
@@ -418,6 +424,15 @@ hard provider blocker. Actual continuation completes these checks before
 `WorkflowCheckpointStore.resume`, so a profile or capability failure cannot
 consume the checkpoint or create ResumeReport. Focused guards prove the Runtime
 profile path does not read LLM, Embedding, Vector Store, or Reranker settings.
+The final real-input zero-write preflight returned
+`READY_FOR_EXTERNAL_AUTHORIZATION` with two-process stagger status `ready`.
+It bound the current pre-existing config SHA256
+`717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`
+for exact restoration after both attempts. The checkpoint remains unconsumed;
+ResumeReport, RuntimeEvidence, Eval, and WorkflowSummary remain at zero; the
+plugin destination remains absent; no process launched and no game-directory
+bytes changed. External launch/write permission is still not granted, and no
+Runtime criterion is yet observed.
 This correction does not implement operator completion, full seven-criterion
 manual acceptance, Agentic orchestration, or RAG retrieval. The affected
 seven-file command passed 236 tests in 37.71 seconds. An authorized marker

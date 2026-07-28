@@ -286,6 +286,15 @@ def test_runtime_gtfo_settings_parse_explicit_real_automation_config(tmp_path: P
         poll_interval_seconds: 0.5
         output_limit_chars: 4096
         terminate_after_capture: true
+        operator_completion_required: true
+        operator_completion_timeout_seconds: 900
+        stagger_acceptance:
+          enabled: true
+          config_path: C:/Games/GTFO/BepInEx/config/local.betterhitfeedback.cfg
+          disabled_config_path: C:/Runtime/general_enabled_false.cfg
+          disabled_config_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          enabled_config_path: C:/Runtime/general_enabled_true.cfg
+          enabled_config_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
     """
     settings_path = tmp_path / "settings.yaml"
     _write_yaml(settings_path, config)
@@ -310,6 +319,25 @@ def test_runtime_gtfo_settings_parse_explicit_real_automation_config(tmp_path: P
     assert settings.runtime.gtfo.poll_interval_seconds == 0.5
     assert settings.runtime.gtfo.output_limit_chars == 4096
     assert settings.runtime.gtfo.terminate_after_capture is True
+    assert settings.runtime.gtfo.operator_completion_required is True
+    assert settings.runtime.gtfo.operator_completion_timeout_seconds == 900
+    assert settings.runtime.gtfo.stagger_acceptance is not None
+    assert settings.runtime.gtfo.stagger_acceptance.enabled is True
+    assert settings.runtime.gtfo.stagger_acceptance.config_path == (
+        "C:/Games/GTFO/BepInEx/config/local.betterhitfeedback.cfg"
+    )
+    assert settings.runtime.gtfo.stagger_acceptance.disabled_config_path == (
+        "C:/Runtime/general_enabled_false.cfg"
+    )
+    assert settings.runtime.gtfo.stagger_acceptance.disabled_config_sha256 == (
+        "a" * 64
+    )
+    assert settings.runtime.gtfo.stagger_acceptance.enabled_config_path == (
+        "C:/Runtime/general_enabled_true.cfg"
+    )
+    assert settings.runtime.gtfo.stagger_acceptance.enabled_config_sha256 == (
+        "b" * 64
+    )
 
 
 def test_runtime_gtfo_settings_reject_invalid_poll_interval(tmp_path: Path) -> None:
@@ -401,6 +429,57 @@ def test_runtime_gtfo_settings_reject_invalid_screenshot_timeout(tmp_path: Path)
     _write_yaml(settings_path, config)
 
     with pytest.raises(SettingsError, match="runtime.gtfo.screenshot_timeout_seconds"):
+        load_settings(settings_path)
+
+
+def test_runtime_gtfo_settings_reject_invalid_operator_completion_timeout(
+    tmp_path: Path,
+) -> None:
+    config = """
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      temperature: 0.0
+      max_tokens: 1024
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimensions: 1536
+    vector_store:
+      provider: chroma
+      persist_directory: ./data/db/chroma
+      collection_name: knowledge_hub
+    retrieval:
+      dense_top_k: 20
+      sparse_top_k: 20
+      fusion_top_k: 10
+      rrf_k: 60
+    rerank:
+      enabled: false
+      provider: none
+      model: cross-encoder/ms-marco-MiniLM-L-6-v2
+      top_k: 5
+    evaluation:
+      enabled: false
+      provider: custom
+      metrics:
+        - hit_rate
+    observability:
+      log_level: INFO
+      trace_enabled: true
+      trace_file: ./logs/traces.jsonl
+      structured_logging: true
+    runtime:
+      gtfo:
+        operator_completion_timeout_seconds: 0
+    """
+    settings_path = tmp_path / "settings.yaml"
+    _write_yaml(settings_path, config)
+
+    with pytest.raises(
+        SettingsError,
+        match="runtime.gtfo.operator_completion_timeout_seconds",
+    ):
         load_settings(settings_path)
 
 

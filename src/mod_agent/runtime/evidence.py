@@ -589,6 +589,10 @@ def _bind_runtime_trust_binding(
         binding["evidence_source"] = value["evidence_source"]
     if "deployment_required" in value:
         binding["deployment_required"] = value["deployment_required"]
+    if "operator_completion_required" in value:
+        binding["operator_completion_required"] = value[
+            "operator_completion_required"
+        ]
     checks = binding["checks"]
     checks["run_id"] = {
         "status": "passed" if isinstance(run_id, str) and bool(run_id) else "blocked",

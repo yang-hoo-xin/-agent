@@ -19,6 +19,8 @@ from .deployment import (
 )
 from .gtfo_automation import (
     GTFOLogSnapshot,
+    GTFOOperatorCompletion,
+    GTFOOperatorCompletionRequest,
     GTFOProcessHandle,
     GTFORealRuntimeAutomationRunner,
     GTFORealRuntimeProfile,
@@ -27,6 +29,15 @@ from .gtfo_automation import (
     make_gtfo_runtime_evidence_factory,
     make_gtfo_runtime_evidence_factory_from_settings,
     profile_from_settings,
+)
+from .gtfo_stagger import (
+    GTFOConfigDeploymentRecord,
+    GTFOStaggerAcceptanceProfile,
+    GTFOStaggerRuntimeError,
+    build_gtfo_stagger_acceptance_report,
+    make_gtfo_stagger_runtime_evidence_factory,
+    stagger_profile_from_settings,
+    temporarily_deploy_gtfo_config,
 )
 from .probe import (
     RuntimeProbeCommandResult,
@@ -49,9 +60,14 @@ __all__ = [
     "RuntimePluginDeploymentError",
     "RuntimePluginDeploymentRecord",
     "GTFOLogSnapshot",
+    "GTFOOperatorCompletion",
+    "GTFOOperatorCompletionRequest",
     "GTFOProcessHandle",
     "GTFORealRuntimeAutomationRunner",
     "GTFORealRuntimeProfile",
+    "GTFOConfigDeploymentRecord",
+    "GTFOStaggerAcceptanceProfile",
+    "GTFOStaggerRuntimeError",
     "GTFORuntimeAutomationError",
     "RuntimeProbeCommandResult",
     "RuntimeProbeError",
@@ -62,6 +78,7 @@ __all__ = [
     "build_fake_runtime_evidence_payload",
     "build_runtime_failure_ownership",
     "build_gtfo_runtime_capability_report",
+    "build_gtfo_stagger_acceptance_report",
     "build_manual_runtime_evidence_payload",
     "build_real_runtime_evidence_payload",
     "build_screenshot_metadata",
@@ -71,9 +88,12 @@ __all__ = [
     "bind_plugin_deployment_to_runtime_payload",
     "make_gtfo_runtime_evidence_factory",
     "make_gtfo_runtime_evidence_factory_from_settings",
+    "make_gtfo_stagger_runtime_evidence_factory",
     "make_runtime_probe_evidence_factory",
     "normalize_runtime_failure_ownership",
     "profile_from_settings",
+    "stagger_profile_from_settings",
     "screenshot_registry_to_runtime_item",
     "temporarily_deploy_verified_plugin",
+    "temporarily_deploy_gtfo_config",
 ]

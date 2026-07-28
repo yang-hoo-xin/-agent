@@ -464,9 +464,15 @@ def _missing_runtime_success_binding(runtime: Mapping[str, Any]) -> tuple[str, .
         and build_artifact_ref.get("artifact_hash") != build_artifact_hash
     ):
         missing.append("build_artifact_hash")
+    runtime_trust_binding = runtime.get("runtime_trust_binding")
+    operator_completion_required = bool(
+        isinstance(runtime_trust_binding, Mapping)
+        and runtime_trust_binding.get("operator_completion_required") is True
+    )
     if not _has_observed_acceptance_plugin_markers(
         runtime.get("plugin_marker_binding"),
         _acceptance_criteria(runtime),
+        allow_non_marker_acceptance=operator_completion_required,
     ):
         missing.append("plugin_marker_binding")
     if _requires_runtime_trust_binding(runtime) and not _has_trusted_runtime_binding(
@@ -495,11 +501,34 @@ def _acceptance_criteria(runtime: Mapping[str, Any]) -> tuple[str, ...]:
 def _has_observed_acceptance_plugin_markers(
     value: Any,
     acceptance_criteria: tuple[str, ...],
+    *,
+    allow_non_marker_acceptance: bool = False,
 ) -> bool:
     observed_acceptance = _observed_acceptance_marker_criteria(value)
+    if allow_non_marker_acceptance:
+        configured_acceptance = _configured_acceptance_marker_criteria(value)
+        return bool(configured_acceptance) and configured_acceptance.issubset(
+            observed_acceptance
+        )
     if acceptance_criteria:
         return set(acceptance_criteria).issubset(observed_acceptance)
     return bool(observed_acceptance)
+
+
+def _configured_acceptance_marker_criteria(value: Any) -> set[str]:
+    if not isinstance(value, Mapping):
+        return set()
+    configured: set[str] = set()
+    markers = value.get("markers") or value.get("acceptance_markers") or ()
+    if not isinstance(markers, (list, tuple)):
+        return configured
+    for marker in markers:
+        if not isinstance(marker, Mapping):
+            continue
+        acceptance_criterion = marker.get("acceptance_criterion")
+        if isinstance(acceptance_criterion, str) and acceptance_criterion:
+            configured.add(acceptance_criterion)
+    return configured
 
 
 def _observed_acceptance_marker_criteria(value: Any) -> set[str]:
@@ -573,6 +602,8 @@ def _has_trusted_runtime_binding(value: Any) -> bool:
                 "game_directory_restoration",
             }
         )
+    if value.get("operator_completion_required") is True:
+        required_checks.add("operator_completion")
     return all(
         isinstance(checks.get(check_name), Mapping)
         and checks[check_name].get("status") == "passed"

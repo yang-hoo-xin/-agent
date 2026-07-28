@@ -35,8 +35,11 @@ from src.mod_agent.runtime import (
     GTFORuntimeAutomationError,
     bind_plugin_deployment_to_runtime_payload,
     build_gtfo_runtime_capability_report,
+    build_gtfo_stagger_acceptance_report,
     make_gtfo_runtime_evidence_factory_from_settings,
+    make_gtfo_stagger_runtime_evidence_factory,
     profile_from_settings,
+    stagger_profile_from_settings,
     temporarily_deploy_verified_plugin,
 )
 from src.mod_agent.workflow import (
@@ -863,6 +866,26 @@ def _runtime_admission_record(
             "Run-scoped plugin deployment requires "
             "runtime.gtfo.terminate_after_capture=true before launch."
         )
+    stagger_profile = stagger_profile_from_settings(settings)
+    stagger_acceptance = None
+    if stagger_profile is not None:
+        if profile.operator_completion_required is not True:
+            raise LocalEntryError(
+                "Two-process stagger Runtime requires "
+                "runtime.gtfo.operator_completion_required=true."
+            )
+        stagger_acceptance = build_gtfo_stagger_acceptance_report(
+            stagger_profile,
+            working_directory=profile.working_directory,
+            acceptance_criteria=acceptance_criteria,
+        )
+        if stagger_acceptance["status"] != "ready":
+            raise LocalEntryError(
+                "GTFO stagger Runtime admission blocked: "
+                + "; ".join(
+                    str(item) for item in stagger_acceptance["blockers"]
+                )
+            )
     return {
         "requested": True,
         "evidence_source": "gtfo_real_runtime_automation",
@@ -884,8 +907,13 @@ def _runtime_admission_record(
             "poll_interval_seconds": profile.poll_interval_seconds,
             "output_limit_chars": profile.output_limit_chars,
             "terminate_after_capture": profile.terminate_after_capture,
+            "operator_completion_required": profile.operator_completion_required,
+            "operator_completion_timeout_seconds": (
+                profile.operator_completion_timeout_seconds
+            ),
         },
         "capability_report": capability_report,
+        "stagger_acceptance": stagger_acceptance,
         "plugin_deployment": {
             "requested": True,
             "destination_path": str(destination),
@@ -985,8 +1013,31 @@ def _make_deploying_runtime_evidence_factory(
     backup_directory: Path,
     expected_destination_existed: bool | None = None,
     expected_destination_sha256: str | None = None,
+    expected_config_destination_existed: bool | None = None,
+    expected_config_destination_sha256: str | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Wrap the existing GTFO runner with verified temporary deployment."""
+
+    stagger_profile = stagger_profile_from_settings(settings)
+    if stagger_profile is not None:
+        return make_gtfo_stagger_runtime_evidence_factory(
+            base_profile=profile_from_settings(settings),
+            stagger_profile=stagger_profile,
+            allow_game_launch=allow_game_launch,
+            allow_game_directory_write=allow_game_directory_write,
+            build_artifact_path=build_artifact_path,
+            expected_artifact=expected_artifact,
+            plugin_destination_path=destination_path,
+            backup_directory=backup_directory,
+            expected_plugin_destination_existed=expected_destination_existed,
+            expected_plugin_destination_sha256=expected_destination_sha256,
+            expected_config_destination_existed=(
+                expected_config_destination_existed
+            ),
+            expected_config_destination_sha256=(
+                expected_config_destination_sha256
+            ),
+        )
 
     base_factory = make_gtfo_runtime_evidence_factory_from_settings(
         settings,
@@ -1890,6 +1941,12 @@ def run_local_request(
             input_execution_mode=input_execution_mode,
         )
 
+    direct_stagger_admission = runtime_admission.get("stagger_acceptance")
+    direct_stagger_config = (
+        direct_stagger_admission.get("config")
+        if isinstance(direct_stagger_admission, Mapping)
+        else None
+    )
     runtime_evidence_factory = (
         _make_deploying_runtime_evidence_factory(
             settings=settings,
@@ -1909,6 +1966,16 @@ def run_local_request(
             expected_destination_sha256=runtime_admission["plugin_deployment"][
                 "destination_sha256_at_admission"
             ],
+            expected_config_destination_existed=(
+                bool(direct_stagger_config["destination_existed"])
+                if isinstance(direct_stagger_config, Mapping)
+                else None
+            ),
+            expected_config_destination_sha256=(
+                direct_stagger_config.get("destination_sha256")
+                if isinstance(direct_stagger_config, Mapping)
+                else None
+            ),
         )
         if run_gtfo_runtime
         else None
@@ -2559,6 +2626,26 @@ def _runtime_profile_preflight_record(
         "would_launch": False,
         "authorization_status": "not_granted_preflight_only",
     }
+    stagger_profile = stagger_profile_from_settings(settings)
+    stagger_acceptance = None
+    if stagger_profile is not None:
+        if profile.operator_completion_required is not True:
+            raise LocalEntryError(
+                "Two-process stagger Runtime requires "
+                "runtime.gtfo.operator_completion_required=true."
+            )
+        stagger_acceptance = build_gtfo_stagger_acceptance_report(
+            stagger_profile,
+            working_directory=profile.working_directory,
+            acceptance_criteria=tuple(acceptance_criteria),
+        )
+        if stagger_acceptance["status"] != "ready":
+            raise LocalEntryError(
+                "GTFO stagger Runtime preflight blocked: "
+                + "; ".join(
+                    str(item) for item in stagger_acceptance["blockers"]
+                )
+            )
     return {
         "enabled": True,
         "profile": {
@@ -2575,8 +2662,13 @@ def _runtime_profile_preflight_record(
             "poll_interval_seconds": profile.poll_interval_seconds,
             "output_limit_chars": profile.output_limit_chars,
             "terminate_after_capture": profile.terminate_after_capture,
+            "operator_completion_required": profile.operator_completion_required,
+            "operator_completion_timeout_seconds": (
+                profile.operator_completion_timeout_seconds
+            ),
         },
         "capability_report": capability_report,
+        "stagger_acceptance": stagger_acceptance,
         "acceptance_boundary": {
             "feature_spec_marker_criterion": marker_criteria[0],
             "configured_marker": configured_marker,
@@ -2706,6 +2798,12 @@ def resume_local_runtime(
             raise LocalEntryError(
                 "Runtime continuation found unresolved prior deployment backup state."
             )
+        stagger_admission = runtime_admission.get("stagger_acceptance")
+        stagger_config = (
+            stagger_admission.get("config")
+            if isinstance(stagger_admission, Mapping)
+            else None
+        )
         graph_runtime_factory = _make_deploying_runtime_evidence_factory(
             settings=settings,
             allow_game_launch=allow_game_launch,
@@ -2722,6 +2820,16 @@ def resume_local_runtime(
             expected_destination_sha256=runtime_admission["plugin_deployment"][
                 "destination_sha256_at_admission"
             ],
+            expected_config_destination_existed=(
+                bool(stagger_config["destination_existed"])
+                if isinstance(stagger_config, Mapping)
+                else None
+            ),
+            expected_config_destination_sha256=(
+                stagger_config.get("destination_sha256")
+                if isinstance(stagger_config, Mapping)
+                else None
+            ),
         )
 
     admission_snapshot = {

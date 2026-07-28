@@ -296,6 +296,87 @@ def test_runtime_profile_preflight_binds_marker_without_claiming_visual_or_audio
     ]
 
 
+def test_runtime_profile_preflight_binds_two_process_stagger_plan_without_writing(
+    tmp_path: Path,
+) -> None:
+    settings = _runtime_settings(tmp_path)
+    marker_criterion = (
+        "STAGGER_FEEDBACK_SHOWN records visual_spawn_succeeded=true and "
+        "audio_event_accepted=true without proving visibility or audibility."
+    )
+    disabled_criterion = (
+        "With General.Enabled=false, a qualifying reaction produces no "
+        "feature output."
+    )
+    settings.runtime.gtfo.acceptance_markers = {
+        marker_criterion: (
+            "signal=STAGGER_FEEDBACK_SHOWN "
+            "target=ES_Hitreact.ActivateState "
+            "message=visual_spawn_succeeded_and_audio_event_accepted "
+            "visual_spawn_succeeded=true audio_event_accepted=true"
+        )
+    }
+    settings.runtime.gtfo.operator_completion_required = True
+    settings.runtime.gtfo.operator_completion_timeout_seconds = 900
+    config_destination = (
+        tmp_path / "BepInEx" / "config" / "local.betterhitfeedback.cfg"
+    )
+    disabled_config = tmp_path / "reviewed" / "general_enabled_false.cfg"
+    enabled_config = tmp_path / "reviewed" / "general_enabled_true.cfg"
+    disabled_config.parent.mkdir()
+    disabled_config.write_text(
+        "[General]\nEnabled = false\n",
+        encoding="utf-8",
+    )
+    enabled_config.write_text(
+        "[General]\nEnabled = true\n",
+        encoding="utf-8",
+    )
+    settings.runtime.gtfo.stagger_acceptance = SimpleNamespace(
+        enabled=True,
+        config_path=str(config_destination),
+        disabled_config_path=str(disabled_config),
+        disabled_config_sha256=hashlib.sha256(
+            disabled_config.read_bytes()
+        ).hexdigest(),
+        enabled_config_path=str(enabled_config),
+        enabled_config_sha256=hashlib.sha256(
+            enabled_config.read_bytes()
+        ).hexdigest(),
+    )
+
+    result = _runtime_profile_preflight_record(
+        settings,
+        runtime_plugin_destination=_runtime_destination(tmp_path),
+        feature_spec={
+            "acceptance_criteria": [
+                disabled_criterion,
+                marker_criterion,
+            ],
+            "success_marker_contract": {
+                "signal": "STAGGER_FEEDBACK_SHOWN",
+                "code_level_required_facts": [
+                    "visual_spawn_succeeded=true",
+                    "audio_event_accepted=true",
+                ],
+                "runtime_claim_limit": "Marker is code-level only.",
+            },
+        },
+    )
+
+    stagger = result["stagger_acceptance"]
+    assert stagger["status"] == "ready"
+    assert stagger["writes_performed"] is False
+    assert stagger["process_launched"] is False
+    assert config_destination.exists() is False
+    assert [item["mode"] for item in stagger["attempts"]] == [
+        "general_enabled_false",
+        "general_enabled_true",
+    ]
+    assert result["profile"]["operator_completion_required"] is True
+    assert result["profile"]["operator_completion_timeout_seconds"] == 900
+
+
 def test_runtime_profile_preflight_rejects_product_marker_as_startup_marker(
     tmp_path: Path,
 ) -> None:

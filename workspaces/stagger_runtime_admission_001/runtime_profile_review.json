@@ -33,9 +33,15 @@
     "runtime_provider_semantics": {
       "timeout_starts_after_process_launcher_returns": true,
       "timeout_includes_startup_marker_wait": true,
+      "operator_completion_timeout_starts_after_required_log_observation": true,
+      "logs_are_recollected_after_operator_completion": true,
       "terminate_after_capture_occurs_after_log_collection_and_screenshot": true,
-      "operator_completion_signal_supported": false,
-      "source_path": "src/mod_agent/runtime/gtfo_automation.py"
+      "operator_completion_signal_supported": true,
+      "operator_completion_request_binds_request_id_feature_profile_and_pid": true,
+      "source_paths": [
+        "src/mod_agent/runtime/gtfo_automation.py",
+        "src/mod_agent/runtime/gtfo_stagger.py"
+      ]
     }
   },
   "profile": {
@@ -58,25 +64,39 @@
     "timeout_seconds": 600,
     "poll_interval_seconds": 1.0,
     "output_limit_chars": 20000,
-    "terminate_after_capture": true
+    "terminate_after_capture": true,
+    "operator_completion_required": true,
+    "operator_completion_timeout_seconds": 900,
+    "stagger_acceptance": {
+      "config_path": "C:/Software_ Entertainment software and its platform/steamapps/common/GTFO/BepInEx/config/local.betterhitfeedback.cfg",
+      "disabled_config_path": "C:/Users/10160/.codex/worktrees/f4d6/MODULAR-RAG-MCP-SERVER-main/workspaces/stagger_runtime_admission_001/configs/general_enabled_false.cfg",
+      "disabled_config_sha256": "39d4daceb08612078dcba7131c2d043ded0217b89495746816c68afae16f4e0d",
+      "enabled_config_path": "C:/Users/10160/.codex/worktrees/f4d6/MODULAR-RAG-MCP-SERVER-main/workspaces/stagger_runtime_admission_001/configs/general_enabled_true.cfg",
+      "enabled_config_sha256": "0d36b4b52c29dd784c9c3580a05fae7923bf5cc1a6cda4cb2493b5891848d660"
+    }
   },
   "runtime_scope": {
-    "description": "This profile admits one startup-plus-product-marker smoke attempt.",
+    "description": "This profile admits one bounded two-process Runtime attempt: General.Enabled=false first, then General.Enabled=true only if the first attempt passes.",
     "does_not_claim": [
-      "complete seven-criterion Runtime acceptance",
-      "visible yellow X observation",
-      "audible cue observation",
-      "rapid-fire, shotgun, negative-path, or deduplication completion"
+      "that Runtime launch or game-directory writes are authorized",
+      "that either GTFO process has started",
+      "that any visual, audible, negative-path, deduplication, preservation, or marker observation has occurred",
+      "that the seven FeatureSpec criteria have passed"
     ],
-    "remaining_acceptance_requires_separate_observation": true,
-    "smoke_attempt_would_consume_current_checkpoint": true,
-    "smoke_attempt_does_not_create_a_second_runtime_attempt": true
+    "operator_completion_boundary": "Each process emits a unique request bound to request_id, feature_id, profile_id, pid, and exact criterion SHA256 values. passed, failed, and not_observed remain distinct.",
+    "disabled_attempt": "Wait for startup, perform the disabled qualifying reaction checks, submit the exact operator response, recollect current-run logs, capture, terminate, and restore DLL/config.",
+    "enabled_attempt": "Wait for the exact STAGGER_FEEDBACK_SHOWN marker, complete the visible, audible, rapid-fire, shotgun, negative-path, deduplication, and preservation observations, submit the exact operator response, recollect current-run logs, capture, terminate, and restore DLL/config.",
+    "checkpoint_consumption": "One separately authorized resume consumes the current checkpoint only after the complete two-process profile and current physical pre-state pass admission."
   },
   "deployment": {
     "dll_source_sha256": "7a04ebc37c58572835621640eeac52360f7d5e8b8ea7d68a8d1c3800b2cf21aa",
     "dll_destination": "C:/Software_ Entertainment software and its platform/steamapps/common/GTFO/BepInEx/plugins/BetterHitFeedback.dll",
     "destination_existed_at_review": false,
-    "restore_boundary": "After an authorized Runtime attempt, remove only the deployed BetterHitFeedback.dll because the destination was absent at review; if destination pre-state changes, admission must be repeated and the new exact bytes must be restored."
+    "restore_boundary": "After each authorized Runtime process, remove only the deployed BetterHitFeedback.dll because the destination was absent at review; if destination pre-state changes, admission must be repeated and the new exact bytes must be restored.",
+    "config_destination": "C:/Software_ Entertainment software and its platform/steamapps/common/GTFO/BepInEx/config/local.betterhitfeedback.cfg",
+    "config_destination_existed_at_final_preflight": true,
+    "config_destination_sha256_at_final_preflight": "717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e",
+    "config_restore_boundary": "After each authorized Runtime process, restore the exact preflight config bytes and verify SHA256 717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e."
   },
   "marker_contract": {
     "startup_markers_are_product_behavior_markers": false,
@@ -99,5 +119,17 @@
     "checkpoint_consumed": false,
     "resume_report_created": false,
     "runtime_evidence_created": false
+  },
+  "final_preflight": {
+    "status": "READY_FOR_EXTERNAL_AUTHORIZATION",
+    "scope": "two_process_operator_guided_stagger_acceptance",
+    "stagger_acceptance_status": "ready",
+    "writes_performed": false,
+    "graph_invoked": false,
+    "checkpoint_consumed": false,
+    "resume_report_created": false,
+    "runtime_evidence_created": false,
+    "process_launched": false,
+    "dll_copied": false
   }
 }

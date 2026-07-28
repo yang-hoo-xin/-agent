@@ -21,6 +21,15 @@ runtime:
     poll_interval_seconds: 1.0
     output_limit_chars: 20000
     terminate_after_capture: true
+    operator_completion_required: true
+    operator_completion_timeout_seconds: 900
+    stagger_acceptance:
+      enabled: true
+      config_path: "C:/Software_ Entertainment software and its platform/steamapps/common/GTFO/BepInEx/config/local.betterhitfeedback.cfg"
+      disabled_config_path: "C:/Users/10160/.codex/worktrees/f4d6/MODULAR-RAG-MCP-SERVER-main/workspaces/stagger_runtime_admission_001/configs/general_enabled_false.cfg"
+      disabled_config_sha256: "39d4daceb08612078dcba7131c2d043ded0217b89495746816c68afae16f4e0d"
+      enabled_config_path: "C:/Users/10160/.codex/worktrees/f4d6/MODULAR-RAG-MCP-SERVER-main/workspaces/stagger_runtime_admission_001/configs/general_enabled_true.cfg"
+      enabled_config_sha256: "0d36b4b52c29dd784c9c3580a05fae7923bf5cc1a6cda4cb2493b5891848d660"
 
 llm:
   provider: "openai"

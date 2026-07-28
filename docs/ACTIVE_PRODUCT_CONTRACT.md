@@ -345,23 +345,36 @@ consuming the checkpoint, entering LangGraph, copying a DLL, or launching a
 process. The real `sfp_build_009` checkpoint plus the original shared Store
 passed this read-only preflight.
 
-P1 prepared reviewed run-local profile
-`workspaces/stagger_runtime_admission_001/runtime_profile.yaml` from the current
-machine paths, successful run `e7daa266`, the current FeatureSpec, and the
-compiled marker source. The final read-only preflight returned
-`READY_FOR_EXTERNAL_AUTHORIZATION` for one separately authorized marker-smoke
-attempt, not complete FeatureSpec acceptance. Startup markers remain exactly
-`BepInEx` and `Chainloader`; the structured
+P1 now prepares a reviewed run-local two-process profile at
+`workspaces/stagger_runtime_admission_001/runtime_profile.yaml`. It retains the
+current machine paths, successful run `e7daa266`, the exact FeatureSpec and
+compiled marker source, and adds two hash-bound config inputs derived from the
+existing successful `General.Enabled` Runtime history. The selected GTFO-domain
+provider runs `General.Enabled=false` first and `General.Enabled=true` only
+after the first attempt passes. Each process gets its own DLL/config deployment,
+current-run log boundary, screenshot, termination, and exact restoration
+record. This is a bounded Stagger product-profile implementation, not a generic
+Runtime scheduler or new Artifact system.
+
+The provider now exposes operator completion after its required log condition.
+Each request binds a fresh `request_id`, `feature_id`, profile id, process id,
+the exact criterion text and SHA256, and a 900-second operator timeout. Replies
+must report every displayed criterion as `passed`, `failed`, or
+`not_observed`, with direct notes and operator identity. The provider recollects
+the current-run logs after the reply, captures the screenshot, terminates the
+process, then restores config and DLL. Only `passed` manual observations support
+acceptance; failed or missing trust remains inconclusive. The 600-second
+`timeout_seconds` still begins after process launch and covers startup/product
+marker wait; it is separate from the later operator-completion timeout.
+
+Startup markers remain exactly `BepInEx` and `Chainloader`. The structured
 `signal=STAGGER_FEEDBACK_SHOWN ... visual_spawn_succeeded=true
-audio_event_accepted=true` substring binds only the FeatureSpec's code-level
-marker criterion. The remaining six acceptance criteria still require separate
-visual, audible, negative, deduplication, and preservation observations. The
-profile timeout is `600` seconds because the provider starts that timer after
-the process launcher returns and before startup-marker observation;
-`terminate_after_capture=true` remains required by the current temporary DLL
-deployment/restoration boundary. The provider now treats a partial marker
-mapping as a warning while retaining complete acceptance as unverified; a
-profile with no marker for any selected criterion remains blocked.
+audio_event_accepted=true` substring remains bound only to the FeatureSpec's
+code-level marker criterion and never substitutes for visible or audible
+observation. The disabled attempt owns the exact `General.Enabled=false`
+criterion; the enabled attempt owns the remaining six criteria, with five
+directly reported by the operator and the marker criterion requiring both the
+current-run log marker and its normal trust binding.
 
 The public preflight and actual `resume-runtime` admission both receive the
 exact FeatureSpec acceptance list. Actual continuation performs that profile
@@ -371,11 +384,14 @@ Vector Store, or Reranker settings after configuration parsing. The checkpoint
 remains unconsumed, ResumeReport and RuntimeEvidence counts remain zero, and no
 game-directory write or process launch is authorized. Agentic and RAG expansion
 is not selected: neither supplies a missing signal for this deterministic
-Runtime admission boundary. A separately authorized smoke resume would consume
-the single current checkpoint while still leaving six criteria unproved, so
-launch is not selected until the operator explicitly chooses between spending
-that checkpoint on smoke evidence and first adding a bounded manual-completion
-path.
+Runtime admission boundary. The final real-input no-write preflight returned
+`READY_FOR_EXTERNAL_AUTHORIZATION` with `stagger_acceptance.status=ready`,
+current config SHA256
+`717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`,
+and no checkpoint consumption, ResumeReport, RuntimeEvidence, process launch,
+DLL copy, or file write. This is readiness to request the external launch/write
+permission for the reviewed two-process attempt; it is not Runtime evidence or
+seven-criterion acceptance.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

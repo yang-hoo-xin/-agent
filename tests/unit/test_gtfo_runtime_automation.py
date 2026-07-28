@@ -12,6 +12,7 @@ import pytest
 
 from src.mod_agent.runtime import (
     GTFOLogSnapshot,
+    GTFOOperatorCompletionRequest,
     GTFOProcessHandle,
     GTFORealRuntimeAutomationRunner,
     GTFORealRuntimeProfile,
@@ -26,6 +27,7 @@ from src.mod_agent.runtime import gtfo_automation as gtfo_automation_module
 
 
 ACCEPTANCE_CRITERION = "Requested behavior is implemented: make Load enable diagnostics"
+MANUAL_ACCEPTANCE_CRITERION = "The requested visual behavior is directly observed."
 RUNTIME_PLAN_STEP = "acceptance_evidence_observed"
 STARTUP_MARKER = "BEPINEX_CHAINLOADER_READY"
 ACCEPTANCE_MARKER = "BETTER_HIT_FEEDBACK_ACCEPTANCE_OK"
@@ -1031,6 +1033,286 @@ def test_gtfo_runtime_partial_acceptance_markers_remain_unverified(
     assert payload["runtime_trust_binding"]["checks"]["acceptance_markers"][
         "status"
     ] == "blocked"
+
+
+def test_gtfo_runtime_operator_completion_binds_manual_observation(
+    tmp_path: Path,
+) -> None:
+    process = SimpleNamespace(
+        poll=lambda: None,
+        terminate=lambda: None,
+        wait=lambda timeout: 0,
+    )
+    profile = replace(
+        _profile(tmp_path),
+        operator_completion_required=True,
+        operator_completion_timeout_seconds=30,
+        terminate_after_capture=True,
+    )
+    observed_request: dict[str, object] = {}
+    collection_count = 0
+
+    def collector(_, __):
+        nonlocal collection_count
+        collection_count += 1
+        return GTFOLogSnapshot(
+            content=f"{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
+            sources=(str(tmp_path / "BepInEx" / "LogOutput.log"),),
+        )
+
+    def operator_completion_reader(request):
+        request_payload = request.to_dict()
+        observed_request.update(request_payload)
+        criterion = request_payload["acceptance_criteria"][0]
+        return {
+            "schema_version": "gtfo_operator_completion_v1",
+            "request_sha256": request_payload["request_sha256"],
+            "feature_id": request.feature_id,
+            "status": "completed",
+            "observed_by": "local_operator",
+            "observations": [
+                {
+                    "criterion_sha256": criterion["criterion_sha256"],
+                    "status": "passed",
+                    "notes": "The visual behavior was observed in the current process.",
+                }
+            ],
+        }
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(
+            ACCEPTANCE_CRITERION,
+            MANUAL_ACCEPTANCE_CRITERION,
+        ),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=lambda _: GTFOProcessHandle(pid=4242, process=process),
+        log_collector=collector,
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_operator_completion",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_operator_completion",
+        ),
+        operator_completion_reader=operator_completion_reader,
+    )
+
+    assert observed_request["feature_id"] == "feature_001"
+    assert collection_count == 2
+    assert str(observed_request["request_id"]).startswith("operator_")
+    assert observed_request["profile_id"] == "gtfo_real_runtime"
+    assert observed_request["runtime_process_pid"] == 4242
+    assert observed_request["timeout_seconds"] == 30
+    assert [
+        item["acceptance_criterion"]
+        for item in observed_request["acceptance_criteria"]
+    ] == [MANUAL_ACCEPTANCE_CRITERION]
+    assert payload["verification_status"] == "verified"
+    assert payload["acceptance_verified"] is True
+    assert payload["claims_real_runtime_success"] is True
+    assert payload["operator_completion"]["observed_by"] == "local_operator"
+    assert payload["operator_completion_request"]["request_sha256"] == (
+        payload["operator_completion"]["request_sha256"]
+    )
+    assert payload["runtime_trust_binding"]["operator_completion_required"] is True
+    assert payload["runtime_trust_binding"]["checks"]["operator_completion"][
+        "status"
+    ] == "passed"
+    assert {
+        criterion
+        for item in payload["evidence_items"]
+        for criterion in item["supports_acceptance"]
+    } == {
+        ACCEPTANCE_CRITERION,
+        MANUAL_ACCEPTANCE_CRITERION,
+    }
+
+
+def test_gtfo_runtime_operator_completion_rejects_wrong_request_and_cleans_up(
+    tmp_path: Path,
+) -> None:
+    lifecycle = {"terminated": False, "waited": False}
+    process = SimpleNamespace(
+        poll=lambda: None,
+        terminate=lambda: lifecycle.__setitem__("terminated", True),
+        wait=lambda timeout: lifecycle.__setitem__("waited", True),
+    )
+    capturer_called = False
+
+    def capturer(_, __):
+        nonlocal capturer_called
+        capturer_called = True
+        return None
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=replace(
+            _profile(tmp_path),
+            operator_completion_required=True,
+            terminate_after_capture=True,
+        ),
+        acceptance_criteria=(
+            ACCEPTANCE_CRITERION,
+            MANUAL_ACCEPTANCE_CRITERION,
+        ),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=lambda _: GTFOProcessHandle(pid=4242, process=process),
+        log_collector=lambda _, __: GTFOLogSnapshot(
+            content=f"{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
+            sources=(str(tmp_path / "BepInEx" / "LogOutput.log"),),
+        ),
+        screenshot_capturer=capturer,
+        operator_completion_reader=lambda _: {
+            "schema_version": "gtfo_operator_completion_v1",
+            "request_sha256": "wrong_request",
+            "feature_id": "feature_001",
+            "status": "completed",
+            "observed_by": "local_operator",
+            "observations": [],
+        },
+    )
+
+    assert payload["verification_status"] == "failed"
+    assert payload["acceptance_verified"] is False
+    assert payload["failure"] == {
+        "type": "GTFORuntimeAutomationError",
+        "message": "Operator completion request identity does not match.",
+    }
+    assert payload["failure_ownership"]["owner"] == "observation"
+    assert payload["failure_ownership"]["failure_class"] == (
+        "operator_completion_failed"
+    )
+    assert payload["operator_completion_request"]["feature_id"] == "feature_001"
+    assert payload["operator_completion_request"]["runtime_process_pid"] == 4242
+    assert lifecycle == {"terminated": True, "waited": True}
+    assert capturer_called is False
+
+
+def test_gtfo_runtime_operator_completion_not_observed_remains_inconclusive(
+    tmp_path: Path,
+) -> None:
+    profile = replace(
+        _profile(tmp_path),
+        operator_completion_required=True,
+        terminate_after_capture=True,
+    )
+
+    def operator_completion_reader(request):
+        request_payload = request.to_dict()
+        criterion = request_payload["acceptance_criteria"][0]
+        return {
+            "schema_version": "gtfo_operator_completion_v1",
+            "request_sha256": request_payload["request_sha256"],
+            "feature_id": request.feature_id,
+            "status": "completed",
+            "observed_by": "local_operator",
+            "observations": [
+                {
+                    "criterion_sha256": criterion["criterion_sha256"],
+                    "status": "not_observed",
+                    "notes": "The current process did not reach this scenario.",
+                }
+            ],
+        }
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(
+            ACCEPTANCE_CRITERION,
+            MANUAL_ACCEPTANCE_CRITERION,
+        ),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=lambda _: GTFOProcessHandle(pid=4242),
+        log_collector=lambda _, __: GTFOLogSnapshot(
+            content=f"{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
+            sources=(str(tmp_path / "BepInEx" / "LogOutput.log"),),
+        ),
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_operator_incomplete",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_operator_incomplete",
+        ),
+        operator_completion_reader=operator_completion_reader,
+    )
+
+    assert payload["verification_status"] == "inconclusive"
+    assert payload["acceptance_verified"] is False
+    assert payload["claims_real_runtime_success"] is False
+    assert payload["runtime_trust_binding"]["checks"]["operator_completion"][
+        "status"
+    ] == "blocked"
+    assert payload["operator_completion"]["observations"][0]["status"] == (
+        "not_observed"
+    )
+
+
+def test_gtfo_runtime_operator_completion_requires_termination(
+    tmp_path: Path,
+) -> None:
+    report = build_gtfo_runtime_capability_report(
+        replace(
+            _profile(tmp_path),
+            operator_completion_required=True,
+            terminate_after_capture=False,
+        ),
+        allow_game_launch=True,
+        acceptance_criteria=(
+            ACCEPTANCE_CRITERION,
+            MANUAL_ACCEPTANCE_CRITERION,
+        ),
+    )
+
+    assert report["status"] == "blocked"
+    assert report["would_launch"] is False
+    assert report["checks"]["operator_completion"]["status"] == "blocked"
+    assert report["blockers"] == [
+        "runtime.gtfo.operator_completion_required requires "
+        "terminate_after_capture=true"
+    ]
+
+
+def test_gtfo_operator_completion_stdin_timeout_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class EmptyQueue:
+        def put(self, _: str) -> None:
+            return None
+
+        def get(self, *, timeout: int) -> str:
+            raise gtfo_automation_module.queue.Empty
+
+    monkeypatch.setattr(
+        gtfo_automation_module.queue,
+        "Queue",
+        lambda maxsize: EmptyQueue(),
+    )
+    monkeypatch.setattr(gtfo_automation_module.sys, "stdin", io.StringIO(""))
+
+    with pytest.raises(
+        GTFORuntimeAutomationError,
+        match="Operator completion timed out.",
+    ):
+        gtfo_automation_module._read_operator_completion_from_stdin(
+            GTFOOperatorCompletionRequest(
+                request_id="operator_timeout_test",
+                feature_id="feature_001",
+                profile_id="gtfo_real_runtime",
+                runtime_process_pid=4242,
+                acceptance_criteria=(MANUAL_ACCEPTANCE_CRITERION,),
+                timeout_seconds=1,
+            )
+        )
 
 
 def test_gtfo_runtime_launcher_exception_becomes_failed_payload(tmp_path: Path) -> None:

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import queue
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -12,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from .evidence import (
     RuntimeEvidenceItem,
@@ -42,6 +46,8 @@ class GTFORealRuntimeProfile:
     poll_interval_seconds: float = 1.0
     output_limit_chars: int = 20_000
     terminate_after_capture: bool = False
+    operator_completion_required: bool = False
+    operator_completion_timeout_seconds: int = 900
 
     def __post_init__(self) -> None:
         if not self.profile_id:
@@ -54,6 +60,10 @@ class GTFORealRuntimeProfile:
             raise GTFORuntimeAutomationError("output_limit_chars must be positive")
         if self.screenshot_timeout_seconds <= 0:
             raise GTFORuntimeAutomationError("screenshot_timeout_seconds must be positive")
+        if self.operator_completion_timeout_seconds <= 0:
+            raise GTFORuntimeAutomationError(
+                "operator_completion_timeout_seconds must be positive"
+            )
 
 
 @dataclass(frozen=True)
@@ -75,6 +85,75 @@ class GTFOLogSnapshot:
     run_boundary_status: str = "collector_asserted_current_run"
     source_windows: tuple[Mapping[str, Any], ...] = ()
     marker_observations: tuple[Mapping[str, Any], ...] | None = None
+
+
+@dataclass(frozen=True)
+class GTFOOperatorCompletionRequest:
+    """Exact GTFO observation request shown to the current operator."""
+
+    request_id: str
+    feature_id: str
+    profile_id: str
+    runtime_process_pid: int
+    acceptance_criteria: tuple[str, ...]
+    timeout_seconds: int
+
+    def to_dict(self) -> dict[str, Any]:
+        criteria = [
+            {
+                "acceptance_criterion": criterion,
+                "criterion_sha256": hashlib.sha256(
+                    criterion.encode("utf-8")
+                ).hexdigest(),
+            }
+            for criterion in self.acceptance_criteria
+        ]
+        request = {
+            "schema_version": "gtfo_operator_completion_request_v1",
+            "request_id": self.request_id,
+            "feature_id": self.feature_id,
+            "profile_id": self.profile_id,
+            "runtime_process_pid": self.runtime_process_pid,
+            "acceptance_criteria": criteria,
+            "timeout_seconds": self.timeout_seconds,
+        }
+        request["request_sha256"] = _canonical_json_sha256(request)
+        return request
+
+
+@dataclass(frozen=True)
+class GTFOOperatorCompletion:
+    """Validated operator observations bound to one displayed request."""
+
+    request_sha256: str
+    request_id: str
+    feature_id: str
+    profile_id: str
+    runtime_process_pid: int
+    observed_by: str
+    completed_at: str
+    observations: tuple[Mapping[str, Any], ...]
+
+    @property
+    def passed_criteria(self) -> set[str]:
+        return {
+            str(item["acceptance_criterion"])
+            for item in self.observations
+            if item.get("status") == "passed"
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": "gtfo_operator_completion_v1",
+            "request_sha256": self.request_sha256,
+            "request_id": self.request_id,
+            "feature_id": self.feature_id,
+            "profile_id": self.profile_id,
+            "runtime_process_pid": self.runtime_process_pid,
+            "observed_by": self.observed_by,
+            "completed_at": self.completed_at,
+            "observations": [dict(item) for item in self.observations],
+        }
 
 
 @dataclass(frozen=True)
@@ -190,6 +269,10 @@ class _GTFOProcessDiagnosticsCapture:
 ProcessLauncher = Callable[[GTFORealRuntimeProfile], GTFOProcessHandle]
 LogCollector = Callable[[GTFORealRuntimeProfile, tuple[str, ...]], GTFOLogSnapshot]
 ScreenshotCapturer = Callable[[GTFORealRuntimeProfile, str], ScreenshotMetadata | None]
+OperatorCompletionReader = Callable[
+    [GTFOOperatorCompletionRequest],
+    Mapping[str, Any],
+]
 
 
 def _bepinex_log_config_binding(
@@ -299,6 +382,12 @@ def build_gtfo_runtime_capability_report(
             "acceptance_criteria": list(acceptance_criteria),
             "missing_acceptance_criteria": [],
         },
+        "operator_completion": {
+            "status": "passed",
+            "required": profile.operator_completion_required,
+            "timeout_seconds": profile.operator_completion_timeout_seconds,
+            "terminate_after_capture": profile.terminate_after_capture,
+        },
     }
 
     if not allow_game_launch:
@@ -359,6 +448,16 @@ def build_gtfo_runtime_capability_report(
         checks["startup_markers"]["status"] = "warning"
         warnings.append("runtime.gtfo.startup_markers is empty")
 
+    if (
+        profile.operator_completion_required
+        and not profile.terminate_after_capture
+    ):
+        checks["operator_completion"]["status"] = "blocked"
+        blockers.append(
+            "runtime.gtfo.operator_completion_required requires "
+            "terminate_after_capture=true"
+        )
+
     missing_acceptance_criteria = [
         criterion
         for criterion in acceptance_criteria
@@ -373,7 +472,7 @@ def build_gtfo_runtime_capability_report(
             for criterion in acceptance_criteria
             if criterion in profile.acceptance_markers
         ]
-        if configured_acceptance_criteria:
+        if configured_acceptance_criteria or profile.operator_completion_required:
             checks["acceptance_markers"]["status"] = "warning"
             warnings.append(
                 "GTFO Runtime acceptance criteria without configured markers require "
@@ -386,6 +485,16 @@ def build_gtfo_runtime_capability_report(
             )
 
     status = "ready" if not blockers else "blocked"
+    planned_evidence_sources = {
+        "process": bool(profile.game_executable and profile.working_directory),
+        "process_diagnostics": bool(profile.screenshot_directory),
+        "persistent_logs": bool(profile.log_paths),
+        "bepinex_log_config": True,
+        "desktop_screenshot": bool(profile.screenshot_directory),
+        "plugin_markers": bool(profile.acceptance_markers),
+    }
+    if profile.operator_completion_required:
+        planned_evidence_sources["operator_completion"] = True
     return {
         "profile_id": profile.profile_id,
         "status": status,
@@ -393,14 +502,7 @@ def build_gtfo_runtime_capability_report(
         "blockers": blockers,
         "warnings": warnings,
         "checks": checks,
-        "planned_evidence_sources": {
-            "process": bool(profile.game_executable and profile.working_directory),
-            "process_diagnostics": bool(profile.screenshot_directory),
-            "persistent_logs": bool(profile.log_paths),
-            "bepinex_log_config": True,
-            "desktop_screenshot": bool(profile.screenshot_directory),
-            "plugin_markers": bool(profile.acceptance_markers),
-        },
+        "planned_evidence_sources": planned_evidence_sources,
     }
 
 
@@ -419,6 +521,7 @@ class GTFORealRuntimeAutomationRunner:
         process_launcher: ProcessLauncher | None = None,
         log_collector: LogCollector | None = None,
         screenshot_capturer: ScreenshotCapturer | None = None,
+        operator_completion_reader: OperatorCompletionReader | None = None,
         process_diagnostic_directory: str | Path | None = None,
     ) -> dict[str, Any]:
         """Run real GTFO automation only after explicit approval."""
@@ -443,11 +546,14 @@ class GTFORealRuntimeAutomationRunner:
                 capability_report=capability_report,
                 failure_stage="capability_admission",
                 process_diagnostics=_unavailable_process_diagnostics(),
+                operator_completion_request=None,
             )
         failure_stage = "profile_validation"
         failure: Exception | None = None
         process_handle: GTFOProcessHandle | None = None
         process_diagnostics = _unavailable_process_diagnostics()
+        operator_completion_request: GTFOOperatorCompletionRequest | None = None
+        operator_completion: GTFOOperatorCompletion | None = None
         try:
             _validate_real_profile(profile)
 
@@ -477,6 +583,27 @@ class GTFORealRuntimeAutomationRunner:
             process_liveness_observed = _process_liveness_observed(process_handle)
             failure_stage = "log_collection"
             log_snapshot = collector(profile, acceptance_criteria)
+            manual_criteria = tuple(
+                criterion
+                for criterion in acceptance_criteria
+                if criterion not in profile.acceptance_markers
+            )
+            if profile.operator_completion_required and manual_criteria:
+                failure_stage = "operator_completion"
+                operator_completion_request = GTFOOperatorCompletionRequest(
+                    request_id=f"operator_{uuid4().hex}",
+                    feature_id=feature_id,
+                    profile_id=profile.profile_id,
+                    runtime_process_pid=process_handle.pid,
+                    acceptance_criteria=manual_criteria,
+                    timeout_seconds=profile.operator_completion_timeout_seconds,
+                )
+                operator_completion = _read_operator_completion(
+                    request=operator_completion_request,
+                    reader=operator_completion_reader,
+                )
+                failure_stage = "post_operator_log_collection"
+                log_snapshot = collector(profile, acceptance_criteria)
             failure_stage = "screenshot_capture"
             screenshot = capturer(profile, feature_id)
         except Exception as exc:
@@ -498,6 +625,7 @@ class GTFORealRuntimeAutomationRunner:
                 capability_report=capability_report,
                 failure_stage=failure_stage,
                 process_diagnostics=process_diagnostics,
+                operator_completion_request=operator_completion_request,
             )
 
         return _payload_from_runtime_observations(
@@ -512,6 +640,8 @@ class GTFORealRuntimeAutomationRunner:
             input_execution_mode=input_execution_mode,
             capability_report=capability_report,
             process_diagnostics=process_diagnostics,
+            operator_completion_request=operator_completion_request,
+            operator_completion=operator_completion,
         )
 
 
@@ -546,6 +676,14 @@ def profile_from_settings(
         poll_interval_seconds=gtfo.poll_interval_seconds,
         output_limit_chars=gtfo.output_limit_chars,
         terminate_after_capture=gtfo.terminate_after_capture,
+        operator_completion_required=getattr(
+            gtfo,
+            "operator_completion_required",
+            False,
+        ),
+        operator_completion_timeout_seconds=(
+            getattr(gtfo, "operator_completion_timeout_seconds", 900)
+        ),
     )
 
 
@@ -556,6 +694,7 @@ def make_gtfo_runtime_evidence_factory(
     process_launcher: ProcessLauncher | None = None,
     log_collector: LogCollector | None = None,
     screenshot_capturer: ScreenshotCapturer | None = None,
+    operator_completion_reader: OperatorCompletionReader | None = None,
     process_diagnostic_directory: str | Path | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Build a graph-compatible runtime evidence factory for real GTFO runs."""
@@ -585,6 +724,7 @@ def make_gtfo_runtime_evidence_factory(
             process_launcher=process_launcher,
             log_collector=log_collector,
             screenshot_capturer=screenshot_capturer,
+            operator_completion_reader=operator_completion_reader,
             process_diagnostic_directory=process_diagnostic_directory,
         )
 
@@ -599,6 +739,7 @@ def make_gtfo_runtime_evidence_factory_from_settings(
     process_launcher: ProcessLauncher | None = None,
     log_collector: LogCollector | None = None,
     screenshot_capturer: ScreenshotCapturer | None = None,
+    operator_completion_reader: OperatorCompletionReader | None = None,
     process_diagnostic_directory: str | Path | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Build a graph-compatible GTFO runtime evidence factory from settings."""
@@ -612,8 +753,173 @@ def make_gtfo_runtime_evidence_factory_from_settings(
         process_launcher=process_launcher,
         log_collector=log_collector,
         screenshot_capturer=screenshot_capturer,
+        operator_completion_reader=operator_completion_reader,
         process_diagnostic_directory=process_diagnostic_directory,
     )
+
+
+def _read_operator_completion(
+    *,
+    request: GTFOOperatorCompletionRequest,
+    reader: OperatorCompletionReader | None,
+) -> GTFOOperatorCompletion:
+    request_payload = request.to_dict()
+    response = dict(
+        (reader or _read_operator_completion_from_stdin)(request)
+    )
+    if response.get("schema_version") != "gtfo_operator_completion_v1":
+        raise GTFORuntimeAutomationError(
+            "Operator completion schema_version is invalid."
+        )
+    if response.get("request_sha256") != request_payload["request_sha256"]:
+        raise GTFORuntimeAutomationError(
+            "Operator completion request identity does not match."
+        )
+    if response.get("feature_id") != request.feature_id:
+        raise GTFORuntimeAutomationError(
+            "Operator completion feature identity does not match."
+        )
+    if response.get("status") != "completed":
+        raise GTFORuntimeAutomationError(
+            "Operator completion status must be completed."
+        )
+    observed_by = response.get("observed_by")
+    if not isinstance(observed_by, str) or not observed_by.strip():
+        raise GTFORuntimeAutomationError(
+            "Operator completion observed_by is required."
+        )
+    raw_observations = response.get("observations")
+    if not isinstance(raw_observations, list):
+        raise GTFORuntimeAutomationError(
+            "Operator completion observations must be a list."
+        )
+    criteria_by_hash = {
+        hashlib.sha256(criterion.encode("utf-8")).hexdigest(): criterion
+        for criterion in request.acceptance_criteria
+    }
+    observations: list[Mapping[str, Any]] = []
+    observed_hashes: set[str] = set()
+    for raw_observation in raw_observations:
+        if not isinstance(raw_observation, Mapping):
+            raise GTFORuntimeAutomationError(
+                "Operator completion observation must be a mapping."
+            )
+        criterion_sha256 = raw_observation.get("criterion_sha256")
+        if (
+            not isinstance(criterion_sha256, str)
+            or criterion_sha256 not in criteria_by_hash
+            or criterion_sha256 in observed_hashes
+        ):
+            raise GTFORuntimeAutomationError(
+                "Operator completion criterion identity is unknown or duplicated."
+            )
+        status = raw_observation.get("status")
+        if status not in {"passed", "failed", "not_observed"}:
+            raise GTFORuntimeAutomationError(
+                "Operator completion observation status is invalid."
+            )
+        notes = raw_observation.get("notes")
+        if not isinstance(notes, str) or not notes.strip():
+            raise GTFORuntimeAutomationError(
+                "Operator completion observation notes are required."
+            )
+        observed_hashes.add(criterion_sha256)
+        observations.append(
+            {
+                "acceptance_criterion": criteria_by_hash[criterion_sha256],
+                "criterion_sha256": criterion_sha256,
+                "status": status,
+                "notes": notes.strip(),
+            }
+        )
+    if observed_hashes != set(criteria_by_hash):
+        raise GTFORuntimeAutomationError(
+            "Operator completion must report every requested criterion."
+        )
+    return GTFOOperatorCompletion(
+        request_sha256=str(request_payload["request_sha256"]),
+        request_id=request.request_id,
+        feature_id=request.feature_id,
+        profile_id=request.profile_id,
+        runtime_process_pid=request.runtime_process_pid,
+        observed_by=observed_by.strip(),
+        completed_at=datetime.now(timezone.utc).isoformat(),
+        observations=tuple(observations),
+    )
+
+
+def _read_operator_completion_from_stdin(
+    request: GTFOOperatorCompletionRequest,
+) -> Mapping[str, Any]:
+    request_payload = request.to_dict()
+    print(
+        json.dumps(
+            {
+                "event": "GTFO_OPERATOR_COMPLETION_REQUIRED",
+                "request": request_payload,
+                "response_schema": {
+                    "schema_version": "gtfo_operator_completion_v1",
+                    "request_sha256": request_payload["request_sha256"],
+                    "feature_id": request.feature_id,
+                    "status": "completed",
+                    "observed_by": "<operator identity>",
+                    "observations": [
+                        {
+                            "criterion_sha256": item["criterion_sha256"],
+                            "status": "passed|failed|not_observed",
+                            "notes": "<direct observation>",
+                        }
+                        for item in request_payload["acceptance_criteria"]
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        file=sys.stderr,
+        flush=True,
+    )
+    responses: queue.Queue[str] = queue.Queue(maxsize=1)
+
+    def read_line() -> None:
+        responses.put(sys.stdin.readline())
+
+    threading.Thread(
+        target=read_line,
+        name="gtfo-operator-completion-input",
+        daemon=True,
+    ).start()
+    try:
+        line = responses.get(timeout=request.timeout_seconds)
+    except queue.Empty as exc:
+        raise GTFORuntimeAutomationError(
+            "Operator completion timed out."
+        ) from exc
+    if not line:
+        raise GTFORuntimeAutomationError(
+            "Operator completion input closed before a response."
+        )
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise GTFORuntimeAutomationError(
+            "Operator completion response is not valid JSON."
+        ) from exc
+    if not isinstance(payload, Mapping):
+        raise GTFORuntimeAutomationError(
+            "Operator completion response must be a JSON object."
+        )
+    return payload
+
+
+def _canonical_json_sha256(payload: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            dict(payload),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _validate_real_profile(profile: GTFORealRuntimeProfile) -> None:
@@ -1048,6 +1354,8 @@ def _payload_from_runtime_observations(
     input_execution_mode: str | None,
     capability_report: Mapping[str, Any],
     process_diagnostics: Mapping[str, Any],
+    operator_completion_request: GTFOOperatorCompletionRequest | None,
+    operator_completion: GTFOOperatorCompletion | None,
 ) -> dict[str, Any]:
     marker_observations = (
         tuple(dict(item) for item in log_snapshot.marker_observations)
@@ -1081,16 +1389,38 @@ def _payload_from_runtime_observations(
         for criterion in acceptance_criteria
         if criterion not in profile.acceptance_markers
     ]
-    missing_observations = [
+    configured_marker_criteria = {
         criterion
         for criterion in acceptance_criteria
+        if criterion in profile.acceptance_markers
+    }
+    missing_marker_observations = [
+        criterion
+        for criterion in configured_marker_criteria
         if criterion not in supported_criteria
     ]
+    operator_supported_criteria = (
+        set()
+        if operator_completion is None
+        else operator_completion.passed_criteria
+    )
+    manual_criteria = set(missing_marker_config)
+    missing_operator_observations = sorted(
+        manual_criteria - operator_supported_criteria
+    )
+    all_supported_criteria = supported_criteria | operator_supported_criteria
     gameplay_behavior_verified = (
         startup_loaded
         and bool(acceptance_criteria)
-        and not missing_marker_config
-        and not missing_observations
+        and not missing_marker_observations
+        and not missing_operator_observations
+        and (
+            not manual_criteria
+            or (
+                profile.operator_completion_required
+                and operator_completion is not None
+            )
+        )
     )
     verification_status = "verified" if gameplay_behavior_verified else "inconclusive"
     evidence_items = [
@@ -1114,13 +1444,36 @@ def _payload_from_runtime_observations(
         )
         for source in log_snapshot.sources
     ]
+    if operator_completion is not None:
+        evidence_items.extend(
+            RuntimeEvidenceItem(
+                item_type="manual_observation",
+                source="gtfo_operator_completion",
+                locator=operator_completion.request_sha256,
+                supports_acceptance=(
+                    (str(observation["acceptance_criterion"]),)
+                    if observation.get("status") == "passed"
+                    else ()
+                ),
+                confidence=1.0,
+                raw_excerpt=str(observation["notes"]),
+            )
+            for observation in operator_completion.observations
+        )
     limitations = _limitations(
         process_handle=process_handle,
         log_snapshot=log_snapshot,
         screenshot=screenshot,
         missing_marker_config=missing_marker_config,
-        missing_observations=missing_observations,
+        missing_observations=missing_marker_observations,
+        operator_completion_required=profile.operator_completion_required,
     )
+    if missing_operator_observations:
+        limitations = (
+            *limitations,
+            "GTFO operator completion did not pass every requested manual "
+            "acceptance observation.",
+        )
     plugin_marker_binding = _plugin_marker_binding(
         acceptance_criteria=acceptance_criteria,
         acceptance_markers=profile.acceptance_markers,
@@ -1142,10 +1495,12 @@ def _payload_from_runtime_observations(
         screenshot=screenshot,
         startup_loaded=startup_loaded,
         missing_marker_config=missing_marker_config,
-        missing_observations=missing_observations,
+        missing_observations=missing_marker_observations,
         plugin_marker_binding=plugin_marker_binding,
         marker_observations=marker_observations,
         bepinex_log_config=capability_report["checks"]["bepinex_log_config"],
+        operator_completion=operator_completion,
+        missing_operator_observations=missing_operator_observations,
     )
     payload = build_real_runtime_evidence_payload(
         feature_id=feature_id,
@@ -1215,6 +1570,14 @@ def _payload_from_runtime_observations(
     payload["screenshot"] = screenshot_ref
     payload["process_diagnostics"] = dict(process_diagnostics)
     payload["gtfo_capability_report"] = dict(capability_report)
+    payload["operator_completion"] = (
+        None if operator_completion is None else operator_completion.to_dict()
+    )
+    payload["operator_completion_request"] = (
+        None
+        if operator_completion_request is None
+        else operator_completion_request.to_dict()
+    )
     return payload
 
 
@@ -1230,6 +1593,7 @@ def _payload_from_runtime_failure(
     capability_report: Mapping[str, Any],
     failure_stage: str,
     process_diagnostics: Mapping[str, Any],
+    operator_completion_request: GTFOOperatorCompletionRequest | None,
 ) -> dict[str, Any]:
     failure_type = type(failure).__name__
     failure_message = str(failure)
@@ -1326,6 +1690,11 @@ def _payload_from_runtime_failure(
         "message": failure_message,
     }
     payload["gtfo_capability_report"] = dict(capability_report)
+    payload["operator_completion_request"] = (
+        None
+        if operator_completion_request is None
+        else operator_completion_request.to_dict()
+    )
     return payload
 
 
@@ -1363,7 +1732,12 @@ def _gtfo_failure_ownership(
                 "observation could complete."
             ),
         )
-    if failure_stage in {"log_collection", "screenshot_capture"}:
+    if failure_stage in {
+        "log_collection",
+        "operator_completion",
+        "post_operator_log_collection",
+        "screenshot_capture",
+    }:
         return build_runtime_failure_ownership(
             owner="observation",
             failure_class=f"{failure_stage}_failed",
@@ -1524,6 +1898,8 @@ def _runtime_trust_binding(
     plugin_marker_binding: Mapping[str, Any],
     marker_observations: tuple[Mapping[str, Any], ...],
     bepinex_log_config: Mapping[str, Any],
+    operator_completion: GTFOOperatorCompletion | None,
+    missing_operator_observations: list[str],
 ) -> dict[str, Any]:
     screenshot_ref = screenshot.to_dict() if screenshot is not None else None
     screenshot_feature_id = (
@@ -1585,7 +1961,11 @@ def _runtime_trust_binding(
         "acceptance_markers": {
             "status": (
                 "passed"
-                if not missing_marker_config and not missing_observations
+                if not missing_observations
+                and (
+                    not missing_marker_config
+                    or profile.operator_completion_required
+                )
                 else "blocked"
             ),
             "marker_source": "gtfo_persistent_log",
@@ -1597,6 +1977,26 @@ def _runtime_trust_binding(
                 for item in marker_observations
                 if item.get("marker") in profile.acceptance_markers.values()
             ],
+        },
+        "operator_completion": {
+            "status": (
+                "passed"
+                if (
+                    not profile.operator_completion_required
+                    or (
+                        operator_completion is not None
+                        and not missing_operator_observations
+                    )
+                )
+                else "blocked"
+            ),
+            "required": profile.operator_completion_required,
+            "completion": (
+                None
+                if operator_completion is None
+                else operator_completion.to_dict()
+            ),
+            "missing_observations": list(missing_operator_observations),
         },
         "screenshot_runtime_artifact_linkage": {
             "status": (
@@ -1619,6 +2019,7 @@ def _runtime_trust_binding(
     return {
         "profile_id": profile.profile_id,
         "evidence_source": "gtfo_real_runtime_automation",
+        "operator_completion_required": profile.operator_completion_required,
         "status": "pending_graph_binding" if not blockers else "blocked",
         "checks": checks,
         "blockers": blockers,
@@ -1638,6 +2039,7 @@ def _limitations(
     screenshot: ScreenshotMetadata | None,
     missing_marker_config: list[str],
     missing_observations: list[str],
+    operator_completion_required: bool = False,
 ) -> tuple[str, ...]:
     limitations: list[str] = []
     if process_handle.pid <= 0:
@@ -1650,7 +2052,7 @@ def _limitations(
         )
     if log_snapshot.truncated:
         limitations.append("GTFO runtime log output was truncated before artifact storage.")
-    if missing_marker_config:
+    if missing_marker_config and not operator_completion_required:
         limitations.append(
             "GTFO runtime profile has no acceptance marker for every criterion."
         )
