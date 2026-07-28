@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-27
+Last updated: 2026-07-28
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -264,7 +264,27 @@ exact_evidence:
   and future exact approval hash
   sha256:c9e7903739f5b99422a6b6b130a6bbb0acfba41d47e6d2a4148ad33f3469cdaa.
   All three binding-span checks and the lexical delimiter check passed. The
-  selected source remains unchanged and the diff awaits human semantic review.
+  selected source remains unchanged. A supplied external review judged the main
+  design acceptable but did not approve the exact bytes because the success
+  marker omitted the exact FeatureSpec facts visual_spawn_succeeded=true and
+  audio_event_accepted=true.
+  The first no-model marker revision sfp_manual_marker_repair_006 failed on
+  Windows path length during source materialization, before Proposal and
+  without a source write. The shorter run sfp_mmr_007 preserved all prior
+  revisions and produced PatchProposal
+  37368a6353e59bd76627b72b0ac76433f459090a41058492ad038cf2616dfa93
+  plus ProposalReview
+  f098d9d2c6d26c3eece62b7b39966f7b8002a4aeb8ce382f7dca3f5054af026d
+  with approve_dry_run. The revised patch changes the same file and has the
+  same three change units, 173 insertions, and zero deletions. Its raw
+  unified-diff SHA256 is
+  5d6d6439bf1c5b3f7795a1d27a1326c0e6f038f3fc7b8d1f4c42f1ab82c3b4cf,
+  and its future exact approval hash is
+  sha256:c6fb31dfbdf09b877cdd9e018af26f5441e0b0f30680e5a0e0cb84355e30c7ca.
+  The old-to-new comparison replaces exactly one patch line so the sole
+  STAGGER_FEEDBACK_SHOWN write contains both required facts once; no Hook or
+  behavior logic changed. All static checks passed, source remains unchanged,
+  and the revised diff awaits human exact-diff approval.
 affected_coverage_ids:
   GOV-005, PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
   PROP-002, PROP-005, REVIEW-001, REVIEW-004, DOM-004, DOM-006, EXEC-002,
@@ -272,9 +292,9 @@ affected_coverage_ids:
 dependencies:
   The FeatureSpec, EvidencePack, Implementation Plan, binding/domain gates,
   complete repair Proposal, deterministic Review, and no-write preapproval
-  diff are complete. Human semantic approval of the displayed repair diff is
-  the only current entry gate. Apply, Build, and product Runtime remain later
-  separately authorized stages.
+  diff plus its bounded marker-contract revision are complete. Human approval
+  of the revised displayed exact diff is the only current entry gate. Apply,
+  Build, and product Runtime remain later separately authorized stages.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -292,10 +312,13 @@ permissions_and_disclosure:
   path disclosed nothing externally. The new 4B authorization was consumed by
   exactly one timed-out loopback call. sfp_manual_repair_005 made zero model
   calls and only wrote ArtifactStore/run-local Proposal, Review, and
-  preapproval diff records. Current admission authorizes no additional model
-  call, source write, Apply, Build, game-directory copy, GTFO launch,
-  screenshot capture, or product-behavior claim. Each later side effect
-  retains its existing separate approval boundary.
+  preapproval diff records. sfp_manual_marker_repair_006 and sfp_mmr_007 also
+  made zero model calls and no source write; the latter wrote only new
+  ArtifactStore/run-local Proposal, Review, patch, comparison, and audit
+  records. Current admission authorizes no additional model call, source
+  write, Apply, Build, game-directory copy, GTFO launch, screenshot capture,
+  or product-behavior claim. Each later side effect retains its existing
+  separate approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
   The Implementation Plan resolved exactly one writable target:
@@ -369,19 +392,29 @@ focused_verification:
   Plan/binding pairs, produces the full preapproval diff, passes all three
   target-span checks plus C# delimiter balance, and records
   actual_write_performed=false.
+  sfp_mmr_007 revalidated the same upstream and binding identities, returned
+  approve_dry_run, and produced patch SHA256
+  5d6d6439bf1c5b3f7795a1d27a1326c0e6f038f3fc7b8d1f4c42f1ab82c3b4cf.
+  The patch contains STAGGER_FEEDBACK_SHOWN,
+  visual_spawn_succeeded=true, and audio_event_accepted=true exactly once
+  each. Its comparison with sfp_manual_repair_005 has SHA256
+  c9501b5276a0e0df76f652919159881f70ee49de052c00b618edc7815d2d64bd,
+  with one removed and one added patch line. All three target-span checks and
+  C# delimiter balance pass; actual_write_performed=false.
   A later product Runtime must separately prove visible and audible behavior,
   General.Enabled=false suppression, and exact marker behavior.
 stop_condition:
   Preserve every prior model, Review, Dry-run, and Apply result as immutable
   history, including the semantically rejected isolated Apply and failed repair
-  runs sfp_qwen3_4b_repair_002, sfp_manual_repair_003, and
-  sfp_manual_repair_004. Stop at sfp_manual_repair_005 before source write.
-  Present preapproval_repair.patch for human semantic review. A future Apply
-  requires explicit approval of the displayed bytes and current exact diff
-  hash; Build remains a later separate authorization. Do not call another
-  model, reuse the rejected approval hash, start GTFO, or claim visible/audible
+  runs sfp_qwen3_4b_repair_002, sfp_manual_repair_003,
+  sfp_manual_repair_004, and sfp_manual_marker_repair_006. Stop at sfp_mmr_007
+  before source write. Present its preapproval_repair.patch and
+  previous_to_current_patch.diff for human exact-diff review. A future Apply
+  requires explicit approval of the revised displayed bytes and current exact
+  diff hash; Build remains a later separate authorization. Do not call another
+  model, reuse either prior approval hash, start GTFO, or claim visible/audible
   product success.
-status: repair_diff_awaiting_human_semantic_approval
+status: marker_contract_repair_diff_awaiting_human_exact_diff_approval
 automation_claim: not_proven
 ```
 

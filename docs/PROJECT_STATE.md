@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-27
+Last updated: 2026-07-28
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -14,8 +14,8 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: repair_proposal_reviewed_preapproval_diff_awaiting_human_semantic_approval
-local_proposal_provider_status: real_4b_patch_rejected_no_model_repair_proposal_ready
+stagger_implementation_plan_status: marker_contract_repair_reviewed_preapproval_diff_awaiting_human_exact_diff_approval
+local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_reviewed
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: PROPOSAL-ADMISSION-PLAN-COVERAGE-PREAPPROVAL-DIFF-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -31,10 +31,11 @@ materialization, one diagnostic Runtime, a sufficient EvidencePack revision,
 and an evidence-bound Implementation Plan. The first PatchProposal,
 deterministic Review, no-write Dry-run, and isolated Apply remain immutable
 historical evidence, but later human semantic review rejected those bytes
-before Build. A new three-change repair Proposal and full preapproval unified
-diff now exist without a source write. Human semantic approval, Apply, Build,
-and product Runtime acceptance remain pending; this is not an Agent Harness
-Migration Boundary.
+before Build. A complete three-change repair Proposal was later revised without
+a model to add the two exact FeatureSpec marker facts. Its full preapproval
+unified diff exists without a source write and is waiting for human exact-diff
+approval. Apply, Build, and product Runtime acceptance remain pending; this is
+not an Agent Harness Migration Boundary.
 
 Separately authorized local Proposal continuation
 `sfp_qwen36_27b_001` revalidated the exact four upstream Artifact hashes,
@@ -270,7 +271,35 @@ All three binding-span checks and the lexical delimiter check passed. The
 materialized source remains at
 `92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`;
 model calls, external disclosure, source writes, Build, and Runtime are zero.
-Current state is `awaiting_human_semantic_approval`.
+That patch remains immutable historical evidence after external review found
+that its sole success marker omitted the exact FeatureSpec fields
+`visual_spawn_succeeded=true` and `audio_event_accepted=true`.
+
+The first marker-revision run `sfp_manual_marker_repair_006` failed during
+source materialization because its long run-local path exceeded the Windows
+path boundary. It stopped before Proposal, made zero model calls, and performed
+no source write. The shorter no-model run `sfp_mmr_007` then revalidated the
+same four upstream Artifacts, three edit bindings, source snapshot, runtime
+assembly identity, and domain policy. PatchProposal
+`37368a6353e59bd76627b72b0ac76433f459090a41058492ad038cf2616dfa93`
+and ProposalReview
+`f098d9d2c6d26c3eece62b7b39966f7b8002a4aeb8ce382f7dca3f5054af026d`
+preserve exact Plan coverage and return `approve_dry_run`.
+
+The revised patch changes the same single file through the same three units,
+173 insertions, and zero deletions. Its SHA256 is
+`5d6d6439bf1c5b3f7795a1d27a1326c0e6f038f3fc7b8d1f4c42f1ab82c3b4cf`,
+and its future exact approval hash is
+`sha256:c6fb31dfbdf09b877cdd9e018af26f5441e0b0f30680e5a0e0cb84355e30c7ca`.
+The old-to-new patch comparison has SHA256
+`c9501b5276a0e0df76f652919159881f70ee49de052c00b618edc7815d2d64bd`
+and replaces exactly one patch line: the only `STAGGER_FEEDBACK_SHOWN` write
+now contains both required facts once. Hook and behavior logic are unchanged.
+All three binding-span checks and the lexical delimiter check passed. The
+materialized source remains at
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`;
+model calls, external disclosure, source writes, Apply, Build, and Runtime are
+zero. Current state is `awaiting_human_exact_diff_approval`.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

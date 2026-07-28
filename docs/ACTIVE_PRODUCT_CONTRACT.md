@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-07-27
+Last updated: 2026-07-28
 
 ## 1. Product
 
@@ -273,9 +273,30 @@ and future exact-approval hash
 All three binding-span checks and the lexical C# check passed. The source
 remains at SHA256
 `92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`;
-no model, external disclosure, source write, Build, or Runtime occurred. The
-current stop is human semantic review of the full diff. Approval of these new
-bytes has not been given.
+no model, external disclosure, source write, Build, or Runtime occurred. A
+supplied external review then judged the main Hook, reaction filter,
+local-source, visual, audio, and success-gating design acceptable but identified
+that the success marker did not include the FeatureSpec's two exact code-level
+facts. It did not approve the displayed bytes.
+
+No-model marker-contract revision `sfp_mmr_007` preserves the old Proposal,
+Review, and patch as immutable history. It produced PatchProposal
+`37368a6353e59bd76627b72b0ac76433f459090a41058492ad038cf2616dfa93`
+and approving ProposalReview
+`f098d9d2c6d26c3eece62b7b39966f7b8002a4aeb8ce382f7dca3f5054af026d`.
+The revised no-write patch still changes only
+`Patches/HitFeedbackBehaviorPatch.cs` through the same three units and line
+counts. Relative to the prior patch, exactly one patch line was replaced so
+the sole `STAGGER_FEEDBACK_SHOWN` write now includes the exact FeatureSpec
+facts `visual_spawn_succeeded=true` and `audio_event_accepted=true`; Hook and
+behavior logic did not change. The revised unified-diff SHA256 is
+`5d6d6439bf1c5b3f7795a1d27a1326c0e6f038f3fc7b8d1f4c42f1ab82c3b4cf`,
+and its future exact-approval hash is
+`sha256:c6fb31dfbdf09b877cdd9e018af26f5441e0b0f30680e5a0e0cb84355e30c7ca`.
+All binding-span and lexical checks passed. The source still has SHA256
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`;
+model calls, disclosure, source writes, Apply, Build, and Runtime remain zero.
+The current stop is human exact-diff approval of this revision.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
