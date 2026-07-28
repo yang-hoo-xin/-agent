@@ -335,6 +335,20 @@ GTFO, and emitted no RuntimeEvidence, ResumeReport, EvalReport, or
 WorkflowSummary. The current stop is separate product Runtime authorization;
 Build evidence is not product-behavior evidence.
 
+The first no-launch preflight kept that checkpoint unconsumed and confirmed
+all four required compiled members, but Runtime was not started. The supported
+continuation entry currently assumes both `run_manifest.json` and ArtifactStore
+`a/` share one run root; this real run stores the immutable product ArtifactStore
+at its parent workspace. The default GTFO Runtime profile also remains
+intentionally disabled and incomplete. The selected P0 is a bounded integration
+repair inside the implemented H1.1 Build-to-Runtime handoff: explicit,
+validated ArtifactStore binding plus a public no-write preflight, with existing
+`run_root/a` behavior preserved. The selected P1 is preparation and no-launch
+validation of a reviewed run-local GTFO profile for this product request under
+the existing Runtime admission/provider boundary. Neither selection authorizes
+checkpoint consumption, game-directory writes, process launch, or Runtime
+claims.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove

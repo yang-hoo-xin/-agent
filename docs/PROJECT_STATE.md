@@ -14,7 +14,7 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: marker_contract_repair_isolated_build_completed_runtime_pending
+stagger_implementation_plan_status: runtime_not_started_admission_blocked_p0_p1_selected
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: PROPOSAL-ADMISSION-PLAN-COVERAGE-PREAPPROVAL-DIFF-001
@@ -362,6 +362,32 @@ WorkflowSummary. The focused Build/Harness regression command passed `147`
 tests. Compilation and metadata evidence do not prove Harmony runtime binding,
 visible yellow-X behavior, audible output, exactly-once behavior, disabled-mode
 suppression, or the Runtime marker contract.
+
+The first no-launch Runtime continuation preflight then revalidated the exact
+run, DLL, BuildResult, WorkflowCheckpoint, checkpoint id, recursive freshness,
+physical DLL bytes, and zero lineage/Build-handoff blockers. It also resolved
+all four required compiled members in the same DLL:
+`StaggerFeedbackActivateStatePatch.Postfix`,
+`TrySpawnStaggerYellowX`, `AddStaggerXLine`, and
+`TryPlayStaggerFeedbackSound`. No ResumeReport or RuntimeEvidence exists.
+
+Runtime was not started because admission exposed two independent Harness-side
+preconditions. First, the supported `resume-runtime` entry reads ArtifactStore
+from `run_root/a` and the manifest from `run_root/run_manifest.json`, while
+`sfp_build_009` has the manifest in its run root and the ArtifactStore in the
+parent product-workspace `a` directory. Second, the repository default Runtime
+profile remains intentionally disabled with empty executable, working
+directory, and acceptance markers plus
+`terminate_after_capture=false`. The first condition is selected as bounded P0
+repair of the already implemented H1.1 Build-to-Runtime handoff entry, not a
+new Harness Migration Boundary. The second is selected as P1 preparation of a
+reviewed run-local GTFO Runtime profile for the current product slice under the
+existing Runtime admission/provider boundary. P0 must preserve the default
+`run_root/a` behavior while allowing an explicit validated ArtifactStore root
+and must add a public no-write preflight. P1 must prepare and validate exact
+paths, markers, timeouts, lifecycle, deployment and restoration inputs without
+launching GTFO. Neither step may repeat Evidence, Plan, Proposal, Review,
+Apply, or Build.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

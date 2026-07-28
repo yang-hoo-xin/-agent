@@ -312,8 +312,14 @@ dependencies:
   `215025bd406c09062e44297982a29d9abde587b4ea04b4c0ebc26344a6b5040f`,
   and created fresh Build checkpoint
   `1612ca4562364d84bc47c934687e3cfa2a478f4b72733f074a0593a79b23be2e`.
-  Separately authorized product Runtime continuation is the only current entry
-  gate.
+  The first no-launch Runtime preflight revalidated the exact Build handoff and
+  four required compiled members, but Runtime admission blocked before
+  ResumeReport creation. P0 must repair the supported H1.1 continuation entry
+  so one explicit ArtifactStore root can be validated separately from the run
+  manifest root while preserving `run_root/a` as the default. P1 must then
+  prepare and validate one reviewed run-local GTFO Runtime profile. Only after
+  both no-launch preflights pass may separately authorized product Runtime
+  continuation reach the external-action gate.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -460,13 +466,15 @@ stop_condition:
   sfp_manual_repair_004, and sfp_manual_marker_repair_006. Preserve sfp_mmr_007
   as the immutable reviewed no-write source and sfp_mma_008 as the only approved
   isolated Apply. Preserve sfp_build_009 as the only current Build and its
-  checkpoint as the only current Runtime handoff. Stop before ResumeReport,
-  game-directory copy, GTFO launch, screenshot capture, RuntimeEvidence, Eval,
-  or WorkflowSummary. Do not call another model, reuse either prior approval
-  hash, perform a second Apply or Build, or claim Harmony runtime binding,
-  visible, audible, exactly-once, disabled-mode, marker, or product Runtime
-  success.
-status: isolated_build_completed_runtime_awaiting_separate_authorization
+  checkpoint as the only current Runtime handoff. Implement only P0 explicit
+  ArtifactStore binding plus no-write continuation preflight, then P1 reviewed
+  run-local GTFO Runtime profile preparation and no-launch validation. Stop
+  before ResumeReport, game-directory copy, GTFO launch, screenshot capture,
+  RuntimeEvidence, Eval, or WorkflowSummary. Do not call another model, reuse
+  either prior approval hash, perform a second Apply or Build, or claim Harmony
+  runtime binding, visible, audible, exactly-once, disabled-mode, marker, or
+  product Runtime success.
+status: runtime_not_started_admission_blocked_p0_p1_selected
 automation_claim: not_proven
 ```
 
