@@ -380,11 +380,12 @@ The public preflight and actual `resume-runtime` admission both receive the
 exact FeatureSpec acceptance list. Actual continuation performs that profile
 and provider admission before writing ResumeReport or consuming the checkpoint.
 Focused settings guards prove this Runtime path does not read LLM, Embedding,
-Vector Store, or Reranker settings after configuration parsing. The checkpoint
-remains unconsumed, ResumeReport and RuntimeEvidence counts remain zero, and no
-game-directory write or process launch is authorized. Agentic and RAG expansion
-is not selected: neither supplies a missing signal for this deterministic
-Runtime admission boundary. The final real-input no-write preflight returned
+Vector Store, or Reranker settings after configuration parsing. At the
+no-launch preflight boundary, the checkpoint was unconsumed, ResumeReport and
+RuntimeEvidence counts were zero, and no game-directory write or process launch
+had occurred. Agentic and RAG expansion is not selected: neither supplies a
+missing signal for this deterministic Runtime admission boundary. The final
+real-input no-write preflight returned
 `READY_FOR_EXTERNAL_AUTHORIZATION` with `stagger_acceptance.status=ready`,
 current config SHA256
 `717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`,
@@ -392,6 +393,21 @@ and no checkpoint consumption, ResumeReport, RuntimeEvidence, process launch,
 DLL copy, or file write. This is readiness to request the external launch/write
 permission for the reviewed two-process attempt; it is not Runtime evidence or
 seven-criterion acceptance.
+
+The separately authorized first real continuation then wrote accepted
+ResumeReport `resume_87604d6c789049a19e19c708be168b7d` and consumed the
+single Build checkpoint, but failed before either GTFO process launch. The
+configuration backup path ending in
+`general_enabled_false/config/local.betterhitfeedback.cfg.before` is 273
+characters on this run root; `shutil.copy2` raised `FileNotFoundError`. No
+RuntimeEvidence, EvalReport, or WorkflowSummary was written. The GTFO process
+is absent, the plugin destination is absent, and the game configuration remains
+at SHA256
+`717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`.
+Only empty backup directories were added under the Build root. The continuation
+is blocked: preserve the accepted ResumeReport, consumed checkpoint, and empty
+directories until the backup-path and post-acceptance recovery boundary is
+repaired and separately authorized.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

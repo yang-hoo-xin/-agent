@@ -14,7 +14,7 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: runtime_not_started_two_process_preflight_ready_external_authorization_required
+stagger_implementation_plan_status: runtime_blocked_prelaunch_backup_path_failure_checkpoint_consumed
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: STAGGER-TWO-PROCESS-OPERATOR-COMPLETION-PREFLIGHT-001
@@ -410,10 +410,10 @@ substring includes `target=ES_Hitreact.ActivateState`,
 `visual_spawn_succeeded=true`, and `audio_event_accepted=true`, and binds only
 the exact code-level FeatureSpec marker criterion. The marker does not prove
 Runtime visibility or audibility; all other acceptance criteria remain separate
-Runtime observation obligations. Runtime is still not started. The checkpoint
-is unconsumed, ResumeReport and RuntimeEvidence remain at zero, and no DLL copy,
-game-directory write, screenshot capture, process launch, Eval, or
-WorkflowSummary occurred.
+Runtime observation obligations. At the preflight boundary Runtime had not
+started: the checkpoint was unconsumed, ResumeReport and RuntimeEvidence were
+zero, and no DLL copy, game-directory write, screenshot capture, process
+launch, Eval, or WorkflowSummary had occurred.
 
 A post-review correction now passes the exact seven FeatureSpec acceptance
 criteria into both public preflight and actual continuation admission. Six
@@ -428,17 +428,31 @@ The final real-input zero-write preflight returned
 `READY_FOR_EXTERNAL_AUTHORIZATION` with two-process stagger status `ready`.
 It bound the current pre-existing config SHA256
 `717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`
-for exact restoration after both attempts. The checkpoint remains unconsumed;
-ResumeReport, RuntimeEvidence, Eval, and WorkflowSummary remain at zero; the
-plugin destination remains absent; no process launched and no game-directory
-bytes changed. External launch/write permission is still not granted, and no
-Runtime criterion is yet observed.
-This correction does not implement operator completion, full seven-criterion
-manual acceptance, Agentic orchestration, or RAG retrieval. The affected
-seven-file command passed 236 tests in 37.71 seconds. An authorized marker
-smoke would consume the single current Build checkpoint without completing the
-other six criteria; no launch is selected until that tradeoff is explicitly
-accepted or a bounded manual-completion path is prepared first.
+for exact restoration after both attempts. At that boundary the checkpoint
+remained unconsumed; ResumeReport, RuntimeEvidence, Eval, and WorkflowSummary
+were zero; the plugin destination remained absent; no process launched and no
+game-directory bytes changed.
+
+The next separately authorized `resume-runtime` attempt did not reach GTFO
+launch. Admission wrote accepted ResumeReport
+`resume_87604d6c789049a19e19c708be168b7d` and durably consumed checkpoint
+`checkpoint_03ca7e7fbac24db1a88559ae5788613a`. During the first
+`General.Enabled=false` deployment, the provider attempted to back up the
+existing config to a 273-character path ending in
+`general_enabled_false/config/local.betterhitfeedback.cfg.before`.
+`shutil.copy2` raised `FileNotFoundError` before the process launcher. The
+plugin destination is absent, no GTFO process exists, and
+`local.betterhitfeedback.cfg` still has SHA256
+`717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`.
+RuntimeEvidence, EvalReport, and WorkflowSummary remain at zero. Empty
+`plugin` and `config` backup directories remain under the Build root and the
+existing unresolved-backup guard blocks direct replay. Runtime is stopped at
+this Harness-owned blocker; no Runtime criterion is observed.
+The earlier seven-file admission correction did not implement operator
+completion; the later bounded Stagger profile did. Agentic orchestration and RAG
+retrieval remain outside this Runtime boundary. The current failure occurred
+before operator completion or any marker/visual/audio observation, so it changes
+neither the FeatureSpec nor the product evidence state.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

@@ -492,6 +492,17 @@ focused_verification:
   Public preflight and actual continuation pass the same seven FeatureSpec
   criteria into provider admission before ResumeReport write or checkpoint
   consumption.
+  The separately authorized first real continuation wrote accepted ResumeReport
+  `resume_87604d6c789049a19e19c708be168b7d`, then failed before either GTFO
+  launch while backing up the existing config. The selected backup pathname was
+  273 characters and `shutil.copy2` raised `FileNotFoundError`. The plugin
+  destination remains absent, the original config remains at SHA256
+  `717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`,
+  no GTFO process exists, and RuntimeEvidence, EvalReport, and WorkflowSummary
+  remain at zero. The accepted ResumeReport consumed the only current
+  checkpoint. Empty per-mode backup directories remain under the Build root and
+  are rejected by the unresolved-backup guard. This is a Harness-owned
+  prelaunch blocker, not product Runtime evidence or source-repair authority.
   Focused tests also prove the Runtime profile path does not read LLM,
   Embedding, Vector Store, or Reranker settings. `python -m pytest
   tests/unit/test_workflow_graph.py tests/unit/test_mod_agent_cli.py
@@ -515,14 +526,16 @@ stop_condition:
   checkpoint as the only current Runtime handoff. P0 explicit ArtifactStore
   binding plus public no-write continuation preflight and P1 reviewed run-local
   two-process operator-completion profile preparation/no-launch validation are
-  complete. Stop at `READY_FOR_EXTERNAL_AUTHORIZATION` before ResumeReport,
-  game-directory copy, config replacement, GTFO launch, screenshot capture,
-  RuntimeEvidence, Eval, or WorkflowSummary. This readiness does not prove any
-  of the seven Runtime criteria.
+  complete. The first authorized continuation is immutable failed history:
+  preserve its accepted ResumeReport, consumed checkpoint, and exact prelaunch
+  error. Stop before cleanup, retry, new checkpoint, GTFO launch,
+  game-directory write, RuntimeEvidence, Eval, or WorkflowSummary until the
+  backup-path and post-acceptance recovery boundary is explicitly repaired and
+  separately authorized. None of the seven Runtime criteria is proved.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.
-status: runtime_not_started_preflight_ready_external_authorization_required
+status: runtime_blocked_prelaunch_backup_path_failure_checkpoint_consumed
 automation_claim: not_proven
 ```
 
