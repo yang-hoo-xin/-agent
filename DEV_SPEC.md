@@ -197,14 +197,18 @@ Current E2E-001 proof level:
 
 Expert Skills may be split when they help the delivery chain move faster and
 their outputs stay connected to source code, artifacts, tests, and LangGraph
-routing. Start with:
+routing. The currently discoverable process Skills in this group are:
 
 ```text
-patch-review-playbook
 runtime-diagnosis-playbook
 hook-discovery-playbook
-repair-loop-playbook
 ```
+
+The former `patch-review-playbook` and `repair-loop-playbook` are frozen as
+`SKILL.md.frozen`. They preserve history but are not discoverable Skills or
+execution authorities. Patch review and repair decisions use the current
+FeatureSpec, source, registered Artifacts, deterministic graph gates, and
+focused command evidence directly.
 
 # 0.0D High-Risk Git And Queue Handling
 
