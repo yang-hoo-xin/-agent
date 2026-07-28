@@ -365,13 +365,25 @@ def build_gtfo_runtime_capability_report(
         if criterion not in profile.acceptance_markers
     ]
     if missing_acceptance_criteria:
-        checks["acceptance_markers"]["status"] = "blocked"
         checks["acceptance_markers"]["missing_acceptance_criteria"] = list(
             missing_acceptance_criteria
         )
-        blockers.append(
-            "GTFO runtime profile has no acceptance marker for every criterion"
-        )
+        configured_acceptance_criteria = [
+            criterion
+            for criterion in acceptance_criteria
+            if criterion in profile.acceptance_markers
+        ]
+        if configured_acceptance_criteria:
+            checks["acceptance_markers"]["status"] = "warning"
+            warnings.append(
+                "GTFO Runtime acceptance criteria without configured markers require "
+                "separate observation and cannot be verified by plugin markers"
+            )
+        else:
+            checks["acceptance_markers"]["status"] = "blocked"
+            blockers.append(
+                "GTFO runtime profile has no acceptance marker for every criterion"
+            )
 
     status = "ready" if not blockers else "blocked"
     return {

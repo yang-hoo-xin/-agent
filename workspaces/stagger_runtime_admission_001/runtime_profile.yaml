@@ -17,7 +17,7 @@ runtime:
       - "Chainloader"
     acceptance_markers:
       "STAGGER_FEEDBACK_SHOWN is emitted only after the implementation has both created the feature visual and received a nonzero acceptance result for the feature audio event; the marker records visual_spawn_succeeded=true and audio_event_accepted=true without claiming that Runtime visibility or audibility is already proved.": "signal=STAGGER_FEEDBACK_SHOWN target=ES_Hitreact.ActivateState message=visual_spawn_succeeded_and_audio_event_accepted visual_spawn_succeeded=true audio_event_accepted=true"
-    timeout_seconds: 120
+    timeout_seconds: 600
     poll_interval_seconds: 1.0
     output_limit_chars: 20000
     terminate_after_capture: true

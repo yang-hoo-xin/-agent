@@ -576,6 +576,69 @@ def test_runtime_preflight_supports_explicit_shared_artifact_store_without_write
     assert _tree_bytes(tmp_path) == before
 
 
+def test_runtime_profile_admission_blocks_before_checkpoint_consumption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    _write_runtime_handoff_manifest(
+        tmp_path,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    destination = tmp_path / "BepInEx" / "plugins" / "BetterHitFeedback.dll"
+    destination.parent.mkdir(parents=True)
+    before = _tree_bytes(tmp_path)
+    feature_spec = _artifact_data(store, build_result, "feature_spec")
+    captured_admission: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.load_settings",
+        lambda _: SimpleNamespace(runtime=SimpleNamespace(gtfo=SimpleNamespace())),
+    )
+
+    def record_admission(*args, **kwargs):
+        captured_admission.update(kwargs)
+        return {}
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_admission_record",
+        record_admission,
+    )
+
+    def block_profile(*args, **kwargs):
+        raise LocalEntryError("profile acceptance contract blocked")
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_profile_preflight_record",
+        block_profile,
+    )
+
+    with pytest.raises(LocalEntryError, match="profile acceptance contract blocked"):
+        resume_local_runtime(
+            run_root=tmp_path,
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=checkpoint_ref.path,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+            settings_path=tmp_path / "runtime.yaml",
+            approved_by="human",
+            allow_game_launch=True,
+            runtime_plugin_destination=destination,
+            allow_game_directory_write=True,
+            resume_id="resume_profile_blocked_001",
+        )
+
+    assert _tree_bytes(tmp_path) == before
+    assert not (tmp_path / "runtime_resume_result.json").exists()
+    assert captured_admission["acceptance_criteria"] == tuple(
+        feature_spec["acceptance_criteria"]
+    )
+
+
 def test_runtime_preflight_rejects_wrong_artifact_store(
     tmp_path: Path,
 ) -> None:

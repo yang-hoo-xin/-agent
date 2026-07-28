@@ -349,14 +349,33 @@ P1 prepared reviewed run-local profile
 `workspaces/stagger_runtime_admission_001/runtime_profile.yaml` from the current
 machine paths, successful run `e7daa266`, the current FeatureSpec, and the
 compiled marker source. The final read-only preflight returned
-`READY_FOR_EXTERNAL_AUTHORIZATION`. Startup markers remain exactly `BepInEx`
-and `Chainloader`; the structured
+`READY_FOR_EXTERNAL_AUTHORIZATION` for one separately authorized marker-smoke
+attempt, not complete FeatureSpec acceptance. Startup markers remain exactly
+`BepInEx` and `Chainloader`; the structured
 `signal=STAGGER_FEEDBACK_SHOWN ... visual_spawn_succeeded=true
 audio_event_accepted=true` substring binds only the FeatureSpec's code-level
 marker criterion. The remaining six acceptance criteria still require separate
 visual, audible, negative, deduplication, and preservation observations. The
-checkpoint remains unconsumed, ResumeReport and RuntimeEvidence counts remain
-zero, and no game-directory write or process launch is authorized.
+profile timeout is `600` seconds because the provider starts that timer after
+the process launcher returns and before startup-marker observation;
+`terminate_after_capture=true` remains required by the current temporary DLL
+deployment/restoration boundary. The provider now treats a partial marker
+mapping as a warning while retaining complete acceptance as unverified; a
+profile with no marker for any selected criterion remains blocked.
+
+The public preflight and actual `resume-runtime` admission both receive the
+exact FeatureSpec acceptance list. Actual continuation performs that profile
+and provider admission before writing ResumeReport or consuming the checkpoint.
+Focused settings guards prove this Runtime path does not read LLM, Embedding,
+Vector Store, or Reranker settings after configuration parsing. The checkpoint
+remains unconsumed, ResumeReport and RuntimeEvidence counts remain zero, and no
+game-directory write or process launch is authorized. Agentic and RAG expansion
+is not selected: neither supplies a missing signal for this deterministic
+Runtime admission boundary. A separately authorized smoke resume would consume
+the single current checkpoint while still leaving six criteria unproved, so
+launch is not selected until the operator explicitly chooses between spending
+that checkpoint on smoke evidence and first adding a bounded manual-completion
+path.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

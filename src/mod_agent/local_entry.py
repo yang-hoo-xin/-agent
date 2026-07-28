@@ -771,6 +771,7 @@ def _runtime_admission_record(
     allow_game_launch: bool,
     runtime_plugin_destination: str | Path | None,
     allow_game_directory_write: bool,
+    acceptance_criteria: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Bind one run's requested Runtime boundary before any mutable action."""
 
@@ -825,6 +826,7 @@ def _runtime_admission_record(
         capability_report = build_gtfo_runtime_capability_report(
             profile,
             allow_game_launch=allow_game_launch,
+            acceptance_criteria=acceptance_criteria,
         )
     except GTFORuntimeAutomationError as exc:
         raise LocalEntryError(f"GTFO Runtime admission failed: {exc}") from exc
@@ -2451,29 +2453,8 @@ def _runtime_profile_preflight_record(
         )
     try:
         profile = profile_from_settings(settings)
-        capability_report = build_gtfo_runtime_capability_report(
-            profile,
-            allow_game_launch=True,
-        )
     except GTFORuntimeAutomationError as exc:
         raise LocalEntryError(f"GTFO Runtime preflight failed: {exc}") from exc
-    if capability_report["status"] != "ready":
-        raise LocalEntryError(
-            "GTFO Runtime preflight blocked: "
-            + "; ".join(str(item) for item in capability_report["blockers"])
-        )
-    capability_checks = dict(capability_report["checks"])
-    capability_checks["explicit_launch_approval"] = {
-        "status": "not_granted_preflight_only",
-        "required": True,
-        "allow_game_launch": False,
-    }
-    capability_report = {
-        **capability_report,
-        "checks": capability_checks,
-        "would_launch": False,
-        "authorization_status": "not_granted_preflight_only",
-    }
     destination_input = Path(runtime_plugin_destination)
     if not destination_input.is_absolute():
         raise LocalEntryError(
@@ -2553,6 +2534,31 @@ def _runtime_profile_preflight_record(
         raise LocalEntryError(
             "Runtime continuation product marker cannot be a startup marker."
         )
+    try:
+        capability_report = build_gtfo_runtime_capability_report(
+            profile,
+            allow_game_launch=True,
+            acceptance_criteria=tuple(acceptance_criteria),
+        )
+    except GTFORuntimeAutomationError as exc:
+        raise LocalEntryError(f"GTFO Runtime preflight failed: {exc}") from exc
+    if capability_report["status"] != "ready":
+        raise LocalEntryError(
+            "GTFO Runtime preflight blocked: "
+            + "; ".join(str(item) for item in capability_report["blockers"])
+        )
+    capability_checks = dict(capability_report["checks"])
+    capability_checks["explicit_launch_approval"] = {
+        "status": "not_granted_preflight_only",
+        "required": True,
+        "allow_game_launch": False,
+    }
+    capability_report = {
+        **capability_report,
+        "checks": capability_checks,
+        "would_launch": False,
+        "authorization_status": "not_granted_preflight_only",
+    }
     return {
         "enabled": True,
         "profile": {
@@ -2646,12 +2652,30 @@ def resume_local_runtime(
         graph_runtime_factory = runtime_evidence_factory
     else:
         settings = load_settings(settings_path)
+        feature_acceptance_criteria = handoff.feature_spec.get(
+            "acceptance_criteria"
+        )
+        exact_acceptance_criteria = (
+            tuple(feature_acceptance_criteria)
+            if isinstance(feature_acceptance_criteria, list)
+            and all(
+                isinstance(item, str) and bool(item)
+                for item in feature_acceptance_criteria
+            )
+            else ()
+        )
         runtime_admission = _runtime_admission_record(
             settings,
             run_gtfo_runtime=True,
             allow_game_launch=allow_game_launch,
             runtime_plugin_destination=runtime_plugin_destination,
             allow_game_directory_write=allow_game_directory_write,
+            acceptance_criteria=exact_acceptance_criteria,
+        )
+        _runtime_profile_preflight_record(
+            settings,
+            runtime_plugin_destination=runtime_plugin_destination,
+            feature_spec=handoff.feature_spec,
         )
         build = handoff.build
         verified_artifacts = [

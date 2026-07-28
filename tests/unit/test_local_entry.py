@@ -277,6 +277,23 @@ def test_runtime_profile_preflight_binds_marker_without_claiming_visual_or_audio
         "required": True,
         "allow_game_launch": False,
     }
+    assert result["capability_report"]["checks"]["acceptance_markers"] == {
+        "status": "warning",
+        "configured_markers": settings.runtime.gtfo.acceptance_markers,
+        "acceptance_criteria": [
+            "The yellow X is visibly observed.",
+            "The feature cue is audibly observed.",
+            marker_criterion,
+        ],
+        "missing_acceptance_criteria": [
+            "The yellow X is visibly observed.",
+            "The feature cue is audibly observed.",
+        ],
+    }
+    assert result["capability_report"]["warnings"] == [
+        "GTFO Runtime acceptance criteria without configured markers require "
+        "separate observation and cannot be verified by plugin markers"
+    ]
 
 
 def test_runtime_profile_preflight_rejects_product_marker_as_startup_marker(
@@ -311,6 +328,61 @@ def test_runtime_profile_preflight_rejects_product_marker_as_startup_marker(
                 },
             },
         )
+
+
+def test_runtime_profile_preflight_does_not_read_non_runtime_provider_settings(
+    tmp_path: Path,
+) -> None:
+    settings = _runtime_settings(tmp_path)
+    marker_criterion = (
+        "STAGGER_FEEDBACK_SHOWN records visual_spawn_succeeded=true and "
+        "audio_event_accepted=true."
+    )
+    settings.runtime.gtfo.acceptance_markers = {
+        marker_criterion: (
+            "signal=STAGGER_FEEDBACK_SHOWN "
+            "visual_spawn_succeeded=true audio_event_accepted=true"
+        )
+    }
+
+    class RuntimeOnlySettings:
+        runtime = settings.runtime
+
+        def __getattribute__(self, name: str) -> object:
+            if name in {"llm", "embedding", "vector_store", "rerank"}:
+                raise AssertionError(
+                    f"Runtime preflight read unrelated settings: {name}"
+                )
+            return object.__getattribute__(self, name)
+
+    guarded_settings = RuntimeOnlySettings()
+    destination = _runtime_destination(tmp_path)
+    result = _runtime_profile_preflight_record(
+        guarded_settings,
+        runtime_plugin_destination=destination,
+        feature_spec={
+            "acceptance_criteria": [marker_criterion],
+            "success_marker_contract": {
+                "signal": "STAGGER_FEEDBACK_SHOWN",
+                "code_level_required_facts": [
+                    "visual_spawn_succeeded=true",
+                    "audio_event_accepted=true",
+                ],
+                "runtime_claim_limit": "Marker is code-level only.",
+            },
+        },
+    )
+    admission = _runtime_admission_record(
+        guarded_settings,
+        run_gtfo_runtime=True,
+        allow_game_launch=True,
+        runtime_plugin_destination=destination,
+        allow_game_directory_write=True,
+        acceptance_criteria=(marker_criterion,),
+    )
+
+    assert result["capability_report"]["status"] == "ready"
+    assert admission["capability_report"]["status"] == "ready"
 
 
 def test_runtime_verification_chain_requires_all_bound_artifacts() -> None:

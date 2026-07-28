@@ -29,6 +29,13 @@
       "plugin_destination_parent_exists": true,
       "bepinex_log_config_sha256": "cad94700be6c79cbe6efbf6e953fead502b9c5723ee67cc1fb19e63c94326616",
       "bepinex_append_log": false
+    },
+    "runtime_provider_semantics": {
+      "timeout_starts_after_process_launcher_returns": true,
+      "timeout_includes_startup_marker_wait": true,
+      "terminate_after_capture_occurs_after_log_collection_and_screenshot": true,
+      "operator_completion_signal_supported": false,
+      "source_path": "src/mod_agent/runtime/gtfo_automation.py"
     }
   },
   "profile": {
@@ -48,10 +55,22 @@
     "acceptance_markers": {
       "STAGGER_FEEDBACK_SHOWN is emitted only after the implementation has both created the feature visual and received a nonzero acceptance result for the feature audio event; the marker records visual_spawn_succeeded=true and audio_event_accepted=true without claiming that Runtime visibility or audibility is already proved.": "signal=STAGGER_FEEDBACK_SHOWN target=ES_Hitreact.ActivateState message=visual_spawn_succeeded_and_audio_event_accepted visual_spawn_succeeded=true audio_event_accepted=true"
     },
-    "timeout_seconds": 120,
+    "timeout_seconds": 600,
     "poll_interval_seconds": 1.0,
     "output_limit_chars": 20000,
     "terminate_after_capture": true
+  },
+  "runtime_scope": {
+    "description": "This profile admits one startup-plus-product-marker smoke attempt.",
+    "does_not_claim": [
+      "complete seven-criterion Runtime acceptance",
+      "visible yellow X observation",
+      "audible cue observation",
+      "rapid-fire, shotgun, negative-path, or deduplication completion"
+    ],
+    "remaining_acceptance_requires_separate_observation": true,
+    "smoke_attempt_would_consume_current_checkpoint": true,
+    "smoke_attempt_does_not_create_a_second_runtime_attempt": true
   },
   "deployment": {
     "dll_source_sha256": "7a04ebc37c58572835621640eeac52360f7d5e8b8ea7d68a8d1c3800b2cf21aa",

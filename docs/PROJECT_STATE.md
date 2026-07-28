@@ -388,12 +388,15 @@ P0 with `READY_FOR_RUNTIME_PROFILE`. P1 then prepared
 `runtime_profile_review.json` from current machine reads, successful Runtime
 run `e7daa266`, FeatureSpec Artifact
 `bbd473ce1072b2f605afa9a3ef7822695249e4781f77ca810e6b61fcf3c8a190`,
-and the exact compiled marker source. The final public preflight returned
-`READY_FOR_EXTERNAL_AUTHORIZATION`. It verified enabled profile, executable,
-working directory, log paths, `BepInEx.cfg` AppendLog binding, run-local
-screenshot directory, exact startup markers `BepInEx` and `Chainloader`,
-timeout/poll/output limits, `terminate_after_capture=true`, exact DLL
-destination, and the absent-destination restoration boundary.
+and the exact compiled marker source. The corrected final public preflight
+returned `READY_FOR_EXTERNAL_AUTHORIZATION` only for one marker-smoke attempt.
+It verified enabled profile, executable, working directory, log paths,
+`BepInEx.cfg` AppendLog binding, run-local screenshot directory, exact startup
+markers `BepInEx` and `Chainloader`, `timeout_seconds=600`, poll/output limits,
+`terminate_after_capture=true`, exact DLL destination, and the
+absent-destination restoration boundary. The 600-second timer starts after the
+process launcher returns and includes startup-marker wait; the current provider
+has no operator-completion signal.
 
 `STAGGER_FEEDBACK_SHOWN` is not a startup marker. Its configured structured
 substring includes `target=ES_Hitreact.ActivateState`,
@@ -404,8 +407,23 @@ Runtime visibility or audibility; all other acceptance criteria remain separate
 Runtime observation obligations. Runtime is still not started. The checkpoint
 is unconsumed, ResumeReport and RuntimeEvidence remain at zero, and no DLL copy,
 game-directory write, screenshot capture, process launch, Eval, or
-WorkflowSummary occurred. The affected command passed 233 tests in 23.92
-seconds.
+WorkflowSummary occurred.
+
+A post-review correction now passes the exact seven FeatureSpec acceptance
+criteria into both public preflight and actual continuation admission. Six
+criteria without configured markers are reported as separate-observation
+warnings and can never be promoted by the product marker; the marker criterion
+remains the sole configured mapping. Missing every selected marker remains a
+hard provider blocker. Actual continuation completes these checks before
+`WorkflowCheckpointStore.resume`, so a profile or capability failure cannot
+consume the checkpoint or create ResumeReport. Focused guards prove the Runtime
+profile path does not read LLM, Embedding, Vector Store, or Reranker settings.
+This correction does not implement operator completion, full seven-criterion
+manual acceptance, Agentic orchestration, or RAG retrieval. The affected
+seven-file command passed 236 tests in 37.71 seconds. An authorized marker
+smoke would consume the single current Build checkpoint without completing the
+other six criteria; no launch is selected until that tradeoff is explicitly
+accepted or a bounded manual-completion path is prepared first.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

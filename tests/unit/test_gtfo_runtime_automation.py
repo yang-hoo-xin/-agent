@@ -635,7 +635,7 @@ def test_gtfo_runtime_marker_observations_accumulate_across_log_generations(
             chain_criterion: "chain_probe=true",
             negative_criterion: negative_marker,
         },
-        timeout_seconds=0.04,
+        timeout_seconds=0.2,
         poll_interval_seconds=0.01,
     )
     log_path = tmp_path / "BepInEx" / "LogOutput.log"
@@ -977,6 +977,60 @@ def test_gtfo_runtime_missing_acceptance_marker_blocks_before_launch(
         "acceptance_criteria": [ACCEPTANCE_CRITERION],
         "missing_acceptance_criteria": [ACCEPTANCE_CRITERION],
     }
+
+
+def test_gtfo_runtime_partial_acceptance_markers_remain_unverified(
+    tmp_path: Path,
+) -> None:
+    separate_observation_criterion = "The yellow X is visibly observed."
+    profile = _profile(tmp_path)
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(
+            ACCEPTANCE_CRITERION,
+            separate_observation_criterion,
+        ),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=lambda _: GTFOProcessHandle(pid=4242),
+        log_collector=lambda _, __: GTFOLogSnapshot(
+            content=f"{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
+            sources=(str(tmp_path / "BepInEx" / "LogOutput.log"),),
+        ),
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_marker_partial",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_marker_partial",
+        ),
+    )
+
+    assert payload["verification_status"] == "inconclusive"
+    assert payload["claims_real_runtime_success"] is False
+    assert payload["acceptance_verified"] is False
+    assert payload["gtfo_capability_report"]["status"] == "ready"
+    assert payload["gtfo_capability_report"]["warnings"] == [
+        "GTFO Runtime acceptance criteria without configured markers require "
+        "separate observation and cannot be verified by plugin markers"
+    ]
+    assert payload["gtfo_capability_report"]["checks"]["acceptance_markers"] == {
+        "status": "warning",
+        "configured_markers": {
+            ACCEPTANCE_CRITERION: ACCEPTANCE_MARKER,
+        },
+        "acceptance_criteria": [
+            ACCEPTANCE_CRITERION,
+            separate_observation_criterion,
+        ],
+        "missing_acceptance_criteria": [separate_observation_criterion],
+    }
+    assert payload["runtime_trust_binding"]["checks"]["acceptance_markers"][
+        "status"
+    ] == "blocked"
 
 
 def test_gtfo_runtime_launcher_exception_becomes_failed_payload(tmp_path: Path) -> None:
