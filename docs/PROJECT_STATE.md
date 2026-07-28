@@ -14,8 +14,8 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: marker_contract_repair_isolated_apply_completed_build_pending
-local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_applied_isolated
+stagger_implementation_plan_status: marker_contract_repair_isolated_build_completed_runtime_pending
+local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: PROPOSAL-ADMISSION-PLAN-COVERAGE-PREAPPROVAL-DIFF-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -34,8 +34,10 @@ historical evidence, but later human semantic review rejected those bytes
 before Build. A complete three-change repair Proposal was later revised without
 a model to add the two exact FeatureSpec marker facts. The user approved its
 exact-diff identity and run `sfp_mma_008` applied it only to a fresh isolated
-materialization. Build and product Runtime acceptance remain pending; this is
-not an Agent Harness Migration Boundary.
+materialization. Separately authorized run `sfp_build_009` compiled that exact
+materialization and persisted a fresh Build-to-Runtime checkpoint. Product
+Runtime acceptance remains pending; this is not an Agent Harness Migration
+Boundary.
 
 Separately authorized local Proposal continuation
 `sfp_qwen36_27b_001` revalidated the exact four upstream Artifact hashes,
@@ -329,7 +331,37 @@ command
 `python -m pytest tests/unit/test_patch_apply.py
 tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py -q
 --tb=short` passes `95` tests in `27.83s`. Current state is
-`isolated_apply_completed_build_pending`.
+`isolated_build_completed_runtime_pending`.
+
+The separately authorized isolated Build run `sfp_build_009` resumed from the
+existing Dry-run and Apply Artifacts without repeating Proposal, Review,
+Dry-run, or Apply. Its run-local restore and `dotnet build --no-restore`
+completed with exit code `0`, zero compiler warnings, and zero compiler errors.
+BuildResult
+`215025bd406c09062e44297982a29d9abde587b4ea04b4c0ebc26344a6b5040f`
+verifies `BetterHitFeedback.dll` SHA256
+`7a04ebc37c58572835621640eeac52360f7d5e8b8ea7d68a8d1c3800b2cf21aa`
+and size `91136` bytes. Read-only metadata inspection verifies BepInPlugin
+identity `local.betterhitfeedback` / `BetterHitFeedback` / `0.1.0` and the
+compiled methods
+`HitFeedbackBehaviorPatch+StaggerFeedbackActivateStatePatch.Postfix`,
+`TrySpawnStaggerYellowX`, and `TryPlayStaggerFeedbackSound`; target code was
+not executed. The product Build was not repeated after a post-Build inspector
+project filename correction.
+
+WorkflowCheckpoint
+`1612ca4562364d84bc47c934687e3cfa2a478f4b72733f074a0593a79b23be2e`
+with checkpoint id `checkpoint_03ca7e7fbac24db1a88559ae5788613a`
+binds that BuildResult and `next_graph_node=collect_runtime_evidence`.
+Read-only checkpoint validation reports no lineage or Build-handoff blockers
+and no stale reasons. The approved Apply materialization and the non-generated
+files in the Build copy remain unchanged. The run made zero model calls,
+disclosed nothing externally, did not write the game directory, did not launch
+GTFO, and emitted no RuntimeEvidence, ResumeReport, EvalReport, or
+WorkflowSummary. The focused Build/Harness regression command passed `147`
+tests. Compilation and metadata evidence do not prove Harmony runtime binding,
+visible yellow-X behavior, audible output, exactly-once behavior, disabled-mode
+suppression, or the Runtime marker contract.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

@@ -307,9 +307,13 @@ dependencies:
   The FeatureSpec, EvidencePack, Implementation Plan, binding/domain gates,
   complete repair Proposal, deterministic Review, and no-write preapproval
   diff, marker-contract revision, human exact-diff approval, fresh Dry-run, and
-  isolated Apply are complete. A separately authorized Build against the
-  `sfp_mma_008` materialization is the only current entry gate. Product Runtime
-  remains a later separately authorized stage after Build evidence.
+  isolated Apply are complete. Separately authorized run `sfp_build_009`
+  compiled the exact `sfp_mma_008` materialization, persisted BuildResult
+  `215025bd406c09062e44297982a29d9abde587b4ea04b4c0ebc26344a6b5040f`,
+  and created fresh Build checkpoint
+  `1612ca4562364d84bc47c934687e3cfa2a478f4b72733f074a0593a79b23be2e`.
+  Separately authorized product Runtime continuation is the only current entry
+  gate.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -330,17 +334,23 @@ permissions_and_disclosure:
   preapproval diff records. sfp_manual_marker_repair_006 and sfp_mmr_007 also
   made zero model calls and no source write; the latter wrote only new
   ArtifactStore/run-local Proposal, Review, patch, comparison, and audit
-  records. Current admission authorizes no additional model call, source
-  write or second Apply. The exact approval was consumed only by sfp_mma_008.
-  It did not authorize Build, game-directory copy, GTFO launch, screenshot
-  capture, or product-behavior claims. Each later side effect retains its
-  existing separate approval boundary.
+  records. The exact approval was consumed only by sfp_mma_008. The later
+  isolated Build authorization was consumed only by sfp_build_009; it wrote
+  run-local build inputs, bounded logs, BuildResult, WorkflowCheckpoint, DLL,
+  and static inspection records. It made zero model calls, disclosed nothing
+  externally, did not repeat Apply, did not write the game directory, and did
+  not launch GTFO. Current admission authorizes no additional model call,
+  source write, second Apply, second Build, game-directory copy, GTFO launch,
+  screenshot capture, Runtime continuation, or product-behavior claim. Each
+  later side effect retains its existing separate approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
-  The Implementation Plan resolved exactly one writable target:
-  Patches/HitFeedbackBehaviorPatch.cs in a future approved run-local
-  materialization. The current repair run has no write authority. Plugin.cs,
-  the preserved lineage, and the historical rejected Apply remain read-only.
+  The only approved source write remains
+  `sfp_mma_008/materialized_source/BetterHitFeedback/Patches/HitFeedbackBehaviorPatch.cs`.
+  Run `sfp_build_009` copied that result into its own run-local Build tree and
+  generated only Build/tool outputs there. Plugin.cs, the preserved lineage,
+  the approved Apply materialization, and the historical rejected Apply remain
+  read-only.
 focused_verification:
   python -B
   workspaces/stagger_feedback_proposal_001/proposal_continuation_driver.py
@@ -431,18 +441,32 @@ focused_verification:
   python -m pytest tests/unit/test_patch_apply.py
   tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py
   -q --tb=short passed 95 tests in 27.83s.
-  A later product Runtime must separately prove visible and audible behavior,
-  General.Enabled=false suppression, and exact marker behavior.
+  The separately authorized `sfp_build_009` run completed run-local restore and
+  `dotnet build --no-restore` with exit code 0, zero warnings, and zero errors.
+  BuildResult `215025bd...5040f` verifies DLL SHA256
+  `7a04ebc37c58572835621640eeac52360f7d5e8b8ea7d68a8d1c3800b2cf21aa`
+  and size 91136 bytes. Static inspection verifies BepInPlugin identity and
+  the three compiled stagger methods without executing target code.
+  WorkflowCheckpoint `1612ca45...be2e` is fresh and has no lineage or
+  Build-handoff blockers. `python -m pytest tests/unit/test_build_adapter.py
+  tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py
+  tests/unit/test_local_entry.py -q --tb=short` passed 147 tests in 19.46s.
+  A later separately authorized product Runtime must prove visible and audible
+  behavior, General.Enabled=false suppression, and exact marker behavior.
 stop_condition:
   Preserve every prior model, Review, Dry-run, and Apply result as immutable
   history, including the semantically rejected isolated Apply and failed repair
   runs sfp_qwen3_4b_repair_002, sfp_manual_repair_003,
   sfp_manual_repair_004, and sfp_manual_marker_repair_006. Preserve sfp_mmr_007
   as the immutable reviewed no-write source and sfp_mma_008 as the only approved
-  isolated Apply. Stop before Build. Do not call another model, reuse either
-  prior approval hash, perform a second Apply, start GTFO, or claim compile,
-  Harmony binding, visible, audible, exactly-once, or product Runtime success.
-status: isolated_apply_completed_build_awaiting_separate_authorization
+  isolated Apply. Preserve sfp_build_009 as the only current Build and its
+  checkpoint as the only current Runtime handoff. Stop before ResumeReport,
+  game-directory copy, GTFO launch, screenshot capture, RuntimeEvidence, Eval,
+  or WorkflowSummary. Do not call another model, reuse either prior approval
+  hash, perform a second Apply or Build, or claim Harmony runtime binding,
+  visible, audible, exactly-once, disabled-mode, marker, or product Runtime
+  success.
+status: isolated_build_completed_runtime_awaiting_separate_authorization
 automation_claim: not_proven
 ```
 

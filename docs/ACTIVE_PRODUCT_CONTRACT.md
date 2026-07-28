@@ -315,7 +315,25 @@ remains, and both the reviewed `sfp_mmr_007` source and preserved lineage retain
 their original SHA256. The run made zero model calls, repeated no upstream
 stage, disclosed nothing externally, and emitted no Build, Runtime, Eval, or
 WorkflowSummary Artifact. Apply/Workflow/Artifact regression tests pass `95`
-cases. The current stop is separate Build authorization.
+cases.
+
+Separately authorized run `sfp_build_009` continued from those exact Dry-run
+and Apply Artifacts without repeating any upstream stage. Run-local restore and
+`dotnet build --no-restore` completed with exit code `0`, zero warnings, and
+zero errors. BuildResult
+`215025bd406c09062e44297982a29d9abde587b4ea04b4c0ebc26344a6b5040f`
+verifies `BetterHitFeedback.dll` SHA256
+`7a04ebc37c58572835621640eeac52360f7d5e8b8ea7d68a8d1c3800b2cf21aa`
+and size `91136` bytes. Read-only metadata inspection verifies the BepInPlugin
+identity and compiled stagger Postfix, visual helper, and audio helper without
+executing target code. Fresh WorkflowCheckpoint
+`1612ca4562364d84bc47c934687e3cfa2a478f4b72733f074a0593a79b23be2e`
+has no lineage or Build-handoff blockers and binds
+`next_graph_node=collect_runtime_evidence`. The run made zero model calls,
+did not repeat Apply or Build, did not write the game directory, did not launch
+GTFO, and emitted no RuntimeEvidence, ResumeReport, EvalReport, or
+WorkflowSummary. The current stop is separate product Runtime authorization;
+Build evidence is not product-behavior evidence.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
