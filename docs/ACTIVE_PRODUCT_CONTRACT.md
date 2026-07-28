@@ -296,7 +296,26 @@ and its future exact-approval hash is
 All binding-span and lexical checks passed. The source still has SHA256
 `92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`;
 model calls, disclosure, source writes, Apply, Build, and Runtime remain zero.
-The current stop is human exact-diff approval of this revision.
+The user then approved exact-diff identity
+`sha256:c6fb31dfbdf09b877cdd9e018af26f5441e0b0f30680e5a0e0cb84355e30c7ca`
+for one isolated Apply while explicitly retaining Build and Runtime as later
+evidence boundaries. Run `sfp_mma_008` created a fresh materialization from the
+preserved source lineage, revalidated the exact Proposal, Review, three
+bindings, domain policy, Runtime assembly identity, reviewed patch SHA256, and
+before/after source hashes, then used the existing LangGraph to persist
+Dry-run Artifact
+`704fa77085b715969d2d3e05183c29b1acbdaac7fb3c81185ecd217d3184a4a6`
+and isolated Apply Artifact
+`0abffbc29e55b4d33d14b61f746eafdf15a1861c021e86406f71b09ff192ab21`.
+Only `Patches/HitFeedbackBehaviorPatch.cs` changed, from SHA256
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`
+to `65489604eec41d073ff5bda77940481ae63be1917ede199c99ed04c7b180bb3b`.
+The approved and applied exact-diff identities match, no temporary patch file
+remains, and both the reviewed `sfp_mmr_007` source and preserved lineage retain
+their original SHA256. The run made zero model calls, repeated no upstream
+stage, disclosed nothing externally, and emitted no Build, Runtime, Eval, or
+WorkflowSummary Artifact. Apply/Workflow/Artifact regression tests pass `95`
+cases. The current stop is separate Build authorization.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

@@ -14,8 +14,8 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: marker_contract_repair_reviewed_preapproval_diff_awaiting_human_exact_diff_approval
-local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_reviewed
+stagger_implementation_plan_status: marker_contract_repair_isolated_apply_completed_build_pending
+local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_applied_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: PROPOSAL-ADMISSION-PLAN-COVERAGE-PREAPPROVAL-DIFF-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
@@ -32,9 +32,9 @@ and an evidence-bound Implementation Plan. The first PatchProposal,
 deterministic Review, no-write Dry-run, and isolated Apply remain immutable
 historical evidence, but later human semantic review rejected those bytes
 before Build. A complete three-change repair Proposal was later revised without
-a model to add the two exact FeatureSpec marker facts. Its full preapproval
-unified diff exists without a source write and is waiting for human exact-diff
-approval. Apply, Build, and product Runtime acceptance remain pending; this is
+a model to add the two exact FeatureSpec marker facts. The user approved its
+exact-diff identity and run `sfp_mma_008` applied it only to a fresh isolated
+materialization. Build and product Runtime acceptance remain pending; this is
 not an Agent Harness Migration Boundary.
 
 Separately authorized local Proposal continuation
@@ -299,7 +299,37 @@ All three binding-span checks and the lexical delimiter check passed. The
 materialized source remains at
 `92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`;
 model calls, external disclosure, source writes, Apply, Build, and Runtime are
-zero. Current state is `awaiting_human_exact_diff_approval`.
+zero at the end of the Proposal revision.
+
+The user subsequently approved exact-diff identity
+`sha256:c6fb31dfbdf09b877cdd9e018af26f5441e0b0f30680e5a0e0cb84355e30c7ca`
+for one isolated Apply. The no-write preflight for `sfp_mma_008` revalidated
+Proposal
+`37368a6353e59bd76627b72b0ac76433f459090a41058492ad038cf2616dfa93`,
+Review
+`f098d9d2c6d26c3eece62b7b39966f7b8002a4aeb8ce382f7dca3f5054af026d`,
+the approved patch SHA256, three edit bindings, domain path, current source,
+selected assembly, and expected final source SHA256. It observed zero prior
+Dry-run, Apply, Build, Runtime, Eval, or WorkflowSummary revisions in this
+repair ArtifactStore.
+
+The same graph then persisted successful Dry-run Artifact
+`704fa77085b715969d2d3e05183c29b1acbdaac7fb3c81185ecd217d3184a4a6`
+and isolated Apply Artifact
+`0abffbc29e55b4d33d14b61f746eafdf15a1861c021e86406f71b09ff192ab21`.
+Only `Patches/HitFeedbackBehaviorPatch.cs` changed in the new materialization,
+from SHA256
+`92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a`
+to `65489604eec41d073ff5bda77940481ae63be1917ede199c99ed04c7b180bb3b`.
+The exact approved and applied identities match; there are no temporary patch
+files or later-stage Artifacts. The preserved lineage and `sfp_mmr_007`
+materialization retain the original SHA256. The run made zero model calls,
+repeated no upstream stage, and disclosed nothing externally. The focused
+command
+`python -m pytest tests/unit/test_patch_apply.py
+tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py -q
+--tb=short` passes `95` tests in `27.83s`. Current state is
+`isolated_apply_completed_build_pending`.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

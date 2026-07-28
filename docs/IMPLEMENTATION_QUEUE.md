@@ -284,7 +284,21 @@ exact_evidence:
   The old-to-new comparison replaces exactly one patch line so the sole
   STAGGER_FEEDBACK_SHOWN write contains both required facts once; no Hook or
   behavior logic changed. All static checks passed, source remains unchanged,
-  and the revised diff awaits human exact-diff approval.
+  and the revised diff was presented for human exact-diff approval.
+  The user approved
+  sha256:c6fb31dfbdf09b877cdd9e018af26f5441e0b0f30680e5a0e0cb84355e30c7ca
+  for one isolated Apply while preserving later Build and Runtime boundaries.
+  Run sfp_mma_008 revalidated the exact Proposal, Review, reviewed patch,
+  three bindings, domain path, source and assembly identities, then persisted
+  Dry-run Artifact
+  704fa77085b715969d2d3e05183c29b1acbdaac7fb3c81185ecd217d3184a4a6
+  and isolated Apply Artifact
+  0abffbc29e55b4d33d14b61f746eafdf15a1861c021e86406f71b09ff192ab21.
+  Only Patches/HitFeedbackBehaviorPatch.cs changed in the new materialization,
+  from 92eab8010eed49e8c84094dc6eb5376d5f995414c40cf7d2c44fc1955d405e1a
+  to 65489604eec41d073ff5bda77940481ae63be1917ede199c99ed04c7b180bb3b.
+  Approved and applied diff identities match. The reviewed source run and
+  preserved lineage remain unchanged, and no Build or later Artifact exists.
 affected_coverage_ids:
   GOV-005, PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
   PROP-002, PROP-005, REVIEW-001, REVIEW-004, DOM-004, DOM-006, EXEC-002,
@@ -292,9 +306,10 @@ affected_coverage_ids:
 dependencies:
   The FeatureSpec, EvidencePack, Implementation Plan, binding/domain gates,
   complete repair Proposal, deterministic Review, and no-write preapproval
-  diff plus its bounded marker-contract revision are complete. Human approval
-  of the revised displayed exact diff is the only current entry gate. Apply,
-  Build, and product Runtime remain later separately authorized stages.
+  diff, marker-contract revision, human exact-diff approval, fresh Dry-run, and
+  isolated Apply are complete. A separately authorized Build against the
+  `sfp_mma_008` materialization is the only current entry gate. Product Runtime
+  remains a later separately authorized stage after Build evidence.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -316,9 +331,10 @@ permissions_and_disclosure:
   made zero model calls and no source write; the latter wrote only new
   ArtifactStore/run-local Proposal, Review, patch, comparison, and audit
   records. Current admission authorizes no additional model call, source
-  write, Apply, Build, game-directory copy, GTFO launch, screenshot capture,
-  or product-behavior claim. Each later side effect retains its existing
-  separate approval boundary.
+  write or second Apply. The exact approval was consumed only by sfp_mma_008.
+  It did not authorize Build, game-directory copy, GTFO launch, screenshot
+  capture, or product-behavior claims. Each later side effect retains its
+  existing separate approval boundary.
 files_in_scope:
   r/007b1b58/generated_mods/BetterHitFeedback is read-only lineage input.
   The Implementation Plan resolved exactly one writable target:
@@ -401,20 +417,32 @@ focused_verification:
   c9501b5276a0e0df76f652919159881f70ee49de052c00b618edc7815d2d64bd,
   with one removed and one added patch line. All three target-span checks and
   C# delimiter balance pass; actual_write_performed=false.
+  python -B
+  workspaces/stagger_feedback_proposal_repair_001/
+  manual_marker_isolated_apply_driver.py --preflight-only passed with exact
+  Proposal/Review/patch/approval identities, three bindings, before/after
+  SHA256, zero model calls, and zero prior later-stage revisions.
+  The separately authorized non-preflight command persisted one successful
+  Dry-run and one successful isolated Apply, changed only the approved target,
+  matched target after SHA256
+  65489604eec41d073ff5bda77940481ae63be1917ede199c99ed04c7b180bb3b,
+  retained both read-only source inputs, left zero temporary patch files, and
+  emitted no forbidden later Artifact.
+  python -m pytest tests/unit/test_patch_apply.py
+  tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py
+  -q --tb=short passed 95 tests in 27.83s.
   A later product Runtime must separately prove visible and audible behavior,
   General.Enabled=false suppression, and exact marker behavior.
 stop_condition:
   Preserve every prior model, Review, Dry-run, and Apply result as immutable
   history, including the semantically rejected isolated Apply and failed repair
   runs sfp_qwen3_4b_repair_002, sfp_manual_repair_003,
-  sfp_manual_repair_004, and sfp_manual_marker_repair_006. Stop at sfp_mmr_007
-  before source write. Present its preapproval_repair.patch and
-  previous_to_current_patch.diff for human exact-diff review. A future Apply
-  requires explicit approval of the revised displayed bytes and current exact
-  diff hash; Build remains a later separate authorization. Do not call another
-  model, reuse either prior approval hash, start GTFO, or claim visible/audible
-  product success.
-status: marker_contract_repair_diff_awaiting_human_exact_diff_approval
+  sfp_manual_repair_004, and sfp_manual_marker_repair_006. Preserve sfp_mmr_007
+  as the immutable reviewed no-write source and sfp_mma_008 as the only approved
+  isolated Apply. Stop before Build. Do not call another model, reuse either
+  prior approval hash, perform a second Apply, start GTFO, or claim compile,
+  Harmony binding, visible, audible, exactly-once, or product Runtime success.
+status: isolated_apply_completed_build_awaiting_separate_authorization
 automation_claim: not_proven
 ```
 
