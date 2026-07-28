@@ -1,0 +1,68 @@
+# Reviewed run-local settings for the BetterHitFeedback stagger Runtime admission.
+# Path and marker provenance is recorded in runtime_profile_review.json.
+
+runtime:
+  gtfo:
+    enabled: true
+    game_executable: "C:/Software_ Entertainment software and its platform/steamapps/common/GTFO/GTFO.exe"
+    working_directory: "C:/Software_ Entertainment software and its platform/steamapps/common/GTFO"
+    launch_args: []
+    log_paths:
+      - "BepInEx/LogOutput.log"
+      - "BepInEx/logs/LogOutput.log"
+    screenshot_directory: "C:/Users/10160/.codex/worktrees/f4d6/MODULAR-RAG-MCP-SERVER-main/workspaces/stagger_runtime_admission_001/runtime_captures"
+    screenshot_timeout_seconds: 15
+    startup_markers:
+      - "BepInEx"
+      - "Chainloader"
+    acceptance_markers:
+      "STAGGER_FEEDBACK_SHOWN is emitted only after the implementation has both created the feature visual and received a nonzero acceptance result for the feature audio event; the marker records visual_spawn_succeeded=true and audio_event_accepted=true without claiming that Runtime visibility or audibility is already proved.": "signal=STAGGER_FEEDBACK_SHOWN target=ES_Hitreact.ActivateState message=visual_spawn_succeeded_and_audio_event_accepted visual_spawn_succeeded=true audio_event_accepted=true"
+    timeout_seconds: 120
+    poll_interval_seconds: 1.0
+    output_limit_chars: 20000
+    terminate_after_capture: true
+
+llm:
+  provider: "openai"
+  model: "qwen3.6-plus"
+  temperature: 0.0
+  max_tokens: 4096
+
+embedding:
+  provider: "openai"
+  model: "text-embedding-ada-002"
+  dimensions: 1536
+
+vector_store:
+  provider: "chroma"
+  persist_directory: "./data/db/chroma"
+  collection_name: "knowledge_hub"
+
+retrieval:
+  dense_enabled: false
+  dense_provider: "disabled"
+  dense_failure_policy: "degrade"
+  dense_top_k: 20
+  sparse_top_k: 20
+  fusion_top_k: 10
+  rrf_k: 60
+
+rerank:
+  enabled: false
+  provider: "none"
+  model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
+  top_k: 5
+
+evaluation:
+  enabled: false
+  provider: "custom"
+  metrics:
+    - "hit_rate"
+    - "mrr"
+    - "faithfulness"
+
+observability:
+  log_level: "INFO"
+  trace_enabled: true
+  trace_file: "./logs/traces.jsonl"
+  structured_logging: true

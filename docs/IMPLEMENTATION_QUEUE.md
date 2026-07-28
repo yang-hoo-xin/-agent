@@ -302,7 +302,8 @@ exact_evidence:
 affected_coverage_ids:
   GOV-005, PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
   PROP-002, PROP-005, REVIEW-001, REVIEW-004, DOM-004, DOM-006, EXEC-002,
-  EXEC-003, EXEC-005, EXEC-006, EXEC-011
+  EXEC-003, EXEC-005, EXEC-006, EXEC-011, WF-004, ART-002, MISS-026D,
+  MISS-026E
 dependencies:
   The FeatureSpec, EvidencePack, Implementation Plan, binding/domain gates,
   complete repair Proposal, deterministic Review, and no-write preapproval
@@ -312,14 +313,15 @@ dependencies:
   `215025bd406c09062e44297982a29d9abde587b4ea04b4c0ebc26344a6b5040f`,
   and created fresh Build checkpoint
   `1612ca4562364d84bc47c934687e3cfa2a478f4b72733f074a0593a79b23be2e`.
-  The first no-launch Runtime preflight revalidated the exact Build handoff and
-  four required compiled members, but Runtime admission blocked before
-  ResumeReport creation. P0 must repair the supported H1.1 continuation entry
-  so one explicit ArtifactStore root can be validated separately from the run
-  manifest root while preserving `run_root/a` as the default. P1 must then
-  prepare and validate one reviewed run-local GTFO Runtime profile. Only after
-  both no-launch preflights pass may separately authorized product Runtime
-  continuation reach the external-action gate.
+  P0 now lets the supported H1.1 continuation entry validate one explicit
+  ArtifactStore root separately from the run manifest root while preserving
+  `run_root/a` as the default. Its public preflight performs no writes and does
+  not consume the checkpoint or enter the graph. The real `sfp_build_009`
+  checkpoint plus original shared Store returned `READY_FOR_RUNTIME_PROFILE`.
+  P1 prepared and validated one reviewed run-local GTFO Runtime profile from
+  successful Runtime history, current FeatureSpec/marker contract, compiled
+  marker source, and current machine reads. The final no-launch preflight
+  returned `READY_FOR_EXTERNAL_AUTHORIZATION`.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -457,6 +459,27 @@ focused_verification:
   Build-handoff blockers. `python -m pytest tests/unit/test_build_adapter.py
   tests/unit/test_workflow_graph.py tests/unit/test_artifact_contract.py
   tests/unit/test_local_entry.py -q --tb=short` passed 147 tests in 19.46s.
+  `python -m src.main preflight-runtime` with the real `sfp_build_009` run root,
+  explicit original shared Store, feature id, checkpoint ref/hash, and no
+  Runtime profile returned `READY_FOR_RUNTIME_PROFILE`. It reported
+  writes_performed=false, graph_invoked=false, checkpoint_consumed=false,
+  resume_report_created=false, runtime_evidence_created=false,
+  process_launched=false, and dll_copied=false.
+  Reviewed run-local files
+  `workspaces/stagger_runtime_admission_001/runtime_profile.yaml` and
+  `runtime_profile_review.json` bind the current executable/working directory,
+  successful `e7daa266` startup/log/time-limit settings, current
+  FeatureSpec/compiled marker fields, exact DLL destination, and absent-file
+  restoration boundary. The product marker is not a startup marker and binds
+  only the code-level marker criterion; visible and audible acceptance remain
+  separate observations.
+  The final `python -m src.main preflight-runtime` command with that profile
+  returned `READY_FOR_EXTERNAL_AUTHORIZATION` with the same zero-side-effect
+  fields. `python -m pytest tests/unit/test_workflow_graph.py
+  tests/unit/test_mod_agent_cli.py tests/unit/test_local_entry.py
+  tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
+  tests/unit/test_config_loading.py tests/unit/test_gtfo_runtime_automation.py
+  -q --tb=short` passed 233 tests in 23.92s.
   A later separately authorized product Runtime must prove visible and audible
   behavior, General.Enabled=false suppression, and exact marker behavior.
 stop_condition:
@@ -466,15 +489,15 @@ stop_condition:
   sfp_manual_repair_004, and sfp_manual_marker_repair_006. Preserve sfp_mmr_007
   as the immutable reviewed no-write source and sfp_mma_008 as the only approved
   isolated Apply. Preserve sfp_build_009 as the only current Build and its
-  checkpoint as the only current Runtime handoff. Implement only P0 explicit
-  ArtifactStore binding plus no-write continuation preflight, then P1 reviewed
-  run-local GTFO Runtime profile preparation and no-launch validation. Stop
-  before ResumeReport, game-directory copy, GTFO launch, screenshot capture,
-  RuntimeEvidence, Eval, or WorkflowSummary. Do not call another model, reuse
-  either prior approval hash, perform a second Apply or Build, or claim Harmony
-  runtime binding, visible, audible, exactly-once, disabled-mode, marker, or
-  product Runtime success.
-status: runtime_not_started_admission_blocked_p0_p1_selected
+  checkpoint as the only current Runtime handoff. P0 explicit ArtifactStore
+  binding plus public no-write continuation preflight and P1 reviewed run-local
+  profile preparation/no-launch validation are complete. Stop at
+  `READY_FOR_EXTERNAL_AUTHORIZATION` before ResumeReport, game-directory copy,
+  GTFO launch, screenshot capture, RuntimeEvidence, Eval, or WorkflowSummary.
+  Do not call another model, reuse either prior approval hash, perform a second
+  Apply or Build, or claim Harmony runtime binding, visible, audible,
+  exactly-once, disabled-mode, marker, or product Runtime success.
+status: runtime_not_started_preflight_ready_external_authorization_required
 automation_claim: not_proven
 ```
 

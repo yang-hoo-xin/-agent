@@ -222,63 +222,12 @@ class WorkflowCheckpointStore:
     ) -> tuple[ResumeDecision, ArtifactRef]:
         """Validate a resume payload and write a resume_report artifact."""
 
-        checkpoint_envelope = self.artifact_store.read(checkpoint_ref)
-        checkpoint = checkpoint_envelope["data"]
-        lineage_blockers = self._checkpoint_lineage_blockers(
+        checkpoint = self.artifact_store.read(checkpoint_ref)["data"]
+        decision = self.preflight_resume(
             checkpoint_ref,
-            checkpoint_envelope,
-        )
-        freshness = (
-            self.artifact_store.check_freshness(checkpoint_ref)
-            if checkpoint.get("checkpoint_stage") == "build"
-            else self.artifact_store.check_direct_freshness(checkpoint_ref)
-        )
-        consumed, seen_resume_id = self._durable_consumption_state(
-            checkpoint_ref.feature_id,
-            checkpoint_id=str(checkpoint.get("checkpoint_id") or ""),
             resume_id=payload.resume_id,
         )
-        if lineage_blockers:
-            decision = ResumeDecision(
-                status="blocked",
-                allowed=False,
-                reason="Resume blocked because checkpoint lineage is invalid.",
-                applied_updates={},
-                blockers=tuple(lineage_blockers),
-            )
-        elif not freshness.is_fresh:
-            decision = ResumeDecision(
-                status="blocked",
-                allowed=False,
-                reason="Resume blocked because checkpoint inputs are stale.",
-                applied_updates={},
-                blockers=(
-                    {
-                        "code": "STALE_RESUME_REJECTED",
-                        "message": "Checkpoint upstream artifacts changed.",
-                    },
-                ),
-                stale_reasons=tuple(freshness.stale_reasons),
-            )
-        elif (
-            payload.resume_id in self._seen_resume_ids
-            or checkpoint["checkpoint_id"] in self._consumed_checkpoint_ids
-            or seen_resume_id
-            or consumed
-        ):
-            decision = ResumeDecision(
-                status="blocked",
-                allowed=False,
-                reason="Resume blocked because checkpoint or resume_id was already used.",
-                applied_updates={},
-                blockers=(
-                    {
-                        "code": "DOUBLE_RESUME_REJECTED",
-                        "message": "Checkpoint resume is idempotent and was already consumed.",
-                    },
-                ),
-            )
-        else:
+        if decision.allowed:
             decision = self.resume_validator.validate(payload, checkpoint=checkpoint)
 
         if decision.allowed:
@@ -308,6 +257,77 @@ class WorkflowCheckpointStore:
             exact_revision_upstream_types={"workflow_checkpoint"},
         )
         return decision, report_ref
+
+    def preflight_resume(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_id: str | None = None,
+    ) -> ResumeDecision:
+        """Validate checkpoint integrity and consumption without writing or consuming."""
+
+        checkpoint_envelope = self.artifact_store.read(checkpoint_ref)
+        checkpoint = checkpoint_envelope["data"]
+        lineage_blockers = self._checkpoint_lineage_blockers(
+            checkpoint_ref,
+            checkpoint_envelope,
+        )
+        freshness = (
+            self.artifact_store.check_freshness(checkpoint_ref)
+            if checkpoint.get("checkpoint_stage") == "build"
+            else self.artifact_store.check_direct_freshness(checkpoint_ref)
+        )
+        consumed, seen_resume_id = self._durable_consumption_state(
+            checkpoint_ref.feature_id,
+            checkpoint_id=str(checkpoint.get("checkpoint_id") or ""),
+            resume_id=resume_id or "",
+        )
+        if lineage_blockers:
+            return ResumeDecision(
+                status="blocked",
+                allowed=False,
+                reason="Resume blocked because checkpoint lineage is invalid.",
+                applied_updates={},
+                blockers=tuple(lineage_blockers),
+            )
+        if not freshness.is_fresh:
+            return ResumeDecision(
+                status="blocked",
+                allowed=False,
+                reason="Resume blocked because checkpoint inputs are stale.",
+                applied_updates={},
+                blockers=(
+                    {
+                        "code": "STALE_RESUME_REJECTED",
+                        "message": "Checkpoint upstream artifacts changed.",
+                    },
+                ),
+                stale_reasons=tuple(freshness.stale_reasons),
+            )
+        if (
+            (resume_id is not None and resume_id in self._seen_resume_ids)
+            or checkpoint["checkpoint_id"] in self._consumed_checkpoint_ids
+            or seen_resume_id
+            or consumed
+        ):
+            return ResumeDecision(
+                status="blocked",
+                allowed=False,
+                reason="Resume blocked because checkpoint or resume_id was already used.",
+                applied_updates={},
+                blockers=(
+                    {
+                        "code": "DOUBLE_RESUME_REJECTED",
+                        "message": "Checkpoint resume is idempotent and was already consumed.",
+                    },
+                ),
+            )
+        return ResumeDecision(
+            status="ready",
+            allowed=True,
+            reason="Checkpoint is ready for a separately authorized resume.",
+            applied_updates={},
+        )
 
     @staticmethod
     def langgraph_memory_checkpointer() -> MemorySaver:

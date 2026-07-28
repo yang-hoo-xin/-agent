@@ -67,6 +67,22 @@ OllamaServerVersionReader = Callable[[str], str]
 
 
 @dataclass(frozen=True)
+class _RuntimeContinuationHandoff:
+    """Read-validated Build handoff shared by preflight and actual resume."""
+
+    run_root: Path
+    artifact_store_root: Path
+    artifact_store: ArtifactStore
+    checkpoint_ref: ArtifactRef
+    checkpoint: dict[str, Any]
+    manifest: dict[str, Any]
+    feature_spec_ref: ArtifactRef
+    feature_spec: dict[str, Any]
+    build_ref: ArtifactRef
+    build: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class NuGetIsolatedBuildProfile:
     """Run-local NuGet restore and build inputs for one delivery workspace."""
 
@@ -2119,35 +2135,38 @@ def run_local_request(
     return summary
 
 
-def resume_local_runtime(
+def _load_runtime_continuation_handoff(
     *,
     run_root: str | Path,
+    artifact_store_root: str | Path | None,
     feature_id: str,
     checkpoint_path: str | Path,
     checkpoint_hash: str,
-    settings_path: str | Path,
-    approved_by: str,
-    allow_game_launch: bool,
-    runtime_plugin_destination: str | Path | None,
-    allow_game_directory_write: bool,
     resume_id: str | None = None,
-    runtime_evidence_factory: (
-        Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None
-    ) = None,
-    injected_runtime_admission: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Continue one validated Build handoff through the existing Runtime graph."""
-
+) -> _RuntimeContinuationHandoff:
     root = Path(run_root).resolve()
     if not root.is_dir():
         raise LocalEntryError("Runtime continuation run_root does not exist.")
-    if not approved_by.strip():
-        raise LocalEntryError("Runtime continuation requires approved_by.")
-    artifact_store = ArtifactStore(root / "a")
+    store_root = (
+        Path(artifact_store_root).resolve()
+        if artifact_store_root is not None
+        else (root / "a").resolve()
+    )
+    if not store_root.is_dir():
+        raise LocalEntryError("Runtime continuation ArtifactStore root does not exist.")
+    resolved_checkpoint_path = Path(checkpoint_path).resolve()
+    try:
+        resolved_checkpoint_path.relative_to(store_root)
+    except ValueError as exc:
+        raise LocalEntryError(
+            "Runtime continuation checkpoint is outside the selected ArtifactStore root."
+        ) from exc
+
+    artifact_store = ArtifactStore(store_root)
     checkpoint_ref = ArtifactRef(
         feature_id=feature_id,
         artifact_type="workflow_checkpoint",
-        path=str(Path(checkpoint_path).resolve()),
+        path=str(resolved_checkpoint_path),
         artifact_hash=checkpoint_hash,
     )
     try:
@@ -2166,14 +2185,457 @@ def resume_local_runtime(
     manifest_path = root / "run_manifest.json"
     if not manifest_path.is_file():
         raise LocalEntryError("Runtime continuation run_manifest.json is missing.")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    try:
+        manifest_value = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise LocalEntryError(
+            f"Runtime continuation run_manifest.json is invalid: {exc}"
+        ) from exc
+    if not isinstance(manifest_value, dict):
+        raise LocalEntryError(
+            "Runtime continuation run_manifest.json must contain an object."
+        )
+    manifest = manifest_value
     if (
         manifest.get("run_id") != checkpoint.get("run_id")
         or manifest.get("request_id") != checkpoint.get("request_id")
+        or (
+            manifest.get("feature_id") is not None
+            and manifest.get("feature_id") != checkpoint.get("feature_id")
+        )
     ):
         raise LocalEntryError(
             "Runtime continuation manifest identity does not match checkpoint."
         )
+    manifest_checkpoint_ref = manifest.get("workflow_checkpoint_ref")
+    manifest_checkpoint_hash = manifest.get("workflow_checkpoint_hash")
+    if (
+        manifest_checkpoint_ref is not None
+        and Path(str(manifest_checkpoint_ref)).resolve() != resolved_checkpoint_path
+    ) or (
+        manifest_checkpoint_hash is not None
+        and manifest_checkpoint_hash != checkpoint_hash
+    ):
+        raise LocalEntryError(
+            "Runtime continuation manifest checkpoint binding does not match."
+        )
+
+    try:
+        snapshot = checkpoint["state_snapshot"]
+        feature_spec_ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type="feature_spec",
+            path=snapshot["artifacts"]["feature_spec"],
+            artifact_hash=snapshot["artifact_hashes"]["feature_spec"],
+        )
+        build_ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type="build_result",
+            path=snapshot["artifacts"]["build_result"],
+            artifact_hash=snapshot["artifact_hashes"]["build_result"],
+        )
+        feature_spec = artifact_store.read(feature_spec_ref)["data"]
+        build = artifact_store.read(build_ref)["data"]
+    except (KeyError, TypeError, OSError, ValueError) as exc:
+        raise LocalEntryError(
+            f"Runtime continuation BuildResult binding is invalid: {exc}"
+        ) from exc
+    if build.get("feature_id") != feature_id:
+        raise LocalEntryError(
+            "Runtime continuation BuildResult feature_id does not match checkpoint."
+        )
+    manifest_build_ref = manifest.get("build_result_ref")
+    manifest_build_hash = manifest.get("build_result_hash")
+    if (
+        manifest_build_ref is not None
+        and Path(str(manifest_build_ref)).resolve() != Path(build_ref.path).resolve()
+    ) or (
+        manifest_build_hash is not None
+        and manifest_build_hash != build_ref.artifact_hash
+    ):
+        raise LocalEntryError(
+            "Runtime continuation manifest BuildResult binding does not match."
+        )
+
+    verified_artifacts = [
+        item
+        for item in build.get("verified_artifacts") or []
+        if isinstance(item, Mapping)
+    ]
+    if len(verified_artifacts) != 1:
+        raise LocalEntryError(
+            "Runtime continuation requires exactly one verified Build output."
+        )
+    verified_artifact = verified_artifacts[0]
+    resolved_path = verified_artifact.get("resolved_path")
+    expected_hash = verified_artifact.get("sha256")
+    expected_size = verified_artifact.get("size_bytes")
+    expected_mtime = verified_artifact.get("mtime")
+    if (
+        not isinstance(resolved_path, str)
+        or not isinstance(expected_hash, str)
+        or isinstance(expected_size, bool)
+        or not isinstance(expected_size, int)
+        or isinstance(expected_mtime, bool)
+        or not isinstance(expected_mtime, (int, float))
+    ):
+        raise LocalEntryError(
+            "Runtime continuation Build output binding is incomplete."
+        )
+    build_output = Path(resolved_path)
+    if not build_output.is_file():
+        raise LocalEntryError("Runtime continuation verified Build output is missing.")
+    stat = build_output.stat()
+    if (
+        hashlib.sha256(build_output.read_bytes()).hexdigest() != expected_hash
+        or stat.st_size != expected_size
+        or stat.st_mtime != float(expected_mtime)
+    ):
+        raise LocalEntryError(
+            "Runtime continuation verified Build output identity changed."
+        )
+
+    try:
+        readiness = WorkflowCheckpointStore(artifact_store).preflight_resume(
+            checkpoint_ref,
+            resume_id=resume_id,
+        )
+    except (OSError, ValueError) as exc:
+        raise LocalEntryError(
+            f"Runtime continuation checkpoint preflight failed: {exc}"
+        ) from exc
+    if not readiness.allowed:
+        blocker_codes = [
+            str(blocker.get("code"))
+            for blocker in readiness.blockers
+            if isinstance(blocker, Mapping)
+        ]
+        raise LocalEntryError(
+            "Runtime continuation preflight was blocked: "
+            + ", ".join(blocker_codes)
+        )
+
+    return _RuntimeContinuationHandoff(
+        run_root=root,
+        artifact_store_root=store_root,
+        artifact_store=artifact_store,
+        checkpoint_ref=checkpoint_ref,
+        checkpoint=checkpoint,
+        manifest=manifest,
+        feature_spec_ref=feature_spec_ref,
+        feature_spec=feature_spec,
+        build_ref=build_ref,
+        build=build,
+    )
+
+
+def preflight_local_runtime(
+    *,
+    run_root: str | Path,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    artifact_store_root: str | Path | None = None,
+    resume_id: str | None = None,
+    settings_path: str | Path | None = None,
+    runtime_plugin_destination: str | Path | None = None,
+) -> dict[str, Any]:
+    """Read-validate one Runtime continuation without writing or entering graph."""
+
+    handoff = _load_runtime_continuation_handoff(
+        run_root=run_root,
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        checkpoint_path=checkpoint_path,
+        checkpoint_hash=checkpoint_hash,
+        resume_id=resume_id,
+    )
+    build_artifact = handoff.build["verified_artifacts"][0]
+    runtime_profile = None
+    external_action_gate = {
+        "status": "runtime_profile_required",
+        "required_permissions": [
+            "runtime_execution",
+            "process_launch",
+            "game_directory_write",
+        ],
+        "authorized_permissions": [],
+    }
+    status = "READY_FOR_RUNTIME_PROFILE"
+    if settings_path is not None or runtime_plugin_destination is not None:
+        if settings_path is None or runtime_plugin_destination is None:
+            raise LocalEntryError(
+                "Runtime continuation preflight requires both settings_path and "
+                "runtime_plugin_destination when validating a Runtime profile."
+            )
+        settings = load_settings(settings_path)
+        runtime_profile = _runtime_profile_preflight_record(
+            settings,
+            runtime_plugin_destination=runtime_plugin_destination,
+            feature_spec=handoff.feature_spec,
+        )
+        if Path(str(build_artifact["path"])).name != Path(
+            str(runtime_profile["plugin_deployment"]["destination_path"])
+        ).name:
+            raise LocalEntryError(
+                "Runtime continuation destination filename does not match Build output."
+            )
+        external_action_gate = {
+            "status": "awaiting_separate_authorization",
+            "required_permissions": [
+                "runtime_execution",
+                "process_launch",
+                "game_directory_write",
+            ],
+            "authorized_permissions": [],
+        }
+        status = "READY_FOR_EXTERNAL_AUTHORIZATION"
+
+    return {
+        "status": status,
+        "command": "preflight-runtime",
+        "writes_performed": False,
+        "graph_invoked": False,
+        "checkpoint_consumed": False,
+        "resume_report_created": False,
+        "runtime_evidence_created": False,
+        "process_launched": False,
+        "dll_copied": False,
+        "run_root": str(handoff.run_root),
+        "artifact_store_root": str(handoff.artifact_store_root),
+        "identity": {
+            "run_id": handoff.checkpoint["run_id"],
+            "request_id": handoff.checkpoint["request_id"],
+            "feature_id": handoff.checkpoint["feature_id"],
+        },
+        "checkpoint": {
+            "checkpoint_id": handoff.checkpoint["checkpoint_id"],
+            "checkpoint_stage": handoff.checkpoint["checkpoint_stage"],
+            "path": handoff.checkpoint_ref.path,
+            "artifact_hash": handoff.checkpoint_ref.artifact_hash,
+            "store_bound": True,
+            "lineage_status": "valid",
+            "freshness_status": "fresh",
+            "consumption_status": "unconsumed",
+            "next_graph_node": (
+                handoff.checkpoint.get("resume_binding") or {}
+            ).get("next_graph_node"),
+        },
+        "build_result": {
+            "path": handoff.build_ref.path,
+            "artifact_hash": handoff.build_ref.artifact_hash,
+            "status": handoff.build.get("status"),
+            "claims_real_build_success": handoff.build.get(
+                "claims_real_build_success"
+            ),
+            "verified_artifact": dict(build_artifact),
+        },
+        "runtime_profile": runtime_profile,
+        "external_action_gate": external_action_gate,
+    }
+
+
+def _runtime_profile_preflight_record(
+    settings: Any,
+    *,
+    runtime_plugin_destination: str | Path,
+    feature_spec: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate one configured Runtime profile without granting external authority."""
+
+    runtime = getattr(settings, "runtime", None)
+    gtfo = getattr(runtime, "gtfo", None)
+    if gtfo is None or getattr(gtfo, "enabled", False) is not True:
+        raise LocalEntryError(
+            "Runtime continuation preflight requires runtime.gtfo.enabled=true."
+        )
+    try:
+        profile = profile_from_settings(settings)
+        capability_report = build_gtfo_runtime_capability_report(
+            profile,
+            allow_game_launch=True,
+        )
+    except GTFORuntimeAutomationError as exc:
+        raise LocalEntryError(f"GTFO Runtime preflight failed: {exc}") from exc
+    if capability_report["status"] != "ready":
+        raise LocalEntryError(
+            "GTFO Runtime preflight blocked: "
+            + "; ".join(str(item) for item in capability_report["blockers"])
+        )
+    capability_checks = dict(capability_report["checks"])
+    capability_checks["explicit_launch_approval"] = {
+        "status": "not_granted_preflight_only",
+        "required": True,
+        "allow_game_launch": False,
+    }
+    capability_report = {
+        **capability_report,
+        "checks": capability_checks,
+        "would_launch": False,
+        "authorization_status": "not_granted_preflight_only",
+    }
+    destination_input = Path(runtime_plugin_destination)
+    if not destination_input.is_absolute():
+        raise LocalEntryError(
+            "runtime_plugin_destination must be an absolute .dll path."
+        )
+    destination = destination_input.resolve()
+    working_directory = Path(profile.working_directory).resolve()
+    try:
+        destination.relative_to(working_directory)
+    except ValueError as exc:
+        raise LocalEntryError(
+            "runtime_plugin_destination must remain inside "
+            "runtime.gtfo.working_directory."
+        ) from exc
+    if destination.suffix.lower() != ".dll":
+        raise LocalEntryError(
+            "runtime_plugin_destination must identify one .dll file."
+        )
+    if not destination.parent.is_dir():
+        raise LocalEntryError(
+            "Runtime plugin destination directory does not exist: "
+            f"{destination.parent}"
+        )
+    if profile.terminate_after_capture is not True:
+        raise LocalEntryError(
+            "Runtime continuation requires "
+            "runtime.gtfo.terminate_after_capture=true."
+        )
+    acceptance_criteria = feature_spec.get("acceptance_criteria")
+    marker_contract = feature_spec.get("success_marker_contract")
+    if (
+        not isinstance(acceptance_criteria, list)
+        or not acceptance_criteria
+        or any(not isinstance(item, str) or not item for item in acceptance_criteria)
+        or not isinstance(marker_contract, Mapping)
+    ):
+        raise LocalEntryError(
+            "Runtime continuation FeatureSpec marker contract is incomplete."
+        )
+    signal = marker_contract.get("signal")
+    required_facts = marker_contract.get("code_level_required_facts")
+    runtime_claim_limit = marker_contract.get("runtime_claim_limit")
+    if (
+        not isinstance(signal, str)
+        or not signal
+        or not isinstance(required_facts, list)
+        or not required_facts
+        or any(not isinstance(item, str) or not item for item in required_facts)
+        or not isinstance(runtime_claim_limit, str)
+        or not runtime_claim_limit
+    ):
+        raise LocalEntryError(
+            "Runtime continuation FeatureSpec success_marker_contract is invalid."
+        )
+    marker_criteria = [
+        criterion
+        for criterion in acceptance_criteria
+        if signal in criterion and all(fact in criterion for fact in required_facts)
+    ]
+    if len(marker_criteria) != 1:
+        raise LocalEntryError(
+            "Runtime continuation FeatureSpec does not bind one exact marker criterion."
+        )
+    configured_marker_criteria = set(profile.acceptance_markers)
+    if configured_marker_criteria != {marker_criteria[0]}:
+        raise LocalEntryError(
+            "Runtime continuation acceptance_markers must bind only the exact "
+            "FeatureSpec marker criterion."
+        )
+    configured_marker = profile.acceptance_markers[marker_criteria[0]]
+    required_marker_parts = [f"signal={signal}", *required_facts]
+    if any(part not in configured_marker for part in required_marker_parts):
+        raise LocalEntryError(
+            "Runtime continuation acceptance marker omits required marker fields."
+        )
+    if any(signal in marker for marker in profile.startup_markers):
+        raise LocalEntryError(
+            "Runtime continuation product marker cannot be a startup marker."
+        )
+    return {
+        "enabled": True,
+        "profile": {
+            "profile_id": profile.profile_id,
+            "game_executable": profile.game_executable,
+            "working_directory": profile.working_directory,
+            "launch_args": list(profile.launch_args),
+            "log_paths": list(profile.log_paths),
+            "screenshot_directory": profile.screenshot_directory,
+            "screenshot_timeout_seconds": profile.screenshot_timeout_seconds,
+            "startup_markers": list(profile.startup_markers),
+            "acceptance_markers": dict(profile.acceptance_markers),
+            "timeout_seconds": profile.timeout_seconds,
+            "poll_interval_seconds": profile.poll_interval_seconds,
+            "output_limit_chars": profile.output_limit_chars,
+            "terminate_after_capture": profile.terminate_after_capture,
+        },
+        "capability_report": capability_report,
+        "acceptance_boundary": {
+            "feature_spec_marker_criterion": marker_criteria[0],
+            "configured_marker": configured_marker,
+            "success_marker_contract": dict(marker_contract),
+            "marker_does_not_prove_visual_or_audio": True,
+            "remaining_acceptance_criteria_require_separate_observation": [
+                criterion
+                for criterion in acceptance_criteria
+                if criterion != marker_criteria[0]
+            ],
+        },
+        "plugin_deployment": {
+            "destination_path": str(destination),
+            "allow_game_directory_write": False,
+            "restore_after_runtime": True,
+            "performed": False,
+            "destination_existed_at_preflight": destination.is_file(),
+            "destination_sha256_at_preflight": (
+                hashlib.sha256(destination.read_bytes()).hexdigest()
+                if destination.is_file()
+                else None
+            ),
+            "recovery_boundary": (
+                "restore the exact preflight destination bytes when present; "
+                "otherwise remove only the deployed destination DLL"
+            ),
+        },
+    }
+
+
+def resume_local_runtime(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None = None,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    settings_path: str | Path,
+    approved_by: str,
+    allow_game_launch: bool,
+    runtime_plugin_destination: str | Path | None,
+    allow_game_directory_write: bool,
+    resume_id: str | None = None,
+    runtime_evidence_factory: (
+        Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None
+    ) = None,
+    injected_runtime_admission: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Continue one validated Build handoff through the existing Runtime graph."""
+
+    if not approved_by.strip():
+        raise LocalEntryError("Runtime continuation requires approved_by.")
+    selected_resume_id = resume_id or f"resume_{uuid4().hex}"
+    handoff = _load_runtime_continuation_handoff(
+        run_root=run_root,
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        checkpoint_path=checkpoint_path,
+        checkpoint_hash=checkpoint_hash,
+        resume_id=selected_resume_id,
+    )
+    root = handoff.run_root
+    artifact_store = handoff.artifact_store
+    checkpoint_ref = handoff.checkpoint_ref
+    checkpoint = handoff.checkpoint
 
     if injected_runtime_admission is not None:
         if runtime_evidence_factory is None:
@@ -2191,15 +2653,7 @@ def resume_local_runtime(
             runtime_plugin_destination=runtime_plugin_destination,
             allow_game_directory_write=allow_game_directory_write,
         )
-        build_ref = ArtifactRef(
-            feature_id=feature_id,
-            artifact_type="build_result",
-            path=checkpoint["state_snapshot"]["artifacts"]["build_result"],
-            artifact_hash=checkpoint["state_snapshot"]["artifact_hashes"][
-                "build_result"
-            ],
-        )
-        build = artifact_store.read(build_ref)["data"]
+        build = handoff.build
         verified_artifacts = [
             item
             for item in build.get("verified_artifacts") or []
@@ -2272,7 +2726,7 @@ def resume_local_runtime(
         "runtime_admission": runtime_admission,
     }
     payload = ResumePayload(
-        resume_id=resume_id or f"resume_{uuid4().hex}",
+        resume_id=selected_resume_id,
         run_id=str(checkpoint["run_id"]),
         request_id=str(checkpoint["request_id"]),
         feature_id=str(checkpoint["feature_id"]),

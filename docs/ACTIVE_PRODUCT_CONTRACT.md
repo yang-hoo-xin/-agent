@@ -335,19 +335,28 @@ GTFO, and emitted no RuntimeEvidence, ResumeReport, EvalReport, or
 WorkflowSummary. The current stop is separate product Runtime authorization;
 Build evidence is not product-behavior evidence.
 
-The first no-launch preflight kept that checkpoint unconsumed and confirmed
-all four required compiled members, but Runtime was not started. The supported
-continuation entry currently assumes both `run_manifest.json` and ArtifactStore
-`a/` share one run root; this real run stores the immutable product ArtifactStore
-at its parent workspace. The default GTFO Runtime profile also remains
-intentionally disabled and incomplete. The selected P0 is a bounded integration
-repair inside the implemented H1.1 Build-to-Runtime handoff: explicit,
-validated ArtifactStore binding plus a public no-write preflight, with existing
-`run_root/a` behavior preserved. The selected P1 is preparation and no-launch
-validation of a reviewed run-local GTFO profile for this product request under
-the existing Runtime admission/provider boundary. Neither selection authorizes
-checkpoint consumption, game-directory writes, process launch, or Runtime
-claims.
+The bounded P0 integration repair now lets `resume-runtime` accept an explicit
+`artifact_store_root` independently of the manifest `run_root`, while preserving
+`run_root/a` as the default. Its public `preflight-runtime` entry validates the
+selected Store, checkpoint revision ownership, run/request/feature identity,
+manifest handoff, recursive freshness, BuildResult, physical DLL hash/size/mtime,
+lineage, and durable consumption state without writing a ResumeReport,
+consuming the checkpoint, entering LangGraph, copying a DLL, or launching a
+process. The real `sfp_build_009` checkpoint plus the original shared Store
+passed this read-only preflight.
+
+P1 prepared reviewed run-local profile
+`workspaces/stagger_runtime_admission_001/runtime_profile.yaml` from the current
+machine paths, successful run `e7daa266`, the current FeatureSpec, and the
+compiled marker source. The final read-only preflight returned
+`READY_FOR_EXTERNAL_AUTHORIZATION`. Startup markers remain exactly `BepInEx`
+and `Chainloader`; the structured
+`signal=STAGGER_FEEDBACK_SHOWN ... visual_spawn_succeeded=true
+audio_event_accepted=true` substring binds only the FeatureSpec's code-level
+marker criterion. The remaining six acceptance criteria still require separate
+visual, audible, negative, deduplication, and preservation observations. The
+checkpoint remains unconsumed, ResumeReport and RuntimeEvidence counts remain
+zero, and no game-directory write or process launch is authorized.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

@@ -1442,6 +1442,7 @@ def test_cli_resume_runtime_passes_fresh_authority_and_handoff_identity(
     json.loads(capsys.readouterr().out)
     assert captured == {
         "run_root": "run-root",
+        "artifact_store_root": None,
         "feature_id": "feature_001",
         "checkpoint_path": "checkpoint.json",
         "checkpoint_hash": "a" * 64,
@@ -1453,6 +1454,67 @@ def test_cli_resume_runtime_passes_fresh_authority_and_handoff_identity(
             r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll"
         ),
         "allow_game_directory_write": True,
+    }
+
+
+def test_cli_runtime_preflight_passes_explicit_store_and_profile_without_authority(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def preflight(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "READY_FOR_EXTERNAL_AUTHORIZATION",
+            "writes_performed": False,
+            "graph_invoked": False,
+            "checkpoint_consumed": False,
+            "resume_report_created": False,
+            "runtime_evidence_created": False,
+            "process_launched": False,
+            "dll_copied": False,
+        }
+
+    monkeypatch.setattr("src.mod_agent.cli.preflight_local_runtime", preflight)
+
+    exit_code = main(
+        [
+            "preflight-runtime",
+            "--run-root",
+            "run-root",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--checkpoint-path",
+            "checkpoint.json",
+            "--checkpoint-hash",
+            "a" * 64,
+            "--resume-id",
+            "preflight_001",
+            "--settings",
+            "runtime.yaml",
+            "--runtime-plugin-destination",
+            r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == "READY_FOR_EXTERNAL_AUTHORIZATION"
+    assert payload["writes_performed"] is False
+    assert captured == {
+        "run_root": "run-root",
+        "artifact_store_root": "shared-store",
+        "feature_id": "feature_001",
+        "checkpoint_path": "checkpoint.json",
+        "checkpoint_hash": "a" * 64,
+        "resume_id": "preflight_001",
+        "settings_path": "runtime.yaml",
+        "runtime_plugin_destination": (
+            r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll"
+        ),
     }
 
 

@@ -15,7 +15,12 @@ from .intelligent_evidence_only import (
     IntelligentEvidenceEntryError,
     run_intelligent_evidence_only,
 )
-from .local_entry import LocalEntryError, resume_local_runtime, run_local_request
+from .local_entry import (
+    LocalEntryError,
+    preflight_local_runtime,
+    resume_local_runtime,
+    run_local_request,
+)
 from .planning import ModPlanningBriefBuilder, RequestPlanner
 from .tools import PermissionModel
 
@@ -217,6 +222,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     resume_runtime_parser.add_argument("--run-root", required=True)
+    resume_runtime_parser.add_argument("--artifact-store-root")
     resume_runtime_parser.add_argument("--feature-id", required=True)
     resume_runtime_parser.add_argument("--checkpoint-path", required=True)
     resume_runtime_parser.add_argument("--checkpoint-hash", required=True)
@@ -232,6 +238,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-game-directory-write",
         action="store_true",
     )
+    preflight_runtime_parser = subparsers.add_parser(
+        "preflight-runtime",
+        help=(
+            "Read-validate a Build-to-Runtime continuation without writing, "
+            "consuming the checkpoint, entering the graph, copying a DLL, or "
+            "launching a process."
+        ),
+    )
+    preflight_runtime_parser.add_argument("--run-root", required=True)
+    preflight_runtime_parser.add_argument("--artifact-store-root")
+    preflight_runtime_parser.add_argument("--feature-id", required=True)
+    preflight_runtime_parser.add_argument("--checkpoint-path", required=True)
+    preflight_runtime_parser.add_argument("--checkpoint-hash", required=True)
+    preflight_runtime_parser.add_argument("--resume-id")
+    preflight_runtime_parser.add_argument("--settings")
+    preflight_runtime_parser.add_argument("--runtime-plugin-destination")
 
     return parser
 
@@ -448,10 +470,46 @@ def main(argv: Sequence[str] | None = None) -> int:
             else 1
         )
 
+    if args.command == "preflight-runtime":
+        try:
+            result = preflight_local_runtime(
+                run_root=args.run_root,
+                artifact_store_root=args.artifact_store_root,
+                feature_id=args.feature_id,
+                checkpoint_path=args.checkpoint_path,
+                checkpoint_hash=args.checkpoint_hash,
+                resume_id=args.resume_id,
+                settings_path=args.settings,
+                runtime_plugin_destination=args.runtime_plugin_destination,
+            )
+        except LocalEntryError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "command": "preflight-runtime",
+                        "reason": str(exc),
+                        "writes_performed": False,
+                        "graph_invoked": False,
+                        "checkpoint_consumed": False,
+                        "resume_report_created": False,
+                        "runtime_evidence_created": False,
+                        "process_launched": False,
+                        "dll_copied": False,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command == "resume-runtime":
         try:
             result = resume_local_runtime(
                 run_root=args.run_root,
+                artifact_store_root=args.artifact_store_root,
                 feature_id=args.feature_id,
                 checkpoint_path=args.checkpoint_path,
                 checkpoint_hash=args.checkpoint_hash,

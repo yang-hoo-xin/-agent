@@ -14,10 +14,10 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: runtime_not_started_admission_blocked_p0_p1_selected
+stagger_implementation_plan_status: runtime_not_started_preflight_ready_external_authorization_required
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: PROPOSAL-ADMISSION-PLAN-COVERAGE-PREAPPROVAL-DIFF-001
+most_recent_completed_capability: STAGGER-RUNTIME-ADMISSION-PREFLIGHT-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -371,23 +371,41 @@ all four required compiled members in the same DLL:
 `TrySpawnStaggerYellowX`, `AddStaggerXLine`, and
 `TryPlayStaggerFeedbackSound`. No ResumeReport or RuntimeEvidence exists.
 
-Runtime was not started because admission exposed two independent Harness-side
-preconditions. First, the supported `resume-runtime` entry reads ArtifactStore
-from `run_root/a` and the manifest from `run_root/run_manifest.json`, while
-`sfp_build_009` has the manifest in its run root and the ArtifactStore in the
-parent product-workspace `a` directory. Second, the repository default Runtime
-profile remains intentionally disabled with empty executable, working
-directory, and acceptance markers plus
-`terminate_after_capture=false`. The first condition is selected as bounded P0
-repair of the already implemented H1.1 Build-to-Runtime handoff entry, not a
-new Harness Migration Boundary. The second is selected as P1 preparation of a
-reviewed run-local GTFO Runtime profile for the current product slice under the
-existing Runtime admission/provider boundary. P0 must preserve the default
-`run_root/a` behavior while allowing an explicit validated ArtifactStore root
-and must add a public no-write preflight. P1 must prepare and validate exact
-paths, markers, timeouts, lifecycle, deployment and restoration inputs without
-launching GTFO. Neither step may repeat Evidence, Plan, Proposal, Review,
-Apply, or Build.
+P0 completed as a bounded integration repair of the implemented H1.1
+Build-to-Runtime handoff, not a new Harness Migration Boundary.
+`resume_local_runtime` and `resume-runtime` now accept an explicit
+`artifact_store_root` independently of the manifest `run_root`, while the
+default remains `run_root/a`. `WorkflowCheckpointStore.preflight_resume` and
+the public `preflight-runtime` entry perform read-only Store ownership,
+checkpoint, identity, manifest, recursive freshness, lineage, BuildResult,
+physical DLL hash/size/mtime, handoff, and durable-consumption validation. The
+preflight does not write ResumeReport, consume the checkpoint, enter the graph,
+copy a DLL, or launch a process.
+
+The real `sfp_build_009` checkpoint and original shared ArtifactStore passed
+P0 with `READY_FOR_RUNTIME_PROFILE`. P1 then prepared
+`workspaces/stagger_runtime_admission_001/runtime_profile.yaml` and
+`runtime_profile_review.json` from current machine reads, successful Runtime
+run `e7daa266`, FeatureSpec Artifact
+`bbd473ce1072b2f605afa9a3ef7822695249e4781f77ca810e6b61fcf3c8a190`,
+and the exact compiled marker source. The final public preflight returned
+`READY_FOR_EXTERNAL_AUTHORIZATION`. It verified enabled profile, executable,
+working directory, log paths, `BepInEx.cfg` AppendLog binding, run-local
+screenshot directory, exact startup markers `BepInEx` and `Chainloader`,
+timeout/poll/output limits, `terminate_after_capture=true`, exact DLL
+destination, and the absent-destination restoration boundary.
+
+`STAGGER_FEEDBACK_SHOWN` is not a startup marker. Its configured structured
+substring includes `target=ES_Hitreact.ActivateState`,
+`message=visual_spawn_succeeded_and_audio_event_accepted`,
+`visual_spawn_succeeded=true`, and `audio_event_accepted=true`, and binds only
+the exact code-level FeatureSpec marker criterion. The marker does not prove
+Runtime visibility or audibility; all other acceptance criteria remain separate
+Runtime observation obligations. Runtime is still not started. The checkpoint
+is unconsumed, ResumeReport and RuntimeEvidence remain at zero, and no DLL copy,
+game-directory write, screenshot capture, process launch, Eval, or
+WorkflowSummary occurred. The affected command passed 233 tests in 23.92
+seconds.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

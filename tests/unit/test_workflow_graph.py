@@ -26,7 +26,11 @@ from src.mod_agent.knowledge import (
     SourceRecord,
     SourceRegistry,
 )
-from src.mod_agent.local_entry import resume_local_runtime
+from src.mod_agent.local_entry import (
+    LocalEntryError,
+    preflight_local_runtime,
+    resume_local_runtime,
+)
 from src.mod_agent.proposal import RuleBasedProposalCritic
 from src.mod_agent.runtime import (
     GTFOLogSnapshot,
@@ -471,6 +475,255 @@ def test_supported_local_entry_resumes_build_handoff_without_model_or_gtfo(
     assert summary["model_call_count"] == 0
     assert summary["upstream_stages_repeated"] is False
     assert (tmp_path / "runtime_resume_result.json").is_file()
+
+
+def _write_runtime_handoff_manifest(
+    run_root: Path,
+    *,
+    checkpoint: dict[str, object],
+    checkpoint_ref: ArtifactRef,
+) -> None:
+    snapshot = checkpoint["state_snapshot"]
+    assert isinstance(snapshot, dict)
+    artifacts = snapshot["artifacts"]
+    artifact_hashes = snapshot["artifact_hashes"]
+    assert isinstance(artifacts, dict)
+    assert isinstance(artifact_hashes, dict)
+    run_root.mkdir(parents=True, exist_ok=True)
+    (run_root / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": checkpoint["run_id"],
+                "request_id": checkpoint["request_id"],
+                "workflow_checkpoint_ref": checkpoint_ref.path,
+                "workflow_checkpoint_hash": checkpoint_ref.artifact_hash,
+                "build_result_ref": artifacts["build_result"],
+                "build_result_hash": artifact_hashes["build_result"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def test_runtime_preflight_supports_default_run_root_artifact_store(
+    tmp_path: Path,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    _write_runtime_handoff_manifest(
+        tmp_path,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+
+    result = preflight_local_runtime(
+        run_root=tmp_path,
+        feature_id=str(build_result["feature_id"]),
+        checkpoint_path=checkpoint_ref.path,
+        checkpoint_hash=checkpoint_ref.artifact_hash,
+    )
+
+    assert result["status"] == "READY_FOR_RUNTIME_PROFILE"
+    assert result["artifact_store_root"] == str((tmp_path / "a").resolve())
+    assert result["checkpoint"]["store_bound"] is True
+    assert result["checkpoint"]["consumption_status"] == "unconsumed"
+
+
+def test_runtime_preflight_supports_explicit_shared_artifact_store_without_writes(
+    tmp_path: Path,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="shared-store",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    run_root = tmp_path / "run-root"
+    _write_runtime_handoff_manifest(
+        run_root,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    before = _tree_bytes(tmp_path)
+
+    result = preflight_local_runtime(
+        run_root=run_root,
+        artifact_store_root=tmp_path / "shared-store",
+        feature_id=str(build_result["feature_id"]),
+        checkpoint_path=checkpoint_ref.path,
+        checkpoint_hash=checkpoint_ref.artifact_hash,
+        resume_id="preflight_shared_store_001",
+    )
+
+    assert result["status"] == "READY_FOR_RUNTIME_PROFILE"
+    assert result["writes_performed"] is False
+    assert result["graph_invoked"] is False
+    assert result["checkpoint_consumed"] is False
+    assert result["resume_report_created"] is False
+    assert result["runtime_evidence_created"] is False
+    assert result["process_launched"] is False
+    assert result["dll_copied"] is False
+    assert _tree_bytes(tmp_path) == before
+
+
+def test_runtime_preflight_rejects_wrong_artifact_store(
+    tmp_path: Path,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="shared-store",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    run_root = tmp_path / "run-root"
+    _write_runtime_handoff_manifest(
+        run_root,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    wrong_store = tmp_path / "wrong-store"
+    wrong_checkpoint = (
+        wrong_store
+        / "features"
+        / str(build_result["feature_id"])
+        / "r"
+        / "workflow_checkpoint"
+        / Path(checkpoint_ref.path).name
+    )
+    wrong_checkpoint.parent.mkdir(parents=True)
+    wrong_checkpoint.write_bytes(Path(checkpoint_ref.path).read_bytes())
+    manifest_path = run_root / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["workflow_checkpoint_ref"] = str(wrong_checkpoint)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(LocalEntryError, match="BuildResult binding is invalid"):
+        preflight_local_runtime(
+            run_root=run_root,
+            artifact_store_root=wrong_store,
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=wrong_checkpoint,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+        )
+
+
+def test_runtime_preflight_rejects_checkpoint_outside_selected_store(
+    tmp_path: Path,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="shared-store",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    run_root = tmp_path / "run-root"
+    _write_runtime_handoff_manifest(
+        run_root,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    external_checkpoint = tmp_path / "external-checkpoint.json"
+    external_checkpoint.write_bytes(Path(checkpoint_ref.path).read_bytes())
+
+    with pytest.raises(LocalEntryError, match="outside the selected ArtifactStore"):
+        preflight_local_runtime(
+            run_root=run_root,
+            artifact_store_root=tmp_path / "shared-store",
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=external_checkpoint,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+        )
+
+
+def test_runtime_preflight_rejects_manifest_checkpoint_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    _write_runtime_handoff_manifest(
+        tmp_path,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    manifest_path = tmp_path / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["request_id"] = "wrong_request"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(LocalEntryError, match="manifest identity"):
+        preflight_local_runtime(
+            run_root=tmp_path,
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=checkpoint_ref.path,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+        )
+
+
+def test_runtime_preflight_rejects_changed_verified_dll(tmp_path: Path) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    _write_runtime_handoff_manifest(
+        tmp_path,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    build = _artifact_data(store, build_result, "build_result")
+    Path(build["verified_artifacts"][0]["resolved_path"]).write_bytes(b"changed")
+
+    with pytest.raises(LocalEntryError, match="Build output identity changed"):
+        preflight_local_runtime(
+            run_root=tmp_path,
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=checkpoint_ref.path,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+        )
+
+
+def test_runtime_preflight_rejects_stale_checkpoint_lineage(tmp_path: Path) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    _write_runtime_handoff_manifest(
+        tmp_path,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    feature_spec = _artifact_data(store, build_result, "feature_spec")
+    store.write(
+        feature_id=str(build_result["feature_id"]),
+        artifact_type="feature_spec",
+        payload={
+            **feature_spec,
+            "message": "Feature specification changed after Build.",
+        },
+    )
+
+    with pytest.raises(
+        LocalEntryError,
+        match="Runtime continuation preflight was blocked: STALE_RESUME_REJECTED",
+    ):
+        preflight_local_runtime(
+            run_root=tmp_path,
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=checkpoint_ref.path,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+        )
 
 
 def test_fresh_process_rejects_consumed_build_handoff(tmp_path: Path) -> None:

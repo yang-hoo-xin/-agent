@@ -34,6 +34,7 @@ from src.mod_agent.local_entry import (
     _resolve_project_path_property,
     _runtime_admission_record,
     _runtime_graph_options,
+    _runtime_profile_preflight_record,
     _runtime_verification_chain,
     _run_nuget_isolated_build,
     _sanitized_endpoint_url,
@@ -212,6 +213,103 @@ def test_runtime_admission_requires_physical_deployment_authorization(
             allow_game_launch=True,
             runtime_plugin_destination=_runtime_destination(tmp_path),
             allow_game_directory_write=False,
+        )
+
+
+def test_runtime_profile_preflight_binds_marker_without_claiming_visual_or_audio(
+    tmp_path: Path,
+) -> None:
+    settings = _runtime_settings(tmp_path)
+    marker_criterion = (
+        "STAGGER_FEEDBACK_SHOWN records visual_spawn_succeeded=true and "
+        "audio_event_accepted=true without proving visibility or audibility."
+    )
+    settings.runtime.gtfo.acceptance_markers = {
+        marker_criterion: (
+            "signal=STAGGER_FEEDBACK_SHOWN "
+            "target=ES_Hitreact.ActivateState "
+            "message=visual_spawn_succeeded_and_audio_event_accepted "
+            "visual_spawn_succeeded=true audio_event_accepted=true"
+        )
+    }
+
+    result = _runtime_profile_preflight_record(
+        settings,
+        runtime_plugin_destination=_runtime_destination(tmp_path),
+        feature_spec={
+            "acceptance_criteria": [
+                "The yellow X is visibly observed.",
+                "The feature cue is audibly observed.",
+                marker_criterion,
+            ],
+            "success_marker_contract": {
+                "signal": "STAGGER_FEEDBACK_SHOWN",
+                "code_level_required_facts": [
+                    "visual_spawn_succeeded=true",
+                    "audio_event_accepted=true",
+                ],
+                "emit_only_after": [
+                    "feature visual creation returned success",
+                    "feature audio event submission returned a nonzero playing id",
+                ],
+                "runtime_claim_limit": (
+                    "The marker does not by itself prove visibility or audibility."
+                ),
+            },
+        },
+    )
+
+    boundary = result["acceptance_boundary"]
+    assert boundary["feature_spec_marker_criterion"] == marker_criterion
+    assert boundary["marker_does_not_prove_visual_or_audio"] is True
+    assert boundary["remaining_acceptance_criteria_require_separate_observation"] == [
+        "The yellow X is visibly observed.",
+        "The feature cue is audibly observed.",
+    ]
+    assert result["plugin_deployment"]["allow_game_directory_write"] is False
+    assert result["plugin_deployment"]["performed"] is False
+    assert result["capability_report"]["would_launch"] is False
+    assert result["capability_report"]["authorization_status"] == (
+        "not_granted_preflight_only"
+    )
+    assert result["capability_report"]["checks"]["explicit_launch_approval"] == {
+        "status": "not_granted_preflight_only",
+        "required": True,
+        "allow_game_launch": False,
+    }
+
+
+def test_runtime_profile_preflight_rejects_product_marker_as_startup_marker(
+    tmp_path: Path,
+) -> None:
+    settings = _runtime_settings(tmp_path)
+    marker_criterion = (
+        "STAGGER_FEEDBACK_SHOWN records visual_spawn_succeeded=true and "
+        "audio_event_accepted=true."
+    )
+    settings.runtime.gtfo.startup_markers = ["STAGGER_FEEDBACK_SHOWN"]
+    settings.runtime.gtfo.acceptance_markers = {
+        marker_criterion: (
+            "signal=STAGGER_FEEDBACK_SHOWN "
+            "visual_spawn_succeeded=true audio_event_accepted=true"
+        )
+    }
+
+    with pytest.raises(LocalEntryError, match="cannot be a startup marker"):
+        _runtime_profile_preflight_record(
+            settings,
+            runtime_plugin_destination=_runtime_destination(tmp_path),
+            feature_spec={
+                "acceptance_criteria": [marker_criterion],
+                "success_marker_contract": {
+                    "signal": "STAGGER_FEEDBACK_SHOWN",
+                    "code_level_required_facts": [
+                        "visual_spawn_succeeded=true",
+                        "audio_event_accepted=true",
+                    ],
+                    "runtime_claim_limit": "Marker is code-level only.",
+                },
+            },
         )
 
 

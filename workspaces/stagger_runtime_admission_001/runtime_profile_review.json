@@ -1,0 +1,84 @@
+{
+  "schema_version": "stagger_runtime_profile_review_v1",
+  "status": "reviewed_no_launch",
+  "feature_id": "feature_4f4c63c3802d",
+  "profile_path": "workspaces/stagger_runtime_admission_001/runtime_profile.yaml",
+  "profile_id": "gtfo_real_runtime",
+  "evidence": {
+    "successful_runtime_settings": {
+      "path": "C:/Users/10160/.codex/visualizations/2026/07/23/019f8d25-d420-7182-8f39-d361f883c4c1/v2ta_api_member_repair/workspaces/runtime_chain_post_h3_001/e7daa266/run_inputs/runtime_closure_post_h3.yaml",
+      "sha256": "b1be301e30e171ef17ac45a416981a18de31d50f018bc23dd4a836df6df4ffe3"
+    },
+    "successful_runtime_admission": {
+      "run_id": "e7daa266",
+      "path": "C:/Users/10160/.codex/visualizations/2026/07/23/019f8d25-d420-7182-8f39-d361f883c4c1/v2ta_api_member_repair/workspaces/runtime_chain_post_h3_001/e7daa266/runtime_resume_result.json",
+      "status": "ready",
+      "profile_id": "gtfo_real_runtime"
+    },
+    "feature_spec": {
+      "path": "C:/Users/10160/.codex/visualizations/2026/07/25/019f9824-4993-74b2-ad28-ba899646b82f/stagger_proposal_repair/workspaces/stagger_feedback_proposal_repair_001/a/features/feature_4f4c63c3802d/r/feature_spec/bbd473ce1072b2f605afa9a3ef782269.json",
+      "artifact_hash": "bbd473ce1072b2f605afa9a3ef7822695249e4781f77ca810e6b61fcf3c8a190"
+    },
+    "compiled_marker_source": {
+      "path": "C:/Users/10160/.codex/visualizations/2026/07/25/019f9824-4993-74b2-ad28-ba899646b82f/stagger_proposal_repair/workspaces/stagger_feedback_proposal_repair_001/sfp_build_009/generated_mods/BetterHitFeedback/Patches/HitFeedbackBehaviorPatch.cs",
+      "source_line": 285
+    },
+    "machine_paths": {
+      "game_executable_exists": true,
+      "working_directory_exists": true,
+      "plugin_destination_parent_exists": true,
+      "bepinex_log_config_sha256": "cad94700be6c79cbe6efbf6e953fead502b9c5723ee67cc1fb19e63c94326616",
+      "bepinex_append_log": false
+    }
+  },
+  "profile": {
+    "enabled": true,
+    "game_executable": "C:/Software_ Entertainment software and its platform/steamapps/common/GTFO/GTFO.exe",
+    "working_directory": "C:/Software_ Entertainment software and its platform/steamapps/common/GTFO",
+    "log_paths": [
+      "BepInEx/LogOutput.log",
+      "BepInEx/logs/LogOutput.log"
+    ],
+    "screenshot_directory": "C:/Users/10160/.codex/worktrees/f4d6/MODULAR-RAG-MCP-SERVER-main/workspaces/stagger_runtime_admission_001/runtime_captures",
+    "screenshot_timeout_seconds": 15,
+    "startup_markers": [
+      "BepInEx",
+      "Chainloader"
+    ],
+    "acceptance_markers": {
+      "STAGGER_FEEDBACK_SHOWN is emitted only after the implementation has both created the feature visual and received a nonzero acceptance result for the feature audio event; the marker records visual_spawn_succeeded=true and audio_event_accepted=true without claiming that Runtime visibility or audibility is already proved.": "signal=STAGGER_FEEDBACK_SHOWN target=ES_Hitreact.ActivateState message=visual_spawn_succeeded_and_audio_event_accepted visual_spawn_succeeded=true audio_event_accepted=true"
+    },
+    "timeout_seconds": 120,
+    "poll_interval_seconds": 1.0,
+    "output_limit_chars": 20000,
+    "terminate_after_capture": true
+  },
+  "deployment": {
+    "dll_source_sha256": "7a04ebc37c58572835621640eeac52360f7d5e8b8ea7d68a8d1c3800b2cf21aa",
+    "dll_destination": "C:/Software_ Entertainment software and its platform/steamapps/common/GTFO/BepInEx/plugins/BetterHitFeedback.dll",
+    "destination_existed_at_review": false,
+    "restore_boundary": "After an authorized Runtime attempt, remove only the deployed BetterHitFeedback.dll because the destination was absent at review; if destination pre-state changes, admission must be repeated and the new exact bytes must be restored."
+  },
+  "marker_contract": {
+    "startup_markers_are_product_behavior_markers": false,
+    "signal": "STAGGER_FEEDBACK_SHOWN",
+    "required_fields": {
+      "target": "ES_Hitreact.ActivateState",
+      "message": "visual_spawn_succeeded_and_audio_event_accepted",
+      "visual_spawn_succeeded": true,
+      "audio_event_accepted": true
+    },
+    "runtime_claim_limit": "The marker does not by itself prove that the yellow X was visible or that the cue was audible.",
+    "visual_evidence_required": true,
+    "audible_evidence_required": true
+  },
+  "side_effects": {
+    "profile_only": true,
+    "game_launched": false,
+    "game_directory_written": false,
+    "dll_copied": false,
+    "checkpoint_consumed": false,
+    "resume_report_created": false,
+    "runtime_evidence_created": false
+  }
+}
