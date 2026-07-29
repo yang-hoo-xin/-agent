@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -904,6 +905,8 @@ def test_gtfo_runtime_process_diagnostics_are_bounded_and_not_acceptance(
     assert stdout_path.parent == (
         tmp_path / "run_001" / "runtime_process_diagnostics"
     )
+    assert stdout_path.name == "stdout.log"
+    assert Path(diagnostics["stderr"]["file_path"]).name == "stderr.log"
     assert stdout_path.read_bytes() == stdout_content[-32:]
     assert payload["startup_loaded"] is False
     assert payload["acceptance_verified"] is False
@@ -1132,6 +1135,108 @@ def test_gtfo_runtime_operator_completion_binds_manual_observation(
     }
 
 
+def test_gtfo_runtime_operator_status_fact_conflict_is_inconclusive(
+    tmp_path: Path,
+) -> None:
+    profile = replace(
+        _profile(tmp_path),
+        operator_completion_required=True,
+        terminate_after_capture=True,
+    )
+    process = SimpleNamespace(
+        poll=lambda: None,
+        terminate=lambda: None,
+        wait=lambda timeout: 0,
+    )
+
+    def operator_completion_reader(request):
+        request_payload = request.to_dict()
+        criterion = request_payload["acceptance_criteria"][0]
+        return {
+            "schema_version": "gtfo_operator_completion_v1",
+            "request_sha256": request_payload["request_sha256"],
+            "feature_id": request.feature_id,
+            "status": "completed",
+            "observed_by": "local_operator",
+            "observations": [
+                {
+                    "criterion_sha256": criterion["criterion_sha256"],
+                    "status": "failed",
+                    "criterion_satisfied": True,
+                    "notes": (
+                        "The observed facts satisfy the criterion, but the "
+                        "operator selected failed."
+                    ),
+                }
+            ],
+        }
+
+    payload = GTFORealRuntimeAutomationRunner().run(
+        feature_id="feature_001",
+        profile=profile,
+        acceptance_criteria=(
+            ACCEPTANCE_CRITERION,
+            MANUAL_ACCEPTANCE_CRITERION,
+        ),
+        runtime_verification_plan=(RUNTIME_PLAN_STEP,),
+        input_execution_mode="local",
+        allow_game_launch=True,
+        process_launcher=lambda _: GTFOProcessHandle(pid=4242, process=process),
+        log_collector=lambda _, __: GTFOLogSnapshot(
+            content=f"{STARTUP_MARKER}\n{ACCEPTANCE_MARKER}\n",
+            sources=(str(tmp_path / "BepInEx" / "LogOutput.log"),),
+        ),
+        screenshot_capturer=lambda _, feature_id: build_screenshot_metadata(
+            screenshot_id="shot_operator_conflict",
+            feature_id=feature_id,
+            file_path=str(tmp_path / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash_operator_conflict",
+        ),
+        operator_completion_reader=operator_completion_reader,
+        operator_guidance={
+            MANUAL_ACCEPTANCE_CRITERION: (
+                "Set criterion_satisfied independently from status."
+            )
+        },
+    )
+
+    assert payload["verification_status"] == "inconclusive"
+    assert payload["acceptance_verified"] is False
+    assert payload["claims_real_runtime_success"] is False
+    assert payload["failure_ownership"]["owner"] == "observation"
+    assert payload["failure_ownership"]["failure_class"] == (
+        "operator_status_semantic_conflict"
+    )
+    assert payload["failure_ownership"]["source_repair_allowed"] is False
+    assert payload["operator_completion"]["semantic_consistency"] == {
+        "status": "conflict",
+        "correction_required": True,
+        "conflicts": [
+            {
+                "criterion_sha256": hashlib.sha256(
+                    MANUAL_ACCEPTANCE_CRITERION.encode("utf-8")
+                ).hexdigest(),
+                "status": "failed",
+                "criterion_satisfied": True,
+                "reason": (
+                    "Operator status conflicts with the independently "
+                    "reported criterion_satisfied fact."
+                ),
+            }
+        ],
+    }
+    operator_check = payload["runtime_trust_binding"]["checks"][
+        "operator_completion"
+    ]
+    assert operator_check["status"] == "blocked"
+    assert operator_check["semantic_consistency"]["correction_required"] is True
+    assert any(
+        "criterion satisfaction fact" in item
+        for item in payload["limitations"]
+    )
+
+
 def test_gtfo_runtime_operator_completion_rejects_wrong_request_and_cleans_up(
     tmp_path: Path,
 ) -> None:
@@ -1313,6 +1418,58 @@ def test_gtfo_operator_completion_stdin_timeout_is_explicit(
                 timeout_seconds=1,
             )
         )
+
+
+def test_gtfo_operator_completion_stdin_preserves_utf8_notes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = GTFOOperatorCompletionRequest(
+        request_id="operator_utf8_test",
+        feature_id="feature_001",
+        profile_id="gtfo_real_runtime",
+        runtime_process_pid=4242,
+        acceptance_criteria=(MANUAL_ACCEPTANCE_CRITERION,),
+        timeout_seconds=1,
+    )
+    request_payload = request.to_dict()
+    response = {
+        "schema_version": "gtfo_operator_completion_v1",
+        "request_sha256": request_payload["request_sha256"],
+        "feature_id": request.feature_id,
+        "status": "completed",
+        "observed_by": "local_operator",
+        "observations": [
+            {
+                "criterion_sha256": request_payload["acceptance_criteria"][0][
+                    "criterion_sha256"
+                ],
+                "status": "failed",
+                "notes": "用霰弹枪测试，没有黄色 X，也没有提示音。",
+            }
+        ],
+    }
+
+    class BinaryStdin:
+        def __init__(self) -> None:
+            self.buffer = io.BytesIO(
+                (
+                    json.dumps(response, ensure_ascii=False) + "\n"
+                ).encode("utf-8")
+            )
+
+    monkeypatch.setattr(
+        gtfo_automation_module.sys,
+        "stdin",
+        BinaryStdin(),
+    )
+
+    parsed = gtfo_automation_module._read_operator_completion_from_stdin(
+        request
+    )
+
+    assert parsed["observations"][0]["notes"] == (
+        "用霰弹枪测试，没有黄色 X，也没有提示音。"
+    )
 
 
 def test_gtfo_runtime_launcher_exception_becomes_failed_payload(tmp_path: Path) -> None:

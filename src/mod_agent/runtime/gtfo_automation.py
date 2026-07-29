@@ -97,17 +97,22 @@ class GTFOOperatorCompletionRequest:
     runtime_process_pid: int
     acceptance_criteria: tuple[str, ...]
     timeout_seconds: int
+    operator_guidance: Mapping[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        criteria = [
-            {
+        criteria = []
+        for criterion in self.acceptance_criteria:
+            item = {
                 "acceptance_criterion": criterion,
                 "criterion_sha256": hashlib.sha256(
                     criterion.encode("utf-8")
                 ).hexdigest(),
             }
-            for criterion in self.acceptance_criteria
-        ]
+            guidance = self.operator_guidance.get(criterion)
+            if guidance:
+                item["operator_guidance"] = guidance
+                item["criterion_satisfied_required"] = True
+            criteria.append(item)
         request = {
             "schema_version": "gtfo_operator_completion_request_v1",
             "request_id": self.request_id,
@@ -133,6 +138,7 @@ class GTFOOperatorCompletion:
     observed_by: str
     completed_at: str
     observations: tuple[Mapping[str, Any], ...]
+    semantic_consistency: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def passed_criteria(self) -> set[str]:
@@ -140,6 +146,7 @@ class GTFOOperatorCompletion:
             str(item["acceptance_criterion"])
             for item in self.observations
             if item.get("status") == "passed"
+            and item.get("semantic_consistency") != "conflict"
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -153,6 +160,7 @@ class GTFOOperatorCompletion:
             "observed_by": self.observed_by,
             "completed_at": self.completed_at,
             "observations": [dict(item) for item in self.observations],
+            "semantic_consistency": dict(self.semantic_consistency),
         }
 
 
@@ -200,12 +208,9 @@ class _GTFOProcessDiagnosticsCapture:
         self,
         *,
         output_directory: Path,
-        feature_id: str,
         output_limit_chars: int,
     ) -> None:
         self._output_directory = output_directory
-        self._feature_id = feature_id
-        self._capture_id = str(time.time_ns())
         self._stdout = _BoundedProcessOutput(limit_bytes=output_limit_chars)
         self._stderr = _BoundedProcessOutput(limit_bytes=output_limit_chars)
         self._threads: list[threading.Thread] = []
@@ -252,10 +257,7 @@ class _GTFOProcessDiagnosticsCapture:
         output: _BoundedProcessOutput,
     ) -> dict[str, Any]:
         retained, total_size, truncated = output.snapshot()
-        path = (
-            self._output_directory
-            / f"{self._feature_id}_{self._capture_id}.{stream_name}.log"
-        )
+        path = self._output_directory / f"{stream_name}.log"
         path.write_bytes(retained)
         return {
             "file_path": str(path),
@@ -522,6 +524,7 @@ class GTFORealRuntimeAutomationRunner:
         log_collector: LogCollector | None = None,
         screenshot_capturer: ScreenshotCapturer | None = None,
         operator_completion_reader: OperatorCompletionReader | None = None,
+        operator_guidance: Mapping[str, str] | None = None,
         process_diagnostic_directory: str | Path | None = None,
     ) -> dict[str, Any]:
         """Run real GTFO automation only after explicit approval."""
@@ -560,7 +563,6 @@ class GTFORealRuntimeAutomationRunner:
             launcher = process_launcher or (
                 lambda active_profile: _launch_gtfo_process(
                     active_profile,
-                    feature_id=feature_id,
                     output_directory=(
                         Path(process_diagnostic_directory)
                         if process_diagnostic_directory is not None
@@ -597,6 +599,11 @@ class GTFORealRuntimeAutomationRunner:
                     runtime_process_pid=process_handle.pid,
                     acceptance_criteria=manual_criteria,
                     timeout_seconds=profile.operator_completion_timeout_seconds,
+                    operator_guidance={
+                        criterion: str((operator_guidance or {})[criterion])
+                        for criterion in manual_criteria
+                        if criterion in (operator_guidance or {})
+                    },
                 )
                 operator_completion = _read_operator_completion(
                     request=operator_completion_request,
@@ -799,6 +806,7 @@ def _read_operator_completion(
     }
     observations: list[Mapping[str, Any]] = []
     observed_hashes: set[str] = set()
+    semantic_conflicts: list[dict[str, Any]] = []
     for raw_observation in raw_observations:
         if not isinstance(raw_observation, Mapping):
             raise GTFORuntimeAutomationError(
@@ -824,14 +832,56 @@ def _read_operator_completion(
                 "Operator completion observation notes are required."
             )
         observed_hashes.add(criterion_sha256)
-        observations.append(
-            {
-                "acceptance_criterion": criteria_by_hash[criterion_sha256],
-                "criterion_sha256": criterion_sha256,
-                "status": status,
-                "notes": notes.strip(),
-            }
-        )
+        criterion = criteria_by_hash[criterion_sha256]
+        observation = {
+            "acceptance_criterion": criterion,
+            "criterion_sha256": criterion_sha256,
+            "status": status,
+            "notes": notes.strip(),
+        }
+        guidance = request.operator_guidance.get(criterion)
+        if guidance:
+            criterion_satisfied_present = (
+                "criterion_satisfied" in raw_observation
+            )
+            criterion_satisfied = raw_observation.get("criterion_satisfied")
+            expected_satisfied = {
+                "passed": True,
+                "failed": False,
+                "not_observed": None,
+            }[status]
+            observation["criterion_satisfied"] = criterion_satisfied
+            if (
+                not criterion_satisfied_present
+                or criterion_satisfied is not expected_satisfied
+                or (
+                    status != "not_observed"
+                    and not isinstance(criterion_satisfied, bool)
+                )
+            ):
+                observation["semantic_consistency"] = "conflict"
+                semantic_conflicts.append(
+                    {
+                        "criterion_sha256": criterion_sha256,
+                        "status": status,
+                        "criterion_satisfied": criterion_satisfied,
+                        "reason": (
+                            "Operator completion omitted the required "
+                            "criterion_satisfied fact."
+                            if not criterion_satisfied_present
+                            else (
+                                "Operator status conflicts with the "
+                                "independently reported criterion_satisfied "
+                                "fact."
+                            )
+                        ),
+                    }
+                )
+            else:
+                observation["semantic_consistency"] = "consistent"
+        else:
+            observation["semantic_consistency"] = "not_required"
+        observations.append(observation)
     if observed_hashes != set(criteria_by_hash):
         raise GTFORuntimeAutomationError(
             "Operator completion must report every requested criterion."
@@ -845,6 +895,17 @@ def _read_operator_completion(
         observed_by=observed_by.strip(),
         completed_at=datetime.now(timezone.utc).isoformat(),
         observations=tuple(observations),
+        semantic_consistency={
+            "status": (
+                "conflict"
+                if semantic_conflicts
+                else "consistent"
+                if request.operator_guidance
+                else "not_required"
+            ),
+            "correction_required": bool(semantic_conflicts),
+            "conflicts": semantic_conflicts,
+        },
     )
 
 
@@ -867,6 +928,16 @@ def _read_operator_completion_from_stdin(
                         {
                             "criterion_sha256": item["criterion_sha256"],
                             "status": "passed|failed|not_observed",
+                            **(
+                                {
+                                    "criterion_satisfied": "true|false|null",
+                                    "operator_guidance": item[
+                                        "operator_guidance"
+                                    ],
+                                }
+                                if item.get("criterion_satisfied_required") is True
+                                else {}
+                            ),
                             "notes": "<direct observation>",
                         }
                         for item in request_payload["acceptance_criteria"]
@@ -878,10 +949,15 @@ def _read_operator_completion_from_stdin(
         file=sys.stderr,
         flush=True,
     )
-    responses: queue.Queue[str] = queue.Queue(maxsize=1)
+    responses: queue.Queue[bytes | str] = queue.Queue(maxsize=1)
 
     def read_line() -> None:
-        responses.put(sys.stdin.readline())
+        binary_input = getattr(sys.stdin, "buffer", None)
+        responses.put(
+            binary_input.readline()
+            if binary_input is not None
+            else sys.stdin.readline()
+        )
 
     threading.Thread(
         target=read_line,
@@ -889,15 +965,25 @@ def _read_operator_completion_from_stdin(
         daemon=True,
     ).start()
     try:
-        line = responses.get(timeout=request.timeout_seconds)
+        raw_line = responses.get(timeout=request.timeout_seconds)
     except queue.Empty as exc:
         raise GTFORuntimeAutomationError(
             "Operator completion timed out."
         ) from exc
-    if not line:
+    if not raw_line:
         raise GTFORuntimeAutomationError(
             "Operator completion input closed before a response."
         )
+    try:
+        line = (
+            raw_line.decode("utf-8")
+            if isinstance(raw_line, bytes)
+            else raw_line
+        )
+    except UnicodeDecodeError as exc:
+        raise GTFORuntimeAutomationError(
+            "Operator completion response is not valid UTF-8."
+        ) from exc
     try:
         payload = json.loads(line)
     except json.JSONDecodeError as exc:
@@ -944,7 +1030,6 @@ def _validate_real_profile(profile: GTFORealRuntimeProfile) -> None:
 def _launch_gtfo_process(
     profile: GTFORealRuntimeProfile,
     *,
-    feature_id: str,
     output_directory: Path,
 ) -> GTFOProcessHandle:
     command = (profile.game_executable, *profile.launch_args)
@@ -957,7 +1042,6 @@ def _launch_gtfo_process(
     )
     diagnostics = _GTFOProcessDiagnosticsCapture(
         output_directory=output_directory,
-        feature_id=feature_id,
         output_limit_chars=profile.output_limit_chars,
     )
     diagnostics.start(process)
@@ -1474,6 +1558,16 @@ def _payload_from_runtime_observations(
             "GTFO operator completion did not pass every requested manual "
             "acceptance observation.",
         )
+    semantic_conflict = bool(
+        operator_completion is not None
+        and operator_completion.semantic_consistency.get("status") == "conflict"
+    )
+    if semantic_conflict:
+        limitations = (
+            *limitations,
+            "GTFO operator status conflicts with the separately reported "
+            "criterion satisfaction fact; correction is required.",
+        )
     plugin_marker_binding = _plugin_marker_binding(
         acceptance_criteria=acceptance_criteria,
         acceptance_markers=profile.acceptance_markers,
@@ -1522,10 +1616,19 @@ def _payload_from_runtime_observations(
             if verification_status == "verified"
             else build_runtime_failure_ownership(
                 owner="observation",
-                failure_class="runtime_observation_incomplete",
+                failure_class=(
+                    "operator_status_semantic_conflict"
+                    if semantic_conflict
+                    else "runtime_observation_incomplete"
+                ),
                 reason=(
-                    "GTFO Runtime observations did not establish every required "
-                    "startup, acceptance, and trust fact."
+                    "Operator status conflicts with the separately reported "
+                    "criterion satisfaction fact; correction is required."
+                    if semantic_conflict
+                    else (
+                        "GTFO Runtime observations did not establish every "
+                        "required startup, acceptance, and trust fact."
+                    )
                 ),
             )
         ),
@@ -1986,6 +2089,10 @@ def _runtime_trust_binding(
                     or (
                         operator_completion is not None
                         and not missing_operator_observations
+                        and operator_completion.semantic_consistency.get(
+                            "status"
+                        )
+                        != "conflict"
                     )
                 )
                 else "blocked"
@@ -1997,6 +2104,11 @@ def _runtime_trust_binding(
                 else operator_completion.to_dict()
             ),
             "missing_observations": list(missing_operator_observations),
+            "semantic_consistency": (
+                {"status": "not_required", "correction_required": False}
+                if operator_completion is None
+                else dict(operator_completion.semantic_consistency)
+            ),
         },
         "screenshot_runtime_artifact_linkage": {
             "status": (

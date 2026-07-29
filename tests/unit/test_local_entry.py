@@ -489,6 +489,13 @@ def test_runtime_backup_report_reuses_empty_directories_and_blocks_material_stat
     assert report["maximum_path_chars"] == max(
         len(path) for path in report["planned_backup_paths"]
     )
+    assert {
+        Path(path).name
+        for path in report["planned_process_diagnostic_paths"]
+    } == {"stdout.log", "stderr.log"}
+    assert report["maximum_process_diagnostic_path_chars"] == max(
+        len(path) for path in report["planned_process_diagnostic_paths"]
+    )
 
     (backup_root / "general_enabled_false" / "config" / "original.bin").write_bytes(
         b"unresolved backup"
@@ -498,6 +505,36 @@ def test_runtime_backup_report_reuses_empty_directories_and_blocks_material_stat
             tmp_path,
             stagger_enabled=True,
         )
+
+
+def test_runtime_backup_report_compacts_process_diagnostics_below_windows_limit(
+    tmp_path: Path,
+) -> None:
+    target_root_chars = 178
+    padding_chars = target_root_chars - len(str(tmp_path)) - 1
+    assert padding_chars > 0
+    run_root = tmp_path / ("x" * padding_chars)
+
+    report = _runtime_continuation_backup_report(
+        run_root,
+        stagger_enabled=True,
+    )
+    old_dynamic_path = (
+        run_root
+        / "runtime_process_diagnostics"
+        / "general_enabled_false"
+        / (
+            "feature_4f4c63c3802d_1785298858384466900.stdout.log"
+        )
+    )
+
+    assert len(str(old_dynamic_path.resolve())) >= 260
+    assert report["maximum_path_chars"] < 260
+    assert report["maximum_process_diagnostic_path_chars"] < 260
+    assert all(
+        Path(path).name in {"stdout.log", "stderr.log"}
+        for path in report["planned_process_diagnostic_paths"]
+    )
 
 
 def test_runtime_verification_chain_requires_all_bound_artifacts() -> None:

@@ -504,6 +504,22 @@ mojibake in the stored Artifact, and the intended 272-character
 correctly declares `supports_acceptance=[]`. No Runtime retry or Mod repair is
 admitted from this evidence.
 
+The forward-only evidence repair is now implemented without modifying that
+Artifact. Operator input uses explicit UTF-8 byte decoding. Process diagnostics
+use fixed `stdout.log` and `stderr.log` filenames, and continuation preflight
+calculates their exact paths in addition to deployment backup paths before any
+write or launch. Each guided Stagger observation now reports both an independent
+`criterion_satisfied` fact and its status under request-hash-bound,
+mode-specific instructions. Only `true/passed`, `false/failed`, and
+`null/not_observed` are semantically consistent. Missing or contradictory
+values remain inconclusive with
+`failure_class=operator_status_semantic_conflict`,
+`correction_required=true`, `owner=observation`, and
+`source_repair_allowed=false`. This cannot override machine marker,
+current-run-window, config, process, screenshot, deployment, or restoration
+checks. The old run root still contains restoration backup material and remains
+fail-closed; no new observation attempt is admitted or executed by this repair.
+
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B
 canonical baseline. Its `Plugin.cs` SHA256 is

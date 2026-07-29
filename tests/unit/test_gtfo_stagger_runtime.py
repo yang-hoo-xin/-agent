@@ -14,6 +14,7 @@ from src.mod_agent.runtime import (
     make_gtfo_stagger_runtime_evidence_factory,
     temporarily_deploy_gtfo_config,
 )
+from src.mod_agent.runtime import gtfo_stagger as gtfo_stagger_module
 
 
 DISABLED_CRITERION = (
@@ -233,6 +234,7 @@ def test_stagger_runtime_runs_disabled_then_enabled_and_restores_each_attempt(
                 {
                     "criterion_sha256": item["criterion_sha256"],
                     "status": "passed",
+                    "criterion_satisfied": True,
                     "notes": (
                         "Direct observation was completed in this exact "
                         "GTFO process."
@@ -302,9 +304,20 @@ def test_stagger_runtime_runs_disabled_then_enabled_and_restores_each_attempt(
     assert operator_requests[0]["runtime_process_pid"] == 4101
     assert operator_requests[1]["runtime_process_pid"] == 4102
     assert operator_requests[0]["request_id"] != operator_requests[1]["request_id"]
+    assert "intentionally disables BetterHitFeedback" in str(
+        operator_requests[0]["acceptance_criteria"][0]["operator_guidance"]
+    )
+    assert operator_requests[0]["acceptance_criteria"][0][
+        "criterion_satisfied_required"
+    ] is True
     assert plugin_destination.exists() is False
     assert Path(stagger_profile.config_path).exists() is False
     assert payload["runtime_trust_binding"]["status"] == "pending_graph_binding"
+    assert payload["operator_semantic_consistency"] == {
+        "status": "consistent",
+        "correction_required": False,
+        "conflict_modes": [],
+    }
     assert all(
         check["status"] == "passed"
         for check in payload["runtime_trust_binding"]["checks"].values()
@@ -317,4 +330,45 @@ def test_stagger_runtime_runs_disabled_then_enabled_and_restores_each_attempt(
         DISABLED_CRITERION,
         VISUAL_CRITERION,
         MARKER_CRITERION,
+    }
+
+
+def test_stagger_operator_semantic_conflict_is_separate_observation_failure() -> None:
+    payload = gtfo_stagger_module._aggregate_stagger_attempts(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        acceptance_criteria=(DISABLED_CRITERION, VISUAL_CRITERION),
+        runtime_verification_plan=("Run both reviewed GTFO modes.",),
+        attempt_payloads=[
+            {
+                "stagger_attempt_mode": "general_enabled_false",
+                "acceptance_verified": False,
+                "evidence_items": [],
+                "screenshot_refs": [],
+                "runtime_process": {"pid": 4101},
+                "runtime_trust_binding": {"checks": {}},
+                "operator_completion": {
+                    "semantic_consistency": {
+                        "status": "conflict",
+                        "correction_required": True,
+                    }
+                },
+            }
+        ],
+        expected_modes=(
+            "general_enabled_false",
+            "general_enabled_true",
+        ),
+    )
+
+    assert payload["verification_status"] == "inconclusive"
+    assert payload["acceptance_verified"] is False
+    assert payload["failure_ownership"]["failure_class"] == (
+        "operator_status_semantic_conflict"
+    )
+    assert payload["failure_ownership"]["source_repair_allowed"] is False
+    assert payload["operator_semantic_consistency"] == {
+        "status": "conflict",
+        "correction_required": True,
+        "conflict_modes": ["general_enabled_false"],
     }

@@ -2495,9 +2495,31 @@ def _runtime_continuation_backup_report(
         for relative_path in relative_paths
     ]
     maximum_path_chars = max(len(path) for path in planned_paths)
-    if os.name == "nt" and maximum_path_chars >= 260:
+    diagnostic_relative_paths = (
+        (
+            "runtime_process_diagnostics/general_enabled_false/stdout.log",
+            "runtime_process_diagnostics/general_enabled_false/stderr.log",
+            "runtime_process_diagnostics/general_enabled_true/stdout.log",
+            "runtime_process_diagnostics/general_enabled_true/stderr.log",
+        )
+        if stagger_enabled
+        else (
+            "runtime_process_diagnostics/stdout.log",
+            "runtime_process_diagnostics/stderr.log",
+        )
+    )
+    planned_diagnostic_paths = [
+        str((run_root / Path(relative_path)).resolve())
+        for relative_path in diagnostic_relative_paths
+    ]
+    maximum_diagnostic_path_chars = max(
+        len(path) for path in planned_diagnostic_paths
+    )
+    if os.name == "nt" and (
+        maximum_path_chars >= 260 or maximum_diagnostic_path_chars >= 260
+    ):
         raise LocalEntryError(
-            "Runtime continuation compact deployment backup path exceeds the "
+            "Runtime continuation compact Runtime output path exceeds the "
             "Windows 259-character file-path boundary."
         )
     return {
@@ -2505,6 +2527,10 @@ def _runtime_continuation_backup_report(
         "backup_root": str(backup_root.resolve()),
         "planned_backup_paths": planned_paths,
         "maximum_path_chars": maximum_path_chars,
+        "planned_process_diagnostic_paths": planned_diagnostic_paths,
+        "maximum_process_diagnostic_path_chars": (
+            maximum_diagnostic_path_chars
+        ),
         "existing_material_entries": material_entries,
         "empty_directories_reusable": True,
         "writes_performed": False,

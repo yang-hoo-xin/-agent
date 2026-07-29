@@ -39,6 +39,37 @@ class GTFOStaggerRuntimeError(RuntimeError):
     """Raised when the selected stagger Runtime boundary is not safe."""
 
 
+def _operator_guidance_for_stagger_mode(
+    mode: str,
+    acceptance_criteria: tuple[str, ...],
+) -> dict[str, str]:
+    """Bind manual verdicts to the exact product meaning of each mode."""
+
+    if mode == "general_enabled_false":
+        guidance = (
+            "General.Enabled=false intentionally disables BetterHitFeedback "
+            "output for this negative-control attempt. Set "
+            "criterion_satisfied=true and status=passed only when qualifying "
+            "hits produce no feature yellow X and no feature-attributable "
+            "audio. If either output appears, use false/failed. If the "
+            "scenario was not exercised, use null/not_observed. Current-run "
+            "marker evidence remains a separate machine check."
+        )
+    elif mode == "general_enabled_true":
+        guidance = (
+            "Set criterion_satisfied=true and status=passed only when the "
+            "exact criterion was directly observed in this enabled process. "
+            "Use false/failed when the observed behavior violates it, or "
+            "null/not_observed when the scenario was not exercised. Machine "
+            "markers remain separate evidence."
+        )
+    else:
+        raise GTFOStaggerRuntimeError(
+            f"Unsupported GTFO stagger Runtime mode: {mode}"
+        )
+    return {criterion: guidance for criterion in acceptance_criteria}
+
+
 @dataclass(frozen=True)
 class GTFOStaggerAcceptanceProfile:
     """Exact config inputs for the selected two-process Runtime acceptance."""
@@ -557,6 +588,10 @@ def make_gtfo_stagger_runtime_evidence_factory(
                         log_collector=log_collector,
                         screenshot_capturer=screenshot_capturer,
                         operator_completion_reader=operator_completion_reader,
+                        operator_guidance=_operator_guidance_for_stagger_mode(
+                            mode,
+                            mode_criteria,
+                        ),
                         process_diagnostic_directory=(
                             backup_root.parent
                             / "runtime_process_diagnostics"
@@ -606,6 +641,16 @@ def _aggregate_stagger_attempts(
         str(payload.get("stagger_attempt_mode")): payload
         for payload in attempt_payloads
     }
+    semantic_conflict_modes = [
+        mode
+        for mode, attempt_payload in attempts_by_mode.items()
+        if (
+            (attempt_payload.get("operator_completion") or {})
+            .get("semantic_consistency", {})
+            .get("status")
+            == "conflict"
+        )
+    ]
     complete = all(
         mode in attempts_by_mode
         and attempts_by_mode[mode].get("acceptance_verified") is True
@@ -677,6 +722,18 @@ def _aggregate_stagger_attempts(
         "blockers": blockers,
     }
     verification_status = "verified" if complete else "inconclusive"
+    aggregate_limitations: tuple[str, ...] = ()
+    if not complete:
+        aggregate_limitations = (
+            "The two-process GTFO stagger Runtime did not verify every "
+            "required attempt.",
+        )
+        if semantic_conflict_modes:
+            aggregate_limitations = (
+                *aggregate_limitations,
+                "An operator status conflicts with the separately reported "
+                "criterion satisfaction fact; correction is required.",
+            )
     payload = build_real_runtime_evidence_payload(
         feature_id=feature_id,
         input_execution_mode=input_execution_mode,
@@ -685,14 +742,7 @@ def _aggregate_stagger_attempts(
         gameplay_behavior_verified=complete,
         verification_status=verification_status,
         raw_runtime_output=None,
-        limitations=(
-            ()
-            if complete
-            else (
-                "The two-process GTFO stagger Runtime did not verify every "
-                "required attempt.",
-            )
-        ),
+        limitations=aggregate_limitations,
         acceptance_criteria=acceptance_criteria,
         runtime_verification_plan=runtime_verification_plan,
         plugin_marker_binding=plugin_marker_binding,
@@ -703,10 +753,19 @@ def _aggregate_stagger_attempts(
             if complete
             else build_runtime_failure_ownership(
                 owner="observation",
-                failure_class="stagger_runtime_attempt_incomplete",
+                failure_class=(
+                    "operator_status_semantic_conflict"
+                    if semantic_conflict_modes
+                    else "stagger_runtime_attempt_incomplete"
+                ),
                 reason=(
-                    "One required GTFO stagger Runtime attempt did not produce "
-                    "complete bound observations."
+                    "Operator status conflicts with the separately reported "
+                    "criterion satisfaction fact; correction is required."
+                    if semantic_conflict_modes
+                    else (
+                        "One required GTFO stagger Runtime attempt did not "
+                        "produce complete bound observations."
+                    )
                 ),
             )
         ),
@@ -716,6 +775,11 @@ def _aggregate_stagger_attempts(
         "gtfo_stagger_two_process_runtime_v1"
     )
     payload["stagger_runtime_attempts"] = attempt_payloads
+    payload["operator_semantic_consistency"] = {
+        "status": "conflict" if semantic_conflict_modes else "consistent",
+        "correction_required": bool(semantic_conflict_modes),
+        "conflict_modes": semantic_conflict_modes,
+    }
     payload["runtime_processes"] = [
         dict(item.get("runtime_process") or {})
         for item in attempt_payloads

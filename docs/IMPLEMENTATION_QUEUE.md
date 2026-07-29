@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -544,6 +544,35 @@ focused_verification:
   config hash was restored. The run also exposed mojibake in the stored Chinese
   operator note and a 272-character process-diagnostics path
   `FileNotFoundError`; both are Harness evidence-boundary defects.
+  The bounded forward repair now reads operator stdin as explicitly decoded
+  UTF-8 bytes, uses fixed run-local `stdout.log` and `stderr.log` diagnostic
+  names, and makes no-launch preflight validate those exact paths along with
+  deployment backup paths. Stagger requests hash-bind mode-specific guidance
+  and require an independent `criterion_satisfied` fact. Only true/passed,
+  false/failed, and null/not_observed pairings are consistent. Missing or
+  contradictory facts produce `operator_status_semantic_conflict`,
+  `correction_required=true`, an inconclusive observation-owned result, and no
+  source-repair authority. Existing machine evidence gates remain independent.
+  This repair does not rewrite the old RuntimeEvidence or admit a retry; the
+  old run root's backup material remains a hard blocker.
+  `python -m pytest tests/unit/test_workflow_graph.py
+  tests/unit/test_mod_agent_cli.py tests/unit/test_local_entry.py
+  tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
+  tests/unit/test_config_loading.py tests/unit/test_gtfo_runtime_automation.py
+  tests/unit/test_gtfo_stagger_runtime.py
+  tests/unit/test_runtime_deployment.py
+  tests/unit/test_transition_eval_gate.py
+  tests/unit/test_runtime_evidence.py -q --tb=short` passed 299 tests in
+  55.65s.
+  `python -m pytest tests/unit/test_workflow_graph.py
+  tests/unit/test_mod_agent_cli.py tests/unit/test_local_entry.py
+  tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
+  tests/unit/test_config_loading.py tests/unit/test_gtfo_runtime_automation.py
+  tests/unit/test_gtfo_stagger_runtime.py
+  tests/unit/test_runtime_deployment.py
+  tests/unit/test_transition_eval_gate.py
+  tests/unit/test_runtime_evidence.py -q --tb=short` passed 299 tests in
+  55.65s.
 stop_condition:
   Preserve every prior model, Review, Dry-run, and Apply result as immutable
   history, including the semantically rejected isolated Apply and failed repair
@@ -559,9 +588,12 @@ stop_condition:
   entry. Preserve the blocked recovery RuntimeEvidence, RepairPlan, and
   BlockedReport. Do not reinterpret the explicit failed operator status, create
   a new checkpoint or second ResumeReport, retry Runtime, or edit Mod source.
-  None of the seven Runtime criteria is proved. A later action requires separate
-  review of UTF-8 operator evidence preservation, compact process-diagnostic
-  paths, and disabled-stage operator instructions.
+  None of the seven Runtime criteria is proved. UTF-8 preservation, compact
+  process diagnostics, preflight path admission, and disabled-stage semantic
+  instructions are now implemented and tested for a future attempt. A later
+  observation retry still requires a new bounded retry run root and separate
+  game-launch/game-directory authorization; do not clean or bypass the existing
+  backup material.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.

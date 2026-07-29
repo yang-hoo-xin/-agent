@@ -162,5 +162,39 @@
     "final_dll_destination_exists": false,
     "final_config_sha256": "717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e",
     "acceptance_criteria_proved": 0
+  },
+  "post_observation_repair": {
+    "status": "implemented_and_tested_retry_not_admitted",
+    "immutable_runtime_result_rewritten": false,
+    "operator_input_encoding": "explicit_utf8_byte_decode",
+    "process_diagnostic_filenames": [
+      "stdout.log",
+      "stderr.log"
+    ],
+    "preflight_validates_process_diagnostic_paths": true,
+    "operator_semantic_contract": {
+      "guidance_bound_by_request_sha256": true,
+      "independent_fact_field": "criterion_satisfied",
+      "consistent_pairs": [
+        "true/passed",
+        "false/failed",
+        "null/not_observed"
+      ],
+      "conflict_failure_class": "operator_status_semantic_conflict",
+      "conflict_result": "inconclusive",
+      "correction_required": true,
+      "failure_owner": "observation",
+      "source_repair_allowed": false,
+      "machine_evidence_can_be_overridden": false
+    },
+    "focused_test_result": {
+      "passed": 299,
+      "failed": 0,
+      "duration_seconds": 55.65
+    },
+    "old_run_root_backup_material_blocked": true,
+    "game_launched": false,
+    "game_directory_written": false,
+    "runtime_retry_executed": false
   }
 }

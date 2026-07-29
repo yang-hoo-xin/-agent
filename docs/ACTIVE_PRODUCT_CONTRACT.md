@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 ## 1. Product
 
@@ -439,9 +439,23 @@ destination DLL is absent, and the config SHA256 is again
 It also exposed two new Harness evidence blockers. The UTF-8 Chinese operator
 note was not preserved in RuntimeEvidence, and the 272-character process
 diagnostic output path failed with `FileNotFoundError`. The captured screenshot
-is visual-only with no acceptance support. Do not retry Runtime or modify Mod
-source until those evidence-boundary defects and the disabled-stage operator
-instruction are separately reviewed.
+is visual-only with no acceptance support.
+
+The bounded post-observation repair preserves that immutable result while
+closing all three forward evidence-integrity gaps. Operator stdin is now read
+as bytes and decoded explicitly as UTF-8. Process diagnostics use fixed
+run-local `stdout.log` and `stderr.log` names, and no-launch continuation
+preflight validates both deployment-backup and diagnostic paths against the
+Windows boundary. Stagger operator requests now hash-bind mode-specific product
+guidance and require the operator to report the criterion fact separately from
+the status: `true` with `passed`, `false` with `failed`, and `null` with
+`not_observed`. A missing or contradictory fact yields
+`operator_status_semantic_conflict`, `correction_required=true`, an
+inconclusive observation-owned result, and no source-repair authority. Machine
+markers, configuration, current-run log windows, and restoration checks remain
+independent gates and cannot be overridden by the operator fields. This repair
+does not reinterpret the prior Artifact and does not admit a Runtime retry;
+the existing backup material remains a hard blocker on the old run root.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
