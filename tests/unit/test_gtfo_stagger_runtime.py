@@ -388,8 +388,7 @@ def test_stagger_visual_false_is_diagnosed_before_full_acceptance_completes() ->
                 "acceptance_verified": False,
                 "raw_supplied_output": (
                     "[GTFO_MOD_AGENT] signal=STAGGER_FEEDBACK_SKIPPED "
-                    "visual_spawned=False audio_event_accepted=True "
-                    "playing_id=12345 "
+                    "visual_spawned=False "
                     "visual_reason=missing_canvas_rect_for_stagger_x"
                 ),
                 "evidence_items": [
@@ -558,7 +557,6 @@ def test_stagger_machine_diagnosis_does_not_require_manual_observation() -> None
         **base_attempt,
         "raw_supplied_output": (
             "signal=STAGGER_FEEDBACK_SKIPPED visual_spawned=False "
-            "audio_event_accepted=True "
             "visual_reason=missing_canvas_rect_for_stagger_x"
         ),
     }

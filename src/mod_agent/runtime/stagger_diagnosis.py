@@ -13,7 +13,6 @@ STAGGER_VISUAL_ACCEPTANCE_CRITERION = (
 _SKIPPED_SIGNAL = "signal=STAGGER_FEEDBACK_SKIPPED"
 _VISUAL_NOT_SPAWNED = "visual_spawned=False"
 _VISUAL_FAILURE_REASON = "visual_reason=missing_canvas_rect_for_stagger_x"
-_AUDIO_ACCEPTED = "audio_event_accepted=True"
 _RUNTIME_SYMBOL = (
     "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
     "TrySpawnStaggerYellowX"
@@ -274,7 +273,6 @@ def _confirmed_visual_machine_fact(
         _SKIPPED_SIGNAL,
         _VISUAL_NOT_SPAWNED,
         _VISUAL_FAILURE_REASON,
-        _AUDIO_ACCEPTED,
     )
     line = next(
         (

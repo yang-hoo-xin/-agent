@@ -111,7 +111,13 @@ def route_after_runtime_evidence(state: ModAgentState) -> str:
 
     if state["runtime_summary"].get("acceptance_verified") is True:
         return "continue"
-    if state["runtime_summary"].get("has_structured_diagnosis") is True:
+    failure_ownership = state["runtime_summary"].get("failure_ownership")
+    if (
+        state["runtime_summary"].get("has_structured_diagnosis") is True
+        and isinstance(failure_ownership, dict)
+        and failure_ownership.get("owner") == "product_behavior"
+        and failure_ownership.get("source_repair_allowed") is True
+    ):
         return "binding_resolution"
     return "repair"
 

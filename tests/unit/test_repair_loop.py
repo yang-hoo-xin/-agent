@@ -1065,8 +1065,39 @@ def test_repair_routes_are_explicit() -> None:
         "acceptance_status": "failed",
         "acceptance_verified": False,
         "has_structured_diagnosis": True,
+        "failure_ownership": build_runtime_failure_ownership(
+            owner="product_behavior",
+            failure_class="product_behavior",
+            reason="A diagnosed product behavior failed.",
+        ),
     }
     assert route_after_runtime_evidence(state) == "binding_resolution"
+
+    for failure_ownership in (
+        build_runtime_failure_ownership(
+            owner="observation",
+            failure_class="observation_incomplete",
+            reason="Runtime observation is incomplete.",
+        ),
+        {
+            **build_runtime_failure_ownership(
+                owner="product_behavior",
+                failure_class="product_behavior",
+                reason="A diagnosed product behavior failed.",
+            ),
+            "source_repair_allowed": False,
+        },
+        None,
+        "malformed",
+    ):
+        state["runtime_summary"] = {
+            "status": "failed",
+            "acceptance_status": "failed",
+            "acceptance_verified": False,
+            "has_structured_diagnosis": True,
+            "failure_ownership": failure_ownership,
+        }
+        assert route_after_runtime_evidence(state) == "repair"
 
     state["runtime_summary"] = {
         "status": "verified",
