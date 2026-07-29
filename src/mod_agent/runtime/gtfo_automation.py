@@ -971,7 +971,7 @@ def make_operator_completion_file_reader(
     *,
     poll_interval_seconds: float = 0.1,
 ) -> OperatorCompletionReader:
-    """Persist one exact operator request and await its bound response file."""
+    """Persist one request and await a hash-confirmed response file."""
 
     root = Path(exchange_directory)
     if not root.is_absolute():
@@ -988,8 +988,13 @@ def make_operator_completion_file_reader(
     ) -> Mapping[str, Any]:
         request_path = root / f"{request.request_id}.request.json"
         response_path = root / f"{request.request_id}.response.json"
+        confirmation_path = root / f"{request.request_id}.confirmation.json"
         root.mkdir(parents=True, exist_ok=True)
-        if request_path.exists() or response_path.exists():
+        if (
+            request_path.exists()
+            or response_path.exists()
+            or confirmation_path.exists()
+        ):
             raise GTFORuntimeAutomationError(
                 "Operator completion exchange paths must not already exist."
             )
@@ -1005,15 +1010,20 @@ def make_operator_completion_file_reader(
         )
         deadline = time.monotonic() + request.timeout_seconds
         while time.monotonic() < deadline:
-            if response_path.is_file():
-                try:
-                    payload = json.loads(
-                        response_path.read_text(encoding="utf-8")
+            if confirmation_path.is_file():
+                if not response_path.is_file():
+                    raise GTFORuntimeAutomationError(
+                        "Operator completion confirmation has no response file."
                     )
+                try:
+                    response_bytes = response_path.read_bytes()
+                    response_text = response_bytes.decode("utf-8")
                 except UnicodeDecodeError as exc:
                     raise GTFORuntimeAutomationError(
                         "Operator completion response file is not valid UTF-8."
                     ) from exc
+                try:
+                    payload = json.loads(response_text)
                 except json.JSONDecodeError as exc:
                     raise GTFORuntimeAutomationError(
                         "Operator completion response file is not valid JSON."
@@ -1022,6 +1032,42 @@ def make_operator_completion_file_reader(
                     raise GTFORuntimeAutomationError(
                         "Operator completion response file must contain a JSON "
                         "object."
+                    )
+                try:
+                    confirmation = json.loads(
+                        confirmation_path.read_text(encoding="utf-8")
+                    )
+                except UnicodeDecodeError as exc:
+                    raise GTFORuntimeAutomationError(
+                        "Operator completion confirmation file is not valid "
+                        "UTF-8."
+                    ) from exc
+                except json.JSONDecodeError as exc:
+                    raise GTFORuntimeAutomationError(
+                        "Operator completion confirmation file is not valid "
+                        "JSON."
+                    ) from exc
+                if not isinstance(confirmation, Mapping):
+                    raise GTFORuntimeAutomationError(
+                        "Operator completion confirmation file must contain a "
+                        "JSON object."
+                    )
+                request_payload = request.to_dict()
+                if (
+                    confirmation.get("schema_version")
+                    != "gtfo_operator_completion_confirmation_v1"
+                    or confirmation.get("request_sha256")
+                    != request_payload["request_sha256"]
+                    or confirmation.get("status") != "confirmed"
+                ):
+                    raise GTFORuntimeAutomationError(
+                        "Operator completion confirmation identity is invalid."
+                    )
+                response_sha256 = hashlib.sha256(response_bytes).hexdigest()
+                if confirmation.get("response_sha256") != response_sha256:
+                    raise GTFORuntimeAutomationError(
+                        "Operator completion confirmed response SHA256 does "
+                        "not match."
                     )
                 return payload
             time.sleep(
@@ -1045,6 +1091,9 @@ def _operator_completion_exchange_payload(
         "event": "GTFO_OPERATOR_COMPLETION_REQUIRED",
         "request": request_payload,
         "response_path_suffix": f"{request.request_id}.response.json",
+        "confirmation_path_suffix": (
+            f"{request.request_id}.confirmation.json"
+        ),
         "response_schema": {
             "schema_version": "gtfo_operator_completion_v1",
             "request_sha256": request_payload["request_sha256"],
@@ -1067,6 +1116,12 @@ def _operator_completion_exchange_payload(
                 }
                 for item in request_payload["acceptance_criteria"]
             ],
+        },
+        "confirmation_schema": {
+            "schema_version": "gtfo_operator_completion_confirmation_v1",
+            "request_sha256": request_payload["request_sha256"],
+            "response_sha256": "<SHA256 of exact response file bytes>",
+            "status": "confirmed",
         },
     }
 

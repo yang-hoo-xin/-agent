@@ -491,15 +491,46 @@ config SHA256 `717c5f4b...82e` was restored.
 The bounded forward repair keeps stdin as the default for ordinary Runtime but
 gives observation retries a recoverable run-local exchange. Each exact
 `GTFOOperatorCompletionRequest` is persisted under the retry output root, and
-the reader accepts only the response filename declared by that request's
-`response_path_suffix`; pre-existing request or response paths block. The
-request survives task compaction, so an operator response can be built from the
-exact stored request identity and criteria without guessing or restarting the
-game. The retry #2 no-write preflight returned
+the reader accepts only the response and confirmation filenames declared by
+that request. A response remains editable and unread until a separate
+confirmation binds the exact response-file bytes by SHA256; pre-existing
+request, response, or confirmation paths block. The request survives task
+compaction, so an operator response can be built, corrected, and explicitly
+confirmed from the exact stored request identity and criteria without guessing
+or restarting the game. The retry #2 no-write preflight returned
 `READY_FOR_EXTERNAL_AUTHORIZATION`, retry number 2, one remaining attempt,
 prior restoration `passed`, operator exchange path length 211, maximum output
 path 216, an empty output root, and every write/graph/process/DLL field false.
 It authorizes nothing by itself.
+
+The separately authorized retry #2 predates that two-phase confirmation and is
+immutable. Its disabled attempt passed the bound negative observation and its
+enabled attempt loaded the exact DLL/config, then exercised multiple enemies.
+Current-run logs contain in-scope `reaction_type=Light` and
+`reaction_type=Heavy` samples followed by
+`signal=STAGGER_FEEDBACK_SKIPPED`, `visual_spawned=False`,
+`visual_reason=missing_canvas_rect_for_stagger_x`,
+`audio_event_accepted=True`, and nonzero `playing_id` values. The operator
+directly confirmed no additional yellow X. The first submitted response also
+labelled the audio criterion failed; after submission, the operator clarified
+that a quiet cue might have been masked by gunfire. Therefore the current
+product statement is: visual output failed, audio-event acceptance succeeded
+at code level, and player-observable audibility is not established. The
+immutable RuntimeEvidence still contains the earlier audio status and is not
+rewritten.
+
+The run ended `inconclusive`/blocked with RuntimeEvidence
+`3c1554faf998d491d2c09930a923334ec7bb4d4157301f4c2b99f13428646f33`,
+RepairPlan
+`f3cfb335b541998e5229ef4d22f0038d428ed3f8bebd311cafe74eccb9ea1664`,
+and BlockedReport
+`2eca02a4cbbf153c4a9a1504aa79e2685224aff1d42a05cea80a2c8796ad1886`.
+The stored failure owner remains `observation`,
+`source_repair_allowed=false`, because the full attempt did not bind all
+required observations. GTFO exited, the temporary DLL is absent, and
+`local.betterhitfeedback.cfg` was restored to SHA256
+`717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`.
+No further Runtime attempt or Mod source repair is authorized by this result.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

@@ -2681,16 +2681,23 @@ def _runtime_observation_retry_output_report(
         else None
     )
     maximum_operator_completion_path_chars = (
-        len(
-            str(
-                (
-                    operator_completion_directory
-                    / (
-                        "operator_"
-                        + ("f" * 32)
-                        + ".response.json"
-                    )
-                ).resolve()
+        max(
+            len(
+                str(
+                    (
+                        operator_completion_directory
+                        / (
+                            "operator_"
+                            + ("f" * 32)
+                            + suffix
+                        )
+                    ).resolve()
+                )
+            )
+            for suffix in (
+                ".request.json",
+                ".response.json",
+                ".confirmation.json",
             )
         )
         if operator_completion_directory is not None
@@ -2731,6 +2738,12 @@ def _runtime_observation_retry_output_report(
                 ),
                 "response_path_source": (
                     "request_file.response_path_suffix"
+                ),
+                "confirmation_path_source": (
+                    "request_file.confirmation_path_suffix"
+                ),
+                "confirmation_identity": (
+                    "confirmation_file.response_sha256"
                 ),
                 "maximum_path_chars": (
                     maximum_operator_completion_path_chars

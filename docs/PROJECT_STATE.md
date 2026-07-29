@@ -14,10 +14,10 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: build_complete_runtime_retry_2_admitted
+stagger_implementation_plan_status: build_complete_runtime_retry_2_inconclusive
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: STAGGER-OPERATOR-COMPLETION-RECOVERABLE-EXCHANGE-001
+most_recent_completed_capability: STAGGER-OPERATOR-COMPLETION-CONFIRMATION-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -570,6 +570,45 @@ overall maximum path 216, and zero writes, graph entry, checkpoint
 consumption, ResumeReport/RuntimeEvidence creation, process launch, or DLL
 copy. Product Runtime remains blocked; the user's retry #1 observation is not
 retroactively promoted, and none of the seven criteria is proved.
+
+The separately authorized retry #2 then completed both ordered GTFO attempts.
+The disabled observation was bound as passed. In the enabled attempt, the
+operator hit multiple enemies and the current-run log recorded repeated
+`reaction_type=Light` and `reaction_type=Heavy` events in the selected scope.
+Every displayed diagnostic sample ended in
+`signal=STAGGER_FEEDBACK_SKIPPED`, with `visual_spawned=False` and exact reason
+`missing_canvas_rect_for_stagger_x`. The same samples recorded
+`audio_event_accepted=True` with nonzero `playing_id`; that proves code-level
+event acceptance only. The operator directly observed no additional yellow X.
+After an initial response labelled the audio criterion failed, the operator
+clarified that gunfire may have masked a quiet cue. The latest human fact is
+therefore `not_observed` for audibility, not a proved audio failure. The
+immutable response and RuntimeEvidence retain the earlier submitted status and
+are not rewritten.
+
+Retry #2 wrote inconclusive RuntimeEvidence
+`3c1554faf998d491d2c09930a923334ec7bb4d4157301f4c2b99f13428646f33`,
+RepairPlan
+`f3cfb335b541998e5229ef4d22f0038d428ed3f8bebd311cafe74eccb9ea1664`,
+and BlockedReport
+`2eca02a4cbbf153c4a9a1504aa79e2685224aff1d42a05cea80a2c8796ad1886`.
+The Workflow remains blocked and the stored owner remains `observation` with
+`source_repair_allowed=false`; it does not authorize a Mod edit. Restoration
+passed: GTFO process count is zero, the temporary plugin destination is
+absent, and `local.betterhitfeedback.cfg` again has SHA256
+`717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`.
+
+The observed post-submission correction exposed a precise operator-channel
+race. Observation retries now use a two-phase file exchange: the response file
+remains editable and is not read until a separate confirmation file binds its
+exact bytes by SHA256. A response may therefore change from `failed` to
+`not_observed` before confirmation; an absent response, wrong request identity,
+wrong response SHA256, stale exchange path, or missing confirmation blocks.
+Ordinary stdin Runtime is unchanged. This is a bounded input-integrity repair,
+not a new Runtime scheduler or Artifact system. The longest retry #2-shaped
+confirmation path is 215 characters and remains below the existing 216-character
+overall output maximum. The affected Runtime/Workflow suite passed 310 tests in
+36.87 seconds; Python compilation and `git diff --check` passed.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

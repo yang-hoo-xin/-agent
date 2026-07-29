@@ -588,6 +588,10 @@ def test_runtime_observation_retry_preflights_operator_exchange_without_writes(
             "GTFOOperatorCompletionRequest.request_id"
         ),
         "response_path_source": "request_file.response_path_suffix",
+        "confirmation_path_source": (
+            "request_file.confirmation_path_suffix"
+        ),
+        "confirmation_identity": "confirmation_file.response_sha256",
         "maximum_path_chars": exchange["maximum_path_chars"],
         "writes_performed": False,
     }

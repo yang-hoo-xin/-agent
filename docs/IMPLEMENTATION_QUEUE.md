@@ -579,13 +579,28 @@ focused_verification:
   process was not launched. GTFO exited, the temporary DLL was removed, and
   the original config SHA256 `717c5f4b...82e` was restored.
   Observation retries now persist the exact operator request under the
-  run-local output root and wait only for its request-declared response
-  filename. Ordinary Runtime keeps the existing stdin default. Existing
-  exchange paths block, so stale responses cannot be consumed. Retry #2
+  run-local output root. A response remains editable and unread until a
+  request-declared confirmation file binds its exact bytes by SHA256. Ordinary
+  Runtime keeps the existing stdin default. Existing request, response, or
+  confirmation paths block, so stale responses cannot be consumed. Retry #2
   no-write preflight bound the latest RuntimeEvidence/RepairPlan, used empty
   `runtime_observation_retry_002`, returned retry number 2 with one remaining
   attempt, prior restoration passed, operator path 211, maximum path 216, and
   zero writes or external action.
+  The authorized retry #2 completed both modes. The disabled observation
+  passed. Enabled-mode current-run logs recorded in-scope Light/Heavy reactions
+  and repeated STAGGER_FEEDBACK_SKIPPED facts with visual_spawned=False,
+  visual_reason=missing_canvas_rect_for_stagger_x,
+  audio_event_accepted=True, and nonzero playing_id. The operator observed no
+  additional yellow X. The submitted response initially labelled audibility
+  failed, then the operator clarified that gunfire may have masked a quiet cue;
+  the current audibility statement is not_observed, while the immutable
+  response retains the pre-correction value.
+  The final result is inconclusive RuntimeEvidence `3c1554fa...46f33`,
+  RepairPlan `f3cfb335...a1664`, and BlockedReport `2eca02a4...1886`.
+  Its owner is observation and source_repair_allowed=false. GTFO exited, the
+  temporary DLL was removed, and config SHA256 `717c5f4b...82e` was restored.
+  No later Runtime or source change is authorized by that result.
   `python -m pytest tests/unit/test_gtfo_runtime_automation.py
   tests/unit/test_gtfo_stagger_runtime.py tests/unit/test_local_entry.py
   tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py -q`
@@ -599,6 +614,9 @@ focused_verification:
   tests/unit/test_transition_eval_gate.py
   tests/unit/test_runtime_evidence.py -q --tb=short` passed 305 tests in
   37.42s.
+  After the two-phase confirmation repair, the same affected command passed
+  310 tests in 36.87s. The retry #2-shaped confirmation path is 215 characters,
+  Python compilation passed, and `git diff --check` passed.
 stop_condition:
   Preserve every prior model, Review, Dry-run, and Apply result as immutable
   history, including the semantically rejected isolated Apply and failed repair
@@ -614,15 +632,15 @@ stop_condition:
   entry. Preserve the blocked recovery RuntimeEvidence, RepairPlan, and
   BlockedReport. Do not reinterpret the explicit failed operator status, create
   a new checkpoint or second ResumeReport, or edit Mod source.
-  None of the seven Runtime criteria is proved. UTF-8 preservation, compact
-  process diagnostics, preflight path admission, and disabled-stage semantic
-  instructions are now implemented and tested for a future attempt. A later
+  Retry #2 proves the disabled observation and a visible-output defect in the
+  enabled attempt, but not full product acceptance. UTF-8 preservation,
+  compact process diagnostics, preflight path admission, guided semantic
+  instructions, and hash-bound response confirmation are now implemented and
+  tested for a future observation exchange. A later
   Observation retry #1 is immutable inconclusive observation-channel history.
-  Observation retry #2 has passed zero-write admission with a separate empty
-  output root and recoverable operator exchange, and is stopped at the external
-  action gate. Execution still
-  requires separate runtime/process/game-directory authorization; do not clean
-  or bypass the existing backup material.
+  Observation retry #2 is immutable inconclusive Runtime history and exhausted
+  the admitted retry. Preserve its initial audio response together with the
+  later user correction; do not promote either into full audibility proof.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.

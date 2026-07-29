@@ -1508,6 +1508,9 @@ def test_gtfo_operator_completion_file_reader_persists_bound_exchange(
     assert exchange["response_path_suffix"] == (
         f"{request.request_id}.response.json"
     )
+    assert exchange["confirmation_path_suffix"] == (
+        f"{request.request_id}.confirmation.json"
+    )
 
     response = {
         **exchange["response_schema"],
@@ -1525,8 +1528,22 @@ def test_gtfo_operator_completion_file_reader_persists_bound_exchange(
             }
         ],
     }
-    (exchange_root / exchange["response_path_suffix"]).write_text(
+    response_path = exchange_root / exchange["response_path_suffix"]
+    response_path.write_text(
         json.dumps(response, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    time.sleep(0.05)
+    assert thread.is_alive()
+    response_sha256 = hashlib.sha256(response_path.read_bytes()).hexdigest()
+    confirmation = {
+        **exchange["confirmation_schema"],
+        "response_sha256": response_sha256,
+    }
+    (
+        exchange_root / exchange["confirmation_path_suffix"]
+    ).write_text(
+        json.dumps(confirmation, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     thread.join(timeout=1)
@@ -1534,6 +1551,137 @@ def test_gtfo_operator_completion_file_reader_persists_bound_exchange(
     assert not thread.is_alive()
     assert result["payload"] == response
     assert request_path.is_file()
+
+
+def test_gtfo_operator_completion_file_reader_accepts_correction_before_confirmation(
+    tmp_path: Path,
+) -> None:
+    request = GTFOOperatorCompletionRequest(
+        request_id="operator_file_correction_test",
+        feature_id="feature_001",
+        profile_id="gtfo_real_runtime:general_enabled_true",
+        runtime_process_pid=4242,
+        acceptance_criteria=(MANUAL_ACCEPTANCE_CRITERION,),
+        timeout_seconds=2,
+    )
+    exchange_root = (tmp_path / "operator_completion").resolve()
+    reader = make_operator_completion_file_reader(
+        exchange_root,
+        poll_interval_seconds=0.01,
+    )
+    result: dict[str, object] = {}
+
+    def invoke_reader() -> None:
+        result["payload"] = reader(request)
+
+    thread = threading.Thread(target=invoke_reader)
+    thread.start()
+    request_path = exchange_root / f"{request.request_id}.request.json"
+    deadline = time.monotonic() + 1
+    while not request_path.is_file() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    exchange = json.loads(request_path.read_text(encoding="utf-8"))
+    criterion_sha256 = exchange["request"]["acceptance_criteria"][0][
+        "criterion_sha256"
+    ]
+    response_path = exchange_root / exchange["response_path_suffix"]
+    response = {
+        **exchange["response_schema"],
+        "observed_by": "local_operator",
+        "observations": [
+            {
+                "criterion_sha256": criterion_sha256,
+                "status": "failed",
+                "notes": "No cue was heard.",
+            }
+        ],
+    }
+    response_path.write_text(
+        json.dumps(response, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    response["observations"][0] = {
+        "criterion_sha256": criterion_sha256,
+        "status": "not_observed",
+        "notes": "Gunfire may have masked a quiet feature cue.",
+    }
+    response_path.write_text(
+        json.dumps(response, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    confirmation = {
+        **exchange["confirmation_schema"],
+        "response_sha256": hashlib.sha256(
+            response_path.read_bytes()
+        ).hexdigest(),
+    }
+    (
+        exchange_root / exchange["confirmation_path_suffix"]
+    ).write_text(
+        json.dumps(confirmation, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    assert result["payload"]["observations"][0] == {
+        "criterion_sha256": criterion_sha256,
+        "status": "not_observed",
+        "notes": "Gunfire may have masked a quiet feature cue.",
+    }
+
+
+def test_gtfo_operator_completion_file_reader_rejects_wrong_confirmation_hash(
+    tmp_path: Path,
+) -> None:
+    request = GTFOOperatorCompletionRequest(
+        request_id="operator_file_hash_test",
+        feature_id="feature_001",
+        profile_id="gtfo_real_runtime",
+        runtime_process_pid=4242,
+        acceptance_criteria=(MANUAL_ACCEPTANCE_CRITERION,),
+        timeout_seconds=2,
+    )
+    exchange_root = (tmp_path / "operator_completion").resolve()
+    reader = make_operator_completion_file_reader(
+        exchange_root,
+        poll_interval_seconds=0.01,
+    )
+    result: dict[str, object] = {}
+
+    def invoke_reader() -> None:
+        try:
+            reader(request)
+        except Exception as exc:
+            result["error"] = exc
+
+    thread = threading.Thread(target=invoke_reader)
+    thread.start()
+    request_path = exchange_root / f"{request.request_id}.request.json"
+    deadline = time.monotonic() + 1
+    while not request_path.is_file() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    exchange = json.loads(request_path.read_text(encoding="utf-8"))
+    response_path = exchange_root / exchange["response_path_suffix"]
+    response_path.write_text(
+        json.dumps(exchange["response_schema"]) + "\n",
+        encoding="utf-8",
+    )
+    confirmation = {
+        **exchange["confirmation_schema"],
+        "response_sha256": "0" * 64,
+    }
+    (
+        exchange_root / exchange["confirmation_path_suffix"]
+    ).write_text(
+        json.dumps(confirmation) + "\n",
+        encoding="utf-8",
+    )
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    assert isinstance(result["error"], GTFORuntimeAutomationError)
+    assert "confirmed response SHA256 does not match" in str(result["error"])
 
 
 def test_gtfo_operator_completion_file_reader_rejects_existing_exchange(
@@ -1549,7 +1697,7 @@ def test_gtfo_operator_completion_file_reader_rejects_existing_exchange(
     )
     exchange_root = (tmp_path / "operator_completion").resolve()
     exchange_root.mkdir()
-    (exchange_root / f"{request.request_id}.response.json").write_text(
+    (exchange_root / f"{request.request_id}.confirmation.json").write_text(
         "{}\n",
         encoding="utf-8",
     )
