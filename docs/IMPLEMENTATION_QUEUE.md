@@ -553,8 +553,21 @@ focused_verification:
   contradictory facts produce `operator_status_semantic_conflict`,
   `correction_required=true`, an inconclusive observation-owned result, and no
   source-repair authority. Existing machine evidence gates remain independent.
-  This repair does not rewrite the old RuntimeEvidence or admit a retry; the
-  old run root's backup material remains a hard blocker.
+  This repair does not rewrite the old RuntimeEvidence; the old run root's
+  backup material remains a hard blocker.
+  The bounded observation-retry branch now reuses the exact accepted
+  ResumeReport without creating a checkpoint or second report. It accepts only
+  the latest same-run inconclusive observation-owned RuntimeEvidence, its exact
+  new-evidence RepairPlan with no source authority and remaining budget,
+  complete prior DLL/config restoration, unchanged Build/admission, no terminal
+  Eval/Workflow state, and a separate absolute empty output root. Retry number
+  and remaining budget are derived from immutable RuntimeEvidence revisions.
+  Real retry #1 preflight bound RuntimeEvidence `12223427...93c4d`, RepairPlan
+  `21d71010...a4dc`, ResumeReport `40004f6c...960a0`, and the empty
+  `runtime_observation_retry_001` root. It returned
+  `READY_FOR_EXTERNAL_AUTHORIZATION`, maximum path 216, and zero writes, graph
+  entry, checkpoint/report creation, RuntimeEvidence creation, process launch,
+  or DLL copy.
   `python -m pytest tests/unit/test_workflow_graph.py
   tests/unit/test_mod_agent_cli.py tests/unit/test_local_entry.py
   tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
@@ -562,17 +575,8 @@ focused_verification:
   tests/unit/test_gtfo_stagger_runtime.py
   tests/unit/test_runtime_deployment.py
   tests/unit/test_transition_eval_gate.py
-  tests/unit/test_runtime_evidence.py -q --tb=short` passed 299 tests in
-  55.65s.
-  `python -m pytest tests/unit/test_workflow_graph.py
-  tests/unit/test_mod_agent_cli.py tests/unit/test_local_entry.py
-  tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
-  tests/unit/test_config_loading.py tests/unit/test_gtfo_runtime_automation.py
-  tests/unit/test_gtfo_stagger_runtime.py
-  tests/unit/test_runtime_deployment.py
-  tests/unit/test_transition_eval_gate.py
-  tests/unit/test_runtime_evidence.py -q --tb=short` passed 299 tests in
-  55.65s.
+  tests/unit/test_runtime_evidence.py -q --tb=short` passed 305 tests in
+  37.42s.
 stop_condition:
   Preserve every prior model, Review, Dry-run, and Apply result as immutable
   history, including the semantically rejected isolated Apply and failed repair
@@ -587,13 +591,14 @@ stop_condition:
   reuse only its exact accepted ResumeReport through the explicit recovery
   entry. Preserve the blocked recovery RuntimeEvidence, RepairPlan, and
   BlockedReport. Do not reinterpret the explicit failed operator status, create
-  a new checkpoint or second ResumeReport, retry Runtime, or edit Mod source.
+  a new checkpoint or second ResumeReport, or edit Mod source.
   None of the seven Runtime criteria is proved. UTF-8 preservation, compact
   process diagnostics, preflight path admission, and disabled-stage semantic
   instructions are now implemented and tested for a future attempt. A later
-  observation retry still requires a new bounded retry run root and separate
-  game-launch/game-directory authorization; do not clean or bypass the existing
-  backup material.
+  Observation retry #1 has passed zero-write admission with a separate empty
+  output root and is stopped at the external action gate. Execution still
+  requires separate runtime/process/game-directory authorization; do not clean
+  or bypass the existing backup material.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.

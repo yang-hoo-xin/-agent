@@ -454,8 +454,28 @@ the status: `true` with `passed`, `false` with `failed`, and `null` with
 inconclusive observation-owned result, and no source-repair authority. Machine
 markers, configuration, current-run log windows, and restoration checks remain
 independent gates and cannot be overridden by the operator fields. This repair
-does not reinterpret the prior Artifact and does not admit a Runtime retry;
-the existing backup material remains a hard blocker on the old run root.
+does not reinterpret the prior Artifact. The existing backup material remains a
+hard blocker on the old run root.
+
+A new bounded observation-retry branch now reuses the exact immutable
+checkpoint and accepted ResumeReport without creating either Artifact again.
+It admits only the latest RuntimeEvidence when it is inconclusive,
+observation-owned, bound to the same Build, and explicitly forbids source
+repair; the latest RepairPlan must require `repair_runtime_observation`, require
+new evidence, retain retry budget, and bind that exact RuntimeEvidence. Prior
+DLL/config restoration must be complete. Every retry uses a separate absolute
+empty output root, isolates captures/diagnostics/backups/results there, and is
+counted against the RepairPlan budget from immutable RuntimeEvidence revisions.
+Product-owned failures, stale Build lineage, terminal Eval/Workflow state,
+changed admission, incomplete restoration, occupied output roots, and exhausted
+budgets block before graph entry or external action.
+
+The real retry #1 no-launch preflight bound RuntimeEvidence
+`12223427...93c4d`, RepairPlan `21d71010...a4dc`, ResumeReport
+`40004f6c...960a0`, and unchanged Build/checkpoint lineage. It returned
+`READY_FOR_EXTERNAL_AUTHORIZATION`, with maximum planned output path 216
+characters and every write/graph/process/DLL field false. This authorizes
+nothing by itself: no retry has entered the graph or launched GTFO.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

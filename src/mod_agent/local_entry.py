@@ -85,8 +85,12 @@ class _RuntimeContinuationHandoff:
     build_ref: ArtifactRef
     build: dict[str, Any]
     accepted_resume_recovery: bool = False
+    runtime_observation_retry: bool = False
     recovery_decision: ResumeDecision | None = None
     recovery_resume_report_ref: ArtifactRef | None = None
+    prior_runtime_evidence_ref: ArtifactRef | None = None
+    prior_repair_plan_ref: ArtifactRef | None = None
+    observation_retry_binding: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -1051,13 +1055,23 @@ def _make_deploying_runtime_evidence_factory(
     expected_destination_sha256: str | None = None,
     expected_config_destination_existed: bool | None = None,
     expected_config_destination_sha256: str | None = None,
+    runtime_output_directory: Path | None = None,
+    runtime_observation_retry: Mapping[str, Any] | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Wrap the existing GTFO runner with verified temporary deployment."""
 
     stagger_profile = stagger_profile_from_settings(settings)
     if stagger_profile is not None:
-        return make_gtfo_stagger_runtime_evidence_factory(
-            base_profile=profile_from_settings(settings),
+        base_profile = profile_from_settings(settings)
+        if runtime_output_directory is not None:
+            base_profile = replace(
+                base_profile,
+                screenshot_directory=str(
+                    runtime_output_directory / "runtime_captures"
+                ),
+            )
+        stagger_factory = make_gtfo_stagger_runtime_evidence_factory(
+            base_profile=base_profile,
             stagger_profile=stagger_profile,
             allow_game_launch=allow_game_launch,
             allow_game_directory_write=allow_game_directory_write,
@@ -1073,6 +1087,27 @@ def _make_deploying_runtime_evidence_factory(
             expected_config_destination_sha256=(
                 expected_config_destination_sha256
             ),
+        )
+        if runtime_observation_retry is None:
+            return stagger_factory
+
+        def retry_stagger_factory(
+            feature_id: str,
+            build: dict[str, Any],
+            feature_spec: dict[str, Any],
+        ) -> dict[str, Any]:
+            payload = stagger_factory(feature_id, build, feature_spec)
+            payload["runtime_observation_retry"] = dict(
+                runtime_observation_retry
+            )
+            return payload
+
+        return retry_stagger_factory
+
+    if runtime_output_directory is not None or runtime_observation_retry is not None:
+        raise LocalEntryError(
+            "Runtime observation retry is supported only for the reviewed "
+            "Stagger profile."
         )
 
     base_factory = make_gtfo_runtime_evidence_factory_from_settings(
@@ -2249,7 +2284,13 @@ def _load_runtime_continuation_handoff(
     checkpoint_hash: str,
     resume_id: str | None = None,
     recover_accepted_resume: bool = False,
+    retry_runtime_observation: bool = False,
 ) -> _RuntimeContinuationHandoff:
+    if recover_accepted_resume and retry_runtime_observation:
+        raise LocalEntryError(
+            "Accepted resume recovery and Runtime observation retry are "
+            "mutually exclusive."
+        )
     root = Path(run_root).resolve()
     if not root.is_dir():
         raise LocalEntryError("Runtime continuation run_root does not exist.")
@@ -2403,9 +2444,28 @@ def _load_runtime_continuation_handoff(
 
     recovery_decision = None
     recovery_resume_report_ref = None
+    prior_runtime_evidence_ref = None
+    prior_repair_plan_ref = None
+    observation_retry_binding = None
     try:
         checkpoint_store = WorkflowCheckpointStore(artifact_store)
-        if recover_accepted_resume:
+        if retry_runtime_observation:
+            if resume_id is None:
+                raise LocalEntryError(
+                    "Runtime observation retry requires the exact --resume-id."
+                )
+            (
+                recovery_decision,
+                recovery_resume_report_ref,
+                prior_runtime_evidence_ref,
+                prior_repair_plan_ref,
+                observation_retry_binding,
+            ) = checkpoint_store.preflight_runtime_observation_retry(
+                checkpoint_ref,
+                resume_id=resume_id,
+            )
+            readiness = recovery_decision
+        elif recover_accepted_resume:
             if resume_id is None:
                 raise LocalEntryError(
                     "Accepted resume recovery requires the exact --resume-id."
@@ -2450,8 +2510,12 @@ def _load_runtime_continuation_handoff(
         build_ref=build_ref,
         build=build,
         accepted_resume_recovery=recover_accepted_resume,
+        runtime_observation_retry=retry_runtime_observation,
         recovery_decision=recovery_decision,
         recovery_resume_report_ref=recovery_resume_report_ref,
+        prior_runtime_evidence_ref=prior_runtime_evidence_ref,
+        prior_repair_plan_ref=prior_repair_plan_ref,
+        observation_retry_binding=observation_retry_binding,
     )
 
 
@@ -2537,6 +2601,154 @@ def _runtime_continuation_backup_report(
     }
 
 
+def _runtime_observation_retry_output_report(
+    *,
+    source_run_root: Path,
+    runtime_output_root: str | Path,
+    feature_id: str,
+    stagger_enabled: bool,
+) -> dict[str, Any]:
+    """Read-validate a fresh output root for one observation retry."""
+
+    output_input = Path(runtime_output_root)
+    if not output_input.is_absolute():
+        raise LocalEntryError(
+            "Runtime observation retry output root must be absolute."
+        )
+    output_root = output_input.resolve()
+    if not output_root.is_dir():
+        raise LocalEntryError(
+            "Runtime observation retry output root does not exist."
+        )
+    source_root = source_run_root.resolve()
+    try:
+        output_root.relative_to(source_root)
+    except ValueError:
+        pass
+    else:
+        raise LocalEntryError(
+            "Runtime observation retry output root must remain outside the "
+            "original run root."
+        )
+    try:
+        source_root.relative_to(output_root)
+    except ValueError:
+        pass
+    else:
+        raise LocalEntryError(
+            "Runtime observation retry output root cannot contain the original "
+            "run root."
+        )
+    existing_entries = sorted(str(path.resolve()) for path in output_root.iterdir())
+    if existing_entries:
+        raise LocalEntryError(
+            "Runtime observation retry output root must be empty."
+        )
+
+    deployment_backup = _runtime_continuation_backup_report(
+        output_root,
+        stagger_enabled=stagger_enabled,
+    )
+    modes = (
+        ("general_enabled_false", "general_enabled_true")
+        if stagger_enabled
+        else ("single_process",)
+    )
+    planned_capture_paths = [
+        str(
+            (
+                output_root
+                / "runtime_captures"
+                / mode
+                / f"{feature_id}_gtfo_runtime.png"
+            ).resolve()
+        )
+        for mode in modes
+    ]
+    planned_result_path = str((output_root / "runtime_resume_result.json").resolve())
+    maximum_output_path_chars = max(
+        len(path)
+        for path in (
+            *planned_capture_paths,
+            planned_result_path,
+            *deployment_backup["planned_backup_paths"],
+            *deployment_backup["planned_process_diagnostic_paths"],
+        )
+    )
+    if os.name == "nt" and maximum_output_path_chars >= 260:
+        raise LocalEntryError(
+            "Runtime observation retry output path exceeds the Windows "
+            "259-character file-path boundary."
+        )
+    return {
+        "status": "ready",
+        "runtime_output_root": str(output_root),
+        "source_run_root": str(source_root),
+        "empty": True,
+        "existing_entries": [],
+        "planned_capture_paths": planned_capture_paths,
+        "planned_result_path": planned_result_path,
+        "maximum_output_path_chars": maximum_output_path_chars,
+        "deployment_backup": deployment_backup,
+        "writes_performed": False,
+    }
+
+
+def _runtime_observation_retry_restoration_report(
+    handoff: _RuntimeContinuationHandoff,
+) -> dict[str, Any]:
+    """Require exact prior Stagger deployment restoration before retry."""
+
+    prior_ref = handoff.prior_runtime_evidence_ref
+    if prior_ref is None:
+        raise LocalEntryError(
+            "Runtime observation retry prior RuntimeEvidence binding is missing."
+        )
+    prior_runtime = handoff.artifact_store.read(prior_ref)["data"]
+    attempts = prior_runtime.get("stagger_runtime_attempts")
+    if (
+        not isinstance(attempts, list)
+        or not attempts
+        or any(not isinstance(item, Mapping) for item in attempts)
+    ):
+        raise LocalEntryError(
+            "Runtime observation retry requires prior Stagger attempt "
+            "restoration evidence."
+        )
+    attempt_reports: list[dict[str, Any]] = []
+    for item in attempts:
+        mode = item.get("stagger_attempt_mode")
+        plugin = item.get("plugin_deployment_binding")
+        config = item.get("stagger_config_deployment_binding")
+        if (
+            not isinstance(mode, str)
+            or not mode
+            or not isinstance(plugin, Mapping)
+            or plugin.get("restored") is not True
+            or plugin.get("restoration_status") != "restored"
+            or not isinstance(config, Mapping)
+            or config.get("restored") is not True
+            or config.get("restoration_status") != "restored"
+        ):
+            raise LocalEntryError(
+                "Runtime observation retry prior deployment restoration is "
+                "incomplete."
+            )
+        attempt_reports.append(
+            {
+                "mode": mode,
+                "plugin_restoration_status": "restored",
+                "config_restoration_status": "restored",
+            }
+        )
+    return {
+        "status": "passed",
+        "prior_runtime_evidence_ref": prior_ref.path,
+        "prior_runtime_evidence_hash": prior_ref.artifact_hash,
+        "attempts": attempt_reports,
+    }
+
+
 def preflight_local_runtime(
     *,
     run_root: str | Path,
@@ -2546,11 +2758,32 @@ def preflight_local_runtime(
     artifact_store_root: str | Path | None = None,
     resume_id: str | None = None,
     recover_accepted_resume: bool = False,
+    retry_runtime_observation: bool = False,
+    runtime_output_root: str | Path | None = None,
     settings_path: str | Path | None = None,
     runtime_plugin_destination: str | Path | None = None,
 ) -> dict[str, Any]:
     """Read-validate one Runtime continuation without writing or entering graph."""
 
+    if retry_runtime_observation and runtime_output_root is None:
+        raise LocalEntryError(
+            "Runtime observation retry requires runtime_output_root."
+        )
+    if retry_runtime_observation and not Path(runtime_output_root).is_absolute():
+        raise LocalEntryError(
+            "Runtime observation retry output root must be absolute."
+        )
+    if not retry_runtime_observation and runtime_output_root is not None:
+        raise LocalEntryError(
+            "runtime_output_root is only valid for Runtime observation retry."
+        )
+    if retry_runtime_observation and (
+        settings_path is None or runtime_plugin_destination is None
+    ):
+        raise LocalEntryError(
+            "Runtime observation retry preflight requires the reviewed Runtime "
+            "profile and plugin destination."
+        )
     handoff = _load_runtime_continuation_handoff(
         run_root=run_root,
         artifact_store_root=artifact_store_root,
@@ -2559,6 +2792,12 @@ def preflight_local_runtime(
         checkpoint_hash=checkpoint_hash,
         resume_id=resume_id,
         recover_accepted_resume=recover_accepted_resume,
+        retry_runtime_observation=retry_runtime_observation,
+    )
+    retry_restoration = (
+        _runtime_observation_retry_restoration_report(handoff)
+        if retry_runtime_observation
+        else None
     )
     build_artifact = handoff.build["verified_artifacts"][0]
     runtime_profile = None
@@ -2583,6 +2822,9 @@ def preflight_local_runtime(
             settings,
             runtime_plugin_destination=runtime_plugin_destination,
             feature_spec=handoff.feature_spec,
+            runtime_output_root=(
+                runtime_output_root if retry_runtime_observation else None
+            ),
         )
         if Path(str(build_artifact["path"])).name != Path(
             str(runtime_profile["plugin_deployment"]["destination_path"])
@@ -2590,11 +2832,35 @@ def preflight_local_runtime(
             raise LocalEntryError(
                 "Runtime continuation destination filename does not match Build output."
             )
-        runtime_profile["deployment_backup"] = _runtime_continuation_backup_report(
-            handoff.run_root,
-            stagger_enabled=runtime_profile.get("stagger_acceptance") is not None,
-        )
-        if handoff.accepted_resume_recovery:
+        if retry_runtime_observation:
+            retry_output_report = _runtime_observation_retry_output_report(
+                source_run_root=handoff.run_root,
+                runtime_output_root=runtime_output_root,
+                feature_id=feature_id,
+                stagger_enabled=(
+                    runtime_profile.get("stagger_acceptance") is not None
+                ),
+            )
+            runtime_profile["deployment_backup"] = retry_output_report[
+                "deployment_backup"
+            ]
+            runtime_profile["runtime_observation_retry_output"] = (
+                retry_output_report
+            )
+            runtime_profile["prior_restoration"] = retry_restoration
+        else:
+            runtime_profile["deployment_backup"] = (
+                _runtime_continuation_backup_report(
+                    handoff.run_root,
+                    stagger_enabled=(
+                        runtime_profile.get("stagger_acceptance") is not None
+                    ),
+                )
+            )
+        if (
+            handoff.accepted_resume_recovery
+            or handoff.runtime_observation_retry
+        ):
             acceptance_criteria = handoff.feature_spec.get("acceptance_criteria")
             exact_acceptance_criteria = (
                 tuple(acceptance_criteria)
@@ -2664,9 +2930,13 @@ def preflight_local_runtime(
             "lineage_status": "valid",
             "freshness_status": "fresh",
             "consumption_status": (
-                "accepted_resume_recovery"
-                if handoff.accepted_resume_recovery
-                else "unconsumed"
+                "runtime_observation_retry"
+                if handoff.runtime_observation_retry
+                else (
+                    "accepted_resume_recovery"
+                    if handoff.accepted_resume_recovery
+                    else "unconsumed"
+                )
             ),
             "next_graph_node": (
                 handoff.checkpoint.get("resume_binding") or {}
@@ -2701,6 +2971,16 @@ def preflight_local_runtime(
             if handoff.accepted_resume_recovery
             else {"enabled": False}
         ),
+        "runtime_observation_retry": (
+            {
+                "enabled": True,
+                **dict(handoff.observation_retry_binding or {}),
+                "runtime_output_root": str(Path(runtime_output_root).resolve()),
+                "prior_restoration": retry_restoration,
+            }
+            if handoff.runtime_observation_retry
+            else {"enabled": False}
+        ),
         "external_action_gate": external_action_gate,
     }
 
@@ -2710,6 +2990,7 @@ def _runtime_profile_preflight_record(
     *,
     runtime_plugin_destination: str | Path,
     feature_spec: Mapping[str, Any],
+    runtime_output_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Validate one configured Runtime profile without granting external authority."""
 
@@ -2723,6 +3004,19 @@ def _runtime_profile_preflight_record(
         profile = profile_from_settings(settings)
     except GTFORuntimeAutomationError as exc:
         raise LocalEntryError(f"GTFO Runtime preflight failed: {exc}") from exc
+    stagger_profile = stagger_profile_from_settings(settings)
+    if runtime_output_root is not None:
+        if stagger_profile is None:
+            raise LocalEntryError(
+                "Runtime observation retry output isolation is supported only "
+                "for the reviewed Stagger profile."
+            )
+        profile = replace(
+            profile,
+            screenshot_directory=str(
+                Path(runtime_output_root).resolve() / "runtime_captures"
+            ),
+        )
     destination_input = Path(runtime_plugin_destination)
     if not destination_input.is_absolute():
         raise LocalEntryError(
@@ -2827,7 +3121,6 @@ def _runtime_profile_preflight_record(
         "would_launch": False,
         "authorization_status": "not_granted_preflight_only",
     }
-    stagger_profile = stagger_profile_from_settings(settings)
     stagger_acceptance = None
     if stagger_profile is not None:
         if profile.operator_completion_required is not True:
@@ -2914,6 +3207,8 @@ def resume_local_runtime(
     allow_game_directory_write: bool,
     resume_id: str | None = None,
     recover_accepted_resume: bool = False,
+    retry_runtime_observation: bool = False,
+    runtime_output_root: str | Path | None = None,
     runtime_evidence_factory: (
         Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None
     ) = None,
@@ -2927,9 +3222,32 @@ def resume_local_runtime(
         raise LocalEntryError(
             "Accepted resume recovery requires the exact prior resume_id."
         )
-    if recover_accepted_resume and injected_runtime_admission is not None:
+    if retry_runtime_observation and resume_id is None:
         raise LocalEntryError(
-            "Accepted resume recovery does not accept injected Runtime admission."
+            "Runtime observation retry requires the exact prior resume_id."
+        )
+    if recover_accepted_resume and retry_runtime_observation:
+        raise LocalEntryError(
+            "Accepted resume recovery and Runtime observation retry are "
+            "mutually exclusive."
+        )
+    if retry_runtime_observation and runtime_output_root is None:
+        raise LocalEntryError(
+            "Runtime observation retry requires runtime_output_root."
+        )
+    if retry_runtime_observation and not Path(runtime_output_root).is_absolute():
+        raise LocalEntryError(
+            "Runtime observation retry output root must be absolute."
+        )
+    if not retry_runtime_observation and runtime_output_root is not None:
+        raise LocalEntryError(
+            "runtime_output_root is only valid for Runtime observation retry."
+        )
+    if (
+        recover_accepted_resume or retry_runtime_observation
+    ) and injected_runtime_admission is not None:
+        raise LocalEntryError(
+            "Accepted ResumeReport reuse does not accept injected Runtime admission."
         )
     selected_resume_id = resume_id or f"resume_{uuid4().hex}"
     handoff = _load_runtime_continuation_handoff(
@@ -2940,8 +3258,14 @@ def resume_local_runtime(
         checkpoint_hash=checkpoint_hash,
         resume_id=selected_resume_id,
         recover_accepted_resume=recover_accepted_resume,
+        retry_runtime_observation=retry_runtime_observation,
     )
-    root = handoff.run_root
+    source_root = handoff.run_root
+    root = (
+        Path(runtime_output_root).resolve()
+        if retry_runtime_observation
+        else source_root
+    )
     artifact_store = handoff.artifact_store
     checkpoint_ref = handoff.checkpoint_ref
     checkpoint = handoff.checkpoint
@@ -2979,6 +3303,9 @@ def resume_local_runtime(
             settings,
             runtime_plugin_destination=runtime_plugin_destination,
             feature_spec=handoff.feature_spec,
+            runtime_output_root=(
+                root if retry_runtime_observation else None
+            ),
         )
         build = handoff.build
         verified_artifacts = [
@@ -3005,10 +3332,25 @@ def resume_local_runtime(
                 "Runtime continuation destination filename does not match Build output."
             )
         backup_directory = root / "runtime_continuation_deployment_backup"
-        backup_report = _runtime_continuation_backup_report(
-            root,
-            stagger_enabled=runtime_admission.get("stagger_acceptance") is not None,
-        )
+        if retry_runtime_observation:
+            retry_output_report = _runtime_observation_retry_output_report(
+                source_run_root=source_root,
+                runtime_output_root=root,
+                feature_id=feature_id,
+                stagger_enabled=(
+                    runtime_admission.get("stagger_acceptance") is not None
+                ),
+            )
+            _runtime_observation_retry_restoration_report(handoff)
+            backup_report = retry_output_report["deployment_backup"]
+        else:
+            retry_output_report = None
+            backup_report = _runtime_continuation_backup_report(
+                root,
+                stagger_enabled=(
+                    runtime_admission.get("stagger_acceptance") is not None
+                ),
+            )
         stagger_admission = runtime_admission.get("stagger_acceptance")
         stagger_config = (
             stagger_admission.get("config")
@@ -3041,6 +3383,17 @@ def resume_local_runtime(
                 if isinstance(stagger_config, Mapping)
                 else None
             ),
+            runtime_output_directory=(
+                root if retry_runtime_observation else None
+            ),
+            runtime_observation_retry=(
+                {
+                    **dict(handoff.observation_retry_binding or {}),
+                    "runtime_output_root": str(root),
+                }
+                if retry_runtime_observation
+                else None
+            ),
         )
 
     admission_snapshot = _runtime_resume_admission_snapshot(runtime_admission)
@@ -3058,7 +3411,7 @@ def resume_local_runtime(
         runtime_admission=admission_snapshot,
     )
     checkpoint_store = WorkflowCheckpointStore(artifact_store)
-    if recover_accepted_resume:
+    if recover_accepted_resume or retry_runtime_observation:
         decision = handoff.recovery_decision
         resume_report_ref = handoff.recovery_resume_report_ref
         if decision is None or resume_report_ref is None:
@@ -3068,8 +3421,8 @@ def resume_local_runtime(
         original_admission = decision.applied_updates.get("runtime_admission")
         if original_admission != admission_snapshot:
             raise LocalEntryError(
-                "Accepted resume recovery Runtime admission changed from the "
-                "original ResumeReport."
+                "Accepted ResumeReport Runtime admission changed from the "
+                "original admission."
             )
     else:
         decision, resume_report_ref = checkpoint_store.resume(checkpoint_ref, payload)
@@ -3106,6 +3459,15 @@ def resume_local_runtime(
         "feature_id": result["feature_id"],
         "resume_id": payload.resume_id,
         "accepted_resume_recovery": recover_accepted_resume,
+        "runtime_observation_retry": retry_runtime_observation,
+        "runtime_observation_retry_binding": (
+            {
+                **dict(handoff.observation_retry_binding or {}),
+                "runtime_output_root": str(root),
+            }
+            if retry_runtime_observation
+            else None
+        ),
         "checkpoint_id": checkpoint["checkpoint_id"],
         "current_stage": result["current_stage"],
         "artifacts": result["artifacts"],
@@ -3114,6 +3476,8 @@ def resume_local_runtime(
         "deployment_backup": (
             backup_report if injected_runtime_admission is None else None
         ),
+        "runtime_output_root": str(root),
+        "source_run_root": str(source_root),
         "runtime_verification_chain": _runtime_verification_chain(
             result,
             requested=True,

@@ -446,6 +446,276 @@ class WorkflowCheckpointStore:
             report_ref,
         )
 
+    def preflight_runtime_observation_retry(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_id: str,
+    ) -> tuple[
+        ResumeDecision,
+        ArtifactRef,
+        ArtifactRef,
+        ArtifactRef,
+        dict[str, Any],
+    ]:
+        """Read-validate one bounded observation retry without writing."""
+
+        if not resume_id:
+            raise ValueError(
+                "Runtime observation retry requires the exact prior resume_id."
+            )
+        checkpoint_envelope = self.artifact_store.read(checkpoint_ref)
+        checkpoint = checkpoint_envelope["data"]
+        blockers = self._checkpoint_lineage_blockers(
+            checkpoint_ref,
+            checkpoint_envelope,
+            allow_prior_runtime_state=True,
+        )
+        freshness = (
+            self.artifact_store.check_freshness(checkpoint_ref)
+            if checkpoint.get("checkpoint_stage") == "build"
+            else self.artifact_store.check_direct_freshness(checkpoint_ref)
+        )
+        if not freshness.is_fresh:
+            blockers.append(
+                {
+                    "code": "OBSERVATION_RETRY_STALE_CHECKPOINT",
+                    "message": (
+                        "Checkpoint inputs changed after the prior Runtime "
+                        "observation."
+                    ),
+                }
+            )
+
+        accepted_reports: list[tuple[ArtifactRef, dict[str, Any], dict[str, Any]]] = []
+        for report_ref in self.artifact_store.list_feature_artifact_revisions(
+            checkpoint_ref.feature_id,
+            "resume_report",
+        ):
+            envelope = self.artifact_store.read(report_ref)
+            report = envelope["data"]
+            if (
+                report.get("checkpoint_id") == checkpoint.get("checkpoint_id")
+                and report.get("allowed") is True
+            ):
+                accepted_reports.append((report_ref, envelope, report))
+        if len(accepted_reports) != 1:
+            raise ValueError(
+                "Runtime observation retry requires exactly one accepted "
+                "ResumeReport for the checkpoint."
+            )
+        report_ref, report_envelope, report = accepted_reports[0]
+        if report.get("resume_id") != resume_id:
+            raise ValueError(
+                "Runtime observation retry resume_id does not match ResumeReport."
+            )
+        report_upstream = report_envelope.get("inputs", {}).get(
+            "upstream_artifacts",
+            [],
+        )
+        restored_state = report.get("applied_updates", {}).get("restored_state")
+        if (
+            len(report_upstream) != 1
+            or report_upstream[0].get("artifact_type") != "workflow_checkpoint"
+            or report_upstream[0].get("path") != checkpoint_ref.path
+            or report_upstream[0].get("artifact_hash")
+            != checkpoint_ref.artifact_hash
+            or report.get("status") != "accepted"
+            or report.get("run_id") != checkpoint.get("run_id")
+            or report.get("resume_stage") != checkpoint.get("checkpoint_stage")
+            or not isinstance(report.get("applied_updates"), dict)
+            or not isinstance(restored_state, dict)
+            or restored_state != checkpoint.get("state_snapshot")
+        ):
+            blockers.append(
+                {
+                    "code": "OBSERVATION_RETRY_RESUME_BINDING_INVALID",
+                    "message": (
+                        "Accepted ResumeReport does not reconstruct the exact "
+                        "pre-Runtime state."
+                    ),
+                }
+            )
+
+        runtime_revisions: list[tuple[ArtifactRef, dict[str, Any]]] = []
+        for runtime_ref in self.artifact_store.list_feature_artifact_revisions(
+            checkpoint_ref.feature_id,
+            "runtime_evidence",
+        ):
+            runtime = self.artifact_store.read(runtime_ref)["data"]
+            if runtime.get("run_id") == checkpoint.get("run_id"):
+                runtime_revisions.append((runtime_ref, runtime))
+        latest_runtime_ref = self._latest_revision_ref(
+            checkpoint_ref.feature_id,
+            "runtime_evidence",
+        )
+        if latest_runtime_ref is None:
+            raise ValueError(
+                "Runtime observation retry requires prior RuntimeEvidence."
+            )
+        latest_runtime = self.artifact_store.read(latest_runtime_ref)["data"]
+        runtime_owner = latest_runtime.get("failure_ownership")
+        checkpoint_snapshot = checkpoint.get("state_snapshot") or {}
+        checkpoint_artifacts = checkpoint_snapshot.get("artifacts") or {}
+        checkpoint_hashes = checkpoint_snapshot.get("artifact_hashes") or {}
+        build_ref = latest_runtime.get("build_artifact_ref") or {}
+        if (
+            latest_runtime.get("run_id") != checkpoint.get("run_id")
+            or latest_runtime.get("verification_status") != "inconclusive"
+            or latest_runtime.get("acceptance_verified") is not False
+            or latest_runtime.get("claims_real_runtime_success") is not False
+            or not isinstance(runtime_owner, dict)
+            or runtime_owner.get("owner") != "observation"
+            or runtime_owner.get("required_action") != "repair_runtime_observation"
+            or runtime_owner.get("source_repair_allowed") is not False
+            or not isinstance(build_ref, dict)
+            or build_ref.get("path") != checkpoint_artifacts.get("build_result")
+            or build_ref.get("artifact_hash")
+            != checkpoint_hashes.get("build_result")
+            or latest_runtime.get("build_artifact_hash")
+            != checkpoint_hashes.get("build_result")
+        ):
+            blockers.append(
+                {
+                    "code": "OBSERVATION_RETRY_RUNTIME_EVIDENCE_INELIGIBLE",
+                    "message": (
+                        "Latest RuntimeEvidence is not an inconclusive, "
+                        "observation-owned result bound to this Build."
+                    ),
+                }
+            )
+
+        latest_repair_ref = self._latest_revision_ref(
+            checkpoint_ref.feature_id,
+            "repair_plan",
+        )
+        if latest_repair_ref is None:
+            raise ValueError(
+                "Runtime observation retry requires a prior RepairPlan."
+            )
+        latest_repair_envelope = self.artifact_store.read(latest_repair_ref)
+        latest_repair = latest_repair_envelope["data"]
+        repair_context = latest_repair.get("repair_context")
+        repair_upstreams = latest_repair_envelope.get("inputs", {}).get(
+            "upstream_artifacts",
+            [],
+        )
+        bound_runtime_upstreams = [
+            item
+            for item in repair_upstreams
+            if isinstance(item, dict)
+            and item.get("artifact_type") == "runtime_evidence"
+        ]
+        retry_budget = latest_repair.get("retry_budget")
+        retry_budget_remaining = latest_repair.get("retry_budget_remaining")
+        retry_number = len(runtime_revisions)
+        if (
+            latest_repair.get("failure_source") != "runtime"
+            or latest_repair.get("requires_new_evidence") is not True
+            or latest_repair.get("allowed_next_stage") is not None
+            or latest_repair.get("retry_exhausted") is not False
+            or not isinstance(repair_context, dict)
+            or repair_context.get("failure_owner") != "observation"
+            or repair_context.get("repair_decision")
+            != "repair_runtime_observation"
+            or repair_context.get("source_repair_allowed") is not False
+            or bound_runtime_upstreams
+            != [
+                {
+                    "artifact_type": "runtime_evidence",
+                    "path": latest_runtime_ref.path,
+                    "artifact_hash": latest_runtime_ref.artifact_hash,
+                    "require_latest": True,
+                }
+            ]
+            or isinstance(retry_budget, bool)
+            or not isinstance(retry_budget, int)
+            or retry_budget < 1
+            or isinstance(retry_budget_remaining, bool)
+            or not isinstance(retry_budget_remaining, int)
+            or retry_budget_remaining < 1
+        ):
+            blockers.append(
+                {
+                    "code": "OBSERVATION_RETRY_REPAIR_PLAN_INELIGIBLE",
+                    "message": (
+                        "Latest RepairPlan does not authorize new observation "
+                        "evidence without source repair."
+                    ),
+                }
+            )
+        if isinstance(retry_budget, int) and retry_number > retry_budget:
+            blockers.append(
+                {
+                    "code": "OBSERVATION_RETRY_BUDGET_EXHAUSTED",
+                    "message": "Runtime observation retry budget is exhausted.",
+                }
+            )
+        effective_retry_budget_remaining = (
+            min(
+                retry_budget_remaining,
+                retry_budget - retry_number + 1,
+            )
+            if isinstance(retry_budget, int)
+            and isinstance(retry_budget_remaining, int)
+            else 0
+        )
+
+        for artifact_type in ("eval_report", "workflow_summary"):
+            for artifact_ref in self.artifact_store.list_feature_artifact_revisions(
+                checkpoint_ref.feature_id,
+                artifact_type,
+            ):
+                artifact = self.artifact_store.read(artifact_ref)["data"]
+                if artifact.get("run_id") == checkpoint.get("run_id"):
+                    blockers.append(
+                        {
+                            "code": "OBSERVATION_RETRY_TERMINAL_STATE_PRESENT",
+                            "message": (
+                                f"{artifact_type} already exists for this "
+                                "Runtime handoff."
+                            ),
+                        }
+                    )
+                    break
+
+        if blockers:
+            raise ValueError(
+                "Runtime observation retry was blocked: "
+                + ", ".join(str(item.get("code")) for item in blockers)
+            )
+        decision = ResumeDecision(
+            status="accepted",
+            allowed=True,
+            reason=(
+                "Observation-owned Runtime result is ready for one bounded "
+                "evidence retry."
+            ),
+            applied_updates=dict(report["applied_updates"]),
+        )
+        retry_binding = {
+            "retry_number": retry_number,
+            "retry_budget": retry_budget,
+            "retry_budget_remaining_before_attempt": (
+                effective_retry_budget_remaining
+            ),
+            "prior_runtime_evidence_ref": latest_runtime_ref.path,
+            "prior_runtime_evidence_hash": latest_runtime_ref.artifact_hash,
+            "prior_repair_plan_ref": latest_repair_ref.path,
+            "prior_repair_plan_hash": latest_repair_ref.artifact_hash,
+            "resume_report_ref": report_ref.path,
+            "resume_report_hash": report_ref.artifact_hash,
+            "new_checkpoint_would_be_created": False,
+            "new_resume_report_would_be_created": False,
+        }
+        return (
+            decision,
+            report_ref,
+            latest_runtime_ref,
+            latest_repair_ref,
+            retry_binding,
+        )
+
     @staticmethod
     def langgraph_memory_checkpointer() -> MemorySaver:
         """Return the available local LangGraph memory checkpointer."""
@@ -535,10 +805,44 @@ class WorkflowCheckpointStore:
             seen_resume_id = seen_resume_id or report.get("resume_id") == resume_id
         return consumed, seen_resume_id
 
+    def _latest_revision_ref(
+        self,
+        feature_id: str,
+        artifact_type: str,
+    ) -> ArtifactRef | None:
+        """Resolve the latest pointer back to its immutable revision."""
+
+        latest_refs = [
+            ref
+            for ref in self.artifact_store.list_feature_artifacts(feature_id)
+            if ref.artifact_type == artifact_type
+        ]
+        if not latest_refs:
+            return None
+        if len(latest_refs) != 1:
+            raise ArtifactStoreError(
+                f"Multiple latest pointers found for {artifact_type}."
+            )
+        matching_revisions = [
+            ref
+            for ref in self.artifact_store.list_feature_artifact_revisions(
+                feature_id,
+                artifact_type,
+            )
+            if ref.artifact_hash == latest_refs[0].artifact_hash
+        ]
+        if len(matching_revisions) != 1:
+            raise ArtifactStoreError(
+                f"Latest {artifact_type} pointer does not resolve uniquely."
+            )
+        return matching_revisions[0]
+
     def _checkpoint_lineage_blockers(
         self,
         checkpoint_ref: ArtifactRef,
         checkpoint_envelope: dict[str, Any],
+        *,
+        allow_prior_runtime_state: bool = False,
     ) -> list[dict[str, Any]]:
         checkpoint = checkpoint_envelope["data"]
         snapshot = checkpoint.get("state_snapshot")
@@ -599,12 +903,19 @@ class WorkflowCheckpointStore:
                     }
                 )
         if checkpoint.get("checkpoint_stage") == "build":
-            blockers.extend(self._build_handoff_blockers(checkpoint))
+            blockers.extend(
+                self._build_handoff_blockers(
+                    checkpoint,
+                    allow_prior_runtime_state=allow_prior_runtime_state,
+                )
+            )
         return blockers
 
     def _build_handoff_blockers(
         self,
         checkpoint: dict[str, Any],
+        *,
+        allow_prior_runtime_state: bool = False,
     ) -> list[dict[str, Any]]:
         snapshot = checkpoint["state_snapshot"]
         required = {"feature_spec", "build_result"}
@@ -665,22 +976,23 @@ class WorkflowCheckpointStore:
                 }
             ]
         blockers: list[dict[str, Any]] = []
-        for runtime_ref in self.artifact_store.list_feature_artifact_revisions(
-            checkpoint["feature_id"],
-            "runtime_evidence",
-        ):
-            runtime = self.artifact_store.read(runtime_ref)["data"]
-            if runtime.get("run_id") == checkpoint.get("run_id"):
-                blockers.append(
-                    {
-                        "code": "PRIOR_RUNTIME_STATE_PRESENT",
-                        "message": (
-                            "Runtime evidence already exists for this handoff run; "
-                            "automatic repetition is blocked."
-                        ),
-                    }
-                )
-                return blockers
+        if not allow_prior_runtime_state:
+            for runtime_ref in self.artifact_store.list_feature_artifact_revisions(
+                checkpoint["feature_id"],
+                "runtime_evidence",
+            ):
+                runtime = self.artifact_store.read(runtime_ref)["data"]
+                if runtime.get("run_id") == checkpoint.get("run_id"):
+                    blockers.append(
+                        {
+                            "code": "PRIOR_RUNTIME_STATE_PRESENT",
+                            "message": (
+                                "Runtime evidence already exists for this "
+                                "handoff run; automatic repetition is blocked."
+                            ),
+                        }
+                    )
+                    return blockers
         for artifact in verified_artifacts:
             if not isinstance(artifact, dict):
                 blockers.append(

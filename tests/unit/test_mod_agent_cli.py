@@ -1448,6 +1448,8 @@ def test_cli_resume_runtime_passes_fresh_authority_and_handoff_identity(
         "checkpoint_hash": "a" * 64,
         "resume_id": "resume_001",
         "recover_accepted_resume": False,
+        "retry_runtime_observation": False,
+        "runtime_output_root": None,
         "approved_by": "human",
         "settings_path": "runtime.yaml",
         "allow_game_launch": True,
@@ -1513,6 +1515,8 @@ def test_cli_runtime_preflight_passes_explicit_store_and_profile_without_authori
         "checkpoint_hash": "a" * 64,
         "resume_id": "preflight_001",
         "recover_accepted_resume": False,
+        "retry_runtime_observation": False,
+        "runtime_output_root": None,
         "settings_path": "runtime.yaml",
         "runtime_plugin_destination": (
             r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll"
@@ -1589,3 +1593,53 @@ def test_cli_runtime_recovery_passes_exact_resume_id_to_preflight(
     json.loads(capsys.readouterr().out)
     assert captured["resume_id"] == "resume_accepted_001"
     assert captured["recover_accepted_resume"] is True
+
+
+def test_cli_runtime_observation_retry_passes_separate_output_root(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def preflight(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "READY_FOR_EXTERNAL_AUTHORIZATION",
+            "writes_performed": False,
+            "runtime_observation_retry": {"enabled": True},
+        }
+
+    monkeypatch.setattr("src.mod_agent.cli.preflight_local_runtime", preflight)
+
+    exit_code = main(
+        [
+            "preflight-runtime",
+            "--run-root",
+            "source-run",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--checkpoint-path",
+            "checkpoint.json",
+            "--checkpoint-hash",
+            "a" * 64,
+            "--resume-id",
+            "resume_accepted_001",
+            "--retry-runtime-observation",
+            "--runtime-output-root",
+            r"C:\runtime-observation-retry",
+            "--settings",
+            "runtime.yaml",
+            "--runtime-plugin-destination",
+            r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll",
+        ]
+    )
+
+    assert exit_code == 0
+    json.loads(capsys.readouterr().out)
+    assert captured["recover_accepted_resume"] is False
+    assert captured["retry_runtime_observation"] is True
+    assert captured["runtime_output_root"] == (
+        r"C:\runtime-observation-retry"
+    )

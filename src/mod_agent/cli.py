@@ -235,6 +235,21 @@ def build_parser() -> argparse.ArgumentParser:
             "recovery; requires --resume-id and creates no second ResumeReport."
         ),
     )
+    resume_runtime_parser.add_argument(
+        "--retry-runtime-observation",
+        action="store_true",
+        help=(
+            "Reuse the exact accepted ResumeReport only when the latest "
+            "RuntimeEvidence and RepairPlan require a bounded observation retry."
+        ),
+    )
+    resume_runtime_parser.add_argument(
+        "--runtime-output-root",
+        help=(
+            "Absolute empty run-local output directory required by "
+            "--retry-runtime-observation."
+        ),
+    )
     resume_runtime_parser.add_argument("--approved-by", required=True)
     resume_runtime_parser.add_argument("--settings", default="config/settings.yaml")
     resume_runtime_parser.add_argument("--allow-game-launch", action="store_true")
@@ -266,6 +281,21 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Read-validate the exact accepted ResumeReport recovery boundary "
             "without writing or launching."
+        ),
+    )
+    preflight_runtime_parser.add_argument(
+        "--retry-runtime-observation",
+        action="store_true",
+        help=(
+            "Read-validate an observation-owned Runtime retry without writing "
+            "or launching."
+        ),
+    )
+    preflight_runtime_parser.add_argument(
+        "--runtime-output-root",
+        help=(
+            "Absolute empty run-local output directory required by "
+            "--retry-runtime-observation."
         ),
     )
     preflight_runtime_parser.add_argument("--settings")
@@ -496,6 +526,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 checkpoint_hash=args.checkpoint_hash,
                 resume_id=args.resume_id,
                 recover_accepted_resume=bool(args.recover_accepted_resume),
+                retry_runtime_observation=bool(
+                    args.retry_runtime_observation
+                ),
+                runtime_output_root=args.runtime_output_root,
                 settings_path=args.settings,
                 runtime_plugin_destination=args.runtime_plugin_destination,
             )
@@ -532,6 +566,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 checkpoint_hash=args.checkpoint_hash,
                 resume_id=args.resume_id,
                 recover_accepted_resume=bool(args.recover_accepted_resume),
+                retry_runtime_observation=bool(
+                    args.retry_runtime_observation
+                ),
+                runtime_output_root=args.runtime_output_root,
                 approved_by=args.approved_by,
                 settings_path=args.settings,
                 allow_game_launch=bool(args.allow_game_launch),

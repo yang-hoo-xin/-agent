@@ -849,6 +849,433 @@ def test_exact_accepted_resume_can_be_read_recovered_before_runtime(
     ) == 1
 
 
+def _persist_observation_owned_runtime_failure(
+    store: ArtifactStore,
+    checkpoint_ref: ArtifactRef,
+    *,
+    resume_id: str,
+    runtime_admission: dict[str, object] | None = None,
+) -> tuple[ArtifactRef, ArtifactRef, ArtifactRef]:
+    checkpoint = store.read(checkpoint_ref)["data"]
+    resume_payload = _build_runtime_resume_payload(
+        checkpoint=checkpoint,
+        resume_id=resume_id,
+    )
+    if runtime_admission is not None:
+        resume_payload = ResumePayload(
+            **{
+                **resume_payload.to_dict(),
+                "runtime_admission": runtime_admission,
+            }
+        )
+    decision, report_ref = WorkflowCheckpointStore(store).resume(
+        checkpoint_ref,
+        resume_payload,
+    )
+    resumed_state = resumed_state_from_decision(
+        decision,
+        checkpoint_ref=checkpoint_ref,
+        resume_report_ref=report_ref,
+    )
+
+    def observation_failure(
+        feature_id: str,
+        build: dict[str, object],
+        feature_spec: dict[str, object],
+    ) -> dict[str, object]:
+        payload = build_real_runtime_evidence_payload(
+            feature_id=feature_id,
+            input_execution_mode=str(build.get("execution_mode")),
+            evidence_items=(),
+            startup_loaded=True,
+            gameplay_behavior_verified=False,
+            verification_status="inconclusive",
+            limitations=("Operator observation requires correction.",),
+            acceptance_criteria=tuple(
+                feature_spec.get("acceptance_criteria") or ()
+            ),
+            runtime_verification_plan=tuple(
+                feature_spec.get("runtime_verification_plan") or ()
+            ),
+            failure_ownership={
+                "owner": "observation",
+                "failure_class": "operator_status_semantic_conflict",
+                "source_repair_allowed": False,
+                "required_action": "repair_runtime_observation",
+                "reason": "Operator observation requires correction.",
+            },
+        )
+        payload["stagger_runtime_schema_version"] = (
+            "gtfo_stagger_two_process_runtime_v1"
+        )
+        payload["stagger_runtime_attempts"] = [
+            {
+                "stagger_attempt_mode": "general_enabled_false",
+                "plugin_deployment_binding": {
+                    "restored": True,
+                    "restoration_status": "restored",
+                },
+                "stagger_config_deployment_binding": {
+                    "restored": True,
+                    "restoration_status": "restored",
+                },
+            }
+        ]
+        return payload
+
+    graph = build_graph(
+        store,
+        runtime_evidence_factory=observation_failure,
+        runtime_continuation_checkpoint_id=str(checkpoint["checkpoint_id"]),
+    )
+    result = graph.invoke(resumed_state)
+    assert result["current_stage"] == "blocked"
+    return (
+        report_ref,
+        ArtifactRef(
+            feature_id=str(checkpoint["feature_id"]),
+            artifact_type="runtime_evidence",
+            path=result["artifacts"]["runtime_evidence"],
+            artifact_hash=result["artifact_hashes"]["runtime_evidence"],
+        ),
+        ArtifactRef(
+            feature_id=str(checkpoint["feature_id"]),
+            artifact_type="repair_plan",
+            path=result["artifacts"]["repair_plan"],
+            artifact_hash=result["artifact_hashes"]["repair_plan"],
+        ),
+    )
+
+
+def test_runtime_observation_retry_reuses_exact_report_and_failure_lineage(
+    tmp_path: Path,
+) -> None:
+    store, _, checkpoint_ref = _successful_build_handoff(tmp_path)
+    resume_id = "resume_observation_retry_001"
+    report_ref, runtime_ref, repair_ref = (
+        _persist_observation_owned_runtime_failure(
+            store,
+            checkpoint_ref,
+            resume_id=resume_id,
+        )
+    )
+
+    decision, bound_report, bound_runtime, bound_repair, binding = (
+        WorkflowCheckpointStore(store).preflight_runtime_observation_retry(
+            checkpoint_ref,
+            resume_id=resume_id,
+        )
+    )
+
+    assert decision.allowed is True
+    assert bound_report == report_ref
+    assert bound_runtime == runtime_ref
+    assert bound_repair == repair_ref
+    assert binding == {
+        "retry_number": 1,
+        "retry_budget": 2,
+        "retry_budget_remaining_before_attempt": 2,
+        "prior_runtime_evidence_ref": runtime_ref.path,
+        "prior_runtime_evidence_hash": runtime_ref.artifact_hash,
+        "prior_repair_plan_ref": repair_ref.path,
+        "prior_repair_plan_hash": repair_ref.artifact_hash,
+        "resume_report_ref": report_ref.path,
+        "resume_report_hash": report_ref.artifact_hash,
+        "new_checkpoint_would_be_created": False,
+        "new_resume_report_would_be_created": False,
+    }
+    assert len(
+        store.list_feature_artifact_revisions(
+            checkpoint_ref.feature_id,
+            "resume_report",
+        )
+    ) == 1
+
+
+def test_runtime_observation_retry_rejects_product_owned_latest_runtime(
+    tmp_path: Path,
+) -> None:
+    store, _, checkpoint_ref = _successful_build_handoff(tmp_path)
+    resume_id = "resume_observation_retry_product_owner_001"
+    _, runtime_ref, _ = _persist_observation_owned_runtime_failure(
+        store,
+        checkpoint_ref,
+        resume_id=resume_id,
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    snapshot = checkpoint["state_snapshot"]
+    product_runtime = {
+        **store.read(runtime_ref)["data"],
+        "failure_ownership": {
+            "owner": "product_behavior",
+            "failure_class": "runtime_behavior_failed",
+            "source_repair_allowed": True,
+            "required_action": "repair_source",
+            "reason": "Product behavior failed.",
+        },
+    }
+    store.write(
+        feature_id=checkpoint_ref.feature_id,
+        artifact_type="runtime_evidence",
+        payload=product_runtime,
+        status="blocked",
+        upstream_refs=[
+            ArtifactRef(
+                feature_id=checkpoint_ref.feature_id,
+                artifact_type="build_result",
+                path=snapshot["artifacts"]["build_result"],
+                artifact_hash=snapshot["artifact_hashes"]["build_result"],
+            ),
+            ArtifactRef(
+                feature_id=checkpoint_ref.feature_id,
+                artifact_type="feature_spec",
+                path=snapshot["artifacts"]["feature_spec"],
+                artifact_hash=snapshot["artifact_hashes"]["feature_spec"],
+            ),
+        ],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="OBSERVATION_RETRY_RUNTIME_EVIDENCE_INELIGIBLE",
+    ):
+        WorkflowCheckpointStore(store).preflight_runtime_observation_retry(
+            checkpoint_ref,
+            resume_id=resume_id,
+        )
+
+
+def test_runtime_observation_retry_preflight_uses_empty_separate_output_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="shared-store",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    source_root = tmp_path / "source-run"
+    _write_runtime_handoff_manifest(
+        source_root,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    resume_id = "resume_observation_retry_preflight_001"
+    output_root = tmp_path / "retry-output"
+    output_root.mkdir()
+    destination = tmp_path / "BepInEx" / "plugins" / "BetterHitFeedback.dll"
+    destination.parent.mkdir(parents=True)
+    runtime_admission = {
+        "requested_side_effects": ["runtime_execution"],
+        "authorized_side_effects": ["runtime_execution"],
+        "evidence_source": "injected_test",
+    }
+    admission_snapshot = {
+        "status": "admitted",
+        "authorization_scope": "this_resume_only",
+        "requested_side_effects": ["runtime_execution"],
+        "authorized_side_effects": ["runtime_execution"],
+        "provider": "injected_test",
+        "runtime_admission": runtime_admission,
+    }
+    _persist_observation_owned_runtime_failure(
+        store,
+        checkpoint_ref,
+        resume_id=resume_id,
+        runtime_admission=admission_snapshot,
+    )
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.load_settings",
+        lambda _: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_admission_record",
+        lambda *_, **__: runtime_admission,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_profile_preflight_record",
+        lambda *_, **__: {
+            "plugin_deployment": {"destination_path": str(destination)},
+            "stagger_acceptance": {"status": "ready"},
+        },
+    )
+    before = _tree_bytes(tmp_path)
+
+    result = preflight_local_runtime(
+        run_root=source_root,
+        artifact_store_root=tmp_path / "shared-store",
+        feature_id=str(build_result["feature_id"]),
+        checkpoint_path=checkpoint_ref.path,
+        checkpoint_hash=checkpoint_ref.artifact_hash,
+        settings_path=tmp_path / "runtime.yaml",
+        runtime_plugin_destination=destination,
+        resume_id=resume_id,
+        retry_runtime_observation=True,
+        runtime_output_root=output_root.resolve(),
+    )
+
+    assert result["status"] == "READY_FOR_EXTERNAL_AUTHORIZATION"
+    assert result["checkpoint"]["consumption_status"] == (
+        "runtime_observation_retry"
+    )
+    assert result["runtime_observation_retry"]["retry_number"] == 1
+    assert result["runtime_observation_retry"]["runtime_output_root"] == str(
+        output_root.resolve()
+    )
+    assert result["runtime_profile"]["runtime_observation_retry_output"][
+        "empty"
+    ] is True
+    assert result["runtime_profile"]["prior_restoration"]["status"] == "passed"
+    assert result["writes_performed"] is False
+    assert result["resume_report_created"] is False
+    assert result["runtime_evidence_created"] is False
+    assert _tree_bytes(tmp_path) == before
+
+
+def test_runtime_observation_retry_executes_only_runtime_with_one_resume_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="shared-store",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    source_root = tmp_path / "source-run"
+    _write_runtime_handoff_manifest(
+        source_root,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    output_root = tmp_path / "retry-output"
+    output_root.mkdir()
+    destination = tmp_path / "BepInEx" / "plugins" / "BetterHitFeedback.dll"
+    destination.parent.mkdir(parents=True)
+    requested = ["runtime_execution", "process_launch", "game_directory_write"]
+    runtime_admission = {
+        "requested_side_effects": requested,
+        "authorized_side_effects": requested,
+        "evidence_source": "gtfo_real_runtime_automation",
+        "allow_game_launch": True,
+        "plugin_deployment": {
+            "destination_path": str(destination),
+            "destination_existed_at_admission": False,
+            "destination_sha256_at_admission": None,
+            "allow_game_directory_write": True,
+        },
+        "stagger_acceptance": {
+            "config": {
+                "destination_existed": False,
+                "destination_sha256": None,
+            }
+        },
+    }
+    admission_snapshot = {
+        "status": "admitted",
+        "authorization_scope": "this_resume_only",
+        "requested_side_effects": requested,
+        "authorized_side_effects": requested,
+        "provider": "gtfo_real_runtime_automation",
+        "runtime_admission": runtime_admission,
+    }
+    resume_id = "resume_observation_retry_execute_001"
+    _persist_observation_owned_runtime_failure(
+        store,
+        checkpoint_ref,
+        resume_id=resume_id,
+        runtime_admission=admission_snapshot,
+    )
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.load_settings",
+        lambda _: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_admission_record",
+        lambda *_, **__: runtime_admission,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_profile_preflight_record",
+        lambda *_, **__: {
+            "plugin_deployment": {"destination_path": str(destination)},
+            "stagger_acceptance": {"status": "ready"},
+        },
+    )
+    captured_retry_binding: dict[str, object] = {}
+
+    def make_runtime_factory(**kwargs):
+        captured_retry_binding.update(kwargs["runtime_observation_retry"])
+
+        def runtime_factory(
+            feature_id: str,
+            build: dict[str, object],
+            feature_spec: dict[str, object],
+        ) -> dict[str, object]:
+            payload = build_fake_runtime_evidence_payload(
+                feature_id=feature_id,
+                input_execution_mode=str(build.get("execution_mode")),
+                acceptance_criteria=tuple(
+                    feature_spec.get("acceptance_criteria") or ()
+                ),
+                runtime_verification_plan=tuple(
+                    feature_spec.get("runtime_verification_plan") or ()
+                ),
+            )
+            payload["runtime_observation_retry"] = dict(
+                kwargs["runtime_observation_retry"]
+            )
+            return payload
+
+        return runtime_factory
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._make_deploying_runtime_evidence_factory",
+        make_runtime_factory,
+    )
+
+    summary = resume_local_runtime(
+        run_root=source_root,
+        artifact_store_root=tmp_path / "shared-store",
+        feature_id=str(build_result["feature_id"]),
+        checkpoint_path=checkpoint_ref.path,
+        checkpoint_hash=checkpoint_ref.artifact_hash,
+        settings_path=tmp_path / "runtime.yaml",
+        approved_by="human",
+        allow_game_launch=True,
+        runtime_plugin_destination=destination,
+        allow_game_directory_write=True,
+        resume_id=resume_id,
+        retry_runtime_observation=True,
+        runtime_output_root=output_root.resolve(),
+    )
+
+    assert summary["current_stage"] == "done"
+    assert summary["runtime_observation_retry"] is True
+    assert summary["upstream_stages_repeated"] is False
+    assert captured_retry_binding["retry_number"] == 1
+    assert (output_root / "runtime_resume_result.json").is_file()
+    assert not (source_root / "runtime_resume_result.json").exists()
+    assert len(
+        store.list_feature_artifact_revisions(
+            str(build_result["feature_id"]),
+            "resume_report",
+        )
+    ) == 1
+    assert len(
+        store.list_feature_artifact_revisions(
+            str(build_result["feature_id"]),
+            "workflow_checkpoint",
+        )
+    ) == 1
+    assert len(
+        store.list_feature_artifact_revisions(
+            str(build_result["feature_id"]),
+            "runtime_evidence",
+        )
+    ) == 2
+
+
 def test_runtime_recovery_preflight_reuses_report_without_writes(
     tmp_path: Path,
 ) -> None:

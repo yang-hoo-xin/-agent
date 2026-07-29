@@ -35,6 +35,7 @@ from src.mod_agent.local_entry import (
     _runtime_admission_record,
     _runtime_continuation_backup_report,
     _runtime_graph_options,
+    _runtime_observation_retry_output_report,
     _runtime_profile_preflight_record,
     _runtime_verification_chain,
     _run_nuget_isolated_build,
@@ -535,6 +536,31 @@ def test_runtime_backup_report_compacts_process_diagnostics_below_windows_limit(
         Path(path).name in {"stdout.log", "stderr.log"}
         for path in report["planned_process_diagnostic_paths"]
     )
+
+
+def test_runtime_observation_retry_output_requires_empty_separate_root(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    output_root = tmp_path / "retry"
+    output_root.mkdir()
+    (output_root / "existing.txt").write_text("occupied", encoding="utf-8")
+
+    with pytest.raises(LocalEntryError, match="must be empty"):
+        _runtime_observation_retry_output_report(
+            source_run_root=source_root,
+            runtime_output_root=output_root.resolve(),
+            feature_id="feature_001",
+            stagger_enabled=True,
+        )
+    with pytest.raises(LocalEntryError, match="outside the original run root"):
+        _runtime_observation_retry_output_report(
+            source_run_root=source_root,
+            runtime_output_root=source_root.resolve(),
+            feature_id="feature_001",
+            stagger_enabled=True,
+        )
 
 
 def test_runtime_verification_chain_requires_all_bound_artifacts() -> None:

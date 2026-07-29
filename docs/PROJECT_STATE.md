@@ -518,7 +518,27 @@ values remain inconclusive with
 `source_repair_allowed=false`. This cannot override machine marker,
 current-run-window, config, process, screenshot, deployment, or restoration
 checks. The old run root still contains restoration backup material and remains
-fail-closed; no new observation attempt is admitted or executed by this repair.
+fail-closed.
+
+The bounded Runtime observation-retry admission is now implemented on the
+existing checkpointing/local Runtime path. It reuses exactly one accepted
+ResumeReport and creates no checkpoint or report. Eligibility requires the
+latest same-run RuntimeEvidence to be inconclusive, observation-owned,
+source-repair-forbidden, and bound to the same Build; the latest RepairPlan must
+bind that exact revision, require `repair_runtime_observation`, require new
+evidence, and retain budget. The prior Stagger attempt must prove both plugin
+and config restoration. A retry must use a separate absolute empty output root;
+screenshots, compact diagnostics, deployment backups, and the result file are
+planned and length-checked there. Immutable RuntimeEvidence revision count
+derives retry number and remaining budget.
+
+Real-input retry #1 preflight used output root
+`workspaces/stagger_runtime_admission_001/runtime_observation_retry_001`.
+It returned `READY_FOR_EXTERNAL_AUTHORIZATION`, retry budget 2/remaining 2,
+prior restoration `passed`, unchanged accepted admission, and maximum output
+path 216 characters. It wrote nothing, invoked no graph, created no Artifact,
+copied no DLL, and launched no process. Product Runtime remains blocked and
+none of the seven criteria is proved until separately authorized execution.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B
