@@ -1799,3 +1799,85 @@ def test_cli_stagger_edit_authority_preflight_reports_blocked_without_writes(
     assert payload["artifact_writes_performed"] is False
     assert payload["registry_mutation_allowed"] is False
     assert payload["repair_allowed"] is False
+
+
+def test_cli_stagger_edit_authority_approval_passes_exact_hash_and_actor(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def approve(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "EXACT_EDIT_AUTHORITY_RESOLVED",
+            "approval_hash": kwargs["approval_hash"],
+            "approved_by": kwargs["approved_by"],
+            "allowed_edit_binding_ids": ["edit_binding_004"],
+            "repair_planner_invoked": False,
+            "repair_allowed": False,
+            "source_patch_allowed": False,
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli.approve_stagger_edit_authority",
+        approve,
+    )
+    approval_hash = "sha256:" + ("a" * 64)
+    target_symbol = (
+        "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+        "TrySpawnStaggerYellowX"
+    )
+
+    exit_code = main(
+        [
+            "approve-stagger-edit-authority",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--run-id",
+            "runtime_001",
+            "--feature-spec-path",
+            "feature-spec.json",
+            "--feature-spec-hash",
+            "1" * 64,
+            "--runtime-evidence-path",
+            "runtime-evidence.json",
+            "--runtime-evidence-hash",
+            "2" * 64,
+            "--implementation-plan-path",
+            "implementation-plan.json",
+            "--implementation-plan-hash",
+            "3" * 64,
+            "--patch-proposal-path",
+            "patch-proposal.json",
+            "--patch-proposal-hash",
+            "4" * 64,
+            "--source-root",
+            "source-root",
+            "--canonical-target-path",
+            "Patches/HitFeedbackBehaviorPatch.cs",
+            "--target-symbol",
+            target_symbol,
+            "--target-start-line",
+            "979",
+            "--target-end-line",
+            "984",
+            "--proposed-operation",
+            "replace_hud_recttransform_acquisition_and_null_guard_only",
+            "--approval-hash",
+            approval_hash,
+            "--approved-by",
+            "user",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == "EXACT_EDIT_AUTHORITY_RESOLVED"
+    assert captured["approval_hash"] == approval_hash
+    assert captured["approved_by"] == "user"
+    assert captured["target_symbol"] == target_symbol
+    assert captured["target_start_line"] == 979
+    assert captured["target_end_line"] == 984

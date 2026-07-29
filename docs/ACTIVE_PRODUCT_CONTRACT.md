@@ -552,10 +552,30 @@ SHA256
 `replace_hud_recttransform_acquisition_and_null_guard_only`. The no-write
 result is `AWAITING_EXACT_EDIT_AUTHORITY_APPROVAL` with approval hash
 `sha256:488fe9a854c359ac7dd86f54a48692441c7a4e68d2b60d7e4cc89d73a8ef7c6f`.
-It performed no Artifact write, Registry mutation, RepairPlanner invocation,
-source modification, Build, process launch, or game action. The hash has not
-been approved; no new authority record, Plan revision, binding id, or
-ResolvedRepairTarget exists.
+That preflight performed no Artifact write, Registry mutation, RepairPlanner
+invocation, source modification, Build, process launch, or game action.
+
+The user then supplied that exact approval hash. The approval entry reran the
+same no-write preflight and current-source identity checks before writing four
+bounded Artifact revisions to the existing shared ArtifactStore:
+EditAuthorityApproval
+`7dca4d3141fb193a77a1da18cbd63f7029ad0ad1bd07d068dd593dcec962203f`,
+EvidencePack
+`10f60361ca90f9280b7820bf9e663dda736f8efe77c1002816995b62b2e128a6`,
+ImplementationPlan
+`d18dfd13858b4820781198c05155a2b659d171e7a257facd79d95f53fae4f619`,
+and BindingResolution
+`af9ad798e8842b5682c9a188cc605739c895a77d8e97605eba3422a324c61159`.
+The approved list contains only `edit_binding_004`. Deterministic resolution
+produced one `resolved_repair_target` for
+`BetterHitFeedback.Patches.HitFeedbackBehaviorPatch.TrySpawnStaggerYellowX`,
+`Patches/HitFeedbackBehaviorPatch.cs` lines 979-984, with the same source
+SHA256 above and `root_cause_status=unresolved`. Exact-revision freshness now
+validates the immutable historical subgraph without requiring its nodes to
+remain latest; ordinary latest-bound edges retain recursive stale detection.
+All four new revisions are fresh. RepairPlanner and source Patch authority
+remain false, and no RuntimeEvidence, old PatchProposal, Mod source, Build,
+process, or game-directory state changed.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

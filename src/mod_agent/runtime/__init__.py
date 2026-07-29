@@ -41,7 +41,9 @@ from .gtfo_stagger import (
     temporarily_deploy_gtfo_config,
 )
 from .stagger_edit_authority import (
+    StaggerEditAuthorityApprovalError,
     StaggerEditAuthorityPreflightError,
+    approve_stagger_edit_authority,
     preflight_stagger_edit_authority,
 )
 from .probe import (
@@ -73,6 +75,7 @@ __all__ = [
     "GTFOConfigDeploymentRecord",
     "GTFOStaggerAcceptanceProfile",
     "GTFOStaggerRuntimeError",
+    "StaggerEditAuthorityApprovalError",
     "StaggerEditAuthorityPreflightError",
     "GTFORuntimeAutomationError",
     "RuntimeProbeCommandResult",
@@ -98,6 +101,7 @@ __all__ = [
     "make_gtfo_stagger_runtime_evidence_factory",
     "make_runtime_probe_evidence_factory",
     "normalize_runtime_failure_ownership",
+    "approve_stagger_edit_authority",
     "profile_from_settings",
     "preflight_stagger_edit_authority",
     "stagger_profile_from_settings",

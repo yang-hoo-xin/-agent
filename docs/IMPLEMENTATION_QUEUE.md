@@ -620,9 +620,27 @@ focused_verification:
   `replace_hud_recttransform_acquisition_and_null_guard_only`.
   The exact approval hash is
   `sha256:488fe9a854c359ac7dd86f54a48692441c7a4e68d2b60d7e4cc89d73a8ef7c6f`.
-  It remains unapproved and performed zero Artifact writes, Registry mutation,
-  RepairPlanner calls, source changes, Builds, process launches, or game
-  actions.
+  The user supplied that exact hash. The approval entry reran the no-write
+  preflight and current-source checks, then wrote four bounded revisions to
+  the existing shared ArtifactStore: EditAuthorityApproval
+  `7dca4d31...2203f`, EvidencePack `10f60361...128a6`,
+  ImplementationPlan `d18dfd13...e4f619`, and BindingResolution
+  `af9ad798...c61159`. The new allowed list contains only
+  `edit_binding_004`. BindingResolver resolved exactly one target:
+  `TrySpawnStaggerYellowX`, source lines 979-984, current source SHA256
+  `65489604...BB3B`. Root cause remains unresolved.
+  Exact-revision recursive freshness was corrected so the immutable historical
+  subgraph is integrity-checked without requiring its nodes to remain latest;
+  ordinary latest-bound recursion is unchanged. All four new revisions are
+  fresh. The command did not rewrite RuntimeEvidence or the old PatchProposal,
+  modify Mod source, invoke RepairPlanner, build, launch a process, or touch the
+  game directory.
+  `python -m pytest tests/unit/test_gtfo_stagger_runtime.py
+  tests/unit/test_repair_loop.py tests/unit/test_workflow_graph.py
+  tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
+  tests/unit/test_runtime_evidence.py
+  tests/unit/test_stagger_edit_authority.py
+  tests/unit/test_mod_agent_cli.py -q` passed 207 tests in 32.15s.
   `python -m pytest tests/unit/test_gtfo_runtime_automation.py
   tests/unit/test_gtfo_stagger_runtime.py tests/unit/test_local_entry.py
   tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py -q`
@@ -663,11 +681,13 @@ stop_condition:
   Observation retry #2 is immutable inconclusive Runtime history and exhausted
   the admitted retry. Preserve its initial audio response together with the
   later user correction; do not promote either into full audibility proof.
-  Preserve the exact no-write Edit Authority proposal and approval hash above.
-  Until that exact hash is explicitly approved, do not create an authority
-  record, new Implementation Plan revision, new binding id, allowed-list
-  revision, BindingResolution Artifact, or ResolvedRepairTarget. RepairPlanner
-  and every source-change Proposal remain closed.
+  Preserve the approved EditAuthorityApproval, EvidencePack,
+  ImplementationPlan, and BindingResolution revisions above. The exact
+  authority closure grants only `edit_binding_004`; it does not select among
+  the unresolved HUD-parent causes and does not authorize source bytes.
+  RepairPlanner and every source-change Proposal remain closed until the next
+  separately reviewed product step consumes the unique
+  `resolved_repair_target`.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.

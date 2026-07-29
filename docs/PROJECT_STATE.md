@@ -14,7 +14,7 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: build_complete_runtime_visual_failure_replayed_edit_authority_approval_pending
+stagger_implementation_plan_status: build_complete_runtime_visual_failure_exact_edit_authority_resolved_repair_planner_closed
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: STAGGER-OPERATOR-COMPLETION-CONFIRMATION-001
@@ -626,11 +626,27 @@ The exact no-write proposal binds source SHA256
 `65489604EEC41D073FF5BDA77940481AE63BE1917EDE199C99ED04C7B180BB3B`
 and lines 979-984. Its approval hash is
 `sha256:488fe9a854c359ac7dd86f54a48692441c7a4e68d2b60d7e4cc89d73a8ef7c6f`.
-Current state is `AWAITING_EXACT_EDIT_AUTHORITY_APPROVAL`: the hash is not
-approved, Registry mutation and repair remain false, and no Plan, PatchProposal,
-RuntimeEvidence, or source Artifact was written. A unique
-`ResolvedRepairTarget` therefore does not yet exist and RepairPlanner remains
-closed.
+The user supplied that exact hash. The approval path reran the public no-write
+preflight, verified the same source bytes, and wrote only the reviewed authority
+chain in the existing shared ArtifactStore:
+EditAuthorityApproval `7dca4d31...2203f`, EvidencePack
+`10f60361...128a6`, ImplementationPlan `d18dfd13...e4f619`, and
+BindingResolution `af9ad798...c61159`. The new Plan/Registry grants only
+`edit_binding_004`, whose exact symbol is
+`BetterHitFeedback.Patches.HitFeedbackBehaviorPatch.TrySpawnStaggerYellowX`
+and whose source span is lines 979-984. BindingResolver returned one
+`resolved_repair_target` with no binding blocker and
+`root_cause_status=unresolved`.
+
+The first real Artifact read exposed that exact historical upstream subgraphs
+were being recursively compared with newer latest pointers. ArtifactStore now
+propagates `require_latest=false` through an explicitly exact revision
+subgraph while still validating every referenced file, envelope, content hash,
+schema, feature identity, and upstream lineage. Default latest-bound recursion
+is unchanged. All four authority-chain revisions now read as fresh. The
+immutable RuntimeEvidence and PatchProposal were not rewritten, the Mod source
+still has SHA256 `65489604...BB3B`, and RepairPlanner, source Patch, Build,
+process launch, and game-directory actions remain closed.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

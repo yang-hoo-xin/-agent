@@ -278,7 +278,13 @@ class ArtifactStore:
         envelope = self.read(ref)
         stale_reasons: list[str] = []
         seen = {(str(self._guard_path(Path(ref.path))), ref.artifact_hash)}
-        self._collect_stale_reasons(envelope, stale_reasons, seen, recursive=recursive)
+        self._collect_stale_reasons(
+            envelope,
+            stale_reasons,
+            seen,
+            recursive=recursive,
+            require_latest=True,
+        )
         if stale_reasons:
             return FreshnessView(status="stale", stale_reasons=stale_reasons)
         return FreshnessView(status="fresh", stale_reasons=[])
@@ -290,8 +296,13 @@ class ArtifactStore:
         seen: set[tuple[str, str]],
         *,
         recursive: bool,
+        require_latest: bool,
     ) -> None:
         for upstream in envelope.get("inputs", {}).get("upstream_artifacts", []):
+            upstream_requires_latest = (
+                require_latest
+                and upstream.get("require_latest", True) is not False
+            )
             upstream_ref = ArtifactRef(
                 feature_id=envelope["feature_id"],
                 artifact_type=upstream["artifact_type"],
@@ -316,27 +327,27 @@ class ArtifactStore:
                 )
                 self._append_stale_reason(stale_reasons, reason)
                 continue
-            try:
-                latest_hash = self._latest_artifact_hash(
-                    upstream_ref.feature_id,
-                    upstream_ref.artifact_type,
-                )
-            except ArtifactStoreError as exc:
-                self._append_stale_reason(
-                    stale_reasons,
-                    f"{upstream_ref.artifact_type} latest invalid: {exc}",
-                )
-                continue
-            if (
-                upstream.get("require_latest", True) is not False
-                and latest_hash is not None
-                and latest_hash != upstream_ref.artifact_hash
-            ):
-                self._append_stale_reason(
-                    stale_reasons,
-                    f"{upstream_ref.artifact_type} hash changed",
-                )
-                continue
+            if upstream_requires_latest:
+                try:
+                    latest_hash = self._latest_artifact_hash(
+                        upstream_ref.feature_id,
+                        upstream_ref.artifact_type,
+                    )
+                except ArtifactStoreError as exc:
+                    self._append_stale_reason(
+                        stale_reasons,
+                        f"{upstream_ref.artifact_type} latest invalid: {exc}",
+                    )
+                    continue
+                if (
+                    latest_hash is not None
+                    and latest_hash != upstream_ref.artifact_hash
+                ):
+                    self._append_stale_reason(
+                        stale_reasons,
+                        f"{upstream_ref.artifact_type} hash changed",
+                    )
+                    continue
 
             upstream_key = (str(upstream_path), upstream_ref.artifact_hash)
             if upstream_key in seen:
@@ -348,6 +359,7 @@ class ArtifactStore:
                     stale_reasons,
                     seen,
                     recursive=recursive,
+                    require_latest=upstream_requires_latest,
                 )
 
     def read_for_stage(self, ref: ArtifactRef, *, consumer_stage: str) -> dict[str, Any]:

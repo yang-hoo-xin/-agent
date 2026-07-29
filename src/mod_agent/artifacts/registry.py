@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -122,6 +125,8 @@ class ArtifactTypeRegistry:
             _validate_implementation_plan_binding_registry(payload)
         if artifact_type == "binding_resolution":
             _validate_binding_resolution(payload)
+        if artifact_type == "edit_authority_approval":
+            _validate_edit_authority_approval(payload)
         if artifact_type == "evidence_run_attempt":
             _validate_evidence_run_attempt(payload)
         if artifact_type == "evidence_post_run_validation":
@@ -237,6 +242,42 @@ def _validate_binding_resolution(payload: dict[str, Any]) -> None:
                 "resolved binding_resolution requires one resolved target "
                 "and no gap, request, or blockers"
             )
+        if payload.get("authority_source") == "edit_authority_approval":
+            for revision_field in (
+                "edit_authority_approval_revision",
+                "evidence_pack_revision",
+            ):
+                revision = payload.get(revision_field)
+                if (
+                    not isinstance(revision, dict)
+                    or revision.get("feature_id") != feature_id
+                    or not isinstance(revision.get("path"), str)
+                    or not revision["path"]
+                    or not isinstance(
+                        revision.get("artifact_hash"),
+                        str,
+                    )
+                    or not revision["artifact_hash"]
+                ):
+                    raise ArtifactRegistryError(
+                        "approved binding_resolution is missing an exact "
+                        f"{revision_field}"
+                    )
+            ownership = payload.get(
+                "approved_runtime_failure_ownership"
+            )
+            if (
+                not isinstance(ownership, dict)
+                or ownership.get("owner") != "product_behavior"
+                or ownership.get("source_repair_allowed") is not True
+                or payload.get("allowed_edit_binding_ids")
+                != [resolved_target["binding_id"]]
+                or payload.get("repair_planner_allowed") is not False
+                or payload.get("source_patch_allowed") is not False
+            ):
+                raise ArtifactRegistryError(
+                    "approved binding_resolution authority boundary is invalid"
+                )
         return
     if resolved_target is not None or not blockers:
         raise ArtifactRegistryError(
@@ -452,6 +493,88 @@ def _validate_implementation_plan_binding_registry(payload: dict[str, Any]) -> N
             raise ArtifactRegistryError(
                 "Non-blocking implementation_plan proposed_changes edit_binding_id must resolve in binding_registry"
             )
+
+
+def _validate_edit_authority_approval(payload: dict[str, Any]) -> None:
+    if payload.get("status") != "approved":
+        raise ArtifactRegistryError(
+            "edit_authority_approval status must be approved"
+        )
+    approval_hash = payload.get("approval_hash")
+    if (
+        not isinstance(approval_hash, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", approval_hash) is None
+    ):
+        raise ArtifactRegistryError(
+            "edit_authority_approval approval_hash is invalid"
+        )
+    proposal = payload.get("approved_proposal")
+    if not isinstance(proposal, dict):
+        raise ArtifactRegistryError(
+            "edit_authority_approval approved_proposal must be a mapping"
+        )
+    computed_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            proposal,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if computed_hash != approval_hash:
+        raise ArtifactRegistryError(
+            "edit_authority_approval proposal hash mismatch"
+        )
+    if not isinstance(payload.get("approved_by"), str) or not payload[
+        "approved_by"
+    ].strip():
+        raise ArtifactRegistryError(
+            "edit_authority_approval approved_by must be non-empty"
+        )
+    if payload.get("approval_scope") != [
+        "runtime_failure_ownership_reclassification",
+        "new_exact_edit_binding",
+    ]:
+        raise ArtifactRegistryError(
+            "edit_authority_approval approval_scope is invalid"
+        )
+    stored_ownership = payload.get("stored_runtime_failure_ownership")
+    approved_ownership = payload.get("approved_runtime_failure_ownership")
+    if (
+        not isinstance(stored_ownership, dict)
+        or stored_ownership.get("owner") != "observation"
+        or stored_ownership.get("source_repair_allowed") is not False
+        or not isinstance(approved_ownership, dict)
+        or approved_ownership.get("owner") != "product_behavior"
+        or approved_ownership.get("source_repair_allowed") is not True
+    ):
+        raise ArtifactRegistryError(
+            "edit_authority_approval ownership boundary is invalid"
+        )
+    binding_ids = payload.get("allowed_edit_binding_ids")
+    evidence_ids = payload.get("allowed_evidence_ids")
+    if (
+        not isinstance(binding_ids, list)
+        or len(binding_ids) != 1
+        or not isinstance(binding_ids[0], str)
+        or not binding_ids[0]
+        or not isinstance(evidence_ids, list)
+        or len(evidence_ids) != 1
+        or not isinstance(evidence_ids[0], str)
+        or not evidence_ids[0]
+    ):
+        raise ArtifactRegistryError(
+            "edit_authority_approval requires one binding and evidence id"
+        )
+    if (
+        payload.get("runtime_evidence_mutation_allowed") is not False
+        or payload.get("old_patch_proposal_mutation_allowed") is not False
+        or payload.get("repair_planner_allowed") is not False
+        or payload.get("source_patch_allowed") is not False
+    ):
+        raise ArtifactRegistryError(
+            "edit_authority_approval exceeds its mutation boundary"
+        )
 
 
 def default_artifact_contracts() -> list[ArtifactContract]:
@@ -909,6 +1032,56 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             allowed_statuses=statuses,
             required_upstream_artifacts=frozenset({"build_result"}),
             dashboard_projection=("message",),
+        ),
+        ArtifactContract(
+            artifact_type="edit_authority_approval",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "status",
+                    "feature_id",
+                    "run_id",
+                    "approval_hash",
+                    "approved_by",
+                    "approval_scope",
+                    "approved_proposal",
+                    "stored_runtime_failure_ownership",
+                    "approved_runtime_failure_ownership",
+                    "allowed_edit_binding_ids",
+                    "allowed_evidence_ids",
+                    "runtime_evidence_mutation_allowed",
+                    "old_patch_proposal_mutation_allowed",
+                    "repair_planner_allowed",
+                    "source_patch_allowed",
+                }
+            ),
+            producer_stage="edit_authority_approval",
+            consumer_stages=frozenset(
+                {
+                    "evidence_retrieval",
+                    "implementation_plan",
+                    "binding_resolution",
+                    "dashboard",
+                }
+            ),
+            allowed_statuses=statuses,
+            required_upstream_artifacts=frozenset(
+                {
+                    "feature_spec",
+                    "runtime_evidence",
+                    "implementation_plan",
+                    "patch_proposal",
+                }
+            ),
+            dashboard_projection=(
+                "message",
+                "status",
+                "approval_hash",
+                "allowed_edit_binding_ids",
+            ),
         ),
         ArtifactContract(
             artifact_type="manual_evidence",

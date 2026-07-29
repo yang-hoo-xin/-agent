@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -120,6 +121,75 @@ def _patch_payload() -> dict[str, object]:
         "blocked": True,
         "blockers": [],
     }
+
+
+def _edit_authority_approval_payload() -> dict[str, object]:
+    proposal = {
+        "schema_version": "stagger_edit_authority_proposal_v1",
+        "feature_id": "feature_001",
+    }
+    approval_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            proposal,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "node_name": "approve_stagger_edit_authority",
+        "stage": "edit_authority_approval",
+        "message": "Exact authority approved.",
+        "status": "approved",
+        "feature_id": "feature_001",
+        "run_id": "run_001",
+        "approval_hash": approval_hash,
+        "approved_by": "user",
+        "approval_scope": [
+            "runtime_failure_ownership_reclassification",
+            "new_exact_edit_binding",
+        ],
+        "approved_proposal": proposal,
+        "stored_runtime_failure_ownership": {
+            "owner": "observation",
+            "source_repair_allowed": False,
+        },
+        "approved_runtime_failure_ownership": {
+            "owner": "product_behavior",
+            "source_repair_allowed": True,
+        },
+        "allowed_edit_binding_ids": ["edit_binding_004"],
+        "allowed_evidence_ids": ["stagger_repair_001"],
+        "runtime_evidence_mutation_allowed": False,
+        "old_patch_proposal_mutation_allowed": False,
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+    }
+
+
+def test_edit_authority_approval_contract_binds_exact_proposal_hash() -> None:
+    registry = ArtifactTypeRegistry()
+    payload = _edit_authority_approval_payload()
+
+    contract = registry.validate_write(
+        artifact_type="edit_authority_approval",
+        status="success",
+        payload=payload,
+    )
+
+    assert contract.producer_stage == "edit_authority_approval"
+    assert "binding_resolution" in contract.consumer_stages
+
+    payload["approval_hash"] = "sha256:" + ("0" * 64)
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="proposal hash mismatch",
+    ):
+        registry.validate_write(
+            artifact_type="edit_authority_approval",
+            status="success",
+            payload=payload,
+        )
 
 
 def _review_payload() -> dict[str, object]:

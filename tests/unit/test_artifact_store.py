@@ -806,6 +806,190 @@ def test_exact_revision_upstream_is_not_stale_when_latest_pointer_advances(
     assert store.check_direct_freshness(repair_plan).status == "fresh"
 
 
+def test_recursive_freshness_preserves_exact_revision_subgraph(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec_v1 = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    evidence_pack_v1 = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec_v1],
+    )
+    implementation_plan_v1 = store.write(
+        feature_id="feature_001",
+        artifact_type="implementation_plan",
+        payload=_implementation_payload(),
+        upstream_refs=[feature_spec_v1, evidence_pack_v1],
+    )
+    patch_proposal_v1 = store.write(
+        feature_id="feature_001",
+        artifact_type="patch_proposal",
+        payload={
+            "node_name": "draft_patch_proposal",
+            "stage": "patch_proposal",
+            "message": "proposal v1",
+            "proposal_id": "proposal_v1",
+            "feature_id": "feature_001",
+            "summary": "proposal v1",
+            "files": [],
+            "evidence_refs": [],
+            "diff_intent": [],
+            "change_units": [],
+            "context_pack": {},
+            "scope_boundary": {
+                "allowed_files": [],
+                "forbidden_files": [],
+                "max_files_changed": 0,
+            },
+            "risk_assessment": {},
+            "expected_tests": [],
+            "no_op_status": {"is_no_op": False},
+            "rollback_hints": [],
+            "manual_review_notes": [],
+            "blocked": False,
+            "blockers": [],
+        },
+        upstream_refs=[feature_spec_v1, evidence_pack_v1, implementation_plan_v1],
+    )
+    build_result = store.write(
+        feature_id="feature_001",
+        artifact_type="build_result",
+        payload={
+            "node_name": "build",
+            "stage": "build",
+            "message": "failed build",
+            "feature_id": "feature_001",
+            "execution_mode": "supplied",
+            "status": "failed",
+            "command": ["dotnet", "build"],
+            "exit_code": 1,
+            "stdout_path": None,
+            "stderr_path": None,
+            "errors": [],
+            "warnings": [],
+            "duration_ms": 0,
+            "error_class": "compile_error",
+            "diagnostics": [],
+            "repair_handoff": {},
+            "expected_artifacts": [],
+            "verified_artifacts": [],
+            "artifact_verification": {},
+            "real_build_performed": False,
+            "claims_real_build_success": False,
+        },
+        status="blocked",
+        upstream_refs=[
+            store.write(
+                feature_id="feature_001",
+                artifact_type="dry_run_result",
+                payload={
+                    "node_name": "dry_run_apply",
+                    "stage": "dry_run_apply",
+                    "message": "dry run",
+                },
+                upstream_refs=[
+                    patch_proposal_v1,
+                    store.write(
+                        feature_id="feature_001",
+                        artifact_type="proposal_review",
+                        payload={
+                            "node_name": "review_proposal",
+                            "stage": "proposal_review",
+                            "message": "review",
+                            "decision": "approve_dry_run",
+                            "findings": [],
+                            "required_changes": [],
+                            "allowed_next_stage": "dry_run_apply",
+                            "checked_rules": [],
+                            "trace_metrics": {
+                                "num_changes_checked": 1,
+                                "num_blocking_findings": 0,
+                            },
+                        },
+                        upstream_refs=[patch_proposal_v1],
+                    ),
+                ],
+            )
+        ],
+    )
+    repair_plan = store.write(
+        feature_id="feature_001",
+        artifact_type="repair_plan",
+        payload={
+            "node_name": "create_repair_plan",
+            "stage": "repair_plan",
+            "message": "repair",
+            "repair_id": "repair_001",
+            "feature_id": "feature_001",
+            "failure_source": "build_result",
+            "failure_class": "compile_error",
+            "failure_evidence": {"summary": "compiler error"},
+            "evidence_refs": [],
+            "root_cause_hypotheses": [],
+            "hypothesis": "compiler error",
+            "recommended_fix_strategy": "repair scoped proposal",
+            "minimal_changes": [],
+            "retry_count": 1,
+            "retry_budget": 1,
+            "retry_budget_remaining": 0,
+            "retry_exhausted": False,
+            "scope_expansion_allowed": False,
+            "stop_condition": "stop after repair",
+            "forbidden_regressions": [],
+            "requires_new_evidence": False,
+            "allowed_next_stage": "generate_patch_proposal",
+            "blockers": [],
+        },
+        upstream_refs=[build_result, patch_proposal_v1],
+        exact_revision_upstream_types={"build_result", "patch_proposal"},
+    )
+
+    feature_payload_v2 = _feature_payload()
+    feature_payload_v2["message"] = "feature v2"
+    feature_spec_v2 = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=feature_payload_v2,
+    )
+    evidence_pack_v2 = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec_v2],
+    )
+    store.write(
+        feature_id="feature_001",
+        artifact_type="implementation_plan",
+        payload=_implementation_payload(),
+        upstream_refs=[feature_spec_v2, evidence_pack_v2],
+    )
+
+    freshness = store.check_freshness(repair_plan)
+    assert freshness.status == "fresh", freshness.stale_reasons
+
+    exact_feature_envelope = json.loads(
+        Path(feature_spec_v1.path).read_text(encoding="utf-8")
+    )
+    exact_feature_envelope["data"]["message"] = "tampered exact revision"
+    Path(feature_spec_v1.path).write_text(
+        json.dumps(exact_feature_envelope),
+        encoding="utf-8",
+    )
+
+    tampered_freshness = store.check_freshness(repair_plan)
+    assert tampered_freshness.status == "stale"
+    assert (
+        "feature_spec invalid: Artifact content hash mismatch"
+        in tampered_freshness.stale_reasons
+    )
+
+
 def test_cross_feature_upstream_rejected(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
     feature_spec = store.write(

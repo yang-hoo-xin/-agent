@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from src.mod_agent.runtime import (
+    StaggerEditAuthorityApprovalError,
     StaggerEditAuthorityPreflightError,
+    approve_stagger_edit_authority,
     preflight_stagger_edit_authority,
 )
+from src.mod_agent.artifacts import ArtifactRef
+from src.mod_agent.artifacts.registry import ArtifactTypeRegistry
 from src.mod_agent.runtime import (
     stagger_edit_authority as edit_authority_module,
 )
@@ -148,6 +154,31 @@ def _envelopes() -> dict[str, dict[str, object]]:
         ],
     }
     implementation_plan = {
+        "node_name": "create_implementation_plan",
+        "stage": "implementation_plan",
+        "message": "Existing plan.",
+        "feature_id": FEATURE_ID,
+        "evidence_source_paths": [TARGET_PATH],
+        "target_files": [TARGET_PATH],
+        "target_symbols": [
+            (
+                "BetterHitFeedback.Patches."
+                "HitFeedbackBehaviorPatch.AddParallelMarkerPair"
+            )
+        ],
+        "evidence_refs": ["existing_visual_evidence"],
+        "proposed_changes": [
+            {
+                "change_id": "chg_002",
+                "edit_binding_id": "edit_binding_002",
+            }
+        ],
+        "side_effect_boundaries": [],
+        "test_plan": ["focused validation"],
+        "rollback_plan": ["Rollback chg_002."],
+        "open_questions": [],
+        "blocking": False,
+        "blockers": [],
         "binding_registry": {
             "schema_version": "binding_registry_v1",
             "owner_artifact_type": "implementation_plan",
@@ -208,6 +239,11 @@ def _envelopes() -> dict[str, dict[str, object]]:
                     {
                         "artifact_type": "feature_spec",
                         "artifact_hash": FEATURE_SPEC_HASH,
+                    },
+                    {
+                        "artifact_type": "evidence_pack",
+                        "artifact_hash": "5" * 64,
+                        "path": "evidence-pack.json",
                     }
                 ]
             },
@@ -219,6 +255,53 @@ def _envelopes() -> dict[str, dict[str, object]]:
                     {
                         "artifact_type": "implementation_plan",
                         "artifact_hash": IMPLEMENTATION_PLAN_HASH,
+                    }
+                ]
+            },
+        },
+        "evidence_pack": {
+            "status": "success",
+            "data": {
+                "node_name": "retrieve_evidence",
+                "stage": "evidence_retrieval",
+                "message": "Existing evidence.",
+                "query": "Stagger feedback",
+                "readiness": "sufficient",
+                "can_generate_patch": True,
+                "authority": "current_source",
+                "authoritative_for_patch": True,
+                "identity_schema_version": "evidence_identity_v1",
+                "identity_field_mapping": {},
+                "items": [
+                    {
+                        "evidence_id": "existing_visual_evidence",
+                        "source_type": "target_source",
+                        "source_path": TARGET_PATH,
+                        "symbol": (
+                            "BetterHitFeedback.Patches."
+                            "HitFeedbackBehaviorPatch."
+                            "AddParallelMarkerPair"
+                        ),
+                        "span": {
+                            "start_line": 881,
+                            "end_line": 907,
+                        },
+                    }
+                ],
+                "gaps": [],
+                "excluded": [],
+                "blockers": [],
+                "retrieval_methods_used": ["current_source"],
+                "missing_evidence": [],
+                "disabled_modes": [],
+                "timing": {},
+                "trace_refs": [],
+            },
+            "inputs": {
+                "upstream_artifacts": [
+                    {
+                        "artifact_type": "feature_spec",
+                        "artifact_hash": FEATURE_SPEC_HASH,
                     }
                 ]
             },
@@ -405,3 +488,161 @@ def test_preflight_blocks_when_existing_authority_already_resolves(
         match="required Binding Gap",
     ):
         preflight_stagger_edit_authority(**args)
+
+
+class _WritableArtifactStore(_ReadOnlyArtifactStore):
+    writes: list[dict[str, object]] = []
+    preflight_types: tuple[str, ...] = ()
+
+    def preflight_atomic_commit(
+        self,
+        *,
+        feature_id: str,
+        artifact_types: tuple[str, ...],
+    ) -> None:
+        assert feature_id == FEATURE_ID
+        self.__class__.preflight_types = artifact_types
+
+    def write(
+        self,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        payload,
+        status: str = "success",
+        upstream_refs=None,
+        exact_revision_upstream_types=None,
+        **_,
+    ) -> ArtifactRef:
+        assert feature_id == FEATURE_ID
+        ArtifactTypeRegistry().validate_write(
+            artifact_type=artifact_type,
+            status=status,
+            payload=dict(payload),
+        )
+        digest = hashlib.sha256(
+            json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            path=str(
+                self.root
+                / "features"
+                / feature_id
+                / "r"
+                / artifact_type
+                / f"{digest[:32]}.json"
+            ),
+            artifact_hash=digest,
+        )
+        self.__class__.writes.append(
+            {
+                "artifact_type": artifact_type,
+                "payload": copy.deepcopy(dict(payload)),
+                "upstream_types": [
+                    item.artifact_type
+                    for item in (upstream_refs or [])
+                ],
+                "exact_revision_upstream_types": set(
+                    exact_revision_upstream_types or set()
+                ),
+            }
+        )
+        self.__class__.envelopes[artifact_type] = {
+            "status": status,
+            "data": copy.deepcopy(dict(payload)),
+            "inputs": {
+                "upstream_artifacts": [
+                    {
+                        "artifact_type": item.artifact_type,
+                        "artifact_hash": item.artifact_hash,
+                        "path": item.path,
+                    }
+                    for item in (upstream_refs or [])
+                ]
+            },
+        }
+        return ref
+
+
+def test_exact_approval_writes_authority_chain_and_stops_before_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _preflight_args(tmp_path)
+    _WritableArtifactStore.envelopes = _envelopes()
+    _WritableArtifactStore.stale_types = set()
+    _WritableArtifactStore.read_types = []
+    _WritableArtifactStore.freshness_types = []
+    _WritableArtifactStore.writes = []
+    _WritableArtifactStore.preflight_types = ()
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        _WritableArtifactStore,
+    )
+    source_path = Path(args["source_root"]) / TARGET_PATH
+    source_hash_before = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    preflight = preflight_stagger_edit_authority(**args)
+
+    result = approve_stagger_edit_authority(
+        approval_hash=preflight["approval_hash"],
+        approved_by="user",
+        **args,
+    )
+
+    assert result["status"] == "EXACT_EDIT_AUTHORITY_RESOLVED"
+    assert result["written_artifact_types"] == [
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+        "binding_resolution",
+    ]
+    assert result["allowed_edit_binding_ids"] == ["edit_binding_003"]
+    assert result["resolved_repair_target"]["status"] == "resolved"
+    assert result["resolved_repair_target"]["binding_id"] == (
+        "edit_binding_003"
+    )
+    assert result["repair_planner_invoked"] is False
+    assert result["repair_allowed"] is False
+    assert result["source_patch_allowed"] is False
+    assert result["source_modified"] is False
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() == (
+        source_hash_before
+    )
+    assert [
+        item["artifact_type"]
+        for item in _WritableArtifactStore.writes
+    ] == result["written_artifact_types"]
+    assert _WritableArtifactStore.preflight_types == tuple(
+        result["written_artifact_types"]
+    )
+    plan_write = _WritableArtifactStore.writes[2]["payload"]
+    assert isinstance(plan_write, dict)
+    new_binding = plan_write["binding_registry"]["edit_bindings"][-1]
+    assert new_binding["target_symbol"] == TARGET_SYMBOL
+    assert new_binding["target_span"] == {
+        "start_line": 7,
+        "end_line": 11,
+    }
+
+
+def test_wrong_exact_approval_hash_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    args = _preflight_args(tmp_path)
+
+    with pytest.raises(
+        StaggerEditAuthorityApprovalError,
+        match="does not match",
+    ):
+        approve_stagger_edit_authority(
+            approval_hash="sha256:" + ("f" * 64),
+            approved_by="user",
+            **args,
+        )
