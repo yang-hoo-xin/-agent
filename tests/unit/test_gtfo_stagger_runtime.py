@@ -21,7 +21,9 @@ DISABLED_CRITERION = (
     "With General.Enabled=false, a qualifying reaction produces no feature output."
 )
 VISUAL_CRITERION = (
-    "With General.Enabled=true, the additional yellow X is directly observed."
+    "With General.Enabled=true, a locally owned player's weapon hit that "
+    "actually produces the selected enemy reaction shows one additional "
+    "short-lived yellow X at that hit position."
 )
 MARKER_CRITERION = (
     "STAGGER_FEEDBACK_SHOWN records visual_spawn_succeeded=true and "

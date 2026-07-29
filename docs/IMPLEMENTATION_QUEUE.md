@@ -302,8 +302,8 @@ exact_evidence:
 affected_coverage_ids:
   GOV-005, PLAN-001, PLAN-002, PLAN-003, PLAN-004, RET-007, RET-008, RET-011,
   PROP-002, PROP-005, REVIEW-001, REVIEW-004, DOM-004, DOM-006, EXEC-002,
-  EXEC-003, EXEC-005, EXEC-006, EXEC-011, WF-004, ART-002, MISS-026D,
-  MISS-026E
+  EXEC-003, EXEC-005, EXEC-006, EXEC-009, EXEC-010, EXEC-011, WF-004,
+  ART-002, MISS-026D, MISS-026E
 dependencies:
   The FeatureSpec, EvidencePack, Implementation Plan, binding/domain gates,
   complete repair Proposal, deterministic Review, and no-write preapproval
@@ -322,6 +322,13 @@ dependencies:
   successful Runtime history, current FeatureSpec/marker contract, compiled
   marker source, and current machine reads. The final no-launch preflight
   returned `READY_FOR_EXTERNAL_AUTHORIZATION`.
+  After retry #2, the bounded no-write Edit Authority preflight now rereads the
+  exact current FeatureSpec, immutable RuntimeEvidence, Implementation Plan,
+  PatchProposal, and Build source. It keeps the stored observation ownership
+  immutable, separately exposes the deterministic product-behavior replay for
+  human review, and proves the current allowed bindings do not cover the
+  diagnosed symbol. It does not create the later authority record or enter
+  RepairPlanner.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -601,6 +608,21 @@ focused_verification:
   Its owner is observation and source_repair_allowed=false. GTFO exited, the
   temporary DLL was removed, and config SHA256 `717c5f4b...82e` was restored.
   No later Runtime or source change is authorized by that result.
+  The new public no-write Edit Authority preflight bound FeatureSpec
+  `bbd473ce...a190`, RuntimeEvidence `3c1554fa...46f33`, Implementation Plan
+  `6996ea55...5555`, PatchProposal `37368a63...fa93`, and current source
+  SHA256 `65489604...BB3B`. It deterministically replayed the exact yellow-X
+  failure, retained the original observation-owned Artifact unchanged, and
+  returned `missing_symbol_binding` because `edit_binding_002` targets
+  `AddParallelMarkerPair` rather than `TrySpawnStaggerYellowX`. The proposed
+  exact scope is `Patches/HitFeedbackBehaviorPatch.cs` lines 979-984 with
+  operation
+  `replace_hud_recttransform_acquisition_and_null_guard_only`.
+  The exact approval hash is
+  `sha256:488fe9a854c359ac7dd86f54a48692441c7a4e68d2b60d7e4cc89d73a8ef7c6f`.
+  It remains unapproved and performed zero Artifact writes, Registry mutation,
+  RepairPlanner calls, source changes, Builds, process launches, or game
+  actions.
   `python -m pytest tests/unit/test_gtfo_runtime_automation.py
   tests/unit/test_gtfo_stagger_runtime.py tests/unit/test_local_entry.py
   tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py -q`
@@ -641,6 +663,11 @@ stop_condition:
   Observation retry #2 is immutable inconclusive Runtime history and exhausted
   the admitted retry. Preserve its initial audio response together with the
   later user correction; do not promote either into full audibility proof.
+  Preserve the exact no-write Edit Authority proposal and approval hash above.
+  Until that exact hash is explicitly approved, do not create an authority
+  record, new Implementation Plan revision, new binding id, allowed-list
+  revision, BindingResolution Artifact, or ResolvedRepairTarget. RepairPlanner
+  and every source-change Proposal remain closed.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.

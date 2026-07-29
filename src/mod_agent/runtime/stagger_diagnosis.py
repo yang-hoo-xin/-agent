@@ -7,7 +7,9 @@ from typing import Any
 
 
 STAGGER_VISUAL_ACCEPTANCE_CRITERION = (
-    "With General.Enabled=true, the additional yellow X is directly observed."
+    "With General.Enabled=true, a locally owned player's weapon hit that "
+    "actually produces the selected enemy reaction shows one additional "
+    "short-lived yellow X at that hit position."
 )
 
 _SKIPPED_SIGNAL = "signal=STAGGER_FEEDBACK_SKIPPED"

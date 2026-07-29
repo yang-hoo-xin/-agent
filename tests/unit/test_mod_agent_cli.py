@@ -1643,3 +1643,159 @@ def test_cli_runtime_observation_retry_passes_separate_output_root(
     assert captured["runtime_output_root"] == (
         r"C:\runtime-observation-retry"
     )
+
+
+def test_cli_stagger_edit_authority_preflight_passes_exact_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def preflight(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "AWAITING_EXACT_EDIT_AUTHORITY_APPROVAL",
+            "approval_hash": "sha256:" + ("a" * 64),
+            "writes_performed": False,
+            "registry_mutation_allowed": False,
+            "repair_allowed": False,
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli.preflight_stagger_edit_authority",
+        preflight,
+    )
+    target_symbol = (
+        "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+        "TrySpawnStaggerYellowX"
+    )
+
+    exit_code = main(
+        [
+            "preflight-stagger-edit-authority",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--run-id",
+            "runtime_001",
+            "--feature-spec-path",
+            "feature-spec.json",
+            "--feature-spec-hash",
+            "1" * 64,
+            "--runtime-evidence-path",
+            "runtime-evidence.json",
+            "--runtime-evidence-hash",
+            "2" * 64,
+            "--implementation-plan-path",
+            "implementation-plan.json",
+            "--implementation-plan-hash",
+            "3" * 64,
+            "--patch-proposal-path",
+            "patch-proposal.json",
+            "--patch-proposal-hash",
+            "4" * 64,
+            "--source-root",
+            "source-root",
+            "--canonical-target-path",
+            "Patches/HitFeedbackBehaviorPatch.cs",
+            "--target-symbol",
+            target_symbol,
+            "--target-start-line",
+            "979",
+            "--target-end-line",
+            "984",
+            "--proposed-operation",
+            "replace_hud_recttransform_acquisition_and_null_guard_only",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == "AWAITING_EXACT_EDIT_AUTHORITY_APPROVAL"
+    assert payload["writes_performed"] is False
+    assert captured == {
+        "artifact_store_root": "shared-store",
+        "feature_id": "feature_001",
+        "run_id": "runtime_001",
+        "feature_spec_path": "feature-spec.json",
+        "feature_spec_hash": "1" * 64,
+        "runtime_evidence_path": "runtime-evidence.json",
+        "runtime_evidence_hash": "2" * 64,
+        "implementation_plan_path": "implementation-plan.json",
+        "implementation_plan_hash": "3" * 64,
+        "patch_proposal_path": "patch-proposal.json",
+        "patch_proposal_hash": "4" * 64,
+        "source_root": "source-root",
+        "canonical_target_path": "Patches/HitFeedbackBehaviorPatch.cs",
+        "target_symbol": target_symbol,
+        "target_start_line": 979,
+        "target_end_line": 984,
+        "proposed_operation": (
+            "replace_hud_recttransform_acquisition_and_null_guard_only"
+        ),
+    }
+
+
+def test_cli_stagger_edit_authority_preflight_reports_blocked_without_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def blocked(**_: object):
+        raise ValueError("exact Runtime lineage mismatch")
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli.preflight_stagger_edit_authority",
+        blocked,
+    )
+
+    exit_code = main(
+        [
+            "preflight-stagger-edit-authority",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--run-id",
+            "runtime_001",
+            "--feature-spec-path",
+            "feature-spec.json",
+            "--feature-spec-hash",
+            "1" * 64,
+            "--runtime-evidence-path",
+            "runtime-evidence.json",
+            "--runtime-evidence-hash",
+            "2" * 64,
+            "--implementation-plan-path",
+            "implementation-plan.json",
+            "--implementation-plan-hash",
+            "3" * 64,
+            "--patch-proposal-path",
+            "patch-proposal.json",
+            "--patch-proposal-hash",
+            "4" * 64,
+            "--source-root",
+            "source-root",
+            "--canonical-target-path",
+            "Patches/HitFeedbackBehaviorPatch.cs",
+            "--target-symbol",
+            (
+                "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+                "TrySpawnStaggerYellowX"
+            ),
+            "--target-start-line",
+            "979",
+            "--target-end-line",
+            "984",
+            "--proposed-operation",
+            "replace_hud_recttransform_acquisition_and_null_guard_only",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["status"] == "BLOCKED"
+    assert payload["writes_performed"] is False
+    assert payload["artifact_writes_performed"] is False
+    assert payload["registry_mutation_allowed"] is False
+    assert payload["repair_allowed"] is False

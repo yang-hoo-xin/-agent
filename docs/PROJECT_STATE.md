@@ -14,7 +14,7 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: build_complete_runtime_retry_2_inconclusive
+stagger_implementation_plan_status: build_complete_runtime_visual_failure_replayed_edit_authority_approval_pending
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: STAGGER-OPERATOR-COMPLETION-CONFIRMATION-001
@@ -609,6 +609,28 @@ not a new Runtime scheduler or Artifact system. The longest retry #2-shaped
 confirmation path is 215 characters and remains below the existing 216-character
 overall output maximum. The affected Runtime/Workflow suite passed 310 tests in
 36.87 seconds; Python compilation and `git diff --check` passed.
+
+The next bounded product step does not alter that immutable Runtime history.
+`preflight-stagger-edit-authority` rereads the exact current FeatureSpec,
+RuntimeEvidence `3c1554fa...46f33`, Implementation Plan
+`6996ea55...5555`, PatchProposal `37368a63...fa93`, and the read-only
+`sfp_build_009` source. It replays the exact visual criterion, records the
+stored `observation` owner separately from the replayed
+`product_behavior` owner, and refuses to treat that replay as authority.
+It also proves the current allowed list comes from
+`patch_proposal.context_pack.allowed_edit_binding_ids` and that
+`edit_binding_002` does not cover
+`TrySpawnStaggerYellowX`.
+
+The exact no-write proposal binds source SHA256
+`65489604EEC41D073FF5BDA77940481AE63BE1917EDE199C99ED04C7B180BB3B`
+and lines 979-984. Its approval hash is
+`sha256:488fe9a854c359ac7dd86f54a48692441c7a4e68d2b60d7e4cc89d73a8ef7c6f`.
+Current state is `AWAITING_EXACT_EDIT_AUTHORITY_APPROVAL`: the hash is not
+approved, Registry mutation and repair remain false, and no Plan, PatchProposal,
+RuntimeEvidence, or source Artifact was written. A unique
+`ResolvedRepairTarget` therefore does not yet exist and RepairPlanner remains
+closed.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

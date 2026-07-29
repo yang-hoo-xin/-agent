@@ -40,6 +40,10 @@ from .gtfo_stagger import (
     stagger_profile_from_settings,
     temporarily_deploy_gtfo_config,
 )
+from .stagger_edit_authority import (
+    StaggerEditAuthorityPreflightError,
+    preflight_stagger_edit_authority,
+)
 from .probe import (
     RuntimeProbeCommandResult,
     RuntimeProbeError,
@@ -69,6 +73,7 @@ __all__ = [
     "GTFOConfigDeploymentRecord",
     "GTFOStaggerAcceptanceProfile",
     "GTFOStaggerRuntimeError",
+    "StaggerEditAuthorityPreflightError",
     "GTFORuntimeAutomationError",
     "RuntimeProbeCommandResult",
     "RuntimeProbeError",
@@ -94,6 +99,7 @@ __all__ = [
     "make_runtime_probe_evidence_factory",
     "normalize_runtime_failure_ownership",
     "profile_from_settings",
+    "preflight_stagger_edit_authority",
     "stagger_profile_from_settings",
     "screenshot_registry_to_runtime_item",
     "temporarily_deploy_verified_plugin",

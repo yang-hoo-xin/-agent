@@ -532,6 +532,31 @@ required observations. GTFO exited, the temporary DLL is absent, and
 `717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`.
 No further Runtime attempt or Mod source repair is authorized by this result.
 
+The current Stagger follow-up now has a public no-write Edit Authority
+preflight. It rereads the exact FeatureSpec, immutable retry #2
+RuntimeEvidence, current Implementation Plan, current PatchProposal, and the
+read-only `sfp_build_009` source bytes. Deterministic replay binds the exact
+yellow-X criterion to both the trusted
+`missing_canvas_rect_for_stagger_x` current-run fact and the consistent direct
+operator failed observation. It does not rewrite the stored RuntimeEvidence:
+the original owner remains `observation` with
+`source_repair_allowed=false`, while the replayed ownership proposed for
+human review is `product_behavior`.
+
+The same preflight proves that current `edit_binding_002` targets
+`AddParallelMarkerPair`, uses the older source SHA256, and cannot authorize
+`TrySpawnStaggerYellowX`. The exact proposed edit scope is current source
+SHA256
+`65489604EEC41D073FF5BDA77940481AE63BE1917EDE199C99ED04C7B180BB3B`,
+`Patches/HitFeedbackBehaviorPatch.cs` lines 979-984, operation
+`replace_hud_recttransform_acquisition_and_null_guard_only`. The no-write
+result is `AWAITING_EXACT_EDIT_AUTHORITY_APPROVAL` with approval hash
+`sha256:488fe9a854c359ac7dd86f54a48692441c7a4e68d2b60d7e4cc89d73a8ef7c6f`.
+It performed no Artifact write, Registry mutation, RepairPlanner invocation,
+source modification, Build, process launch, or game action. The hash has not
+been approved; no new authority record, Plan revision, binding id, or
+ResolvedRepairTarget exists.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove
