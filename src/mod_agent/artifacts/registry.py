@@ -120,6 +120,8 @@ class ArtifactTypeRegistry:
     ) -> None:
         if artifact_type == "implementation_plan":
             _validate_implementation_plan_binding_registry(payload)
+        if artifact_type == "binding_resolution":
+            _validate_binding_resolution(payload)
         if artifact_type == "evidence_run_attempt":
             _validate_evidence_run_attempt(payload)
         if artifact_type == "evidence_post_run_validation":
@@ -169,6 +171,106 @@ def _validate_evidence_run_attempt(payload: dict[str, Any]) -> None:
                 raise ArtifactRegistryError(
                     f"evidence_run_attempt {field_name} must be an object"
                 )
+
+
+def _validate_binding_resolution(payload: dict[str, Any]) -> None:
+    result_type = payload.get("result_type")
+    if result_type not in {
+        "resolved_repair_target",
+        "binding_gap",
+        "binding_resolution_blocked",
+    }:
+        raise ArtifactRegistryError(
+            "binding_resolution result_type is invalid"
+        )
+    resolved_target = payload.get("resolved_repair_target")
+    binding_gap = payload.get("binding_gap")
+    proposal_request = payload.get("binding_proposal_request")
+    blockers = payload.get("blockers")
+    if not isinstance(blockers, list):
+        raise ArtifactRegistryError(
+            "binding_resolution blockers must be a list"
+        )
+    feature_id = payload.get("feature_id")
+    run_id = payload.get("run_id")
+    if (
+        not isinstance(feature_id, str)
+        or not feature_id
+        or not isinstance(run_id, str)
+        or not run_id
+    ):
+        raise ArtifactRegistryError(
+            "binding_resolution feature_id and run_id must be non-empty"
+        )
+    for revision_field in (
+        "runtime_evidence_revision",
+        "implementation_plan_revision",
+        "patch_proposal_revision",
+    ):
+        revision = payload.get(revision_field)
+        if (
+            not isinstance(revision, dict)
+            or revision.get("feature_id") != feature_id
+            or not isinstance(revision.get("path"), str)
+            or not revision["path"]
+            or not isinstance(revision.get("artifact_hash"), str)
+            or not revision["artifact_hash"]
+        ):
+            raise ArtifactRegistryError(
+                f"binding_resolution {revision_field} is not bound to "
+                "the current feature"
+            )
+    if result_type == "resolved_repair_target":
+        if (
+            not isinstance(resolved_target, dict)
+            or resolved_target.get("status") != "resolved"
+            or resolved_target.get("feature_id") != feature_id
+            or resolved_target.get("run_id") != run_id
+            or resolved_target.get("implementation_plan_revision")
+            != payload["implementation_plan_revision"]
+            or not resolved_target.get("binding_id")
+            or binding_gap is not None
+            or proposal_request is not None
+            or blockers
+        ):
+            raise ArtifactRegistryError(
+                "resolved binding_resolution requires one resolved target "
+                "and no gap, request, or blockers"
+            )
+        return
+    if resolved_target is not None or not blockers:
+        raise ArtifactRegistryError(
+            "blocked binding_resolution requires no resolved target and "
+            "at least one blocker"
+        )
+    if result_type == "binding_gap":
+        if (
+            not isinstance(binding_gap, dict)
+            or binding_gap.get("gap") is not True
+            or not isinstance(binding_gap.get("gap_reasons"), list)
+            or not binding_gap["gap_reasons"]
+            or any(
+                not isinstance(reason, str) or not reason
+                for reason in binding_gap["gap_reasons"]
+            )
+            or len(set(binding_gap["gap_reasons"]))
+            != len(binding_gap["gap_reasons"])
+            or not isinstance(proposal_request, dict)
+            or proposal_request.get("status") != "requested"
+            or proposal_request.get("approval_required") is not True
+            or proposal_request.get("registry_mutation_allowed") is not False
+            or proposal_request.get("repair_allowed") is not False
+            or proposal_request.get("required_plan_lineage")
+            != payload["implementation_plan_revision"]
+        ):
+            raise ArtifactRegistryError(
+                "binding_gap requires a non-authorizing binding proposal request"
+            )
+        return
+    if binding_gap is not None or proposal_request is not None:
+        raise ArtifactRegistryError(
+            "invalid binding inputs cannot produce a gap or proposal request"
+        )
 
 
 def _validate_evidence_post_run_validation(payload: dict[str, Any]) -> None:
@@ -574,7 +676,13 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 }
             ),
             producer_stage="implementation_plan",
-            consumer_stages=frozenset({"generate_patch_proposal", "dashboard"}),
+            consumer_stages=frozenset(
+                {
+                    "generate_patch_proposal",
+                    "binding_resolution",
+                    "dashboard",
+                }
+            ),
             allowed_statuses=statuses,
             required_upstream_artifacts=frozenset({"feature_spec", "evidence_pack"}),
             dashboard_projection=("message", "target_files", "blocking"),
@@ -606,7 +714,14 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 }
             ),
             producer_stage="patch_proposal",
-            consumer_stages=frozenset({"review_proposal", "dry_run_apply", "dashboard"}),
+            consumer_stages=frozenset(
+                {
+                    "review_proposal",
+                    "dry_run_apply",
+                    "binding_resolution",
+                    "dashboard",
+                }
+            ),
             allowed_statuses=statuses,
             required_upstream_artifacts=frozenset({"implementation_plan", "evidence_pack"}),
             dashboard_projection=("message", "files", "blocked"),
@@ -783,7 +898,14 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 }
             ),
             producer_stage="runtime_evidence",
-            consumer_stages=frozenset({"evaluate", "repair_plan", "dashboard"}),
+            consumer_stages=frozenset(
+                {
+                    "evaluate",
+                    "binding_resolution",
+                    "repair_plan",
+                    "dashboard",
+                }
+            ),
             allowed_statuses=statuses,
             required_upstream_artifacts=frozenset({"build_result"}),
             dashboard_projection=("message",),
@@ -856,6 +978,44 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 "captioned_count",
                 "verification_status",
                 "acceptance_status",
+            ),
+        ),
+        ArtifactContract(
+            artifact_type="binding_resolution",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "feature_id",
+                    "run_id",
+                    "result_type",
+                    "runtime_evidence_revision",
+                    "implementation_plan_revision",
+                    "patch_proposal_revision",
+                    "allowed_edit_binding_ids",
+                    "resolved_repair_target",
+                    "binding_gap",
+                    "binding_proposal_request",
+                    "blockers",
+                }
+            ),
+            producer_stage="binding_resolution",
+            consumer_stages=frozenset({"repair_plan", "dashboard"}),
+            allowed_statuses=statuses,
+            required_upstream_artifacts=frozenset(
+                {
+                    "runtime_evidence",
+                    "implementation_plan",
+                    "patch_proposal",
+                }
+            ),
+            dashboard_projection=(
+                "message",
+                "result_type",
+                "binding_gap",
+                "binding_proposal_request",
             ),
         ),
         ArtifactContract(

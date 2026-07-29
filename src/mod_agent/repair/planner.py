@@ -47,6 +47,7 @@ class RepairPlan:
     display_files: tuple[str, ...] = ()
     failure_findings: tuple[dict[str, Any], ...] = ()
     repair_context: dict[str, Any] | None = None
+    resolved_repair_target: dict[str, Any] | None = None
 
     def to_artifact_payload(self) -> dict[str, Any]:
         """Return payload compatible with the repair_plan artifact contract."""
@@ -85,6 +86,7 @@ class RepairPlan:
             "display_files": list(self.display_files),
             "failure_findings": [dict(finding) for finding in self.failure_findings],
             "repair_context": dict(self.repair_context or {}),
+            "resolved_repair_target": dict(self.resolved_repair_target or {}),
         }
 
     def _recommended_fix_strategy(self) -> str:
@@ -191,7 +193,7 @@ class RepairPlanner:
         retry_count: int,
         target_behavior: str | None = None,
         proposal_context_pack: dict[str, Any] | None = None,
-        implementation_plan: dict[str, Any] | None = None,
+        resolved_repair_target: dict[str, Any] | None = None,
     ) -> RepairPlan:
         """Create a repair plan from failed runtime evidence."""
 
@@ -220,16 +222,26 @@ class RepairPlanner:
                 ),
             ]
         )
-        allowed_binding_ids = _allowed_binding_ids_from_context(proposal_context_pack)
-        resolver = BindingResolver.from_implementation_plan(implementation_plan)
+        resolved_target = (
+            dict(resolved_repair_target)
+            if isinstance(resolved_repair_target, dict)
+            else {}
+        )
+        resolved_binding_id = (
+            str(resolved_target["binding_id"])
+            if resolved_target.get("status") == "resolved"
+            and isinstance(resolved_target.get("binding_id"), str)
+            else None
+        )
+        allowed_binding_ids = (
+            {resolved_binding_id} if resolved_binding_id is not None else set()
+        )
         exhausted = source_repair_allowed and retry_count >= self.retry_budget
         minimal_changes = (
             ()
             if exhausted or not source_repair_allowed
             else self._minimal_runtime_changes(
-                runtime_evidence,
-                resolver=resolver,
-                allowed_binding_ids=allowed_binding_ids,
+                resolved_target,
             )
         )
         blockers = self._runtime_blockers(
@@ -237,6 +249,7 @@ class RepairPlanner:
             exhausted=exhausted,
             evidence_refs=evidence_refs,
             minimal_changes=minimal_changes,
+            resolved_repair_target=resolved_target,
         )
         source_repair_ready = source_repair_allowed and bool(minimal_changes)
         next_retry_count = (
@@ -250,6 +263,7 @@ class RepairPlanner:
             exhausted=exhausted,
             evidence_refs=evidence_refs,
             minimal_changes=minimal_changes,
+            resolved_repair_target=resolved_target,
         )
         return RepairPlan(
             repair_id=stable_repair_id(
@@ -263,7 +277,10 @@ class RepairPlanner:
             failure_source="runtime",
             failure_class=failure_class,
             evidence_refs=evidence_refs,
-            hypothesis=_runtime_failure_hypothesis(ownership),
+            hypothesis=_runtime_failure_hypothesis(
+                ownership,
+                resolved_repair_target=resolved_target,
+            ),
             minimal_changes=minimal_changes,
             retry_count=next_retry_count,
             retry_budget=self.retry_budget,
@@ -276,18 +293,26 @@ class RepairPlanner:
                 "Do not broaden runtime behavior without new evidence.",
                 "Do not grant source-repair authority to a non-product owner.",
             ),
-            requires_new_evidence=failure_owner in {
-                "product_behavior",
-                "observation",
-                "unknown",
-            },
+            requires_new_evidence=(
+                failure_owner in {"observation", "unknown"}
+                or resolved_target.get("root_cause_status") == "unresolved"
+                or resolved_target.get("status") != "resolved"
+            ),
             allowed_next_stage=None if exhausted or blockers else "generate_patch_proposal",
             blockers=blockers,
             target_behavior=target_behavior,
             allowed_edit_binding_ids=tuple(sorted(allowed_binding_ids)),
             source_proposal=_source_proposal_from_context(proposal_context_pack),
-            display_files=tuple(resolver.display_files_for_edit_ids(tuple(sorted(allowed_binding_ids)))),
+            display_files=(
+                (str(resolved_target["canonical_target_path"]),)
+                if isinstance(
+                    resolved_target.get("canonical_target_path"),
+                    str,
+                )
+                else ()
+            ),
             repair_context=repair_context,
+            resolved_repair_target=resolved_target,
         )
 
     def from_review_failure(
@@ -442,32 +467,42 @@ class RepairPlanner:
 
     @staticmethod
     def _minimal_runtime_changes(
-        runtime_evidence: dict[str, Any],
-        *,
-        resolver: BindingResolver,
-        allowed_binding_ids: set[str],
+        resolved_repair_target: dict[str, Any],
     ) -> tuple[dict[str, Any], ...]:
-        source = next(
-            (
-                str(item.get("source"))
-                for item in runtime_evidence.get("evidence_items", [])
-                if isinstance(item, dict) and item.get("source")
-            ),
-            "runtime_evidence",
-        )
-        binding_id, error = resolver.resolve_edit_binding_for_path(
-            source,
-            allowed_binding_ids=allowed_binding_ids,
-        )
-        if error is not None or binding_id is None:
+        if (
+            resolved_repair_target.get("status") != "resolved"
+            or not isinstance(
+                resolved_repair_target.get("binding_id"),
+                str,
+            )
+        ):
+            return ()
+        anchors = resolved_repair_target.get("responsibility_anchors")
+        if not isinstance(anchors, dict):
+            return ()
+        repair_scope = anchors.get("repair_scope")
+        if (
+            not isinstance(repair_scope, list)
+            or not repair_scope
+            or not all(isinstance(value, str) and value for value in repair_scope)
+        ):
             return ()
         return (
             {
                 "change_id": "repair_runtime_0",
-                "edit_binding_id": binding_id,
-                "intent": "Adjust implementation so runtime evidence can satisfy acceptance.",
-                "failure_code": runtime_evidence.get("acceptance_status"),
-                "failure_message": runtime_evidence.get("message"),
+                "edit_binding_id": resolved_repair_target["binding_id"],
+                "intent": (
+                    "Investigate the confirmed Runtime failure point within "
+                    f"{', '.join(repair_scope)} without selecting a concrete "
+                    "source change before root-cause evidence is available."
+                ),
+                "failure_code": resolved_repair_target.get("failure_class"),
+                "failure_message": (
+                    "Binding resolution identified the allowed source scope; "
+                    "root-cause selection remains separate."
+                ),
+                "diagnosed_runtime_symbol": anchors.get("symbol"),
+                "repair_scope": list(repair_scope),
             },
         )
 
@@ -512,9 +547,49 @@ class RepairPlanner:
         exhausted: bool,
         evidence_refs: tuple[str, ...],
         minimal_changes: tuple[dict[str, Any], ...],
+        resolved_repair_target: dict[str, Any],
     ) -> tuple[dict[str, Any], ...]:
         owner = str(ownership["owner"])
         if owner == "product_behavior":
+            target_blockers = resolved_repair_target.get("blockers")
+            if resolved_repair_target.get("status") != "resolved":
+                if isinstance(target_blockers, list) and target_blockers:
+                    return tuple(
+                        {
+                            **dict(blocker),
+                            "stage": "repair_plan",
+                            "resolution_stage": blocker.get("stage"),
+                        }
+                        for blocker in target_blockers
+                        if isinstance(blocker, dict)
+                    )
+                return (
+                    {
+                        "stage": "repair_plan",
+                        "code": "RESOLVED_REPAIR_TARGET_REQUIRED",
+                        "message": (
+                            "Product Runtime repair requires a completed "
+                            "ResolvedRepairTarget."
+                        ),
+                    },
+                )
+            if resolved_repair_target.get("root_cause_status") == "unresolved":
+                return (
+                    {
+                        "stage": "repair_plan",
+                        "code": "RUNTIME_ROOT_CAUSE_UNRESOLVED",
+                        "message": (
+                            "The failure point is confirmed, but current evidence "
+                            "does not select one root cause or concrete source change."
+                        ),
+                        "unresolved_root_causes": list(
+                            resolved_repair_target.get(
+                                "unresolved_root_causes",
+                                (),
+                            )
+                        ),
+                    },
+                )
             return RepairPlanner._blockers(
                 exhausted=exhausted,
                 evidence_refs=evidence_refs,
@@ -815,6 +890,7 @@ def _runtime_failure_repair_context(
     exhausted: bool,
     evidence_refs: tuple[str, ...],
     minimal_changes: tuple[dict[str, Any], ...],
+    resolved_repair_target: dict[str, Any],
 ) -> dict[str, Any]:
     """Bind Runtime repair routing to the normalized failure owner."""
 
@@ -861,11 +937,32 @@ def _runtime_failure_repair_context(
         "scoped_edit_binding_ids": list(scoped_binding_ids),
         "failure_evidence_available": bool(evidence_refs),
         "reason": reason,
+        "resolved_repair_target": dict(resolved_repair_target),
     }
 
 
-def _runtime_failure_hypothesis(ownership: dict[str, Any]) -> str:
+def _runtime_failure_hypothesis(
+    ownership: dict[str, Any],
+    *,
+    resolved_repair_target: dict[str, Any] | None = None,
+) -> str:
     owner = str(ownership["owner"])
+    target = (
+        resolved_repair_target
+        if isinstance(resolved_repair_target, dict)
+        else {}
+    )
+    anchors = target.get("responsibility_anchors")
+    if (
+        owner == "product_behavior"
+        and isinstance(anchors, dict)
+        and isinstance(anchors.get("symbol"), str)
+    ):
+        return (
+            "Runtime evidence confirms the failure point at "
+            f"{anchors['symbol']}; root-cause selection remains "
+            f"{target.get('root_cause_status') or 'unresolved'}."
+        )
     hypotheses = {
         "product_behavior": (
             "Runtime evidence attributes the acceptance failure to product behavior."

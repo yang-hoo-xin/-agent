@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.bindings import resolve_runtime_diagnosis_binding
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.domain import DomainAdapterRegistry, build_gtfo_profile
 from src.mod_agent.evidence import EvidencePack, FakeDenseRetrievalProvider
@@ -32,6 +33,7 @@ from src.mod_agent.local_entry import (
     resume_local_runtime,
 )
 from src.mod_agent.proposal import RuleBasedProposalCritic
+from src.mod_agent.repair import RepairPlanner
 from src.mod_agent.runtime import (
     GTFOLogSnapshot,
     GTFOProcessHandle,
@@ -2769,6 +2771,326 @@ def test_real_runtime_evidence_path_can_accept_v1_boundary(tmp_path: Path) -> No
     assert summary["claims_real_mod_success"] is True
     assert summary["claims_real_build_success"] is True
     assert summary["claims_real_runtime_success"] is True
+
+
+def test_structured_runtime_diagnosis_routes_to_binding_gap_before_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    calls = {"binding_resolution": 0, "runtime_repair": 0}
+    original_runtime_repair = RepairPlanner.from_runtime_failure
+
+    def tracked_binding_resolution(**kwargs):
+        calls["binding_resolution"] += 1
+        return resolve_runtime_diagnosis_binding(**kwargs)
+
+    def tracked_runtime_repair(self, **kwargs):
+        calls["runtime_repair"] += 1
+        return original_runtime_repair(self, **kwargs)
+
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.graph.resolve_runtime_diagnosis_binding",
+        tracked_binding_resolution,
+    )
+    monkeypatch.setattr(
+        RepairPlanner,
+        "from_runtime_failure",
+        tracked_runtime_repair,
+    )
+
+    def diagnosed_runtime_failure(
+        feature_id: str,
+        build: dict[str, object],
+        feature_spec: dict[str, object],
+    ) -> dict[str, object]:
+        payload = build_real_runtime_evidence_payload(
+            feature_id=feature_id,
+            input_execution_mode=str(build["execution_mode"]),
+            evidence_items=(),
+            startup_loaded=True,
+            gameplay_behavior_verified=False,
+            verification_status="failed",
+            raw_runtime_output=(
+                "signal=STAGGER_FEEDBACK_SKIPPED "
+                "visual_spawned=False "
+                "visual_reason=missing_canvas_rect_for_stagger_x"
+            ),
+            acceptance_criteria=tuple(
+                str(item)
+                for item in feature_spec["acceptance_criteria"]
+            ),
+            runtime_verification_plan=tuple(
+                str(item)
+                for item in feature_spec["runtime_verification_plan"]
+            ),
+            failure_ownership={
+                "owner": "product_behavior",
+                "failure_class": "product_behavior",
+                "source_repair_allowed": True,
+                "required_action": "repair_product_behavior",
+                "reason": "A bound product criterion is false.",
+            },
+        )
+        payload["runtime_failure_diagnosis"] = {
+            "schema_version": "stagger_runtime_failure_diagnosis_v1",
+            "status": "diagnosed",
+            "feature_id": feature_id,
+            "failure_class": "product_behavior",
+            "evidence_refs": [
+                {
+                    "source": "gtfo_persistent_log",
+                    "locator": "BepInEx/LogOutput.log",
+                }
+            ],
+            "responsibility_anchors": {
+                "component": "ui_attachment",
+                "symbol": (
+                    "BetterHitFeedback.Patches."
+                    "HitFeedbackBehaviorPatch.TrySpawnStaggerYellowX"
+                ),
+                "dependency": "HUD RectTransform",
+                "repair_scope": ["canvas_binding"],
+                "source_hash": None,
+                "source_span": None,
+            },
+            "root_cause_status": "unresolved",
+            "unresolved_root_causes": [
+                "hud_parent_runtime_type_mismatch"
+            ],
+        }
+        return payload
+
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        runtime_evidence_factory=diagnosed_runtime_failure,
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+    )
+    config = {"configurable": {"thread_id": "runtime_binding_gap_replay"}}
+    state = create_initial_state(
+        run_id="run_binding_gap",
+        request_id="req_binding_gap",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+
+    result = graph.invoke(state, config)
+    resolution = _artifact_data(store, result, "binding_resolution")
+
+    assert result["current_stage"] == "blocked"
+    assert resolution["result_type"] == "binding_gap"
+    assert resolution["binding_gap"]["gap"] is True
+    assert resolution["binding_proposal_request"]["status"] == "requested"
+    assert resolution["binding_proposal_request"]["repair_allowed"] is False
+    assert "repair_plan" not in result["artifacts"]
+    assert "binding_resolution" in result["artifacts"]
+    assert result["blockers"][0]["code"] == "BINDING_GAP"
+    assert any(
+        event["node_name"] == "resolve_runtime_binding"
+        and event["event_type"] == "node_finished"
+        and event["status"] == "blocked"
+        for event in result["trace_events"]
+    )
+    assert calls == {"binding_resolution": 1, "runtime_repair": 0}
+    assert len(
+        store.list_feature_artifact_revisions(
+            result["feature_id"],
+            "binding_resolution",
+        )
+    ) == 1
+
+    replayed = graph.invoke(None, config)
+
+    assert replayed["artifacts"]["binding_resolution"] == (
+        result["artifacts"]["binding_resolution"]
+    )
+    assert replayed["artifact_hashes"]["binding_resolution"] == (
+        result["artifact_hashes"]["binding_resolution"]
+    )
+    assert "repair_plan" not in replayed["artifacts"]
+    assert calls == {"binding_resolution": 1, "runtime_repair": 0}
+    assert len(
+        store.list_feature_artifact_revisions(
+            result["feature_id"],
+            "binding_resolution",
+        )
+    ) == 1
+
+
+def test_resolved_runtime_binding_is_the_only_target_consumed_by_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"binding_resolution": 0, "runtime_repair": 0}
+    original_runtime_repair = RepairPlanner.from_runtime_failure
+
+    def tracked_binding_resolution(**kwargs):
+        calls["binding_resolution"] += 1
+        return resolve_runtime_diagnosis_binding(**kwargs)
+
+    def tracked_runtime_repair(self, **kwargs):
+        calls["runtime_repair"] += 1
+        return original_runtime_repair(self, **kwargs)
+
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.graph.resolve_runtime_diagnosis_binding",
+        tracked_binding_resolution,
+    )
+    monkeypatch.setattr(
+        RepairPlanner,
+        "from_runtime_failure",
+        tracked_runtime_repair,
+    )
+    knowledge = _knowledge_with_load_symbol(
+        tmp_path,
+        root_name="resolved_binding_source",
+    )
+    baseline_store = ArtifactStore(tmp_path / "baseline_artifacts")
+    baseline = build_graph(
+        baseline_store,
+        knowledge_database=knowledge,
+    ).invoke(
+        create_initial_state(
+            run_id="run_binding_baseline",
+            request_id="req_binding_baseline",
+            user_request="make Load enable diagnostics",
+            target_mod="BetterHitFeedback",
+        )
+    )
+    binding = _artifact_data(
+        baseline_store,
+        baseline,
+        "implementation_plan",
+    )["binding_registry"]["edit_bindings"][0]
+
+    def diagnosed_runtime_failure(
+        feature_id: str,
+        build: dict[str, object],
+        feature_spec: dict[str, object],
+    ) -> dict[str, object]:
+        payload = build_real_runtime_evidence_payload(
+            feature_id=feature_id,
+            input_execution_mode=str(build["execution_mode"]),
+            evidence_items=(),
+            startup_loaded=True,
+            gameplay_behavior_verified=False,
+            verification_status="failed",
+            acceptance_criteria=tuple(
+                str(item)
+                for item in feature_spec["acceptance_criteria"]
+            ),
+            runtime_verification_plan=tuple(
+                str(item)
+                for item in feature_spec["runtime_verification_plan"]
+            ),
+            failure_ownership={
+                "owner": "product_behavior",
+                "failure_class": "product_behavior",
+                "source_repair_allowed": True,
+                "required_action": "repair_product_behavior",
+                "reason": "A bound product criterion is false.",
+            },
+        )
+        payload["runtime_failure_diagnosis"] = {
+            "schema_version": "runtime_failure_diagnosis_v1",
+            "status": "diagnosed",
+            "feature_id": feature_id,
+            "failure_class": "product_behavior",
+            "evidence_refs": [
+                {
+                    "source": "runtime_probe",
+                    "locator": "runtime://load",
+                }
+            ],
+            "responsibility_anchors": {
+                "component": "plugin_load",
+                "symbol": binding["target_symbol"],
+                "dependency": "ConfigEnabled",
+                "repair_scope": ["configuration_gate"],
+                "source_hash": binding["source_hash"],
+                "source_span": binding["target_span"],
+            },
+            "root_cause_status": "unresolved",
+            "unresolved_root_causes": [
+                "configuration_gate_state_unknown"
+            ],
+        }
+        return payload
+
+    store = ArtifactStore(tmp_path / "resolved_artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=knowledge,
+        runtime_evidence_factory=diagnosed_runtime_failure,
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+    )
+    config = {"configurable": {"thread_id": "runtime_binding_resolved_replay"}}
+    result = graph.invoke(
+        create_initial_state(
+            run_id="run_binding_resolved",
+            request_id="req_binding_resolved",
+            user_request="make Load enable diagnostics",
+            target_mod="BetterHitFeedback",
+        ),
+        config,
+    )
+    resolution = _artifact_data(store, result, "binding_resolution")
+    repair = _artifact_data(store, result, "repair_plan")
+
+    assert resolution["result_type"] == "resolved_repair_target"
+    assert resolution["resolved_repair_target"]["binding_id"] == (
+        binding["binding_id"]
+    )
+    assert repair["minimal_changes"][0]["edit_binding_id"] == (
+        binding["binding_id"]
+    )
+    assert repair["allowed_edit_binding_ids"] == [binding["binding_id"]]
+    assert repair["blockers"][0]["code"] == (
+        "RUNTIME_ROOT_CAUSE_UNRESOLVED"
+    )
+    assert result["current_stage"] == "blocked"
+    assert calls == {"binding_resolution": 1, "runtime_repair": 1}
+    assert len(
+        store.list_feature_artifact_revisions(
+            result["feature_id"],
+            "binding_resolution",
+        )
+    ) == 1
+    assert len(
+        store.list_feature_artifact_revisions(
+            result["feature_id"],
+            "repair_plan",
+        )
+    ) == 1
+
+    replayed = graph.invoke(None, config)
+
+    assert replayed["artifacts"]["binding_resolution"] == (
+        result["artifacts"]["binding_resolution"]
+    )
+    assert replayed["artifact_hashes"]["binding_resolution"] == (
+        result["artifact_hashes"]["binding_resolution"]
+    )
+    assert replayed["artifacts"]["repair_plan"] == (
+        result["artifacts"]["repair_plan"]
+    )
+    assert replayed["artifact_hashes"]["repair_plan"] == (
+        result["artifact_hashes"]["repair_plan"]
+    )
+    assert calls == {"binding_resolution": 1, "runtime_repair": 1}
+    assert len(
+        store.list_feature_artifact_revisions(
+            result["feature_id"],
+            "binding_resolution",
+        )
+    ) == 1
+    assert len(
+        store.list_feature_artifact_revisions(
+            result["feature_id"],
+            "repair_plan",
+        )
+    ) == 1
 
 
 def test_gtfo_runtime_factory_from_settings_can_feed_graph_runtime_branch(

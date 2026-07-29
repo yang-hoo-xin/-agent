@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.bindings import resolve_runtime_diagnosis_binding
 from src.mod_agent.build import BuildResult, build_fake_build_result
 from src.mod_agent.domain import (
     GTFO_DOMAIN_NAME,
@@ -65,6 +66,7 @@ from .nodes import StubNodeRunner
 from .state import ModAgentState
 from .transitions import (
     route_after_build,
+    route_after_binding_resolution,
     route_after_dry_run,
     route_after_evaluate,
     route_after_evidence,
@@ -334,6 +336,16 @@ def build_graph(
         ),
     )
     graph.add_node(
+        "resolve_runtime_binding",
+        _make_real_graph_node(
+            "resolve_runtime_binding",
+            lambda state: _run_resolve_runtime_binding(
+                state,
+                artifact_store,
+            ),
+        ),
+    )
+    graph.add_node(
         "done",
         _make_real_graph_node(
             "done",
@@ -438,6 +450,11 @@ def build_graph(
         "collect_runtime_evidence",
         route_after_runtime_evidence,
         dict(registry["collect_runtime_evidence"]),
+    )
+    graph.add_conditional_edges(
+        "resolve_runtime_binding",
+        route_after_binding_resolution,
+        dict(registry["resolve_runtime_binding"]),
     )
     graph.add_conditional_edges(
         "create_repair_plan",
@@ -1293,25 +1310,46 @@ def _run_create_repair_plan(
             ),
         )
         upstream_refs = [build_ref, proposal_ref]
-    elif failed_stage == "runtime_evidence":
+    elif failed_stage in {"runtime_evidence", "binding_resolution"}:
         runtime_ref = _artifact_ref_from_state(state, "runtime_evidence")
-        plan = planner.from_runtime_failure(
-            runtime_evidence=_read_artifact_data(
+        runtime_evidence = _read_artifact_data(
+            state,
+            artifact_store,
+            "runtime_evidence",
+        )
+        binding_resolution = (
+            _read_artifact_data(
                 state,
                 artifact_store,
-                "runtime_evidence",
-            ),
+                "binding_resolution",
+            )
+            if "binding_resolution" in state["artifacts"]
+            else None
+        )
+        resolved_repair_target = (
+            dict(binding_resolution["resolved_repair_target"])
+            if isinstance(binding_resolution, dict)
+            and binding_resolution.get("result_type")
+            == "resolved_repair_target"
+            and isinstance(
+                binding_resolution.get("resolved_repair_target"),
+                dict,
+            )
+            else {}
+        )
+        plan = planner.from_runtime_failure(
+            runtime_evidence=runtime_evidence,
             runtime_evidence_ref=runtime_ref.path,
             retry_count=state["retry_count"],
             target_behavior=str(feature_spec.get("target_behavior") or ""),
             proposal_context_pack=proposal_context_for_repair,
-            implementation_plan=_read_artifact_data(
-                state,
-                artifact_store,
-                "implementation_plan",
-            ),
+            resolved_repair_target=resolved_repair_target,
         )
         upstream_refs = [runtime_ref, proposal_ref]
+        if binding_resolution is not None:
+            upstream_refs.append(
+                _artifact_ref_from_state(state, "binding_resolution")
+            )
     elif failed_stage == "proposal_review":
         review_ref = _artifact_ref_from_state(state, "proposal_review")
         plan = planner.from_review_failure(
@@ -1349,6 +1387,82 @@ def _run_create_repair_plan(
     _record_artifact(next_state, "repair_plan", artifact_ref)
     if plan.blockers:
         next_state["blockers"].extend(plan.blockers)
+    return next_state
+
+
+def _run_resolve_runtime_binding(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+) -> ModAgentState:
+    feature_id = state["feature_id"] or state["request_id"]
+    runtime_ref = _artifact_ref_from_state(state, "runtime_evidence")
+    runtime_evidence = _read_artifact_data(
+        state,
+        artifact_store,
+        "runtime_evidence",
+    )
+    implementation_plan_ref = _artifact_ref_from_state(
+        state,
+        "implementation_plan",
+    )
+    implementation_plan = _read_artifact_data(
+        state,
+        artifact_store,
+        "implementation_plan",
+    )
+    proposal_ref = _artifact_ref_from_state(state, "patch_proposal")
+    proposal = _read_artifact_data(
+        state,
+        artifact_store,
+        "patch_proposal",
+    )
+    context_pack = proposal.get("context_pack")
+    allowed_binding_ids = {
+        str(value)
+        for value in (
+            context_pack.get("allowed_edit_binding_ids", ())
+            if isinstance(context_pack, dict)
+            else ()
+        )
+        if isinstance(value, str)
+    }
+    result = resolve_runtime_diagnosis_binding(
+        diagnosis=runtime_evidence.get("runtime_failure_diagnosis"),
+        feature_id=feature_id,
+        run_id=state["run_id"],
+        runtime_evidence_revision={
+            "feature_id": runtime_ref.feature_id,
+            "path": runtime_ref.path,
+            "artifact_hash": runtime_ref.artifact_hash,
+        },
+        implementation_plan_revision={
+            "feature_id": implementation_plan_ref.feature_id,
+            "path": implementation_plan_ref.path,
+            "artifact_hash": implementation_plan_ref.artifact_hash,
+        },
+        patch_proposal_revision={
+            "feature_id": proposal_ref.feature_id,
+            "path": proposal_ref.path,
+            "artifact_hash": proposal_ref.artifact_hash,
+        },
+        implementation_plan=implementation_plan,
+        allowed_edit_binding_ids=allowed_binding_ids,
+    )
+    artifact_ref = artifact_store.write(
+        feature_id=feature_id,
+        artifact_type="binding_resolution",
+        payload=result.to_artifact_payload(),
+        status="blocked" if result.blocked else "success",
+        upstream_refs=[
+            runtime_ref,
+            implementation_plan_ref,
+            proposal_ref,
+        ],
+    )
+    next_state = _copy_state(state)
+    next_state["current_stage"] = "binding_resolution"
+    _record_artifact(next_state, "binding_resolution", artifact_ref)
+    next_state["blockers"].extend(result.blockers)
     return next_state
 
 
@@ -1407,6 +1521,10 @@ def _run_runtime_evidence(
         "screenshot_refs": payload["screenshot_refs"],
         "runtime_trust_binding": payload["runtime_trust_binding"],
         "failure_ownership": payload["failure_ownership"],
+        "has_structured_diagnosis": isinstance(
+            payload.get("runtime_failure_diagnosis"),
+            dict,
+        ),
         "plugin_deployment_binding": payload.get("plugin_deployment_binding"),
         "non_goal_preservation": payload["non_goal_preservation"],
     }
@@ -1862,6 +1980,8 @@ def _node_status(state: ModAgentState, node_name: str) -> str:
         return str(state["runtime_summary"].get("status", "success"))
     if node_name == "create_repair_plan":
         return "blocked" if state["blockers"] else "success"
+    if node_name == "resolve_runtime_binding":
+        return "blocked" if state["blockers"] else "success"
     if node_name == "done":
         return "inconclusive"
     if state["blockers"]:
@@ -1882,6 +2002,7 @@ def _node_artifact_refs(state: ModAgentState, node_name: str) -> list[str]:
         "dry_run_apply": "dry_run_result",
         "build": "build_result",
         "collect_runtime_evidence": "runtime_evidence",
+        "resolve_runtime_binding": "binding_resolution",
         "create_repair_plan": "repair_plan",
         "evaluate": "eval_report",
         "done": "workflow_summary",
@@ -1908,6 +2029,16 @@ def _node_trace_details(state: ModAgentState, node_name: str) -> dict[str, Any]:
     if node_name == "create_repair_plan" and "repair_plan" in state["artifacts"]:
         return {
             "retry_count": state["retry_count"],
+            "blocked": bool(state["blockers"]),
+        }
+    if (
+        node_name == "resolve_runtime_binding"
+        and "binding_resolution" in state["artifacts"]
+    ):
+        return {
+            "result_type": (
+                "binding_gap" if state["blockers"] else "resolved_repair_target"
+            ),
             "blocked": bool(state["blockers"]),
         }
     return {}

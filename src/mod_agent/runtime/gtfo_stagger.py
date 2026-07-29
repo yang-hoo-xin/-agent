@@ -33,6 +33,10 @@ from .gtfo_automation import (
     OperatorCompletionReader,
     ScreenshotCapturer,
 )
+from .stagger_diagnosis import (
+    build_stagger_runtime_failure_diagnosis,
+    evaluate_stagger_acceptance,
+)
 
 
 class GTFOStaggerRuntimeError(RuntimeError):
@@ -676,6 +680,23 @@ def _aggregate_stagger_attempts(
         if isinstance(item, Mapping)
     )
     enabled_payload = attempts_by_mode.get("general_enabled_true", {})
+    stagger_acceptance_evaluation = evaluate_stagger_acceptance(
+        attempts_by_mode,
+        expected_modes=expected_modes,
+        acceptance_criteria=acceptance_criteria,
+    )
+    runtime_failure_diagnosis = (
+        build_stagger_runtime_failure_diagnosis(
+            feature_id=feature_id,
+            acceptance_evaluation=stagger_acceptance_evaluation,
+        )
+        if not semantic_conflict_modes
+        else None
+    )
+    product_failure_confirmed = (
+        not semantic_conflict_modes
+        and stagger_acceptance_evaluation["overall_acceptance"] == "failed"
+    )
     plugin_marker_binding = dict(
         enabled_payload.get("plugin_marker_binding") or {}
     )
@@ -721,7 +742,15 @@ def _aggregate_stagger_attempts(
         "checks": checks,
         "blockers": blockers,
     }
-    verification_status = "verified" if complete else "inconclusive"
+    verification_status = (
+        "verified"
+        if complete
+        else (
+            "failed"
+            if stagger_acceptance_evaluation["overall_acceptance"] == "failed"
+            else "inconclusive"
+        )
+    )
     aggregate_limitations: tuple[str, ...] = ()
     if not complete:
         aggregate_limitations = (
@@ -752,19 +781,35 @@ def _aggregate_stagger_attempts(
             None
             if complete
             else build_runtime_failure_ownership(
-                owner="observation",
+                owner=(
+                    "product_behavior"
+                    if product_failure_confirmed
+                    else "observation"
+                ),
                 failure_class=(
                     "operator_status_semantic_conflict"
                     if semantic_conflict_modes
-                    else "stagger_runtime_attempt_incomplete"
+                    else (
+                        "product_behavior"
+                        if product_failure_confirmed
+                        else "stagger_runtime_attempt_incomplete"
+                    )
                 ),
                 reason=(
                     "Operator status conflicts with the separately reported "
                     "criterion satisfaction fact; correction is required."
                     if semantic_conflict_modes
                     else (
-                        "One required GTFO stagger Runtime attempt did not "
-                        "produce complete bound observations."
+                        (
+                            "Current-run evidence confirms that at least one "
+                            "Stagger product acceptance criterion is false; "
+                            "attempt completion remains independently recorded."
+                        )
+                        if product_failure_confirmed
+                        else (
+                            "One required GTFO stagger Runtime attempt did not "
+                            "produce complete bound observations."
+                        )
                     )
                 ),
             )
@@ -780,6 +825,9 @@ def _aggregate_stagger_attempts(
         "correction_required": bool(semantic_conflict_modes),
         "conflict_modes": semantic_conflict_modes,
     }
+    payload["stagger_acceptance_evaluation"] = stagger_acceptance_evaluation
+    if runtime_failure_diagnosis is not None:
+        payload["runtime_failure_diagnosis"] = runtime_failure_diagnosis
     payload["runtime_processes"] = [
         dict(item.get("runtime_process") or {})
         for item in attempt_payloads

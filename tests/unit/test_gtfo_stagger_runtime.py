@@ -372,3 +372,263 @@ def test_stagger_operator_semantic_conflict_is_separate_observation_failure() ->
         "correction_required": True,
         "conflict_modes": ["general_enabled_false"],
     }
+
+
+def test_stagger_visual_false_is_diagnosed_before_full_acceptance_completes() -> None:
+    visual_hash = hashlib.sha256(VISUAL_CRITERION.encode("utf-8")).hexdigest()
+    marker_hash = hashlib.sha256(MARKER_CRITERION.encode("utf-8")).hexdigest()
+    payload = gtfo_stagger_module._aggregate_stagger_attempts(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        acceptance_criteria=(VISUAL_CRITERION, MARKER_CRITERION),
+        runtime_verification_plan=("Run the enabled GTFO mode.",),
+        attempt_payloads=[
+            {
+                "stagger_attempt_mode": "general_enabled_true",
+                "acceptance_verified": False,
+                "raw_supplied_output": (
+                    "[GTFO_MOD_AGENT] signal=STAGGER_FEEDBACK_SKIPPED "
+                    "visual_spawned=False audio_event_accepted=True "
+                    "playing_id=12345 "
+                    "visual_reason=missing_canvas_rect_for_stagger_x"
+                ),
+                "evidence_items": [
+                    {
+                        "type": "runtime_log",
+                        "source": "gtfo_persistent_log",
+                        "locator": "BepInEx/LogOutput.log",
+                        "supports_acceptance": [],
+                        "confidence": 1.0,
+                        "raw_excerpt": None,
+                    }
+                ],
+                "screenshot_refs": [],
+                "runtime_process": {"pid": 4102},
+                "runtime_trust_binding": {
+                    "checks": {
+                        "feature_id": {"status": "passed"},
+                        "runtime_process_identity": {"status": "passed"},
+                        "current_run_logs": {
+                            "status": "passed",
+                            "sources": ["BepInEx/LogOutput.log"],
+                        },
+                        "plugin_load_marker": {"status": "passed"},
+                        "deployed_plugin_artifact_hash": {
+                            "status": "passed"
+                        },
+                        "runtime_config_identity": {"status": "passed"},
+                    }
+                },
+                "operator_completion": {
+                    "request_sha256": "a" * 64,
+                    "semantic_consistency": {
+                        "status": "consistent",
+                        "correction_required": False,
+                    },
+                    "observations": [
+                        {
+                            "acceptance_criterion": VISUAL_CRITERION,
+                            "criterion_sha256": visual_hash,
+                            "status": "failed",
+                            "criterion_satisfied": False,
+                            "semantic_consistency": "consistent",
+                            "notes": "No additional yellow X was observed.",
+                        },
+                        {
+                            "acceptance_criterion": MARKER_CRITERION,
+                            "criterion_sha256": marker_hash,
+                            "status": "not_observed",
+                            "criterion_satisfied": None,
+                            "semantic_consistency": "consistent",
+                            "notes": "Audibility remains unresolved.",
+                        },
+                    ],
+                },
+            }
+        ],
+        expected_modes=("general_enabled_true",),
+    )
+
+    diagnosis = payload["runtime_failure_diagnosis"]
+    assert payload["verification_status"] == "failed"
+    assert payload["acceptance_verified"] is False
+    assert payload["failure_ownership"]["owner"] == "product_behavior"
+    assert payload["failure_ownership"]["failure_class"] == (
+        "product_behavior"
+    )
+    assert payload["failure_ownership"]["source_repair_allowed"] is True
+    assert payload["stagger_acceptance_evaluation"][
+        "attempt_completion"
+    ] == "incomplete"
+    assert payload["stagger_acceptance_evaluation"][
+        "overall_acceptance"
+    ] == "failed"
+    assert payload["stagger_acceptance_evaluation"]["criteria"] == [
+        {
+            "acceptance_criterion": VISUAL_CRITERION,
+            "outcome": "false",
+            "evidence_strength": "confirmed",
+            "evidence_refs": [
+                {
+                    "source": "gtfo_operator_completion",
+                    "locator": "a" * 64,
+                    "criterion_sha256": visual_hash,
+                },
+                {
+                    "source": "gtfo_persistent_log",
+                    "locator": "BepInEx/LogOutput.log",
+                },
+            ],
+        },
+        {
+            "acceptance_criterion": MARKER_CRITERION,
+            "outcome": "not_observed",
+            "evidence_strength": "none",
+            "evidence_refs": [
+                {
+                    "source": "gtfo_operator_completion",
+                    "locator": "a" * 64,
+                    "criterion_sha256": marker_hash,
+                }
+            ],
+        },
+    ]
+    assert diagnosis["schema_version"] == (
+        "stagger_runtime_failure_diagnosis_v1"
+    )
+    assert diagnosis["failure_class"] == "product_behavior"
+    assert diagnosis["confirmed_failure_point"] == {
+        "component": "ui_attachment",
+        "symbol": (
+            "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+            "TrySpawnStaggerYellowX"
+        ),
+        "dependency": "HUD RectTransform",
+        "dependency_expression": "_lastHudParent as RectTransform",
+        "mechanism": "dependency_unavailable_early_return",
+        "event": "missing_canvas_rect_for_stagger_x",
+    }
+    assert diagnosis["responsibility_anchors"]["source_hash"] is None
+    assert diagnosis["responsibility_anchors"]["source_span"] is None
+    assert diagnosis["root_cause_status"] == "unresolved"
+    assert diagnosis["unresolved_root_causes"] == [
+        "hud_parent_never_initialized",
+        "hud_parent_initialization_timing",
+        "hud_parent_cache_stale",
+        "hud_parent_runtime_type_mismatch",
+        "hud_node_selection_incorrect",
+    ]
+    assert diagnosis["excluded_repair_scopes"] == [
+        "hit_reaction_hook",
+        "audio_pipeline",
+    ]
+
+
+def test_stagger_machine_diagnosis_does_not_require_manual_observation() -> None:
+    base_attempt = {
+        "stagger_attempt_mode": "general_enabled_true",
+        "acceptance_verified": False,
+        "evidence_items": [
+            {
+                "type": "runtime_log",
+                "source": "gtfo_persistent_log",
+                "locator": "BepInEx/LogOutput.log",
+                "supports_acceptance": [],
+                "confidence": 1.0,
+                "raw_excerpt": None,
+            }
+        ],
+        "screenshot_refs": [],
+        "runtime_process": {"pid": 4102},
+        "runtime_trust_binding": {
+            "checks": {
+                "feature_id": {"status": "passed"},
+                "runtime_process_identity": {"status": "passed"},
+                "current_run_logs": {
+                    "status": "passed",
+                    "sources": ["BepInEx/LogOutput.log"],
+                },
+                "plugin_load_marker": {"status": "passed"},
+                "deployed_plugin_artifact_hash": {"status": "passed"},
+                "runtime_config_identity": {"status": "passed"},
+            }
+        },
+    }
+    machine_only = {
+        **base_attempt,
+        "raw_supplied_output": (
+            "signal=STAGGER_FEEDBACK_SKIPPED visual_spawned=False "
+            "audio_event_accepted=True "
+            "visual_reason=missing_canvas_rect_for_stagger_x"
+        ),
+    }
+    manual_only = {
+        **base_attempt,
+        "operator_completion": {
+            "request_sha256": "b" * 64,
+            "semantic_consistency": {"status": "consistent"},
+            "observations": [
+                {
+                    "acceptance_criterion": VISUAL_CRITERION,
+                    "criterion_sha256": hashlib.sha256(
+                        VISUAL_CRITERION.encode("utf-8")
+                    ).hexdigest(),
+                    "status": "failed",
+                    "criterion_satisfied": False,
+                    "semantic_consistency": "consistent",
+                    "notes": "No additional yellow X was observed.",
+                }
+            ],
+        },
+    }
+
+    machine_payload = gtfo_stagger_module._aggregate_stagger_attempts(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        acceptance_criteria=(VISUAL_CRITERION,),
+        runtime_verification_plan=("Run the enabled GTFO mode.",),
+        attempt_payloads=[machine_only],
+        expected_modes=("general_enabled_true",),
+    )
+    assert machine_payload["runtime_failure_diagnosis"]["status"] == "diagnosed"
+    assert machine_payload["failure_ownership"]["owner"] == "product_behavior"
+
+    unbound_machine = {
+        **machine_only,
+        "runtime_trust_binding": {
+            "checks": {
+                **base_attempt["runtime_trust_binding"]["checks"],
+                "deployed_plugin_artifact_hash": {"status": "blocked"},
+            }
+        },
+    }
+    unbound_payload = gtfo_stagger_module._aggregate_stagger_attempts(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        acceptance_criteria=(VISUAL_CRITERION,),
+        runtime_verification_plan=("Run the enabled GTFO mode.",),
+        attempt_payloads=[unbound_machine],
+        expected_modes=("general_enabled_true",),
+    )
+    assert "runtime_failure_diagnosis" not in unbound_payload
+    assert unbound_payload["stagger_acceptance_evaluation"][
+        "overall_acceptance"
+    ] == "inconclusive"
+    assert unbound_payload["failure_ownership"]["owner"] == "observation"
+
+    manual_payload = gtfo_stagger_module._aggregate_stagger_attempts(
+        feature_id="feature_001",
+        input_execution_mode="local",
+        acceptance_criteria=(VISUAL_CRITERION,),
+        runtime_verification_plan=("Run the enabled GTFO mode.",),
+        attempt_payloads=[manual_only],
+        expected_modes=("general_enabled_true",),
+    )
+    assert "runtime_failure_diagnosis" not in manual_payload
+    assert manual_payload["stagger_acceptance_evaluation"][
+        "overall_acceptance"
+    ] == "failed"
+    assert manual_payload["failure_ownership"]["owner"] == "product_behavior"
+    assert manual_payload["failure_ownership"]["failure_class"] == (
+        "product_behavior"
+    )

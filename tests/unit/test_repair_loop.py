@@ -6,6 +6,10 @@ import json
 from pathlib import Path
 
 from src.mod_agent.artifacts import ArtifactStore
+from src.mod_agent.bindings import (
+    BindingResolver,
+    resolve_runtime_diagnosis_binding,
+)
 from src.mod_agent.build import BuildAdapter, BuildProfile, BuildResult
 from src.mod_agent.knowledge import (
     IncrementalIndexer,
@@ -241,7 +245,6 @@ def test_ownerless_runtime_failure_fails_closed_without_source_repair() -> None:
         runtime_evidence_ref="artifacts/features/feature_001/runtime_evidence.json",
         retry_count=0,
         proposal_context_pack=_proposal_context_pack(),
-        implementation_plan=_implementation_plan_payload(),
     ).to_artifact_payload()
 
     assert payload["allowed_next_stage"] is None
@@ -287,7 +290,6 @@ def test_non_product_runtime_owners_cannot_enter_source_repair() -> None:
             ),
             retry_count=0,
             proposal_context_pack=_proposal_context_pack(),
-            implementation_plan=_implementation_plan_payload(),
         ).to_artifact_payload()
 
         assert payload["minimal_changes"] == []
@@ -320,7 +322,38 @@ def test_product_behavior_owner_with_bound_source_can_enter_repair_review() -> N
         runtime_evidence_ref="artifacts/features/feature_001/runtime_evidence.json",
         retry_count=0,
         proposal_context_pack=_proposal_context_pack(),
-        implementation_plan=_implementation_plan_payload(),
+        resolved_repair_target={
+            "schema_version": "resolved_repair_target_v1",
+            "status": "resolved",
+            "feature_id": "feature_001",
+            "run_id": "run_001",
+            "implementation_plan_revision": {
+                "feature_id": "feature_001",
+                "path": "implementation_plan.json",
+                "artifact_hash": "plan_hash",
+            },
+            "diagnosis_schema_version": "runtime_failure_diagnosis_v1",
+            "failure_class": "acceptance_behavior_failed",
+            "responsibility_anchors": {
+                "component": "plugin_load",
+                "symbol": "Load",
+                "dependency": "ConfigEnabled",
+                "repair_scope": ["configuration_gate"],
+                "source_hash": "source_hash",
+                "source_span": {"start_line": 10, "end_line": 18},
+            },
+            "evidence_refs": [
+                {
+                    "source": "runtime_log",
+                    "locator": "runtime.log",
+                }
+            ],
+            "binding_id": "edit_binding_001",
+            "canonical_target_path": "mods/BetterHitFeedback/Plugin.cs",
+            "root_cause_status": "confirmed",
+            "unresolved_root_causes": [],
+            "blockers": [],
+        },
     ).to_artifact_payload()
 
     assert payload["failure_class"] == "acceptance_behavior_failed"
@@ -331,6 +364,615 @@ def test_product_behavior_owner_with_bound_source_can_enter_repair_review() -> N
     assert payload["repair_context"]["failure_owner"] == "product_behavior"
     assert payload["repair_context"]["source_repair_allowed"] is True
     assert payload["repair_context"]["repair_decision"] == "scoped_patch_repair"
+
+
+def test_current_stagger_diagnosis_blocks_mismatched_symbol_and_span() -> None:
+    target_file = "Patches/HitFeedbackBehaviorPatch.cs"
+    proposal_context = _proposal_context_pack(target_file)
+    proposal_context["allowed_edit_binding_ids"] = ["edit_binding_002"]
+    implementation_plan = {
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_002",
+                    "evidence_id": "stagger_visual_source",
+                    "canonical_target_path": target_file,
+                    "source_type": "target_source",
+                    "source_hash": (
+                        "92EAB8010EED49E8C84094DC6EB5376D"
+                        "5F995414C40CF7D2C44FC1955D405E1A"
+                    ),
+                    "target_symbol": (
+                        "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+                        "AddParallelMarkerPair"
+                    ),
+                    "target_span": {"start_line": 881, "end_line": 907},
+                }
+            ],
+            "supporting_bindings": [],
+        }
+    }
+    diagnosis = {
+        "feature_id": "feature_001",
+        "schema_version": "stagger_runtime_failure_diagnosis_v1",
+        "status": "diagnosed",
+        "failure_class": "product_behavior",
+        "evidence_refs": [
+            {
+                "source": "gtfo_persistent_log",
+                "locator": "BepInEx/LogOutput.log",
+            }
+        ],
+        "responsibility_anchors": {
+            "component": "ui_attachment",
+            "symbol": (
+                "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+                "TrySpawnStaggerYellowX"
+            ),
+            "dependency": "HUD RectTransform",
+            "repair_scope": [
+                "hud_root_acquisition",
+                "canvas_binding",
+            ],
+            "source_hash": None,
+            "source_span": None,
+        },
+        "root_cause_status": "unresolved",
+        "unresolved_root_causes": ["hud_parent_runtime_type_mismatch"],
+    }
+    resolved = BindingResolver.from_implementation_plan(
+        implementation_plan
+    ).resolve_repair_target(
+        diagnosis=diagnosis,
+        feature_id="feature_001",
+        run_id="run_001",
+        implementation_plan_revision={
+            "feature_id": "feature_001",
+            "path": "implementation_plan.json",
+            "artifact_hash": "plan_hash",
+        },
+        allowed_binding_ids={"edit_binding_002"},
+    )
+    assert resolved.status == "blocked"
+    assert resolved.binding_id is None
+    assert [item["code"] for item in resolved.blockers] == [
+        "REPAIR_TARGET_SYMBOL_UNRESOLVED",
+        "DIAGNOSIS_SOURCE_IDENTITY_INCOMPLETE",
+    ]
+    payload = RepairPlanner(retry_budget=2).from_runtime_failure(
+        runtime_evidence={
+            "feature_id": "feature_001",
+            "verification_status": "failed",
+            "failure_ownership": build_runtime_failure_ownership(
+                owner="product_behavior",
+                failure_class="product_behavior",
+                reason="The Stagger visual requirement is false.",
+            ),
+            "evidence_items": diagnosis["evidence_refs"],
+        },
+        runtime_evidence_ref=(
+            "artifacts/features/feature_001/runtime_evidence.json"
+        ),
+        retry_count=0,
+        proposal_context_pack=proposal_context,
+        resolved_repair_target=resolved.to_dict(),
+    ).to_artifact_payload()
+
+    assert payload["minimal_changes"] == []
+    assert payload["allowed_next_stage"] is None
+    assert payload["allowed_edit_binding_ids"] == []
+    assert payload["display_files"] == []
+    assert [item["code"] for item in payload["blockers"]] == [
+        "REPAIR_TARGET_SYMBOL_UNRESOLVED",
+        "DIAGNOSIS_SOURCE_IDENTITY_INCOMPLETE",
+    ]
+
+
+def test_runtime_diagnosis_reports_binding_gap_without_granting_authority() -> None:
+    implementation_plan = {
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_002",
+                    "evidence_id": "stagger_visual_source",
+                    "canonical_target_path": (
+                        "Patches/HitFeedbackBehaviorPatch.cs"
+                    ),
+                    "source_hash": "OLD_SOURCE_HASH",
+                    "target_symbol": (
+                        "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+                        "AddParallelMarkerPair"
+                    ),
+                    "target_span": {"start_line": 881, "end_line": 907},
+                }
+            ],
+            "supporting_bindings": [],
+        }
+    }
+    diagnosis = {
+        "schema_version": "stagger_runtime_failure_diagnosis_v1",
+        "status": "diagnosed",
+        "feature_id": "feature_001",
+        "failure_class": "product_behavior",
+        "evidence_refs": [
+            {
+                "source": "gtfo_persistent_log",
+                "locator": "BepInEx/LogOutput.log",
+            }
+        ],
+        "responsibility_anchors": {
+            "component": "ui_attachment",
+            "symbol": (
+                "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+                "TrySpawnStaggerYellowX"
+            ),
+            "dependency": "HUD RectTransform",
+            "repair_scope": ["canvas_binding"],
+            "source_hash": None,
+            "source_span": None,
+        },
+        "root_cause_status": "unresolved",
+        "unresolved_root_causes": [
+            "hud_parent_runtime_type_mismatch"
+        ],
+    }
+    result = resolve_runtime_diagnosis_binding(
+        diagnosis=diagnosis,
+        feature_id="feature_001",
+        run_id="run_001",
+        runtime_evidence_revision={
+            "feature_id": "feature_001",
+            "path": "runtime_evidence.json",
+            "artifact_hash": "runtime_hash",
+        },
+        implementation_plan_revision={
+            "feature_id": "feature_001",
+            "path": "implementation_plan.json",
+            "artifact_hash": "plan_hash",
+        },
+        patch_proposal_revision={
+            "feature_id": "feature_001",
+            "path": "patch_proposal.json",
+            "artifact_hash": "proposal_hash",
+        },
+        implementation_plan=implementation_plan,
+        allowed_edit_binding_ids={"edit_binding_002"},
+    ).to_artifact_payload()
+
+    assert result["result_type"] == "binding_gap"
+    assert result["resolved_repair_target"] is None
+    assert result["binding_gap"]["gap"] is True
+    assert result["binding_gap"]["gap_reasons"] == [
+        "missing_symbol_binding",
+        "diagnosis_source_identity_incomplete",
+    ]
+    assert result["binding_gap"]["existing_allowed_bindings"] == [
+        {
+            "binding_id": "edit_binding_002",
+            "canonical_target_path": (
+                "Patches/HitFeedbackBehaviorPatch.cs"
+            ),
+            "target_symbol": (
+                "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+                "AddParallelMarkerPair"
+            ),
+            "target_span": {"start_line": 881, "end_line": 907},
+            "source_hash": "OLD_SOURCE_HASH",
+            "evidence_id": "stagger_visual_source",
+        }
+    ]
+    request = result["binding_proposal_request"]
+    assert request["status"] == "requested"
+    assert request["approval_required"] is True
+    assert request["registry_mutation_allowed"] is False
+    assert request["repair_allowed"] is False
+    assert result["blockers"][0]["code"] == "BINDING_GAP"
+
+
+def test_invalid_diagnosis_lineage_does_not_request_binding_expansion() -> None:
+    result = resolve_runtime_diagnosis_binding(
+        diagnosis={
+            "schema_version": "stagger_runtime_failure_diagnosis_v1",
+            "status": "diagnosed",
+            "feature_id": "other_feature",
+            "failure_class": "product_behavior",
+            "evidence_refs": [],
+            "responsibility_anchors": {},
+        },
+        feature_id="feature_001",
+        run_id="run_001",
+        runtime_evidence_revision={
+            "feature_id": "feature_001",
+            "path": "runtime_evidence.json",
+            "artifact_hash": "runtime_hash",
+        },
+        implementation_plan_revision={
+            "feature_id": "feature_001",
+            "path": "implementation_plan.json",
+            "artifact_hash": "plan_hash",
+        },
+        patch_proposal_revision={
+            "feature_id": "feature_001",
+            "path": "patch_proposal.json",
+            "artifact_hash": "proposal_hash",
+        },
+        implementation_plan={"binding_registry": {"edit_bindings": []}},
+        allowed_edit_binding_ids=set(),
+    ).to_artifact_payload()
+
+    assert result["result_type"] == "binding_resolution_blocked"
+    assert result["binding_gap"] is None
+    assert result["binding_proposal_request"] is None
+    assert result["blockers"][0]["code"] == (
+        "BINDING_RESOLUTION_INPUT_INVALID"
+    )
+
+
+def test_invalid_artifact_lineage_does_not_request_binding_expansion() -> None:
+    result = resolve_runtime_diagnosis_binding(
+        diagnosis={
+            "schema_version": "stagger_runtime_failure_diagnosis_v1",
+            "status": "diagnosed",
+            "feature_id": "feature_001",
+            "failure_class": "product_behavior",
+            "evidence_refs": [
+                {
+                    "source": "gtfo_persistent_log",
+                    "locator": "BepInEx/LogOutput.log",
+                }
+            ],
+            "responsibility_anchors": {
+                "component": "ui_attachment",
+                "symbol": (
+                    "BetterHitFeedback.Patches."
+                    "HitFeedbackBehaviorPatch.TrySpawnStaggerYellowX"
+                ),
+                "dependency": "HUD RectTransform",
+                "repair_scope": ["canvas_binding"],
+                "source_hash": None,
+                "source_span": None,
+            },
+        },
+        feature_id="feature_001",
+        run_id="run_001",
+        runtime_evidence_revision={
+            "feature_id": "other_feature",
+            "path": "runtime_evidence.json",
+            "artifact_hash": "runtime_hash",
+        },
+        implementation_plan_revision={
+            "feature_id": "feature_001",
+            "path": "implementation_plan.json",
+            "artifact_hash": "plan_hash",
+        },
+        patch_proposal_revision={
+            "feature_id": "feature_001",
+            "path": "patch_proposal.json",
+            "artifact_hash": "proposal_hash",
+        },
+        implementation_plan={"binding_registry": {"edit_bindings": []}},
+        allowed_edit_binding_ids=set(),
+    ).to_artifact_payload()
+
+    assert result["result_type"] == "binding_resolution_blocked"
+    assert result["binding_gap"] is None
+    assert result["binding_proposal_request"] is None
+    assert result["blockers"] == [
+        {
+            "stage": "binding_resolution",
+            "code": "BINDING_RESOLUTION_LINEAGE_INVALID",
+            "message": (
+                "Runtime binding resolution requires current feature/run "
+                "identity and bound RuntimeEvidence, ImplementationPlan, and "
+                "PatchProposal revisions."
+            ),
+            "invalid_revision_types": ["runtime_evidence"],
+        }
+    ]
+
+
+def test_resolver_can_resolve_exact_current_symbol_hash_and_span() -> None:
+    target_file = "Patches/HitFeedbackBehaviorPatch.cs"
+    current_hash = "CURRENT_SOURCE_HASH"
+    binding_span = {"start_line": 973, "end_line": 1040}
+    failure_span = {"start_line": 979, "end_line": 983}
+    implementation_plan = {
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_002",
+                    "canonical_target_path": target_file,
+                    "source_hash": current_hash,
+                    "target_symbol": (
+                        "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+                        "TrySpawnStaggerYellowX"
+                    ),
+                    "target_span": binding_span,
+                }
+            ],
+            "supporting_bindings": [],
+        }
+    }
+    diagnosis = {
+        "schema_version": "stagger_runtime_failure_diagnosis_v1",
+        "status": "diagnosed",
+        "feature_id": "feature_001",
+        "failure_class": "product_behavior",
+        "evidence_refs": [
+            {
+                "source": "gtfo_persistent_log",
+                "locator": "BepInEx/LogOutput.log",
+            }
+        ],
+        "responsibility_anchors": {
+            "component": "ui_attachment",
+            "symbol": (
+                "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+                "TrySpawnStaggerYellowX"
+            ),
+            "dependency": "HUD RectTransform",
+            "repair_scope": ["canvas_binding"],
+            "source_hash": current_hash,
+            "source_span": failure_span,
+        },
+        "root_cause_status": "unresolved",
+        "unresolved_root_causes": ["hud_parent_runtime_type_mismatch"],
+    }
+    resolved = BindingResolver.from_implementation_plan(
+        implementation_plan
+    ).resolve_repair_target(
+        diagnosis=diagnosis,
+        feature_id="feature_001",
+        run_id="run_001",
+        implementation_plan_revision={
+            "feature_id": "feature_001",
+            "path": "implementation_plan.json",
+            "artifact_hash": "plan_hash",
+        },
+        allowed_binding_ids={"edit_binding_002"},
+    )
+
+    assert resolved.status == "resolved"
+    assert resolved.binding_id == "edit_binding_002"
+    assert resolved.canonical_target_path == target_file
+    assert resolved.blockers == ()
+
+    payload = RepairPlanner(retry_budget=2).from_runtime_failure(
+        runtime_evidence={
+            "feature_id": "feature_001",
+            "verification_status": "failed",
+            "failure_ownership": build_runtime_failure_ownership(
+                owner="product_behavior",
+                failure_class="product_behavior",
+                reason="The Stagger visual requirement is false.",
+            ),
+            "evidence_items": diagnosis["evidence_refs"],
+        },
+        runtime_evidence_ref=(
+            "artifacts/features/feature_001/runtime_evidence.json"
+        ),
+        retry_count=0,
+        proposal_context_pack={
+            **_proposal_context_pack(target_file),
+            "allowed_edit_binding_ids": ["edit_binding_002"],
+        },
+        resolved_repair_target=resolved.to_dict(),
+    ).to_artifact_payload()
+
+    assert payload["minimal_changes"][0]["edit_binding_id"] == "edit_binding_002"
+    assert payload["allowed_edit_binding_ids"] == ["edit_binding_002"]
+    assert payload["allowed_next_stage"] is None
+    assert payload["blockers"][0]["code"] == "RUNTIME_ROOT_CAUSE_UNRESOLVED"
+    assert payload["requires_new_evidence"] is True
+
+
+def test_resolver_blocks_multiple_exact_allowed_bindings() -> None:
+    symbol = (
+        "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+        "TrySpawnStaggerYellowX"
+    )
+    source_hash = "CURRENT_SOURCE_HASH"
+    binding_span = {"start_line": 973, "end_line": 1040}
+    failure_span = {"start_line": 979, "end_line": 983}
+    resolver = BindingResolver(
+        binding_registry={
+            "schema_version": "binding_registry_v1",
+            "edit_bindings": [
+                {
+                    "binding_id": binding_id,
+                    "canonical_target_path": path,
+                    "source_hash": source_hash,
+                    "target_symbol": symbol,
+                    "target_span": binding_span,
+                }
+                for binding_id, path in (
+                    ("edit_binding_002", "Patches/HitFeedbackBehaviorPatch.cs"),
+                    ("edit_binding_004", "Patches/OtherPatch.cs"),
+                )
+            ],
+            "supporting_bindings": [],
+        }
+    )
+    result = resolver.resolve_repair_target(
+        diagnosis={
+            "schema_version": "stagger_runtime_failure_diagnosis_v1",
+            "status": "diagnosed",
+            "feature_id": "feature_001",
+            "failure_class": "product_behavior",
+            "evidence_refs": [
+                {
+                    "source": "gtfo_persistent_log",
+                    "locator": "BepInEx/LogOutput.log",
+                }
+            ],
+            "responsibility_anchors": {
+                "component": "ui_attachment",
+                "symbol": symbol,
+                "dependency": "HUD RectTransform",
+                "repair_scope": ["canvas_binding"],
+                "source_hash": source_hash,
+                "source_span": failure_span,
+            },
+            "root_cause_status": "unresolved",
+            "unresolved_root_causes": ["hud_parent_runtime_type_mismatch"],
+        },
+        feature_id="feature_001",
+        run_id="run_001",
+        implementation_plan_revision={
+            "feature_id": "feature_001",
+            "path": "implementation_plan.json",
+            "artifact_hash": "plan_hash",
+        },
+        allowed_binding_ids={"edit_binding_002", "edit_binding_004"},
+    )
+
+    assert result.status == "blocked"
+    assert result.binding_id is None
+    assert [item["code"] for item in result.blockers] == [
+        "REPAIR_TARGET_SYMBOL_AMBIGUOUS"
+    ]
+
+
+def test_resolver_blocks_failure_span_outside_exact_symbol_binding() -> None:
+    symbol = (
+        "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+        "TrySpawnStaggerYellowX"
+    )
+    source_hash = "CURRENT_SOURCE_HASH"
+    result = BindingResolver(
+        binding_registry={
+            "schema_version": "binding_registry_v1",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_002",
+                    "canonical_target_path": (
+                        "Patches/HitFeedbackBehaviorPatch.cs"
+                    ),
+                    "source_hash": source_hash,
+                    "target_symbol": symbol,
+                    "target_span": {"start_line": 973, "end_line": 1040},
+                }
+            ],
+            "supporting_bindings": [],
+        }
+    ).resolve_repair_target(
+        diagnosis={
+            "schema_version": "stagger_runtime_failure_diagnosis_v1",
+            "status": "diagnosed",
+            "feature_id": "feature_001",
+            "failure_class": "product_behavior",
+            "evidence_refs": [
+                {
+                    "source": "gtfo_persistent_log",
+                    "locator": "BepInEx/LogOutput.log",
+                }
+            ],
+            "responsibility_anchors": {
+                "component": "ui_attachment",
+                "symbol": symbol,
+                "dependency": "HUD RectTransform",
+                "repair_scope": ["canvas_binding"],
+                "source_hash": source_hash,
+                "source_span": {"start_line": 1041, "end_line": 1044},
+            },
+            "root_cause_status": "unresolved",
+            "unresolved_root_causes": ["hud_parent_runtime_type_mismatch"],
+        },
+        feature_id="feature_001",
+        run_id="run_001",
+        implementation_plan_revision={
+            "feature_id": "feature_001",
+            "path": "implementation_plan.json",
+            "artifact_hash": "plan_hash",
+        },
+        allowed_binding_ids={"edit_binding_002"},
+    )
+
+    assert result.status == "blocked"
+    assert result.binding_id is None
+    assert [item["code"] for item in result.blockers] == [
+        "REPAIR_TARGET_SOURCE_OR_SPAN_DRIFT"
+    ]
+
+
+def test_binding_gap_classifies_hash_and_span_drift_separately() -> None:
+    symbol = (
+        "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+        "TrySpawnStaggerYellowX"
+    )
+    result = resolve_runtime_diagnosis_binding(
+        diagnosis={
+            "schema_version": "stagger_runtime_failure_diagnosis_v1",
+            "status": "diagnosed",
+            "feature_id": "feature_001",
+            "failure_class": "product_behavior",
+            "evidence_refs": [
+                {
+                    "source": "gtfo_persistent_log",
+                    "locator": "BepInEx/LogOutput.log",
+                }
+            ],
+            "responsibility_anchors": {
+                "component": "ui_attachment",
+                "symbol": symbol,
+                "dependency": "HUD RectTransform",
+                "repair_scope": ["canvas_binding"],
+                "source_hash": "CURRENT_SOURCE_HASH",
+                "source_span": {"start_line": 1041, "end_line": 1044},
+            },
+            "root_cause_status": "unresolved",
+            "unresolved_root_causes": [
+                "hud_parent_runtime_type_mismatch"
+            ],
+        },
+        feature_id="feature_001",
+        run_id="run_001",
+        runtime_evidence_revision={
+            "feature_id": "feature_001",
+            "path": "runtime_evidence.json",
+            "artifact_hash": "runtime_hash",
+        },
+        implementation_plan_revision={
+            "feature_id": "feature_001",
+            "path": "implementation_plan.json",
+            "artifact_hash": "plan_hash",
+        },
+        patch_proposal_revision={
+            "feature_id": "feature_001",
+            "path": "patch_proposal.json",
+            "artifact_hash": "proposal_hash",
+        },
+        implementation_plan={
+            "binding_registry": {
+                "schema_version": "binding_registry_v1",
+                "edit_bindings": [
+                    {
+                        "binding_id": "edit_binding_002",
+                        "canonical_target_path": (
+                            "Patches/HitFeedbackBehaviorPatch.cs"
+                        ),
+                        "source_hash": "OLD_SOURCE_HASH",
+                        "target_symbol": symbol,
+                        "target_span": {
+                            "start_line": 973,
+                            "end_line": 1040,
+                        },
+                    }
+                ],
+                "supporting_bindings": [],
+            }
+        },
+        allowed_edit_binding_ids={"edit_binding_002"},
+    ).to_artifact_payload()
+
+    assert result["result_type"] == "binding_gap"
+    assert result["binding_gap"]["gap_reasons"] == [
+        "source_hash_mismatch",
+        "failure_span_outside_edit_scope",
+    ]
 
 
 def test_repair_proposal_reenters_review_gate() -> None:
@@ -417,6 +1059,14 @@ def test_repair_routes_are_explicit() -> None:
         "acceptance_verified": False,
     }
     assert route_after_runtime_evidence(state) == "repair"
+
+    state["runtime_summary"] = {
+        "status": "failed",
+        "acceptance_status": "failed",
+        "acceptance_verified": False,
+        "has_structured_diagnosis": True,
+    }
+    assert route_after_runtime_evidence(state) == "binding_resolution"
 
     state["runtime_summary"] = {
         "status": "verified",

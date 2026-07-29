@@ -245,6 +245,7 @@ def test_every_workflow_artifact_type_is_registered() -> None:
         "dry_run_result",
         "build_result",
         "runtime_evidence",
+        "binding_resolution",
         "manual_evidence",
         "screenshot_registry",
         "repair_plan",
@@ -256,6 +257,87 @@ def test_every_workflow_artifact_type_is_registered() -> None:
         "git_change_record",
         "knowledge_index_report",
     }.issubset(registry.artifact_types())
+
+
+def test_binding_gap_contract_rejects_authority_grant() -> None:
+    registry = ArtifactTypeRegistry()
+    payload = {
+        "node_name": "resolve_runtime_binding",
+        "stage": "binding_resolution",
+        "message": "A binding gap was found.",
+        "feature_id": "feature_001",
+        "run_id": "run_001",
+        "result_type": "binding_gap",
+        "runtime_evidence_revision": {
+            "feature_id": "feature_001",
+            "path": "runtime_evidence.json",
+            "artifact_hash": "runtime_hash",
+        },
+        "implementation_plan_revision": {
+            "feature_id": "feature_001",
+            "path": "implementation_plan.json",
+            "artifact_hash": "plan_hash",
+        },
+        "patch_proposal_revision": {
+            "feature_id": "feature_001",
+            "path": "patch_proposal.json",
+            "artifact_hash": "proposal_hash",
+        },
+        "allowed_edit_binding_ids": ["edit_binding_002"],
+        "resolved_repair_target": None,
+        "binding_gap": {
+            "gap": True,
+            "gap_reasons": ["missing_symbol_binding"],
+        },
+        "binding_proposal_request": {
+            "status": "requested",
+            "approval_required": True,
+            "registry_mutation_allowed": False,
+            "repair_allowed": False,
+            "required_plan_lineage": {
+                "feature_id": "feature_001",
+                "path": "implementation_plan.json",
+                "artifact_hash": "plan_hash",
+            },
+        },
+        "blockers": [{"code": "BINDING_GAP"}],
+    }
+
+    registry.validate_write(
+        artifact_type="binding_resolution",
+        status="blocked",
+        payload=payload,
+    )
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="non-authorizing",
+    ):
+        registry.validate_write(
+            artifact_type="binding_resolution",
+            status="blocked",
+            payload={
+                **payload,
+                "binding_proposal_request": {
+                    **payload["binding_proposal_request"],
+                    "repair_allowed": True,
+                },
+            },
+        )
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="runtime_evidence_revision is not bound",
+    ):
+        registry.validate_write(
+            artifact_type="binding_resolution",
+            status="blocked",
+            payload={
+                **payload,
+                "runtime_evidence_revision": {
+                    **payload["runtime_evidence_revision"],
+                    "feature_id": "other_feature",
+                },
+            },
+        )
 
 
 def test_evidence_post_run_validation_contract_is_non_routing_and_consistent() -> None:

@@ -111,7 +111,17 @@ def route_after_runtime_evidence(state: ModAgentState) -> str:
 
     if state["runtime_summary"].get("acceptance_verified") is True:
         return "continue"
+    if state["runtime_summary"].get("has_structured_diagnosis") is True:
+        return "binding_resolution"
     return "repair"
+
+
+def route_after_binding_resolution(state: ModAgentState) -> str:
+    """Continue only after edit authority resolves to one binding."""
+
+    if state["blockers"]:
+        return "blocked"
+    return "continue"
 
 
 def route_after_evaluate(state: ModAgentState) -> str:
@@ -181,7 +191,12 @@ def route_registry() -> RouteRegistry:
         },
         "collect_runtime_evidence": {
             "continue": "evaluate",
+            "binding_resolution": "resolve_runtime_binding",
             "repair": "create_repair_plan",
+        },
+        "resolve_runtime_binding": {
+            "blocked": "blocked",
+            "continue": "create_repair_plan",
         },
         "create_repair_plan": {
             "blocked": "blocked",
