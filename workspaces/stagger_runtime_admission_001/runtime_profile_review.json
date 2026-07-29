@@ -1,6 +1,6 @@
 {
   "schema_version": "stagger_runtime_profile_review_v1",
-  "status": "reviewed_no_launch",
+  "status": "runtime_observation_blocked",
   "feature_id": "feature_4f4c63c3802d",
   "profile_path": "workspaces/stagger_runtime_admission_001/runtime_profile.yaml",
   "profile_id": "gtfo_real_runtime",
@@ -113,12 +113,12 @@
   },
   "side_effects": {
     "profile_only": false,
-    "game_launched": false,
+    "game_launched": true,
     "game_directory_written": true,
     "dll_copied": true,
     "checkpoint_consumed": true,
     "resume_report_created": true,
-    "runtime_evidence_created": false
+    "runtime_evidence_created": true
   },
   "final_preflight": {
     "status": "READY_FOR_EXTERNAL_AUTHORIZATION",
@@ -138,5 +138,29 @@
     "accepted_resume_admission_match": true,
     "compact_backup_maximum_path_chars": 251,
     "existing_backup_material_entries": []
+  },
+  "runtime_result": {
+    "current_stage": "blocked",
+    "process_mode_executed": "general_enabled_false",
+    "runtime_process_pid": 8432,
+    "general_enabled_true_launched": false,
+    "runtime_evidence_hash": "12223427e9d83b081e918536d15daacc377b2c335308ff9c706afbfbfcc93c4d",
+    "repair_plan_hash": "21d71010cfc5f7846088814f55edad4f64c92b2812bc0e4c45a8d8fcdec2a4dc",
+    "blocked_report_hash": "3d4b76bc44d9dbcd2c1ce894e1872a07abb02f2cd0fceffc819fe8ff0a887088",
+    "failure_owner": "observation",
+    "failure_class": "stagger_runtime_attempt_incomplete",
+    "source_repair_allowed": false,
+    "operator_status": "failed",
+    "operator_request_sha256": "79568bfb2d55d86a2b0c5d6ec7759166edd5115f9769d331000af481b9fc016b",
+    "operator_note_utf8_preserved": false,
+    "process_diagnostics_status": "failed",
+    "process_diagnostics_path_chars": 272,
+    "screenshot_supports_acceptance": [],
+    "plugin_restoration_status": "restored",
+    "config_restoration_status": "restored",
+    "final_gtfo_process_count": 0,
+    "final_dll_destination_exists": false,
+    "final_config_sha256": "717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e",
+    "acceptance_criteria_proved": 0
   }
 }

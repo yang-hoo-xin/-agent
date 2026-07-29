@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -14,7 +14,7 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: runtime_prelaunch_recovery_preflight_ready_external_authorization_required
+stagger_implementation_plan_status: blocked
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: STAGGER-TWO-PROCESS-OPERATOR-COMPLETION-PREFLIGHT-001
@@ -444,7 +444,8 @@ existing config to a 273-character path ending in
 plugin destination is absent, no GTFO process exists, and
 `local.betterhitfeedback.cfg` still has SHA256
 `717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`.
-RuntimeEvidence, EvalReport, and WorkflowSummary remain at zero. Empty
+At that prelaunch failure point, RuntimeEvidence, EvalReport, and
+WorkflowSummary were zero. Empty
 `plugin` and `config` backup directories remain under the Build root and the
 existing unresolved-backup guard blocks direct replay. Runtime is stopped at
 this Harness-owned blocker; no Runtime criterion is observed.
@@ -466,13 +467,42 @@ entry, checkpoint consumption, ResumeReport creation, RuntimeEvidence creation,
 process launch, or DLL copy, and returned
 `accepted_resume_admission_match=true`. The existing checkpoint remains
 consumed by the original report; the recovery preflight neither consumes it
-again nor creates a second report. The affected suite passed 295 tests, and the
-repaired Runtime has not yet launched.
+again nor creates a second report. The affected suite passed 295 tests.
 The earlier seven-file admission correction did not implement operator
 completion; the later bounded Stagger profile did. Agentic orchestration and RAG
-retrieval remain outside this Runtime boundary. The current failure occurred
-before operator completion or any marker/visual/audio observation, so it changes
-neither the FeatureSpec nor the product evidence state.
+retrieval remain outside this Runtime boundary. The preserved first failure
+occurred before operator completion or any marker/visual/audio observation; the
+later recovery result is recorded below.
+
+The separately authorized accepted-resume recovery subsequently launched GTFO
+PID 8432 for `General.Enabled=false`. Current-run markers proved BepInEx and
+Chainloader startup, the log recorded `Loading [BetterHitFeedback 0.1.0]`, and
+the next line recorded `signal=MOD_DISABLED` because the reviewed config set
+`General.Enabled=false`. The operator submitted status `failed` after repeated
+shotgun hits produced no BetterHitFeedback UI or audio. Although those observed
+absences match the literal disabled-mode criterion, the explicit failed status
+cannot be changed by the system. The provider did not launch
+`General.Enabled=true`; it wrote blocked RuntimeEvidence
+`12223427e9d83b081e918536d15daacc377b2c335308ff9c706afbfbfcc93c4d`,
+RepairPlan `21d71010cfc5f7846088814f55edad4f64c92b2812bc0e4c45a8d8fcdec2a4dc`,
+and BlockedReport
+`3d4b76bc44d9dbcd2c1ce894e1872a07abb02f2cd0fceffc819fe8ff0a887088`.
+The exact result is `current_stage=blocked`,
+`failure_ownership.owner=observation`,
+`failure_class=stagger_runtime_attempt_incomplete`, and
+`source_repair_allowed=false`.
+
+Restoration passed: GTFO process count is zero, the runtime DLL destination is
+absent, and the original config hash is again
+`717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`.
+One immutable ResumeReport, one RuntimeEvidence, one RepairPlan, and one
+BlockedReport exist; EvalReport and WorkflowSummary remain zero. The run also
+exposed two Harness evidence-integrity gaps: the Chinese operator note is
+mojibake in the stored Artifact, and the intended 272-character
+`runtime_process_diagnostics/...stdout.log` path failed with
+`FileNotFoundError`. The screenshot captured the desktop/Codex overlay and
+correctly declares `supports_acceptance=[]`. No Runtime retry or Mod repair is
+admitted from this evidence.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

@@ -530,6 +530,20 @@ focused_verification:
   ResumeReport, the recovery preflight did not consume it again, downstream
   Artifact counts remain zero, the plugin destination remains absent, and the
   config bytes remain unchanged.
+  A separately authorized recovery then launched only the first
+  `General.Enabled=false` process as PID 8432. Current-run logs recorded BepInEx,
+  Chainloader, `Loading [BetterHitFeedback 0.1.0]`, and then
+  `signal=MOD_DISABLED`. The operator submitted `failed` after repeated shotgun
+  hits produced no BetterHitFeedback UI or audio. The observation content
+  matches the disabled-mode absence criterion, but the explicit status remains
+  failed and cannot be promoted. The provider skipped `General.Enabled=true`
+  and wrote blocked RuntimeEvidence `12223427...93c4d`, RepairPlan
+  `21d71010...a4dc`, and BlockedReport `3d4b76bc...87088`.
+  Failure ownership is `observation`, source repair is forbidden, and no
+  criterion is proved. GTFO exited, the DLL was removed, and the original
+  config hash was restored. The run also exposed mojibake in the stored Chinese
+  operator note and a 272-character process-diagnostics path
+  `FileNotFoundError`; both are Harness evidence-boundary defects.
 stop_condition:
   Preserve every prior model, Review, Dry-run, and Apply result as immutable
   history, including the semantically rejected isolated Apply and failed repair
@@ -542,13 +556,16 @@ stop_condition:
   two-process operator-completion profile preparation/no-launch validation are
   complete. Preserve the first continuation as immutable failed history and
   reuse only its exact accepted ResumeReport through the explicit recovery
-  entry. The recovery preflight is ready for separate launch/write
-  authorization; it does not authorize cleanup, a new checkpoint, or a second
-  ResumeReport. None of the seven Runtime criteria is proved.
+  entry. Preserve the blocked recovery RuntimeEvidence, RepairPlan, and
+  BlockedReport. Do not reinterpret the explicit failed operator status, create
+  a new checkpoint or second ResumeReport, retry Runtime, or edit Mod source.
+  None of the seven Runtime criteria is proved. A later action requires separate
+  review of UTF-8 operator evidence preservation, compact process-diagnostic
+  paths, and disabled-stage operator instructions.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.
-status: runtime_prelaunch_recovery_preflight_ready_external_authorization_required
+status: blocked
 automation_claim: not_proven
 ```
 

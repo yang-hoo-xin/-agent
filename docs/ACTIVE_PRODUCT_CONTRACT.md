@@ -421,8 +421,27 @@ recovery preflight returned `READY_FOR_EXTERNAL_AUTHORIZATION` with zero writes,
 zero graph entry, zero process launch, zero DLL copy, and no backup material.
 It also returned `accepted_resume_admission_match=true`, proving the exact
 current admission snapshot still equals the immutable accepted ResumeReport.
-This proves only recovery admission; the repaired two-process Runtime remains
-unexecuted.
+The separately authorized recovery then executed the first
+`General.Enabled=false` process. GTFO PID 8432 loaded BepInEx, Chainloader, and
+BetterHitFeedback; the current-run log recorded `MOD_DISABLED` after plugin
+load. The operator submitted `failed` while directly reporting that repeated
+shotgun hits produced no BetterHitFeedback UI or audio. That observation
+content is consistent with the disabled-mode negative criterion, but the
+explicit failed status is authoritative and cannot be reinterpreted as a pass.
+The provider therefore skipped `General.Enabled=true` and wrote blocked
+RuntimeEvidence `12223427...93c4d`, RepairPlan `21d71010...a4dc`, and
+BlockedReport `3d4b76bc...87088`. Failure ownership is `observation`,
+`source_repair_allowed=false`, and none of the seven criteria is proved.
+
+The run restored the plugin and config exactly: GTFO process count is zero, the
+destination DLL is absent, and the config SHA256 is again
+`717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`.
+It also exposed two new Harness evidence blockers. The UTF-8 Chinese operator
+note was not preserved in RuntimeEvidence, and the 272-character process
+diagnostic output path failed with `FileNotFoundError`. The captured screenshot
+is visual-only with no acceptance support. Do not retry Runtime or modify Mod
+source until those evidence-boundary defects and the disabled-stage operator
+instruction are separately reviewed.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
