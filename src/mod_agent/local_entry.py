@@ -43,6 +43,7 @@ from src.mod_agent.runtime import (
     temporarily_deploy_verified_plugin,
 )
 from src.mod_agent.workflow import (
+    ResumeDecision,
     ResumePayload,
     WorkflowCheckpointStore,
     build_graph,
@@ -83,6 +84,9 @@ class _RuntimeContinuationHandoff:
     feature_spec: dict[str, Any]
     build_ref: ArtifactRef
     build: dict[str, Any]
+    accepted_resume_recovery: bool = False
+    recovery_decision: ResumeDecision | None = None
+    recovery_resume_report_ref: ArtifactRef | None = None
 
 
 @dataclass(frozen=True)
@@ -928,6 +932,38 @@ def _runtime_admission_record(
                 else None
             ),
         },
+    }
+
+
+def _runtime_resume_admission_snapshot(
+    runtime_admission: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build the exact admission payload bound to a Build resume."""
+
+    return {
+        "status": "admitted",
+        "authorization_scope": "this_resume_only",
+        "requested_side_effects": list(
+            runtime_admission.get("requested_side_effects")
+            or ["runtime_execution", "process_launch", "game_directory_write"]
+        ),
+        "authorized_side_effects": list(
+            runtime_admission.get("authorized_side_effects")
+            or (
+                ["runtime_execution", "process_launch", "game_directory_write"]
+                if (
+                    runtime_admission.get("allow_game_launch") is True
+                    and (
+                        runtime_admission.get("plugin_deployment") or {}
+                    ).get("allow_game_directory_write")
+                    is True
+                )
+                else []
+            )
+        ),
+        "provider": runtime_admission.get("evidence_source")
+        or runtime_admission.get("provider"),
+        "runtime_admission": dict(runtime_admission),
     }
 
 
@@ -2212,6 +2248,7 @@ def _load_runtime_continuation_handoff(
     checkpoint_path: str | Path,
     checkpoint_hash: str,
     resume_id: str | None = None,
+    recover_accepted_resume: bool = False,
 ) -> _RuntimeContinuationHandoff:
     root = Path(run_root).resolve()
     if not root.is_dir():
@@ -2364,11 +2401,28 @@ def _load_runtime_continuation_handoff(
             "Runtime continuation verified Build output identity changed."
         )
 
+    recovery_decision = None
+    recovery_resume_report_ref = None
     try:
-        readiness = WorkflowCheckpointStore(artifact_store).preflight_resume(
-            checkpoint_ref,
-            resume_id=resume_id,
-        )
+        checkpoint_store = WorkflowCheckpointStore(artifact_store)
+        if recover_accepted_resume:
+            if resume_id is None:
+                raise LocalEntryError(
+                    "Accepted resume recovery requires the exact --resume-id."
+                )
+            (
+                recovery_decision,
+                recovery_resume_report_ref,
+            ) = checkpoint_store.preflight_accepted_resume_recovery(
+                checkpoint_ref,
+                resume_id=resume_id,
+            )
+            readiness = recovery_decision
+        else:
+            readiness = checkpoint_store.preflight_resume(
+                checkpoint_ref,
+                resume_id=resume_id,
+            )
     except (OSError, ValueError) as exc:
         raise LocalEntryError(
             f"Runtime continuation checkpoint preflight failed: {exc}"
@@ -2395,7 +2449,66 @@ def _load_runtime_continuation_handoff(
         feature_spec=feature_spec,
         build_ref=build_ref,
         build=build,
+        accepted_resume_recovery=recover_accepted_resume,
+        recovery_decision=recovery_decision,
+        recovery_resume_report_ref=recovery_resume_report_ref,
     )
+
+
+def _runtime_continuation_backup_report(
+    run_root: Path,
+    *,
+    stagger_enabled: bool,
+) -> dict[str, Any]:
+    """Read-validate compact deployment backup paths and existing material state."""
+
+    backup_root = run_root / "runtime_continuation_deployment_backup"
+    if backup_root.exists() and not backup_root.is_dir():
+        raise LocalEntryError(
+            "Runtime continuation deployment backup root is not a directory."
+        )
+    material_entries = (
+        sorted(
+            str(path)
+            for path in backup_root.rglob("*")
+            if path.is_file() or path.is_symlink()
+        )
+        if backup_root.is_dir()
+        else []
+    )
+    if material_entries:
+        raise LocalEntryError(
+            "Runtime continuation found unresolved prior deployment backup state."
+        )
+    relative_paths = (
+        (
+            "general_enabled_false/plugin/original.bin",
+            "general_enabled_false/config/original.bin",
+            "general_enabled_true/plugin/original.bin",
+            "general_enabled_true/config/original.bin",
+        )
+        if stagger_enabled
+        else ("original.bin",)
+    )
+    planned_paths = [
+        str((backup_root / Path(relative_path)).resolve())
+        for relative_path in relative_paths
+    ]
+    maximum_path_chars = max(len(path) for path in planned_paths)
+    if os.name == "nt" and maximum_path_chars >= 260:
+        raise LocalEntryError(
+            "Runtime continuation compact deployment backup path exceeds the "
+            "Windows 259-character file-path boundary."
+        )
+    return {
+        "status": "ready",
+        "backup_root": str(backup_root.resolve()),
+        "planned_backup_paths": planned_paths,
+        "maximum_path_chars": maximum_path_chars,
+        "existing_material_entries": material_entries,
+        "empty_directories_reusable": True,
+        "writes_performed": False,
+    }
 
 
 def preflight_local_runtime(
@@ -2406,6 +2519,7 @@ def preflight_local_runtime(
     checkpoint_hash: str,
     artifact_store_root: str | Path | None = None,
     resume_id: str | None = None,
+    recover_accepted_resume: bool = False,
     settings_path: str | Path | None = None,
     runtime_plugin_destination: str | Path | None = None,
 ) -> dict[str, Any]:
@@ -2418,6 +2532,7 @@ def preflight_local_runtime(
         checkpoint_path=checkpoint_path,
         checkpoint_hash=checkpoint_hash,
         resume_id=resume_id,
+        recover_accepted_resume=recover_accepted_resume,
     )
     build_artifact = handoff.build["verified_artifacts"][0]
     runtime_profile = None
@@ -2449,6 +2564,43 @@ def preflight_local_runtime(
             raise LocalEntryError(
                 "Runtime continuation destination filename does not match Build output."
             )
+        runtime_profile["deployment_backup"] = _runtime_continuation_backup_report(
+            handoff.run_root,
+            stagger_enabled=runtime_profile.get("stagger_acceptance") is not None,
+        )
+        if handoff.accepted_resume_recovery:
+            acceptance_criteria = handoff.feature_spec.get("acceptance_criteria")
+            exact_acceptance_criteria = (
+                tuple(acceptance_criteria)
+                if isinstance(acceptance_criteria, list)
+                and all(
+                    isinstance(item, str) and bool(item)
+                    for item in acceptance_criteria
+                )
+                else ()
+            )
+            current_runtime_admission = _runtime_admission_record(
+                settings,
+                run_gtfo_runtime=True,
+                allow_game_launch=True,
+                runtime_plugin_destination=runtime_plugin_destination,
+                allow_game_directory_write=True,
+                acceptance_criteria=exact_acceptance_criteria,
+            )
+            recovery_decision = handoff.recovery_decision
+            if recovery_decision is None:
+                raise LocalEntryError(
+                    "Accepted resume recovery binding is incomplete."
+                )
+            if (
+                recovery_decision.applied_updates.get("runtime_admission")
+                != _runtime_resume_admission_snapshot(current_runtime_admission)
+            ):
+                raise LocalEntryError(
+                    "Accepted resume recovery Runtime admission changed from the "
+                    "original ResumeReport."
+                )
+            runtime_profile["accepted_resume_admission_match"] = True
         external_action_gate = {
             "status": "awaiting_separate_authorization",
             "required_permissions": [
@@ -2485,7 +2637,11 @@ def preflight_local_runtime(
             "store_bound": True,
             "lineage_status": "valid",
             "freshness_status": "fresh",
-            "consumption_status": "unconsumed",
+            "consumption_status": (
+                "accepted_resume_recovery"
+                if handoff.accepted_resume_recovery
+                else "unconsumed"
+            ),
             "next_graph_node": (
                 handoff.checkpoint.get("resume_binding") or {}
             ).get("next_graph_node"),
@@ -2500,6 +2656,25 @@ def preflight_local_runtime(
             "verified_artifact": dict(build_artifact),
         },
         "runtime_profile": runtime_profile,
+        "accepted_resume_recovery": (
+            {
+                "enabled": True,
+                "resume_id": resume_id,
+                "resume_report_path": (
+                    None
+                    if handoff.recovery_resume_report_ref is None
+                    else handoff.recovery_resume_report_ref.path
+                ),
+                "resume_report_hash": (
+                    None
+                    if handoff.recovery_resume_report_ref is None
+                    else handoff.recovery_resume_report_ref.artifact_hash
+                ),
+                "new_resume_report_would_be_created": False,
+            }
+            if handoff.accepted_resume_recovery
+            else {"enabled": False}
+        ),
         "external_action_gate": external_action_gate,
     }
 
@@ -2712,6 +2887,7 @@ def resume_local_runtime(
     runtime_plugin_destination: str | Path | None,
     allow_game_directory_write: bool,
     resume_id: str | None = None,
+    recover_accepted_resume: bool = False,
     runtime_evidence_factory: (
         Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None
     ) = None,
@@ -2721,6 +2897,14 @@ def resume_local_runtime(
 
     if not approved_by.strip():
         raise LocalEntryError("Runtime continuation requires approved_by.")
+    if recover_accepted_resume and resume_id is None:
+        raise LocalEntryError(
+            "Accepted resume recovery requires the exact prior resume_id."
+        )
+    if recover_accepted_resume and injected_runtime_admission is not None:
+        raise LocalEntryError(
+            "Accepted resume recovery does not accept injected Runtime admission."
+        )
     selected_resume_id = resume_id or f"resume_{uuid4().hex}"
     handoff = _load_runtime_continuation_handoff(
         run_root=run_root,
@@ -2729,6 +2913,7 @@ def resume_local_runtime(
         checkpoint_path=checkpoint_path,
         checkpoint_hash=checkpoint_hash,
         resume_id=selected_resume_id,
+        recover_accepted_resume=recover_accepted_resume,
     )
     root = handoff.run_root
     artifact_store = handoff.artifact_store
@@ -2794,10 +2979,10 @@ def resume_local_runtime(
                 "Runtime continuation destination filename does not match Build output."
             )
         backup_directory = root / "runtime_continuation_deployment_backup"
-        if backup_directory.exists() and any(backup_directory.iterdir()):
-            raise LocalEntryError(
-                "Runtime continuation found unresolved prior deployment backup state."
-            )
+        backup_report = _runtime_continuation_backup_report(
+            root,
+            stagger_enabled=runtime_admission.get("stagger_acceptance") is not None,
+        )
         stagger_admission = runtime_admission.get("stagger_acceptance")
         stagger_config = (
             stagger_admission.get("config")
@@ -2832,31 +3017,7 @@ def resume_local_runtime(
             ),
         )
 
-    admission_snapshot = {
-        "status": "admitted",
-        "authorization_scope": "this_resume_only",
-        "requested_side_effects": list(
-            runtime_admission.get("requested_side_effects")
-            or ["runtime_execution", "process_launch", "game_directory_write"]
-        ),
-        "authorized_side_effects": list(
-            runtime_admission.get("authorized_side_effects")
-            or (
-                ["runtime_execution", "process_launch", "game_directory_write"]
-                if (
-                    runtime_admission.get("allow_game_launch") is True
-                    and (
-                        runtime_admission.get("plugin_deployment") or {}
-                    ).get("allow_game_directory_write")
-                    is True
-                )
-                else []
-            )
-        ),
-        "provider": runtime_admission.get("evidence_source")
-        or runtime_admission.get("provider"),
-        "runtime_admission": runtime_admission,
-    }
+    admission_snapshot = _runtime_resume_admission_snapshot(runtime_admission)
     payload = ResumePayload(
         resume_id=selected_resume_id,
         run_id=str(checkpoint["run_id"]),
@@ -2871,7 +3032,21 @@ def resume_local_runtime(
         runtime_admission=admission_snapshot,
     )
     checkpoint_store = WorkflowCheckpointStore(artifact_store)
-    decision, resume_report_ref = checkpoint_store.resume(checkpoint_ref, payload)
+    if recover_accepted_resume:
+        decision = handoff.recovery_decision
+        resume_report_ref = handoff.recovery_resume_report_ref
+        if decision is None or resume_report_ref is None:
+            raise LocalEntryError(
+                "Accepted resume recovery binding is incomplete."
+            )
+        original_admission = decision.applied_updates.get("runtime_admission")
+        if original_admission != admission_snapshot:
+            raise LocalEntryError(
+                "Accepted resume recovery Runtime admission changed from the "
+                "original ResumeReport."
+            )
+    else:
+        decision, resume_report_ref = checkpoint_store.resume(checkpoint_ref, payload)
     if not decision.allowed:
         blocker_codes = [
             str(blocker.get("code"))
@@ -2904,11 +3079,15 @@ def resume_local_runtime(
         "request_id": result["request_id"],
         "feature_id": result["feature_id"],
         "resume_id": payload.resume_id,
+        "accepted_resume_recovery": recover_accepted_resume,
         "checkpoint_id": checkpoint["checkpoint_id"],
         "current_stage": result["current_stage"],
         "artifacts": result["artifacts"],
         "runtime_summary": result["runtime_summary"],
         "runtime_admission": runtime_admission,
+        "deployment_backup": (
+            backup_report if injected_runtime_admission is None else None
+        ),
         "runtime_verification_chain": _runtime_verification_chain(
             result,
             requested=True,

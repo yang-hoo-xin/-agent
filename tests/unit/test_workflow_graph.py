@@ -816,6 +816,258 @@ def test_fresh_process_rejects_consumed_build_handoff(tmp_path: Path) -> None:
     assert second_report["blockers"][0]["code"] == "DOUBLE_RESUME_REJECTED"
 
 
+def test_exact_accepted_resume_can_be_read_recovered_before_runtime(
+    tmp_path: Path,
+) -> None:
+    store, _, checkpoint_ref = _successful_build_handoff(tmp_path)
+    checkpoint = store.read(checkpoint_ref)["data"]
+    resume_id = "resume_pre_runtime_recovery_001"
+    decision, report_ref = WorkflowCheckpointStore(store).resume(
+        checkpoint_ref,
+        _build_runtime_resume_payload(
+            checkpoint=checkpoint,
+            resume_id=resume_id,
+        ),
+    )
+
+    recovered, recovered_report_ref = WorkflowCheckpointStore(
+        ArtifactStore(tmp_path / "artifacts")
+    ).preflight_accepted_resume_recovery(
+        checkpoint_ref,
+        resume_id=resume_id,
+    )
+
+    assert decision.allowed is True
+    assert recovered.allowed is True
+    assert recovered.applied_updates == decision.applied_updates
+    assert recovered_report_ref == report_ref
+    assert len(
+        store.list_feature_artifact_revisions(
+            str(checkpoint["feature_id"]),
+            "resume_report",
+        )
+    ) == 1
+
+
+def test_runtime_recovery_preflight_reuses_report_without_writes(
+    tmp_path: Path,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    _write_runtime_handoff_manifest(
+        tmp_path,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    resume_id = "resume_pre_runtime_recovery_preflight_001"
+    _, report_ref = WorkflowCheckpointStore(store).resume(
+        checkpoint_ref,
+        _build_runtime_resume_payload(
+            checkpoint=checkpoint,
+            resume_id=resume_id,
+        ),
+    )
+    before = _tree_bytes(tmp_path)
+
+    result = preflight_local_runtime(
+        run_root=tmp_path,
+        feature_id=str(build_result["feature_id"]),
+        checkpoint_path=checkpoint_ref.path,
+        checkpoint_hash=checkpoint_ref.artifact_hash,
+        resume_id=resume_id,
+        recover_accepted_resume=True,
+    )
+
+    assert result["status"] == "READY_FOR_RUNTIME_PROFILE"
+    assert result["checkpoint"]["consumption_status"] == (
+        "accepted_resume_recovery"
+    )
+    assert result["accepted_resume_recovery"] == {
+        "enabled": True,
+        "resume_id": resume_id,
+        "resume_report_path": report_ref.path,
+        "resume_report_hash": report_ref.artifact_hash,
+        "new_resume_report_would_be_created": False,
+    }
+    assert result["writes_performed"] is False
+    assert result["resume_report_created"] is False
+    assert _tree_bytes(tmp_path) == before
+
+
+def test_runtime_recovery_reuses_exact_admission_and_creates_no_second_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    _write_runtime_handoff_manifest(
+        tmp_path,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    destination = tmp_path / "BepInEx" / "plugins" / "BetterHitFeedback.dll"
+    destination.parent.mkdir(parents=True)
+    requested = ["runtime_execution", "process_launch", "game_directory_write"]
+    runtime_admission = {
+        "requested_side_effects": requested,
+        "authorized_side_effects": requested,
+        "evidence_source": "gtfo_real_runtime_automation",
+        "allow_game_launch": True,
+        "plugin_deployment": {
+            "destination_path": str(destination),
+            "destination_existed_at_admission": False,
+            "destination_sha256_at_admission": None,
+            "allow_game_directory_write": True,
+        },
+        "stagger_acceptance": None,
+    }
+    admission_snapshot = {
+        "status": "admitted",
+        "authorization_scope": "this_resume_only",
+        "requested_side_effects": requested,
+        "authorized_side_effects": requested,
+        "provider": "gtfo_real_runtime_automation",
+        "runtime_admission": runtime_admission,
+    }
+    resume_id = "resume_pre_runtime_recovery_execute_001"
+    payload = ResumePayload(
+        resume_id=resume_id,
+        run_id=str(checkpoint["run_id"]),
+        request_id=str(checkpoint["request_id"]),
+        feature_id=str(checkpoint["feature_id"]),
+        stage="build",
+        decision="approve",
+        approved_by="human",
+        approved_at="2026-07-29T00:00:00Z",
+        artifact_refs=tuple(checkpoint["artifact_refs"]),  # type: ignore[arg-type]
+        runtime_admission=admission_snapshot,
+    )
+    _, report_ref = WorkflowCheckpointStore(store).resume(
+        checkpoint_ref,
+        payload,
+    )
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.load_settings",
+        lambda _: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_admission_record",
+        lambda *_, **__: runtime_admission,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_profile_preflight_record",
+        lambda *_, **__: {
+            "plugin_deployment": {"destination_path": str(destination)}
+        },
+    )
+
+    def runtime_factory(
+        feature_id: str,
+        build: dict[str, object],
+        feature_spec: dict[str, object],
+    ) -> dict[str, object]:
+        return build_fake_runtime_evidence_payload(
+            feature_id=feature_id,
+            input_execution_mode=str(build.get("execution_mode")),
+            acceptance_criteria=tuple(feature_spec.get("acceptance_criteria") or ()),
+            runtime_verification_plan=tuple(
+                feature_spec.get("runtime_verification_plan") or ()
+            ),
+        )
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._make_deploying_runtime_evidence_factory",
+        lambda **_: runtime_factory,
+    )
+
+    before_preflight = _tree_bytes(tmp_path)
+    preflight = preflight_local_runtime(
+        run_root=tmp_path,
+        feature_id=str(build_result["feature_id"]),
+        checkpoint_path=checkpoint_ref.path,
+        checkpoint_hash=checkpoint_ref.artifact_hash,
+        settings_path=tmp_path / "runtime.yaml",
+        runtime_plugin_destination=destination,
+        resume_id=resume_id,
+        recover_accepted_resume=True,
+    )
+
+    assert preflight["status"] == "READY_FOR_EXTERNAL_AUTHORIZATION"
+    assert (
+        preflight["runtime_profile"]["accepted_resume_admission_match"] is True
+    )
+    assert _tree_bytes(tmp_path) == before_preflight
+
+    summary = resume_local_runtime(
+        run_root=tmp_path,
+        feature_id=str(build_result["feature_id"]),
+        checkpoint_path=checkpoint_ref.path,
+        checkpoint_hash=checkpoint_ref.artifact_hash,
+        settings_path=tmp_path / "runtime.yaml",
+        approved_by="human",
+        allow_game_launch=True,
+        runtime_plugin_destination=destination,
+        allow_game_directory_write=True,
+        resume_id=resume_id,
+        recover_accepted_resume=True,
+    )
+
+    assert summary["current_stage"] == "done"
+    assert summary["accepted_resume_recovery"] is True
+    assert summary["artifacts"]["resume_report"] == report_ref.path
+    assert len(
+        store.list_feature_artifact_revisions(
+            str(checkpoint["feature_id"]),
+            "resume_report",
+        )
+    ) == 1
+
+
+def test_accepted_resume_recovery_rejects_wrong_id_and_runtime_state(
+    tmp_path: Path,
+) -> None:
+    store, _, checkpoint_ref = _successful_build_handoff(tmp_path)
+    checkpoint = store.read(checkpoint_ref)["data"]
+    resume_id = "resume_pre_runtime_recovery_002"
+    decision, report_ref = WorkflowCheckpointStore(store).resume(
+        checkpoint_ref,
+        _build_runtime_resume_payload(
+            checkpoint=checkpoint,
+            resume_id=resume_id,
+        ),
+    )
+    with pytest.raises(ValueError, match="resume_id does not match"):
+        WorkflowCheckpointStore(store).preflight_accepted_resume_recovery(
+            checkpoint_ref,
+            resume_id="resume_wrong",
+        )
+
+    resumed_state = resumed_state_from_decision(
+        decision,
+        checkpoint_ref=checkpoint_ref,
+        resume_report_ref=report_ref,
+    )
+    graph = build_graph(
+        store,
+        runtime_continuation_checkpoint_id=checkpoint["checkpoint_id"],
+    )
+    result = graph.invoke(resumed_state)
+    assert result["current_stage"] == "done"
+
+    with pytest.raises(ValueError, match="PRIOR_RUNTIME_STATE_PRESENT"):
+        WorkflowCheckpointStore(store).preflight_accepted_resume_recovery(
+            checkpoint_ref,
+            resume_id=resume_id,
+        )
+
+
 def test_build_handoff_rejects_missing_fresh_runtime_admission(
     tmp_path: Path,
 ) -> None:

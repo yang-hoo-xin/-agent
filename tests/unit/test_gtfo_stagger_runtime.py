@@ -165,6 +165,7 @@ def test_temporary_gtfo_config_restores_existing_bytes(tmp_path: Path) -> None:
         expected_destination_sha256=original_hash,
     ) as record:
         assert hashlib.sha256(destination.read_bytes()).hexdigest() == source_hash
+        assert (tmp_path / "backup" / "original.bin").is_file()
 
     assert destination.read_bytes() == b"original config"
     assert record.restored is True

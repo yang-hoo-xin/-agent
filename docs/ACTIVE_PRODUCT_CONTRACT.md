@@ -409,6 +409,21 @@ is blocked: preserve the accepted ResumeReport, consumed checkpoint, and empty
 directories until the backup-path and post-acceptance recovery boundary is
 repaired and separately authorized.
 
+The bounded recovery repair now uses the fixed backup filename `original.bin`,
+so the longest real Stagger backup path is 251 characters instead of 273.
+Empty directories are reusable, but any file or symlink under the backup root
+remains a hard blocker. New `--recover-accepted-resume` mode requires the exact
+prior `resume_id`, exactly one accepted ResumeReport bound to the checkpoint,
+fresh unchanged Build lineage and bytes, no RuntimeEvidence/EvalReport/
+WorkflowSummary for the run, and an unchanged Runtime admission snapshot. It
+reuses the immutable ResumeReport and writes no second report. The real-input
+recovery preflight returned `READY_FOR_EXTERNAL_AUTHORIZATION` with zero writes,
+zero graph entry, zero process launch, zero DLL copy, and no backup material.
+It also returned `accepted_resume_admission_match=true`, proving the exact
+current admission snapshot still equals the immutable accepted ResumeReport.
+This proves only recovery admission; the repaired two-process Runtime remains
+unexecuted.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove

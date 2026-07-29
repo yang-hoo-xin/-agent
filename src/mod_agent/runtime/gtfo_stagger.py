@@ -268,7 +268,7 @@ def temporarily_deploy_gtfo_config(
 
     backup_root.mkdir(parents=True, exist_ok=True)
     backup_path = (
-        backup_root / f"{destination.name}.before"
+        backup_root / "original.bin"
         if destination_existed
         else None
     )

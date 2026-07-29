@@ -227,6 +227,14 @@ def build_parser() -> argparse.ArgumentParser:
     resume_runtime_parser.add_argument("--checkpoint-path", required=True)
     resume_runtime_parser.add_argument("--checkpoint-hash", required=True)
     resume_runtime_parser.add_argument("--resume-id")
+    resume_runtime_parser.add_argument(
+        "--recover-accepted-resume",
+        action="store_true",
+        help=(
+            "Reuse the exact accepted ResumeReport for a bounded pre-Runtime "
+            "recovery; requires --resume-id and creates no second ResumeReport."
+        ),
+    )
     resume_runtime_parser.add_argument("--approved-by", required=True)
     resume_runtime_parser.add_argument("--settings", default="config/settings.yaml")
     resume_runtime_parser.add_argument("--allow-game-launch", action="store_true")
@@ -252,6 +260,14 @@ def build_parser() -> argparse.ArgumentParser:
     preflight_runtime_parser.add_argument("--checkpoint-path", required=True)
     preflight_runtime_parser.add_argument("--checkpoint-hash", required=True)
     preflight_runtime_parser.add_argument("--resume-id")
+    preflight_runtime_parser.add_argument(
+        "--recover-accepted-resume",
+        action="store_true",
+        help=(
+            "Read-validate the exact accepted ResumeReport recovery boundary "
+            "without writing or launching."
+        ),
+    )
     preflight_runtime_parser.add_argument("--settings")
     preflight_runtime_parser.add_argument("--runtime-plugin-destination")
 
@@ -479,6 +495,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 checkpoint_path=args.checkpoint_path,
                 checkpoint_hash=args.checkpoint_hash,
                 resume_id=args.resume_id,
+                recover_accepted_resume=bool(args.recover_accepted_resume),
                 settings_path=args.settings,
                 runtime_plugin_destination=args.runtime_plugin_destination,
             )
@@ -514,6 +531,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 checkpoint_path=args.checkpoint_path,
                 checkpoint_hash=args.checkpoint_hash,
                 resume_id=args.resume_id,
+                recover_accepted_resume=bool(args.recover_accepted_resume),
                 approved_by=args.approved_by,
                 settings_path=args.settings,
                 allow_game_launch=bool(args.allow_game_launch),

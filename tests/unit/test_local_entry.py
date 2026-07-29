@@ -33,6 +33,7 @@ from src.mod_agent.local_entry import (
     _remove_generated_build_directory,
     _resolve_project_path_property,
     _runtime_admission_record,
+    _runtime_continuation_backup_report,
     _runtime_graph_options,
     _runtime_profile_preflight_record,
     _runtime_verification_chain,
@@ -464,6 +465,39 @@ def test_runtime_profile_preflight_does_not_read_non_runtime_provider_settings(
 
     assert result["capability_report"]["status"] == "ready"
     assert admission["capability_report"]["status"] == "ready"
+
+
+def test_runtime_backup_report_reuses_empty_directories_and_blocks_material_state(
+    tmp_path: Path,
+) -> None:
+    backup_root = tmp_path / "runtime_continuation_deployment_backup"
+    (backup_root / "general_enabled_false" / "config").mkdir(parents=True)
+    (backup_root / "general_enabled_false" / "plugin").mkdir(parents=True)
+
+    report = _runtime_continuation_backup_report(
+        tmp_path,
+        stagger_enabled=True,
+    )
+
+    assert report["status"] == "ready"
+    assert report["existing_material_entries"] == []
+    assert report["empty_directories_reusable"] is True
+    assert all(
+        Path(path).name == "original.bin"
+        for path in report["planned_backup_paths"]
+    )
+    assert report["maximum_path_chars"] == max(
+        len(path) for path in report["planned_backup_paths"]
+    )
+
+    (backup_root / "general_enabled_false" / "config" / "original.bin").write_bytes(
+        b"unresolved backup"
+    )
+    with pytest.raises(LocalEntryError, match="unresolved prior deployment backup"):
+        _runtime_continuation_backup_report(
+            tmp_path,
+            stagger_enabled=True,
+        )
 
 
 def test_runtime_verification_chain_requires_all_bound_artifacts() -> None:

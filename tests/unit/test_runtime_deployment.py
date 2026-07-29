@@ -140,6 +140,7 @@ def test_temporary_plugin_deployment_restores_preexisting_bytes(
     assert destination.read_bytes() == b"preexisting installed plugin"
     assert deployment.destination_sha256_before == original_hash
     assert deployment.destination_sha256_after_restore == original_hash
+    assert Path(str(deployment.backup_path)).name == "original.bin"
     assert Path(str(deployment.backup_path)).read_bytes() == destination.read_bytes()
 
 

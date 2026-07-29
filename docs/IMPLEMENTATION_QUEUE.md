@@ -501,21 +501,35 @@ focused_verification:
   no GTFO process exists, and RuntimeEvidence, EvalReport, and WorkflowSummary
   remain at zero. The accepted ResumeReport consumed the only current
   checkpoint. Empty per-mode backup directories remain under the Build root and
-  are rejected by the unresolved-backup guard. This is a Harness-owned
-  prelaunch blocker, not product Runtime evidence or source-repair authority.
+  were the exact observed prelaunch failure state. The bounded repair now uses
+  `original.bin`, reducing the real longest backup path from 273 to 251
+  characters, and permits empty directories while continuing to block every
+  file or symlink. Explicit `--recover-accepted-resume` requires the exact prior
+  resume id, exactly one accepted report with exact checkpoint binding, fresh
+  Build lineage/bytes, zero downstream Runtime/Eval/Summary Artifacts, and an
+  unchanged Runtime admission snapshot. It reuses the existing report and
+  cannot write a second ResumeReport.
+  The real-input recovery preflight returned
+  `READY_FOR_EXTERNAL_AUTHORIZATION`, bound ResumeReport
+  `40004f6c...960a0`, reported maximum backup path length 251 and zero material
+  backup entries, returned `accepted_resume_admission_match=true`, and performed
+  no write, graph entry, process launch, or DLL copy. This is recovery
+  admission, not product Runtime evidence.
   Focused tests also prove the Runtime profile path does not read LLM,
   Embedding, Vector Store, or Reranker settings. `python -m pytest
   tests/unit/test_workflow_graph.py tests/unit/test_mod_agent_cli.py
   tests/unit/test_local_entry.py tests/unit/test_artifact_contract.py
   tests/unit/test_artifact_store.py tests/unit/test_config_loading.py
   tests/unit/test_gtfo_runtime_automation.py
-  tests/unit/test_gtfo_stagger_runtime.py
+  tests/unit/test_gtfo_stagger_runtime.py tests/unit/test_runtime_deployment.py
   tests/unit/test_transition_eval_gate.py tests/unit/test_runtime_evidence.py
-  -q --tb=short` passed 281 tests in 26.96s.
+  -q --tb=short` passed 295 tests in 47.72s.
   The real-input no-write preflight bound the current config SHA256
   `717c5f4bce731d33defc861da3a9e54011f7baa8f1b61bc8a383d20f775db82e`;
-  the checkpoint remains unconsumed, downstream Artifact counts remain zero,
-  the plugin destination remains absent, and the config bytes remain unchanged.
+  the checkpoint remains durably consumed only by the immutable original
+  ResumeReport, the recovery preflight did not consume it again, downstream
+  Artifact counts remain zero, the plugin destination remains absent, and the
+  config bytes remain unchanged.
 stop_condition:
   Preserve every prior model, Review, Dry-run, and Apply result as immutable
   history, including the semantically rejected isolated Apply and failed repair
@@ -526,16 +540,15 @@ stop_condition:
   checkpoint as the only current Runtime handoff. P0 explicit ArtifactStore
   binding plus public no-write continuation preflight and P1 reviewed run-local
   two-process operator-completion profile preparation/no-launch validation are
-  complete. The first authorized continuation is immutable failed history:
-  preserve its accepted ResumeReport, consumed checkpoint, and exact prelaunch
-  error. Stop before cleanup, retry, new checkpoint, GTFO launch,
-  game-directory write, RuntimeEvidence, Eval, or WorkflowSummary until the
-  backup-path and post-acceptance recovery boundary is explicitly repaired and
-  separately authorized. None of the seven Runtime criteria is proved.
+  complete. Preserve the first continuation as immutable failed history and
+  reuse only its exact accepted ResumeReport through the explicit recovery
+  entry. The recovery preflight is ready for separate launch/write
+  authorization; it does not authorize cleanup, a new checkpoint, or a second
+  ResumeReport. None of the seven Runtime criteria is proved.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.
-status: runtime_blocked_prelaunch_backup_path_failure_checkpoint_consumed
+status: runtime_prelaunch_recovery_preflight_ready_external_authorization_required
 automation_claim: not_proven
 ```
 

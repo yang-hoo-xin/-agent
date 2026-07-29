@@ -1447,6 +1447,7 @@ def test_cli_resume_runtime_passes_fresh_authority_and_handoff_identity(
         "checkpoint_path": "checkpoint.json",
         "checkpoint_hash": "a" * 64,
         "resume_id": "resume_001",
+        "recover_accepted_resume": False,
         "approved_by": "human",
         "settings_path": "runtime.yaml",
         "allow_game_launch": True,
@@ -1511,6 +1512,7 @@ def test_cli_runtime_preflight_passes_explicit_store_and_profile_without_authori
         "checkpoint_path": "checkpoint.json",
         "checkpoint_hash": "a" * 64,
         "resume_id": "preflight_001",
+        "recover_accepted_resume": False,
         "settings_path": "runtime.yaml",
         "runtime_plugin_destination": (
             r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll"
@@ -1549,3 +1551,41 @@ def test_cli_resume_runtime_reports_blocked_admission(
     assert exit_code == 2
     assert payload["command"] == "resume-runtime"
     assert payload["status"] == "BLOCKED"
+
+
+def test_cli_runtime_recovery_passes_exact_resume_id_to_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def preflight(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "READY_FOR_EXTERNAL_AUTHORIZATION",
+            "writes_performed": False,
+        }
+
+    monkeypatch.setattr("src.mod_agent.cli.preflight_local_runtime", preflight)
+
+    exit_code = main(
+        [
+            "preflight-runtime",
+            "--run-root",
+            "run-root",
+            "--feature-id",
+            "feature_001",
+            "--checkpoint-path",
+            "checkpoint.json",
+            "--checkpoint-hash",
+            "a" * 64,
+            "--resume-id",
+            "resume_accepted_001",
+            "--recover-accepted-resume",
+        ]
+    )
+
+    assert exit_code == 0
+    json.loads(capsys.readouterr().out)
+    assert captured["resume_id"] == "resume_accepted_001"
+    assert captured["recover_accepted_resume"] is True

@@ -14,7 +14,7 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: runtime_blocked_prelaunch_backup_path_failure_checkpoint_consumed
+stagger_implementation_plan_status: runtime_prelaunch_recovery_preflight_ready_external_authorization_required
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: STAGGER-TWO-PROCESS-OPERATOR-COMPLETION-PREFLIGHT-001
@@ -448,6 +448,26 @@ RuntimeEvidence, EvalReport, and WorkflowSummary remain at zero. Empty
 `plugin` and `config` backup directories remain under the Build root and the
 existing unresolved-backup guard blocks direct replay. Runtime is stopped at
 this Harness-owned blocker; no Runtime criterion is observed.
+
+The bounded repair preserves that failed attempt and adds an explicit
+`--recover-accepted-resume` path rather than weakening double-resume rejection.
+It accepts only the exact prior `resume_id`, one accepted ResumeReport with the
+exact checkpoint upstream, fresh Build lineage/bytes, no RuntimeEvidence,
+EvalReport, or WorkflowSummary for the run, and an unchanged Runtime admission
+snapshot. It reuses that report and cannot write a second ResumeReport.
+Deployment backups now use the fixed filename `original.bin`; the longest path
+for the real two-process run is 251 characters. Empty directories are reusable,
+while any file or symlink remains blocked.
+
+The real-input recovery preflight bound ResumeReport
+`40004f6cdd9b3926dda6faf2c4d8bb116e723f4a1dd68d334af74972606960a0`
+and returned `READY_FOR_EXTERNAL_AUTHORIZATION`. It performed no write, graph
+entry, checkpoint consumption, ResumeReport creation, RuntimeEvidence creation,
+process launch, or DLL copy, and returned
+`accepted_resume_admission_match=true`. The existing checkpoint remains
+consumed by the original report; the recovery preflight neither consumes it
+again nor creates a second report. The affected suite passed 295 tests, and the
+repaired Runtime has not yet launched.
 The earlier seven-file admission correction did not implement operator
 completion; the later bounded Stagger profile did. Agentic orchestration and RAG
 retrieval remain outside this Runtime boundary. The current failure occurred

@@ -329,6 +329,123 @@ class WorkflowCheckpointStore:
             applied_updates={},
         )
 
+    def preflight_accepted_resume_recovery(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_id: str,
+    ) -> tuple[ResumeDecision, ArtifactRef]:
+        """Read-validate one exact accepted pre-Runtime resume without writing."""
+
+        if not resume_id:
+            raise ValueError(
+                "Accepted resume recovery requires the exact prior resume_id."
+            )
+        checkpoint_envelope = self.artifact_store.read(checkpoint_ref)
+        checkpoint = checkpoint_envelope["data"]
+        blockers = self._checkpoint_lineage_blockers(
+            checkpoint_ref,
+            checkpoint_envelope,
+        )
+        freshness = (
+            self.artifact_store.check_freshness(checkpoint_ref)
+            if checkpoint.get("checkpoint_stage") == "build"
+            else self.artifact_store.check_direct_freshness(checkpoint_ref)
+        )
+        if not freshness.is_fresh:
+            blockers.append(
+                {
+                    "code": "STALE_RESUME_RECOVERY_REJECTED",
+                    "message": "Checkpoint inputs changed after the accepted resume.",
+                }
+            )
+
+        accepted_reports: list[tuple[ArtifactRef, dict[str, Any], dict[str, Any]]] = []
+        for report_ref in self.artifact_store.list_feature_artifact_revisions(
+            checkpoint_ref.feature_id,
+            "resume_report",
+        ):
+            envelope = self.artifact_store.read(report_ref)
+            report = envelope["data"]
+            if (
+                report.get("checkpoint_id") == checkpoint.get("checkpoint_id")
+                and report.get("allowed") is True
+            ):
+                accepted_reports.append((report_ref, envelope, report))
+        if len(accepted_reports) != 1:
+            raise ValueError(
+                "Accepted resume recovery requires exactly one accepted "
+                "ResumeReport for the checkpoint."
+            )
+        report_ref, report_envelope, report = accepted_reports[0]
+        if report.get("resume_id") != resume_id:
+            raise ValueError(
+                "Accepted resume recovery resume_id does not match ResumeReport."
+            )
+        upstream = report_envelope.get("inputs", {}).get("upstream_artifacts", [])
+        if (
+            len(upstream) != 1
+            or upstream[0].get("artifact_type") != "workflow_checkpoint"
+            or upstream[0].get("path") != checkpoint_ref.path
+            or upstream[0].get("artifact_hash") != checkpoint_ref.artifact_hash
+        ):
+            blockers.append(
+                {
+                    "code": "RESUME_RECOVERY_REPORT_BINDING_MISMATCH",
+                    "message": (
+                        "Accepted ResumeReport is not bound to the exact checkpoint."
+                    ),
+                }
+            )
+        restored_state = report.get("applied_updates", {}).get("restored_state")
+        if (
+            report.get("status") != "accepted"
+            or report.get("run_id") != checkpoint.get("run_id")
+            or report.get("resume_stage") != checkpoint.get("checkpoint_stage")
+            or not isinstance(report.get("applied_updates"), dict)
+            or not isinstance(restored_state, dict)
+            or restored_state != checkpoint.get("state_snapshot")
+        ):
+            blockers.append(
+                {
+                    "code": "RESUME_RECOVERY_REPORT_INVALID",
+                    "message": (
+                        "Accepted ResumeReport cannot reconstruct the exact "
+                        "pre-Runtime graph state."
+                    ),
+                }
+            )
+        for artifact_type in ("runtime_evidence", "eval_report", "workflow_summary"):
+            for ref in self.artifact_store.list_feature_artifact_revisions(
+                checkpoint_ref.feature_id,
+                artifact_type,
+            ):
+                artifact = self.artifact_store.read(ref)["data"]
+                if artifact.get("run_id") == checkpoint.get("run_id"):
+                    blockers.append(
+                        {
+                            "code": "RESUME_RECOVERY_DOWNSTREAM_STATE_PRESENT",
+                            "message": (
+                                f"{artifact_type} already exists for this handoff run."
+                            ),
+                        }
+                    )
+                    break
+        if blockers:
+            raise ValueError(
+                "Accepted resume recovery was blocked: "
+                + ", ".join(str(item.get("code")) for item in blockers)
+            )
+        return (
+            ResumeDecision(
+                status="accepted",
+                allowed=True,
+                reason="Exact accepted ResumeReport is ready for bounded recovery.",
+                applied_updates=dict(report["applied_updates"]),
+            ),
+            report_ref,
+        )
+
     @staticmethod
     def langgraph_memory_checkpointer() -> MemorySaver:
         """Return the available local LangGraph memory checkpointer."""
