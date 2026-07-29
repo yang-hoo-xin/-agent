@@ -14,10 +14,10 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: blocked
+stagger_implementation_plan_status: build_complete_runtime_retry_2_admitted
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: STAGGER-TWO-PROCESS-OPERATOR-COMPLETION-PREFLIGHT-001
+most_recent_completed_capability: STAGGER-OPERATOR-COMPLETION-RECOVERABLE-EXCHANGE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -537,8 +537,39 @@ Real-input retry #1 preflight used output root
 It returned `READY_FOR_EXTERNAL_AUTHORIZATION`, retry budget 2/remaining 2,
 prior restoration `passed`, unchanged accepted admission, and maximum output
 path 216 characters. It wrote nothing, invoked no graph, created no Artifact,
-copied no DLL, and launched no process. Product Runtime remains blocked and
-none of the seven criteria is proved until separately authorized execution.
+copied no DLL, and launched no process.
+
+The authorized retry #1 execution launched only `General.Enabled=false`. The
+operator exercised a qualifying non-death reaction and reported no additional
+yellow X and no feature-attributable cue. The observation could not be bound
+after the Codex PTY session identifier was lost during task compaction. The
+Runtime correctly timed out instead of inventing operator fields, produced
+inconclusive RuntimeEvidence
+`0398621b27292b3b553c3062ee6f490597e4b8afd7da309254b230026ed152fd`,
+RepairPlan
+`326a4121b2a59389f4ba443efa3721fefcb338b0464e79de5285246a5b0ae28b`,
+and BlockedReport
+`0395c5ea86d2070f499b208acd728f4fdfa3dd67a566f38fd68e12bd05e0b003`.
+The exact provider failure is `operator_completion_failed` with message
+`Operator completion timed out.`; it is an observation-channel failure, not a
+product failed verdict. The enabled process was not launched. Restoration
+passed: both processes exited, the temporary DLL destination is absent, and
+the config SHA256 is again `717c5f4b...82e`.
+
+Observation retries now use a persistent run-local operator exchange while
+ordinary Runtime retains stdin. The exact request envelope, request SHA256,
+criterion hashes, guidance, and response filename suffix are written under
+`runtime_output_root/operator_completion`. Existing exchange files block, and
+only the exact request-declared response path is read. Focused Runtime,
+Stagger, local-entry, CLI, and Workflow tests passed 200 cases in 35.73s.
+Retry #2 preflight used the empty
+`workspaces/stagger_runtime_admission_001/runtime_observation_retry_002` root
+and returned `READY_FOR_EXTERNAL_AUTHORIZATION`, retry number 2, remaining
+budget 1, prior restoration `passed`, operator exchange maximum path 211,
+overall maximum path 216, and zero writes, graph entry, checkpoint
+consumption, ResumeReport/RuntimeEvidence creation, process launch, or DLL
+copy. Product Runtime remains blocked; the user's retry #1 observation is not
+retroactively promoted, and none of the seven criteria is proved.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

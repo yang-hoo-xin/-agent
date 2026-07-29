@@ -36,6 +36,7 @@ from src.mod_agent.runtime import (
     bind_plugin_deployment_to_runtime_payload,
     build_gtfo_runtime_capability_report,
     build_gtfo_stagger_acceptance_report,
+    make_operator_completion_file_reader,
     make_gtfo_runtime_evidence_factory_from_settings,
     make_gtfo_stagger_runtime_evidence_factory,
     profile_from_settings,
@@ -1057,6 +1058,7 @@ def _make_deploying_runtime_evidence_factory(
     expected_config_destination_sha256: str | None = None,
     runtime_output_directory: Path | None = None,
     runtime_observation_retry: Mapping[str, Any] | None = None,
+    operator_completion_directory: Path | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Wrap the existing GTFO runner with verified temporary deployment."""
 
@@ -1086,6 +1088,13 @@ def _make_deploying_runtime_evidence_factory(
             ),
             expected_config_destination_sha256=(
                 expected_config_destination_sha256
+            ),
+            operator_completion_reader=(
+                make_operator_completion_file_reader(
+                    operator_completion_directory
+                )
+                if operator_completion_directory is not None
+                else None
             ),
         )
         if runtime_observation_retry is None:
@@ -2666,6 +2675,27 @@ def _runtime_observation_retry_output_report(
         for mode in modes
     ]
     planned_result_path = str((output_root / "runtime_resume_result.json").resolve())
+    operator_completion_directory = (
+        output_root / "operator_completion"
+        if stagger_enabled
+        else None
+    )
+    maximum_operator_completion_path_chars = (
+        len(
+            str(
+                (
+                    operator_completion_directory
+                    / (
+                        "operator_"
+                        + ("f" * 32)
+                        + ".response.json"
+                    )
+                ).resolve()
+            )
+        )
+        if operator_completion_directory is not None
+        else 0
+    )
     maximum_output_path_chars = max(
         len(path)
         for path in (
@@ -2674,6 +2704,10 @@ def _runtime_observation_retry_output_report(
             *deployment_backup["planned_backup_paths"],
             *deployment_backup["planned_process_diagnostic_paths"],
         )
+    )
+    maximum_output_path_chars = max(
+        maximum_output_path_chars,
+        maximum_operator_completion_path_chars,
     )
     if os.name == "nt" and maximum_output_path_chars >= 260:
         raise LocalEntryError(
@@ -2688,6 +2722,24 @@ def _runtime_observation_retry_output_report(
         "existing_entries": [],
         "planned_capture_paths": planned_capture_paths,
         "planned_result_path": planned_result_path,
+        "operator_completion_exchange": (
+            {
+                "status": "ready",
+                "directory": str(operator_completion_directory.resolve()),
+                "request_identity_source": (
+                    "GTFOOperatorCompletionRequest.request_id"
+                ),
+                "response_path_source": (
+                    "request_file.response_path_suffix"
+                ),
+                "maximum_path_chars": (
+                    maximum_operator_completion_path_chars
+                ),
+                "writes_performed": False,
+            }
+            if operator_completion_directory is not None
+            else None
+        ),
         "maximum_output_path_chars": maximum_output_path_chars,
         "deployment_backup": deployment_backup,
         "writes_performed": False,
@@ -3391,6 +3443,11 @@ def resume_local_runtime(
                     **dict(handoff.observation_retry_binding or {}),
                     "runtime_output_root": str(root),
                 }
+                if retry_runtime_observation
+                else None
+            ),
+            operator_completion_directory=(
+                root / "operator_completion"
                 if retry_runtime_observation
                 else None
             ),

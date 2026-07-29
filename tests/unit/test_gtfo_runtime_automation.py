@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +22,7 @@ from src.mod_agent.runtime import (
     GTFORuntimeAutomationError,
     build_gtfo_runtime_capability_report,
     build_screenshot_metadata,
+    make_operator_completion_file_reader,
     make_gtfo_runtime_evidence_factory,
     make_gtfo_runtime_evidence_factory_from_settings,
     profile_from_settings,
@@ -1470,6 +1473,97 @@ def test_gtfo_operator_completion_stdin_preserves_utf8_notes(
     assert parsed["observations"][0]["notes"] == (
         "用霰弹枪测试，没有黄色 X，也没有提示音。"
     )
+
+
+def test_gtfo_operator_completion_file_reader_persists_bound_exchange(
+    tmp_path: Path,
+) -> None:
+    request = GTFOOperatorCompletionRequest(
+        request_id="operator_file_exchange_test",
+        feature_id="feature_001",
+        profile_id="gtfo_real_runtime:general_enabled_false",
+        runtime_process_pid=4242,
+        acceptance_criteria=(MANUAL_ACCEPTANCE_CRITERION,),
+        timeout_seconds=2,
+    )
+    exchange_root = (tmp_path / "operator_completion").resolve()
+    reader = make_operator_completion_file_reader(
+        exchange_root,
+        poll_interval_seconds=0.01,
+    )
+    result: dict[str, object] = {}
+
+    def invoke_reader() -> None:
+        result["payload"] = reader(request)
+
+    thread = threading.Thread(target=invoke_reader)
+    thread.start()
+    request_path = exchange_root / f"{request.request_id}.request.json"
+    deadline = time.monotonic() + 1
+    while not request_path.is_file() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert request_path.is_file()
+    exchange = json.loads(request_path.read_text(encoding="utf-8"))
+    assert exchange["request"] == request.to_dict()
+    assert exchange["response_path_suffix"] == (
+        f"{request.request_id}.response.json"
+    )
+
+    response = {
+        **exchange["response_schema"],
+        "observed_by": "local_operator",
+        "observations": [
+            {
+                "criterion_sha256": exchange["request"][
+                    "acceptance_criteria"
+                ][0]["criterion_sha256"],
+                "status": "passed",
+                "notes": (
+                    "确认触发非致死硬直；没有额外黄色 X；"
+                    "没有额外提示音。"
+                ),
+            }
+        ],
+    }
+    (exchange_root / exchange["response_path_suffix"]).write_text(
+        json.dumps(response, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    assert result["payload"] == response
+    assert request_path.is_file()
+
+
+def test_gtfo_operator_completion_file_reader_rejects_existing_exchange(
+    tmp_path: Path,
+) -> None:
+    request = GTFOOperatorCompletionRequest(
+        request_id="operator_existing_exchange_test",
+        feature_id="feature_001",
+        profile_id="gtfo_real_runtime",
+        runtime_process_pid=4242,
+        acceptance_criteria=(MANUAL_ACCEPTANCE_CRITERION,),
+        timeout_seconds=1,
+    )
+    exchange_root = (tmp_path / "operator_completion").resolve()
+    exchange_root.mkdir()
+    (exchange_root / f"{request.request_id}.response.json").write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
+    reader = make_operator_completion_file_reader(exchange_root)
+
+    with pytest.raises(
+        GTFORuntimeAutomationError,
+        match="exchange paths must not already exist",
+    ):
+        reader(request)
+
+    assert not (
+        exchange_root / f"{request.request_id}.request.json"
+    ).exists()
 
 
 def test_gtfo_runtime_launcher_exception_becomes_failed_payload(tmp_path: Path) -> None:

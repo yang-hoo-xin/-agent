@@ -912,40 +912,9 @@ def _read_operator_completion(
 def _read_operator_completion_from_stdin(
     request: GTFOOperatorCompletionRequest,
 ) -> Mapping[str, Any]:
-    request_payload = request.to_dict()
+    exchange_payload = _operator_completion_exchange_payload(request)
     print(
-        json.dumps(
-            {
-                "event": "GTFO_OPERATOR_COMPLETION_REQUIRED",
-                "request": request_payload,
-                "response_schema": {
-                    "schema_version": "gtfo_operator_completion_v1",
-                    "request_sha256": request_payload["request_sha256"],
-                    "feature_id": request.feature_id,
-                    "status": "completed",
-                    "observed_by": "<operator identity>",
-                    "observations": [
-                        {
-                            "criterion_sha256": item["criterion_sha256"],
-                            "status": "passed|failed|not_observed",
-                            **(
-                                {
-                                    "criterion_satisfied": "true|false|null",
-                                    "operator_guidance": item[
-                                        "operator_guidance"
-                                    ],
-                                }
-                                if item.get("criterion_satisfied_required") is True
-                                else {}
-                            ),
-                            "notes": "<direct observation>",
-                        }
-                        for item in request_payload["acceptance_criteria"]
-                    ],
-                },
-            },
-            ensure_ascii=False,
-        ),
+        json.dumps(exchange_payload, ensure_ascii=False),
         file=sys.stderr,
         flush=True,
     )
@@ -995,6 +964,111 @@ def _read_operator_completion_from_stdin(
             "Operator completion response must be a JSON object."
         )
     return payload
+
+
+def make_operator_completion_file_reader(
+    exchange_directory: str | Path,
+    *,
+    poll_interval_seconds: float = 0.1,
+) -> OperatorCompletionReader:
+    """Persist one exact operator request and await its bound response file."""
+
+    root = Path(exchange_directory)
+    if not root.is_absolute():
+        raise GTFORuntimeAutomationError(
+            "Operator completion exchange directory must be absolute."
+        )
+    if poll_interval_seconds <= 0:
+        raise GTFORuntimeAutomationError(
+            "Operator completion file poll interval must be positive."
+        )
+
+    def read_from_file(
+        request: GTFOOperatorCompletionRequest,
+    ) -> Mapping[str, Any]:
+        request_path = root / f"{request.request_id}.request.json"
+        response_path = root / f"{request.request_id}.response.json"
+        root.mkdir(parents=True, exist_ok=True)
+        if request_path.exists() or response_path.exists():
+            raise GTFORuntimeAutomationError(
+                "Operator completion exchange paths must not already exist."
+            )
+        request_path.write_text(
+            json.dumps(
+                _operator_completion_exchange_payload(request),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        deadline = time.monotonic() + request.timeout_seconds
+        while time.monotonic() < deadline:
+            if response_path.is_file():
+                try:
+                    payload = json.loads(
+                        response_path.read_text(encoding="utf-8")
+                    )
+                except UnicodeDecodeError as exc:
+                    raise GTFORuntimeAutomationError(
+                        "Operator completion response file is not valid UTF-8."
+                    ) from exc
+                except json.JSONDecodeError as exc:
+                    raise GTFORuntimeAutomationError(
+                        "Operator completion response file is not valid JSON."
+                    ) from exc
+                if not isinstance(payload, Mapping):
+                    raise GTFORuntimeAutomationError(
+                        "Operator completion response file must contain a JSON "
+                        "object."
+                    )
+                return payload
+            time.sleep(
+                min(
+                    poll_interval_seconds,
+                    max(0.0, deadline - time.monotonic()),
+                )
+            )
+        raise GTFORuntimeAutomationError(
+            "Operator completion response file timed out."
+        )
+
+    return read_from_file
+
+
+def _operator_completion_exchange_payload(
+    request: GTFOOperatorCompletionRequest,
+) -> dict[str, Any]:
+    request_payload = request.to_dict()
+    return {
+        "event": "GTFO_OPERATOR_COMPLETION_REQUIRED",
+        "request": request_payload,
+        "response_path_suffix": f"{request.request_id}.response.json",
+        "response_schema": {
+            "schema_version": "gtfo_operator_completion_v1",
+            "request_sha256": request_payload["request_sha256"],
+            "feature_id": request.feature_id,
+            "status": "completed",
+            "observed_by": "<operator identity>",
+            "observations": [
+                {
+                    "criterion_sha256": item["criterion_sha256"],
+                    "status": "passed|failed|not_observed",
+                    **(
+                        {
+                            "criterion_satisfied": "true|false|null",
+                            "operator_guidance": item["operator_guidance"],
+                        }
+                        if item.get("criterion_satisfied_required") is True
+                        else {}
+                    ),
+                    "notes": "<direct observation>",
+                }
+                for item in request_payload["acceptance_criteria"]
+            ],
+        },
+    }
 
 
 def _canonical_json_sha256(payload: Mapping[str, Any]) -> str:

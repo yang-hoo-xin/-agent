@@ -568,6 +568,28 @@ focused_verification:
   `READY_FOR_EXTERNAL_AUTHORIZATION`, maximum path 216, and zero writes, graph
   entry, checkpoint/report creation, RuntimeEvidence creation, process launch,
   or DLL copy.
+  The authorized retry #1 launched only `General.Enabled=false`. The operator
+  exercised a qualifying non-death reaction and reported no additional yellow
+  X and no feature-attributable cue, but the Codex PTY session identifier was
+  lost before that observation could be submitted to the waiting stdin
+  request. The provider timed out fail-closed and wrote inconclusive
+  RuntimeEvidence `0398621b...152fd`, RepairPlan `326a4121...ae28b`, and
+  BlockedReport `0395c5ea...b003`; the failure is
+  `operator_completion_failed`, not product behavior failure. The enabled
+  process was not launched. GTFO exited, the temporary DLL was removed, and
+  the original config SHA256 `717c5f4b...82e` was restored.
+  Observation retries now persist the exact operator request under the
+  run-local output root and wait only for its request-declared response
+  filename. Ordinary Runtime keeps the existing stdin default. Existing
+  exchange paths block, so stale responses cannot be consumed. Retry #2
+  no-write preflight bound the latest RuntimeEvidence/RepairPlan, used empty
+  `runtime_observation_retry_002`, returned retry number 2 with one remaining
+  attempt, prior restoration passed, operator path 211, maximum path 216, and
+  zero writes or external action.
+  `python -m pytest tests/unit/test_gtfo_runtime_automation.py
+  tests/unit/test_gtfo_stagger_runtime.py tests/unit/test_local_entry.py
+  tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py -q`
+  passed 200 tests in 35.73s.
   `python -m pytest tests/unit/test_workflow_graph.py
   tests/unit/test_mod_agent_cli.py tests/unit/test_local_entry.py
   tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
@@ -595,8 +617,10 @@ stop_condition:
   None of the seven Runtime criteria is proved. UTF-8 preservation, compact
   process diagnostics, preflight path admission, and disabled-stage semantic
   instructions are now implemented and tested for a future attempt. A later
-  Observation retry #1 has passed zero-write admission with a separate empty
-  output root and is stopped at the external action gate. Execution still
+  Observation retry #1 is immutable inconclusive observation-channel history.
+  Observation retry #2 has passed zero-write admission with a separate empty
+  output root and recoverable operator exchange, and is stopped at the external
+  action gate. Execution still
   requires separate runtime/process/game-directory authorization; do not clean
   or bypass the existing backup material.
   Do not call another model, reuse either prior approval hash, perform a second

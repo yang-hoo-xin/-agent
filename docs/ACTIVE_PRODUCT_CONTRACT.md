@@ -474,8 +474,32 @@ The real retry #1 no-launch preflight bound RuntimeEvidence
 `12223427...93c4d`, RepairPlan `21d71010...a4dc`, ResumeReport
 `40004f6c...960a0`, and unchanged Build/checkpoint lineage. It returned
 `READY_FOR_EXTERNAL_AUTHORIZATION`, with maximum planned output path 216
-characters and every write/graph/process/DLL field false. This authorizes
-nothing by itself: no retry has entered the graph or launched GTFO.
+characters and every write/graph/process/DLL field false.
+
+The separately authorized retry #1 then launched only
+`General.Enabled=false`. The operator exercised a qualifying non-death
+reaction and directly observed no additional yellow X and no
+feature-attributable cue. That observation was not bound because the Codex PTY
+session identifier was lost while the Runtime process was waiting on stdin.
+The provider timed out rather than fabricating a response, wrote inconclusive
+RuntimeEvidence `0398621b...152fd`, RepairPlan `326a4121...ae28b`, and
+BlockedReport `0395c5ea...b003`, and did not launch the enabled process. This is
+`operator_completion_failed` owned by observation, not a BetterHitFeedback
+product failure. GTFO exited, the temporary DLL was removed, and the original
+config SHA256 `717c5f4b...82e` was restored.
+
+The bounded forward repair keeps stdin as the default for ordinary Runtime but
+gives observation retries a recoverable run-local exchange. Each exact
+`GTFOOperatorCompletionRequest` is persisted under the retry output root, and
+the reader accepts only the response filename declared by that request's
+`response_path_suffix`; pre-existing request or response paths block. The
+request survives task compaction, so an operator response can be built from the
+exact stored request identity and criteria without guessing or restarting the
+game. The retry #2 no-write preflight returned
+`READY_FOR_EXTERNAL_AUTHORIZATION`, retry number 2, one remaining attempt,
+prior restoration `passed`, operator exchange path length 211, maximum output
+path 216, an empty output root, and every write/graph/process/DLL field false.
+It authorizes nothing by itself.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

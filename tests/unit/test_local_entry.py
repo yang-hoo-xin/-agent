@@ -563,6 +563,39 @@ def test_runtime_observation_retry_output_requires_empty_separate_root(
         )
 
 
+def test_runtime_observation_retry_preflights_operator_exchange_without_writes(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    output_root = tmp_path / "retry"
+    output_root.mkdir()
+
+    report = _runtime_observation_retry_output_report(
+        source_run_root=source_root,
+        runtime_output_root=output_root.resolve(),
+        feature_id="feature_001",
+        stagger_enabled=True,
+    )
+
+    exchange = report["operator_completion_exchange"]
+    assert exchange == {
+        "status": "ready",
+        "directory": str(
+            (output_root / "operator_completion").resolve()
+        ),
+        "request_identity_source": (
+            "GTFOOperatorCompletionRequest.request_id"
+        ),
+        "response_path_source": "request_file.response_path_suffix",
+        "maximum_path_chars": exchange["maximum_path_chars"],
+        "writes_performed": False,
+    }
+    assert exchange["maximum_path_chars"] < 260
+    assert report["writes_performed"] is False
+    assert list(output_root.iterdir()) == []
+
+
 def test_runtime_verification_chain_requires_all_bound_artifacts() -> None:
     complete = _runtime_verification_chain(
         {

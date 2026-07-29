@@ -1203,9 +1203,13 @@ def test_runtime_observation_retry_executes_only_runtime_with_one_resume_report(
         },
     )
     captured_retry_binding: dict[str, object] = {}
+    captured_operator_completion: dict[str, object] = {}
 
     def make_runtime_factory(**kwargs):
         captured_retry_binding.update(kwargs["runtime_observation_retry"])
+        captured_operator_completion["directory"] = kwargs[
+            "operator_completion_directory"
+        ]
 
         def runtime_factory(
             feature_id: str,
@@ -1254,6 +1258,9 @@ def test_runtime_observation_retry_executes_only_runtime_with_one_resume_report(
     assert summary["runtime_observation_retry"] is True
     assert summary["upstream_stages_repeated"] is False
     assert captured_retry_binding["retry_number"] == 1
+    assert captured_operator_completion["directory"] == (
+        output_root.resolve() / "operator_completion"
+    )
     assert (output_root / "runtime_resume_result.json").is_file()
     assert not (source_root / "runtime_resume_result.json").exists()
     assert len(
