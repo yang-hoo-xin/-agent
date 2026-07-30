@@ -2023,6 +2023,59 @@ def test_cli_stagger_edit_authority_review_delegates_to_graph_entry(
     }
 
 
+def test_cli_stagger_edit_authority_review_preflight_is_no_write(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def preflight_review(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": "READY_FOR_EDIT_AUTHORITY_REVIEW_EXECUTION",
+            "request_hash": kwargs["authority_request_hash"],
+            "checkpoint_artifact_refs": [kwargs["edit_authority_request_path"]],
+            "writes_performed": False,
+            "artifact_writes_performed": False,
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli.preflight_stagger_edit_authority_review",
+        preflight_review,
+    )
+    request_hash = "sha256:" + ("a" * 64)
+
+    exit_code = main(
+        [
+            "preflight-stagger-edit-authority-review",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--request-path",
+            "request.json",
+            "--request-artifact-hash",
+            "b" * 64,
+            "--authority-request-hash",
+            request_hash,
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == (
+        "READY_FOR_EDIT_AUTHORITY_REVIEW_EXECUTION"
+    )
+    assert payload["writes_performed"] is False
+    assert captured == {
+        "artifact_store_root": "shared-store",
+        "feature_id": "feature_001",
+        "edit_authority_request_path": "request.json",
+        "edit_authority_request_hash": "b" * 64,
+        "authority_request_hash": request_hash,
+    }
+
+
 def test_cli_has_no_direct_stagger_edit_authority_approval_command() -> None:
     with pytest.raises(SystemExit):
         main(["approve-stagger-edit-authority"])

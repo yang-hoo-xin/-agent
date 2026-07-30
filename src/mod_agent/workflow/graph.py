@@ -1041,33 +1041,43 @@ def _run_stagger_edit_authority_gate(
     gate_state = _copy_state(state)
     gate_state["current_stage"] = "edit_authority_approval"
     _record_artifact(gate_state, "edit_authority_request", request_ref)
-    for upstream in request_envelope.get("inputs", {}).get(
-        "upstream_artifacts",
-        (),
-    ):
-        if (
-            isinstance(upstream, dict)
-            and isinstance(upstream.get("artifact_type"), str)
-            and isinstance(upstream.get("path"), str)
-            and isinstance(upstream.get("artifact_hash"), str)
-        ):
-            _record_artifact(
-                gate_state,
-                str(upstream["artifact_type"]),
-                ArtifactRef(
-                    feature_id=feature_id,
-                    artifact_type=str(upstream["artifact_type"]),
-                    path=str(upstream["path"]),
-                    artifact_hash=str(upstream["artifact_hash"]),
-                ),
-            )
-
     request_payload = request.get("request_payload")
     request_schema = (
         request_payload.get("schema_version")
         if isinstance(request_payload, dict)
         else None
     )
+    if (
+        request_schema
+        != "stagger_existing_binding_reauthorization_request_v1"
+    ):
+        for upstream in request_envelope.get("inputs", {}).get(
+            "upstream_artifacts",
+            (),
+        ):
+            if (
+                isinstance(upstream, dict)
+                and isinstance(upstream.get("artifact_type"), str)
+                and isinstance(upstream.get("path"), str)
+                and isinstance(
+                    upstream.get("artifact_hash"),
+                    str,
+                )
+            ):
+                _record_artifact(
+                    gate_state,
+                    str(upstream["artifact_type"]),
+                    ArtifactRef(
+                        feature_id=feature_id,
+                        artifact_type=str(
+                            upstream["artifact_type"]
+                        ),
+                        path=str(upstream["path"]),
+                        artifact_hash=str(
+                            upstream["artifact_hash"]
+                        ),
+                    ),
+                )
     if (
         request_schema
         == "stagger_existing_binding_reauthorization_request_v1"

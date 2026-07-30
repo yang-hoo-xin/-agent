@@ -169,6 +169,18 @@ tested bounded mechanisms; EXEC-009/EXEC-010 remain blocked before
 RepairPlanner because no real Request/Approval continuation or root-cause
 diagnostic attempt has occurred.
 
+The real Request now exists as `3e151d44...0096d4`, Request hash
+`sha256:06ed20c9c2ef7ef6c73b9208519eb52a1e92e52e798aa2dec0deaf16e545b2c3`.
+Its first review execution exposed and wrote no state for one checkpoint
+projection defect: exact historical Request upstreams were flattened into
+ordinary latest-bound state. For this schema only, checkpoint projection now
+contains the latest Request alone; recursive exact validation remains owned by
+that Request. The original schema projection is regression-tested unchanged.
+The public no-write Graph interrupt preflight returned
+`READY_FOR_EDIT_AUTHORITY_REVIEW_EXECUTION` against the real Store with all
+four downstream revision counts unchanged. This tests the repaired admission;
+it does not prove a completed Approval or BindingResolution continuation.
+
 ## Knowledge And Retrieval Coverage
 
 | Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |

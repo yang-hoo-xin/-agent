@@ -14,10 +14,10 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: build_complete_runtime_visual_failure_graph_review_entry_implemented_real_request_preflight_blocked_plan_lineage
+stagger_implementation_plan_status: build_complete_runtime_visual_failure_exact_request_review_preflight_ready
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: STAGGER-EXISTING-BINDING-REAUTHORIZATION-PREFLIGHT-001
+most_recent_completed_capability: STAGGER-EXACT-REQUEST-CHECKPOINT-PROJECTION-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -715,6 +715,25 @@ behavior, reference-null state, Unity-null state, runtime type,
 `RectTransform` compatibility, whether `CanvasTrans` or `Root` was selected,
 and a selection sequence. The diagnostic run may confirm only the state it
 observes. It cannot itself count as product repair or product acceptance.
+
+The real Request was created with hash
+`sha256:06ed20c9c2ef7ef6c73b9208519eb52a1e92e52e798aa2dec0deaf16e545b2c3`
+and Artifact hash `3e151d44...0096d4`. The first approved execution was
+rejected before any new Artifact write because the Graph copied historical
+exact-role Request upstreams into a latest-bound checkpoint. Request
+freshness itself passed; independently checking the flattened RuntimeEvidence,
+predecessor Plan, and PatchProposal reproduced the stale reasons.
+
+For the existing-binding Request schema only, the Graph now checkpoints the
+latest Request as its sole direct Artifact ref. Its embedded historical graph
+remains recursively exact-validated. The original Request schema still
+projects its upstreams as before. The new public no-write review preflight
+entered the actual Graph interrupt for the real Request and returned
+`READY_FOR_EDIT_AUTHORITY_REVIEW_EXECUTION`. Its checkpoint projection
+contained only the Request path, and workflow checkpoint, ResumeReport,
+Approval, and BindingResolution revision counts remained `1/1/1/1`.
+Python compilation passed; the focused suite passed 193 tests and the broader
+affected Runtime/deployment suite passed 354 tests in 32.07 seconds.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

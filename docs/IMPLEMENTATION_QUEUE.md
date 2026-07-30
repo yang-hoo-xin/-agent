@@ -370,6 +370,19 @@ dependencies:
   Python compilation passed. The focused authority/Store/CLI/Graph suite
   passed 190 tests; the broader affected Runtime/deployment suite passed 351
   tests in 96.70 seconds.
+  The real no-authority Request was then written once with Request hash
+  `sha256:06ed20c9c2ef7ef6c73b9208519eb52a1e92e52e798aa2dec0deaf16e545b2c3`.
+  Its first approved execution stopped before any new Artifact write because
+  the Graph flattened historical exact-role Request upstreams into ordinary
+  latest-bound checkpoint state. The bounded fix now checkpoints only the
+  latest Request for this schema and leaves its exact historical subgraph
+  inside the Request. The original schema remains unchanged.
+  Real no-write Graph interrupt preflight returned
+  `READY_FOR_EDIT_AUTHORITY_REVIEW_EXECUTION` for the same Request hash,
+  projected only that Request into checkpoint refs, and kept checkpoint,
+  ResumeReport, Approval, and BindingResolution counts at `1/1/1/1`.
+  Updated focused tests passed 193; the broader affected suite passed 354 in
+  32.07 seconds.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -761,8 +774,11 @@ stop_condition:
   The exact existing-binding reauthorization preflight now satisfies admission
   without claiming that PatchProposal `37368a63...6dfa93` directly binds
   current Plan `d18dfd13...e4f619`. Stop before the separately authorized
-  shared-Store Request write. After its exact Graph approval and unique
-  re-resolution, remain stopped before RepairPlanner. Root cause still requires
+  Graph review execution for Request hash
+  `sha256:06ed20c9c2ef7ef6c73b9208519eb52a1e92e52e798aa2dec0deaf16e545b2c3`.
+  The prior failed execution did not write or materialize approval state and
+  must not be retried without new authorization. After exact Graph approval and
+  unique re-resolution, remain stopped before RepairPlanner. Root cause requires
   a separately reviewed diagnostic source scope and controlled Runtime
   observation; do not replace diagnosis with an unverified product edit.
   Do not call another model, reuse either prior approval hash, perform a second

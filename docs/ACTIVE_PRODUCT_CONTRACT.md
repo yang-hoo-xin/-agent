@@ -635,6 +635,27 @@ still be produced only through the LangGraph interrupt/resume gate. The next
 side effect is creation of one no-authority Request in the shared Store and
 requires separate permission.
 
+The real no-authority Request now exists with Request hash
+`sha256:06ed20c9c2ef7ef6c73b9208519eb52a1e92e52e798aa2dec0deaf16e545b2c3`
+and Artifact hash
+`3e151d449ae7d4ebac380535e2b37ef3227bd88f642ebca962a497af3f0096d4`.
+Its first approved execution exposed a checkpoint integration defect before
+any new checkpoint, ResumeReport, Approval, or BindingResolution write:
+the Graph flattened the Request's historical exact-role upstreams into
+ordinary latest-bound checkpoint state. The Store correctly rejected stale
+RuntimeEvidence, predecessor Plan, and PatchProposal refs.
+
+The bounded repair keeps only the exact current Request as the checkpoint's
+direct Artifact ref for this one Request schema. The Request remains latest
+and recursively validates its immutable exact subgraph, so no historical role
+or validation is removed. The original Edit Authority Request schema retains
+its prior upstream projection. A public no-write review preflight now enters
+the real Graph interrupt and requires the projected checkpoint refs to contain
+only that Request. Against the real Store and same Request hash it returned
+`READY_FOR_EDIT_AUTHORITY_REVIEW_EXECUTION`; workflow checkpoint,
+ResumeReport, Approval, and BindingResolution revision counts remained one
+each. It did not resume, write, or reuse the failed execution authorization.
+
 Read-only correlation of the immutable retry #2 Runtime log further narrows,
 but does not resolve, the product root cause. The persistent log SHA256
 `D23A154A1614DFF5AF1FCBA29A2C58BE4A4931F578E71D1A7460B48900155C24`

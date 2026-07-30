@@ -71,22 +71,34 @@ LOCAL_DIAGNOSTIC_CONTENT_FILENAME = "patch_generation_failure_message_content.tx
 EXACT_DIFF_REJECTION_TOKEN = "REJECTED_BY_USER"
 OllamaModelIdentityReader = Callable[[str, str], dict[str, Any]]
 OllamaServerVersionReader = Callable[[str], str]
+_EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA = (
+    "stagger_existing_binding_reauthorization_request_v1"
+)
+_EDIT_AUTHORITY_REVIEW_WRITE_TYPES = (
+    "workflow_checkpoint",
+    "resume_report",
+    "edit_authority_approval",
+    "binding_resolution",
+)
 
 
-def resume_stagger_edit_authority_review(
+@dataclass(frozen=True)
+class _EditAuthorityReviewAdmission:
+    store: ArtifactStore
+    request_ref: ArtifactRef
+    request: dict[str, Any]
+    request_envelope: dict[str, Any]
+    run_id: str
+
+
+def _admit_stagger_edit_authority_review(
     *,
     artifact_store_root: str | Path,
     feature_id: str,
     edit_authority_request_path: str | Path,
     edit_authority_request_hash: str,
     authority_request_hash: str,
-    resume_id: str,
-    decision: str,
-    approved_by: str,
-    approved_at: str,
-) -> dict[str, Any]:
-    """Carry one exact human decision through the existing graph gate."""
-
+) -> _EditAuthorityReviewAdmission:
     store = ArtifactStore(artifact_store_root)
     request_ref = ArtifactRef(
         feature_id=feature_id,
@@ -146,16 +158,32 @@ def resume_stagger_edit_authority_review(
         raise LocalEntryError(
             "Edit Authority Request run_id is missing."
         )
+    return _EditAuthorityReviewAdmission(
+        store=store,
+        request_ref=request_ref,
+        request=request,
+        request_envelope=request_envelope,
+        run_id=run_id,
+    )
+
+
+def _invoke_stagger_edit_authority_interrupt(
+    *,
+    admission: _EditAuthorityReviewAdmission,
+    feature_id: str,
+    authority_request_hash: str,
+    thread_id: str,
+) -> tuple[Any, list[str], Any, dict[str, Any]]:
     graph = build_graph(
-        store,
-        edit_authority_request_ref=request_ref,
+        admission.store,
+        edit_authority_request_ref=admission.request_ref,
         checkpointer=(
             WorkflowCheckpointStore.langgraph_memory_checkpointer()
         ),
         use_default_proposal_git_binding=False,
     )
     state = create_initial_state(
-        run_id=run_id,
+        run_id=admission.run_id,
         request_id=feature_id,
         user_request=(
             "Review the exact BetterHitFeedback Stagger Edit Authority "
@@ -165,7 +193,7 @@ def resume_stagger_edit_authority_review(
         target_mod="BetterHitFeedback",
     )
     state["feature_id"] = feature_id
-    config = {"configurable": {"thread_id": resume_id}}
+    config = {"configurable": {"thread_id": thread_id}}
     try:
         interrupted_state = graph.invoke(state, config)
     except Exception as exc:
@@ -203,12 +231,138 @@ def resume_stagger_edit_authority_review(
         raise LocalEntryError(
             "Edit Authority graph interrupt has no exact Artifact refs."
         )
+    return graph, list(artifact_refs), config, interrupt_value
+
+
+def preflight_stagger_edit_authority_review(
+    *,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    edit_authority_request_path: str | Path,
+    edit_authority_request_hash: str,
+    authority_request_hash: str,
+) -> dict[str, Any]:
+    """Validate the Graph review entry without writing or resuming."""
+
+    admission = _admit_stagger_edit_authority_review(
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        edit_authority_request_path=edit_authority_request_path,
+        edit_authority_request_hash=edit_authority_request_hash,
+        authority_request_hash=authority_request_hash,
+    )
+    request_payload = admission.request.get("request_payload")
+    request_schema = (
+        request_payload.get("schema_version")
+        if isinstance(request_payload, dict)
+        else None
+    )
+    if request_schema != _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA:
+        raise LocalEntryError(
+            "This no-write review preflight requires the exact existing-"
+            "binding reauthorization Request schema."
+        )
+    before_counts = {
+        artifact_type: len(
+            admission.store.list_feature_artifact_revisions(
+                feature_id,
+                artifact_type,
+            )
+        )
+        for artifact_type in _EDIT_AUTHORITY_REVIEW_WRITE_TYPES
+    }
+    _, artifact_refs, _, interrupt_value = (
+        _invoke_stagger_edit_authority_interrupt(
+            admission=admission,
+            feature_id=feature_id,
+            authority_request_hash=authority_request_hash,
+            thread_id=f"preflight_edit_authority_{uuid4().hex}",
+        )
+    )
+    if artifact_refs != [admission.request_ref.path]:
+        raise LocalEntryError(
+            "Existing-binding review checkpoint projection must contain "
+            "only the exact EditAuthorityRequest."
+        )
+    after_counts = {
+        artifact_type: len(
+            admission.store.list_feature_artifact_revisions(
+                feature_id,
+                artifact_type,
+            )
+        )
+        for artifact_type in _EDIT_AUTHORITY_REVIEW_WRITE_TYPES
+    }
+    if after_counts != before_counts:
+        raise LocalEntryError(
+            "Edit Authority review preflight changed Artifact revisions."
+        )
+    return {
+        "status": "READY_FOR_EDIT_AUTHORITY_REVIEW_EXECUTION",
+        "command": "preflight-stagger-edit-authority-review",
+        "feature_id": feature_id,
+        "run_id": admission.run_id,
+        "request_hash": authority_request_hash,
+        "edit_authority_request_revision": {
+            "feature_id": feature_id,
+            "path": admission.request_ref.path,
+            "artifact_hash": admission.request_ref.artifact_hash,
+        },
+        "checkpoint_artifact_refs": artifact_refs,
+        "allowed_actions": list(
+            interrupt_value["payload"]["allowed_actions"]
+        ),
+        "forbidden_actions": list(
+            interrupt_value["payload"]["forbidden_actions"]
+        ),
+        "artifact_revision_counts": after_counts,
+        "writes_performed": False,
+        "artifact_writes_performed": False,
+        "approval_written": False,
+        "binding_resolution_written": False,
+        "repair_planner_invoked": False,
+        "source_patch_allowed": False,
+        "source_modified": False,
+        "build_performed": False,
+        "process_launched": False,
+    }
+
+
+def resume_stagger_edit_authority_review(
+    *,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    edit_authority_request_path: str | Path,
+    edit_authority_request_hash: str,
+    authority_request_hash: str,
+    resume_id: str,
+    decision: str,
+    approved_by: str,
+    approved_at: str,
+) -> dict[str, Any]:
+    """Carry one exact human decision through the existing graph gate."""
+
+    admission = _admit_stagger_edit_authority_review(
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        edit_authority_request_path=edit_authority_request_path,
+        edit_authority_request_hash=edit_authority_request_hash,
+        authority_request_hash=authority_request_hash,
+    )
+    graph, artifact_refs, config, _ = (
+        _invoke_stagger_edit_authority_interrupt(
+            admission=admission,
+            feature_id=feature_id,
+            authority_request_hash=authority_request_hash,
+            thread_id=resume_id,
+        )
+    )
     try:
         result = graph.invoke(
             Command(
                 resume={
                     "resume_id": resume_id,
-                    "run_id": run_id,
+                    "run_id": admission.run_id,
                     "stage": "edit_authority_approval",
                     "decision": decision,
                     "approved_by": approved_by,
@@ -242,7 +396,7 @@ def resume_stagger_edit_authority_review(
         ),
         "command": "resume-stagger-edit-authority-review",
         "feature_id": feature_id,
-        "run_id": run_id,
+        "run_id": admission.run_id,
         "resume_id": resume_id,
         "decision": decision,
         "request_hash": authority_request_hash,

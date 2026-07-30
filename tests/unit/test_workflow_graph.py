@@ -13,6 +13,7 @@ import pytest
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.artifacts.registry import (
+    ArtifactContract,
     ArtifactTypeRegistry,
 )
 from src.mod_agent.bindings import resolve_runtime_diagnosis_binding
@@ -35,6 +36,7 @@ from src.mod_agent.knowledge import (
 from src.mod_agent.local_entry import (
     LocalEntryError,
     preflight_local_runtime,
+    preflight_stagger_edit_authority_review,
     resume_stagger_edit_authority_review,
     resume_local_runtime,
 )
@@ -328,6 +330,329 @@ def test_existing_binding_reauthorization_exposes_narrow_graph_actions(
         "feature_existing_binding",
         "edit_authority_approval",
     ) == []
+
+
+def test_existing_binding_review_preserves_exact_request_subgraph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    feature_id = "feature_existing_binding_exact"
+    run_id = "run_existing_binding_exact"
+    statuses = frozenset({"success"})
+    simple_contracts = [
+        ArtifactContract(
+            artifact_type=artifact_type,
+            schema_version="1.0",
+            required_fields=frozenset(
+                {"node_name", "stage", "message"}
+            ),
+            producer_stage=artifact_type,
+            consumer_stages=frozenset(
+                {"edit_authority_request"}
+            ),
+            allowed_statuses=statuses,
+        )
+        for artifact_type in (
+            "feature_spec",
+            "runtime_evidence",
+            "implementation_plan",
+            "patch_proposal",
+        )
+    ]
+    default_registry = ArtifactTypeRegistry()
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            *simple_contracts,
+            default_registry.get("edit_authority_request"),
+            default_registry.get("workflow_checkpoint"),
+            default_registry.get("resume_report"),
+            default_registry.get("workflow_trace"),
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+
+    def write_simple(
+        artifact_type: str,
+        label: str,
+        *,
+        upstream_refs: list[ArtifactRef] | None = None,
+    ) -> ArtifactRef:
+        payload = {
+            "node_name": label,
+            "stage": artifact_type,
+            "message": label,
+        }
+        if artifact_type == "implementation_plan":
+            payload["blocking"] = True
+        return store.write(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            payload=payload,
+            upstream_refs=upstream_refs,
+        )
+
+    feature_ref = write_simple("feature_spec", "feature")
+    predecessor_plan_ref = write_simple(
+        "implementation_plan",
+        "predecessor-plan",
+    )
+    runtime_ref = write_simple(
+        "runtime_evidence",
+        "runtime",
+        upstream_refs=[predecessor_plan_ref],
+    )
+    proposal_ref = write_simple(
+        "patch_proposal",
+        "proposal",
+        upstream_refs=[predecessor_plan_ref],
+    )
+    current_plan_ref = write_simple(
+        "implementation_plan",
+        "current-plan",
+    )
+    assert store.check_freshness(runtime_ref).is_fresh is False
+    assert store.check_freshness(proposal_ref).is_fresh is False
+
+    request_payload = {
+        "schema_version": (
+            "stagger_existing_binding_reauthorization_request_v1"
+        ),
+        "proposal": {},
+        "source_root": str(tmp_path),
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": (
+                "request_stagger_existing_binding_reauthorization"
+            ),
+            "stage": "edit_authority_request",
+            "message": "Awaiting graph approval.",
+            "status": "pending_human_approval",
+            "feature_id": feature_id,
+            "run_id": run_id,
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+        upstream_refs=[
+            feature_ref,
+            runtime_ref,
+            predecessor_plan_ref,
+            proposal_ref,
+            current_plan_ref,
+        ],
+        exact_revision_upstream_types={
+            "feature_spec",
+            "runtime_evidence",
+            "implementation_plan",
+            "patch_proposal",
+        },
+    )
+    assert store.check_freshness(request_ref).is_fresh is True
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.ArtifactStore",
+        lambda _root: store,
+    )
+
+    before_counts = {
+        artifact_type: len(
+            store.list_feature_artifact_revisions(
+                feature_id,
+                artifact_type,
+            )
+        )
+        for artifact_type in (
+            "workflow_checkpoint",
+            "resume_report",
+            "edit_authority_approval",
+            "binding_resolution",
+        )
+    }
+    preflight = preflight_stagger_edit_authority_review(
+        artifact_store_root=tmp_path / "artifacts",
+        feature_id=feature_id,
+        edit_authority_request_path=request_ref.path,
+        edit_authority_request_hash=request_ref.artifact_hash,
+        authority_request_hash=request_hash,
+    )
+
+    assert preflight["status"] == (
+        "READY_FOR_EDIT_AUTHORITY_REVIEW_EXECUTION"
+    )
+    assert preflight["checkpoint_artifact_refs"] == [
+        request_ref.path
+    ]
+    assert preflight["artifact_revision_counts"] == before_counts
+    assert preflight["writes_performed"] is False
+
+    def materialize(**_kwargs):
+        return {
+            field_name: {
+                "feature_id": feature_id,
+                "path": str(tmp_path / f"{artifact_type}.json"),
+                "artifact_hash": artifact_type.ljust(64, "0")[:64],
+            }
+            for artifact_type, field_name in (
+                (
+                    "edit_authority_approval",
+                    "edit_authority_approval_revision",
+                ),
+                ("evidence_pack", "evidence_pack_revision"),
+                (
+                    "implementation_plan",
+                    "implementation_plan_revision",
+                ),
+                (
+                    "binding_resolution",
+                    "binding_resolution_revision",
+                ),
+            )
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.graph."
+        "materialize_stagger_edit_authority_approval",
+        materialize,
+    )
+    result = resume_stagger_edit_authority_review(
+        artifact_store_root=tmp_path / "artifacts",
+        feature_id=feature_id,
+        edit_authority_request_path=request_ref.path,
+        edit_authority_request_hash=request_ref.artifact_hash,
+        authority_request_hash=request_hash,
+        resume_id="resume_existing_binding_exact_001",
+        decision="approve",
+        approved_by="user",
+        approved_at="2026-07-30T12:00:00+08:00",
+    )
+
+    assert result["status"] == "EXACT_EDIT_AUTHORITY_RESOLVED"
+    assert len(
+        store.list_feature_artifact_revisions(
+            feature_id,
+            "workflow_checkpoint",
+        )
+    ) == 1
+    assert len(
+        store.list_feature_artifact_revisions(
+            feature_id,
+            "resume_report",
+        )
+    ) == 1
+
+
+def test_original_edit_authority_request_keeps_upstream_projection(
+    tmp_path: Path,
+) -> None:
+    default_registry = ArtifactTypeRegistry()
+    request_contract = replace(
+        default_registry.get("edit_authority_request"),
+        required_upstream_artifacts=frozenset(),
+        required_exact_revision_upstream_artifacts=frozenset(),
+    )
+    feature_contract = ArtifactContract(
+        artifact_type="feature_spec",
+        schema_version="1.0",
+        required_fields=frozenset({"node_name", "stage", "message"}),
+        producer_stage="feature_spec",
+        consumer_stages=frozenset({"edit_authority_request"}),
+        allowed_statuses=frozenset({"success"}),
+    )
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            feature_contract,
+            request_contract,
+            default_registry.get("workflow_checkpoint"),
+            default_registry.get("resume_report"),
+            default_registry.get("workflow_trace"),
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    feature_ref = store.write(
+        feature_id="feature_original_request",
+        artifact_type="feature_spec",
+        payload={
+            "node_name": "feature",
+            "stage": "feature_spec",
+            "message": "feature",
+        },
+    )
+    request_payload = {
+        "schema_version": "stagger_edit_authority_request_v1",
+        "proposal": {},
+        "source_root": str(tmp_path),
+        "projected_ids": {
+            "binding_id": "edit_binding_004",
+            "change_id": "chg_004",
+            "evidence_id": "stagger_repair_001",
+        },
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id="feature_original_request",
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": "request_stagger_edit_authority",
+            "stage": "edit_authority_request",
+            "message": "Awaiting graph approval.",
+            "status": "pending_human_approval",
+            "feature_id": "feature_original_request",
+            "run_id": "run_original_request",
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+        upstream_refs=[feature_ref],
+    )
+    graph = build_graph(
+        store,
+        edit_authority_request_ref=request_ref,
+        checkpointer=(
+            WorkflowCheckpointStore.langgraph_memory_checkpointer()
+        ),
+    )
+    state = create_initial_state(
+        run_id="run_original_request",
+        request_id="feature_original_request",
+        user_request="Review the original authority request.",
+    )
+    state["feature_id"] = "feature_original_request"
+
+    interrupted = graph.invoke(
+        state,
+        {
+            "configurable": {
+                "thread_id": "original_authority_request_001"
+            }
+        },
+    )
+
+    assert set(
+        interrupted["__interrupt__"][0].value["artifact_refs"]
+    ) == {request_ref.path, feature_ref.path}
 
 
 def test_edit_authority_resume_blocks_wrong_request_hash() -> None:

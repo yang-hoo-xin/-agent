@@ -18,6 +18,7 @@ from .intelligent_evidence_only import (
 from .local_entry import (
     LocalEntryError,
     preflight_local_runtime,
+    preflight_stagger_edit_authority_review,
     resume_stagger_edit_authority_review,
     resume_local_runtime,
     run_local_request,
@@ -477,6 +478,33 @@ def build_parser() -> argparse.ArgumentParser:
     _add_stagger_existing_binding_reauthorization_arguments(
         request_existing_binding_parser
     )
+    preflight_stagger_review_parser = subparsers.add_parser(
+        "preflight-stagger-edit-authority-review",
+        help=(
+            "Enter the exact Graph review interrupt without writing a "
+            "checkpoint, ResumeReport, Approval, or BindingResolution."
+        ),
+    )
+    preflight_stagger_review_parser.add_argument(
+        "--artifact-store-root",
+        required=True,
+    )
+    preflight_stagger_review_parser.add_argument(
+        "--feature-id",
+        required=True,
+    )
+    preflight_stagger_review_parser.add_argument(
+        "--request-path",
+        required=True,
+    )
+    preflight_stagger_review_parser.add_argument(
+        "--request-artifact-hash",
+        required=True,
+    )
+    preflight_stagger_review_parser.add_argument(
+        "--authority-request-hash",
+        required=True,
+    )
     resume_stagger_edit_authority_parser = subparsers.add_parser(
         "resume-stagger-edit-authority-review",
         help=(
@@ -876,6 +904,42 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "artifact_store_inspection_required": True,
                         "repair_planner_invoked": False,
                         "repair_allowed": False,
+                        "source_patch_allowed": False,
+                        "source_modified": False,
+                        "build_performed": False,
+                        "process_launched": False,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "preflight-stagger-edit-authority-review":
+        try:
+            result = preflight_stagger_edit_authority_review(
+                artifact_store_root=args.artifact_store_root,
+                feature_id=args.feature_id,
+                edit_authority_request_path=args.request_path,
+                edit_authority_request_hash=(
+                    args.request_artifact_hash
+                ),
+                authority_request_hash=args.authority_request_hash,
+            )
+        except LocalEntryError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "command": (
+                            "preflight-stagger-edit-authority-review"
+                        ),
+                        "reason": str(exc),
+                        "writes_performed": False,
+                        "artifact_writes_performed": False,
+                        "repair_planner_invoked": False,
                         "source_patch_allowed": False,
                         "source_modified": False,
                         "build_performed": False,

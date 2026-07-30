@@ -151,6 +151,15 @@ BindingResolution must exact-bind the previous Resolution and all business
 inputs. This is a product-bounded continuation path, not a general
 ratification engine.
 
+The checkpoint for that gate directly binds the Request, not a flattened copy
+of its historical exact-role subgraph. This preserves one owner for role and
+freshness semantics: the latest Request is a normal checkpoint input, while
+the Request's registered upstream edges retain exact-revision behavior.
+Flattening those refs would incorrectly reinterpret predecessor artifacts as
+latest-bound inputs. The original Edit Authority Request schema retains its
+existing expanded checkpoint projection; no generic checkpoint protocol or
+ArtifactStore behavior changed.
+
 Repair-plan source selection uses the current failing graph stage. A stale
 Build or Runtime summary from an earlier attempt cannot override a later
 ProposalReview failure. This adds no exception hierarchy, repair controller,
