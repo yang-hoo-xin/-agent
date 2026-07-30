@@ -1219,6 +1219,35 @@ def test_recursive_freshness_preserves_exact_revision_subgraph(
     )
 
 
+def test_exact_revision_freshness_ignores_latest_pointer_drift(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_v1 = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    evidence_v1 = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_v1],
+    )
+    feature_payload_v2 = _feature_payload()
+    feature_payload_v2["message"] = "feature v2"
+    store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=feature_payload_v2,
+    )
+
+    assert store.check_freshness(evidence_v1).status == "stale"
+    exact = store.check_exact_revision_freshness(evidence_v1)
+    assert exact.status == "fresh"
+    assert exact.stale_reasons == []
+
+
 def test_cross_feature_upstream_rejected(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
     feature_spec = store.write(

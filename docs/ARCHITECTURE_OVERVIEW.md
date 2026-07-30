@@ -130,6 +130,22 @@ without a matching final BindingResolution and remains blocked. This path does
 not add two-phase commit, automatic authorization, a second graph, or a
 general-purpose contract engine.
 
+The supported local review entry is a transport into this gate, not an
+Approval producer. It receives a separately reviewed exact Request hash,
+invokes the existing graph to expose one interrupt, and resumes that same
+in-process graph. The Graph and ArtifactStore remain the only writers.
+`check_exact_revision_freshness` validates the immutable revision subgraph
+without requiring historical upstreams to remain latest; separate
+current-revision admission still requires the selected revision hash to equal
+the latest projection and its path to exist in immutable revision storage.
+
+Real shared-Store integration exposed a bounded unresolved lineage case:
+the current Plan is a historical authority projection, while the current
+PatchProposal binds its predecessor Plan. The system blocks rather than
+pretending those two Artifacts are directly bound. Supporting ratification of
+an already materialized binding would require an explicit product decision;
+it is not inferred by the transport entry or exact-freshness check.
+
 Repair-plan source selection uses the current failing graph stage. A stale
 Build or Runtime summary from an earlier attempt cannot override a later
 ProposalReview failure. This adds no exception hierarchy, repair controller,

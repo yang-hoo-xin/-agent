@@ -155,6 +155,16 @@ tests/unit/test_workflow_checkpointing.py
 | ART-004 | 31, 49.2.3 | Registry covers workflow artifact types | ART | tested | Q-001 and R-011 done | Registry tests pass; R-011 adds evidence_pack identity_schema_version and identity_field_mapping requirements |
 | ART-005 | 49.2.5 | Artifact migrations for schema evolution | ART | not_started | future migration task / ARTIFACT-PROD-001 | Unknown schema version is rejected; schema and storage-layout migration/backfill paths are not implemented |
 
+Stagger Edit Authority operational addendum: the Graph-backed local review
+entry and exact-revision freshness API are tested. Real shared-Store preflight
+is blocked before Request creation because PatchProposal
+`37368a63...6dfa93` binds predecessor ImplementationPlan
+`6996ea55...5555`, not current projected Plan `d18dfd13...e4f619`.
+EditAuthorityRequest revision count remains zero. This preserves WF-004 and
+ART-002 as tested bounded mechanisms while EXEC-009/EXEC-010 remain blocked
+before RepairPlanner; it does not prove historical BindingResolution
+ratification or a completed real Approval continuation.
+
 ## Knowledge And Retrieval Coverage
 
 | Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |

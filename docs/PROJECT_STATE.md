@@ -14,7 +14,7 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: build_complete_runtime_visual_failure_legacy_authority_history_new_request_gate_implemented_repair_planner_closed
+stagger_implementation_plan_status: build_complete_runtime_visual_failure_graph_review_entry_implemented_real_request_preflight_blocked_plan_lineage
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: STAGGER-EDIT-AUTHORITY-REQUEST-APPROVAL-GATE-001
@@ -668,6 +668,23 @@ New legacy-shaped Approval writes are rejected at ArtifactStore, while the
 immutable historical Approval remains readable. Current input selection now
 requires both the exact revision path and complete Artifact hash. The final
 focused suite passed 214 tests.
+
+The supported local Graph review entry is now implemented. It accepts an
+already reviewed exact Request hash, constructs the existing bounded Graph,
+observes its single `edit_authority_approval` interrupt, and resumes in the
+same process. Approval persistence remains Graph-owned; the entry cannot route
+to RepairPlanner, source modification, Build, or Runtime. Exact revision
+freshness now distinguishes immutable revision integrity from latest-pointer
+drift.
+
+The subsequent real shared-Store preflight produced a new precise blocker:
+current Plan `d18dfd13...e4f619` is the historical authority projection, but
+PatchProposal `37368a63...6dfa93` remains bound to predecessor Plan
+`6996ea55...5555`. The control path correctly rejected the statement that the
+PatchProposal binds the current Plan. No EditAuthorityRequest was created;
+ResumeReport, historical Approval, and BindingResolution counts remain one
+each. The current source hash remains `65489604...BB3B`. RepairPlanner and all
+source actions remain closed. The focused suite now passes 217 tests.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

@@ -124,8 +124,9 @@ def preflight_stagger_edit_authority(
         artifact_type: store.read(ref)
         for artifact_type, ref in refs.items()
     }
+    _require_latest_artifact_refs(store, refs.values())
     freshness = {
-        artifact_type: store.check_freshness(ref)
+        artifact_type: store.check_exact_revision_freshness(ref)
         for artifact_type, ref in refs.items()
     }
     stale = {
@@ -1103,11 +1104,19 @@ def _require_latest_artifact_refs(
     }
     for ref in selected:
         latest_ref = latest.get(ref.artifact_type)
+        revision_paths = {
+            str(Path(revision.path).resolve())
+            for revision in store.list_feature_artifact_revisions(
+                feature_id,
+                ref.artifact_type,
+            )
+            if revision.artifact_hash == ref.artifact_hash
+        }
         if (
             ref.feature_id != feature_id
             or latest_ref is None
-            or latest_ref.path != ref.path
             or latest_ref.artifact_hash != ref.artifact_hash
+            or str(Path(ref.path).resolve()) not in revision_paths
         ):
             raise StaggerEditAuthorityApprovalError(
                 f"{ref.artifact_type} is no longer the current revision."

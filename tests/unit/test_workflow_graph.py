@@ -35,6 +35,7 @@ from src.mod_agent.knowledge import (
 from src.mod_agent.local_entry import (
     LocalEntryError,
     preflight_local_runtime,
+    resume_stagger_edit_authority_review,
     resume_local_runtime,
 )
 from src.mod_agent.proposal import RuleBasedProposalCritic
@@ -260,6 +261,113 @@ def test_edit_authority_resume_blocks_wrong_request_hash() -> None:
         blocker["code"] == "EDIT_AUTHORITY_REQUEST_HASH_MISMATCH"
         for blocker in decision.blockers
     )
+
+
+def test_stagger_edit_authority_local_entry_carries_decision_through_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_registry = ArtifactTypeRegistry()
+    request_contract = replace(
+        default_registry.get("edit_authority_request"),
+        required_upstream_artifacts=frozenset(),
+        required_exact_revision_upstream_artifacts=frozenset(),
+    )
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            request_contract,
+            default_registry.get("workflow_checkpoint"),
+            default_registry.get("resume_report"),
+            default_registry.get("workflow_trace"),
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    request_payload = {
+        "schema_version": "stagger_edit_authority_request_v1",
+        "proposal": {},
+        "source_root": str(tmp_path),
+        "projected_ids": {
+            "binding_id": "edit_binding_004",
+            "change_id": "chg_004",
+            "evidence_id": "stagger_repair_001",
+        },
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id="feature_edit_authority_entry",
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": "request_stagger_edit_authority",
+            "stage": "edit_authority_request",
+            "message": "Awaiting graph approval.",
+            "status": "pending_human_approval",
+            "feature_id": "feature_edit_authority_entry",
+            "run_id": "run_edit_authority_entry",
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+    )
+
+    def materialize(**_kwargs):
+        return {
+            field_name: {
+                "feature_id": "feature_edit_authority_entry",
+                "path": str(tmp_path / f"{artifact_type}.json"),
+                "artifact_hash": artifact_type.ljust(64, "0")[:64],
+            }
+            for artifact_type, field_name in (
+                (
+                    "edit_authority_approval",
+                    "edit_authority_approval_revision",
+                ),
+                ("evidence_pack", "evidence_pack_revision"),
+                (
+                    "implementation_plan",
+                    "implementation_plan_revision",
+                ),
+                ("binding_resolution", "binding_resolution_revision"),
+            )
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.ArtifactStore",
+        lambda _root: store,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.graph."
+        "materialize_stagger_edit_authority_approval",
+        materialize,
+    )
+
+    result = resume_stagger_edit_authority_review(
+        artifact_store_root=tmp_path / "artifacts",
+        feature_id="feature_edit_authority_entry",
+        edit_authority_request_path=request_ref.path,
+        edit_authority_request_hash=request_ref.artifact_hash,
+        authority_request_hash=request_hash,
+        resume_id="resume_edit_authority_entry_001",
+        decision="approve",
+        approved_by="user",
+        approved_at="2026-07-30T12:00:00+08:00",
+    )
+
+    assert result["status"] == "EXACT_EDIT_AUTHORITY_RESOLVED"
+    assert result["current_stage"] == "binding_resolution"
+    assert "resume_report" in result["artifacts"]
+    assert "binding_resolution" in result["artifacts"]
+    assert "repair_plan" not in result["artifacts"]
+    assert result["repair_planner_invoked"] is False
 
 
 def test_explicit_domain_policy_rejects_simultaneous_registry(

@@ -274,7 +274,25 @@ class ArtifactStore:
 
         return self._check_freshness(ref, recursive=False)
 
-    def _check_freshness(self, ref: ArtifactRef, *, recursive: bool) -> FreshnessView:
+    def check_exact_revision_freshness(
+        self,
+        ref: ArtifactRef,
+    ) -> FreshnessView:
+        """Validate one immutable revision subgraph without latest-pointer drift."""
+
+        return self._check_freshness(
+            ref,
+            recursive=True,
+            require_latest=False,
+        )
+
+    def _check_freshness(
+        self,
+        ref: ArtifactRef,
+        *,
+        recursive: bool,
+        require_latest: bool = True,
+    ) -> FreshnessView:
         envelope = self.read(ref)
         stale_reasons: list[str] = []
         seen = {(str(self._guard_path(Path(ref.path))), ref.artifact_hash)}
@@ -283,7 +301,7 @@ class ArtifactStore:
             stale_reasons,
             seen,
             recursive=recursive,
-            require_latest=True,
+            require_latest=require_latest,
         )
         if stale_reasons:
             return FreshnessView(status="stale", stale_reasons=stale_reasons)

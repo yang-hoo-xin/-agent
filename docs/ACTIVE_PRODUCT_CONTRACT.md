@@ -602,6 +602,29 @@ path and complete Artifact hash. Focused verification passed 214 tests,
 including wrong request hash, stale or same-byte noncurrent revisions, direct
 legacy Approval writes, and approved-but-not-materialized blocking.
 
+The first real operational-entry check then found that the Graph gate had no
+supported local caller outside tests. The bounded
+`resume-stagger-edit-authority-review` entry now carries one already reviewed
+exact Request hash through the existing in-process LangGraph interrupt/resume;
+the CLI does not write Approval directly, and the graph still stops at
+BindingResolution. ArtifactStore now also exposes exact-revision freshness,
+which validates immutable subgraph integrity without treating later
+latest-pointer movement as byte or lineage corruption.
+
+The real shared-Store no-write preflight remains blocked before Request
+creation. Latest ImplementationPlan
+`d18dfd13858b4820781198c05155a2b659d171e7a257facd79d95f53fae4f619`
+is the historical authority projection, while latest PatchProposal
+`37368a6353e59bd76627b72b0ac76433f459090a41058492ad038cf2616dfa93`
+still exact-binds predecessor Plan
+`6996ea555b43dec436ad253b46519b3e25465b9585cc7e0de7c74911ac655555`.
+It therefore cannot be presented as bound to the current Plan. The preflight
+wrote nothing: EditAuthorityRequest revisions remain zero; ResumeReport,
+historical Approval, and BindingResolution remain one each. Current source
+SHA256 remains
+`65489604EEC41D073FF5BDA77940481AE63BE1917EDE199C99ED04C7B180BB3B`.
+No automatic lineage adoption or duplicate edit binding was created.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove

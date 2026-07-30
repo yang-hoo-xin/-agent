@@ -338,6 +338,15 @@ dependencies:
   RepairPlanner. ArtifactStore rejects new legacy-shaped Approval writes, and
   current-revision admission compares both revision path and complete hash.
   This code change wrote no new real shared-Store revision.
+  The supported `resume-stagger-edit-authority-review` entry now transports an
+  already reviewed exact Request hash through the existing LangGraph
+  interrupt/resume in one process. It has no direct Approval writer and stops
+  after BindingResolution.
+  The real shared-Store preflight then blocked because current
+  ImplementationPlan `d18dfd13...e4f619` is the historical authority
+  projection while PatchProposal `37368a63...6dfa93` still exact-binds
+  predecessor Plan `6996ea55...5555`. No Request was written and no lineage
+  edge was weakened.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -376,6 +385,13 @@ files_in_scope:
   the approved Apply materialization, and the historical rejected Apply remain
   read-only.
 focused_verification:
+  python -m pytest tests/unit/test_stagger_edit_authority.py
+  tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
+  tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py
+  tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_repair_loop.py
+  tests/unit/test_runtime_evidence.py -q --tb=short passed 217 tests in
+  33.88s. The added coverage verifies the supported Graph-backed local entry
+  and exact-revision freshness independently from latest-pointer drift.
   python -m pytest tests/unit/test_stagger_edit_authority.py
   tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
   tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py
@@ -719,6 +735,11 @@ stop_condition:
   EditAuthorityRequest from current exact inputs and complete its LangGraph
   human approval/materialization path. The removed direct approval CLI and the
   old approval hash cannot be reused.
+  Current exact inputs do not yet satisfy that admission: the PatchProposal
+  binds predecessor Plan `6996ea55...5555`, not current projected Plan
+  `d18dfd13...e4f619`. Stop before Request creation. Do not silently adopt the
+  historical BindingResolution, create a duplicate binding, or relax the
+  lineage check.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.

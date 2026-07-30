@@ -18,6 +18,7 @@ from .intelligent_evidence_only import (
 from .local_entry import (
     LocalEntryError,
     preflight_local_runtime,
+    resume_stagger_edit_authority_review,
     resume_local_runtime,
     run_local_request,
 )
@@ -372,6 +373,50 @@ def build_parser() -> argparse.ArgumentParser:
     _add_stagger_edit_authority_arguments(
         request_stagger_edit_authority_parser
     )
+    resume_stagger_edit_authority_parser = subparsers.add_parser(
+        "resume-stagger-edit-authority-review",
+        help=(
+            "Carry one exact human decision through the existing LangGraph "
+            "Edit Authority interrupt/resume gate."
+        ),
+    )
+    resume_stagger_edit_authority_parser.add_argument(
+        "--artifact-store-root",
+        required=True,
+    )
+    resume_stagger_edit_authority_parser.add_argument(
+        "--feature-id",
+        required=True,
+    )
+    resume_stagger_edit_authority_parser.add_argument(
+        "--request-path",
+        required=True,
+    )
+    resume_stagger_edit_authority_parser.add_argument(
+        "--request-artifact-hash",
+        required=True,
+    )
+    resume_stagger_edit_authority_parser.add_argument(
+        "--authority-request-hash",
+        required=True,
+    )
+    resume_stagger_edit_authority_parser.add_argument(
+        "--resume-id",
+        required=True,
+    )
+    resume_stagger_edit_authority_parser.add_argument(
+        "--decision",
+        required=True,
+        choices=("approve", "reject"),
+    )
+    resume_stagger_edit_authority_parser.add_argument(
+        "--approved-by",
+        required=True,
+    )
+    resume_stagger_edit_authority_parser.add_argument(
+        "--approved-at",
+        required=True,
+    )
 
     return parser
 
@@ -657,6 +702,47 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
+
+    if args.command == "resume-stagger-edit-authority-review":
+        try:
+            result = resume_stagger_edit_authority_review(
+                artifact_store_root=args.artifact_store_root,
+                feature_id=args.feature_id,
+                edit_authority_request_path=args.request_path,
+                edit_authority_request_hash=args.request_artifact_hash,
+                authority_request_hash=args.authority_request_hash,
+                resume_id=args.resume_id,
+                decision=args.decision,
+                approved_by=args.approved_by,
+                approved_at=args.approved_at,
+            )
+        except (LocalEntryError, OSError, RuntimeError, ValueError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "command": (
+                            "resume-stagger-edit-authority-review"
+                        ),
+                        "reason": str(exc),
+                        "artifact_store_inspection_required": True,
+                        "repair_planner_invoked": False,
+                        "source_patch_allowed": False,
+                        "source_modified": False,
+                        "build_performed": False,
+                        "process_launched": False,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return (
+            0
+            if result["status"] == "EXACT_EDIT_AUTHORITY_RESOLVED"
+            else 2
+        )
 
     if args.command == "preflight-runtime":
         try:

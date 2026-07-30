@@ -18,6 +18,8 @@ from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
+from langgraph.types import Command
+
 from src.core.settings import load_settings
 from src.libs.llm import LLMFactory, OllamaLLM, validate_loopback_http_base_url
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
@@ -69,6 +71,191 @@ LOCAL_DIAGNOSTIC_CONTENT_FILENAME = "patch_generation_failure_message_content.tx
 EXACT_DIFF_REJECTION_TOKEN = "REJECTED_BY_USER"
 OllamaModelIdentityReader = Callable[[str, str], dict[str, Any]]
 OllamaServerVersionReader = Callable[[str], str]
+
+
+def resume_stagger_edit_authority_review(
+    *,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    edit_authority_request_path: str | Path,
+    edit_authority_request_hash: str,
+    authority_request_hash: str,
+    resume_id: str,
+    decision: str,
+    approved_by: str,
+    approved_at: str,
+) -> dict[str, Any]:
+    """Carry one exact human decision through the existing graph gate."""
+
+    store = ArtifactStore(artifact_store_root)
+    request_ref = ArtifactRef(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        path=str(Path(edit_authority_request_path).resolve()),
+        artifact_hash=edit_authority_request_hash,
+    )
+    try:
+        request_envelope = store.read_for_stage(
+            request_ref,
+            consumer_stage="edit_authority_approval",
+        )
+        freshness = store.check_freshness(request_ref)
+        latest_refs = {
+            ref.artifact_type: ref
+            for ref in store.list_feature_artifacts(feature_id)
+        }
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise LocalEntryError(
+            f"Edit Authority Request admission failed: {exc}"
+        ) from exc
+    latest_request_ref = latest_refs.get("edit_authority_request")
+    request_revision_paths = {
+        str(Path(revision.path).resolve())
+        for revision in store.list_feature_artifact_revisions(
+            feature_id,
+            "edit_authority_request",
+        )
+        if revision.artifact_hash == request_ref.artifact_hash
+    }
+    if (
+        not freshness.is_fresh
+        or latest_request_ref is None
+        or latest_request_ref.artifact_hash != request_ref.artifact_hash
+        or str(Path(request_ref.path).resolve())
+        not in request_revision_paths
+    ):
+        raise LocalEntryError(
+            "Edit Authority review requires the fresh current Request "
+            "revision with the exact path and Artifact hash."
+        )
+    request = request_envelope["data"]
+    if (
+        request.get("feature_id") != feature_id
+        or request.get("request_hash") != authority_request_hash
+        or request.get("authority_granted") is not False
+        or request.get("registry_mutation_allowed") is not False
+        or request.get("repair_planner_allowed") is not False
+        or request.get("source_patch_allowed") is not False
+    ):
+        raise LocalEntryError(
+            "Edit Authority review input does not match the exact "
+            "no-authority Request."
+        )
+    run_id = request.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        raise LocalEntryError(
+            "Edit Authority Request run_id is missing."
+        )
+    graph = build_graph(
+        store,
+        edit_authority_request_ref=request_ref,
+        checkpointer=(
+            WorkflowCheckpointStore.langgraph_memory_checkpointer()
+        ),
+        use_default_proposal_git_binding=False,
+    )
+    state = create_initial_state(
+        run_id=run_id,
+        request_id=feature_id,
+        user_request=(
+            "Review the exact BetterHitFeedback Stagger Edit Authority "
+            "Request."
+        ),
+        target_domain="gtfo",
+        target_mod="BetterHitFeedback",
+    )
+    state["feature_id"] = feature_id
+    config = {"configurable": {"thread_id": resume_id}}
+    try:
+        interrupted_state = graph.invoke(state, config)
+    except Exception as exc:
+        raise LocalEntryError(
+            "Edit Authority graph failed before its human interrupt: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+    interrupts = interrupted_state.get("__interrupt__")
+    if (
+        not isinstance(interrupts, (list, tuple))
+        or len(interrupts) != 1
+    ):
+        raise LocalEntryError(
+            "Edit Authority graph did not expose exactly one human "
+            "interrupt."
+        )
+    interrupt_value = getattr(interrupts[0], "value", None)
+    interrupt_payload = (
+        interrupt_value.get("payload")
+        if isinstance(interrupt_value, dict)
+        else None
+    )
+    if (
+        not isinstance(interrupt_payload, dict)
+        or interrupt_value.get("stage") != "edit_authority_approval"
+        or interrupt_payload.get("request_hash")
+        != authority_request_hash
+    ):
+        raise LocalEntryError(
+            "Edit Authority graph interrupt does not bind the approved "
+            "Request hash."
+        )
+    artifact_refs = interrupt_value.get("artifact_refs")
+    if not isinstance(artifact_refs, list) or not artifact_refs:
+        raise LocalEntryError(
+            "Edit Authority graph interrupt has no exact Artifact refs."
+        )
+    try:
+        result = graph.invoke(
+            Command(
+                resume={
+                    "resume_id": resume_id,
+                    "run_id": run_id,
+                    "stage": "edit_authority_approval",
+                    "decision": decision,
+                    "approved_by": approved_by,
+                    "approved_at": approved_at,
+                    "artifact_refs": artifact_refs,
+                    "authority_request_hash": authority_request_hash,
+                }
+            ),
+            config,
+        )
+    except Exception as exc:
+        raise LocalEntryError(
+            "Edit Authority graph resume failed: "
+            f"{type(exc).__name__}: {exc}"
+        ) from exc
+    artifact_types = set(result.get("artifacts") or {})
+    if "repair_plan" in artifact_types:
+        raise LocalEntryError(
+            "Edit Authority graph exceeded its stop-before-RepairPlanner "
+            "boundary."
+        )
+    resolved = (
+        result.get("current_stage") == "binding_resolution"
+        and "binding_resolution" in artifact_types
+    )
+    return {
+        "status": (
+            "EXACT_EDIT_AUTHORITY_RESOLVED"
+            if resolved
+            else "BLOCKED"
+        ),
+        "command": "resume-stagger-edit-authority-review",
+        "feature_id": feature_id,
+        "run_id": run_id,
+        "resume_id": resume_id,
+        "decision": decision,
+        "request_hash": authority_request_hash,
+        "current_stage": result.get("current_stage"),
+        "artifacts": dict(result.get("artifacts") or {}),
+        "artifact_hashes": dict(result.get("artifact_hashes") or {}),
+        "blockers": list(result.get("blockers") or ()),
+        "repair_planner_invoked": False,
+        "source_patch_allowed": False,
+        "source_modified": False,
+        "build_performed": False,
+        "process_launched": False,
+    }
 
 
 @dataclass(frozen=True)

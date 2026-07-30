@@ -63,6 +63,49 @@ class _ReadOnlyArtifactStore:
             )
         return SimpleNamespace(is_fresh=True, stale_reasons=[])
 
+    def check_exact_revision_freshness(self, ref):
+        return self.check_freshness(ref)
+
+    def list_feature_artifacts(self, feature_id: str) -> list[ArtifactRef]:
+        assert feature_id == FEATURE_ID
+        return [
+            ArtifactRef(
+                feature_id=FEATURE_ID,
+                artifact_type="feature_spec",
+                path=str(self.root.parent / "feature-spec.json"),
+                artifact_hash=FEATURE_SPEC_HASH,
+            ),
+            ArtifactRef(
+                feature_id=FEATURE_ID,
+                artifact_type="runtime_evidence",
+                path=str(self.root.parent / "runtime-evidence.json"),
+                artifact_hash=RUNTIME_EVIDENCE_HASH,
+            ),
+            ArtifactRef(
+                feature_id=FEATURE_ID,
+                artifact_type="implementation_plan",
+                path=str(self.root.parent / "implementation-plan.json"),
+                artifact_hash=IMPLEMENTATION_PLAN_HASH,
+            ),
+            ArtifactRef(
+                feature_id=FEATURE_ID,
+                artifact_type="patch_proposal",
+                path=str(self.root.parent / "patch-proposal.json"),
+                artifact_hash=PATCH_PROPOSAL_HASH,
+            ),
+        ]
+
+    def list_feature_artifact_revisions(
+        self,
+        feature_id: str,
+        artifact_type: str,
+    ) -> list[ArtifactRef]:
+        return [
+            ref
+            for ref in self.list_feature_artifacts(feature_id)
+            if ref.artifact_type == artifact_type
+        ]
+
     def write(self, **_):
         raise AssertionError("The preflight must never write an Artifact.")
 
@@ -529,6 +572,17 @@ class _WritableArtifactStore(_ReadOnlyArtifactStore):
             if isinstance(ref, ArtifactRef):
                 latest[ref.artifact_type] = ref
         return list(latest.values())
+
+    def list_feature_artifact_revisions(
+        self,
+        feature_id: str,
+        artifact_type: str,
+    ) -> list[ArtifactRef]:
+        return [
+            ref
+            for ref in self.list_feature_artifacts(feature_id)
+            if ref.artifact_type == artifact_type
+        ]
 
     def preflight_atomic_commit(
         self,
