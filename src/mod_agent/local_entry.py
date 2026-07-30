@@ -74,11 +74,21 @@ OllamaServerVersionReader = Callable[[str], str]
 _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA = (
     "stagger_existing_binding_reauthorization_request_v1"
 )
+_STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA = (
+    "stagger_hud_parent_observation_authority_request_v1"
+)
 _EDIT_AUTHORITY_REVIEW_WRITE_TYPES = (
     "workflow_checkpoint",
     "resume_report",
     "edit_authority_approval",
     "binding_resolution",
+)
+_STAGGER_OBSERVATION_REVIEW_WRITE_TYPES = (
+    "workflow_checkpoint",
+    "resume_report",
+    "edit_authority_approval",
+    "evidence_pack",
+    "implementation_plan",
 )
 
 
@@ -257,11 +267,19 @@ def preflight_stagger_edit_authority_review(
         if isinstance(request_payload, dict)
         else None
     )
-    if request_schema != _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA:
+    if request_schema not in {
+        _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA,
+        _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
+    }:
         raise LocalEntryError(
-            "This no-write review preflight requires the exact existing-"
-            "binding reauthorization Request schema."
+            "This no-write review preflight requires a supported exact "
+            "Stagger EditAuthorityRequest schema."
         )
+    write_types = (
+        _STAGGER_OBSERVATION_REVIEW_WRITE_TYPES
+        if request_schema == _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA
+        else _EDIT_AUTHORITY_REVIEW_WRITE_TYPES
+    )
     before_counts = {
         artifact_type: len(
             admission.store.list_feature_artifact_revisions(
@@ -269,7 +287,7 @@ def preflight_stagger_edit_authority_review(
                 artifact_type,
             )
         )
-        for artifact_type in _EDIT_AUTHORITY_REVIEW_WRITE_TYPES
+        for artifact_type in write_types
     }
     _, artifact_refs, _, interrupt_value = (
         _invoke_stagger_edit_authority_interrupt(
@@ -281,7 +299,7 @@ def preflight_stagger_edit_authority_review(
     )
     if artifact_refs != [admission.request_ref.path]:
         raise LocalEntryError(
-            "Existing-binding review checkpoint projection must contain "
+            "Stagger authority review checkpoint projection must contain "
             "only the exact EditAuthorityRequest."
         )
     after_counts = {
@@ -291,7 +309,7 @@ def preflight_stagger_edit_authority_review(
                 artifact_type,
             )
         )
-        for artifact_type in _EDIT_AUTHORITY_REVIEW_WRITE_TYPES
+        for artifact_type in write_types
     }
     if after_counts != before_counts:
         raise LocalEntryError(
@@ -388,9 +406,27 @@ def resume_stagger_edit_authority_review(
         result.get("current_stage") == "binding_resolution"
         and "binding_resolution" in artifact_types
     )
+    request_payload = admission.request.get("request_payload")
+    request_schema = (
+        request_payload.get("schema_version")
+        if isinstance(request_payload, dict)
+        else None
+    )
+    observation_plan_authorized = (
+        request_schema == _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA
+        and result.get("current_stage") == "implementation_plan"
+        and {
+            "edit_authority_approval",
+            "evidence_pack",
+            "implementation_plan",
+        }.issubset(artifact_types)
+        and "binding_resolution" not in artifact_types
+    )
     return {
         "status": (
-            "EXACT_EDIT_AUTHORITY_RESOLVED"
+            "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED"
+            if observation_plan_authorized
+            else "EXACT_EDIT_AUTHORITY_RESOLVED"
             if resolved
             else "BLOCKED"
         ),

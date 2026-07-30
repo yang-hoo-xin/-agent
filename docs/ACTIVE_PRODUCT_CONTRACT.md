@@ -656,6 +656,18 @@ only that Request. Against the real Store and same Request hash it returned
 ResumeReport, Approval, and BindingResolution revision counts remained one
 each. It did not resume, write, or reuse the failed execution authorization.
 
+The user then explicitly authorized Graph review of that same Request hash.
+The resumed Graph wrote WorkflowCheckpoint
+`a96e06501d227c9f2eeb1a99dd49009d13bee1891ede2a6c456a81c4ee6c0713`,
+ResumeReport
+`fcc62352f7370931d107d05420da416c84e51f9f592f4a0c793c57edb86104d8`,
+permission-only Approval
+`d648fff15f0074202e19dda7dd48a45afdb4a4133733de5f75f3278cf7227336`,
+and BindingResolution
+`0786c8cf0618fc209662ec2d9c79cad5fa6a57c2401647035727548a03c03200`.
+The resolution still selects only `edit_binding_004`, keeps root cause
+unresolved, and leaves RepairPlanner and source writes forbidden.
+
 Read-only correlation of the immutable retry #2 Runtime log further narrows,
 but does not resolve, the product root cause. The persistent log SHA256
 `D23A154A1614DFF5AF1FCBA29A2C58BE4A4931F578E71D1A7460B48900155C24`
@@ -667,6 +679,25 @@ distinguish a null `_lastHudParent`, a non-`RectTransform` runtime value, or a
 stale Unity object. Product repair therefore remains prohibited until a
 separately approved diagnostic source revision and controlled Runtime attempt
 produce that missing fact.
+
+The next bounded capability prepares that missing observation without using the
+product-repair binding as diagnostic authority. A public no-write preflight
+exact-binds the latest FeatureSpec, RuntimeEvidence, current Plan,
+PatchProposal, BindingResolution, permission-only Approval, EvidencePack, and
+source SHA256. It projects exactly two new observation-only scopes:
+`edit_binding_005/chg_005` at `ShowHitIndicator_Prefix` line 301 and
+`edit_binding_006/chg_006` at `TrySpawnStaggerYellowX` lines 979-984. A
+separate Request and LangGraph approval may materialize only a source-scope
+EvidencePack revision and diagnostic Plan revision. They cannot create a
+BindingResolution, enter RepairPlanner, modify source, Build, launch GTFO, or
+write the game directory. The real shared-Store preflight returned
+`READY_TO_CREATE_STAGGER_HUD_PARENT_OBSERVATION_AUTHORITY_REQUEST` with
+proposal hash
+`sha256:11e10bb6c6ae31ddf6228c83c1b1d996f54f044e51ad1fccd5dc01033dd33ddc`.
+All seven observed Artifact revision counts remained unchanged. No Request has
+been created for this diagnostic scope. Python compilation passed; the focused
+authority/Store/Graph/CLI suite passed 200 tests, and the broader affected
+Runtime/deployment suite passed 349 tests.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

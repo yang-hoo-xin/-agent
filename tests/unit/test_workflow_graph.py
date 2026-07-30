@@ -332,6 +332,146 @@ def test_existing_binding_reauthorization_exposes_narrow_graph_actions(
     ) == []
 
 
+def test_stagger_observation_authority_graph_stops_at_diagnostic_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from langgraph.types import Command
+
+    default_registry = ArtifactTypeRegistry()
+    request_contract = replace(
+        default_registry.get("edit_authority_request"),
+        required_upstream_artifacts=frozenset(),
+        required_exact_revision_upstream_artifacts=frozenset(),
+    )
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            request_contract,
+            default_registry.get("workflow_checkpoint"),
+            default_registry.get("resume_report"),
+            default_registry.get("workflow_trace"),
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    monkeypatch.setattr(
+        store,
+        "_validate_upstream_refs",
+        lambda **_kwargs: None,
+    )
+    request_payload = {
+        "schema_version": (
+            "stagger_hud_parent_observation_authority_request_v1"
+        ),
+        "proposal": {},
+        "source_root": str(tmp_path),
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id="feature_observation_authority",
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": (
+                "request_stagger_hud_parent_observation_authority"
+            ),
+            "stage": "edit_authority_request",
+            "message": "Awaiting graph approval.",
+            "status": "pending_human_approval",
+            "feature_id": "feature_observation_authority",
+            "run_id": "run_observation_authority",
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+    )
+
+    def materialize(**_kwargs):
+        return {
+            field_name: {
+                "feature_id": "feature_observation_authority",
+                "path": str(tmp_path / f"{artifact_type}.json"),
+                "artifact_hash": artifact_type.ljust(64, "0")[:64],
+            }
+            for artifact_type, field_name in (
+                (
+                    "edit_authority_approval",
+                    "edit_authority_approval_revision",
+                ),
+                ("evidence_pack", "evidence_pack_revision"),
+                (
+                    "implementation_plan",
+                    "implementation_plan_revision",
+                ),
+            )
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.graph."
+        "materialize_stagger_edit_authority_approval",
+        materialize,
+    )
+    graph = build_graph(
+        store,
+        edit_authority_request_ref=request_ref,
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+    )
+    config = {
+        "configurable": {
+            "thread_id": "stagger_observation_authority_001"
+        }
+    }
+    state = create_initial_state(
+        run_id="run_observation_authority",
+        request_id="feature_observation_authority",
+        user_request="Approve exact observation-only Stagger bindings.",
+    )
+    state["feature_id"] = "feature_observation_authority"
+    interrupted = graph.invoke(state, config)
+    interrupt_value = interrupted["__interrupt__"][0].value
+    assert interrupt_value["payload"]["allowed_actions"] == [
+        "create_observation_evidence_pack_revision",
+        "create_diagnostic_implementation_plan_revision",
+        "create_observation_only_edit_bindings",
+    ]
+    assert interrupt_value["payload"]["forbidden_actions"] == [
+        "create_binding_resolution_revision",
+        "invoke_repair_planner",
+        "modify_source",
+        "build",
+        "launch_process",
+        "write_game_directory",
+    ]
+    result = graph.invoke(
+        Command(
+            resume={
+                "resume_id": "resume_observation_authority_001",
+                "run_id": "run_observation_authority",
+                "stage": "edit_authority_approval",
+                "decision": "approve",
+                "approved_by": "user",
+                "approved_at": "2026-07-30T16:30:00+08:00",
+                "artifact_refs": interrupt_value["artifact_refs"],
+                "authority_request_hash": request_hash,
+            }
+        ),
+        config,
+    )
+    assert result["current_stage"] == "implementation_plan"
+    assert result["approvals"]["edit_authority"] is True
+    assert "implementation_plan" in result["artifacts"]
+    assert "binding_resolution" not in result["artifacts"]
+    assert "repair_plan" not in result["artifacts"]
+
+
 def test_existing_binding_review_preserves_exact_request_subgraph(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

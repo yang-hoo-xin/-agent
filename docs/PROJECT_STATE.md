@@ -735,6 +735,44 @@ Approval, and BindingResolution revision counts remained `1/1/1/1`.
 Python compilation passed; the focused suite passed 193 tests and the broader
 affected Runtime/deployment suite passed 354 tests in 32.07 seconds.
 
+The explicitly authorized review then completed for the same Request hash. It
+wrote WorkflowCheckpoint `a96e0650...c0713`, ResumeReport
+`fcc62352...104d8`, permission-only Approval `d648fff1...27336`, and
+BindingResolution `0786c8cf...03200`. The resolution reauthorizes only
+`edit_binding_004`; `root_cause_status=unresolved`,
+`repair_planner_allowed=false`, and `source_patch_allowed=false` remain
+unchanged. The source SHA256 remains `65489604...BB3B`.
+
+The bounded observation-authority continuation now derives two and only two
+diagnostic scopes from that current source and authority chain. It uses
+`edit_binding_005/chg_005` for `ShowHitIndicator_Prefix` line 301 and
+`edit_binding_006/chg_006` for `TrySpawnStaggerYellowX` lines 979-984. The
+first scope requires a future diagnostic insertion to record the `CanvasTrans`,
+`Root`, and selected-object null/type/`RectTransform` facts immediately after
+the existing assignment; the second requires use-time `_lastHudParent` facts
+before the unchanged cast and early-return block. Both specify `_hitSequence`
+only as a snapshot correlation field and add no new global state. The earlier
+three-location design is
+superseded because modifying `TryGetLayerHudParent` would create high-frequency
+per-frame diagnostic traffic without adding a fact needed for the current
+root-cause split.
+
+The separate Approval contract may create only an observation-scope
+EvidencePack revision, a diagnostic ImplementationPlan revision, and those two
+observation-only bindings. It cannot create BindingResolution, invoke
+RepairPlanner, modify source, Build, launch a process, or write the game
+directory. ArtifactStore requires every exact technical and authority role;
+the Plan validator requires exactly the two diagnostic changes and preserves
+both false permission flags. The real shared-Store no-write preflight returned
+`READY_TO_CREATE_STAGGER_HUD_PARENT_OBSERVATION_AUTHORITY_REQUEST` with
+proposal hash
+`sha256:11e10bb6c6ae31ddf6228c83c1b1d996f54f044e51ad1fccd5dc01033dd33ddc`.
+Request, Approval, EvidencePack, Plan, BindingResolution, checkpoint, and
+ResumeReport counts remained `1/2/2/2/2/2/2`. No diagnostic Request exists.
+Python compilation passed; focused authority/Store/Graph/CLI coverage passed
+200 tests and the broader affected Runtime/deployment suite passed 349 tests
+in 36.04 seconds.
+
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B
 canonical baseline. Its `Plugin.cs` SHA256 is

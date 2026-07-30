@@ -29,8 +29,10 @@ from .runtime import (
     StaggerEditAuthorityPreflightError,
     create_stagger_existing_binding_reauthorization_request,
     create_stagger_edit_authority_request,
+    create_stagger_hud_parent_observation_authority_request,
     preflight_stagger_existing_binding_reauthorization,
     preflight_stagger_edit_authority,
+    preflight_stagger_hud_parent_observation_authority,
 )
 from .tools import PermissionModel
 
@@ -199,6 +201,72 @@ def _stagger_existing_binding_reauthorization_arguments(
         "target_symbol": args.target_symbol,
         "target_start_line": args.target_start_line,
         "target_end_line": args.target_end_line,
+    }
+
+
+def _add_stagger_observation_authority_arguments(
+    parser: argparse.ArgumentParser,
+) -> None:
+    parser.add_argument("--artifact-store-root", required=True)
+    parser.add_argument("--feature-id", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--feature-spec-path", required=True)
+    parser.add_argument("--feature-spec-hash", required=True)
+    parser.add_argument("--runtime-evidence-path", required=True)
+    parser.add_argument("--runtime-evidence-hash", required=True)
+    parser.add_argument("--current-implementation-plan-path", required=True)
+    parser.add_argument("--current-implementation-plan-hash", required=True)
+    parser.add_argument("--patch-proposal-path", required=True)
+    parser.add_argument("--patch-proposal-hash", required=True)
+    parser.add_argument("--existing-binding-resolution-path", required=True)
+    parser.add_argument("--existing-binding-resolution-hash", required=True)
+    parser.add_argument(
+        "--existing-edit-authority-approval-path",
+        required=True,
+    )
+    parser.add_argument(
+        "--existing-edit-authority-approval-hash",
+        required=True,
+    )
+    parser.add_argument("--evidence-pack-path", required=True)
+    parser.add_argument("--evidence-pack-hash", required=True)
+    parser.add_argument("--source-root", required=True)
+
+
+def _stagger_observation_authority_arguments(
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    return {
+        "artifact_store_root": args.artifact_store_root,
+        "feature_id": args.feature_id,
+        "run_id": args.run_id,
+        "feature_spec_path": args.feature_spec_path,
+        "feature_spec_hash": args.feature_spec_hash,
+        "runtime_evidence_path": args.runtime_evidence_path,
+        "runtime_evidence_hash": args.runtime_evidence_hash,
+        "current_implementation_plan_path": (
+            args.current_implementation_plan_path
+        ),
+        "current_implementation_plan_hash": (
+            args.current_implementation_plan_hash
+        ),
+        "patch_proposal_path": args.patch_proposal_path,
+        "patch_proposal_hash": args.patch_proposal_hash,
+        "existing_binding_resolution_path": (
+            args.existing_binding_resolution_path
+        ),
+        "existing_binding_resolution_hash": (
+            args.existing_binding_resolution_hash
+        ),
+        "existing_edit_authority_approval_path": (
+            args.existing_edit_authority_approval_path
+        ),
+        "existing_edit_authority_approval_hash": (
+            args.existing_edit_authority_approval_hash
+        ),
+        "evidence_pack_path": args.evidence_pack_path,
+        "evidence_pack_hash": args.evidence_pack_hash,
+        "source_root": args.source_root,
     }
 
 
@@ -477,6 +545,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_stagger_existing_binding_reauthorization_arguments(
         request_existing_binding_parser
+    )
+    preflight_observation_authority_parser = subparsers.add_parser(
+        "preflight-stagger-hud-parent-observation-authority",
+        help=(
+            "Read-validate two exact observation-only Stagger HUD parent "
+            "bindings and emit a no-write authority proposal."
+        ),
+    )
+    _add_stagger_observation_authority_arguments(
+        preflight_observation_authority_parser
+    )
+    request_observation_authority_parser = subparsers.add_parser(
+        "request-stagger-hud-parent-observation-authority",
+        help=(
+            "Persist one no-authority Request for the exact observation-only "
+            "Stagger HUD parent bindings and Plan."
+        ),
+    )
+    _add_stagger_observation_authority_arguments(
+        request_observation_authority_parser
     )
     preflight_stagger_review_parser = subparsers.add_parser(
         "preflight-stagger-edit-authority-review",
@@ -885,6 +973,84 @@ def main(argv: Sequence[str] | None = None) -> int:
                     **_stagger_existing_binding_reauthorization_arguments(
                         args
                     )
+                )
+            )
+        except (
+            StaggerEditAuthorityApprovalError,
+            StaggerEditAuthorityPreflightError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "command": args.command,
+                        "reason": str(exc),
+                        "writes_performed": None,
+                        "artifact_store_inspection_required": True,
+                        "repair_planner_invoked": False,
+                        "repair_allowed": False,
+                        "source_patch_allowed": False,
+                        "source_modified": False,
+                        "build_performed": False,
+                        "process_launched": False,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if (
+        args.command
+        == "preflight-stagger-hud-parent-observation-authority"
+    ):
+        try:
+            result = preflight_stagger_hud_parent_observation_authority(
+                **_stagger_observation_authority_arguments(args)
+            )
+        except (
+            StaggerEditAuthorityPreflightError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "command": args.command,
+                        "reason": str(exc),
+                        "approval_required": False,
+                        "registry_mutation_allowed": False,
+                        "repair_allowed": False,
+                        "writes_performed": False,
+                        "artifact_writes_performed": False,
+                        "repair_planner_invoked": False,
+                        "source_modified": False,
+                        "build_performed": False,
+                        "process_launched": False,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if (
+        args.command
+        == "request-stagger-hud-parent-observation-authority"
+    ):
+        try:
+            result = (
+                create_stagger_hud_parent_observation_authority_request(
+                    **_stagger_observation_authority_arguments(args)
                 )
             )
         except (

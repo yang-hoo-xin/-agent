@@ -45,8 +45,10 @@ from .stagger_edit_authority import (
     StaggerEditAuthorityPreflightError,
     create_stagger_existing_binding_reauthorization_request,
     create_stagger_edit_authority_request,
+    create_stagger_hud_parent_observation_authority_request,
     preflight_stagger_existing_binding_reauthorization,
     preflight_stagger_edit_authority,
+    preflight_stagger_hud_parent_observation_authority,
 )
 from .probe import (
     RuntimeProbeCommandResult,
@@ -105,9 +107,11 @@ __all__ = [
     "normalize_runtime_failure_ownership",
     "create_stagger_edit_authority_request",
     "create_stagger_existing_binding_reauthorization_request",
+    "create_stagger_hud_parent_observation_authority_request",
     "profile_from_settings",
     "preflight_stagger_edit_authority",
     "preflight_stagger_existing_binding_reauthorization",
+    "preflight_stagger_hud_parent_observation_authority",
     "stagger_profile_from_settings",
     "screenshot_registry_to_runtime_item",
     "temporarily_deploy_verified_plugin",

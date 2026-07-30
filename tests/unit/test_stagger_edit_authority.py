@@ -14,11 +14,16 @@ from src.mod_agent.runtime import (
     StaggerEditAuthorityPreflightError,
     create_stagger_existing_binding_reauthorization_request,
     create_stagger_edit_authority_request,
+    create_stagger_hud_parent_observation_authority_request,
     preflight_stagger_existing_binding_reauthorization,
     preflight_stagger_edit_authority,
+    preflight_stagger_hud_parent_observation_authority,
 )
 from src.mod_agent.artifacts import ArtifactRef
-from src.mod_agent.artifacts.registry import ArtifactTypeRegistry
+from src.mod_agent.artifacts.registry import (
+    ArtifactRegistryError,
+    ArtifactTypeRegistry,
+)
 from src.mod_agent.runtime import (
     stagger_edit_authority as edit_authority_module,
 )
@@ -774,6 +779,121 @@ def _existing_binding_setup(
         "target_symbol": TARGET_SYMBOL,
         "target_start_line": 7,
         "target_end_line": 11,
+    }
+
+
+def _observation_authority_setup(
+    tmp_path: Path,
+) -> dict[str, object]:
+    existing_args = _existing_binding_setup(tmp_path)
+    source_root = Path(existing_args["source_root"])
+    source_path = source_root / TARGET_PATH
+    lines = [f"// filler {index}" for index in range(1, 985)]
+    lines[296] = (
+        "        public static void ShowHitIndicator_Prefix("
+        "CrosshairGuiLayer __instance, Vector3 worldPos, bool isWeakspot, "
+        "bool isFriendly, bool noDamage)"
+    )
+    lines[300] = (
+        "                _lastHudParent = "
+        "TryGetLayerHudParent(__instance);"
+    )
+    lines[334] = (
+        "                _lastHudParent = "
+        "TryGetLayerHudParent(__instance);"
+    )
+    lines[972] = (
+        "        private static bool TrySpawnStaggerYellowX("
+        "Vector3 worldPos, out string reason)"
+    )
+    lines[978:984] = [
+        (
+            "                RectTransform? canvasRect = "
+            "_lastHudParent as RectTransform;"
+        ),
+        "                if (canvasRect == null)",
+        "                {",
+        '                    reason = "missing_canvas_rect_for_stagger_x";',
+        "                    return false;",
+        "                }",
+    ]
+    source_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest().upper()
+    current_plan_ref = _RoleAwareArtifactStore.latest_by_type[
+        "implementation_plan"
+    ]
+    current_plan = _RoleAwareArtifactStore.envelopes_by_path[
+        str(Path(current_plan_ref.path).resolve())
+    ]["data"]
+    binding = next(
+        item
+        for item in current_plan["binding_registry"]["edit_bindings"]
+        if item.get("binding_id") == "edit_binding_004"
+    )
+    binding["source_hash"] = source_hash
+    binding["target_span"] = {"start_line": 979, "end_line": 984}
+    resolution_ref = _RoleAwareArtifactStore.latest_by_type[
+        "binding_resolution"
+    ]
+    resolution = _RoleAwareArtifactStore.envelopes_by_path[
+        str(Path(resolution_ref.path).resolve())
+    ]["data"]
+    resolution["authority_contract_version"] = (
+        "edit_authority_existing_binding_reauthorization_v1"
+    )
+    resolution["resolved_repair_target"]["source_hash"] = source_hash
+    resolution["resolved_repair_target"]["target_span"] = {
+        "start_line": 979,
+        "end_line": 984,
+    }
+    approval_path = tmp_path / "old-approval.json"
+    approval_ref = ArtifactRef(
+        FEATURE_ID,
+        "edit_authority_approval",
+        str(approval_path),
+        "a" * 64,
+    )
+    _RoleAwareArtifactStore.envelopes_by_path[
+        str(approval_path.resolve())
+    ] = {
+        "data": {
+            "feature_id": FEATURE_ID,
+            "run_id": RUN_ID,
+            "status": "approved",
+            "authority_contract_version": (
+                "edit_authority_existing_binding_reauthorization_v1"
+            ),
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+        "inputs": {"upstream_artifacts": []},
+    }
+    _RoleAwareArtifactStore.latest_by_type[
+        "edit_authority_approval"
+    ] = approval_ref
+    _RoleAwareArtifactStore.revisions_by_type[
+        "edit_authority_approval"
+    ] = [approval_ref]
+    evidence_ref = _RoleAwareArtifactStore.latest_by_type["evidence_pack"]
+    return {
+        "artifact_store_root": existing_args["artifact_store_root"],
+        "feature_id": FEATURE_ID,
+        "run_id": RUN_ID,
+        "feature_spec_path": existing_args["feature_spec_path"],
+        "feature_spec_hash": FEATURE_SPEC_HASH,
+        "runtime_evidence_path": existing_args["runtime_evidence_path"],
+        "runtime_evidence_hash": RUNTIME_EVIDENCE_HASH,
+        "current_implementation_plan_path": current_plan_ref.path,
+        "current_implementation_plan_hash": current_plan_ref.artifact_hash,
+        "patch_proposal_path": existing_args["patch_proposal_path"],
+        "patch_proposal_hash": PATCH_PROPOSAL_HASH,
+        "existing_binding_resolution_path": resolution_ref.path,
+        "existing_binding_resolution_hash": resolution_ref.artifact_hash,
+        "existing_edit_authority_approval_path": approval_ref.path,
+        "existing_edit_authority_approval_hash": approval_ref.artifact_hash,
+        "evidence_pack_path": evidence_ref.path,
+        "evidence_pack_hash": evidence_ref.artifact_hash,
+        "source_root": source_root,
     }
 
 
@@ -1601,3 +1721,247 @@ def test_request_creation_blocks_same_hash_at_noncurrent_plan_path(
         write.get("artifact_type") != "edit_authority_request"
         for write in _WritableArtifactStore.writes
     )
+
+
+def test_observation_authority_preflight_projects_two_exact_no_write_bindings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _observation_authority_setup(tmp_path)
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        _RoleAwareArtifactStore,
+    )
+    source_path = Path(args["source_root"]) / TARGET_PATH
+    source_hash_before = hashlib.sha256(source_path.read_bytes()).hexdigest()
+
+    first = preflight_stagger_hud_parent_observation_authority(**args)
+    second = preflight_stagger_hud_parent_observation_authority(**args)
+
+    assert first == second
+    assert first["status"] == (
+        "READY_TO_CREATE_STAGGER_HUD_PARENT_OBSERVATION_AUTHORITY_REQUEST"
+    )
+    assert first["writes_performed"] is False
+    assert first["registry_mutation_allowed"] is False
+    assert first["repair_allowed"] is False
+    assert _RoleAwareArtifactStore.writes == []
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() == (
+        source_hash_before
+    )
+    bindings = first["proposal"]["diagnostic_bindings"]
+    assert [
+        (item["binding_id"], item["change_id"], item["target_span"])
+        for item in bindings
+    ] == [
+        (
+            "edit_binding_005",
+            "chg_005",
+            {"start_line": 301, "end_line": 301},
+        ),
+        (
+            "edit_binding_006",
+            "chg_006",
+            {"start_line": 979, "end_line": 984},
+        ),
+    ]
+    assert first["proposal"]["claim_boundary"] == {
+        "observation_only": True,
+        "product_behavior_change_allowed": False,
+        "runtime_evidence_mutation_allowed": False,
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+        "build_allowed": False,
+        "process_launch_allowed": False,
+        "game_directory_write_allowed": False,
+        "diagnostic_result_counts_as_product_acceptance": False,
+    }
+
+
+def test_observation_authority_preflight_blocks_source_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _observation_authority_setup(tmp_path)
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        _RoleAwareArtifactStore,
+    )
+    source_path = Path(args["source_root"]) / TARGET_PATH
+    source_path.write_text(
+        source_path.read_text(encoding="utf-8") + "// drift\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        StaggerEditAuthorityPreflightError,
+        match="edit_binding_004 does not match",
+    ):
+        preflight_stagger_hud_parent_observation_authority(**args)
+
+    assert _RoleAwareArtifactStore.writes == []
+
+
+def test_observation_authority_request_and_graph_materialization_stop_at_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _observation_authority_setup(tmp_path)
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        _RoleAwareArtifactStore,
+    )
+    request_result = (
+        create_stagger_hud_parent_observation_authority_request(**args)
+    )
+    assert request_result["written_artifact_types"] == [
+        "edit_authority_request"
+    ]
+    request_revision = request_result["edit_authority_request_revision"]
+    request_ref = ArtifactRef(
+        FEATURE_ID,
+        "edit_authority_request",
+        request_revision["path"],
+        request_revision["artifact_hash"],
+    )
+    checkpoint_ref = ArtifactRef(
+        FEATURE_ID,
+        "workflow_checkpoint",
+        str(tmp_path / "observation-checkpoint.json"),
+        "6" * 64,
+    )
+    report_ref = ArtifactRef(
+        FEATURE_ID,
+        "resume_report",
+        str(tmp_path / "observation-resume.json"),
+        "7" * 64,
+    )
+    _RoleAwareArtifactStore.envelopes_by_path[
+        str(Path(checkpoint_ref.path).resolve())
+    ] = {
+        "data": {
+            "checkpoint_stage": "edit_authority_approval",
+            "run_id": RUN_ID,
+            "feature_id": FEATURE_ID,
+            "state_snapshot": {
+                "artifacts": {
+                    "edit_authority_request": request_ref.path,
+                },
+                "artifact_hashes": {
+                    "edit_authority_request": request_ref.artifact_hash,
+                },
+            },
+            "resume_binding": {
+                "edit_authority_request_ref": request_ref.path,
+                "edit_authority_request_artifact_hash": (
+                    request_ref.artifact_hash
+                ),
+                "edit_authority_request_hash": request_result["request_hash"],
+            },
+        },
+        "inputs": {"upstream_artifacts": []},
+    }
+    _RoleAwareArtifactStore.envelopes_by_path[
+        str(Path(report_ref.path).resolve())
+    ] = {
+        "data": {
+            "resume_id": "resume_observation_authority_001",
+            "status": "accepted",
+            "allowed": True,
+            "decision": "approve",
+            "resume_stage": "edit_authority_approval",
+            "run_id": RUN_ID,
+            "approved_by": "user",
+            "approved_at": "2026-07-30T16:30:00+08:00",
+            "authority_request_hash": request_result["request_hash"],
+        },
+        "inputs": {
+            "upstream_artifacts": [
+                {
+                    "artifact_type": "workflow_checkpoint",
+                    "path": checkpoint_ref.path,
+                    "artifact_hash": checkpoint_ref.artifact_hash,
+                }
+            ]
+        },
+    }
+
+    result = materialize_stagger_edit_authority_approval(
+        artifact_store_root=args["artifact_store_root"],
+        feature_id=FEATURE_ID,
+        edit_authority_request_path=request_ref.path,
+        edit_authority_request_hash=request_ref.artifact_hash,
+        resume_report_path=report_ref.path,
+        resume_report_hash=report_ref.artifact_hash,
+    )
+
+    assert result["status"] == (
+        "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED"
+    )
+    assert result["written_artifact_types"] == [
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+    ]
+    assert result["allowed_edit_binding_ids"] == [
+        "edit_binding_005",
+        "edit_binding_006",
+    ]
+    assert result["binding_resolution_written"] is False
+    assert result["repair_planner_invoked"] is False
+    assert result["source_patch_allowed"] is False
+    assert _RoleAwareArtifactStore.preflight_types == (
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+    )
+    written_types = [
+        item["artifact_type"]
+        for item in _RoleAwareArtifactStore.writes
+    ]
+    assert written_types == [
+        "edit_authority_request",
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+    ]
+    approval = _RoleAwareArtifactStore.writes[1]["payload"]
+    assert approval["authority_contract_version"] == (
+        "edit_authority_stagger_hud_parent_observation_plan_v1"
+    )
+    assert approval["allowed_actions"] == [
+        "create_observation_evidence_pack_revision",
+        "create_diagnostic_implementation_plan_revision",
+        "create_observation_only_edit_bindings",
+    ]
+    plan = _RoleAwareArtifactStore.writes[3]["payload"]
+    diagnostic_scope = plan["diagnostic_scope"]
+    assert diagnostic_scope["edit_binding_ids"] == [
+        "edit_binding_005",
+        "edit_binding_006",
+    ]
+    assert diagnostic_scope["repair_planner_allowed"] is False
+    assert diagnostic_scope["source_patch_allowed"] is False
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="implementation_plan",
+        status="success",
+        payload=plan,
+    )
+    diagnostic_binding = next(
+        item
+        for item in plan["binding_registry"]["edit_bindings"]
+        if item.get("binding_id") == "edit_binding_005"
+    )
+    diagnostic_binding["source_patch_allowed"] = True
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="exceeds its approved scope",
+    ):
+        ArtifactTypeRegistry().validate_write(
+            artifact_type="implementation_plan",
+            status="success",
+            payload=plan,
+        )

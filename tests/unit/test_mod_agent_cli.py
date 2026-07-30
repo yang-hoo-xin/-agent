@@ -1963,6 +1963,80 @@ def test_cli_existing_binding_reauthorization_keeps_plan_roles_distinct(
     assert "approved_by" not in captured
 
 
+def test_cli_stagger_observation_authority_preflight_passes_exact_roles(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def preflight(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": (
+                "READY_TO_CREATE_STAGGER_HUD_PARENT_OBSERVATION_"
+                "AUTHORITY_REQUEST"
+            ),
+            "proposal_hash": "sha256:" + ("a" * 64),
+            "writes_performed": False,
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli."
+        "preflight_stagger_hud_parent_observation_authority",
+        preflight,
+    )
+    exit_code = main(
+        [
+            "preflight-stagger-hud-parent-observation-authority",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--run-id",
+            "runtime_001",
+            "--feature-spec-path",
+            "feature-spec.json",
+            "--feature-spec-hash",
+            "1" * 64,
+            "--runtime-evidence-path",
+            "runtime-evidence.json",
+            "--runtime-evidence-hash",
+            "2" * 64,
+            "--current-implementation-plan-path",
+            "current-plan.json",
+            "--current-implementation-plan-hash",
+            "3" * 64,
+            "--patch-proposal-path",
+            "patch-proposal.json",
+            "--patch-proposal-hash",
+            "4" * 64,
+            "--existing-binding-resolution-path",
+            "binding-resolution.json",
+            "--existing-binding-resolution-hash",
+            "5" * 64,
+            "--existing-edit-authority-approval-path",
+            "edit-authority-approval.json",
+            "--existing-edit-authority-approval-hash",
+            "6" * 64,
+            "--evidence-pack-path",
+            "evidence-pack.json",
+            "--evidence-pack-hash",
+            "7" * 64,
+            "--source-root",
+            "source-root",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["writes_performed"] is False
+    assert captured["current_implementation_plan_hash"] == "3" * 64
+    assert captured["existing_binding_resolution_hash"] == "5" * 64
+    assert captured["existing_edit_authority_approval_hash"] == "6" * 64
+    assert captured["evidence_pack_hash"] == "7" * 64
+    assert "approved_by" not in captured
+
+
 def test_cli_stagger_edit_authority_review_delegates_to_graph_entry(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

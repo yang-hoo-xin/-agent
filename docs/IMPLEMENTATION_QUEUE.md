@@ -383,6 +383,28 @@ dependencies:
   ResumeReport, Approval, and BindingResolution counts at `1/1/1/1`.
   Updated focused tests passed 193; the broader affected suite passed 354 in
   32.07 seconds.
+  The separately authorized Graph review of that same Request then completed.
+  It wrote one new checkpoint, ResumeReport, permission-only Approval
+  `d648fff1...27336`, and BindingResolution `0786c8cf...03200`.
+  The result still grants only `edit_binding_004` and keeps
+  `root_cause_status=unresolved`, RepairPlanner false, and source Patch false.
+  The next bounded observation-authority path does not reuse that product
+  repair operation as diagnostic write authority. It projects exactly
+  `edit_binding_005/chg_005` at `ShowHitIndicator_Prefix` line 301 and
+  `edit_binding_006/chg_006` at `TrySpawnStaggerYellowX` lines 979-984.
+  The independent Graph Approval may materialize only an observation-scope
+  EvidencePack and diagnostic Plan containing those two bindings; it forbids
+  BindingResolution, RepairPlanner, source modification, Build, process
+  launch, and game-directory writes.
+  Real shared-Store zero-write preflight returned
+  `READY_TO_CREATE_STAGGER_HUD_PARENT_OBSERVATION_AUTHORITY_REQUEST` with
+  proposal hash
+  `sha256:11e10bb6c6ae31ddf6228c83c1b1d996f54f044e51ad1fccd5dc01033dd33ddc`.
+  The observed Request/Approval/EvidencePack/Plan/Resolution/checkpoint/report
+  counts remained `1/2/2/2/2/2/2`; no diagnostic Request was written.
+  Python compilation passed. The focused authority/Store/Graph/CLI suite
+  passed 200 tests; the broader affected Runtime/deployment suite passed 349
+  tests in 36.04 seconds.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;

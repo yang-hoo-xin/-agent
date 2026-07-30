@@ -424,6 +424,67 @@ def test_existing_binding_reauthorization_contract_adds_no_technical_write() -> 
         )
 
 
+def test_stagger_observation_plan_approval_is_permission_only() -> None:
+    registry = ArtifactTypeRegistry()
+    revision = {
+        "feature_id": "feature_001",
+        "path": "artifact.json",
+        "artifact_hash": "a" * 64,
+    }
+    approval = {
+        "node_name": "approve_stagger_edit_authority",
+        "stage": "edit_authority_approval",
+        "message": "Observation-only Plan projection approved.",
+        "status": "approved",
+        "feature_id": "feature_001",
+        "run_id": "run_001",
+        "authority_source": "edit_authority_request",
+        "authority_contract_version": (
+            "edit_authority_stagger_hud_parent_observation_plan_v1"
+        ),
+        "approval_hash": "sha256:" + ("b" * 64),
+        "request_hash": "sha256:" + ("b" * 64),
+        "approved_by": "user",
+        "approved_at": "2026-07-30T16:30:00+08:00",
+        "resume_id": "resume_001",
+        "decision": "approve",
+        "edit_authority_request_revision": dict(revision),
+        "resume_report_revision": dict(revision),
+        "allowed_actions": [
+            "create_observation_evidence_pack_revision",
+            "create_diagnostic_implementation_plan_revision",
+            "create_observation_only_edit_bindings",
+        ],
+        "forbidden_actions": [
+            "create_binding_resolution_revision",
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ],
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+    }
+
+    registry.validate_write(
+        artifact_type="edit_authority_approval",
+        status="success",
+        payload=approval,
+    )
+
+    approval["allowed_actions"].append("modify_source")
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="allowed_actions",
+    ):
+        registry.validate_write(
+            artifact_type="edit_authority_approval",
+            status="success",
+            payload=approval,
+        )
+
+
 def _review_payload() -> dict[str, object]:
     return {
         "node_name": "review_proposal",

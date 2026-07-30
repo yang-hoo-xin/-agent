@@ -890,6 +890,80 @@ class ArtifactStore:
                 "New EditAuthorityApproval writes must originate from an "
                 "exact EditAuthorityRequest and ResumeReport."
             )
+        request_payload = payload.get("request_payload")
+        if (
+            artifact_type == "edit_authority_request"
+            and isinstance(request_payload, Mapping)
+            and request_payload.get("schema_version")
+            == "stagger_hud_parent_observation_authority_request_v1"
+        ):
+            observation_authority_types = {
+                "feature_spec",
+                "runtime_evidence",
+                "implementation_plan",
+                "patch_proposal",
+                "binding_resolution",
+                "edit_authority_approval",
+                "evidence_pack",
+            }
+            if (
+                observation_authority_types - provided_types
+                or observation_authority_types
+                - exact_revision_upstream_types
+            ):
+                raise ArtifactStoreError(
+                    "Stagger observation authority Request requires every "
+                    "exact technical and authority role."
+                )
+            refs_by_type = {
+                ref.artifact_type: ref
+                for ref in upstream_refs
+                if ref.artifact_type in observation_authority_types
+            }
+            if (
+                len(refs_by_type) != len(observation_authority_types)
+                or sum(
+                    1
+                    for ref in upstream_refs
+                    if ref.artifact_type in observation_authority_types
+                )
+                != len(observation_authority_types)
+            ):
+                raise ArtifactStoreError(
+                    "Stagger observation authority Request roles are "
+                    "duplicated or incomplete."
+                )
+            proposal = request_payload.get("proposal")
+            revision_roles = (
+                ("feature_spec_revision", "feature_spec"),
+                ("runtime_evidence_revision", "runtime_evidence"),
+                (
+                    "current_implementation_plan_revision",
+                    "implementation_plan",
+                ),
+                ("patch_proposal_revision", "patch_proposal"),
+                (
+                    "existing_binding_resolution_revision",
+                    "binding_resolution",
+                ),
+                (
+                    "existing_edit_authority_approval_revision",
+                    "edit_authority_approval",
+                ),
+                ("evidence_pack_revision", "evidence_pack"),
+            )
+            if not isinstance(proposal, Mapping) or any(
+                not isinstance(proposal.get(revision_field), Mapping)
+                or proposal[revision_field].get("path")
+                != refs_by_type[upstream_type].path
+                or proposal[revision_field].get("artifact_hash")
+                != refs_by_type[upstream_type].artifact_hash
+                for revision_field, upstream_type in revision_roles
+            ):
+                raise ArtifactStoreError(
+                    "Stagger observation authority Request revision roles do "
+                    "not match exact upstreams."
+                )
         if (
             artifact_type == "binding_resolution"
             and payload.get("authority_source")

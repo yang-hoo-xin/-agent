@@ -100,6 +100,12 @@ PatchExecutionFactory = Callable[
 ]
 CriticRequirement = Literal["not_required", "required"]
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA = (
+    "stagger_existing_binding_reauthorization_request_v1"
+)
+_STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA = (
+    "stagger_hud_parent_observation_authority_request_v1"
+)
 
 
 def build_graph(
@@ -1047,10 +1053,10 @@ def _run_stagger_edit_authority_gate(
         if isinstance(request_payload, dict)
         else None
     )
-    if (
-        request_schema
-        != "stagger_existing_binding_reauthorization_request_v1"
-    ):
+    if request_schema not in {
+        _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA,
+        _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
+    }:
         for upstream in request_envelope.get("inputs", {}).get(
             "upstream_artifacts",
             (),
@@ -1080,7 +1086,7 @@ def _run_stagger_edit_authority_gate(
                 )
     if (
         request_schema
-        == "stagger_existing_binding_reauthorization_request_v1"
+        == _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA
     ):
         allowed_actions = [
             "reauthorize_existing_edit_binding",
@@ -1090,6 +1096,20 @@ def _run_stagger_edit_authority_gate(
             "create_evidence_pack_revision",
             "create_implementation_plan_revision",
             "create_edit_binding",
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ]
+    elif request_schema == _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA:
+        allowed_actions = [
+            "create_observation_evidence_pack_revision",
+            "create_diagnostic_implementation_plan_revision",
+            "create_observation_only_edit_bindings",
+        ]
+        forbidden_actions = [
+            "create_binding_resolution_revision",
             "invoke_repair_planner",
             "modify_source",
             "build",
@@ -1192,12 +1212,16 @@ def _run_stagger_edit_authority_gate(
         )
         return next_state
 
-    for artifact_type, field_name in (
+    materialized_fields = [
         ("edit_authority_approval", "edit_authority_approval_revision"),
         ("evidence_pack", "evidence_pack_revision"),
         ("implementation_plan", "implementation_plan_revision"),
-        ("binding_resolution", "binding_resolution_revision"),
-    ):
+    ]
+    if request_schema != _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA:
+        materialized_fields.append(
+            ("binding_resolution", "binding_resolution_revision")
+        )
+    for artifact_type, field_name in materialized_fields:
         revision = materialized[field_name]
         _record_artifact(
             next_state,
@@ -1209,7 +1233,11 @@ def _run_stagger_edit_authority_gate(
                 artifact_hash=str(revision["artifact_hash"]),
             ),
         )
-    next_state["current_stage"] = "binding_resolution"
+    next_state["current_stage"] = (
+        "implementation_plan"
+        if request_schema == _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA
+        else "binding_resolution"
+    )
     next_state["approvals"] = {
         **dict(next_state["approvals"]),
         "edit_authority": True,

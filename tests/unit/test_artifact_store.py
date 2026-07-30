@@ -526,6 +526,138 @@ def test_existing_binding_reauthorization_store_requires_all_exact_roles(
         )
 
 
+def test_stagger_observation_request_store_requires_every_exact_role(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_id = "feature_001"
+    monkeypatch.setattr(
+        store,
+        "read",
+        lambda item: {
+            "feature_id": item.feature_id,
+            "artifact_type": item.artifact_type,
+        },
+    )
+    monkeypatch.setattr(
+        store,
+        "_check_upstream_write_freshness",
+        lambda item, require_latest: type(
+            "Freshness",
+            (),
+            {"is_fresh": True, "stale_reasons": ()},
+        )(),
+    )
+
+    def ref(artifact_type: str, fill: str) -> ArtifactRef:
+        return ArtifactRef(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            path=str(tmp_path / f"{artifact_type}.json"),
+            artifact_hash=fill * 64,
+        )
+
+    refs = {
+        "feature_spec": ref("feature_spec", "1"),
+        "runtime_evidence": ref("runtime_evidence", "2"),
+        "implementation_plan": ref("implementation_plan", "3"),
+        "patch_proposal": ref("patch_proposal", "4"),
+        "binding_resolution": ref("binding_resolution", "5"),
+        "edit_authority_approval": ref("edit_authority_approval", "6"),
+        "evidence_pack": ref("evidence_pack", "7"),
+    }
+
+    def revision(item: ArtifactRef) -> dict[str, str]:
+        return {
+            "feature_id": feature_id,
+            "path": item.path,
+            "artifact_hash": item.artifact_hash,
+        }
+
+    request_payload = {
+        "schema_version": (
+            "stagger_hud_parent_observation_authority_request_v1"
+        ),
+        "source_root": str(tmp_path),
+        "proposal": {
+            "feature_spec_revision": revision(refs["feature_spec"]),
+            "runtime_evidence_revision": revision(
+                refs["runtime_evidence"]
+            ),
+            "current_implementation_plan_revision": revision(
+                refs["implementation_plan"]
+            ),
+            "patch_proposal_revision": revision(refs["patch_proposal"]),
+            "existing_binding_resolution_revision": revision(
+                refs["binding_resolution"]
+            ),
+            "existing_edit_authority_approval_revision": revision(
+                refs["edit_authority_approval"]
+            ),
+            "evidence_pack_revision": revision(refs["evidence_pack"]),
+        },
+    }
+    payload = {"request_payload": request_payload}
+    upstream_refs = list(refs.values())
+    exact_types = set(refs)
+    contract = ArtifactContract(
+        artifact_type="edit_authority_request",
+        schema_version="1.0",
+        required_fields=frozenset(),
+        producer_stage="edit_authority_request",
+        consumer_stages=frozenset(),
+        allowed_statuses=frozenset({"success"}),
+    )
+
+    store._validate_upstream_refs(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        contract=contract,
+        payload=payload,
+        status="success",
+        upstream_refs=upstream_refs,
+        allow_stale_upstreams=False,
+        exact_revision_upstream_types=exact_types,
+    )
+
+    not_exact = set(exact_types)
+    not_exact.remove("edit_authority_approval")
+    with pytest.raises(
+        ArtifactStoreError,
+        match="requires every exact technical and authority role",
+    ):
+        store._validate_upstream_refs(
+            feature_id=feature_id,
+            artifact_type="edit_authority_request",
+            contract=contract,
+            payload=payload,
+            status="success",
+            upstream_refs=upstream_refs,
+            allow_stale_upstreams=False,
+            exact_revision_upstream_types=not_exact,
+        )
+
+    wrong_role = json.loads(json.dumps(payload))
+    wrong_role["request_payload"]["proposal"][
+        "evidence_pack_revision"
+    ]["artifact_hash"] = "a" * 64
+    with pytest.raises(
+        ArtifactStoreError,
+        match="revision roles do not match",
+    ):
+        store._validate_upstream_refs(
+            feature_id=feature_id,
+            artifact_type="edit_authority_request",
+            contract=contract,
+            payload=wrong_role,
+            status="success",
+            upstream_refs=upstream_refs,
+            allow_stale_upstreams=False,
+            exact_revision_upstream_types=exact_types,
+        )
+
+
 def test_write_wraps_payload_in_envelope(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
 
