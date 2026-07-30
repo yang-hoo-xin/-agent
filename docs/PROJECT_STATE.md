@@ -767,11 +767,24 @@ both false permission flags. The real shared-Store no-write preflight returned
 `READY_TO_CREATE_STAGGER_HUD_PARENT_OBSERVATION_AUTHORITY_REQUEST` with
 proposal hash
 `sha256:11e10bb6c6ae31ddf6228c83c1b1d996f54f044e51ad1fccd5dc01033dd33ddc`.
-Request, Approval, EvidencePack, Plan, BindingResolution, checkpoint, and
-ResumeReport counts remained `1/2/2/2/2/2/2`. No diagnostic Request exists.
-Python compilation passed; focused authority/Store/Graph/CLI coverage passed
-200 tests and the broader affected Runtime/deployment suite passed 349 tests
-in 36.04 seconds.
+The no-authority Request
+`sha256:8f420195e606bdf47f797c52a921170afaf0ea930b36610ff2fba6e43939ca81`
+was then created and approved through the real LangGraph interrupt/resume
+gate. The approved projection wrote WorkflowCheckpoint
+`cdf39288...f6bc4`, ResumeReport `1d4d1309...8ddfe0`, permission-only
+Approval `8f05ce14...c318bf`, EvidencePack `2e4336d8...055dbf`, and
+diagnostic Plan `e45cda19...86a3c`. Revision counts are now
+Request/Approval/EvidencePack/Plan/BindingResolution/checkpoint/report
+`2/3/3/3/2/3/3`. The Plan contains exactly `edit_binding_005/chg_005` and
+`edit_binding_006/chg_006`; no BindingResolution, RepairPlan, source write,
+Build, process launch, or game-directory write occurred. The source SHA256
+remains `65489604...BB3B`. The CLI emitted the successful
+`STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED` payload but returned nonzero
+because the command return-code branch recognizes only
+`EXACT_EDIT_AUTHORITY_RESOLVED`; this bounded CLI return-code defect remains
+open. Python compilation passed; focused authority/Store/Graph/CLI coverage
+passed 200 tests and the broader affected Runtime/deployment suite passed 349
+tests in 36.04 seconds.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

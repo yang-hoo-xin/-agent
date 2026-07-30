@@ -400,8 +400,18 @@ dependencies:
   `READY_TO_CREATE_STAGGER_HUD_PARENT_OBSERVATION_AUTHORITY_REQUEST` with
   proposal hash
   `sha256:11e10bb6c6ae31ddf6228c83c1b1d996f54f044e51ad1fccd5dc01033dd33ddc`.
-  The observed Request/Approval/EvidencePack/Plan/Resolution/checkpoint/report
-  counts remained `1/2/2/2/2/2/2`; no diagnostic Request was written.
+  The separately authorized no-authority Request
+  `sha256:8f420195e606bdf47f797c52a921170afaf0ea930b36610ff2fba6e43939ca81`
+  was created and approved through the real LangGraph gate. The gate wrote
+  checkpoint `cdf39288...f6bc4`, report `1d4d1309...8ddfe0`, Approval
+  `8f05ce14...c318bf`, EvidencePack `2e4336d8...055dbf`, and diagnostic Plan
+  `e45cda19...86a3c`; counts are now `2/3/3/3/2/3/3`.
+  The Plan contains only `edit_binding_005/chg_005` and
+  `edit_binding_006/chg_006`; Resolution remained at two revisions and no
+  source, Build, process, or game-directory action occurred. The CLI returned
+  nonzero after emitting `STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED`
+  because its return-code branch has not yet admitted that bounded success
+  status.
   Python compilation passed. The focused authority/Store/Graph/CLI suite
   passed 200 tests; the broader affected Runtime/deployment suite passed 349
   tests in 36.04 seconds.

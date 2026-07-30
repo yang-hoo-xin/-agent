@@ -694,8 +694,20 @@ write the game directory. The real shared-Store preflight returned
 `READY_TO_CREATE_STAGGER_HUD_PARENT_OBSERVATION_AUTHORITY_REQUEST` with
 proposal hash
 `sha256:11e10bb6c6ae31ddf6228c83c1b1d996f54f044e51ad1fccd5dc01033dd33ddc`.
-All seven observed Artifact revision counts remained unchanged. No Request has
-been created for this diagnostic scope. Python compilation passed; the focused
+The authorized Request
+`sha256:8f420195e606bdf47f797c52a921170afaf0ea930b36610ff2fba6e43939ca81`
+then entered the real LangGraph approval gate. Approval materialized
+WorkflowCheckpoint `cdf39288...f6bc4`, ResumeReport `1d4d1309...8ddfe0`,
+permission-only Approval `8f05ce14...c318bf`, EvidencePack
+`2e4336d8...055dbf`, and diagnostic ImplementationPlan
+`e45cda19...86a3c`. The Plan contains only `edit_binding_005/chg_005` and
+`edit_binding_006/chg_006`; no BindingResolution was created, and
+`repair_planner_allowed=false` plus `source_patch_allowed=false` remain in
+force. The CLI printed
+`STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED` but returned a nonzero process
+code because its success-code branch currently recognizes only
+`EXACT_EDIT_AUTHORITY_RESOLVED`; this is an entry return-code defect, not an
+Artifact or approval failure. Python compilation passed; the focused
 authority/Store/Graph/CLI suite passed 200 tests, and the broader affected
 Runtime/deployment suite passed 349 tests.
 
