@@ -233,6 +233,103 @@ def test_stagger_edit_authority_approval_runs_only_through_graph_interrupt(
         assert "binding_resolution" in result["artifacts"]
 
 
+def test_existing_binding_reauthorization_exposes_narrow_graph_actions(
+    tmp_path: Path,
+) -> None:
+    default_registry = ArtifactTypeRegistry()
+    request_contract = replace(
+        default_registry.get("edit_authority_request"),
+        required_upstream_artifacts=frozenset(),
+        required_exact_revision_upstream_artifacts=frozenset(),
+    )
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            request_contract,
+            default_registry.get("workflow_checkpoint"),
+            default_registry.get("resume_report"),
+            default_registry.get("workflow_trace"),
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    request_payload = {
+        "schema_version": (
+            "stagger_existing_binding_reauthorization_request_v1"
+        ),
+        "proposal": {},
+        "source_root": str(tmp_path),
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id="feature_existing_binding",
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": (
+                "request_stagger_existing_binding_reauthorization"
+            ),
+            "stage": "edit_authority_request",
+            "message": "Awaiting graph approval.",
+            "status": "pending_human_approval",
+            "feature_id": "feature_existing_binding",
+            "run_id": "run_existing_binding",
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+    )
+    graph = build_graph(
+        store,
+        edit_authority_request_ref=request_ref,
+        checkpointer=(
+            WorkflowCheckpointStore.langgraph_memory_checkpointer()
+        ),
+    )
+    state = create_initial_state(
+        run_id="run_existing_binding",
+        request_id="feature_existing_binding",
+        user_request="Review one existing Stagger edit binding.",
+    )
+    state["feature_id"] = "feature_existing_binding"
+
+    interrupted = graph.invoke(
+        state,
+        {
+            "configurable": {
+                "thread_id": "existing_binding_reauthorization_001"
+            }
+        },
+    )
+
+    request = interrupted["__interrupt__"][0].value
+    assert request["payload"]["allowed_actions"] == [
+        "reauthorize_existing_edit_binding",
+        "create_binding_resolution_revision",
+    ]
+    assert request["payload"]["forbidden_actions"] == [
+        "create_evidence_pack_revision",
+        "create_implementation_plan_revision",
+        "create_edit_binding",
+        "invoke_repair_planner",
+        "modify_source",
+        "build",
+        "launch_process",
+        "write_game_directory",
+    ]
+    assert store.list_feature_artifact_revisions(
+        "feature_existing_binding",
+        "edit_authority_approval",
+    ) == []
+
+
 def test_edit_authority_resume_blocks_wrong_request_hash() -> None:
     checkpoint = {
         "run_id": "run_edit_authority",

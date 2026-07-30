@@ -1880,6 +1880,89 @@ def test_cli_stagger_edit_authority_request_cannot_grant_authority(
     assert captured["target_end_line"] == 984
 
 
+def test_cli_existing_binding_reauthorization_keeps_plan_roles_distinct(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def create_request(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": (
+                "EXISTING_BINDING_REAUTHORIZATION_REQUEST_CREATED"
+            ),
+            "request_hash": "sha256:" + ("a" * 64),
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_invoked": False,
+            "repair_allowed": False,
+            "source_patch_allowed": False,
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli."
+        "create_stagger_existing_binding_reauthorization_request",
+        create_request,
+    )
+    exit_code = main(
+        [
+            "request-stagger-existing-binding-reauthorization",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--run-id",
+            "runtime_001",
+            "--feature-spec-path",
+            "feature-spec.json",
+            "--feature-spec-hash",
+            "1" * 64,
+            "--runtime-evidence-path",
+            "runtime-evidence.json",
+            "--runtime-evidence-hash",
+            "2" * 64,
+            "--predecessor-implementation-plan-path",
+            "predecessor-plan.json",
+            "--predecessor-implementation-plan-hash",
+            "3" * 64,
+            "--patch-proposal-path",
+            "patch-proposal.json",
+            "--patch-proposal-hash",
+            "4" * 64,
+            "--current-implementation-plan-path",
+            "current-plan.json",
+            "--current-implementation-plan-hash",
+            "8" * 64,
+            "--existing-binding-resolution-path",
+            "binding-resolution.json",
+            "--existing-binding-resolution-hash",
+            "9" * 64,
+            "--source-root",
+            "source-root",
+            "--canonical-target-path",
+            "Patches/HitFeedbackBehaviorPatch.cs",
+            "--target-symbol",
+            (
+                "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+                "TrySpawnStaggerYellowX"
+            ),
+            "--target-start-line",
+            "979",
+            "--target-end-line",
+            "984",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["authority_granted"] is False
+    assert captured["predecessor_implementation_plan_hash"] == "3" * 64
+    assert captured["current_implementation_plan_hash"] == "8" * 64
+    assert captured["existing_binding_resolution_hash"] == "9" * 64
+    assert "approved_by" not in captured
+
+
 def test_cli_stagger_edit_authority_review_delegates_to_graph_entry(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

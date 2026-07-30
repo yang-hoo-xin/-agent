@@ -17,7 +17,7 @@ most_recent_evidence_run: sfe2_467fd878
 stagger_implementation_plan_status: build_complete_runtime_visual_failure_graph_review_entry_implemented_real_request_preflight_blocked_plan_lineage
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: STAGGER-EDIT-AUTHORITY-REQUEST-APPROVAL-GATE-001
+most_recent_completed_capability: STAGGER-EXISTING-BINDING-REAUTHORIZATION-PREFLIGHT-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -677,14 +677,44 @@ to RepairPlanner, source modification, Build, or Runtime. Exact revision
 freshness now distinguishes immutable revision integrity from latest-pointer
 drift.
 
-The subsequent real shared-Store preflight produced a new precise blocker:
-current Plan `d18dfd13...e4f619` is the historical authority projection, but
-PatchProposal `37368a63...6dfa93` remains bound to predecessor Plan
-`6996ea55...5555`. The control path correctly rejected the statement that the
-PatchProposal binds the current Plan. No EditAuthorityRequest was created;
-ResumeReport, historical Approval, and BindingResolution counts remain one
-each. The current source hash remains `65489604...BB3B`. RepairPlanner and all
-source actions remain closed. The focused suite now passes 217 tests.
+The bounded existing-binding reauthorization entry now preserves the actual
+two-Plan lineage: PatchProposal `37368a63...6dfa93` remains directly bound to
+predecessor Plan `6996ea55...5555`, while current Plan
+`d18dfd13...e4f619` and existing BindingResolution
+`af9ad798...c61159` remain separate exact inputs. It reuses only
+`edit_binding_004`, creates no binding or Plan, and cannot invoke RepairPlanner
+or modify source. The real no-write preflight returned
+`READY_TO_CREATE_EXISTING_BINDING_REAUTHORIZATION_REQUEST`, proposal hash
+`sha256:ffa3fc0379365fc865e22287191e25929d9c6904b154332c8a637c176f659c56`.
+No EditAuthorityRequest was created; its revision count remains zero.
+
+ArtifactStore checks every exact role, including both Plan revisions and the
+previous BindingResolution, before accepting a reauthorized resolution.
+Python compilation passed; the focused authority, Store, CLI, and Graph suite
+passed 190 tests, and the broader affected Runtime/deployment suite passed 351
+tests in 96.70 seconds.
+
+Read-only retry #2 log correlation used the RuntimeEvidence-bound persistent
+log SHA256
+`D23A154A1614DFF5AF1FCBA29A2C58BE4A4931F578E71D1A7460B48900155C24`.
+Repeated `missing_canvas_rect_for_stagger_x` events occur after successful
+`ShowHitIndicator` hook entries. This rejects only the explanation that every
+failure occurred before all HUD observation. Existing logs do not distinguish
+null, runtime type mismatch, or stale-object states for `_lastHudParent`.
+Root cause, RepairPlan, product repair, Build, and new Runtime acceptance
+therefore remain incomplete.
+
+The minimum diagnostic source design is observation-only and must not reuse
+`edit_binding_004` as write authority because that binding's operation is
+`replace_hud_recttransform_acquisition_and_null_guard_only`. Against current
+source SHA256 `65489604...BB3B`, a separately reviewed diagnostic scope must
+bind the `_lastHudParent` state declaration near line 27,
+`TrySpawnStaggerYellowX` lines 979-984, and `TryGetLayerHudParent` lines
+2511-2530. It must record, without changing the selected parent or return
+behavior, reference-null state, Unity-null state, runtime type,
+`RectTransform` compatibility, whether `CanvasTrans` or `Root` was selected,
+and a selection sequence. The diagnostic run may confirm only the state it
+observes. It cannot itself count as product repair or product acceptance.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

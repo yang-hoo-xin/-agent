@@ -1062,6 +1062,43 @@ def _run_stagger_edit_authority_gate(
                 ),
             )
 
+    request_payload = request.get("request_payload")
+    request_schema = (
+        request_payload.get("schema_version")
+        if isinstance(request_payload, dict)
+        else None
+    )
+    if (
+        request_schema
+        == "stagger_existing_binding_reauthorization_request_v1"
+    ):
+        allowed_actions = [
+            "reauthorize_existing_edit_binding",
+            "create_binding_resolution_revision",
+        ]
+        forbidden_actions = [
+            "create_evidence_pack_revision",
+            "create_implementation_plan_revision",
+            "create_edit_binding",
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ]
+    else:
+        allowed_actions = [
+            "create_evidence_pack_revision",
+            "create_implementation_plan_revision",
+            "resolve_exact_edit_binding",
+        ]
+        forbidden_actions = [
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ]
     interrupt_request = InterruptRequest(
         interrupt_id=f"interrupt_{uuid4().hex}",
         run_id=state["run_id"],
@@ -1081,18 +1118,8 @@ def _run_stagger_edit_authority_gate(
                 "artifact_hash": request_ref.artifact_hash,
             },
             "request_hash": request["request_hash"],
-            "allowed_actions": [
-                "create_evidence_pack_revision",
-                "create_implementation_plan_revision",
-                "resolve_exact_edit_binding",
-            ],
-            "forbidden_actions": [
-                "invoke_repair_planner",
-                "modify_source",
-                "build",
-                "launch_process",
-                "write_game_directory",
-            ],
+            "allowed_actions": allowed_actions,
+            "forbidden_actions": forbidden_actions,
         },
         resume_allowed_fields=("approvals.edit_authority",),
         artifact_refs=tuple(gate_state["artifacts"].values()),

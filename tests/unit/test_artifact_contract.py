@@ -319,6 +319,111 @@ def test_request_bound_approval_is_permission_only() -> None:
         )
 
 
+def test_existing_binding_reauthorization_contract_adds_no_technical_write() -> None:
+    registry = ArtifactTypeRegistry()
+    revision = {
+        "feature_id": "feature_001",
+        "path": "artifact.json",
+        "artifact_hash": "a" * 64,
+    }
+    approval = {
+        "node_name": "approve_stagger_edit_authority",
+        "stage": "edit_authority_approval",
+        "message": "Existing binding reauthorized.",
+        "status": "approved",
+        "feature_id": "feature_001",
+        "run_id": "run_001",
+        "authority_source": "edit_authority_request",
+        "authority_contract_version": (
+            "edit_authority_existing_binding_reauthorization_v1"
+        ),
+        "approval_hash": "sha256:" + ("b" * 64),
+        "request_hash": "sha256:" + ("b" * 64),
+        "approved_by": "user",
+        "approved_at": "2026-07-30T12:00:00+08:00",
+        "resume_id": "resume_001",
+        "decision": "approve",
+        "edit_authority_request_revision": dict(revision),
+        "resume_report_revision": dict(revision),
+        "allowed_actions": [
+            "reauthorize_existing_edit_binding",
+            "create_binding_resolution_revision",
+        ],
+        "forbidden_actions": [
+            "create_evidence_pack_revision",
+            "create_implementation_plan_revision",
+            "create_edit_binding",
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ],
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+    }
+    registry.validate_write(
+        artifact_type="edit_authority_approval",
+        status="success",
+        payload=approval,
+    )
+
+    plan_revision = dict(revision)
+    resolution = {
+        "node_name": "resolve_runtime_diagnosis_binding",
+        "stage": "binding_resolution",
+        "message": "Existing binding remains uniquely resolved.",
+        "feature_id": "feature_001",
+        "run_id": "run_001",
+        "result_type": "resolved_repair_target",
+        "runtime_evidence_revision": dict(revision),
+        "implementation_plan_revision": plan_revision,
+        "patch_proposal_revision": dict(revision),
+        "allowed_edit_binding_ids": ["edit_binding_004"],
+        "resolved_repair_target": {
+            "status": "resolved",
+            "feature_id": "feature_001",
+            "run_id": "run_001",
+            "binding_id": "edit_binding_004",
+            "implementation_plan_revision": plan_revision,
+        },
+        "binding_gap": None,
+        "binding_proposal_request": None,
+        "blockers": [],
+        "authority_source": "edit_authority_approval",
+        "authority_contract_version": (
+            "edit_authority_existing_binding_reauthorization_v1"
+        ),
+        "edit_authority_request_revision": dict(revision),
+        "edit_authority_approval_revision": dict(revision),
+        "evidence_pack_revision": dict(revision),
+        "previous_binding_resolution_revision": dict(revision),
+        "predecessor_implementation_plan_revision": dict(revision),
+        "approved_runtime_failure_ownership": {
+            "owner": "product_behavior",
+            "source_repair_allowed": True,
+        },
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+    }
+    registry.validate_write(
+        artifact_type="binding_resolution",
+        status="success",
+        payload=resolution,
+    )
+
+    del resolution["previous_binding_resolution_revision"]
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="previous_binding_resolution_revision",
+    ):
+        registry.validate_write(
+            artifact_type="binding_resolution",
+            status="success",
+            payload=resolution,
+        )
+
+
 def _review_payload() -> dict[str, object]:
     return {
         "node_name": "review_proposal",

@@ -43,7 +43,9 @@ from .gtfo_stagger import (
 from .stagger_edit_authority import (
     StaggerEditAuthorityApprovalError,
     StaggerEditAuthorityPreflightError,
+    create_stagger_existing_binding_reauthorization_request,
     create_stagger_edit_authority_request,
+    preflight_stagger_existing_binding_reauthorization,
     preflight_stagger_edit_authority,
 )
 from .probe import (
@@ -102,8 +104,10 @@ __all__ = [
     "make_runtime_probe_evidence_factory",
     "normalize_runtime_failure_ownership",
     "create_stagger_edit_authority_request",
+    "create_stagger_existing_binding_reauthorization_request",
     "profile_from_settings",
     "preflight_stagger_edit_authority",
+    "preflight_stagger_existing_binding_reauthorization",
     "stagger_profile_from_settings",
     "screenshot_registry_to_runtime_item",
     "temporarily_deploy_verified_plugin",

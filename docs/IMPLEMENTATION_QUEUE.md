@@ -342,11 +342,34 @@ dependencies:
   already reviewed exact Request hash through the existing LangGraph
   interrupt/resume in one process. It has no direct Approval writer and stops
   after BindingResolution.
-  The real shared-Store preflight then blocked because current
-  ImplementationPlan `d18dfd13...e4f619` is the historical authority
-  projection while PatchProposal `37368a63...6dfa93` still exact-binds
-  predecessor Plan `6996ea55...5555`. No Request was written and no lineage
-  edge was weakened.
+  A bounded existing-binding reauthorization entry now represents the two
+  Plan roles explicitly. It exact-binds predecessor ImplementationPlan
+  `6996ea55...5555`, its PatchProposal `37368a63...6dfa93`, current
+  ImplementationPlan `d18dfd13...e4f619`, existing BindingResolution
+  `af9ad798...c61159`, and the unchanged Runtime/source identities. It reuses
+  only `edit_binding_004`, creates no binding or technical projection, and
+  keeps RepairPlanner/source authority false. The real no-write preflight
+  returned `READY_TO_CREATE_EXISTING_BINDING_REAUTHORIZATION_REQUEST` with
+  proposal hash
+  `sha256:ffa3fc0379365fc865e22287191e25929d9c6904b154332c8a637c176f659c56`.
+  Request revision count remains zero.
+  Read-only retry #2 log correlation proves later
+  `missing_canvas_rect_for_stagger_x` events occurred after successful
+  `ShowHitIndicator` hook entries, but it cannot distinguish null,
+  non-`RectTransform`, or stale-object states for `_lastHudParent`.
+  The minimum observation-only diagnostic design binds current source SHA256
+  `65489604...BB3B` at the `_lastHudParent` state declaration near line 27,
+  `TrySpawnStaggerYellowX` lines 979-984, and
+  `TryGetLayerHudParent` lines 2511-2530. It records reference-null,
+  Unity-null, runtime type, `RectTransform` compatibility, selected
+  `CanvasTrans`/`Root` source, and a selection sequence while preserving the
+  current selected parent and early-return behavior. Because
+  `edit_binding_004` authorizes a product acquisition/null-guard operation,
+  not diagnostic logging, this insertion requires a separately reviewed exact
+  diagnostic binding before any Mod source write.
+  Python compilation passed. The focused authority/Store/CLI/Graph suite
+  passed 190 tests; the broader affected Runtime/deployment suite passed 351
+  tests in 96.70 seconds.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -735,11 +758,13 @@ stop_condition:
   EditAuthorityRequest from current exact inputs and complete its LangGraph
   human approval/materialization path. The removed direct approval CLI and the
   old approval hash cannot be reused.
-  Current exact inputs do not yet satisfy that admission: the PatchProposal
-  binds predecessor Plan `6996ea55...5555`, not current projected Plan
-  `d18dfd13...e4f619`. Stop before Request creation. Do not silently adopt the
-  historical BindingResolution, create a duplicate binding, or relax the
-  lineage check.
+  The exact existing-binding reauthorization preflight now satisfies admission
+  without claiming that PatchProposal `37368a63...6dfa93` directly binds
+  current Plan `d18dfd13...e4f619`. Stop before the separately authorized
+  shared-Store Request write. After its exact Graph approval and unique
+  re-resolution, remain stopped before RepairPlanner. Root cause still requires
+  a separately reviewed diagnostic source scope and controlled Runtime
+  observation; do not replace diagnosis with an unverified product edit.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.

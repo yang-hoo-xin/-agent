@@ -249,12 +249,25 @@ def _validate_binding_resolution(payload: dict[str, Any]) -> None:
                 "edit_authority_approval_revision",
                 "evidence_pack_revision",
             ]
-            if (
-                payload.get("authority_contract_version")
-                == "edit_authority_request_approval_v1"
-            ):
+            authority_contract_version = payload.get(
+                "authority_contract_version"
+            )
+            if authority_contract_version in {
+                "edit_authority_request_approval_v1",
+                "edit_authority_existing_binding_reauthorization_v1",
+            }:
                 revision_fields.append(
                     "edit_authority_request_revision"
+                )
+            if (
+                authority_contract_version
+                == "edit_authority_existing_binding_reauthorization_v1"
+            ):
+                revision_fields.extend(
+                    [
+                        "previous_binding_resolution_revision",
+                        "predecessor_implementation_plan_revision",
+                    ]
                 )
             for revision_field in revision_fields:
                 revision = payload.get(revision_field)
@@ -273,6 +286,14 @@ def _validate_binding_resolution(payload: dict[str, Any]) -> None:
                         "approved binding_resolution is missing an exact "
                         f"{revision_field}"
                     )
+            if authority_contract_version not in {
+                None,
+                "edit_authority_request_approval_v1",
+                "edit_authority_existing_binding_reauthorization_v1",
+            }:
+                raise ArtifactRegistryError(
+                    "approved binding_resolution authority contract is invalid"
+                )
             ownership = payload.get(
                 "approved_runtime_failure_ownership"
             )
@@ -639,6 +660,7 @@ def _validate_request_bound_edit_authority_approval(
         "feature_id",
         "run_id",
         "authority_source",
+        "authority_contract_version",
         "approval_hash",
         "request_hash",
         "approved_by",
@@ -694,21 +716,50 @@ def _validate_request_bound_edit_authority_approval(
         raise ArtifactRegistryError(
             "edit_authority_approval human decision identity is invalid"
         )
-    if payload.get("allowed_actions") != [
-        "create_evidence_pack_revision",
-        "create_implementation_plan_revision",
-        "resolve_exact_edit_binding",
-    ]:
+    authority_contract_version = payload.get(
+        "authority_contract_version",
+        "edit_authority_request_approval_v1",
+    )
+    if (
+        authority_contract_version
+        == "edit_authority_existing_binding_reauthorization_v1"
+    ):
+        expected_allowed_actions = [
+            "reauthorize_existing_edit_binding",
+            "create_binding_resolution_revision",
+        ]
+        expected_forbidden_actions = [
+            "create_evidence_pack_revision",
+            "create_implementation_plan_revision",
+            "create_edit_binding",
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ]
+    elif authority_contract_version == "edit_authority_request_approval_v1":
+        expected_allowed_actions = [
+            "create_evidence_pack_revision",
+            "create_implementation_plan_revision",
+            "resolve_exact_edit_binding",
+        ]
+        expected_forbidden_actions = [
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ]
+    else:
+        raise ArtifactRegistryError(
+            "edit_authority_approval authority contract is invalid"
+        )
+    if payload.get("allowed_actions") != expected_allowed_actions:
         raise ArtifactRegistryError(
             "edit_authority_approval allowed_actions are invalid"
         )
-    if payload.get("forbidden_actions") != [
-        "invoke_repair_planner",
-        "modify_source",
-        "build",
-        "launch_process",
-        "write_game_directory",
-    ]:
+    if payload.get("forbidden_actions") != expected_forbidden_actions:
         raise ArtifactRegistryError(
             "edit_authority_approval forbidden_actions are invalid"
         )

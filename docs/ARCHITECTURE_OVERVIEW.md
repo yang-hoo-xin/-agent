@@ -139,12 +139,17 @@ without requiring historical upstreams to remain latest; separate
 current-revision admission still requires the selected revision hash to equal
 the latest projection and its path to exist in immutable revision storage.
 
-Real shared-Store integration exposed a bounded unresolved lineage case:
-the current Plan is a historical authority projection, while the current
-PatchProposal binds its predecessor Plan. The system blocks rather than
-pretending those two Artifacts are directly bound. Supporting ratification of
-an already materialized binding would require an explicit product decision;
-it is not inferred by the transport entry or exact-freshness check.
+Real shared-Store integration exposed a bounded two-Plan lineage case: the
+current Plan is a historical authority projection, while the current
+PatchProposal binds its predecessor Plan. The existing-binding
+reauthorization entry represents those roles explicitly and preserves the
+already materialized `edit_binding_004`; it does not rewrite history, create a
+duplicate binding, or claim a direct PatchProposal-to-current-Plan edge.
+Its Request grants no authority. A permission-only Approval still requires the
+existing LangGraph interrupt/resume gate, and the resulting new
+BindingResolution must exact-bind the previous Resolution and all business
+inputs. This is a product-bounded continuation path, not a general
+ratification engine.
 
 Repair-plan source selection uses the current failing graph stage. A stale
 Build or Runtime summary from an earlier attempt cannot override a later

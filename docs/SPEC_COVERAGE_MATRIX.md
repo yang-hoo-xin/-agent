@@ -156,14 +156,18 @@ tests/unit/test_workflow_checkpointing.py
 | ART-005 | 49.2.5 | Artifact migrations for schema evolution | ART | not_started | future migration task / ARTIFACT-PROD-001 | Unknown schema version is rejected; schema and storage-layout migration/backfill paths are not implemented |
 
 Stagger Edit Authority operational addendum: the Graph-backed local review
-entry and exact-revision freshness API are tested. Real shared-Store preflight
-is blocked before Request creation because PatchProposal
-`37368a63...6dfa93` binds predecessor ImplementationPlan
-`6996ea55...5555`, not current projected Plan `d18dfd13...e4f619`.
-EditAuthorityRequest revision count remains zero. This preserves WF-004 and
-ART-002 as tested bounded mechanisms while EXEC-009/EXEC-010 remain blocked
-before RepairPlanner; it does not prove historical BindingResolution
-ratification or a completed real Approval continuation.
+entry, exact-revision freshness API, and bounded existing-binding
+reauthorization preflight are tested. The latter preserves predecessor
+ImplementationPlan `6996ea55...5555`, directly bound PatchProposal
+`37368a63...6dfa93`, current Plan `d18dfd13...e4f619`, and existing
+BindingResolution `af9ad798...c61159` as separate exact roles. ArtifactStore
+requires every role to be exact, including both Plan revisions and the previous
+resolution. Real shared-Store preflight passed without a write; proposal hash
+is `sha256:ffa3fc0379365fc865e22287191e25929d9c6904b154332c8a637c176f659c56`
+and EditAuthorityRequest revision count remains zero. WF-004 and ART-002 remain
+tested bounded mechanisms; EXEC-009/EXEC-010 remain blocked before
+RepairPlanner because no real Request/Approval continuation or root-cause
+diagnostic attempt has occurred.
 
 ## Knowledge And Retrieval Coverage
 

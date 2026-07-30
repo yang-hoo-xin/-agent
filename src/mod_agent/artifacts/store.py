@@ -895,7 +895,10 @@ class ArtifactStore:
             and payload.get("authority_source")
             == "edit_authority_approval"
             and payload.get("authority_contract_version")
-            != "edit_authority_request_approval_v1"
+            not in {
+                "edit_authority_request_approval_v1",
+                "edit_authority_existing_binding_reauthorization_v1",
+            }
         ):
             raise ArtifactStoreError(
                 "New approved binding_resolution writes must use the "
@@ -909,13 +912,29 @@ class ArtifactStore:
         if (
             artifact_type == "binding_resolution"
             and payload.get("authority_contract_version")
-            == "edit_authority_request_approval_v1"
+            in {
+                "edit_authority_request_approval_v1",
+                "edit_authority_existing_binding_reauthorization_v1",
+            }
         ):
             authority_types = {
                 "edit_authority_request",
                 "edit_authority_approval",
                 "evidence_pack",
             }
+            if (
+                payload.get("authority_contract_version")
+                == "edit_authority_existing_binding_reauthorization_v1"
+            ):
+                authority_types.update(
+                    {
+                        "feature_spec",
+                        "runtime_evidence",
+                        "implementation_plan",
+                        "patch_proposal",
+                        "binding_resolution",
+                    }
+                )
             missing_authority = sorted(authority_types - provided_types)
             not_exact_authority = sorted(
                 authority_types - exact_revision_upstream_types
@@ -953,6 +972,65 @@ class ArtifactStore:
                     raise ArtifactStoreError(
                         "Approved binding_resolution payload revision does "
                         f"not match exact {upstream_type} upstream."
+                    )
+            if (
+                payload.get("authority_contract_version")
+                == "edit_authority_existing_binding_reauthorization_v1"
+            ):
+                refs_by_type_list: dict[str, list[ArtifactRef]] = {}
+                for ref in upstream_refs:
+                    refs_by_type_list.setdefault(
+                        ref.artifact_type,
+                        [],
+                    ).append(ref)
+
+                def revision_matches_upstream(
+                    revision_field: str,
+                    upstream_type: str,
+                ) -> bool:
+                    revision = payload.get(revision_field)
+                    return isinstance(revision, Mapping) and any(
+                        revision.get("path") == ref.path
+                        and revision.get("artifact_hash")
+                        == ref.artifact_hash
+                        for ref in refs_by_type_list.get(
+                            upstream_type,
+                            [],
+                        )
+                    )
+
+                for revision_field, upstream_type in (
+                    ("runtime_evidence_revision", "runtime_evidence"),
+                    ("implementation_plan_revision", "implementation_plan"),
+                    ("patch_proposal_revision", "patch_proposal"),
+                    (
+                        "predecessor_implementation_plan_revision",
+                        "implementation_plan",
+                    ),
+                ):
+                    if not revision_matches_upstream(
+                        revision_field,
+                        upstream_type,
+                    ):
+                        raise ArtifactStoreError(
+                            "Reauthorized binding_resolution payload revision "
+                            f"does not match exact {revision_field} upstream."
+                        )
+                previous_revision = payload.get(
+                    "previous_binding_resolution_revision"
+                )
+                previous_ref = refs_by_type.get("binding_resolution")
+                if (
+                    not isinstance(previous_revision, Mapping)
+                    or previous_ref is None
+                    or previous_revision.get("path")
+                    != previous_ref.path
+                    or previous_revision.get("artifact_hash")
+                    != previous_ref.artifact_hash
+                ):
+                    raise ArtifactStoreError(
+                        "Reauthorized binding_resolution does not bind the "
+                        "exact previous BindingResolution."
                     )
         if (
             artifact_type == "edit_authority_approval"

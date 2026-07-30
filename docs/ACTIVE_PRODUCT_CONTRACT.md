@@ -611,19 +611,41 @@ BindingResolution. ArtifactStore now also exposes exact-revision freshness,
 which validates immutable subgraph integrity without treating later
 latest-pointer movement as byte or lineage corruption.
 
-The real shared-Store no-write preflight remains blocked before Request
-creation. Latest ImplementationPlan
-`d18dfd13858b4820781198c05155a2b659d171e7a257facd79d95f53fae4f619`
-is the historical authority projection, while latest PatchProposal
-`37368a6353e59bd76627b72b0ac76433f459090a41058492ad038cf2616dfa93`
-still exact-binds predecessor Plan
-`6996ea555b43dec436ad253b46519b3e25465b9585cc7e0de7c74911ac655555`.
-It therefore cannot be presented as bound to the current Plan. The preflight
-wrote nothing: EditAuthorityRequest revisions remain zero; ResumeReport,
-historical Approval, and BindingResolution remain one each. Current source
-SHA256 remains
-`65489604EEC41D073FF5BDA77940481AE63BE1917EDE199C99ED04C7B180BB3B`.
-No automatic lineage adoption or duplicate edit binding was created.
+The existing-binding reauthorization path now represents that historical
+lineage without rewriting it. Its no-write preflight binds predecessor
+ImplementationPlan
+`6996ea555b43dec436ad253b46519b3e25465b9585cc7e0de7c74911ac655555`,
+the directly bound PatchProposal
+`37368a6353e59bd76627b72b0ac76433f459090a41058492ad038cf2616dfa93`,
+current ImplementationPlan
+`d18dfd13858b4820781198c05155a2b659d171e7a257facd79d95f53fae4f619`,
+and existing BindingResolution
+`af9ad798e8842b5682c9a188cc605739c895a77d8e97605eba3422a324c61159`
+as separate exact roles. It preserves `edit_binding_004`, creates no new
+binding, adds no technical meaning, and leaves RepairPlanner and source writes
+forbidden. The real shared-Store preflight returned
+`READY_TO_CREATE_EXISTING_BINDING_REAUTHORIZATION_REQUEST` with proposal hash
+`sha256:ffa3fc0379365fc865e22287191e25929d9c6904b154332c8a637c176f659c56`.
+It wrote nothing, and EditAuthorityRequest revision count remains zero.
+
+ArtifactStore now requires the resulting BindingResolution to exact-bind the
+FeatureSpec, RuntimeEvidence, both ImplementationPlan roles, PatchProposal,
+previous BindingResolution, Request, Approval, and EvidencePack. Approval can
+still be produced only through the LangGraph interrupt/resume gate. The next
+side effect is creation of one no-authority Request in the shared Store and
+requires separate permission.
+
+Read-only correlation of the immutable retry #2 Runtime log further narrows,
+but does not resolve, the product root cause. The persistent log SHA256
+`D23A154A1614DFF5AF1FCBA29A2C58BE4A4931F578E71D1A7460B48900155C24`
+equals the RuntimeEvidence-bound full-run log identity. Later
+`missing_canvas_rect_for_stagger_x` events occur after successful
+`ShowHitIndicator` hook entries, so the failure is not explained solely by
+every stagger event preceding every HUD observation. The log still cannot
+distinguish a null `_lastHudParent`, a non-`RectTransform` runtime value, or a
+stale Unity object. Product repair therefore remains prohibited until a
+separately approved diagnostic source revision and controlled Runtime attempt
+produce that missing fact.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

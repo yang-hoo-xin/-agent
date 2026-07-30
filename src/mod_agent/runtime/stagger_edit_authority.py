@@ -36,6 +36,16 @@ _DEPENDENCY_BLOCK_TOKENS = (
     'reason = "missing_canvas_rect_for_stagger_x";',
     "return false;",
 )
+_EXISTING_STAGGER_REPAIR_BINDING_ID = "edit_binding_004"
+_EXISTING_BINDING_REAUTHORIZATION_SCHEMA = (
+    "stagger_existing_binding_reauthorization_v1"
+)
+_EXISTING_BINDING_REQUEST_SCHEMA = (
+    "stagger_existing_binding_reauthorization_request_v1"
+)
+_EXISTING_BINDING_AUTHORITY_CONTRACT = (
+    "edit_authority_existing_binding_reauthorization_v1"
+)
 
 
 class StaggerEditAuthorityPreflightError(ValueError):
@@ -157,83 +167,14 @@ def preflight_stagger_edit_authority(
         patch_proposal_envelope=envelopes["patch_proposal"],
     )
 
-    acceptance_criteria = tuple(
-        str(item)
-        for item in feature_spec.get("acceptance_criteria", ())
-        if isinstance(item, str) and item
-    )
-    runtime_acceptance = tuple(
-        str(item)
-        for item in (
-            runtime_evidence.get("acceptance_contract", {})
-            .get("acceptance_criteria", ())
-        )
-        if isinstance(item, str) and item
-    )
-    if not acceptance_criteria or runtime_acceptance != acceptance_criteria:
-        raise StaggerEditAuthorityPreflightError(
-            "RuntimeEvidence acceptance criteria do not exactly match FeatureSpec."
-        )
-
-    attempts = runtime_evidence.get("stagger_runtime_attempts")
-    if not isinstance(attempts, list):
-        raise StaggerEditAuthorityPreflightError(
-            "RuntimeEvidence has no Stagger attempt payloads."
-        )
-    attempts_by_mode = {
-        str(item.get("stagger_attempt_mode")): item
-        for item in attempts
-        if isinstance(item, dict)
-        and isinstance(item.get("stagger_attempt_mode"), str)
-    }
-    if any(mode not in attempts_by_mode for mode in _EXPECTED_MODES):
-        raise StaggerEditAuthorityPreflightError(
-            "RuntimeEvidence does not contain both exact Stagger modes."
-        )
-    semantic_status = runtime_evidence.get(
-        "operator_semantic_consistency", {}
-    )
-    if (
-        not isinstance(semantic_status, dict)
-        or semantic_status.get("status") != "consistent"
-    ):
-        raise StaggerEditAuthorityPreflightError(
-            "Operator observations are not semantically consistent."
-        )
-
-    acceptance_evaluation = evaluate_stagger_acceptance(
-        attempts_by_mode,
-        expected_modes=_EXPECTED_MODES,
-        acceptance_criteria=acceptance_criteria,
-    )
-    diagnosis = build_stagger_runtime_failure_diagnosis(
+    (
+        diagnosis,
+        stored_ownership,
+        replayed_ownership,
+    ) = _replay_stagger_visual_failure(
         feature_id=feature_id,
-        acceptance_evaluation=acceptance_evaluation,
-    )
-    if diagnosis is None:
-        raise StaggerEditAuthorityPreflightError(
-            "Current RuntimeEvidence does not deterministically diagnose the "
-            "Stagger visual failure."
-        )
-    stored_ownership = runtime_evidence.get("failure_ownership")
-    if (
-        not isinstance(stored_ownership, dict)
-        or stored_ownership.get("owner") != "observation"
-        or stored_ownership.get("source_repair_allowed") is not False
-    ):
-        raise StaggerEditAuthorityPreflightError(
-            "The selected RuntimeEvidence does not have the exact stored "
-            "observation-owned no-source-repair boundary."
-        )
-    replayed_ownership = build_runtime_failure_ownership(
-        owner="product_behavior",
-        failure_class="stagger_visual_output_failed",
-        reason=(
-            "Deterministic replay of the immutable current-run attempts binds "
-            "the exact yellow-X criterion to both the trusted "
-            "missing_canvas_rect_for_stagger_x marker and a consistent direct "
-            "operator failed observation."
-        ),
+        feature_spec=feature_spec,
+        runtime_evidence=runtime_evidence,
     )
 
     source_identity = _validate_source_identity(
@@ -506,6 +447,358 @@ def create_stagger_edit_authority_request(
     return {
         "status": "EDIT_AUTHORITY_REQUEST_CREATED",
         "command": "request-stagger-edit-authority",
+        "request_hash": request_hash,
+        "edit_authority_request_revision": _revision(request_ref),
+        "authority_granted": False,
+        "registry_mutation_allowed": False,
+        "repair_planner_invoked": False,
+        "repair_allowed": False,
+        "source_patch_allowed": False,
+        "source_modified": False,
+        "build_performed": False,
+        "process_launched": False,
+        "writes_performed": True,
+        "written_artifact_types": ["edit_authority_request"],
+    }
+
+
+def preflight_stagger_existing_binding_reauthorization(
+    *,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    run_id: str,
+    feature_spec_path: str | Path,
+    feature_spec_hash: str,
+    runtime_evidence_path: str | Path,
+    runtime_evidence_hash: str,
+    predecessor_implementation_plan_path: str | Path,
+    predecessor_implementation_plan_hash: str,
+    patch_proposal_path: str | Path,
+    patch_proposal_hash: str,
+    current_implementation_plan_path: str | Path,
+    current_implementation_plan_hash: str,
+    existing_binding_resolution_path: str | Path,
+    existing_binding_resolution_hash: str,
+    source_root: str | Path,
+    canonical_target_path: str,
+    target_symbol: str,
+    target_start_line: int,
+    target_end_line: int,
+) -> dict[str, Any]:
+    """Read-validate the one existing Stagger repair binding without writes."""
+
+    if not feature_id or not run_id:
+        raise StaggerEditAuthorityPreflightError(
+            "feature_id and run_id must be non-empty."
+        )
+    if target_symbol != _STAGGER_RUNTIME_SYMBOL:
+        raise StaggerEditAuthorityPreflightError(
+            "The requested symbol is not the diagnosed Stagger responsibility."
+        )
+    if (
+        not isinstance(target_start_line, int)
+        or not isinstance(target_end_line, int)
+        or target_start_line <= 0
+        or target_end_line < target_start_line
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The proposed target span is invalid."
+        )
+
+    store = ArtifactStore(artifact_store_root)
+    refs = _existing_binding_reauthorization_refs(
+        feature_id=feature_id,
+        feature_spec_path=feature_spec_path,
+        feature_spec_hash=feature_spec_hash,
+        runtime_evidence_path=runtime_evidence_path,
+        runtime_evidence_hash=runtime_evidence_hash,
+        predecessor_implementation_plan_path=(
+            predecessor_implementation_plan_path
+        ),
+        predecessor_implementation_plan_hash=(
+            predecessor_implementation_plan_hash
+        ),
+        patch_proposal_path=patch_proposal_path,
+        patch_proposal_hash=patch_proposal_hash,
+        current_implementation_plan_path=current_implementation_plan_path,
+        current_implementation_plan_hash=current_implementation_plan_hash,
+        existing_binding_resolution_path=existing_binding_resolution_path,
+        existing_binding_resolution_hash=existing_binding_resolution_hash,
+    )
+    envelopes = {
+        role: store.read(ref)
+        for role, ref in refs.items()
+    }
+    current_refs = (
+        refs["feature_spec"],
+        refs["runtime_evidence"],
+        refs["patch_proposal"],
+        refs["current_implementation_plan"],
+        refs["existing_binding_resolution"],
+    )
+    _require_latest_artifact_refs(store, current_refs)
+    _require_registered_exact_revision(
+        store,
+        refs["predecessor_implementation_plan"],
+    )
+    stale = {
+        role: list(view.stale_reasons)
+        for role, view in (
+            (
+                role,
+                store.check_exact_revision_freshness(ref),
+            )
+            for role, ref in refs.items()
+        )
+        if not view.is_fresh
+    }
+    if stale:
+        raise StaggerEditAuthorityPreflightError(
+            f"Selected Artifact revisions are stale: {stale}"
+        )
+
+    feature_spec = _artifact_data(envelopes["feature_spec"])
+    runtime_evidence = _artifact_data(envelopes["runtime_evidence"])
+    predecessor_plan = _artifact_data(
+        envelopes["predecessor_implementation_plan"]
+    )
+    patch_proposal = _artifact_data(envelopes["patch_proposal"])
+    current_plan = _artifact_data(
+        envelopes["current_implementation_plan"]
+    )
+    existing_resolution = _artifact_data(
+        envelopes["existing_binding_resolution"]
+    )
+    _validate_existing_binding_reauthorization_lineage(
+        feature_id=feature_id,
+        run_id=run_id,
+        refs=refs,
+        envelopes=envelopes,
+        runtime_evidence=runtime_evidence,
+        predecessor_plan=predecessor_plan,
+        patch_proposal=patch_proposal,
+        current_plan=current_plan,
+        existing_resolution=existing_resolution,
+    )
+    (
+        diagnosis,
+        stored_ownership,
+        replayed_ownership,
+    ) = _replay_stagger_visual_failure(
+        feature_id=feature_id,
+        feature_spec=feature_spec,
+        runtime_evidence=runtime_evidence,
+    )
+    source_identity = _validate_source_identity(
+        source_root=source_root,
+        canonical_target_path=canonical_target_path,
+        target_symbol=target_symbol,
+        target_start_line=target_start_line,
+        target_end_line=target_end_line,
+    )
+    binding, change = _require_existing_repair_binding(
+        current_plan=current_plan,
+        source_identity=source_identity,
+        target_symbol=target_symbol,
+    )
+    bound_diagnosis = copy.deepcopy(diagnosis)
+    anchors = bound_diagnosis["responsibility_anchors"]
+    anchors["canonical_target_path"] = canonical_target_path
+    anchors["source_hash"] = source_identity["sha256"]
+    anchors["source_span"] = copy.deepcopy(
+        source_identity["target_span"]
+    )
+    replayed_resolution = resolve_runtime_diagnosis_binding(
+        diagnosis=bound_diagnosis,
+        feature_id=feature_id,
+        run_id=run_id,
+        runtime_evidence_revision=_revision(refs["runtime_evidence"]),
+        implementation_plan_revision=_revision(
+            refs["current_implementation_plan"]
+        ),
+        patch_proposal_revision=_revision(refs["patch_proposal"]),
+        implementation_plan=current_plan,
+        allowed_edit_binding_ids={
+            _EXISTING_STAGGER_REPAIR_BINDING_ID
+        },
+    ).to_artifact_payload()
+    existing_target = existing_resolution.get("resolved_repair_target")
+    replayed_target = replayed_resolution.get("resolved_repair_target")
+    if (
+        replayed_resolution.get("result_type")
+        != "resolved_repair_target"
+        or not isinstance(replayed_target, dict)
+        or replayed_target.get("binding_id")
+        != _EXISTING_STAGGER_REPAIR_BINDING_ID
+        or replayed_resolution.get("blockers")
+        or replayed_target != existing_target
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "Current facts do not reproduce the exact existing "
+            "ResolvedRepairTarget."
+        )
+
+    proposal = {
+        "schema_version": _EXISTING_BINDING_REAUTHORIZATION_SCHEMA,
+        "feature_id": feature_id,
+        "run_id": run_id,
+        "feature_spec_revision": _revision(refs["feature_spec"]),
+        "runtime_evidence_revision": _revision(
+            refs["runtime_evidence"]
+        ),
+        "predecessor_implementation_plan_revision": _revision(
+            refs["predecessor_implementation_plan"]
+        ),
+        "patch_proposal_revision": _revision(refs["patch_proposal"]),
+        "current_implementation_plan_revision": _revision(
+            refs["current_implementation_plan"]
+        ),
+        "existing_binding_resolution_revision": _revision(
+            refs["existing_binding_resolution"]
+        ),
+        "binding_id": _EXISTING_STAGGER_REPAIR_BINDING_ID,
+        "preserved_edit_binding": copy.deepcopy(binding),
+        "preserved_change": copy.deepcopy(change),
+        "preserved_resolved_repair_target": copy.deepcopy(
+            existing_target
+        ),
+        "current_source": source_identity,
+        "ownership_review": {
+            "stored_runtime_failure_ownership": copy.deepcopy(
+                stored_ownership
+            ),
+            "replayed_runtime_failure_ownership": copy.deepcopy(
+                replayed_ownership
+            ),
+            "runtime_evidence_mutation_allowed": False,
+        },
+        "root_cause_status": diagnosis.get("root_cause_status"),
+        "unresolved_root_causes": list(
+            diagnosis.get("unresolved_root_causes", ())
+        ),
+        "projection_boundary": {
+            "new_edit_binding_allowed": False,
+            "evidence_pack_revision_allowed": False,
+            "implementation_plan_revision_allowed": False,
+            "binding_resolution_revision_allowed": True,
+            "technical_semantics_change_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+    }
+    proposal_hash = "sha256:" + hashlib.sha256(
+        _canonical_json(proposal)
+    ).hexdigest()
+    return {
+        "status": "READY_TO_CREATE_EXISTING_BINDING_REAUTHORIZATION_REQUEST",
+        "command": (
+            "preflight-stagger-existing-binding-reauthorization"
+        ),
+        "proposal": proposal,
+        "proposal_hash": proposal_hash,
+        "request_creation_required": True,
+        "approval_required": True,
+        "registry_mutation_allowed": False,
+        "repair_allowed": False,
+        "writes_performed": False,
+        "artifact_writes_performed": False,
+        "repair_planner_invoked": False,
+        "source_modified": False,
+        "build_performed": False,
+        "process_launched": False,
+    }
+
+
+def create_stagger_existing_binding_reauthorization_request(
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Persist one no-authority request for the existing Stagger binding."""
+
+    preflight = preflight_stagger_existing_binding_reauthorization(
+        **kwargs
+    )
+    feature_id = str(kwargs["feature_id"])
+    run_id = str(kwargs["run_id"])
+    store = ArtifactStore(kwargs["artifact_store_root"])
+    refs = _existing_binding_reauthorization_refs(
+        feature_id=feature_id,
+        feature_spec_path=kwargs["feature_spec_path"],
+        feature_spec_hash=kwargs["feature_spec_hash"],
+        runtime_evidence_path=kwargs["runtime_evidence_path"],
+        runtime_evidence_hash=kwargs["runtime_evidence_hash"],
+        predecessor_implementation_plan_path=kwargs[
+            "predecessor_implementation_plan_path"
+        ],
+        predecessor_implementation_plan_hash=kwargs[
+            "predecessor_implementation_plan_hash"
+        ],
+        patch_proposal_path=kwargs["patch_proposal_path"],
+        patch_proposal_hash=kwargs["patch_proposal_hash"],
+        current_implementation_plan_path=kwargs[
+            "current_implementation_plan_path"
+        ],
+        current_implementation_plan_hash=kwargs[
+            "current_implementation_plan_hash"
+        ],
+        existing_binding_resolution_path=kwargs[
+            "existing_binding_resolution_path"
+        ],
+        existing_binding_resolution_hash=kwargs[
+            "existing_binding_resolution_hash"
+        ],
+    )
+    request_payload = {
+        "schema_version": _EXISTING_BINDING_REQUEST_SCHEMA,
+        "proposal": copy.deepcopy(preflight["proposal"]),
+        "source_root": str(Path(kwargs["source_root"]).resolve()),
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        _canonical_json(request_payload)
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": (
+                "request_stagger_existing_binding_reauthorization"
+            ),
+            "stage": "edit_authority_request",
+            "message": (
+                "Exact existing-binding reauthorization request awaits "
+                "LangGraph human review."
+            ),
+            "status": "pending_human_approval",
+            "feature_id": feature_id,
+            "run_id": run_id,
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+        status="success",
+        upstream_refs=[
+            refs["feature_spec"],
+            refs["runtime_evidence"],
+            refs["predecessor_implementation_plan"],
+            refs["patch_proposal"],
+            refs["current_implementation_plan"],
+            refs["existing_binding_resolution"],
+        ],
+        exact_revision_upstream_types={
+            "feature_spec",
+            "runtime_evidence",
+            "implementation_plan",
+            "patch_proposal",
+            "binding_resolution",
+        },
+    )
+    return {
+        "status": "EXISTING_BINDING_REAUTHORIZATION_REQUEST_CREATED",
+        "command": (
+            "request-stagger-existing-binding-reauthorization"
+        ),
         "request_hash": request_hash,
         "edit_authority_request_revision": _revision(request_ref),
         "authority_granted": False,
@@ -852,6 +1145,12 @@ def materialize_stagger_edit_authority_approval(
         raise StaggerEditAuthorityApprovalError(
             "EditAuthorityRequest feature identity is invalid."
         )
+    request_payload = request.get("request_payload")
+    request_schema = (
+        request_payload.get("schema_version")
+        if isinstance(request_payload, dict)
+        else None
+    )
     request_freshness = store.check_freshness(request_ref)
     if not request_freshness.is_fresh:
         raise StaggerEditAuthorityApprovalError(
@@ -862,10 +1161,13 @@ def materialize_stagger_edit_authority_approval(
         request_envelope,
         feature_id=feature_id,
     )
-    _require_latest_artifact_refs(
-        store,
-        (request_ref, *request_upstream_refs),
-    )
+    if request_schema == _EXISTING_BINDING_REQUEST_SCHEMA:
+        _require_latest_artifact_refs(store, (request_ref,))
+    else:
+        _require_latest_artifact_refs(
+            store,
+            (request_ref, *request_upstream_refs),
+        )
     report_ref = _artifact_ref(
         feature_id=feature_id,
         artifact_type="resume_report",
@@ -926,7 +1228,6 @@ def materialize_stagger_edit_authority_approval(
         raise StaggerEditAuthorityApprovalError(
             "ResumeReport does not bind the exact EditAuthorityRequest."
         )
-    request_payload = request.get("request_payload")
     proposal = (
         request_payload.get("proposal")
         if isinstance(request_payload, dict)
@@ -940,6 +1241,28 @@ def materialize_stagger_edit_authority_approval(
     if not isinstance(proposal, dict) or not isinstance(source_root, str):
         raise StaggerEditAuthorityApprovalError(
             "EditAuthorityRequest technical payload is invalid."
+        )
+    if (
+        request_payload.get("schema_version")
+        == _EXISTING_BINDING_REQUEST_SCHEMA
+    ):
+        return _apply_approved_existing_binding_reauthorization(
+            approval_hash=str(request["request_hash"]),
+            approved_by=str(report["approved_by"]),
+            approved_at=str(report["approved_at"]),
+            resume_id=str(report["resume_id"]),
+            request_ref=request_ref,
+            resume_report_ref=report_ref,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            run_id=str(request["run_id"]),
+            request_payload=request_payload,
+        )
+    if request_payload.get("schema_version") != (
+        "stagger_edit_authority_request_v1"
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "EditAuthorityRequest schema is not supported."
         )
     return _apply_approved_stagger_edit_authority(
         approval_hash=str(request["request_hash"]),
@@ -976,6 +1299,267 @@ def materialize_stagger_edit_authority_approval(
         target_end_line=proposal["proposed_exact_span"]["end_line"],
         proposed_operation=proposal["proposed_operation"],
     )
+
+
+def _apply_approved_existing_binding_reauthorization(
+    *,
+    approval_hash: str,
+    approved_by: str,
+    approved_at: str,
+    resume_id: str,
+    request_ref: ArtifactRef,
+    resume_report_ref: ArtifactRef,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    run_id: str,
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Reauthorize one existing binding without changing its technical scope."""
+
+    proposal = request_payload.get("proposal")
+    source_root = request_payload.get("source_root")
+    if not isinstance(proposal, dict) or not isinstance(source_root, str):
+        raise StaggerEditAuthorityApprovalError(
+            "Existing-binding reauthorization payload is invalid."
+        )
+    preflight = preflight_stagger_existing_binding_reauthorization(
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        run_id=run_id,
+        feature_spec_path=proposal["feature_spec_revision"]["path"],
+        feature_spec_hash=proposal[
+            "feature_spec_revision"
+        ]["artifact_hash"],
+        runtime_evidence_path=proposal[
+            "runtime_evidence_revision"
+        ]["path"],
+        runtime_evidence_hash=proposal[
+            "runtime_evidence_revision"
+        ]["artifact_hash"],
+        predecessor_implementation_plan_path=proposal[
+            "predecessor_implementation_plan_revision"
+        ]["path"],
+        predecessor_implementation_plan_hash=proposal[
+            "predecessor_implementation_plan_revision"
+        ]["artifact_hash"],
+        patch_proposal_path=proposal["patch_proposal_revision"]["path"],
+        patch_proposal_hash=proposal[
+            "patch_proposal_revision"
+        ]["artifact_hash"],
+        current_implementation_plan_path=proposal[
+            "current_implementation_plan_revision"
+        ]["path"],
+        current_implementation_plan_hash=proposal[
+            "current_implementation_plan_revision"
+        ]["artifact_hash"],
+        existing_binding_resolution_path=proposal[
+            "existing_binding_resolution_revision"
+        ]["path"],
+        existing_binding_resolution_hash=proposal[
+            "existing_binding_resolution_revision"
+        ]["artifact_hash"],
+        source_root=source_root,
+        canonical_target_path=proposal["current_source"][
+            "canonical_target_path"
+        ],
+        target_symbol=proposal[
+            "preserved_edit_binding"
+        ]["target_symbol"],
+        target_start_line=proposal["current_source"][
+            "target_span"
+        ]["start_line"],
+        target_end_line=proposal["current_source"][
+            "target_span"
+        ]["end_line"],
+    )
+    actor = approved_by.strip()
+    approval_time = approved_at.strip()
+    if not actor or not approval_time or not resume_id:
+        raise StaggerEditAuthorityApprovalError(
+            "Graph approval identity must be complete."
+        )
+    store = ArtifactStore(artifact_store_root)
+    request = _artifact_data(store.read(request_ref))
+    if (
+        request.get("request_hash") != approval_hash
+        or preflight["proposal"] != proposal
+        or "sha256:"
+        + hashlib.sha256(_canonical_json(request_payload)).hexdigest()
+        != approval_hash
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "The graph-approved Request does not match the fresh "
+            "existing-binding reauthorization."
+        )
+    refs = _existing_binding_reauthorization_refs(
+        feature_id=feature_id,
+        feature_spec_path=proposal["feature_spec_revision"]["path"],
+        feature_spec_hash=proposal[
+            "feature_spec_revision"
+        ]["artifact_hash"],
+        runtime_evidence_path=proposal[
+            "runtime_evidence_revision"
+        ]["path"],
+        runtime_evidence_hash=proposal[
+            "runtime_evidence_revision"
+        ]["artifact_hash"],
+        predecessor_implementation_plan_path=proposal[
+            "predecessor_implementation_plan_revision"
+        ]["path"],
+        predecessor_implementation_plan_hash=proposal[
+            "predecessor_implementation_plan_revision"
+        ]["artifact_hash"],
+        patch_proposal_path=proposal["patch_proposal_revision"]["path"],
+        patch_proposal_hash=proposal[
+            "patch_proposal_revision"
+        ]["artifact_hash"],
+        current_implementation_plan_path=proposal[
+            "current_implementation_plan_revision"
+        ]["path"],
+        current_implementation_plan_hash=proposal[
+            "current_implementation_plan_revision"
+        ]["artifact_hash"],
+        existing_binding_resolution_path=proposal[
+            "existing_binding_resolution_revision"
+        ]["path"],
+        existing_binding_resolution_hash=proposal[
+            "existing_binding_resolution_revision"
+        ]["artifact_hash"],
+    )
+    existing_resolution = _artifact_data(
+        store.read(refs["existing_binding_resolution"])
+    )
+    evidence_revision = existing_resolution.get(
+        "evidence_pack_revision"
+    )
+    if not isinstance(evidence_revision, dict):
+        raise StaggerEditAuthorityApprovalError(
+            "Existing BindingResolution has no exact EvidencePack revision."
+        )
+    evidence_ref = _artifact_ref(
+        feature_id=feature_id,
+        artifact_type="evidence_pack",
+        path=evidence_revision["path"],
+        artifact_hash=evidence_revision["artifact_hash"],
+    )
+    evidence_freshness = store.check_exact_revision_freshness(
+        evidence_ref
+    )
+    if not evidence_freshness.is_fresh:
+        raise StaggerEditAuthorityApprovalError(
+            "Existing EvidencePack revision is stale: "
+            f"{list(evidence_freshness.stale_reasons)}"
+        )
+    approval_payload = _build_approval_payload(
+        feature_id=feature_id,
+        run_id=run_id,
+        approved_by=actor,
+        approved_at=approval_time,
+        resume_id=resume_id,
+        approval_hash=approval_hash,
+        request_ref=request_ref,
+        resume_report_ref=resume_report_ref,
+        authority_contract_version=(
+            _EXISTING_BINDING_AUTHORITY_CONTRACT
+        ),
+    )
+    store.preflight_atomic_commit(
+        feature_id=feature_id,
+        artifact_types=(
+            "edit_authority_approval",
+            "binding_resolution",
+        ),
+    )
+    approval_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="edit_authority_approval",
+        payload=approval_payload,
+        status="success",
+        upstream_refs=[request_ref, resume_report_ref],
+        exact_revision_upstream_types={
+            "edit_authority_request",
+            "resume_report",
+        },
+    )
+    resolution = copy.deepcopy(existing_resolution)
+    resolution["authority_source"] = "edit_authority_approval"
+    resolution["authority_contract_version"] = (
+        _EXISTING_BINDING_AUTHORITY_CONTRACT
+    )
+    resolution["edit_authority_request_revision"] = _revision(
+        request_ref
+    )
+    resolution["edit_authority_approval_revision"] = _revision(
+        approval_ref
+    )
+    resolution["previous_binding_resolution_revision"] = _revision(
+        refs["existing_binding_resolution"]
+    )
+    resolution["predecessor_implementation_plan_revision"] = _revision(
+        refs["predecessor_implementation_plan"]
+    )
+    resolution["repair_planner_allowed"] = False
+    resolution["source_patch_allowed"] = False
+    resolution_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="binding_resolution",
+        payload=resolution,
+        status="success",
+        upstream_refs=[
+            refs["feature_spec"],
+            refs["runtime_evidence"],
+            refs["predecessor_implementation_plan"],
+            refs["patch_proposal"],
+            refs["current_implementation_plan"],
+            refs["existing_binding_resolution"],
+            request_ref,
+            approval_ref,
+            evidence_ref,
+        ],
+        exact_revision_upstream_types={
+            "feature_spec",
+            "runtime_evidence",
+            "implementation_plan",
+            "patch_proposal",
+            "binding_resolution",
+            "edit_authority_request",
+            "edit_authority_approval",
+            "evidence_pack",
+        },
+    )
+    return {
+        "status": "EXISTING_EDIT_AUTHORITY_REAUTHORIZED",
+        "command": "langgraph-edit-authority-approval",
+        "approval_hash": approval_hash,
+        "approved_by": actor,
+        "edit_authority_approval_revision": _revision(approval_ref),
+        "evidence_pack_revision": _revision(evidence_ref),
+        "implementation_plan_revision": _revision(
+            refs["current_implementation_plan"]
+        ),
+        "binding_resolution_revision": _revision(resolution_ref),
+        "allowed_edit_binding_ids": [
+            _EXISTING_STAGGER_REPAIR_BINDING_ID
+        ],
+        "resolved_repair_target": copy.deepcopy(
+            resolution["resolved_repair_target"]
+        ),
+        "writes_performed": True,
+        "artifact_writes_performed": True,
+        "written_artifact_types": [
+            "edit_authority_approval",
+            "binding_resolution",
+        ],
+        "evidence_pack_modified": False,
+        "implementation_plan_modified": False,
+        "new_edit_binding_created": False,
+        "repair_planner_invoked": False,
+        "repair_allowed": False,
+        "source_patch_allowed": False,
+        "source_modified": False,
+        "build_performed": False,
+        "process_launched": False,
+    }
 
 
 def _authority_refs(
@@ -1016,6 +1600,278 @@ def _authority_refs(
             artifact_hash=patch_proposal_hash,
         ),
     }
+
+
+def _existing_binding_reauthorization_refs(
+    *,
+    feature_id: str,
+    feature_spec_path: str | Path,
+    feature_spec_hash: str,
+    runtime_evidence_path: str | Path,
+    runtime_evidence_hash: str,
+    predecessor_implementation_plan_path: str | Path,
+    predecessor_implementation_plan_hash: str,
+    patch_proposal_path: str | Path,
+    patch_proposal_hash: str,
+    current_implementation_plan_path: str | Path,
+    current_implementation_plan_hash: str,
+    existing_binding_resolution_path: str | Path,
+    existing_binding_resolution_hash: str,
+) -> dict[str, ArtifactRef]:
+    return {
+        "feature_spec": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="feature_spec",
+            path=feature_spec_path,
+            artifact_hash=feature_spec_hash,
+        ),
+        "runtime_evidence": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="runtime_evidence",
+            path=runtime_evidence_path,
+            artifact_hash=runtime_evidence_hash,
+        ),
+        "predecessor_implementation_plan": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="implementation_plan",
+            path=predecessor_implementation_plan_path,
+            artifact_hash=predecessor_implementation_plan_hash,
+        ),
+        "patch_proposal": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="patch_proposal",
+            path=patch_proposal_path,
+            artifact_hash=patch_proposal_hash,
+        ),
+        "current_implementation_plan": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="implementation_plan",
+            path=current_implementation_plan_path,
+            artifact_hash=current_implementation_plan_hash,
+        ),
+        "existing_binding_resolution": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="binding_resolution",
+            path=existing_binding_resolution_path,
+            artifact_hash=existing_binding_resolution_hash,
+        ),
+    }
+
+
+def _require_registered_exact_revision(
+    store: ArtifactStore,
+    ref: ArtifactRef,
+) -> None:
+    matches = {
+        (
+            str(Path(revision.path).resolve()),
+            revision.artifact_hash,
+        )
+        for revision in store.list_feature_artifact_revisions(
+            ref.feature_id,
+            ref.artifact_type,
+        )
+    }
+    if (
+        str(Path(ref.path).resolve()),
+        ref.artifact_hash,
+    ) not in matches:
+        raise StaggerEditAuthorityPreflightError(
+            f"{ref.artifact_type} is not an exact registered revision."
+        )
+
+
+def _validate_existing_binding_reauthorization_lineage(
+    *,
+    feature_id: str,
+    run_id: str,
+    refs: dict[str, ArtifactRef],
+    envelopes: dict[str, dict[str, Any]],
+    runtime_evidence: dict[str, Any],
+    predecessor_plan: dict[str, Any],
+    patch_proposal: dict[str, Any],
+    current_plan: dict[str, Any],
+    existing_resolution: dict[str, Any],
+) -> None:
+    feature_spec_hash = refs["feature_spec"].artifact_hash
+    predecessor_hash = refs[
+        "predecessor_implementation_plan"
+    ].artifact_hash
+    current_plan_hash = refs[
+        "current_implementation_plan"
+    ].artifact_hash
+    patch_proposal_hash = refs["patch_proposal"].artifact_hash
+    runtime_evidence_hash = refs["runtime_evidence"].artifact_hash
+    if (
+        runtime_evidence.get("feature_id") != feature_id
+        or runtime_evidence.get("run_id") != run_id
+        or not _has_upstream_revision(
+            envelopes["runtime_evidence"],
+            artifact_type="feature_spec",
+            artifact_hash=feature_spec_hash,
+        )
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "RuntimeEvidence identity or FeatureSpec lineage is invalid."
+        )
+    if (
+        predecessor_plan.get("feature_id") != feature_id
+        or not _has_upstream_revision(
+            envelopes["predecessor_implementation_plan"],
+            artifact_type="feature_spec",
+            artifact_hash=feature_spec_hash,
+        )
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The predecessor ImplementationPlan lineage is invalid."
+        )
+    context_pack = patch_proposal.get("context_pack")
+    registry_ref = (
+        context_pack.get("binding_registry_ref")
+        if isinstance(context_pack, dict)
+        else None
+    )
+    if (
+        patch_proposal.get("feature_id") != feature_id
+        or not isinstance(registry_ref, dict)
+        or registry_ref.get("artifact_type") != "implementation_plan"
+        or registry_ref.get("artifact_hash") != predecessor_hash
+        or not _has_upstream_revision(
+            envelopes["patch_proposal"],
+            artifact_type="implementation_plan",
+            artifact_hash=predecessor_hash,
+        )
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "PatchProposal does not exactly bind the predecessor "
+            "ImplementationPlan."
+        )
+    if (
+        current_plan.get("feature_id") != feature_id
+        or not _has_upstream_revision(
+            envelopes["current_implementation_plan"],
+            artifact_type="feature_spec",
+            artifact_hash=feature_spec_hash,
+        )
+        or not _has_upstream_revision(
+            envelopes["current_implementation_plan"],
+            artifact_type="implementation_plan",
+            artifact_hash=predecessor_hash,
+        )
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The current ImplementationPlan does not exactly extend the "
+            "predecessor Plan."
+        )
+    if (
+        existing_resolution.get("feature_id") != feature_id
+        or existing_resolution.get("run_id") != run_id
+        or existing_resolution.get("result_type")
+        != "resolved_repair_target"
+        or existing_resolution.get("authority_source")
+        != "edit_authority_approval"
+        or existing_resolution.get("repair_planner_allowed") is not False
+        or existing_resolution.get("source_patch_allowed") is not False
+        or existing_resolution.get(
+            "implementation_plan_revision", {}
+        ).get("artifact_hash")
+        != current_plan_hash
+        or existing_resolution.get(
+            "patch_proposal_revision", {}
+        ).get("artifact_hash")
+        != patch_proposal_hash
+        or not _has_upstream_revision(
+            envelopes["existing_binding_resolution"],
+            artifact_type="runtime_evidence",
+            artifact_hash=runtime_evidence_hash,
+        )
+        or not _has_upstream_revision(
+            envelopes["existing_binding_resolution"],
+            artifact_type="implementation_plan",
+            artifact_hash=current_plan_hash,
+        )
+        or not _has_upstream_revision(
+            envelopes["existing_binding_resolution"],
+            artifact_type="patch_proposal",
+            artifact_hash=patch_proposal_hash,
+        )
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The existing BindingResolution lineage or stop boundary is "
+            "invalid."
+        )
+
+
+def _require_existing_repair_binding(
+    *,
+    current_plan: dict[str, Any],
+    source_identity: dict[str, Any],
+    target_symbol: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    bindings = current_plan.get("binding_registry", {}).get(
+        "edit_bindings"
+    )
+    changes = current_plan.get("proposed_changes")
+    if not isinstance(bindings, list) or not isinstance(changes, list):
+        raise StaggerEditAuthorityPreflightError(
+            "The current ImplementationPlan Registry is invalid."
+        )
+    matching_bindings = [
+        item
+        for item in bindings
+        if isinstance(item, dict)
+        and item.get("binding_id")
+        == _EXISTING_STAGGER_REPAIR_BINDING_ID
+    ]
+    matching_changes = [
+        item
+        for item in changes
+        if isinstance(item, dict)
+        and item.get("edit_binding_id")
+        == _EXISTING_STAGGER_REPAIR_BINDING_ID
+    ]
+    if len(matching_bindings) != 1 or len(matching_changes) != 1:
+        raise StaggerEditAuthorityPreflightError(
+            "The current Plan does not contain exactly one existing Stagger "
+            "repair binding and change."
+        )
+    binding = matching_bindings[0]
+    change = matching_changes[0]
+    if (
+        binding.get("target_symbol") != target_symbol
+        or binding.get("canonical_target_path")
+        != source_identity["canonical_target_path"]
+        or binding.get("source_hash") != source_identity["sha256"]
+        or binding.get("target_span") != source_identity["target_span"]
+        or change.get("change_id") != "chg_004"
+        or change.get("operation")
+        != "replace_hud_recttransform_acquisition_and_null_guard_only"
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The existing Stagger repair binding or change no longer matches "
+            "the exact current source responsibility."
+        )
+    return copy.deepcopy(binding), copy.deepcopy(change)
+
+
+def _has_upstream_revision(
+    envelope: dict[str, Any],
+    *,
+    artifact_type: str,
+    artifact_hash: str,
+) -> bool:
+    inputs = envelope.get("inputs")
+    upstreams = (
+        inputs.get("upstream_artifacts")
+        if isinstance(inputs, dict)
+        else ()
+    )
+    return any(
+        isinstance(item, dict)
+        and item.get("artifact_type") == artifact_type
+        and item.get("artifact_hash") == artifact_hash
+        for item in upstreams
+    )
 
 
 def _single_upstream_ref(
@@ -1178,7 +2034,41 @@ def _build_approval_payload(
     approval_hash: str,
     request_ref: ArtifactRef,
     resume_report_ref: ArtifactRef,
+    authority_contract_version: str = (
+        "edit_authority_request_approval_v1"
+    ),
 ) -> dict[str, Any]:
+    if (
+        authority_contract_version
+        == _EXISTING_BINDING_AUTHORITY_CONTRACT
+    ):
+        allowed_actions = [
+            "reauthorize_existing_edit_binding",
+            "create_binding_resolution_revision",
+        ]
+        forbidden_actions = [
+            "create_evidence_pack_revision",
+            "create_implementation_plan_revision",
+            "create_edit_binding",
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ]
+    else:
+        allowed_actions = [
+            "create_evidence_pack_revision",
+            "create_implementation_plan_revision",
+            "resolve_exact_edit_binding",
+        ]
+        forbidden_actions = [
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ]
     return {
         "node_name": "approve_stagger_edit_authority",
         "stage": "edit_authority_approval",
@@ -1190,6 +2080,7 @@ def _build_approval_payload(
         "feature_id": feature_id,
         "run_id": run_id,
         "authority_source": "edit_authority_request",
+        "authority_contract_version": authority_contract_version,
         "approval_hash": approval_hash,
         "request_hash": approval_hash,
         "approved_by": approved_by,
@@ -1198,18 +2089,8 @@ def _build_approval_payload(
         "decision": "approve",
         "edit_authority_request_revision": _revision(request_ref),
         "resume_report_revision": _revision(resume_report_ref),
-        "allowed_actions": [
-            "create_evidence_pack_revision",
-            "create_implementation_plan_revision",
-            "resolve_exact_edit_binding",
-        ],
-        "forbidden_actions": [
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ],
+        "allowed_actions": allowed_actions,
+        "forbidden_actions": forbidden_actions,
         "repair_planner_allowed": False,
         "source_patch_allowed": False,
     }
@@ -1429,6 +2310,96 @@ def _build_implementation_plan_revision(
         if question not in open_questions:
             open_questions.append(question)
     return payload
+
+
+def _replay_stagger_visual_failure(
+    *,
+    feature_id: str,
+    feature_spec: dict[str, Any],
+    runtime_evidence: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    acceptance_criteria = tuple(
+        str(item)
+        for item in feature_spec.get("acceptance_criteria", ())
+        if isinstance(item, str) and item
+    )
+    runtime_acceptance = tuple(
+        str(item)
+        for item in (
+            runtime_evidence.get("acceptance_contract", {})
+            .get("acceptance_criteria", ())
+        )
+        if isinstance(item, str) and item
+    )
+    if not acceptance_criteria or runtime_acceptance != acceptance_criteria:
+        raise StaggerEditAuthorityPreflightError(
+            "RuntimeEvidence acceptance criteria do not exactly match "
+            "FeatureSpec."
+        )
+    attempts = runtime_evidence.get("stagger_runtime_attempts")
+    if not isinstance(attempts, list):
+        raise StaggerEditAuthorityPreflightError(
+            "RuntimeEvidence has no Stagger attempt payloads."
+        )
+    attempts_by_mode = {
+        str(item.get("stagger_attempt_mode")): item
+        for item in attempts
+        if isinstance(item, dict)
+        and isinstance(item.get("stagger_attempt_mode"), str)
+    }
+    if any(mode not in attempts_by_mode for mode in _EXPECTED_MODES):
+        raise StaggerEditAuthorityPreflightError(
+            "RuntimeEvidence does not contain both exact Stagger modes."
+        )
+    semantic_status = runtime_evidence.get(
+        "operator_semantic_consistency", {}
+    )
+    if (
+        not isinstance(semantic_status, dict)
+        or semantic_status.get("status") != "consistent"
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "Operator observations are not semantically consistent."
+        )
+    acceptance_evaluation = evaluate_stagger_acceptance(
+        attempts_by_mode,
+        expected_modes=_EXPECTED_MODES,
+        acceptance_criteria=acceptance_criteria,
+    )
+    diagnosis = build_stagger_runtime_failure_diagnosis(
+        feature_id=feature_id,
+        acceptance_evaluation=acceptance_evaluation,
+    )
+    if diagnosis is None:
+        raise StaggerEditAuthorityPreflightError(
+            "Current RuntimeEvidence does not deterministically diagnose the "
+            "Stagger visual failure."
+        )
+    stored_ownership = runtime_evidence.get("failure_ownership")
+    if (
+        not isinstance(stored_ownership, dict)
+        or stored_ownership.get("owner") != "observation"
+        or stored_ownership.get("source_repair_allowed") is not False
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The selected RuntimeEvidence does not have the exact stored "
+            "observation-owned no-source-repair boundary."
+        )
+    replayed_ownership = build_runtime_failure_ownership(
+        owner="product_behavior",
+        failure_class="stagger_visual_output_failed",
+        reason=(
+            "Deterministic replay of the immutable current-run attempts binds "
+            "the exact yellow-X criterion to both the trusted "
+            "missing_canvas_rect_for_stagger_x marker and a consistent direct "
+            "operator failed observation."
+        ),
+    )
+    return (
+        diagnosis,
+        copy.deepcopy(stored_ownership),
+        replayed_ownership,
+    )
 
 
 def _approved_bound_diagnosis(
