@@ -201,14 +201,19 @@ Approval `71623b5f...32f30`, EvidencePack `deeb1acd...166e8`, and pure
 four-change Plan `d1613594...64d68`. Counts are `3/4/4/4/2/4/4`.
 The current deterministic no-write exact-diff entry validates those Artifacts,
 source/config/dependency hashes, and exact binding spans before staging one
-file in memory. Real diff hash
-`sha256:63e6b0e08cf689a5aefbfc419a74eb1399a32dfec2c7ba94c4b014321d8d8c86`
-contains four change units and passes all four span checks plus the lexical C#
-delimiter check. The source remains unchanged and source-write authority is
-still false. This advances WF-004, ART-002, EXEC-001, EXEC-009, EXEC-010, and
-EXEC-011 only within the Stagger diagnostic boundary; 228 affected tests pass
-and compilation, Runtime root-cause accuracy, and product acceptance remain
-unproven.
+file in memory. Semantic review invalidated the first unapproved diff before
+source write because its Runtime observations could be misleading. The
+corrected entry adds five deterministic evidence-truth blockers covering
+emitted/suppressed correlation, captured object snapshots, Root fallback,
+native-only instance change, and visible record-limit saturation. Real diff
+hash
+`sha256:784a6f8663f1223ed67ea1ca3a6a42e6fd626b122ddd6c8bb84b3645c1731dd1`
+contains four change units and passes all four span checks, the lexical C#
+delimiter check, and all five evidence-truth checks. The source remains
+unchanged and source-write authority is still false. This advances WF-004,
+ART-002, EXEC-001, EXEC-009, EXEC-010, and EXEC-011 only within the Stagger
+diagnostic boundary; 229 affected tests pass. Compilation, Runtime root-cause
+accuracy, product repair, and product acceptance remain unproven.
 
 ## Knowledge And Retrieval Coverage
 

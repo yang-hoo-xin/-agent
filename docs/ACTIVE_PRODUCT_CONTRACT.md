@@ -749,14 +749,27 @@ current Approval, EvidencePack, Plan, source root, and their bound dependency
 identities. It rejects stale or expanded scope and uses the exact binding span
 to select the duplicated line-301 assignment without widening the binding.
 The existing global-unique exact-text behavior remains unchanged for ordinary
-changes. The real no-write result contains one file, four change units, 432
-insertions, zero deletions, four passing span checks, and a passing lexical C#
-delimiter check. Its exact diff hash is
-`sha256:63e6b0e08cf689a5aefbfc419a74eb1399a32dfec2c7ba94c4b014321d8d8c86`;
+changes. Human semantic review rejected the first no-write diff
+`sha256:63e6b0e0...d8d8c86` because it could correlate use to a selection log
+that was never emitted, output inferred values under object field names,
+combine native-object and managed-wrapper changes, and hide record-limit
+saturation. No source-write approval existed for those bytes.
+
+The corrected preflight now fails closed on five evidence-truth properties:
+selection correlation is emitted or explicitly marked `deduplicated` /
+`record_limit_suppressed`; object fields are captured snapshots; valid Root
+fallback is distinct from identity observation failure; crosshair instance
+change uses native identity only; and the eighth record exposes
+`record_limit_reached=true`. The real corrected no-write result contains one
+file, four change units, 654 insertions, zero deletions, four passing span
+checks, a passing lexical C# delimiter check, and five passing evidence-truth
+checks. Its exact diff hash is
+`sha256:784a6f8663f1223ed67ea1ca3a6a42e6fd626b122ddd6c8bb84b3645c1731dd1`;
 the unified-diff SHA256 is
-`72d32153773faf8d0ed37f4d04e13697458d819e90337f3e748247935c6ae070`.
-This is a reviewable observation-only diff, not source-write authority,
-compilation proof, root-cause confirmation, or product acceptance.
+`73d6ddf478260a0e65b7f0d82ce8ac2c9219c053b7b934a619852dac26d07eb7`.
+This remains an observation-only diff: it deliberately does not repair the
+yellow X or feedback sound and is not source-write authority, compilation
+proof, root-cause confirmation, or product acceptance.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

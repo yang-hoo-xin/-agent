@@ -14,10 +14,10 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: build_complete_runtime_visual_failure_diagnostic_v2_exact_diff_ready_for_human_approval
+stagger_implementation_plan_status: build_complete_runtime_visual_failure_diagnostic_v2_corrected_exact_diff_ready_for_human_approval
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: STAGGER-DIAGNOSTIC-EXACT-DIFF-PREFLIGHT-001
+most_recent_completed_capability: STAGGER-DIAGNOSTIC-EVIDENCE-TRUTH-PREFLIGHT-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -53,16 +53,28 @@ The public no-write diagnostic exact-diff entry now revalidates those exact
 Artifact revisions, current source/config bytes, all three bound Build
 dependencies, the four selected bindings, and their exact spans. It stages
 the complete observation-only change in memory through the existing exact
-text applier. The real preflight returned
+text applier. Semantic review invalidated the earlier unapproved diff
+`sha256:63e6b0e0...d8d8c86`: its selection/use correlation, snapshot field
+values, fallback/error split, instance-change meaning, and record-limit
+visibility could produce misleading RuntimeEvidence.
+
+The corrected entry hard-blocks regressions in all five properties. A
+suppressed selection receives `event_sequence=0` plus exact status instead of
+pointing to a nonexistent log; logged object fields come from stored snapshots;
+native identity alone determines crosshair instance change; Root fallback is
+kept separate from identity failure; and the eighth record exposes limit
+saturation. The real corrected preflight returned
 `READY_FOR_STAGGER_HUD_PARENT_DIAGNOSTIC_DIFF_APPROVAL`, diff hash
-`sha256:63e6b0e08cf689a5aefbfc419a74eb1399a32dfec2c7ba94c4b014321d8d8c86`,
+`sha256:784a6f8663f1223ed67ea1ca3a6a42e6fd626b122ddd6c8bb84b3645c1731dd1`,
 unified-diff SHA256
-`72d32153773faf8d0ed37f4d04e13697458d819e90337f3e748247935c6ae070`,
+`73d6ddf478260a0e65b7f0d82ce8ac2c9219c053b7b934a619852dac26d07eb7`,
 and staged after SHA256
-`0F363CABE0D1C5EC86B0F2AE844813F42CCAD0DD985623DD22EB4ACD727C761A`.
+`C39DF9DFE4DD3B07BD6D7835C905B0A46D1C756FC361DF8D3EFF55AC11E26424`.
 The source remains at `65489604...BB3B`; no Artifact, source, Build, process,
 or game-directory write occurred. A separate exact-hash source-write
-approval is still required.
+approval is still required. This diagnostic DLL is expected not to change
+yellow-X or feedback-sound behavior; it exists only to establish a bound
+Runtime root cause before a separately authorized product repair.
 
 Separately authorized local Proposal continuation
 `sfp_qwen36_27b_001` revalidated the exact four upstream Artifact hashes,

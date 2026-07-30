@@ -384,7 +384,57 @@ def test_exact_diff_is_deterministic_and_zero_write(
     assert "Plugin.EnableDiagnosticLogging.Value" in (
         first["unified_diff"]
     )
+    assert all(first["diagnostic_evidence_checks"].values())
     assert source_path.read_bytes() == source_before
+
+
+def test_exact_diff_template_emits_truthful_bounded_correlation() -> None:
+    helper = diff_module._HELPER_AFTER
+
+    selection_start = helper.index(
+        "private static void RecordStaggerHudParentSelection"
+    )
+    use_start = helper.index(
+        "private static void RecordStaggerHudParentUse"
+    )
+    selection = helper[selection_start:use_start]
+    crosshair_change = selection[
+        selection.index("bool crosshairInstanceChanged")
+        : selection.index("string dedupKey")
+    ]
+
+    assert selection.index(
+        "if (_staggerDiagnosticSelectionRecordCount >= 8)"
+    ) < selection.index(
+        "Interlocked.Increment"
+    )
+    assert (
+        '"record_limit_suppressed",\n'
+        "                        0,"
+    ) in selection
+    assert '"deduplicated",\n                        0,' in selection
+    assert selection.index("Log.LogInfo(") < selection.index(
+        '"emitted",'
+    )
+    assert "_staggerDiagnosticLastCrosshairManagedWrapperIdentity" not in (
+        crosshair_change
+    )
+    assert "ReferenceEquals(selected, canvasTrans)" in helper
+    assert "ReferenceEquals(selected, root)" in helper
+    assert "identity_relationship_unresolved" in helper
+
+    assert helper.count('"record_limit_reached="') == 2
+    assert '"last_assignment_record_status="' in helper
+    assert "see_selection_event" not in helper
+    assert "FormatStaggerDiagnosticBool(!assignmentSeen)" not in helper
+    assert (
+        "_staggerDiagnosticLastCrosshairRuntimeType"
+        in helper
+    )
+    assert (
+        "_staggerDiagnosticLastHudParentIdentityReadError"
+        in helper
+    )
 
 
 def test_exact_diff_blocks_source_drift(

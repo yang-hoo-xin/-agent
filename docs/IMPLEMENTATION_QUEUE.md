@@ -441,17 +441,27 @@ dependencies:
   an explicit `bound_span_exact` mode that must be the first change for a file
   and selects exactly one occurrence inside the registered span. Ordinary
   changes retain the old whole-file unique match.
-  The real result is
+  Semantic review rejected the first unapproved diff
+  `sha256:63e6b0e0...d8d8c86` because its correlation and field projection
+  could produce misleading RuntimeEvidence. The corrected entry now treats
+  only an emitted selection as having a nonzero correlation sequence, records
+  deduplication and record-limit suppression explicitly, projects actual
+  snapshots, compares native and managed identities separately, preserves
+  valid Root fallback, and exposes saturation on the eighth record. These five
+  properties are public preflight blockers.
+  The corrected real result is
   `READY_FOR_STAGGER_HUD_PARENT_DIAGNOSTIC_DIFF_APPROVAL`, with diff hash
-  `sha256:63e6b0e08cf689a5aefbfc419a74eb1399a32dfec2c7ba94c4b014321d8d8c86`,
+  `sha256:784a6f8663f1223ed67ea1ca3a6a42e6fd626b122ddd6c8bb84b3645c1731dd1`,
   unified-diff SHA256
-  `72d32153773faf8d0ed37f4d04e13697458d819e90337f3e748247935c6ae070`,
+  `73d6ddf478260a0e65b7f0d82ce8ac2c9219c053b7b934a619852dac26d07eb7`,
   staged after SHA256
-  `0F363CABE0D1C5EC86B0F2AE844813F42CCAD0DD985623DD22EB4ACD727C761A`,
-  one file, four change units, 432 insertions, and zero deletions. All four
-  span checks plus the lexical C# delimiter check passed. The source stayed
+  `C39DF9DFE4DD3B07BD6D7835C905B0A46D1C756FC361DF8D3EFF55AC11E26424`,
+  one file, four change units, 654 insertions, and zero deletions. All four
+  span checks, the lexical C# delimiter check, and five evidence-truth checks
+  passed. The affected suite passed 229 tests. The source stayed
   at `65489604...BB3B`; no Artifact, source, Build, process, or game-directory
-  write occurred.
+  write occurred. The observation-only diff deliberately does not change the
+  missing yellow X or feedback sound.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;

@@ -67,12 +67,23 @@ _STATE_AFTER = """        private static Transform? _lastHudParent;
         private static int _staggerDiagnosticUseRecordCount;
         private static string _staggerDiagnosticLastSelectionDedupKey = string.Empty;
         private static string _staggerDiagnosticLastUseDedupKey = string.Empty;
+        private static bool _staggerDiagnosticAssignmentSeen;
+        private static string _staggerDiagnosticLastAssignmentRecordStatus = "none";
         private static long _staggerDiagnosticLastAssignmentEventSequence;
         private static long _staggerDiagnosticLastAssignmentUtcTicks;
         private static int _staggerDiagnosticLastAssignmentHitSequence;
+        private static bool _staggerDiagnosticLastCrosshairReferenceNull = true;
         private static string _staggerDiagnosticLastCrosshairNativePointer = "unavailable";
         private static int _staggerDiagnosticLastCrosshairManagedWrapperIdentity;
+        private static string _staggerDiagnosticLastCrosshairRuntimeType = "unavailable";
+        private static string _staggerDiagnosticLastCrosshairIdentityReadError = "assignment_not_seen";
+        private static bool _staggerDiagnosticLastHudParentReferenceNull = true;
+        private static bool _staggerDiagnosticLastHudParentUnityNull = true;
+        private static int _staggerDiagnosticLastHudParentManagedWrapperIdentity;
         private static int? _staggerDiagnosticLastHudParentUnityInstanceId;
+        private static string _staggerDiagnosticLastHudParentRuntimeType = "unavailable";
+        private static bool _staggerDiagnosticLastHudParentRectTransformCompatible;
+        private static string _staggerDiagnosticLastHudParentIdentityReadError = "assignment_not_seen";
         private static string _staggerDiagnosticLastAssignmentSource = "none";
         private static bool _staggerDiagnosticLastCrosshairInstanceChanged;"""
 _SELECTION_LINE = (
@@ -109,8 +120,6 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
 
             try
             {
-                long eventSequence = System.Threading.Interlocked.Increment(
-                    ref _staggerDiagnosticEventSequence);
                 long utcTicks = DateTime.UtcNow.Ticks;
                 Transform? canvasTrans = null;
                 Transform? root = null;
@@ -128,65 +137,120 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                     observationError = SafeName(ex.GetType().Name);
                 }
 
-                string crosshairNativePointer = GetStaggerCrosshairNativePointer(
+                CaptureStaggerCrosshair(
                     layer,
+                    out bool crosshairReferenceNull,
+                    out string crosshairNativePointer,
+                    out int crosshairManagedIdentity,
+                    out string crosshairRuntimeType,
                     out string crosshairIdentityError);
-                int crosshairManagedIdentity = ReferenceEquals(layer, null)
-                    ? 0
-                    : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(layer);
-                int? selectedInstanceId = GetStaggerUnityInstanceId(
+                CaptureStaggerUnityObject(
                     selected,
+                    out bool selectedReferenceNull,
+                    out bool selectedUnityNull,
+                    out int selectedManagedIdentity,
+                    out int? selectedInstanceId,
+                    out string selectedRuntimeType,
+                    out bool selectedRectTransformCompatible,
                     out string selectedIdentityError);
-                int? canvasInstanceId = GetStaggerUnityInstanceId(
+                CaptureStaggerUnityObject(
                     canvasTrans,
+                    out bool canvasReferenceNull,
+                    out bool canvasUnityNull,
+                    out int canvasManagedIdentity,
+                    out int? canvasInstanceId,
+                    out string canvasRuntimeType,
+                    out bool canvasRectTransformCompatible,
                     out string canvasIdentityError);
-                int? rootInstanceId = GetStaggerUnityInstanceId(
+                CaptureStaggerUnityObject(
                     root,
+                    out bool rootReferenceNull,
+                    out bool rootUnityNull,
+                    out int rootManagedIdentity,
+                    out int? rootInstanceId,
+                    out string rootRuntimeType,
+                    out bool rootRectTransformCompatible,
                     out string rootIdentityError);
                 string selectedSource = ResolveStaggerHudParentSource(
+                    selected,
+                    canvasTrans,
+                    root,
                     selectedInstanceId,
                     canvasInstanceId,
                     rootInstanceId,
                     observationError);
-                bool assignmentSeen =
-                    _staggerDiagnosticLastAssignmentEventSequence > 0;
-                bool crosshairInstanceChanged = assignmentSeen
-                    && (
-                        _staggerDiagnosticLastCrosshairNativePointer
-                            != crosshairNativePointer
-                        || _staggerDiagnosticLastCrosshairManagedWrapperIdentity
-                            != crosshairManagedIdentity
-                    );
-
-                _staggerDiagnosticLastAssignmentEventSequence = eventSequence;
-                _staggerDiagnosticLastAssignmentUtcTicks = utcTicks;
-                _staggerDiagnosticLastAssignmentHitSequence =
-                    hitSequenceSnapshot;
-                _staggerDiagnosticLastCrosshairNativePointer =
-                    crosshairNativePointer;
-                _staggerDiagnosticLastCrosshairManagedWrapperIdentity =
-                    crosshairManagedIdentity;
-                _staggerDiagnosticLastHudParentUnityInstanceId =
-                    selectedInstanceId;
-                _staggerDiagnosticLastAssignmentSource = selectedSource;
-                _staggerDiagnosticLastCrosshairInstanceChanged =
-                    crosshairInstanceChanged;
+                string selectionObservationError =
+                    ResolveStaggerSelectionObservationError(
+                        selectedSource,
+                        observationError,
+                        selectedIdentityError,
+                        canvasIdentityError,
+                        rootIdentityError);
+                bool crosshairInstanceChanged =
+                    _staggerDiagnosticAssignmentSeen
+                    && _staggerDiagnosticLastCrosshairIdentityReadError
+                        == "none"
+                    && crosshairIdentityError == "none"
+                    && _staggerDiagnosticLastCrosshairNativePointer
+                        != crosshairNativePointer;
 
                 string dedupKey =
                     $"selection|{crosshairNativePointer}|"
                     + $"{FormatStaggerDiagnosticId(selectedInstanceId)}|"
                     + $"{FormatStaggerDiagnosticId(selectedInstanceId)}|"
                     + $"{hitSequenceSnapshot}";
-                if (
-                    _staggerDiagnosticSelectionRecordCount >= 8
-                    || _staggerDiagnosticLastSelectionDedupKey == dedupKey
-                )
+                if (_staggerDiagnosticSelectionRecordCount >= 8)
                 {
+                    StoreStaggerHudParentSelectionSnapshot(
+                        "record_limit_suppressed",
+                        0,
+                        utcTicks,
+                        hitSequenceSnapshot,
+                        crosshairReferenceNull,
+                        crosshairNativePointer,
+                        crosshairManagedIdentity,
+                        crosshairRuntimeType,
+                        crosshairIdentityError,
+                        selectedReferenceNull,
+                        selectedUnityNull,
+                        selectedManagedIdentity,
+                        selectedInstanceId,
+                        selectedRuntimeType,
+                        selectedRectTransformCompatible,
+                        selectedIdentityError,
+                        selectedSource,
+                        crosshairInstanceChanged);
                     return;
                 }
 
-                _staggerDiagnosticLastSelectionDedupKey = dedupKey;
-                _staggerDiagnosticSelectionRecordCount++;
+                if (_staggerDiagnosticLastSelectionDedupKey == dedupKey)
+                {
+                    StoreStaggerHudParentSelectionSnapshot(
+                        "deduplicated",
+                        0,
+                        utcTicks,
+                        hitSequenceSnapshot,
+                        crosshairReferenceNull,
+                        crosshairNativePointer,
+                        crosshairManagedIdentity,
+                        crosshairRuntimeType,
+                        crosshairIdentityError,
+                        selectedReferenceNull,
+                        selectedUnityNull,
+                        selectedManagedIdentity,
+                        selectedInstanceId,
+                        selectedRuntimeType,
+                        selectedRectTransformCompatible,
+                        selectedIdentityError,
+                        selectedSource,
+                        crosshairInstanceChanged);
+                    return;
+                }
+
+                long eventSequence = System.Threading.Interlocked.Increment(
+                    ref _staggerDiagnosticEventSequence);
+                int nextRecordCount =
+                    _staggerDiagnosticSelectionRecordCount + 1;
                 Log.LogInfo(
                     $"[GTFO_MOD_AGENT] feature_id={Plugin.FEATURE_ID} "
                     + "signal=STAGGER_HUD_PARENT_DIAGNOSTIC "
@@ -194,11 +258,14 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                     + $"utc_ticks={utcTicks} "
                     + $"hit_sequence_snapshot={hitSequenceSnapshot} "
                     + $"assignment_source={selectedSource} "
+                    + "record_limit_reached="
+                    + $"{FormatStaggerDiagnosticBool(nextRecordCount == 8)} "
                     + "crosshair_instance_changed="
                     + $"{FormatStaggerDiagnosticBool(crosshairInstanceChanged)} "
-                    + $"selection_observation_error={observationError} "
+                    + "selection_observation_error="
+                    + $"{selectionObservationError} "
                     + "CrosshairGuiLayer.reference_null="
-                    + $"{FormatStaggerDiagnosticBool(ReferenceEquals(layer, null))} "
+                    + $"{FormatStaggerDiagnosticBool(crosshairReferenceNull)} "
                     + "CrosshairGuiLayer.unity_null=not_applicable "
                     + "CrosshairGuiLayer.native_pointer="
                     + $"{crosshairNativePointer} "
@@ -206,27 +273,60 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                     + $"{crosshairManagedIdentity} "
                     + "CrosshairGuiLayer.unity_instance_id=not_applicable "
                     + "CrosshairGuiLayer.runtime_type="
-                    + $"{GetStaggerRuntimeType(layer)} "
+                    + $"{crosshairRuntimeType} "
                     + "CrosshairGuiLayer.rect_transform_compatible=not_applicable "
                     + "CrosshairGuiLayer.identity_read_error="
                     + $"{crosshairIdentityError} "
-                    + DescribeStaggerUnityObject(
+                    + FormatStaggerUnityObjectSnapshot(
                         "CanvasTrans",
-                        canvasTrans,
+                        canvasReferenceNull,
+                        canvasUnityNull,
+                        canvasManagedIdentity,
                         canvasInstanceId,
+                        canvasRuntimeType,
+                        canvasRectTransformCompatible,
                         canvasIdentityError)
                     + " "
-                    + DescribeStaggerUnityObject(
+                    + FormatStaggerUnityObjectSnapshot(
                         "Root",
-                        root,
+                        rootReferenceNull,
+                        rootUnityNull,
+                        rootManagedIdentity,
                         rootInstanceId,
+                        rootRuntimeType,
+                        rootRectTransformCompatible,
                         rootIdentityError)
                     + " "
-                    + DescribeStaggerUnityObject(
+                    + FormatStaggerUnityObjectSnapshot(
                         "selected",
-                        selected,
+                        selectedReferenceNull,
+                        selectedUnityNull,
+                        selectedManagedIdentity,
                         selectedInstanceId,
+                        selectedRuntimeType,
+                        selectedRectTransformCompatible,
                         selectedIdentityError));
+                _staggerDiagnosticLastSelectionDedupKey = dedupKey;
+                _staggerDiagnosticSelectionRecordCount = nextRecordCount;
+                StoreStaggerHudParentSelectionSnapshot(
+                    "emitted",
+                    eventSequence,
+                    utcTicks,
+                    hitSequenceSnapshot,
+                    crosshairReferenceNull,
+                    crosshairNativePointer,
+                    crosshairManagedIdentity,
+                    crosshairRuntimeType,
+                    crosshairIdentityError,
+                    selectedReferenceNull,
+                    selectedUnityNull,
+                    selectedManagedIdentity,
+                    selectedInstanceId,
+                    selectedRuntimeType,
+                    selectedRectTransformCompatible,
+                    selectedIdentityError,
+                    selectedSource,
+                    crosshairInstanceChanged);
             }
             catch (Exception ex)
             {
@@ -247,15 +347,21 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
 
             try
             {
-                long eventSequence = System.Threading.Interlocked.Increment(
-                    ref _staggerDiagnosticEventSequence);
                 long utcTicks = DateTime.UtcNow.Ticks;
-                int? currentInstanceId = GetStaggerUnityInstanceId(
+                CaptureStaggerUnityObject(
                     currentHudParent,
+                    out bool currentReferenceNull,
+                    out bool currentUnityNull,
+                    out int currentManagedIdentity,
+                    out int? currentInstanceId,
+                    out string currentRuntimeType,
+                    out bool currentRectTransformCompatible,
                     out string currentIdentityError);
-                bool assignmentSeen =
-                    _staggerDiagnosticLastAssignmentEventSequence > 0;
+                bool assignmentSeen = _staggerDiagnosticAssignmentSeen;
                 bool hudParentIdentityChanged = assignmentSeen
+                    && _staggerDiagnosticLastHudParentIdentityReadError
+                        == "none"
+                    && currentIdentityError == "none"
                     && _staggerDiagnosticLastHudParentUnityInstanceId
                         != currentInstanceId;
                 string dedupKey =
@@ -264,28 +370,35 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                     + $"{FormatStaggerDiagnosticId(_staggerDiagnosticLastHudParentUnityInstanceId)}|"
                     + $"{FormatStaggerDiagnosticId(currentInstanceId)}|"
                     + $"{hitSequenceSnapshot}";
-                if (
-                    _staggerDiagnosticUseRecordCount >= 8
-                    || _staggerDiagnosticLastUseDedupKey == dedupKey
-                )
+                if (_staggerDiagnosticUseRecordCount >= 8)
                 {
                     return;
                 }
 
-                _staggerDiagnosticLastUseDedupKey = dedupKey;
-                _staggerDiagnosticUseRecordCount++;
+                if (_staggerDiagnosticLastUseDedupKey == dedupKey)
+                {
+                    return;
+                }
+
+                long eventSequence = System.Threading.Interlocked.Increment(
+                    ref _staggerDiagnosticEventSequence);
+                int nextRecordCount = _staggerDiagnosticUseRecordCount + 1;
                 Log.LogInfo(
                     $"[GTFO_MOD_AGENT] feature_id={Plugin.FEATURE_ID} "
                     + "signal=STAGGER_HUD_PARENT_DIAGNOSTIC "
                     + $"phase=stagger_use event_sequence={eventSequence} "
                     + $"utc_ticks={utcTicks} "
                     + $"hit_sequence_snapshot={hitSequenceSnapshot} "
+                    + "record_limit_reached="
+                    + $"{FormatStaggerDiagnosticBool(nextRecordCount == 8)} "
                     + "last_assignment_event_sequence="
                     + $"{_staggerDiagnosticLastAssignmentEventSequence} "
                     + "last_assignment_utc_ticks="
                     + $"{_staggerDiagnosticLastAssignmentUtcTicks} "
                     + "last_assignment_hit_sequence="
                     + $"{_staggerDiagnosticLastAssignmentHitSequence} "
+                    + "last_assignment_record_status="
+                    + $"{_staggerDiagnosticLastAssignmentRecordStatus} "
                     + "assignment_seen="
                     + $"{FormatStaggerDiagnosticBool(assignmentSeen)} "
                     + "crosshair_instance_changed="
@@ -293,7 +406,7 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                     + "hud_parent_identity_changed="
                     + $"{FormatStaggerDiagnosticBool(hudParentIdentityChanged)} "
                     + "stored_CrosshairGuiLayer.reference_null="
-                    + $"{FormatStaggerDiagnosticBool(!assignmentSeen)} "
+                    + $"{FormatStaggerDiagnosticBool(_staggerDiagnosticLastCrosshairReferenceNull)} "
                     + "stored_CrosshairGuiLayer.unity_null=not_applicable "
                     + "stored_CrosshairGuiLayer.native_pointer="
                     + $"{_staggerDiagnosticLastCrosshairNativePointer} "
@@ -301,34 +414,40 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                     + $"{_staggerDiagnosticLastCrosshairManagedWrapperIdentity} "
                     + "stored_CrosshairGuiLayer.unity_instance_id=not_applicable "
                     + "stored_CrosshairGuiLayer.runtime_type="
-                    + "CrosshairGuiLayer "
+                    + $"{_staggerDiagnosticLastCrosshairRuntimeType} "
                     + "stored_CrosshairGuiLayer.rect_transform_compatible="
                     + "not_applicable "
                     + "stored_CrosshairGuiLayer.identity_read_error="
-                    + $"{(assignmentSeen ? "none" : "assignment_not_seen")} "
-                    + DescribeStaggerUnityObject(
+                    + $"{_staggerDiagnosticLastCrosshairIdentityReadError} "
+                    + FormatStaggerUnityObjectSnapshot(
                         "_lastHudParent",
-                        currentHudParent,
+                        currentReferenceNull,
+                        currentUnityNull,
+                        currentManagedIdentity,
                         currentInstanceId,
+                        currentRuntimeType,
+                        currentRectTransformCompatible,
                         currentIdentityError)
                     + " "
                     + "last_assigned_HUD_parent.reference_null="
-                    + $"{FormatStaggerDiagnosticBool(!assignmentSeen)} "
+                    + $"{FormatStaggerDiagnosticBool(_staggerDiagnosticLastHudParentReferenceNull)} "
                     + "last_assigned_HUD_parent.unity_null="
-                    + "see_selection_event "
+                    + $"{FormatStaggerDiagnosticBool(_staggerDiagnosticLastHudParentUnityNull)} "
                     + "last_assigned_HUD_parent.native_pointer=not_authorized "
                     + "last_assigned_HUD_parent.managed_wrapper_identity="
-                    + "see_selection_event "
+                    + $"{_staggerDiagnosticLastHudParentManagedWrapperIdentity} "
                     + "last_assigned_HUD_parent.unity_instance_id="
                     + $"{FormatStaggerDiagnosticId(_staggerDiagnosticLastHudParentUnityInstanceId)} "
                     + "last_assigned_HUD_parent.runtime_type="
-                    + "see_selection_event "
+                    + $"{_staggerDiagnosticLastHudParentRuntimeType} "
                     + "last_assigned_HUD_parent.rect_transform_compatible="
-                    + "see_selection_event "
+                    + $"{FormatStaggerDiagnosticBool(_staggerDiagnosticLastHudParentRectTransformCompatible)} "
                     + "last_assigned_HUD_parent.identity_read_error="
-                    + $"{(assignmentSeen ? "none" : "assignment_not_seen")} "
+                    + $"{_staggerDiagnosticLastHudParentIdentityReadError} "
                     + "last_assignment_source="
                     + $"{_staggerDiagnosticLastAssignmentSource}");
+                _staggerDiagnosticLastUseDedupKey = dedupKey;
+                _staggerDiagnosticUseRecordCount = nextRecordCount;
             }
             catch (Exception ex)
             {
@@ -351,49 +470,136 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
             }
         }
 
-        private static string GetStaggerCrosshairNativePointer(
+        private static void StoreStaggerHudParentSelectionSnapshot(
+            string recordStatus,
+            long eventSequence,
+            long utcTicks,
+            int hitSequenceSnapshot,
+            bool crosshairReferenceNull,
+            string crosshairNativePointer,
+            int crosshairManagedIdentity,
+            string crosshairRuntimeType,
+            string crosshairIdentityError,
+            bool selectedReferenceNull,
+            bool selectedUnityNull,
+            int selectedManagedIdentity,
+            int? selectedInstanceId,
+            string selectedRuntimeType,
+            bool selectedRectTransformCompatible,
+            string selectedIdentityError,
+            string selectedSource,
+            bool crosshairInstanceChanged)
+        {
+            _staggerDiagnosticAssignmentSeen = true;
+            _staggerDiagnosticLastAssignmentRecordStatus = recordStatus;
+            _staggerDiagnosticLastAssignmentEventSequence = eventSequence;
+            _staggerDiagnosticLastAssignmentUtcTicks = utcTicks;
+            _staggerDiagnosticLastAssignmentHitSequence =
+                hitSequenceSnapshot;
+            _staggerDiagnosticLastCrosshairReferenceNull =
+                crosshairReferenceNull;
+            _staggerDiagnosticLastCrosshairNativePointer =
+                crosshairNativePointer;
+            _staggerDiagnosticLastCrosshairManagedWrapperIdentity =
+                crosshairManagedIdentity;
+            _staggerDiagnosticLastCrosshairRuntimeType =
+                crosshairRuntimeType;
+            _staggerDiagnosticLastCrosshairIdentityReadError =
+                crosshairIdentityError;
+            _staggerDiagnosticLastHudParentReferenceNull =
+                selectedReferenceNull;
+            _staggerDiagnosticLastHudParentUnityNull = selectedUnityNull;
+            _staggerDiagnosticLastHudParentManagedWrapperIdentity =
+                selectedManagedIdentity;
+            _staggerDiagnosticLastHudParentUnityInstanceId =
+                selectedInstanceId;
+            _staggerDiagnosticLastHudParentRuntimeType =
+                selectedRuntimeType;
+            _staggerDiagnosticLastHudParentRectTransformCompatible =
+                selectedRectTransformCompatible;
+            _staggerDiagnosticLastHudParentIdentityReadError =
+                selectedIdentityError;
+            _staggerDiagnosticLastAssignmentSource = selectedSource;
+            _staggerDiagnosticLastCrosshairInstanceChanged =
+                crosshairInstanceChanged;
+        }
+
+        private static void CaptureStaggerCrosshair(
             CrosshairGuiLayer? layer,
+            out bool referenceNull,
+            out string nativePointer,
+            out int managedWrapperIdentity,
+            out string runtimeType,
             out string identityReadError)
         {
+            referenceNull = ReferenceEquals(layer, null);
+            nativePointer = referenceNull ? "reference_null" : "unavailable";
+            managedWrapperIdentity = 0;
+            runtimeType = "unavailable";
             identityReadError = "none";
-            if (ReferenceEquals(layer, null))
+            if (referenceNull)
             {
-                return "reference_null";
+                return;
             }
 
             try
             {
-                return layer.Pointer.ToString();
+                nativePointer = layer.Pointer.ToString();
+                managedWrapperIdentity =
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(
+                        layer);
+                runtimeType = SafeName(
+                    layer.GetType().FullName ?? "unknown");
             }
             catch (Exception ex)
             {
                 identityReadError = SafeName(ex.GetType().Name);
-                return "unavailable";
             }
         }
 
-        private static int? GetStaggerUnityInstanceId(
+        private static void CaptureStaggerUnityObject(
             Transform? value,
+            out bool referenceNull,
+            out bool unityNull,
+            out int managedWrapperIdentity,
+            out int? unityInstanceId,
+            out string runtimeType,
+            out bool rectTransformCompatible,
             out string identityReadError)
         {
+            referenceNull = ReferenceEquals(value, null);
+            unityNull = referenceNull;
+            managedWrapperIdentity = 0;
+            unityInstanceId = null;
+            runtimeType = "unavailable";
+            rectTransformCompatible = false;
             identityReadError = "none";
-            if (ReferenceEquals(value, null))
+            if (referenceNull)
             {
-                return null;
+                return;
             }
 
             try
             {
-                return value.GetInstanceID();
+                unityNull = value == null;
+                managedWrapperIdentity =
+                    System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(
+                        value);
+                unityInstanceId = value.GetInstanceID();
+                runtimeType = SafeName(
+                    value.GetType().FullName ?? "unknown");
+                rectTransformCompatible = value is RectTransform;
             }
             catch (Exception ex)
             {
                 identityReadError = SafeName(ex.GetType().Name);
-                return null;
             }
         }
 
         private static string ResolveStaggerHudParentSource(
+            Transform? selected,
+            Transform? canvasTrans,
+            Transform? root,
             int? selectedInstanceId,
             int? canvasInstanceId,
             int? rootInstanceId,
@@ -404,13 +610,27 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                 return "observation_exception";
             }
 
-            if (!selectedInstanceId.HasValue)
+            if (ReferenceEquals(selected, null))
             {
-                return "none";
+                return ReferenceEquals(canvasTrans, null)
+                    && ReferenceEquals(root, null)
+                    ? "none"
+                    : "observation_exception";
+            }
+
+            if (ReferenceEquals(selected, canvasTrans))
+            {
+                return "CanvasTrans";
+            }
+
+            if (ReferenceEquals(selected, root))
+            {
+                return "Root";
             }
 
             if (
-                canvasInstanceId.HasValue
+                selectedInstanceId.HasValue
+                && canvasInstanceId.HasValue
                 && selectedInstanceId.Value == canvasInstanceId.Value
             )
             {
@@ -418,7 +638,8 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
             }
 
             if (
-                rootInstanceId.HasValue
+                selectedInstanceId.HasValue
+                && rootInstanceId.HasValue
                 && selectedInstanceId.Value == rootInstanceId.Value
             )
             {
@@ -428,32 +649,51 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
             return "observation_exception";
         }
 
-        private static string DescribeStaggerUnityObject(
-            string prefix,
-            Transform? value,
-            int? instanceId,
-            string identityReadError)
+        private static string ResolveStaggerSelectionObservationError(
+            string selectedSource,
+            string observationError,
+            string selectedIdentityError,
+            string canvasIdentityError,
+            string rootIdentityError)
         {
-            bool referenceNull = ReferenceEquals(value, null);
-            bool unityNull = referenceNull;
-            string runtimeType = "unavailable";
-            int managedWrapperIdentity = 0;
-            try
+            if (observationError != "none")
             {
-                if (!referenceNull)
-                {
-                    unityNull = value == null;
-                    runtimeType = value.GetType().FullName ?? "unknown";
-                    managedWrapperIdentity =
-                        System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(
-                            value);
-                }
-            }
-            catch (Exception ex)
-            {
-                identityReadError = SafeName(ex.GetType().Name);
+                return observationError;
             }
 
+            if (selectedSource != "observation_exception")
+            {
+                return "none";
+            }
+
+            if (selectedIdentityError != "none")
+            {
+                return selectedIdentityError;
+            }
+
+            if (canvasIdentityError != "none")
+            {
+                return canvasIdentityError;
+            }
+
+            if (rootIdentityError != "none")
+            {
+                return rootIdentityError;
+            }
+
+            return "identity_relationship_unresolved";
+        }
+
+        private static string FormatStaggerUnityObjectSnapshot(
+            string prefix,
+            bool referenceNull,
+            bool unityNull,
+            int managedWrapperIdentity,
+            int? instanceId,
+            string runtimeType,
+            bool rectTransformCompatible,
+            string identityReadError)
+        {
             return $"{prefix}.reference_null="
                 + $"{FormatStaggerDiagnosticBool(referenceNull)} "
                 + $"{prefix}.unity_null="
@@ -463,28 +703,10 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                 + $"{managedWrapperIdentity} "
                 + $"{prefix}.unity_instance_id="
                 + $"{FormatStaggerDiagnosticId(instanceId)} "
-                + $"{prefix}.runtime_type={SafeName(runtimeType)} "
+                + $"{prefix}.runtime_type={runtimeType} "
                 + $"{prefix}.rect_transform_compatible="
-                + $"{FormatStaggerDiagnosticBool(value is RectTransform)} "
+                + $"{FormatStaggerDiagnosticBool(rectTransformCompatible)} "
                 + $"{prefix}.identity_read_error={identityReadError}";
-        }
-
-        private static string GetStaggerRuntimeType(
-            CrosshairGuiLayer? layer)
-        {
-            if (ReferenceEquals(layer, null))
-            {
-                return "unavailable";
-            }
-
-            try
-            {
-                return SafeName(layer.GetType().FullName ?? "unknown");
-            }
-            catch
-            {
-                return "unavailable";
-            }
         }
 
         private static string FormatStaggerDiagnosticId(int? value)
@@ -616,6 +838,7 @@ def preflight_stagger_hud_parent_diagnostic_exact_diff(
         evidence=evidence,
         plan=plan,
     )
+    diagnostic_evidence_checks = _validate_diagnostic_evidence_truth()
 
     proposal = _build_diagnostic_proposal(
         feature_id=feature_id,
@@ -680,6 +903,7 @@ def preflight_stagger_hud_parent_diagnostic_exact_diff(
         "unified_diff_bytes": result["unified_diff_bytes"],
         "diff_stats": result["diff_stats"],
         "static_checks": result["static_checks"],
+        "diagnostic_evidence_checks": diagnostic_evidence_checks,
         "unified_diff": result["unified_diff"],
         "approval_required": True,
         "writes_performed": False,
@@ -690,6 +914,60 @@ def preflight_stagger_hud_parent_diagnostic_exact_diff(
         "process_launched": False,
         "game_directory_written": False,
     }
+
+
+def _validate_diagnostic_evidence_truth() -> dict[str, bool]:
+    helper = _HELPER_AFTER
+    selection_start = helper.index(
+        "private static void RecordStaggerHudParentSelection"
+    )
+    use_start = helper.index(
+        "private static void RecordStaggerHudParentUse"
+    )
+    selection = helper[selection_start:use_start]
+    crosshair_change = selection[
+        selection.index("bool crosshairInstanceChanged")
+        : selection.index("string dedupKey")
+    ]
+    checks = {
+        "selection_correlation_is_emitted_or_explicitly_suppressed": (
+            selection.index(
+                "if (_staggerDiagnosticSelectionRecordCount >= 8)"
+            )
+            < selection.index("Interlocked.Increment")
+            and '"record_limit_suppressed",\n'
+            "                        0," in selection
+            and '"deduplicated",\n                        0,' in selection
+            and selection.index("Log.LogInfo(")
+            < selection.index('"emitted",')
+        ),
+        "logged_object_fields_are_captured_snapshots": (
+            "see_selection_event" not in helper
+            and "FormatStaggerDiagnosticBool(!assignmentSeen)" not in helper
+            and "_staggerDiagnosticLastCrosshairRuntimeType" in helper
+            and "_staggerDiagnosticLastHudParentIdentityReadError" in helper
+        ),
+        "root_fallback_is_distinct_from_observation_error": (
+            "ReferenceEquals(selected, canvasTrans)" in helper
+            and "ReferenceEquals(selected, root)" in helper
+            and "identity_relationship_unresolved" in helper
+        ),
+        "crosshair_change_uses_native_identity_only": (
+            "_staggerDiagnosticLastCrosshairManagedWrapperIdentity"
+            not in crosshair_change
+        ),
+        "record_limit_saturation_is_observable": (
+            helper.count('"record_limit_reached="') == 2
+            and '"last_assignment_record_status="' in helper
+        ),
+    }
+    failed = [name for name, passed in checks.items() if not passed]
+    if failed:
+        raise StaggerDiagnosticDiffPreflightError(
+            "Diagnostic evidence-truth checks failed: "
+            + ", ".join(failed)
+        )
+    return checks
 
 
 def _validate_authority_and_plan(
