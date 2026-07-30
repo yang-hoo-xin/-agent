@@ -43,7 +43,7 @@ from .gtfo_stagger import (
 from .stagger_edit_authority import (
     StaggerEditAuthorityApprovalError,
     StaggerEditAuthorityPreflightError,
-    approve_stagger_edit_authority,
+    create_stagger_edit_authority_request,
     preflight_stagger_edit_authority,
 )
 from .probe import (
@@ -101,7 +101,7 @@ __all__ = [
     "make_gtfo_stagger_runtime_evidence_factory",
     "make_runtime_probe_evidence_factory",
     "normalize_runtime_failure_ownership",
-    "approve_stagger_edit_authority",
+    "create_stagger_edit_authority_request",
     "profile_from_settings",
     "preflight_stagger_edit_authority",
     "stagger_profile_from_settings",

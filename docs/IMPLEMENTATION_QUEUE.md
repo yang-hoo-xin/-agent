@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -329,6 +329,15 @@ dependencies:
   human review, and proves the current allowed bindings do not cover the
   diagnosed symbol. It does not create the later authority record or enter
   RepairPlanner.
+  The forward Edit Authority path now persists technical scope only as a
+  no-authority `edit_authority_request`. Its CLI cannot approve, mutate the
+  Registry, or create BindingResolution. Approval must pass the existing
+  LangGraph interrupt/resume validator with the exact request hash, then write
+  a permission-only `edit_authority_approval` bound to the exact Request and
+  ResumeReport. Missing final projection remains blocked and cannot enter
+  RepairPlanner. ArtifactStore rejects new legacy-shaped Approval writes, and
+  current-revision admission compares both revision path and complete hash.
+  This code change wrote no new real shared-Store revision.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -367,6 +376,15 @@ files_in_scope:
   the approved Apply materialization, and the historical rejected Apply remain
   read-only.
 focused_verification:
+  python -m pytest tests/unit/test_stagger_edit_authority.py
+  tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
+  tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py
+  tests/unit/test_repair_checkpoint_smoke.py tests/unit/test_repair_loop.py
+  tests/unit/test_runtime_evidence.py -q --tb=short passed 214 tests in
+  31.64s. This covers Request no-authority, Graph-only approval, wrong request
+  hash, exact path-plus-hash current revision checks, direct legacy Approval
+  rejection, approved-but-not-materialized blocking, and existing
+  Runtime/repair regression.
   python -B
   workspaces/stagger_feedback_proposal_001/proposal_continuation_driver.py
   --profile qwen3-4b --preflight-only passed with 17 snippets, 25098
@@ -635,6 +653,15 @@ focused_verification:
   fresh. The command did not rewrite RuntimeEvidence or the old PatchProposal,
   modify Mod source, invoke RepairPlanner, build, launch a process, or touch the
   game directory.
+  A later contract review identified the direct four-write CLI and the
+  technical fields embedded in this historical Approval as forward-path
+  authority defects. The four revisions remain immutable history and already
+  forbid RepairPlanner/source Patch. New writes must use
+  EditAuthorityRequest -> LangGraph interrupt/resume ->
+  EditAuthorityApproval -> deterministic projection. The Approval is now the
+  only authority source and contains only permission scope and exact
+  Request/ResumeReport identity; the technical diagnosis and proposed scope
+  stay in the Request.
   `python -m pytest tests/unit/test_gtfo_stagger_runtime.py
   tests/unit/test_repair_loop.py tests/unit/test_workflow_graph.py
   tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
@@ -681,13 +708,17 @@ stop_condition:
   Observation retry #2 is immutable inconclusive Runtime history and exhausted
   the admitted retry. Preserve its initial audio response together with the
   later user correction; do not promote either into full audibility proof.
-  Preserve the approved EditAuthorityApproval, EvidencePack,
+  Preserve the historical EditAuthorityApproval, EvidencePack,
   ImplementationPlan, and BindingResolution revisions above. The exact
   authority closure grants only `edit_binding_004`; it does not select among
   the unresolved HUD-parent causes and does not authorize source bytes.
   RepairPlanner and every source-change Proposal remain closed until the next
   separately reviewed product step consumes the unique
   `resolved_repair_target`.
+  Before any new RepairPlanner step, create a fresh no-authority
+  EditAuthorityRequest from current exact inputs and complete its LangGraph
+  human approval/materialization path. The removed direct approval CLI and the
+  old approval hash cannot be reused.
   Do not call another model, reuse either prior approval hash, perform a second
   Apply or Build, or claim Harmony runtime binding, visible, audible,
   exactly-once, disabled-mode, marker, or product Runtime success.

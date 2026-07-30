@@ -125,6 +125,8 @@ class ArtifactTypeRegistry:
             _validate_implementation_plan_binding_registry(payload)
         if artifact_type == "binding_resolution":
             _validate_binding_resolution(payload)
+        if artifact_type == "edit_authority_request":
+            _validate_edit_authority_request(payload)
         if artifact_type == "edit_authority_approval":
             _validate_edit_authority_approval(payload)
         if artifact_type == "evidence_run_attempt":
@@ -243,10 +245,18 @@ def _validate_binding_resolution(payload: dict[str, Any]) -> None:
                 "and no gap, request, or blockers"
             )
         if payload.get("authority_source") == "edit_authority_approval":
-            for revision_field in (
+            revision_fields = [
                 "edit_authority_approval_revision",
                 "evidence_pack_revision",
+            ]
+            if (
+                payload.get("authority_contract_version")
+                == "edit_authority_request_approval_v1"
             ):
+                revision_fields.append(
+                    "edit_authority_request_revision"
+                )
+            for revision_field in revision_fields:
                 revision = payload.get(revision_field)
                 if (
                     not isinstance(revision, dict)
@@ -495,11 +505,52 @@ def _validate_implementation_plan_binding_registry(payload: dict[str, Any]) -> N
             )
 
 
+def _validate_edit_authority_request(payload: dict[str, Any]) -> None:
+    if payload.get("status") != "pending_human_approval":
+        raise ArtifactRegistryError(
+            "edit_authority_request status must be pending_human_approval"
+        )
+    request_hash = payload.get("request_hash")
+    request_payload = payload.get("request_payload")
+    if (
+        not isinstance(request_hash, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", request_hash) is None
+        or not isinstance(request_payload, dict)
+    ):
+        raise ArtifactRegistryError(
+            "edit_authority_request exact request binding is invalid"
+        )
+    computed_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if computed_hash != request_hash:
+        raise ArtifactRegistryError(
+            "edit_authority_request request hash mismatch"
+        )
+    if (
+        payload.get("authority_granted") is not False
+        or payload.get("registry_mutation_allowed") is not False
+        or payload.get("repair_planner_allowed") is not False
+        or payload.get("source_patch_allowed") is not False
+    ):
+        raise ArtifactRegistryError(
+            "edit_authority_request cannot grant execution authority"
+        )
+
+
 def _validate_edit_authority_approval(payload: dict[str, Any]) -> None:
     if payload.get("status") != "approved":
         raise ArtifactRegistryError(
             "edit_authority_approval status must be approved"
         )
+    if payload.get("authority_source") == "edit_authority_request":
+        _validate_request_bound_edit_authority_approval(payload)
+        return
     approval_hash = payload.get("approval_hash")
     if (
         not isinstance(approval_hash, str)
@@ -574,6 +625,99 @@ def _validate_edit_authority_approval(payload: dict[str, Any]) -> None:
     ):
         raise ArtifactRegistryError(
             "edit_authority_approval exceeds its mutation boundary"
+        )
+
+
+def _validate_request_bound_edit_authority_approval(
+    payload: dict[str, Any],
+) -> None:
+    allowed_fields = {
+        "node_name",
+        "stage",
+        "message",
+        "status",
+        "feature_id",
+        "run_id",
+        "authority_source",
+        "approval_hash",
+        "request_hash",
+        "approved_by",
+        "approved_at",
+        "resume_id",
+        "decision",
+        "edit_authority_request_revision",
+        "resume_report_revision",
+        "allowed_actions",
+        "forbidden_actions",
+        "repair_planner_allowed",
+        "source_patch_allowed",
+    }
+    unexpected_fields = sorted(set(payload) - allowed_fields)
+    if unexpected_fields:
+        raise ArtifactRegistryError(
+            "edit_authority_approval contains non-authority fields: "
+            f"{unexpected_fields}"
+        )
+    approval_hash = payload.get("approval_hash")
+    request_hash = payload.get("request_hash")
+    request_revision = payload.get("edit_authority_request_revision")
+    resume_revision = payload.get("resume_report_revision")
+    if (
+        not isinstance(approval_hash, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", approval_hash) is None
+        or approval_hash != request_hash
+        or not isinstance(request_revision, dict)
+        or request_revision.get("feature_id") != payload.get("feature_id")
+        or not isinstance(request_revision.get("path"), str)
+        or not request_revision["path"]
+        or not isinstance(request_revision.get("artifact_hash"), str)
+        or not request_revision["artifact_hash"]
+        or not isinstance(resume_revision, dict)
+        or resume_revision.get("feature_id") != payload.get("feature_id")
+        or not isinstance(resume_revision.get("path"), str)
+        or not resume_revision["path"]
+        or not isinstance(resume_revision.get("artifact_hash"), str)
+        or not resume_revision["artifact_hash"]
+    ):
+        raise ArtifactRegistryError(
+            "edit_authority_approval request and resume binding is invalid"
+        )
+    if (
+        payload.get("decision") != "approve"
+        or not isinstance(payload.get("resume_id"), str)
+        or not payload["resume_id"]
+        or not isinstance(payload.get("approved_by"), str)
+        or not payload["approved_by"].strip()
+        or not isinstance(payload.get("approved_at"), str)
+        or not payload["approved_at"].strip()
+    ):
+        raise ArtifactRegistryError(
+            "edit_authority_approval human decision identity is invalid"
+        )
+    if payload.get("allowed_actions") != [
+        "create_evidence_pack_revision",
+        "create_implementation_plan_revision",
+        "resolve_exact_edit_binding",
+    ]:
+        raise ArtifactRegistryError(
+            "edit_authority_approval allowed_actions are invalid"
+        )
+    if payload.get("forbidden_actions") != [
+        "invoke_repair_planner",
+        "modify_source",
+        "build",
+        "launch_process",
+        "write_game_directory",
+    ]:
+        raise ArtifactRegistryError(
+            "edit_authority_approval forbidden_actions are invalid"
+        )
+    if (
+        payload.get("repair_planner_allowed") is not False
+        or payload.get("source_patch_allowed") is not False
+    ):
+        raise ArtifactRegistryError(
+            "edit_authority_approval exceeds its approved action boundary"
         )
 
 
@@ -1034,6 +1178,56 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             dashboard_projection=("message",),
         ),
         ArtifactContract(
+            artifact_type="edit_authority_request",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "status",
+                    "feature_id",
+                    "run_id",
+                    "request_hash",
+                    "request_payload",
+                    "authority_granted",
+                    "registry_mutation_allowed",
+                    "repair_planner_allowed",
+                    "source_patch_allowed",
+                }
+            ),
+            producer_stage="edit_authority_request",
+            consumer_stages=frozenset(
+                {
+                    "edit_authority_approval",
+                    "dashboard",
+                }
+            ),
+            allowed_statuses=statuses,
+            required_upstream_artifacts=frozenset(
+                {
+                    "feature_spec",
+                    "runtime_evidence",
+                    "implementation_plan",
+                    "patch_proposal",
+                }
+            ),
+            required_exact_revision_upstream_artifacts=frozenset(
+                {
+                    "feature_spec",
+                    "runtime_evidence",
+                    "implementation_plan",
+                    "patch_proposal",
+                }
+            ),
+            dashboard_projection=(
+                "message",
+                "status",
+                "request_hash",
+                "authority_granted",
+            ),
+        ),
+        ArtifactContract(
             artifact_type="edit_authority_approval",
             schema_version="1.0",
             required_fields=frozenset(
@@ -1046,14 +1240,6 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                     "run_id",
                     "approval_hash",
                     "approved_by",
-                    "approval_scope",
-                    "approved_proposal",
-                    "stored_runtime_failure_ownership",
-                    "approved_runtime_failure_ownership",
-                    "allowed_edit_binding_ids",
-                    "allowed_evidence_ids",
-                    "runtime_evidence_mutation_allowed",
-                    "old_patch_proposal_mutation_allowed",
                     "repair_planner_allowed",
                     "source_patch_allowed",
                 }
@@ -1070,17 +1256,22 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             allowed_statuses=statuses,
             required_upstream_artifacts=frozenset(
                 {
-                    "feature_spec",
-                    "runtime_evidence",
-                    "implementation_plan",
-                    "patch_proposal",
+                    "edit_authority_request",
+                    "resume_report",
+                }
+            ),
+            required_exact_revision_upstream_artifacts=frozenset(
+                {
+                    "edit_authority_request",
+                    "resume_report",
                 }
             ),
             dashboard_projection=(
                 "message",
                 "status",
                 "approval_hash",
-                "allowed_edit_binding_ids",
+                "repair_planner_allowed",
+                "source_patch_allowed",
             ),
         ),
         ArtifactContract(
@@ -1331,9 +1522,14 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 }
             ),
             producer_stage="resume",
-            consumer_stages=frozenset({"dashboard", "eval"}),
+            consumer_stages=frozenset(
+                {"edit_authority_approval", "dashboard", "eval"}
+            ),
             allowed_statuses=statuses,
             required_upstream_artifacts=frozenset({"workflow_checkpoint"}),
+            required_exact_revision_upstream_artifacts=frozenset(
+                {"workflow_checkpoint"}
+            ),
             dashboard_projection=(
                 "message",
                 "resume_id",

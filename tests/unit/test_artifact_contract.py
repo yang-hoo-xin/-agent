@@ -192,6 +192,133 @@ def test_edit_authority_approval_contract_binds_exact_proposal_hash() -> None:
         )
 
 
+def test_edit_authority_request_has_no_authority_and_requires_exact_inputs() -> None:
+    registry = ArtifactTypeRegistry()
+    request_payload = {
+        "schema_version": "stagger_edit_authority_request_v1",
+        "proposal": {"feature_id": "feature_001"},
+        "source_root": "C:/source",
+        "projected_ids": {
+            "binding_id": "edit_binding_004",
+            "change_id": "chg_004",
+            "evidence_id": "stagger_repair_001",
+        },
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    payload = {
+        "node_name": "request_stagger_edit_authority",
+        "stage": "edit_authority_request",
+        "message": "Awaiting graph approval.",
+        "status": "pending_human_approval",
+        "feature_id": "feature_001",
+        "run_id": "run_001",
+        "request_hash": request_hash,
+        "request_payload": request_payload,
+        "authority_granted": False,
+        "registry_mutation_allowed": False,
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+    }
+
+    contract = registry.validate_write(
+        artifact_type="edit_authority_request",
+        status="success",
+        payload=payload,
+    )
+
+    assert contract.required_upstream_artifacts == frozenset(
+        {
+            "feature_spec",
+            "runtime_evidence",
+            "implementation_plan",
+            "patch_proposal",
+        }
+    )
+    assert contract.required_exact_revision_upstream_artifacts == (
+        contract.required_upstream_artifacts
+    )
+    payload["authority_granted"] = True
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="cannot grant execution authority",
+    ):
+        registry.validate_write(
+            artifact_type="edit_authority_request",
+            status="success",
+            payload=payload,
+        )
+
+
+def test_request_bound_approval_is_permission_only() -> None:
+    registry = ArtifactTypeRegistry()
+    revision = {
+        "feature_id": "feature_001",
+        "path": "artifact.json",
+        "artifact_hash": "a" * 64,
+    }
+    payload = {
+        "node_name": "approve_stagger_edit_authority",
+        "stage": "edit_authority_approval",
+        "message": "Exact request approved.",
+        "status": "approved",
+        "feature_id": "feature_001",
+        "run_id": "run_001",
+        "authority_source": "edit_authority_request",
+        "approval_hash": "sha256:" + ("b" * 64),
+        "request_hash": "sha256:" + ("b" * 64),
+        "approved_by": "user",
+        "approved_at": "2026-07-30T12:00:00+08:00",
+        "resume_id": "resume_001",
+        "decision": "approve",
+        "edit_authority_request_revision": dict(revision),
+        "resume_report_revision": dict(revision),
+        "allowed_actions": [
+            "create_evidence_pack_revision",
+            "create_implementation_plan_revision",
+            "resolve_exact_edit_binding",
+        ],
+        "forbidden_actions": [
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ],
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+    }
+
+    contract = registry.validate_write(
+        artifact_type="edit_authority_approval",
+        status="success",
+        payload=payload,
+    )
+
+    assert contract.required_upstream_artifacts == frozenset(
+        {"edit_authority_request", "resume_report"}
+    )
+    assert contract.required_exact_revision_upstream_artifacts == (
+        contract.required_upstream_artifacts
+    )
+    payload["approved_proposal"] = {"must_not_be_here": True}
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="non-authority fields",
+    ):
+        registry.validate_write(
+            artifact_type="edit_authority_approval",
+            status="success",
+            payload=payload,
+        )
+
+
 def _review_payload() -> dict[str, object]:
     return {
         "node_name": "review_proposal",

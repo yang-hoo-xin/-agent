@@ -11,15 +11,17 @@ from types import SimpleNamespace
 import pytest
 
 from src.mod_agent.runtime import (
-    StaggerEditAuthorityApprovalError,
     StaggerEditAuthorityPreflightError,
-    approve_stagger_edit_authority,
+    create_stagger_edit_authority_request,
     preflight_stagger_edit_authority,
 )
 from src.mod_agent.artifacts import ArtifactRef
 from src.mod_agent.artifacts.registry import ArtifactTypeRegistry
 from src.mod_agent.runtime import (
     stagger_edit_authority as edit_authority_module,
+)
+from src.mod_agent.runtime.stagger_edit_authority import (
+    materialize_stagger_edit_authority_approval,
 )
 from src.mod_agent.runtime.stagger_diagnosis import (
     STAGGER_VISUAL_ACCEPTANCE_CRITERION,
@@ -355,8 +357,8 @@ def test_preflight_emits_exact_stable_proposal_without_writing(
     second = preflight_stagger_edit_authority(**args)
 
     assert first == second
-    assert first["status"] == "AWAITING_EXACT_EDIT_AUTHORITY_APPROVAL"
-    assert first["approval_hash"].startswith("sha256:")
+    assert first["status"] == "READY_TO_CREATE_EDIT_AUTHORITY_REQUEST"
+    assert first["proposal_hash"].startswith("sha256:")
     assert first["approval_required"] is True
     assert first["registry_mutation_allowed"] is False
     assert first["repair_allowed"] is False
@@ -494,6 +496,40 @@ class _WritableArtifactStore(_ReadOnlyArtifactStore):
     writes: list[dict[str, object]] = []
     preflight_types: tuple[str, ...] = ()
 
+    def list_feature_artifacts(self, feature_id: str) -> list[ArtifactRef]:
+        assert feature_id == FEATURE_ID
+        latest = {
+            "feature_spec": ArtifactRef(
+                feature_id=FEATURE_ID,
+                artifact_type="feature_spec",
+                path=str(self.root.parent / "feature-spec.json"),
+                artifact_hash=FEATURE_SPEC_HASH,
+            ),
+            "runtime_evidence": ArtifactRef(
+                feature_id=FEATURE_ID,
+                artifact_type="runtime_evidence",
+                path=str(self.root.parent / "runtime-evidence.json"),
+                artifact_hash=RUNTIME_EVIDENCE_HASH,
+            ),
+            "implementation_plan": ArtifactRef(
+                feature_id=FEATURE_ID,
+                artifact_type="implementation_plan",
+                path=str(self.root.parent / "implementation-plan.json"),
+                artifact_hash=IMPLEMENTATION_PLAN_HASH,
+            ),
+            "patch_proposal": ArtifactRef(
+                feature_id=FEATURE_ID,
+                artifact_type="patch_proposal",
+                path=str(self.root.parent / "patch-proposal.json"),
+                artifact_hash=PATCH_PROPOSAL_HASH,
+            ),
+        }
+        for write in self.__class__.writes:
+            ref = write.get("ref")
+            if isinstance(ref, ArtifactRef):
+                latest[ref.artifact_type] = ref
+        return list(latest.values())
+
     def preflight_atomic_commit(
         self,
         *,
@@ -551,6 +587,7 @@ class _WritableArtifactStore(_ReadOnlyArtifactStore):
                 "exact_revision_upstream_types": set(
                     exact_revision_upstream_types or set()
                 ),
+                "ref": ref,
             }
         )
         self.__class__.envelopes[artifact_type] = {
@@ -570,7 +607,7 @@ class _WritableArtifactStore(_ReadOnlyArtifactStore):
         return ref
 
 
-def test_exact_approval_writes_authority_chain_and_stops_before_repair(
+def test_request_writes_only_non_authoritative_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -588,26 +625,12 @@ def test_exact_approval_writes_authority_chain_and_stops_before_repair(
     )
     source_path = Path(args["source_root"]) / TARGET_PATH
     source_hash_before = hashlib.sha256(source_path.read_bytes()).hexdigest()
-    preflight = preflight_stagger_edit_authority(**args)
+    result = create_stagger_edit_authority_request(**args)
 
-    result = approve_stagger_edit_authority(
-        approval_hash=preflight["approval_hash"],
-        approved_by="user",
-        **args,
-    )
-
-    assert result["status"] == "EXACT_EDIT_AUTHORITY_RESOLVED"
-    assert result["written_artifact_types"] == [
-        "edit_authority_approval",
-        "evidence_pack",
-        "implementation_plan",
-        "binding_resolution",
-    ]
-    assert result["allowed_edit_binding_ids"] == ["edit_binding_003"]
-    assert result["resolved_repair_target"]["status"] == "resolved"
-    assert result["resolved_repair_target"]["binding_id"] == (
-        "edit_binding_003"
-    )
+    assert result["status"] == "EDIT_AUTHORITY_REQUEST_CREATED"
+    assert result["written_artifact_types"] == ["edit_authority_request"]
+    assert result["authority_granted"] is False
+    assert result["registry_mutation_allowed"] is False
     assert result["repair_planner_invoked"] is False
     assert result["repair_allowed"] is False
     assert result["source_patch_allowed"] is False
@@ -619,30 +642,229 @@ def test_exact_approval_writes_authority_chain_and_stops_before_repair(
         item["artifact_type"]
         for item in _WritableArtifactStore.writes
     ] == result["written_artifact_types"]
-    assert _WritableArtifactStore.preflight_types == tuple(
-        result["written_artifact_types"]
-    )
-    plan_write = _WritableArtifactStore.writes[2]["payload"]
-    assert isinstance(plan_write, dict)
-    new_binding = plan_write["binding_registry"]["edit_bindings"][-1]
-    assert new_binding["target_symbol"] == TARGET_SYMBOL
-    assert new_binding["target_span"] == {
-        "start_line": 7,
-        "end_line": 11,
+    request_write = _WritableArtifactStore.writes[0]
+    assert request_write["upstream_types"] == [
+        "feature_spec",
+        "runtime_evidence",
+        "implementation_plan",
+        "patch_proposal",
+    ]
+    request_payload = request_write["payload"]
+    assert request_payload["authority_granted"] is False
+    assert request_payload["request_payload"]["projected_ids"] == {
+        "binding_id": "edit_binding_003",
+        "change_id": "chg_003",
+        "evidence_id": request_payload["request_payload"][
+            "projected_ids"
+        ]["evidence_id"],
     }
 
 
-def test_wrong_exact_approval_hash_writes_nothing(
+def test_request_creation_preserves_preflight_no_source_write(
     tmp_path: Path,
 ) -> None:
     args = _preflight_args(tmp_path)
+    source_path = Path(args["source_root"]) / TARGET_PATH
+    source_hash_before = hashlib.sha256(source_path.read_bytes()).hexdigest()
+
+    preflight_stagger_edit_authority(**args)
+
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() == (
+        source_hash_before
+    )
+    assert _ReadOnlyArtifactStore.read_types == [
+        "feature_spec",
+        "runtime_evidence",
+        "implementation_plan",
+        "patch_proposal",
+    ]
+
+
+def test_graph_resume_materialization_keeps_approval_permission_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _preflight_args(tmp_path)
+    _WritableArtifactStore.envelopes = _envelopes()
+    _WritableArtifactStore.stale_types = set()
+    _WritableArtifactStore.read_types = []
+    _WritableArtifactStore.freshness_types = []
+    _WritableArtifactStore.writes = []
+    _WritableArtifactStore.preflight_types = ()
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        _WritableArtifactStore,
+    )
+    request_result = create_stagger_edit_authority_request(**args)
+    request_revision = request_result[
+        "edit_authority_request_revision"
+    ]
+    request_ref = ArtifactRef(
+        feature_id=FEATURE_ID,
+        artifact_type="edit_authority_request",
+        path=request_revision["path"],
+        artifact_hash=request_revision["artifact_hash"],
+    )
+    checkpoint_ref = ArtifactRef(
+        feature_id=FEATURE_ID,
+        artifact_type="workflow_checkpoint",
+        path=str(tmp_path / "checkpoint.json"),
+        artifact_hash="6" * 64,
+    )
+    _WritableArtifactStore.envelopes["workflow_checkpoint"] = {
+        "data": {
+            "checkpoint_stage": "edit_authority_approval",
+            "run_id": RUN_ID,
+            "feature_id": FEATURE_ID,
+            "state_snapshot": {
+                "artifacts": {
+                    "edit_authority_request": request_ref.path,
+                },
+                "artifact_hashes": {
+                    "edit_authority_request": request_ref.artifact_hash,
+                },
+            },
+            "resume_binding": {
+                "edit_authority_request_ref": request_ref.path,
+                "edit_authority_request_artifact_hash": (
+                    request_ref.artifact_hash
+                ),
+                "edit_authority_request_hash": request_result[
+                    "request_hash"
+                ],
+            },
+        },
+        "inputs": {"upstream_artifacts": []},
+    }
+    report_ref = ArtifactRef(
+        feature_id=FEATURE_ID,
+        artifact_type="resume_report",
+        path=str(tmp_path / "resume-report.json"),
+        artifact_hash="7" * 64,
+    )
+    _WritableArtifactStore.envelopes["resume_report"] = {
+        "data": {
+            "resume_id": "resume_edit_authority_001",
+            "status": "accepted",
+            "allowed": True,
+            "decision": "approve",
+            "resume_stage": "edit_authority_approval",
+            "run_id": RUN_ID,
+            "approved_by": "user",
+            "approved_at": "2026-07-30T12:00:00+08:00",
+            "authority_request_hash": request_result["request_hash"],
+        },
+        "inputs": {
+            "upstream_artifacts": [
+                {
+                    "artifact_type": "workflow_checkpoint",
+                    "path": checkpoint_ref.path,
+                    "artifact_hash": checkpoint_ref.artifact_hash,
+                }
+            ]
+        },
+    }
+
+    result = materialize_stagger_edit_authority_approval(
+        artifact_store_root=args["artifact_store_root"],
+        feature_id=FEATURE_ID,
+        edit_authority_request_path=request_ref.path,
+        edit_authority_request_hash=request_ref.artifact_hash,
+        resume_report_path=report_ref.path,
+        resume_report_hash=report_ref.artifact_hash,
+    )
+
+    assert result["status"] == "EXACT_EDIT_AUTHORITY_RESOLVED"
+    assert result["written_artifact_types"] == [
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+        "binding_resolution",
+    ]
+    approval = _WritableArtifactStore.writes[1]["payload"]
+    assert approval["authority_source"] == "edit_authority_request"
+    assert approval["request_hash"] == request_result["request_hash"]
+    assert approval["repair_planner_allowed"] is False
+    assert approval["source_patch_allowed"] is False
+    assert "approved_proposal" not in approval
+    assert "approved_runtime_failure_ownership" not in approval
+    assert result["resolved_repair_target"]["binding_id"] == (
+        "edit_binding_003"
+    )
+
+
+def test_request_creation_blocks_noncurrent_plan_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _preflight_args(tmp_path)
+    _WritableArtifactStore.envelopes = _envelopes()
+    _WritableArtifactStore.stale_types = set()
+    _WritableArtifactStore.read_types = []
+    _WritableArtifactStore.freshness_types = []
+    _WritableArtifactStore.writes = [
+        {
+            "ref": ArtifactRef(
+                feature_id=FEATURE_ID,
+                artifact_type="implementation_plan",
+                path=str(tmp_path / "new-plan.json"),
+                artifact_hash="9" * 64,
+            )
+        }
+    ]
+    _WritableArtifactStore.preflight_types = ()
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        _WritableArtifactStore,
+    )
 
     with pytest.raises(
-        StaggerEditAuthorityApprovalError,
-        match="does not match",
+        edit_authority_module.StaggerEditAuthorityApprovalError,
+        match="implementation_plan is no longer the current revision",
     ):
-        approve_stagger_edit_authority(
-            approval_hash="sha256:" + ("f" * 64),
-            approved_by="user",
-            **args,
-        )
+        create_stagger_edit_authority_request(**args)
+
+    assert all(
+        write.get("artifact_type") != "edit_authority_request"
+        for write in _WritableArtifactStore.writes
+    )
+
+
+def test_request_creation_blocks_same_hash_at_noncurrent_plan_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _preflight_args(tmp_path)
+    _WritableArtifactStore.envelopes = _envelopes()
+    _WritableArtifactStore.stale_types = set()
+    _WritableArtifactStore.read_types = []
+    _WritableArtifactStore.freshness_types = []
+    _WritableArtifactStore.writes = [
+        {
+            "ref": ArtifactRef(
+                feature_id=FEATURE_ID,
+                artifact_type="implementation_plan",
+                path=str(tmp_path / "same-bytes-new-revision.json"),
+                artifact_hash=IMPLEMENTATION_PLAN_HASH,
+            )
+        }
+    ]
+    _WritableArtifactStore.preflight_types = ()
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        _WritableArtifactStore,
+    )
+
+    with pytest.raises(
+        edit_authority_module.StaggerEditAuthorityApprovalError,
+        match="implementation_plan is no longer the current revision",
+    ):
+        create_stagger_edit_authority_request(**args)
+
+    assert all(
+        write.get("artifact_type") != "edit_authority_request"
+        for write in _WritableArtifactStore.writes
+    )

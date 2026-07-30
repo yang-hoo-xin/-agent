@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.artifacts.registry import (
+    ArtifactTypeRegistry,
+)
 from src.mod_agent.bindings import resolve_runtime_diagnosis_binding
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.domain import DomainAdapterRegistry, build_gtfo_profile
@@ -48,6 +53,7 @@ from src.mod_agent.runtime import (
 )
 from src.mod_agent.workflow import (
     ResumePayload,
+    ResumeValidator,
     WorkflowCheckpointStore,
     build_graph,
     create_initial_state,
@@ -66,6 +72,194 @@ def test_external_evaluation_requirement_requires_factory(tmp_path: Path) -> Non
             ArtifactStore(tmp_path / "artifacts"),
             require_external_evaluation=True,
         )
+
+
+@pytest.mark.parametrize("materialization_fails", [False, True])
+def test_stagger_edit_authority_approval_runs_only_through_graph_interrupt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    materialization_fails: bool,
+) -> None:
+    from langgraph.types import Command
+
+    default_registry = ArtifactTypeRegistry()
+    request_contract = replace(
+        default_registry.get("edit_authority_request"),
+        required_upstream_artifacts=frozenset(),
+        required_exact_revision_upstream_artifacts=frozenset(),
+    )
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            request_contract,
+            default_registry.get("workflow_checkpoint"),
+            default_registry.get("resume_report"),
+            default_registry.get("workflow_trace"),
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    request_payload = {
+        "schema_version": "stagger_edit_authority_request_v1",
+        "proposal": {},
+        "source_root": str(tmp_path),
+        "projected_ids": {
+            "binding_id": "edit_binding_004",
+            "change_id": "chg_004",
+            "evidence_id": "stagger_repair_001",
+        },
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id="feature_edit_authority",
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": "request_stagger_edit_authority",
+            "stage": "edit_authority_request",
+            "message": "Awaiting graph approval.",
+            "status": "pending_human_approval",
+            "feature_id": "feature_edit_authority",
+            "run_id": "run_edit_authority",
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def materialize(**kwargs):
+        captured.update(kwargs)
+        if materialization_fails:
+            raise RuntimeError("projection stopped after approval")
+        return {
+            field_name: {
+                "feature_id": "feature_edit_authority",
+                "path": str(tmp_path / f"{artifact_type}.json"),
+                "artifact_hash": artifact_type.ljust(64, "0")[:64],
+            }
+            for artifact_type, field_name in (
+                (
+                    "edit_authority_approval",
+                    "edit_authority_approval_revision",
+                ),
+                ("evidence_pack", "evidence_pack_revision"),
+                (
+                    "implementation_plan",
+                    "implementation_plan_revision",
+                ),
+                ("binding_resolution", "binding_resolution_revision"),
+            )
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.graph."
+        "materialize_stagger_edit_authority_approval",
+        materialize,
+    )
+    graph = build_graph(
+        store,
+        edit_authority_request_ref=request_ref,
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+    )
+    config = {
+        "configurable": {
+            "thread_id": (
+                "stagger_edit_authority_graph_failed"
+                if materialization_fails
+                else "stagger_edit_authority_graph_001"
+            )
+        }
+    }
+    state = create_initial_state(
+        run_id="run_edit_authority",
+        request_id="feature_edit_authority",
+        user_request="Approve one exact Stagger edit scope.",
+    )
+    state["feature_id"] = "feature_edit_authority"
+
+    interrupted = graph.invoke(state, config)
+
+    assert "__interrupt__" in interrupted
+    request = interrupted["__interrupt__"][0].value
+    assert request["stage"] == "edit_authority_approval"
+    assert request["payload"]["request_hash"] == request_hash
+    assert store.list_feature_artifact_revisions(
+        "feature_edit_authority",
+        "edit_authority_approval",
+    ) == []
+
+    result = graph.invoke(
+        Command(
+            resume={
+                "resume_id": "resume_edit_authority_001",
+                "run_id": "run_edit_authority",
+                "stage": "edit_authority_approval",
+                "decision": "approve",
+                "approved_by": "user",
+                "approved_at": "2026-07-30T12:00:00+08:00",
+                "artifact_refs": request["artifact_refs"],
+                "authority_request_hash": request_hash,
+            }
+        ),
+        config,
+    )
+
+    assert captured["edit_authority_request_path"] == request_ref.path
+    assert captured["edit_authority_request_hash"] == (
+        request_ref.artifact_hash
+    )
+    assert "resume_report" in result["artifacts"]
+    if materialization_fails:
+        assert result["current_stage"] == "blocked"
+        assert "binding_resolution" not in result["artifacts"]
+        assert result["approvals"].get("edit_authority") is not True
+        assert any(
+            blocker["code"]
+            == "EDIT_AUTHORITY_APPROVED_NOT_MATERIALIZED"
+            for blocker in result["blockers"]
+        )
+    else:
+        assert result["current_stage"] == "binding_resolution"
+        assert result["approvals"]["edit_authority"] is True
+        assert "binding_resolution" in result["artifacts"]
+
+
+def test_edit_authority_resume_blocks_wrong_request_hash() -> None:
+    checkpoint = {
+        "run_id": "run_edit_authority",
+        "checkpoint_stage": "edit_authority_approval",
+        "artifact_refs": ["request.json"],
+        "state_snapshot": {},
+        "resume_binding": {
+            "edit_authority_request_hash": "sha256:" + ("a" * 64),
+        },
+    }
+    payload = ResumePayload(
+        resume_id="resume_edit_authority_wrong_hash",
+        run_id="run_edit_authority",
+        stage="edit_authority_approval",
+        decision="approve",
+        approved_by="user",
+        approved_at="2026-07-30T12:00:00+08:00",
+        artifact_refs=("request.json",),
+        authority_request_hash="sha256:" + ("b" * 64),
+    )
+
+    decision = ResumeValidator().validate(payload, checkpoint=checkpoint)
+
+    assert decision.allowed is False
+    assert any(
+        blocker["code"] == "EDIT_AUTHORITY_REQUEST_HASH_MISMATCH"
+        for blocker in decision.blockers
+    )
 
 
 def test_explicit_domain_policy_rejects_simultaneous_registry(

@@ -27,6 +27,7 @@ class CheckpointPolicy:
         "dry_run_apply",
         "build",
         "collect_runtime_evidence",
+        "edit_authority_approval",
     )
     backend: str = "langgraph_memory"
 
@@ -100,6 +101,9 @@ class ResumeReport:
     applied_updates: dict[str, Any]
     stale_reasons: tuple[str, ...]
     blockers: tuple[dict[str, Any], ...]
+    approved_by: str = ""
+    approved_at: str = ""
+    authority_request_hash: str | None = None
 
     def to_artifact_payload(self) -> dict[str, Any]:
         """Return payload compatible with the resume_report contract."""
@@ -119,6 +123,9 @@ class ResumeReport:
             "applied_updates": self.applied_updates,
             "stale_reasons": list(self.stale_reasons),
             "blockers": list(self.blockers),
+            "approved_by": self.approved_by,
+            "approved_at": self.approved_at,
+            "authority_request_hash": self.authority_request_hash,
         }
 
 
@@ -246,6 +253,9 @@ class WorkflowCheckpointStore:
             applied_updates=decision.applied_updates,
             stale_reasons=tuple(decision.stale_reasons),
             blockers=tuple(decision.blockers),
+            approved_by=payload.approved_by,
+            approved_at=payload.approved_at,
+            authority_request_hash=payload.authority_request_hash,
         )
         report_ref = self.artifact_store.write(
             feature_id=checkpoint_ref.feature_id,
@@ -760,6 +770,9 @@ class WorkflowCheckpointStore:
             "build_result_ref": None,
             "build_result_hash": None,
             "next_graph_node": None,
+            "edit_authority_request_ref": None,
+            "edit_authority_request_artifact_hash": None,
+            "edit_authority_request_hash": None,
         }
         if "patch_proposal" in state["artifacts"]:
             proposal_ref = self._artifact_ref_from_state(state, "patch_proposal")
@@ -781,6 +794,19 @@ class WorkflowCheckpointStore:
             build_ref = self._artifact_ref_from_state(state, "build_result")
             binding["build_result_ref"] = build_ref.path
             binding["build_result_hash"] = build_ref.artifact_hash
+        if "edit_authority_request" in state["artifacts"]:
+            request_ref = self._artifact_ref_from_state(
+                state,
+                "edit_authority_request",
+            )
+            request_payload = self.artifact_store.read(request_ref)["data"]
+            binding["edit_authority_request_ref"] = request_ref.path
+            binding["edit_authority_request_artifact_hash"] = (
+                request_ref.artifact_hash
+            )
+            binding["edit_authority_request_hash"] = request_payload.get(
+                "request_hash"
+            )
         if state["current_stage"] == "build":
             binding["next_graph_node"] = "collect_runtime_evidence"
         return binding

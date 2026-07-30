@@ -16,6 +16,8 @@ StageName = Literal[
     "isolated_apply",
     "build",
     "runtime_evidence",
+    "edit_authority_request",
+    "edit_authority_approval",
     "binding_resolution",
     "repair_plan",
     "evaluation",

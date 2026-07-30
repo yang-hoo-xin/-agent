@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -14,10 +14,10 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: build_complete_runtime_visual_failure_exact_edit_authority_resolved_repair_planner_closed
+stagger_implementation_plan_status: build_complete_runtime_visual_failure_legacy_authority_history_new_request_gate_implemented_repair_planner_closed
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: STAGGER-OPERATOR-COMPLETION-CONFIRMATION-001
+most_recent_completed_capability: STAGGER-EDIT-AUTHORITY-REQUEST-APPROVAL-GATE-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -647,6 +647,27 @@ is unchanged. All four authority-chain revisions now read as fresh. The
 immutable RuntimeEvidence and PatchProposal were not rewritten, the Mod source
 still has SHA256 `65489604...BB3B`, and RepairPlanner, source Patch, Build,
 process launch, and game-directory actions remain closed.
+
+The subsequent Edit Authority contract repair keeps those four revisions as
+immutable historical records but removes their old direct CLI producer from
+the forward path. `preflight-stagger-edit-authority` remains no-write.
+`request-stagger-edit-authority` may write only one
+`edit_authority_request`, whose contract sets `authority_granted=false`,
+`registry_mutation_allowed=false`, `repair_planner_allowed=false`, and
+`source_patch_allowed=false`. Human approval is accepted only by the existing
+LangGraph interrupt/resume path when the resume binds the exact request hash.
+The resulting `edit_authority_approval` is the sole forward authority record
+and contains no diagnosis, Plan, EvidencePack, source excerpt, or validation
+result. It authorizes only deterministic EvidencePack/Plan projection and one
+strict Binding resolution; source modification, RepairPlanner, Build, process
+launch, and game-directory writes remain forbidden. A missing final
+BindingResolution is treated as approved-but-not-materialized and grants no
+later execution authority. This code path is focused-tested only; no new
+real-store request, approval, Plan, or BindingResolution revision was written.
+New legacy-shaped Approval writes are rejected at ArtifactStore, while the
+immutable historical Approval remains readable. Current input selection now
+requires both the exact revision path and complete Artifact hash. The final
+focused suite passed 214 tests.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

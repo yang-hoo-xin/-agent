@@ -863,21 +863,126 @@ class ArtifactStore:
         exact_revision_upstream_types: set[str],
     ) -> None:
         provided_types = {ref.artifact_type for ref in upstream_refs}
+        if (
+            artifact_type == "edit_authority_approval"
+            and payload.get("authority_source")
+            != "edit_authority_request"
+        ):
+            raise ArtifactStoreError(
+                "New EditAuthorityApproval writes must originate from an "
+                "exact EditAuthorityRequest and ResumeReport."
+            )
+        if (
+            artifact_type == "binding_resolution"
+            and payload.get("authority_source")
+            == "edit_authority_approval"
+            and payload.get("authority_contract_version")
+            != "edit_authority_request_approval_v1"
+        ):
+            raise ArtifactStoreError(
+                "New approved binding_resolution writes must use the "
+                "request-bound Edit Authority contract."
+            )
         missing = sorted(contract.required_upstream_artifacts - provided_types)
         if missing:
             raise ArtifactStoreError(
                 f"Artifact {artifact_type!r} missing required upstream artifacts: {missing}"
             )
-        if _requires_conditional_upstream_contract(
+        if (
+            artifact_type == "binding_resolution"
+            and payload.get("authority_contract_version")
+            == "edit_authority_request_approval_v1"
+        ):
+            authority_types = {
+                "edit_authority_request",
+                "edit_authority_approval",
+                "evidence_pack",
+            }
+            missing_authority = sorted(authority_types - provided_types)
+            not_exact_authority = sorted(
+                authority_types - exact_revision_upstream_types
+            )
+            if missing_authority or not_exact_authority:
+                raise ArtifactStoreError(
+                    "Approved binding_resolution requires exact request, "
+                    "approval, and evidence upstreams."
+                )
+            refs_by_type = {
+                ref.artifact_type: ref
+                for ref in upstream_refs
+                if ref.artifact_type in authority_types
+            }
+            for revision_field, upstream_type in (
+                (
+                    "edit_authority_request_revision",
+                    "edit_authority_request",
+                ),
+                (
+                    "edit_authority_approval_revision",
+                    "edit_authority_approval",
+                ),
+                ("evidence_pack_revision", "evidence_pack"),
+            ):
+                revision = payload.get(revision_field)
+                upstream = refs_by_type.get(upstream_type)
+                if (
+                    not isinstance(revision, Mapping)
+                    or upstream is None
+                    or revision.get("path") != upstream.path
+                    or revision.get("artifact_hash")
+                    != upstream.artifact_hash
+                ):
+                    raise ArtifactStoreError(
+                        "Approved binding_resolution payload revision does "
+                        f"not match exact {upstream_type} upstream."
+                    )
+        if (
+            artifact_type == "edit_authority_approval"
+            and payload.get("authority_source")
+            == "edit_authority_request"
+        ):
+            refs_by_type = {
+                ref.artifact_type: ref
+                for ref in upstream_refs
+                if ref.artifact_type
+                in {"edit_authority_request", "resume_report"}
+            }
+            for revision_field, upstream_type in (
+                (
+                    "edit_authority_request_revision",
+                    "edit_authority_request",
+                ),
+                ("resume_report_revision", "resume_report"),
+            ):
+                revision = payload.get(revision_field)
+                upstream = refs_by_type.get(upstream_type)
+                if (
+                    not isinstance(revision, Mapping)
+                    or upstream is None
+                    or revision.get("path") != upstream.path
+                    or revision.get("artifact_hash")
+                    != upstream.artifact_hash
+                ):
+                    raise ArtifactStoreError(
+                        "EditAuthorityApproval payload revision does not "
+                        f"match exact {upstream_type} upstream."
+                    )
+        conditional_upstreams_required = _requires_conditional_upstream_contract(
             artifact_type=artifact_type,
             payload=payload,
             status=status,
-        ):
+        )
+        if conditional_upstreams_required:
             for group in contract.required_one_of_upstream_artifact_groups:
                 if not provided_types.intersection(group):
                     raise ArtifactStoreError(
                         f"Artifact {artifact_type!r} missing one of required upstream artifacts: {sorted(group)}"
                     )
+        exact_upstreams_required = (
+            artifact_type != "repair_plan"
+            or conditional_upstreams_required
+        )
+        if exact_upstreams_required:
             missing_exact = sorted(
                 contract.required_exact_revision_upstream_artifacts - provided_types
             )

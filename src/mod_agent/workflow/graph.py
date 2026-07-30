@@ -59,6 +59,9 @@ from src.mod_agent.runtime import (
     make_gtfo_runtime_evidence_factory_from_settings,
 )
 from src.mod_agent.runtime.evidence import bind_runtime_evidence_context
+from src.mod_agent.runtime.stagger_edit_authority import (
+    materialize_stagger_edit_authority_approval,
+)
 
 from .checkpointing import WorkflowCheckpointStore
 from .interrupts import InterruptRequest, ResumePayload
@@ -128,6 +131,7 @@ def build_graph(
     stop_after_build: bool = False,
     persist_build_runtime_handoff: bool = False,
     runtime_continuation_checkpoint_id: str | None = None,
+    edit_authority_request_ref: ArtifactRef | None = None,
     evaluation_context_factory: EvaluationContextFactory | None = None,
     require_external_evaluation: bool = False,
     require_review_approval_for_dry_run: bool = False,
@@ -143,8 +147,21 @@ def build_graph(
     evidence can be injected for controlled contract tests.
     """
 
-    if enable_dynamic_review_interrupt and checkpointer is None:
-        raise ValueError("Dynamic review interrupt requires a LangGraph checkpointer.")
+    if (
+        enable_dynamic_review_interrupt
+        or edit_authority_request_ref is not None
+    ) and checkpointer is None:
+        raise ValueError(
+            "Human approval interrupts require a LangGraph checkpointer."
+        )
+    if (
+        runtime_continuation_checkpoint_id is not None
+        and edit_authority_request_ref is not None
+    ):
+        raise ValueError(
+            "Runtime continuation and Edit Authority approval cannot share "
+            "one graph entry."
+        )
     if persist_build_runtime_handoff and not stop_after_build:
         raise ValueError(
             "Build-to-Runtime handoff persistence requires stop_after_build=True."
@@ -268,6 +285,18 @@ def build_graph(
                 lambda state: _run_dynamic_human_review_gate(state, artifact_store),
             ),
         )
+    if edit_authority_request_ref is not None:
+        graph.add_node(
+            "stagger_edit_authority_gate",
+            _make_real_graph_node(
+                "stagger_edit_authority_gate",
+                lambda state: _run_stagger_edit_authority_gate(
+                    state,
+                    artifact_store,
+                    edit_authority_request_ref,
+                ),
+            ),
+        )
 
     graph.add_node(
         "dry_run_apply",
@@ -354,7 +383,9 @@ def build_graph(
     )
     graph.add_node("blocked", _make_stub_graph_node("blocked", stub_runner))
 
-    if runtime_continuation_checkpoint_id is None:
+    if edit_authority_request_ref is not None:
+        graph.add_edge(START, "stagger_edit_authority_gate")
+    elif runtime_continuation_checkpoint_id is None:
         graph.add_edge(START, "plan_request")
     else:
         graph.add_conditional_edges(
@@ -420,6 +451,8 @@ def build_graph(
             route_after_human_review_gate,
             dict(registry["human_review_gate"]),
         )
+    if edit_authority_request_ref is not None:
+        graph.add_edge("stagger_edit_authority_gate", END)
     dry_run_routes = dict(registry["dry_run_apply"])
     if isolated_apply_factory is not None:
         dry_run_routes["continue"] = "isolated_apply"
@@ -861,6 +894,7 @@ def _run_review_proposal(
                 _artifact_ref_from_state(state, "implementation_plan"),
                 proposal_ref,
             ],
+            exact_revision_upstream_types={"patch_proposal"},
         )
 
     review = ProposalReviewer().review(
@@ -978,6 +1012,174 @@ def _run_dynamic_human_review_gate(
     return next_state
 
 
+def _run_stagger_edit_authority_gate(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    request_ref: ArtifactRef,
+) -> ModAgentState:
+    """Approve one exact request in-graph, then project bounded records."""
+
+    feature_id = state["feature_id"] or state["request_id"]
+    if request_ref.feature_id != feature_id:
+        raise ValueError(
+            "EditAuthorityRequest feature does not match graph state."
+        )
+    request_envelope = artifact_store.read_for_stage(
+        request_ref,
+        consumer_stage="edit_authority_approval",
+    )
+    request = request_envelope["data"]
+    if (
+        request.get("feature_id") != feature_id
+        or request.get("run_id") != state["run_id"]
+        or request.get("authority_granted") is not False
+    ):
+        raise ValueError(
+            "EditAuthorityRequest identity or no-authority boundary is invalid."
+        )
+
+    gate_state = _copy_state(state)
+    gate_state["current_stage"] = "edit_authority_approval"
+    _record_artifact(gate_state, "edit_authority_request", request_ref)
+    for upstream in request_envelope.get("inputs", {}).get(
+        "upstream_artifacts",
+        (),
+    ):
+        if (
+            isinstance(upstream, dict)
+            and isinstance(upstream.get("artifact_type"), str)
+            and isinstance(upstream.get("path"), str)
+            and isinstance(upstream.get("artifact_hash"), str)
+        ):
+            _record_artifact(
+                gate_state,
+                str(upstream["artifact_type"]),
+                ArtifactRef(
+                    feature_id=feature_id,
+                    artifact_type=str(upstream["artifact_type"]),
+                    path=str(upstream["path"]),
+                    artifact_hash=str(upstream["artifact_hash"]),
+                ),
+            )
+
+    interrupt_request = InterruptRequest(
+        interrupt_id=f"interrupt_{uuid4().hex}",
+        run_id=state["run_id"],
+        feature_id=feature_id,
+        stage="edit_authority_approval",
+        reason=(
+            "exact EditAuthorityRequest requires human approval before "
+            "Registry projection"
+        ),
+        payload={
+            "node_name": "stagger_edit_authority_gate",
+            "stage": "edit_authority_approval",
+            "required_decision": ["approve", "reject"],
+            "edit_authority_request_revision": {
+                "feature_id": request_ref.feature_id,
+                "path": request_ref.path,
+                "artifact_hash": request_ref.artifact_hash,
+            },
+            "request_hash": request["request_hash"],
+            "allowed_actions": [
+                "create_evidence_pack_revision",
+                "create_implementation_plan_revision",
+                "resolve_exact_edit_binding",
+            ],
+            "forbidden_actions": [
+                "invoke_repair_planner",
+                "modify_source",
+                "build",
+                "launch_process",
+                "write_game_directory",
+            ],
+        },
+        resume_allowed_fields=("approvals.edit_authority",),
+        artifact_refs=tuple(gate_state["artifacts"].values()),
+    )
+    resume_value = interrupt(interrupt_request.to_dict())
+
+    checkpoint_store = WorkflowCheckpointStore(artifact_store)
+    checkpoint_ref = checkpoint_store.create_checkpoint(
+        gate_state,
+        interrupt_reason=interrupt_request.reason,
+        resume_allowed_fields=("approvals.edit_authority",),
+    )
+    checkpoint = artifact_store.read(checkpoint_ref)["data"]
+    payload = _resume_payload_from_dynamic_value(
+        resume_value,
+        state=gate_state,
+        checkpoint=checkpoint,
+    )
+    decision, report_ref = checkpoint_store.resume(
+        checkpoint_ref,
+        payload,
+    )
+    next_state = _copy_state(gate_state)
+    _record_artifact(next_state, "workflow_checkpoint", checkpoint_ref)
+    _record_artifact(next_state, "resume_report", report_ref)
+    if not decision.allowed or payload.decision != "approve":
+        next_state["current_stage"] = "blocked"
+        next_state["blockers"].extend(
+            decision.blockers
+            or (
+                {
+                    "stage": "edit_authority_approval",
+                    "code": "EDIT_AUTHORITY_REJECTED",
+                    "message": (
+                        "Human review did not approve the exact "
+                        "EditAuthorityRequest."
+                    ),
+                },
+            )
+        )
+        return next_state
+
+    try:
+        materialized = materialize_stagger_edit_authority_approval(
+            artifact_store_root=artifact_store.root,
+            feature_id=feature_id,
+            edit_authority_request_path=request_ref.path,
+            edit_authority_request_hash=request_ref.artifact_hash,
+            resume_report_path=report_ref.path,
+            resume_report_hash=report_ref.artifact_hash,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        next_state["current_stage"] = "blocked"
+        next_state["blockers"].append(
+            {
+                "stage": "edit_authority_approval",
+                "code": "EDIT_AUTHORITY_APPROVED_NOT_MATERIALIZED",
+                "message": str(exc),
+            }
+        )
+        return next_state
+
+    for artifact_type, field_name in (
+        ("edit_authority_approval", "edit_authority_approval_revision"),
+        ("evidence_pack", "evidence_pack_revision"),
+        ("implementation_plan", "implementation_plan_revision"),
+        ("binding_resolution", "binding_resolution_revision"),
+    ):
+        revision = materialized[field_name]
+        _record_artifact(
+            next_state,
+            artifact_type,
+            ArtifactRef(
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                path=str(revision["path"]),
+                artifact_hash=str(revision["artifact_hash"]),
+            ),
+        )
+    next_state["current_stage"] = "binding_resolution"
+    next_state["approvals"] = {
+        **dict(next_state["approvals"]),
+        "edit_authority": True,
+    }
+    return next_state
+
+
 def _dynamic_review_interrupt_request(
     state: ModAgentState,
     artifact_store: ArtifactStore,
@@ -1040,6 +1242,7 @@ def _resume_payload_from_dynamic_value(
         artifact_refs=tuple(value.get("artifact_refs") or ()),
         diff_hash=value.get("diff_hash"),
         notes=str(value.get("notes") or ""),
+        authority_request_hash=value.get("authority_request_hash"),
     )
 
 

@@ -53,6 +53,7 @@ class ResumePayload:
     request_id: str | None = None
     feature_id: str | None = None
     runtime_admission: dict[str, Any] | None = None
+    authority_request_hash: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable resume payload."""
@@ -70,6 +71,7 @@ class ResumePayload:
             "request_id": self.request_id,
             "feature_id": self.feature_id,
             "runtime_admission": self.runtime_admission,
+            "authority_request_hash": self.authority_request_hash,
         }
 
 
@@ -107,6 +109,7 @@ class ResumeValidator:
         "dry_run_apply": ("approvals.dry_run",),
         "confirmed_apply": ("approvals.confirmed_write",),
         "collect_runtime_evidence": ("runtime_evidence.manual",),
+        "edit_authority_approval": ("approvals.edit_authority",),
     }
 
     ALLOWED_DECISIONS = frozenset({"approve", "reject", "correct", "provide_evidence"})
@@ -154,6 +157,12 @@ class ResumeValidator:
                     "message": "Approved resume payload must include approved_by.",
                 }
             )
+        if payload.stage == "edit_authority_approval":
+            self._validate_edit_authority_resume(
+                payload,
+                checkpoint=checkpoint,
+                blockers=blockers,
+            )
         missing_refs = sorted(
             set(checkpoint.get("artifact_refs", [])) - set(payload.artifact_refs)
         )
@@ -193,6 +202,52 @@ class ResumeValidator:
             reason="Resume payload accepted.",
             applied_updates=self._updates_for(payload, checkpoint=checkpoint),
         )
+
+    @staticmethod
+    def _validate_edit_authority_resume(
+        payload: ResumePayload,
+        *,
+        checkpoint: Mapping[str, Any],
+        blockers: list[dict[str, Any]],
+    ) -> None:
+        binding = checkpoint.get("resume_binding")
+        expected_hash = (
+            binding.get("edit_authority_request_hash")
+            if isinstance(binding, Mapping)
+            else None
+        )
+        if payload.decision not in {"approve", "reject"}:
+            blockers.append(
+                {
+                    "code": "EDIT_AUTHORITY_DECISION_UNSUPPORTED",
+                    "message": (
+                        "Edit Authority resume supports only approve or reject."
+                    ),
+                }
+            )
+        if payload.decision == "approve" and not payload.approved_at:
+            blockers.append(
+                {
+                    "code": "EDIT_AUTHORITY_APPROVAL_TIME_MISSING",
+                    "message": (
+                        "Edit Authority approval requires approved_at."
+                    ),
+                }
+            )
+        if (
+            not isinstance(expected_hash, str)
+            or not expected_hash
+            or payload.authority_request_hash != expected_hash
+        ):
+            blockers.append(
+                {
+                    "code": "EDIT_AUTHORITY_REQUEST_HASH_MISMATCH",
+                    "message": (
+                        "Resume payload does not bind the exact "
+                        "EditAuthorityRequest hash."
+                    ),
+                }
+            )
 
     @staticmethod
     def _validate_build_runtime_resume(
@@ -282,6 +337,16 @@ class ResumeValidator:
                 "restored_state": restored_state,
                 "clear_checkpointed_approvals": True,
                 "runtime_admission": dict(payload.runtime_admission or {}),
+            }
+        if (
+            payload.decision == "approve"
+            and payload.stage == "edit_authority_approval"
+        ):
+            return {
+                "approvals": {"edit_authority": True},
+                "allowed_fields": list(allowed_fields),
+                "restored_state": restored_state,
+                "authority_request_hash": payload.authority_request_hash,
             }
         return {
             "allowed_fields": list(allowed_fields),

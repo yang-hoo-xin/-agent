@@ -25,7 +25,7 @@ from .planning import ModPlanningBriefBuilder, RequestPlanner
 from .runtime import (
     StaggerEditAuthorityApprovalError,
     StaggerEditAuthorityPreflightError,
-    approve_stagger_edit_authority,
+    create_stagger_edit_authority_request,
     preflight_stagger_edit_authority,
 )
 from .tools import PermissionModel
@@ -362,23 +362,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_stagger_edit_authority_arguments(
         stagger_edit_authority_parser
     )
-    approve_stagger_edit_authority_parser = subparsers.add_parser(
-        "approve-stagger-edit-authority",
+    request_stagger_edit_authority_parser = subparsers.add_parser(
+        "request-stagger-edit-authority",
         help=(
-            "Consume one exact approval, write bounded authority revisions, "
-            "and stop after unique Binding resolution."
+            "Persist one exact technical request without granting Edit "
+            "Authority or mutating the Registry."
         ),
     )
     _add_stagger_edit_authority_arguments(
-        approve_stagger_edit_authority_parser
-    )
-    approve_stagger_edit_authority_parser.add_argument(
-        "--approval-hash",
-        required=True,
-    )
-    approve_stagger_edit_authority_parser.add_argument(
-        "--approved-by",
-        required=True,
+        request_stagger_edit_authority_parser
     )
 
     return parser
@@ -631,11 +623,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
-    if args.command == "approve-stagger-edit-authority":
+    if args.command == "request-stagger-edit-authority":
         try:
-            result = approve_stagger_edit_authority(
-                approval_hash=args.approval_hash,
-                approved_by=args.approved_by,
+            result = create_stagger_edit_authority_request(
                 **_stagger_edit_authority_arguments(args),
             )
         except (
@@ -649,7 +639,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 json.dumps(
                     {
                         "status": "BLOCKED",
-                        "command": "approve-stagger-edit-authority",
+                        "command": "request-stagger-edit-authority",
                         "reason": str(exc),
                         "writes_performed": None,
                         "artifact_store_inspection_required": True,

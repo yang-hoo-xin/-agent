@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -13,6 +14,10 @@ from src.mod_agent.artifacts import (
     ArtifactStore,
     ArtifactStoreError,
     StaleArtifactError,
+)
+from src.mod_agent.artifacts.registry import (
+    ArtifactContract,
+    ArtifactTypeRegistry,
 )
 from src.mod_agent.artifacts.store import ArtifactStorePreflightError
 from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
@@ -132,6 +137,230 @@ def _implementation_payload() -> dict[str, object]:
         "blocking": False,
         "blockers": [],
     }
+
+
+def _legacy_edit_authority_approval_payload() -> dict[str, object]:
+    proposal = {
+        "schema_version": "stagger_edit_authority_proposal_v1",
+        "feature_id": "feature_001",
+    }
+    approval_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            proposal,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "node_name": "approve_stagger_edit_authority",
+        "stage": "edit_authority_approval",
+        "message": "Historical authority shape.",
+        "status": "approved",
+        "feature_id": "feature_001",
+        "run_id": "run_001",
+        "approval_hash": approval_hash,
+        "approved_by": "user",
+        "approval_scope": [
+            "runtime_failure_ownership_reclassification",
+            "new_exact_edit_binding",
+        ],
+        "approved_proposal": proposal,
+        "stored_runtime_failure_ownership": {
+            "owner": "observation",
+            "source_repair_allowed": False,
+        },
+        "approved_runtime_failure_ownership": {
+            "owner": "product_behavior",
+            "source_repair_allowed": True,
+        },
+        "allowed_edit_binding_ids": ["edit_binding_004"],
+        "allowed_evidence_ids": ["stagger_repair_001"],
+        "runtime_evidence_mutation_allowed": False,
+        "old_patch_proposal_mutation_allowed": False,
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+    }
+
+
+def test_request_bound_approval_requires_exact_request_and_resume_refs(
+    tmp_path: Path,
+) -> None:
+    statuses = frozenset({"success"})
+    simple_contracts = [
+        ArtifactContract(
+            artifact_type=artifact_type,
+            schema_version="1.0",
+            required_fields=frozenset({"node_name", "stage", "message"}),
+            producer_stage=artifact_type,
+            consumer_stages=frozenset({"edit_authority_request"}),
+            allowed_statuses=statuses,
+        )
+        for artifact_type in (
+            "feature_spec",
+            "runtime_evidence",
+            "implementation_plan",
+            "patch_proposal",
+            "resume_report",
+        )
+    ]
+    default_registry = ArtifactTypeRegistry()
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            *simple_contracts,
+            default_registry.get("edit_authority_request"),
+            default_registry.get("edit_authority_approval"),
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    upstream_refs = {}
+    for artifact_type in (
+        "feature_spec",
+        "runtime_evidence",
+        "implementation_plan",
+        "patch_proposal",
+        "resume_report",
+    ):
+        payload = {
+            "node_name": artifact_type,
+            "stage": artifact_type,
+            "message": "stub",
+        }
+        if artifact_type == "implementation_plan":
+            payload["blocking"] = True
+        upstream_refs[artifact_type] = store.write(
+            feature_id="feature_001",
+            artifact_type=artifact_type,
+            payload=payload,
+        )
+    request_payload = {
+        "schema_version": "stagger_edit_authority_request_v1",
+        "proposal": {},
+        "source_root": str(tmp_path),
+        "projected_ids": {
+            "binding_id": "edit_binding_004",
+            "change_id": "chg_004",
+            "evidence_id": "stagger_repair_001",
+        },
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id="feature_001",
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": "request_stagger_edit_authority",
+            "stage": "edit_authority_request",
+            "message": "Awaiting approval.",
+            "status": "pending_human_approval",
+            "feature_id": "feature_001",
+            "run_id": "run_001",
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+        upstream_refs=[
+            upstream_refs["feature_spec"],
+            upstream_refs["runtime_evidence"],
+            upstream_refs["implementation_plan"],
+            upstream_refs["patch_proposal"],
+        ],
+        exact_revision_upstream_types={
+            "feature_spec",
+            "runtime_evidence",
+            "implementation_plan",
+            "patch_proposal",
+        },
+    )
+    resume_ref = upstream_refs["resume_report"]
+    approval_payload = {
+        "node_name": "approve_stagger_edit_authority",
+        "stage": "edit_authority_approval",
+        "message": "Approved.",
+        "status": "approved",
+        "feature_id": "feature_001",
+        "run_id": "run_001",
+        "authority_source": "edit_authority_request",
+        "approval_hash": request_hash,
+        "request_hash": request_hash,
+        "approved_by": "user",
+        "approved_at": "2026-07-30T12:00:00+08:00",
+        "resume_id": "resume_001",
+        "decision": "approve",
+        "edit_authority_request_revision": {
+            "feature_id": "feature_001",
+            "path": request_ref.path,
+            "artifact_hash": request_ref.artifact_hash,
+        },
+        "resume_report_revision": {
+            "feature_id": "feature_001",
+            "path": resume_ref.path,
+            "artifact_hash": resume_ref.artifact_hash,
+        },
+        "allowed_actions": [
+            "create_evidence_pack_revision",
+            "create_implementation_plan_revision",
+            "resolve_exact_edit_binding",
+        ],
+        "forbidden_actions": [
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ],
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+    }
+
+    with pytest.raises(
+        ArtifactStoreError,
+        match="requires exact revision upstream",
+    ):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="edit_authority_approval",
+            payload=approval_payload,
+            upstream_refs=[request_ref, resume_ref],
+        )
+
+    approval_ref = store.write(
+        feature_id="feature_001",
+        artifact_type="edit_authority_approval",
+        payload=approval_payload,
+        upstream_refs=[request_ref, resume_ref],
+        exact_revision_upstream_types={
+            "edit_authority_request",
+            "resume_report",
+        },
+    )
+
+    assert store.read(approval_ref)["data"]["request_hash"] == request_hash
+
+
+def test_store_rejects_new_legacy_edit_authority_approval_write(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+
+    with pytest.raises(
+        ArtifactStoreError,
+        match="must originate from an exact EditAuthorityRequest",
+    ):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="edit_authority_approval",
+            payload=_legacy_edit_authority_approval_payload(),
+        )
 
 
 def test_write_wraps_payload_in_envelope(tmp_path: Path) -> None:

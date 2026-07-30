@@ -345,14 +345,15 @@ def preflight_stagger_edit_authority(
             diagnosis.get("unresolved_root_causes", ())
         ),
     }
-    approval_hash = "sha256:" + hashlib.sha256(
+    proposal_hash = "sha256:" + hashlib.sha256(
         _canonical_json(proposal)
     ).hexdigest()
     return {
-        "status": "AWAITING_EXACT_EDIT_AUTHORITY_APPROVAL",
+        "status": "READY_TO_CREATE_EDIT_AUTHORITY_REQUEST",
         "command": "preflight-stagger-edit-authority",
         "proposal": proposal,
-        "approval_hash": approval_hash,
+        "proposal_hash": proposal_hash,
+        "request_creation_required": True,
         "approval_required": True,
         "registry_mutation_allowed": False,
         "repair_allowed": False,
@@ -365,10 +366,8 @@ def preflight_stagger_edit_authority(
     }
 
 
-def approve_stagger_edit_authority(
+def create_stagger_edit_authority_request(
     *,
-    approval_hash: str,
-    approved_by: str,
     artifact_store_root: str | Path,
     feature_id: str,
     run_id: str,
@@ -387,7 +386,7 @@ def approve_stagger_edit_authority(
     target_end_line: int,
     proposed_operation: str,
 ) -> dict[str, Any]:
-    """Consume one exact approval and stop after unique target resolution."""
+    """Persist one exact technical request without granting authority."""
 
     preflight = preflight_stagger_edit_authority(
         artifact_store_root=artifact_store_root,
@@ -408,17 +407,187 @@ def approve_stagger_edit_authority(
         target_end_line=target_end_line,
         proposed_operation=proposed_operation,
     )
-    if approval_hash != preflight["approval_hash"]:
+    store = ArtifactStore(artifact_store_root)
+    refs = _authority_refs(
+        feature_id=feature_id,
+        feature_spec_path=feature_spec_path,
+        feature_spec_hash=feature_spec_hash,
+        runtime_evidence_path=runtime_evidence_path,
+        runtime_evidence_hash=runtime_evidence_hash,
+        implementation_plan_path=implementation_plan_path,
+        implementation_plan_hash=implementation_plan_hash,
+        patch_proposal_path=patch_proposal_path,
+        patch_proposal_hash=patch_proposal_hash,
+    )
+    _require_latest_artifact_refs(store, refs.values())
+    plan = _artifact_data(store.read(refs["implementation_plan"]))
+    proposal = copy.deepcopy(preflight["proposal"])
+    source_identity = _validate_source_identity(
+        source_root=source_root,
+        canonical_target_path=canonical_target_path,
+        target_symbol=target_symbol,
+        target_start_line=target_start_line,
+        target_end_line=target_end_line,
+    )
+    if source_identity != proposal["current_source"]:
         raise StaggerEditAuthorityApprovalError(
-            "The supplied approval hash does not match the fresh proposal."
+            "The current source identity changed before request persistence."
         )
+    binding_id = _next_sequential_id(
+        (
+            binding.get("binding_id")
+            for binding in (
+                plan.get("binding_registry", {}).get("edit_bindings", ())
+            )
+            if isinstance(binding, dict)
+        ),
+        prefix="edit_binding_",
+    )
+    change_id = _next_sequential_id(
+        (
+            change.get("change_id")
+            for change in plan.get("proposed_changes", ())
+            if isinstance(change, dict)
+        ),
+        prefix="chg_",
+    )
+    request_payload = {
+        "schema_version": "stagger_edit_authority_request_v1",
+        "proposal": proposal,
+        "source_root": str(Path(source_root).resolve()),
+        "projected_ids": {
+            "binding_id": binding_id,
+            "change_id": change_id,
+            "evidence_id": _approved_evidence_id(
+                approval_hash=preflight["proposal_hash"],
+                source_identity=source_identity,
+                target_symbol=target_symbol,
+            ),
+        },
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        _canonical_json(request_payload)
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": "request_stagger_edit_authority",
+            "stage": "edit_authority_request",
+            "message": (
+                "Exact technical Edit Authority request awaits LangGraph "
+                "human review."
+            ),
+            "status": "pending_human_approval",
+            "feature_id": feature_id,
+            "run_id": run_id,
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+        status="success",
+        upstream_refs=[
+            refs["feature_spec"],
+            refs["runtime_evidence"],
+            refs["implementation_plan"],
+            refs["patch_proposal"],
+        ],
+        exact_revision_upstream_types={
+            "feature_spec",
+            "runtime_evidence",
+            "implementation_plan",
+            "patch_proposal",
+        },
+    )
+    return {
+        "status": "EDIT_AUTHORITY_REQUEST_CREATED",
+        "command": "request-stagger-edit-authority",
+        "request_hash": request_hash,
+        "edit_authority_request_revision": _revision(request_ref),
+        "authority_granted": False,
+        "registry_mutation_allowed": False,
+        "repair_planner_invoked": False,
+        "repair_allowed": False,
+        "source_patch_allowed": False,
+        "source_modified": False,
+        "build_performed": False,
+        "process_launched": False,
+        "writes_performed": True,
+        "written_artifact_types": ["edit_authority_request"],
+    }
+
+
+def _apply_approved_stagger_edit_authority(
+    *,
+    approval_hash: str,
+    approved_by: str,
+    approved_at: str,
+    resume_id: str,
+    request_ref: ArtifactRef,
+    resume_report_ref: ArtifactRef,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    run_id: str,
+    feature_spec_path: str | Path,
+    feature_spec_hash: str,
+    runtime_evidence_path: str | Path,
+    runtime_evidence_hash: str,
+    implementation_plan_path: str | Path,
+    implementation_plan_hash: str,
+    patch_proposal_path: str | Path,
+    patch_proposal_hash: str,
+    source_root: str | Path,
+    canonical_target_path: str,
+    target_symbol: str,
+    target_start_line: int,
+    target_end_line: int,
+    proposed_operation: str,
+) -> dict[str, Any]:
+    """Materialize one graph-approved request and stop after resolution."""
+
+    preflight = preflight_stagger_edit_authority(
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        run_id=run_id,
+        feature_spec_path=feature_spec_path,
+        feature_spec_hash=feature_spec_hash,
+        runtime_evidence_path=runtime_evidence_path,
+        runtime_evidence_hash=runtime_evidence_hash,
+        implementation_plan_path=implementation_plan_path,
+        implementation_plan_hash=implementation_plan_hash,
+        patch_proposal_path=patch_proposal_path,
+        patch_proposal_hash=patch_proposal_hash,
+        source_root=source_root,
+        canonical_target_path=canonical_target_path,
+        target_symbol=target_symbol,
+        target_start_line=target_start_line,
+        target_end_line=target_end_line,
+        proposed_operation=proposed_operation,
+    )
     actor = approved_by.strip()
-    if not actor:
+    approval_time = approved_at.strip()
+    if not actor or not approval_time or not resume_id:
         raise StaggerEditAuthorityApprovalError(
-            "approved_by must be non-empty."
+            "Graph approval identity must be complete."
         )
 
     store = ArtifactStore(artifact_store_root)
+    request = _artifact_data(store.read(request_ref))
+    request_payload = request.get("request_payload")
+    if (
+        request.get("request_hash") != approval_hash
+        or not isinstance(request_payload, dict)
+        or request_payload.get("proposal") != preflight["proposal"]
+        or "sha256:"
+        + hashlib.sha256(_canonical_json(request_payload)).hexdigest()
+        != approval_hash
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "The graph-approved request does not match the fresh proposal."
+        )
     refs = _authority_refs(
         feature_id=feature_id,
         feature_spec_path=feature_spec_path,
@@ -461,38 +630,27 @@ def approve_stagger_edit_authority(
         raise StaggerEditAuthorityApprovalError(
             "The current source identity changed after approval preflight."
         )
-    binding_id = _next_sequential_id(
-        (
-            binding.get("binding_id")
-            for binding in (
-                old_plan.get("binding_registry", {})
-                .get("edit_bindings", ())
-            )
-            if isinstance(binding, dict)
-        ),
-        prefix="edit_binding_",
-    )
-    change_id = _next_sequential_id(
-        (
-            change.get("change_id")
-            for change in old_plan.get("proposed_changes", ())
-            if isinstance(change, dict)
-        ),
-        prefix="chg_",
-    )
-    evidence_id = _approved_evidence_id(
-        approval_hash=approval_hash,
-        source_identity=source_identity,
-        target_symbol=target_symbol,
-    )
+    projected_ids = request_payload.get("projected_ids")
+    if not isinstance(projected_ids, dict):
+        raise StaggerEditAuthorityApprovalError(
+            "The approved request has no exact projected identifiers."
+        )
+    binding_id = str(projected_ids.get("binding_id") or "")
+    change_id = str(projected_ids.get("change_id") or "")
+    evidence_id = str(projected_ids.get("evidence_id") or "")
+    if not binding_id or not change_id or not evidence_id:
+        raise StaggerEditAuthorityApprovalError(
+            "The approved request projected identifiers are incomplete."
+        )
     approval_payload = _build_approval_payload(
         feature_id=feature_id,
         run_id=run_id,
         approved_by=actor,
+        approved_at=approval_time,
+        resume_id=resume_id,
         approval_hash=approval_hash,
-        proposal=proposal,
-        binding_id=binding_id,
-        evidence_id=evidence_id,
+        request_ref=request_ref,
+        resume_report_ref=resume_report_ref,
     )
 
     store.preflight_atomic_commit(
@@ -510,16 +668,12 @@ def approve_stagger_edit_authority(
         payload=approval_payload,
         status="success",
         upstream_refs=[
-            refs["feature_spec"],
-            refs["runtime_evidence"],
-            refs["implementation_plan"],
-            refs["patch_proposal"],
+            request_ref,
+            resume_report_ref,
         ],
         exact_revision_upstream_types={
-            "feature_spec",
-            "runtime_evidence",
-            "implementation_plan",
-            "patch_proposal",
+            "edit_authority_request",
+            "resume_report",
         },
     )
 
@@ -603,12 +757,20 @@ def approve_stagger_edit_authority(
             "The approved authority did not resolve to exactly one target."
         )
     resolution["authority_source"] = "edit_authority_approval"
+    resolution["authority_contract_version"] = (
+        "edit_authority_request_approval_v1"
+    )
     resolution["edit_authority_approval_revision"] = _revision(
         approval_ref
     )
+    resolution["edit_authority_request_revision"] = _revision(
+        request_ref
+    )
     resolution["evidence_pack_revision"] = _revision(evidence_ref)
     resolution["approved_runtime_failure_ownership"] = copy.deepcopy(
-        approval_payload["approved_runtime_failure_ownership"]
+        proposal["ownership_review"][
+            "replayed_runtime_failure_ownership"
+        ]
     )
     resolution["repair_planner_allowed"] = False
     resolution["source_patch_allowed"] = False
@@ -621,19 +783,21 @@ def approve_stagger_edit_authority(
             refs["runtime_evidence"],
             plan_ref,
             refs["patch_proposal"],
+            request_ref,
             approval_ref,
             evidence_ref,
         ],
         exact_revision_upstream_types={
             "runtime_evidence",
             "patch_proposal",
+            "edit_authority_request",
             "edit_authority_approval",
             "evidence_pack",
         },
     )
     return {
         "status": "EXACT_EDIT_AUTHORITY_RESOLVED",
-        "command": "approve-stagger-edit-authority",
+        "command": "langgraph-edit-authority-approval",
         "approval_hash": approval_hash,
         "approved_by": actor,
         "edit_authority_approval_revision": _revision(approval_ref),
@@ -661,6 +825,156 @@ def approve_stagger_edit_authority(
         "build_performed": False,
         "process_launched": False,
     }
+
+
+def materialize_stagger_edit_authority_approval(
+    *,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    edit_authority_request_path: str | Path,
+    edit_authority_request_hash: str,
+    resume_report_path: str | Path,
+    resume_report_hash: str,
+) -> dict[str, Any]:
+    """Validate one graph resume and materialize its bounded projections."""
+
+    store = ArtifactStore(artifact_store_root)
+    request_ref = _artifact_ref(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        path=edit_authority_request_path,
+        artifact_hash=edit_authority_request_hash,
+    )
+    request_envelope = store.read(request_ref)
+    request = _artifact_data(request_envelope)
+    if request.get("feature_id") != feature_id:
+        raise StaggerEditAuthorityApprovalError(
+            "EditAuthorityRequest feature identity is invalid."
+        )
+    request_freshness = store.check_freshness(request_ref)
+    if not request_freshness.is_fresh:
+        raise StaggerEditAuthorityApprovalError(
+            "EditAuthorityRequest is stale: "
+            f"{list(request_freshness.stale_reasons)}"
+        )
+    request_upstream_refs = _upstream_refs_from_envelope(
+        request_envelope,
+        feature_id=feature_id,
+    )
+    _require_latest_artifact_refs(
+        store,
+        (request_ref, *request_upstream_refs),
+    )
+    report_ref = _artifact_ref(
+        feature_id=feature_id,
+        artifact_type="resume_report",
+        path=resume_report_path,
+        artifact_hash=resume_report_hash,
+    )
+    report_envelope = store.read(report_ref)
+    report = _artifact_data(report_envelope)
+    checkpoint_ref = _single_upstream_ref(
+        report_envelope,
+        feature_id=feature_id,
+        artifact_type="workflow_checkpoint",
+    )
+    checkpoint = _artifact_data(store.read(checkpoint_ref))
+    state_snapshot = checkpoint.get("state_snapshot")
+    snapshot_artifacts = (
+        state_snapshot.get("artifacts")
+        if isinstance(state_snapshot, dict)
+        else None
+    )
+    snapshot_hashes = (
+        state_snapshot.get("artifact_hashes")
+        if isinstance(state_snapshot, dict)
+        else None
+    )
+    resume_binding = checkpoint.get("resume_binding")
+    if (
+        report.get("status") != "accepted"
+        or report.get("allowed") is not True
+        or report.get("decision") != "approve"
+        or report.get("resume_stage") != "edit_authority_approval"
+        or report.get("run_id") != request.get("run_id")
+        or checkpoint.get("checkpoint_stage")
+        != "edit_authority_approval"
+        or checkpoint.get("run_id") != request.get("run_id")
+        or checkpoint.get("feature_id") != feature_id
+        or not isinstance(state_snapshot, dict)
+        or not isinstance(snapshot_artifacts, dict)
+        or not isinstance(snapshot_hashes, dict)
+        or snapshot_artifacts.get("edit_authority_request")
+        != request_ref.path
+        or snapshot_hashes.get("edit_authority_request")
+        != request_ref.artifact_hash
+        or not isinstance(resume_binding, dict)
+        or resume_binding.get("edit_authority_request_ref")
+        != request_ref.path
+        or resume_binding.get("edit_authority_request_artifact_hash")
+        != request_ref.artifact_hash
+        or resume_binding.get("edit_authority_request_hash")
+        != request.get("request_hash")
+        or report.get("authority_request_hash")
+        != request.get("request_hash")
+        or not isinstance(report.get("approved_by"), str)
+        or not report["approved_by"].strip()
+        or not isinstance(report.get("approved_at"), str)
+        or not report["approved_at"].strip()
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "ResumeReport does not bind the exact EditAuthorityRequest."
+        )
+    request_payload = request.get("request_payload")
+    proposal = (
+        request_payload.get("proposal")
+        if isinstance(request_payload, dict)
+        else None
+    )
+    source_root = (
+        request_payload.get("source_root")
+        if isinstance(request_payload, dict)
+        else None
+    )
+    if not isinstance(proposal, dict) or not isinstance(source_root, str):
+        raise StaggerEditAuthorityApprovalError(
+            "EditAuthorityRequest technical payload is invalid."
+        )
+    return _apply_approved_stagger_edit_authority(
+        approval_hash=str(request["request_hash"]),
+        approved_by=str(report["approved_by"]),
+        approved_at=str(report["approved_at"]),
+        resume_id=str(report["resume_id"]),
+        request_ref=request_ref,
+        resume_report_ref=report_ref,
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        run_id=str(request["run_id"]),
+        feature_spec_path=proposal["feature_spec_revision"]["path"],
+        feature_spec_hash=proposal["feature_spec_revision"]["artifact_hash"],
+        runtime_evidence_path=proposal["runtime_evidence_revision"]["path"],
+        runtime_evidence_hash=proposal["runtime_evidence_revision"][
+            "artifact_hash"
+        ],
+        implementation_plan_path=proposal[
+            "implementation_plan_revision"
+        ]["path"],
+        implementation_plan_hash=proposal[
+            "implementation_plan_revision"
+        ]["artifact_hash"],
+        patch_proposal_path=proposal["patch_proposal_revision"]["path"],
+        patch_proposal_hash=proposal["patch_proposal_revision"][
+            "artifact_hash"
+        ],
+        source_root=source_root,
+        canonical_target_path=proposal["current_source"][
+            "canonical_target_path"
+        ],
+        target_symbol=proposal["proposed_target_symbol"],
+        target_start_line=proposal["proposed_exact_span"]["start_line"],
+        target_end_line=proposal["proposed_exact_span"]["end_line"],
+        proposed_operation=proposal["proposed_operation"],
+    )
 
 
 def _authority_refs(
@@ -736,6 +1050,70 @@ def _single_upstream_ref(
     )
 
 
+def _upstream_refs_from_envelope(
+    envelope: dict[str, Any],
+    *,
+    feature_id: str,
+) -> tuple[ArtifactRef, ...]:
+    inputs = envelope.get("inputs")
+    upstreams = (
+        inputs.get("upstream_artifacts")
+        if isinstance(inputs, dict)
+        else None
+    )
+    if not isinstance(upstreams, list):
+        raise StaggerEditAuthorityApprovalError(
+            "Artifact upstream inputs are invalid."
+        )
+    refs: list[ArtifactRef] = []
+    for upstream in upstreams:
+        if (
+            not isinstance(upstream, dict)
+            or not isinstance(upstream.get("artifact_type"), str)
+            or not isinstance(upstream.get("path"), str)
+            or not isinstance(upstream.get("artifact_hash"), str)
+        ):
+            raise StaggerEditAuthorityApprovalError(
+                "Artifact upstream identity is invalid."
+            )
+        refs.append(
+            _artifact_ref(
+                feature_id=feature_id,
+                artifact_type=str(upstream["artifact_type"]),
+                path=str(upstream["path"]),
+                artifact_hash=str(upstream["artifact_hash"]),
+            )
+        )
+    return tuple(refs)
+
+
+def _require_latest_artifact_refs(
+    store: ArtifactStore,
+    refs: Any,
+) -> None:
+    selected = tuple(refs)
+    if not selected:
+        raise StaggerEditAuthorityApprovalError(
+            "Current authority inputs are empty."
+        )
+    feature_id = selected[0].feature_id
+    latest = {
+        ref.artifact_type: ref
+        for ref in store.list_feature_artifacts(feature_id)
+    }
+    for ref in selected:
+        latest_ref = latest.get(ref.artifact_type)
+        if (
+            ref.feature_id != feature_id
+            or latest_ref is None
+            or latest_ref.path != ref.path
+            or latest_ref.artifact_hash != ref.artifact_hash
+        ):
+            raise StaggerEditAuthorityApprovalError(
+                f"{ref.artifact_type} is no longer the current revision."
+            )
+
+
 def _next_sequential_id(values: Any, *, prefix: str) -> str:
     pattern = re.compile(re.escape(prefix) + r"([0-9]{3})")
     numbers: list[int] = []
@@ -786,36 +1164,43 @@ def _build_approval_payload(
     feature_id: str,
     run_id: str,
     approved_by: str,
+    approved_at: str,
+    resume_id: str,
     approval_hash: str,
-    proposal: dict[str, Any],
-    binding_id: str,
-    evidence_id: str,
+    request_ref: ArtifactRef,
+    resume_report_ref: ArtifactRef,
 ) -> dict[str, Any]:
-    ownership = proposal["ownership_review"]
     return {
         "node_name": "approve_stagger_edit_authority",
         "stage": "edit_authority_approval",
         "message": (
-            "Human exact approval permits one evidence and Plan authority "
-            "revision, then one strict Binding resolution."
+            "LangGraph human approval permits only the exact request "
+            "projection and strict Binding resolution."
         ),
         "status": "approved",
         "feature_id": feature_id,
         "run_id": run_id,
+        "authority_source": "edit_authority_request",
         "approval_hash": approval_hash,
+        "request_hash": approval_hash,
         "approved_by": approved_by,
-        "approval_scope": list(proposal["approval_scope"]),
-        "approved_proposal": copy.deepcopy(proposal),
-        "stored_runtime_failure_ownership": copy.deepcopy(
-            ownership["stored_runtime_failure_ownership"]
-        ),
-        "approved_runtime_failure_ownership": copy.deepcopy(
-            ownership["replayed_runtime_failure_ownership"]
-        ),
-        "allowed_edit_binding_ids": [binding_id],
-        "allowed_evidence_ids": [evidence_id],
-        "runtime_evidence_mutation_allowed": False,
-        "old_patch_proposal_mutation_allowed": False,
+        "approved_at": approved_at,
+        "resume_id": resume_id,
+        "decision": "approve",
+        "edit_authority_request_revision": _revision(request_ref),
+        "resume_report_revision": _revision(resume_report_ref),
+        "allowed_actions": [
+            "create_evidence_pack_revision",
+            "create_implementation_plan_revision",
+            "resolve_exact_edit_binding",
+        ],
+        "forbidden_actions": [
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ],
         "repair_planner_allowed": False,
         "source_patch_allowed": False,
     }

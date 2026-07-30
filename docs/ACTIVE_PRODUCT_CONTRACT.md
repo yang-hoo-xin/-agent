@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 ## 1. Product
 
@@ -576,6 +576,31 @@ remain latest; ordinary latest-bound edges retain recursive stale detection.
 All four new revisions are fresh. RepairPlanner and source Patch authority
 remain false, and no RuntimeEvidence, old PatchProposal, Mod source, Build,
 process, or game-directory state changed.
+
+A later contract review found that this historical approval entry combined
+the human decision with technical diagnosis/Plan projection and exposed a
+direct CLI path that could write all four revisions. Those revisions remain
+immutable history, but their `repair_planner_allowed=false` and
+`source_patch_allowed=false` boundaries remain closed. The forward path now
+separates one technical `edit_authority_request` from the
+`edit_authority_approval` that grants authority. The request exact-binds the
+FeatureSpec, RuntimeEvidence, ImplementationPlan, PatchProposal, current source
+scope, and projected identifiers while explicitly granting no authority. The
+approval contains only the exact request/ResumeReport revisions, request hash,
+human decision identity, allowed projection actions, and forbidden later
+actions. It can be produced only after the existing LangGraph
+interrupt/resume validator accepts the exact request hash. The public CLI can
+create the request but has no direct approval command. Missing or partial
+projection after approval remains blocked and cannot enter RepairPlanner.
+This is a bounded repair of the current Stagger continuation, not a general
+approval framework or cross-Artifact transaction system. No new request or
+approval was written to the real shared ArtifactStore in this code change.
+ArtifactStore rejects every new legacy-shaped EditAuthorityApproval write, so
+the historical payload remains readable but cannot be used as a forward
+producer contract. Current-revision admission compares both immutable revision
+path and complete Artifact hash. Focused verification passed 214 tests,
+including wrong request hash, stale or same-byte noncurrent revisions, direct
+legacy Approval writes, and approved-but-not-materialized blocking.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

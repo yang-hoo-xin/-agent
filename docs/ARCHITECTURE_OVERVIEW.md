@@ -107,6 +107,29 @@ repeat Proposal, Dry-run, Apply, or Build. GTFO maps its current admission,
 environment, launch, log, screenshot, and observation stages into this
 contract; GTFO does not choose the LangGraph route or authorize source edits.
 
+#### 2.2.1 Bounded Edit Authority Request And Approval
+
+The Stagger Runtime failure activates one product-bounded authority repair.
+Technical diagnosis, current source identity, exact edit span, proposed
+operation, and projected identifiers live in `edit_authority_request`. That
+Artifact exact-binds its four business inputs and explicitly grants no
+authority. `edit_authority_approval` is the only forward authority source. It
+contains only the exact Request and ResumeReport revisions, request hash,
+human decision identity, allowed projection actions, and forbidden later
+actions.
+
+The public CLI can create the Request but cannot create the Approval.
+LangGraph owns the human interrupt/resume and validates the exact request hash
+before the Approval can be persisted. ArtifactStore then requires exact
+Request and ResumeReport upstreams and rejects new writes using the historical
+combined Approval payload. Current revision selection compares both revision
+path and complete Artifact hash. EvidencePack, ImplementationPlan, and
+BindingResolution remain deterministic projections; they are not independent
+authority sources. A partial projection is observable as an accepted approval
+without a matching final BindingResolution and remains blocked. This path does
+not add two-phase commit, automatic authorization, a second graph, or a
+general-purpose contract engine.
+
 Repair-plan source selection uses the current failing graph stage. A stale
 Build or Runtime summary from an earlier attempt cannot override a later
 ProposalReview failure. This adds no exception hierarchy, repair controller,

@@ -1654,8 +1654,8 @@ def test_cli_stagger_edit_authority_preflight_passes_exact_inputs(
     def preflight(**kwargs):
         captured.update(kwargs)
         return {
-            "status": "AWAITING_EXACT_EDIT_AUTHORITY_APPROVAL",
-            "approval_hash": "sha256:" + ("a" * 64),
+            "status": "READY_TO_CREATE_EDIT_AUTHORITY_REQUEST",
+            "proposal_hash": "sha256:" + ("a" * 64),
             "writes_performed": False,
             "registry_mutation_allowed": False,
             "repair_allowed": False,
@@ -1712,7 +1712,7 @@ def test_cli_stagger_edit_authority_preflight_passes_exact_inputs(
 
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
-    assert payload["status"] == "AWAITING_EXACT_EDIT_AUTHORITY_APPROVAL"
+    assert payload["status"] == "READY_TO_CREATE_EDIT_AUTHORITY_REQUEST"
     assert payload["writes_performed"] is False
     assert captured == {
         "artifact_store_root": "shared-store",
@@ -1801,29 +1801,28 @@ def test_cli_stagger_edit_authority_preflight_reports_blocked_without_writes(
     assert payload["repair_allowed"] is False
 
 
-def test_cli_stagger_edit_authority_approval_passes_exact_hash_and_actor(
+def test_cli_stagger_edit_authority_request_cannot_grant_authority(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     captured: dict[str, object] = {}
 
-    def approve(**kwargs):
+    def create_request(**kwargs):
         captured.update(kwargs)
         return {
-            "status": "EXACT_EDIT_AUTHORITY_RESOLVED",
-            "approval_hash": kwargs["approval_hash"],
-            "approved_by": kwargs["approved_by"],
-            "allowed_edit_binding_ids": ["edit_binding_004"],
+            "status": "EDIT_AUTHORITY_REQUEST_CREATED",
+            "request_hash": "sha256:" + ("a" * 64),
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
             "repair_planner_invoked": False,
             "repair_allowed": False,
             "source_patch_allowed": False,
         }
 
     monkeypatch.setattr(
-        "src.mod_agent.cli.approve_stagger_edit_authority",
-        approve,
+        "src.mod_agent.cli.create_stagger_edit_authority_request",
+        create_request,
     )
-    approval_hash = "sha256:" + ("a" * 64)
     target_symbol = (
         "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
         "TrySpawnStaggerYellowX"
@@ -1831,7 +1830,7 @@ def test_cli_stagger_edit_authority_approval_passes_exact_hash_and_actor(
 
     exit_code = main(
         [
-            "approve-stagger-edit-authority",
+            "request-stagger-edit-authority",
             "--artifact-store-root",
             "shared-store",
             "--feature-id",
@@ -1866,18 +1865,21 @@ def test_cli_stagger_edit_authority_approval_passes_exact_hash_and_actor(
             "984",
             "--proposed-operation",
             "replace_hud_recttransform_acquisition_and_null_guard_only",
-            "--approval-hash",
-            approval_hash,
-            "--approved-by",
-            "user",
         ]
     )
 
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
-    assert payload["status"] == "EXACT_EDIT_AUTHORITY_RESOLVED"
-    assert captured["approval_hash"] == approval_hash
-    assert captured["approved_by"] == "user"
+    assert payload["status"] == "EDIT_AUTHORITY_REQUEST_CREATED"
+    assert payload["authority_granted"] is False
+    assert payload["registry_mutation_allowed"] is False
+    assert "approval_hash" not in captured
+    assert "approved_by" not in captured
     assert captured["target_symbol"] == target_symbol
     assert captured["target_start_line"] == 979
     assert captured["target_end_line"] == 984
+
+
+def test_cli_has_no_direct_stagger_edit_authority_approval_command() -> None:
+    with pytest.raises(SystemExit):
+        main(["approve-stagger-edit-authority"])
