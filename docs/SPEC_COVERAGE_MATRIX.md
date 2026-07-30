@@ -215,6 +215,21 @@ ART-002, EXEC-001, EXEC-009, EXEC-010, and EXEC-011 only within the Stagger
 diagnostic boundary; 229 affected tests pass. Compilation, Runtime root-cause
 accuracy, product repair, and product acceptance remain unproven.
 
+The exact diff was later approved and applied once to a fresh isolated
+materialization. Its source SHA256 is `C39DF9DF...26424`; a real
+`dotnet build --no-restore` produced DLL SHA256 `61DD2A82...9FAB4`, size
+`102912`, with exit code zero, zero errors, and two nullable warnings. A
+controlled GTFO attempt passed current-run BepInEx/Chainloader startup and
+restored the temporary DLL/config, but no operator gameplay occurred and no
+`phase=stagger_use` diagnostic marker appeared. Run-local result
+`1EBA129C...3C413` remains observation-owned and inconclusive; it is not an
+ArtifactStore RuntimeEvidence revision. This verifies isolated diagnostic
+Apply, compile, process start, current-run log binding, and restoration only.
+It does not verify root-cause classification, source-repair authority, or
+Stagger product acceptance. The post-run focused authority, diff, Apply,
+Artifact, Graph, GTFO provider, deployment, and Stagger Runtime command passed
+`278` tests in `39.25` seconds; it performed no game launch or directory write.
+
 ## Knowledge And Retrieval Coverage
 
 | Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |

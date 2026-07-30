@@ -76,6 +76,29 @@ approval is still required. This diagnostic DLL is expected not to change
 yellow-X or feedback-sound behavior; it exists only to establish a bound
 Runtime root cause before a separately authorized product repair.
 
+That approval was later supplied for exact diff
+`sha256:784a6f8663f1223ed67ea1ca3a6a42e6fd626b122ddd6c8bb84b3645c1731dd1`
+and consumed once in
+`workspaces/stagger_hud_parent_diagnostic_001/run_001`. The existing exact
+text applier produced isolated source SHA256 `C39DF9DF...26424`; the original
+`sfp_build_009` input remained at `65489604...BB3B`. A real
+`dotnet build --no-restore` succeeded with zero errors, two nullable warnings,
+and DLL SHA256 `61DD2A82...9FAB4`, size `102912`.
+
+The controlled diagnostic Runtime then launched GTFO as PID `48568`.
+Current-run BepInEx and Chainloader markers passed, proving process and plugin
+startup. No operator gameplay occurred during the 600-second window, so the
+required `phase=stagger_use` marker was absent. Structured run-local result
+SHA256 `1EBA129C...3C413` is `inconclusive` with
+`failure_ownership.owner=observation` and
+`source_repair_allowed=false`. It is not an ArtifactStore RuntimeEvidence
+revision and cannot confirm a product root cause. GTFO terminated, the
+temporary DLL was removed, the config was restored to
+`717C5F4B...DB82E`, and no product repair permission was produced. The next
+meaningful action is one operator-guided valid Micro/Light/Heavy reaction using
+the unchanged diagnostic DLL; Apply and Build need not repeat while all bound
+hashes remain fresh.
+
 Separately authorized local Proposal continuation
 `sfp_qwen36_27b_001` revalidated the exact four upstream Artifact hashes,
 all five source-file hashes, all three edit bindings, and the selected

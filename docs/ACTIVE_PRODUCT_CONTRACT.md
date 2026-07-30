@@ -771,6 +771,24 @@ This remains an observation-only diff: it deliberately does not repair the
 yellow X or feedback sound and is not source-write authority, compilation
 proof, root-cause confirmation, or product acceptance.
 
+The user subsequently approved that exact diagnostic source write plus one
+isolated Apply, Build, and controlled Runtime diagnosis. The existing
+exact-text applier changed only a fresh run-local materialization from source
+SHA256 `65489604...BB3B` to `C39DF9D...26424`. A real
+`dotnet build --no-restore` completed with exit code zero, zero errors, two
+nullable warnings, and diagnostic DLL SHA256 `61DD2A82...9FAB4`, size
+`102912`. GTFO process `48568` then loaded BepInEx, Chainloader, and the
+diagnostic plugin under the reviewed profile. No operator gameplay action
+occurred during the 600-second observation window, so
+`signal=STAGGER_HUD_PARENT_DIAGNOSTIC phase=stagger_use` was not observed.
+Run-local result SHA256 `1EBA129C...3C413` is therefore
+`inconclusive`, owned by `observation`, and grants no source repair authority.
+The process terminated, the temporary game DLL was removed, the game config
+returned to SHA256 `717C5F4B...DB82E`, and the original source retained
+SHA256 `65489604...BB3B`. This run-local result is not an ArtifactStore
+RuntimeEvidence revision. Root cause and product repair remain blocked until
+one operator-guided valid hit/reaction produces the bound diagnostic records.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove

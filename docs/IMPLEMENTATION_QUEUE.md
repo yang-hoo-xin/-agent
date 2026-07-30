@@ -462,7 +462,32 @@ dependencies:
   at `65489604...BB3B`; no Artifact, source, Build, process, or game-directory
   write occurred. The observation-only diff deliberately does not change the
   missing yellow X or feedback sound.
+  The user later approved that exact hash together with one isolated Apply,
+  Build, and controlled diagnostic Runtime. Run
+  workspaces/stagger_hud_parent_diagnostic_001/run_001 applied the diff only
+  to a fresh materialization and produced source SHA256
+  C39DF9DF...26424. A real dotnet build completed with exit code zero, zero
+  errors, two nullable warnings, and DLL SHA256 61DD2A82...9FAB4, size
+  102912. GTFO PID 48568 loaded the current-run BepInEx and Chainloader
+  markers, but no operator gameplay occurred within 600 seconds and the
+  required phase=stagger_use diagnostic marker was absent. Run-local result
+  SHA256 1EBA129C...3C413 is inconclusive and observation-owned; it is not an
+  ArtifactStore RuntimeEvidence revision and grants no product repair
+  authority. The process terminated, the temporary DLL was removed, the
+  config returned to 717C5F4B...DB82E, and the original source stayed at
+  65489604...BB3B. Reuse the unchanged diagnostic DLL for one
+  operator-guided valid Micro/Light/Heavy reaction; do not repeat Apply or
+  Build unless a bound byte changes.
 permissions_and_disclosure:
+  The user granted and consumed the diagnostic source-write, isolated
+  Apply/Build, process-launch, process-termination, and temporary
+  game-directory-write permissions for run_001. The conditional product
+  repair permission did not activate because root cause remained unresolved.
+  Any later diagnostic gameplay attempt still requires the operator to be
+  present for the actual hit/reaction stimulus; no manual observation may be
+  fabricated. Product source write remains blocked until current-run
+  diagnostic records confirm one root cause and resolve to an exact approved
+  edit binding.
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
   two later synthetic-only 4B Provider probes were also separately authorized
@@ -500,6 +525,16 @@ files_in_scope:
   the approved Apply materialization, and the historical rejected Apply remain
   read-only.
 focused_verification:
+  python -m pytest tests/unit/test_stagger_diagnostic_diff.py
+  tests/unit/test_stagger_edit_authority.py tests/unit/test_patch_apply.py
+  tests/unit/test_artifact_store.py tests/unit/test_artifact_contract.py
+  tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py
+  tests/unit/test_gtfo_runtime_automation.py
+  tests/unit/test_runtime_deployment.py
+  tests/unit/test_gtfo_stagger_runtime.py -q --tb=short
+  -p no:cacheprovider passed 278 tests in 39.25 seconds after diagnostic
+  Apply/Build/Runtime restoration. This command did not launch GTFO or write
+  the game directory. Python compileall and git diff checks also passed.
   python -m pytest tests/unit/test_patch_apply.py
   tests/unit/test_stagger_diagnostic_diff.py tests/unit/test_mod_agent_cli.py
   tests/unit/test_stagger_edit_authority.py tests/unit/test_artifact_contract.py
