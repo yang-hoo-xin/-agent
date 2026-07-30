@@ -104,6 +104,139 @@ def test_dry_run_rejects_change_outside_bound_source_span(tmp_path: Path) -> Non
         )
 
 
+def test_bound_span_exact_selects_one_duplicate_without_writing(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    source.write_text(
+        "first = Color.Red;\nsecond = Color.Red;\n",
+        encoding="utf-8",
+    )
+    plan = _plan()
+    plan["binding_registry"]["edit_bindings"][0]["target_span"] = {
+        "start_line": 2,
+        "end_line": 2,
+    }
+    proposal = _proposal()
+    proposal["diff_intent"][0]["patch"]["match_mode"] = (
+        "bound_span_exact"
+    )
+    proposal["diff_intent"][0]["patch"]["before_text"] = "Color.Red"
+    proposal["diff_intent"][0]["patch"]["after_text"] = "Color.Pink"
+
+    result = ExactTextPatchApplier().run(
+        workspace_root=tmp_path,
+        proposal=proposal,
+        implementation_plan=plan,
+        review=_review(),
+        allow_write=False,
+    )
+
+    assert result["diff_stats"]["insertions"] == 1
+    assert result["diff_stats"]["deletions"] == 1
+    assert result["static_checks"][0]["match_mode"] == (
+        "bound_span_exact"
+    )
+    assert "+second = Color.Pink;" in result["unified_diff"]
+    assert " first = Color.Red;" in result["unified_diff"]
+    assert source.read_text(encoding="utf-8") == (
+        "first = Color.Red;\nsecond = Color.Red;\n"
+    )
+
+
+def test_bound_span_exact_rejects_anchor_outside_bound_line(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    source.write_text(
+        "first = Color.Red;\nsecond = Color.Blue;\n",
+        encoding="utf-8",
+    )
+    plan = _plan()
+    plan["binding_registry"]["edit_bindings"][0]["target_span"] = {
+        "start_line": 2,
+        "end_line": 2,
+    }
+    proposal = _proposal()
+    proposal["diff_intent"][0]["patch"]["match_mode"] = (
+        "bound_span_exact"
+    )
+
+    with pytest.raises(
+        PatchApplyError,
+        match="does not match exactly once inside target_span",
+    ):
+        ExactTextPatchApplier().run(
+            workspace_root=tmp_path,
+            proposal=proposal,
+            implementation_plan=plan,
+            review=_review(),
+            allow_write=False,
+        )
+
+
+def test_bound_span_exact_must_be_first_change_for_file(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    source.write_text(
+        "first = Color.Red;\nsecond = Color.Red;\n",
+        encoding="utf-8",
+    )
+    plan = _plan()
+    plan["binding_registry"]["edit_bindings"] = [
+        {
+            "binding_id": "edit_binding_001",
+            "canonical_target_path": "Patches/Behavior.cs",
+            "target_span": {"start_line": 1, "end_line": 1},
+        },
+        {
+            "binding_id": "edit_binding_002",
+            "canonical_target_path": "Patches/Behavior.cs",
+            "target_span": {"start_line": 2, "end_line": 2},
+        },
+    ]
+    proposal = _proposal()
+    proposal["diff_intent"] = [
+        {
+            "change_id": "change_000",
+            "edit_binding_id": "edit_binding_001",
+            "patch": {
+                "kind": "exact_text_replace",
+                "before_text": "first = Color.Red;",
+                "after_text": "first = Color.Pink;",
+                "expected_occurrences": 1,
+            },
+        },
+        {
+            "change_id": "change_001",
+            "edit_binding_id": "edit_binding_002",
+            "patch": {
+                "kind": "exact_text_replace",
+                "match_mode": "bound_span_exact",
+                "before_text": "Color.Red",
+                "after_text": "Color.Pink",
+                "expected_occurrences": 1,
+            },
+        },
+    ]
+
+    with pytest.raises(
+        PatchApplyError,
+        match="must be the first change for its file",
+    ):
+        ExactTextPatchApplier().run(
+            workspace_root=tmp_path,
+            proposal=proposal,
+            implementation_plan=plan,
+            review=_review(),
+            allow_write=False,
+        )
+
+
 def test_dry_run_rejects_unbalanced_csharp_replacement(tmp_path: Path) -> None:
     source = tmp_path / "Patches" / "Behavior.cs"
     source.parent.mkdir()

@@ -50,6 +50,10 @@ from .stagger_edit_authority import (
     preflight_stagger_edit_authority,
     preflight_stagger_hud_parent_observation_authority,
 )
+from .stagger_diagnostic_diff import (
+    StaggerDiagnosticDiffPreflightError,
+    preflight_stagger_hud_parent_diagnostic_exact_diff,
+)
 from .probe import (
     RuntimeProbeCommandResult,
     RuntimeProbeError,
@@ -81,6 +85,7 @@ __all__ = [
     "GTFOStaggerRuntimeError",
     "StaggerEditAuthorityApprovalError",
     "StaggerEditAuthorityPreflightError",
+    "StaggerDiagnosticDiffPreflightError",
     "GTFORuntimeAutomationError",
     "RuntimeProbeCommandResult",
     "RuntimeProbeError",
@@ -112,6 +117,7 @@ __all__ = [
     "preflight_stagger_edit_authority",
     "preflight_stagger_existing_binding_reauthorization",
     "preflight_stagger_hud_parent_observation_authority",
+    "preflight_stagger_hud_parent_diagnostic_exact_diff",
     "stagger_profile_from_settings",
     "screenshot_registry_to_runtime_item",
     "temporarily_deploy_verified_plugin",

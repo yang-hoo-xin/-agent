@@ -25,6 +25,7 @@ from .local_entry import (
 )
 from .planning import ModPlanningBriefBuilder, RequestPlanner
 from .runtime import (
+    StaggerDiagnosticDiffPreflightError,
     StaggerEditAuthorityApprovalError,
     StaggerEditAuthorityPreflightError,
     create_stagger_existing_binding_reauthorization_request,
@@ -32,6 +33,7 @@ from .runtime import (
     create_stagger_hud_parent_observation_authority_request,
     preflight_stagger_existing_binding_reauthorization,
     preflight_stagger_edit_authority,
+    preflight_stagger_hud_parent_diagnostic_exact_diff,
     preflight_stagger_hud_parent_observation_authority,
 )
 from .tools import PermissionModel
@@ -278,6 +280,21 @@ def _stagger_observation_authority_arguments(
             args.il2cpp_interop_runtime_hash
         ),
     }
+
+
+def _add_stagger_diagnostic_diff_arguments(
+    parser: argparse.ArgumentParser,
+) -> None:
+    parser.add_argument("--artifact-store-root", required=True)
+    parser.add_argument("--feature-id", required=True)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--edit-authority-approval-path", required=True)
+    parser.add_argument("--edit-authority-approval-hash", required=True)
+    parser.add_argument("--evidence-pack-path", required=True)
+    parser.add_argument("--evidence-pack-hash", required=True)
+    parser.add_argument("--implementation-plan-path", required=True)
+    parser.add_argument("--implementation-plan-hash", required=True)
+    parser.add_argument("--source-root", required=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -575,6 +592,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_stagger_observation_authority_arguments(
         request_observation_authority_parser
+    )
+    stagger_diagnostic_diff_parser = subparsers.add_parser(
+        "preflight-stagger-hud-parent-diagnostic-exact-diff",
+        help=(
+            "Generate the exact four-change Stagger HUD diagnostic diff "
+            "without writing source or Artifacts."
+        ),
+    )
+    _add_stagger_diagnostic_diff_arguments(
+        stagger_diagnostic_diff_parser
     )
     preflight_stagger_review_parser = subparsers.add_parser(
         "preflight-stagger-edit-authority-review",
@@ -1081,6 +1108,51 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "repair_planner_invoked": False,
                         "repair_allowed": False,
                         "source_patch_allowed": False,
+                        "source_modified": False,
+                        "build_performed": False,
+                        "process_launched": False,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if (
+        args.command
+        == "preflight-stagger-hud-parent-diagnostic-exact-diff"
+    ):
+        try:
+            result = preflight_stagger_hud_parent_diagnostic_exact_diff(
+                artifact_store_root=args.artifact_store_root,
+                feature_id=args.feature_id,
+                run_id=args.run_id,
+                edit_authority_approval_path=(
+                    args.edit_authority_approval_path
+                ),
+                edit_authority_approval_hash=(
+                    args.edit_authority_approval_hash
+                ),
+                evidence_pack_path=args.evidence_pack_path,
+                evidence_pack_hash=args.evidence_pack_hash,
+                implementation_plan_path=args.implementation_plan_path,
+                implementation_plan_hash=args.implementation_plan_hash,
+                source_root=args.source_root,
+            )
+        except StaggerDiagnosticDiffPreflightError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "BLOCKED",
+                        "command": (
+                            "preflight-stagger-hud-parent-diagnostic-"
+                            "exact-diff"
+                        ),
+                        "reason": str(exc),
+                        "writes_performed": False,
+                        "artifact_writes_performed": False,
                         "source_modified": False,
                         "build_performed": False,
                         "process_launched": False,

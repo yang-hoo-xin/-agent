@@ -14,10 +14,10 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: build_complete_runtime_visual_failure_diagnostic_v2_request_preflight_ready
+stagger_implementation_plan_status: build_complete_runtime_visual_failure_diagnostic_v2_exact_diff_ready_for_human_approval
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: STAGGER-EXACT-REQUEST-CHECKPOINT-PROJECTION-001
+most_recent_completed_capability: STAGGER-DIAGNOSTIC-EXACT-DIFF-PREFLIGHT-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -38,6 +38,31 @@ materialization. Separately authorized run `sfp_build_009` compiled that exact
 materialization and persisted a fresh Build-to-Runtime checkpoint. Product
 Runtime acceptance remains pending; this is not an Agent Harness Migration
 Boundary.
+
+The Runtime visual failure now has one separately approved diagnostic-only
+continuation. Request
+`sha256:c8bd821278a7507946982df121a85ab5b1883fc140634924fb12124fb73e1996`
+produced permission-only Approval `71623b5f...32f30`, EvidencePack
+`deeb1acd...166e8`, and fresh ImplementationPlan
+`d1613594...64d68`. That Plan contains only
+`edit_binding_007-010/chg_007-010`, keeps the root cause unresolved, and
+forbids product acceptance, RepairPlanner, source write, Build, process
+launch, and game-directory write.
+
+The public no-write diagnostic exact-diff entry now revalidates those exact
+Artifact revisions, current source/config bytes, all three bound Build
+dependencies, the four selected bindings, and their exact spans. It stages
+the complete observation-only change in memory through the existing exact
+text applier. The real preflight returned
+`READY_FOR_STAGGER_HUD_PARENT_DIAGNOSTIC_DIFF_APPROVAL`, diff hash
+`sha256:63e6b0e08cf689a5aefbfc419a74eb1399a32dfec2c7ba94c4b014321d8d8c86`,
+unified-diff SHA256
+`72d32153773faf8d0ed37f4d04e13697458d819e90337f3e748247935c6ae070`,
+and staged after SHA256
+`0F363CABE0D1C5EC86B0F2AE844813F42CCAD0DD985623DD22EB4ACD727C761A`.
+The source remains at `65489604...BB3B`; no Artifact, source, Build, process,
+or game-directory write occurred. A separate exact-hash source-write
+approval is still required.
 
 Separately authorized local Proposal continuation
 `sfp_qwen36_27b_001` revalidated the exact four upstream Artifact hashes,

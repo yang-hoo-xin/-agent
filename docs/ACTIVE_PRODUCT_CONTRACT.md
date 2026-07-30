@@ -734,6 +734,30 @@ Artifact counts remained Request/Approval/EvidencePack/Plan/
 BindingResolution/checkpoint/report `2/3/3/3/2/3/3`. No new Request was
 created, and no source, Build, process, or game-directory action occurred.
 
+The exact v2 Request was subsequently created with Request hash
+`sha256:c8bd821278a7507946982df121a85ab5b1883fc140634924fb12124fb73e1996`
+and approved through the existing LangGraph interrupt/resume gate. The gate
+wrote Approval `71623b5f...32f30`, diagnostic EvidencePack
+`deeb1acd...166e8`, and diagnostic-only ImplementationPlan
+`d1613594...64d68`, plus its checkpoint and ResumeReport. Counts are now
+`3/4/4/4/2/4/4`. The Plan contains only
+`edit_binding_007-010/chg_007-010`; no BindingResolution, RepairPlan, source,
+Build, process, or game-directory action was produced.
+
+The Stagger-specific deterministic exact-diff preflight consumes only that
+current Approval, EvidencePack, Plan, source root, and their bound dependency
+identities. It rejects stale or expanded scope and uses the exact binding span
+to select the duplicated line-301 assignment without widening the binding.
+The existing global-unique exact-text behavior remains unchanged for ordinary
+changes. The real no-write result contains one file, four change units, 432
+insertions, zero deletions, four passing span checks, and a passing lexical C#
+delimiter check. Its exact diff hash is
+`sha256:63e6b0e08cf689a5aefbfc419a74eb1399a32dfec2c7ba94c4b014321d8d8c86`;
+the unified-diff SHA256 is
+`72d32153773faf8d0ed37f4d04e13697458d819e90337f3e748247935c6ae070`.
+This is a reviewable observation-only diff, not source-write authority,
+compilation proof, root-cause confirmation, or product acceptance.
+
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded
 single-missing-marker negative slice in one GTFO environment. It does not prove

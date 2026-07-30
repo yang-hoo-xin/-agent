@@ -81,21 +81,60 @@ class ExactTextPatchApplier:
                 raise PatchApplyError(
                     f"Change {index} patch text is not valid UTF-8 text."
                 ) from exc
-            binding_span_check = _validate_bound_source_span(
-                original=original,
-                before=before_bytes,
-                binding=resolver.edit_bindings.get(binding_id) or {},
-                change_index=index,
-                binding_id=binding_id,
-            )
-            if binding_span_check is not None:
-                binding_span_checks.append(binding_span_check)
-            count = current.count(before_bytes)
-            if patch.get("expected_occurrences") != 1 or count != 1:
-                raise PatchApplyError(
-                    f"Change {index} expected one live source match but found {count}."
+            match_mode = patch.get("match_mode", "unique")
+            if match_mode == "bound_span_exact":
+                if current != original:
+                    raise PatchApplyError(
+                        f"Change {index} bound-span match must be the first "
+                        "change for its file."
+                    )
+                bound_position = _bound_span_match_position(
+                    original=original,
+                    before=before_bytes,
+                    binding=resolver.edit_bindings.get(binding_id) or {},
+                    change_index=index,
                 )
-            updated = current.replace(before_bytes, after_bytes, 1)
+                binding_span_checks.append(
+                    _binding_span_check(
+                        original=original,
+                        before=before_bytes,
+                        binding=resolver.edit_bindings.get(binding_id) or {},
+                        position=bound_position,
+                        change_index=index,
+                        binding_id=binding_id,
+                    )
+                )
+                count = 1
+                updated = (
+                    current[:bound_position]
+                    + after_bytes
+                    + current[bound_position + len(before_bytes) :]
+                )
+            elif match_mode == "unique":
+                binding_span_check = _validate_bound_source_span(
+                    original=original,
+                    before=before_bytes,
+                    binding=resolver.edit_bindings.get(binding_id) or {},
+                    change_index=index,
+                    binding_id=binding_id,
+                )
+                if binding_span_check is not None:
+                    binding_span_checks.append(binding_span_check)
+                count = current.count(before_bytes)
+                if patch.get("expected_occurrences") != 1 or count != 1:
+                    raise PatchApplyError(
+                        f"Change {index} expected one live source match but "
+                        f"found {count}."
+                    )
+                updated = current.replace(before_bytes, after_bytes, 1)
+            else:
+                raise PatchApplyError(
+                    f"Change {index} patch match_mode is unsupported."
+                )
+            if patch.get("expected_occurrences") != 1:
+                raise PatchApplyError(
+                    f"Change {index} must expect exactly one occurrence."
+                )
             if current.startswith(codecs.BOM_UTF8) != updated.startswith(codecs.BOM_UTF8):
                 raise PatchApplyError(f"Change {index} must preserve the UTF-8 BOM.")
             staged[target] = updated
@@ -118,24 +157,25 @@ class ExactTextPatchApplier:
                     "matched_occurrences": count,
                 }
             )
-            diff_preview.append(
-                {
-                    "change_id": change.get("change_id"),
-                    "edit_binding_id": binding_id,
-                    "path": relative.as_posix(),
-                    "before_text": before,
-                    "after_text": after,
-                    "expected_occurrences": 1,
-                    "before_sha256": before_sha256,
-                    "after_sha256": after_sha256,
-                    "raw_before_sha256": before_sha256,
-                    "raw_after_sha256": after_sha256,
-                    "hash_mode": "raw_bytes",
-                    "encoding": encoding,
-                    "bom_preserved": current.startswith(codecs.BOM_UTF8)
-                    == updated.startswith(codecs.BOM_UTF8),
-                }
-            )
+            preview = {
+                "change_id": change.get("change_id"),
+                "edit_binding_id": binding_id,
+                "path": relative.as_posix(),
+                "before_text": before,
+                "after_text": after,
+                "expected_occurrences": 1,
+                "before_sha256": before_sha256,
+                "after_sha256": after_sha256,
+                "raw_before_sha256": before_sha256,
+                "raw_after_sha256": after_sha256,
+                "hash_mode": "raw_bytes",
+                "encoding": encoding,
+                "bom_preserved": current.startswith(codecs.BOM_UTF8)
+                == updated.startswith(codecs.BOM_UTF8),
+            }
+            if "match_mode" in patch:
+                preview["match_mode"] = match_mode
+            diff_preview.append(preview)
 
         if not staged:
             raise PatchApplyError("Proposal contains no executable changes.")
@@ -287,6 +327,80 @@ def _validate_bound_source_span(
         "bound_end_line": end_line,
         "observed_start_line": observed_start,
         "observed_end_line": observed_end,
+    }
+
+
+def _bound_span_match_position(
+    *,
+    original: bytes,
+    before: bytes,
+    binding: dict[str, Any],
+    change_index: int,
+) -> int:
+    span = binding.get("target_span")
+    if not isinstance(span, dict):
+        raise PatchApplyError(
+            f"Change {change_index} bound-span match requires target_span."
+        )
+    start_line = span.get("start_line")
+    end_line = span.get("end_line")
+    if (
+        not isinstance(start_line, int)
+        or isinstance(start_line, bool)
+        or not isinstance(end_line, int)
+        or isinstance(end_line, bool)
+        or start_line <= 0
+        or end_line < start_line
+    ):
+        raise PatchApplyError(
+            f"Change {change_index} edit binding has an invalid target_span."
+        )
+    lines = original.splitlines(keepends=True)
+    if end_line > len(lines):
+        raise PatchApplyError(
+            f"Change {change_index} target_span exceeds the live source."
+        )
+    span_start = sum(len(line) for line in lines[: start_line - 1])
+    span_end = sum(len(line) for line in lines[:end_line])
+    bound_bytes = original[span_start:span_end]
+    if bound_bytes.count(before) != 1:
+        raise PatchApplyError(
+            f"Change {change_index} before_text does not match exactly once "
+            "inside target_span."
+        )
+    return span_start + bound_bytes.index(before)
+
+
+def _binding_span_check(
+    *,
+    original: bytes,
+    before: bytes,
+    binding: dict[str, Any],
+    position: int,
+    change_index: int,
+    binding_id: str,
+) -> dict[str, Any]:
+    span = binding["target_span"]
+    observed_start = original[:position].count(b"\n") + 1
+    observed_end = observed_start + before.rstrip(b"\r\n").count(b"\n")
+    if (
+        observed_start < span["start_line"]
+        or observed_end > span["end_line"]
+    ):
+        raise PatchApplyError(
+            f"Change {change_index} before_text is outside edit binding "
+            "target_span."
+        )
+    return {
+        "check_id": "binding_target_span",
+        "status": "passed",
+        "change_index": change_index,
+        "binding_id": binding_id,
+        "bound_start_line": span["start_line"],
+        "bound_end_line": span["end_line"],
+        "observed_start_line": observed_start,
+        "observed_end_line": observed_end,
+        "match_mode": "bound_span_exact",
     }
 
 

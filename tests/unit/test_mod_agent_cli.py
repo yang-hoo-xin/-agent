@@ -2094,6 +2094,72 @@ def test_cli_stagger_diagnostic_plan_authorization_returns_success(
     )
 
 
+def test_cli_stagger_diagnostic_exact_diff_passes_exact_roles(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def preflight(**kwargs):
+        captured.update(kwargs)
+        return {
+            "status": (
+                "READY_FOR_STAGGER_HUD_PARENT_DIAGNOSTIC_DIFF_APPROVAL"
+            ),
+            "diff_hash": "sha256:" + ("a" * 64),
+            "unified_diff": "--- a/source\n+++ b/source\n",
+            "writes_performed": False,
+            "artifact_writes_performed": False,
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli."
+        "preflight_stagger_hud_parent_diagnostic_exact_diff",
+        preflight,
+    )
+    exit_code = main(
+        [
+            "preflight-stagger-hud-parent-diagnostic-exact-diff",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--run-id",
+            "runtime_001",
+            "--edit-authority-approval-path",
+            "approval.json",
+            "--edit-authority-approval-hash",
+            "1" * 64,
+            "--evidence-pack-path",
+            "evidence.json",
+            "--evidence-pack-hash",
+            "2" * 64,
+            "--implementation-plan-path",
+            "plan.json",
+            "--implementation-plan-hash",
+            "3" * 64,
+            "--source-root",
+            "source-root",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["writes_performed"] is False
+    assert captured == {
+        "artifact_store_root": "shared-store",
+        "feature_id": "feature_001",
+        "run_id": "runtime_001",
+        "edit_authority_approval_path": "approval.json",
+        "edit_authority_approval_hash": "1" * 64,
+        "evidence_pack_path": "evidence.json",
+        "evidence_pack_hash": "2" * 64,
+        "implementation_plan_path": "plan.json",
+        "implementation_plan_hash": "3" * 64,
+        "source_root": "source-root",
+    }
+
+
 def test_cli_stagger_edit_authority_review_delegates_to_graph_entry(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

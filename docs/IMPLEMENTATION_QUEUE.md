@@ -427,7 +427,31 @@ dependencies:
   `READY_TO_CREATE_STAGGER_HUD_PARENT_OBSERVATION_AUTHORITY_REQUEST` with
   proposal hash
   `sha256:ae129a2ed4312929f3c795ede58a9010b3231b4d1733696e4a188eed4a7f0f6b`.
-  Counts remained `2/3/3/3/2/3/3`; the new Request does not yet exist.
+  The exact no-authority Request was then created with Request hash
+  `sha256:c8bd821278a7507946982df121a85ab5b1883fc140634924fb12124fb73e1996`.
+  Its separately supplied exact hash entered the existing LangGraph human
+  gate and materialized Approval `71623b5f...32f30`, EvidencePack
+  `deeb1acd...166e8`, diagnostic-only Plan `d1613594...64d68`, checkpoint,
+  and ResumeReport. Counts are `3/4/4/4/2/4/4`; BindingResolution remains at
+  two.
+  A new public no-write exact-diff entry validates those three current
+  Artifact revisions, the current source/config hashes, three dependency
+  hashes, and only `edit_binding_007-010/chg_007-010`. The line-301
+  assignment is duplicated elsewhere, so the exact-text applier now supports
+  an explicit `bound_span_exact` mode that must be the first change for a file
+  and selects exactly one occurrence inside the registered span. Ordinary
+  changes retain the old whole-file unique match.
+  The real result is
+  `READY_FOR_STAGGER_HUD_PARENT_DIAGNOSTIC_DIFF_APPROVAL`, with diff hash
+  `sha256:63e6b0e08cf689a5aefbfc419a74eb1399a32dfec2c7ba94c4b014321d8d8c86`,
+  unified-diff SHA256
+  `72d32153773faf8d0ed37f4d04e13697458d819e90337f3e748247935c6ae070`,
+  staged after SHA256
+  `0F363CABE0D1C5EC86B0F2AE844813F42CCAD0DD985623DD22EB4ACD727C761A`,
+  one file, four change units, 432 insertions, and zero deletions. All four
+  span checks plus the lexical C# delimiter check passed. The source stayed
+  at `65489604...BB3B`; no Artifact, source, Build, process, or game-directory
+  write occurred.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -466,6 +490,15 @@ files_in_scope:
   the approved Apply materialization, and the historical rejected Apply remain
   read-only.
 focused_verification:
+  python -m pytest tests/unit/test_patch_apply.py
+  tests/unit/test_stagger_diagnostic_diff.py tests/unit/test_mod_agent_cli.py
+  tests/unit/test_stagger_edit_authority.py tests/unit/test_artifact_contract.py
+  tests/unit/test_artifact_store.py tests/unit/test_workflow_graph.py -q
+  --tb=short passed 228 tests in 50.16 seconds. This covers the new
+  Stagger-specific no-write exact diff, deterministic repeatability, current
+  Artifact/source/dependency admission, source and stale-Plan blocking, the
+  exact four-change selection, zero writes, CLI projection, and the new
+  bound-span duplicate match while preserving ordinary unique matching.
   python -m pytest tests/unit/test_stagger_edit_authority.py
   tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
   tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py -q passed

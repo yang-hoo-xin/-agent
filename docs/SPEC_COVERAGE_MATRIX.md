@@ -194,10 +194,21 @@ test contract forbid product acceptance, RepairPlanner, source Patch, Build,
 launch, or game-directory writes. Focused authority/Store/Graph/CLI coverage
 passes 202 tests. Real shared-Store no-write preflight returned proposal hash
 `sha256:ae129a2ed4312929f3c795ede58a9010b3231b4d1733696e4a188eed4a7f0f6b`
-with Artifact counts unchanged at `2/3/3/3/2/3/3`; the v2 Request has not been
-created. This advances WF-004, ART-002, EXEC-009, and EXEC-010 only within the
-Stagger diagnostic authority boundary; the broader affected suite passes 302
-tests and root-cause accuracy remains unproven.
+before the Request write. Request
+`sha256:c8bd821278a7507946982df121a85ab5b1883fc140634924fb12124fb73e1996`
+was later created and approved through the Graph gate, producing current
+Approval `71623b5f...32f30`, EvidencePack `deeb1acd...166e8`, and pure
+four-change Plan `d1613594...64d68`. Counts are `3/4/4/4/2/4/4`.
+The current deterministic no-write exact-diff entry validates those Artifacts,
+source/config/dependency hashes, and exact binding spans before staging one
+file in memory. Real diff hash
+`sha256:63e6b0e08cf689a5aefbfc419a74eb1399a32dfec2c7ba94c4b014321d8d8c86`
+contains four change units and passes all four span checks plus the lexical C#
+delimiter check. The source remains unchanged and source-write authority is
+still false. This advances WF-004, ART-002, EXEC-001, EXEC-009, EXEC-010, and
+EXEC-011 only within the Stagger diagnostic boundary; 228 affected tests pass
+and compilation, Runtime root-cause accuracy, and product acceptance remain
+unproven.
 
 ## Knowledge And Retrieval Coverage
 
