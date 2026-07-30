@@ -895,7 +895,13 @@ class ArtifactStore:
             artifact_type == "edit_authority_request"
             and isinstance(request_payload, Mapping)
             and request_payload.get("schema_version")
-            == "stagger_hud_parent_observation_authority_request_v1"
+            in {
+                "stagger_hud_parent_observation_authority_request_v1",
+                (
+                    "stagger_hud_parent_diagnostic_execution_"
+                    "authority_request_v2"
+                ),
+            }
         ):
             observation_authority_types = {
                 "feature_spec",

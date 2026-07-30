@@ -577,7 +577,7 @@ def test_stagger_observation_request_store_requires_every_exact_role(
 
     request_payload = {
         "schema_version": (
-            "stagger_hud_parent_observation_authority_request_v1"
+            "stagger_hud_parent_diagnostic_execution_authority_request_v2"
         ),
         "source_root": str(tmp_path),
         "proposal": {

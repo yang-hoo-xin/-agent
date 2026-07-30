@@ -528,6 +528,18 @@ def _validate_implementation_plan_binding_registry(payload: dict[str, Any]) -> N
     if diagnostic_scope is None:
         return
     if (
+        isinstance(diagnostic_scope, dict)
+        and diagnostic_scope.get("schema_version")
+        == "stagger_hud_parent_diagnostic_execution_authority_v2"
+    ):
+        _validate_stagger_diagnostic_only_plan(
+            payload=payload,
+            diagnostic_scope=diagnostic_scope,
+            edit_bindings=edit_bindings,
+            proposed_changes=proposed_changes,
+        )
+        return
+    if (
         not isinstance(diagnostic_scope, dict)
         or diagnostic_scope.get("schema_version")
         != "stagger_hud_parent_observation_authority_v1"
@@ -611,6 +623,131 @@ def _validate_implementation_plan_binding_registry(payload: dict[str, Any]) -> N
     ):
         raise ArtifactRegistryError(
             "Stagger observation binding or change exceeds its approved scope"
+        )
+
+
+def _validate_stagger_diagnostic_only_plan(
+    *,
+    payload: dict[str, Any],
+    diagnostic_scope: dict[str, Any],
+    edit_bindings: list[Any],
+    proposed_changes: list[Any],
+) -> None:
+    selected_binding_ids = diagnostic_scope.get("selected_binding_ids")
+    selected_change_ids = diagnostic_scope.get("selected_change_ids")
+    approval_revision = diagnostic_scope.get(
+        "edit_authority_approval_revision"
+    )
+    if (
+        diagnostic_scope.get("root_cause_status") != "unresolved"
+        or diagnostic_scope.get("observation_only") is not True
+        or diagnostic_scope.get(
+            "new_plan_contains_only_selected_bindings"
+        )
+        is not True
+        or diagnostic_scope.get(
+            "new_plan_contains_only_selected_changes"
+        )
+        is not True
+        or diagnostic_scope.get("repair_planner_allowed") is not False
+        or diagnostic_scope.get("source_patch_allowed") is not False
+        or diagnostic_scope.get("product_acceptance_allowed") is not False
+        or not isinstance(selected_binding_ids, list)
+        or len(selected_binding_ids) != 4
+        or len(set(selected_binding_ids)) != 4
+        or not isinstance(selected_change_ids, list)
+        or len(selected_change_ids) != 4
+        or len(set(selected_change_ids)) != 4
+        or not isinstance(approval_revision, dict)
+        or approval_revision.get("feature_id") != payload.get("feature_id")
+    ):
+        raise ArtifactRegistryError(
+            "Stagger diagnostic-only Plan boundary is invalid"
+        )
+    exact_bindings = [
+        item for item in edit_bindings if isinstance(item, dict)
+    ]
+    exact_changes = [
+        item for item in proposed_changes if isinstance(item, dict)
+    ]
+    if (
+        len(exact_bindings) != 4
+        or len(exact_changes) != 4
+        or {
+            item.get("binding_id") for item in exact_bindings
+        }
+        != set(selected_binding_ids)
+        or {
+            item.get("change_id") for item in exact_changes
+        }
+        != set(selected_change_ids)
+        or {
+            item.get("edit_binding_id") for item in exact_changes
+        }
+        != set(selected_binding_ids)
+    ):
+        raise ArtifactRegistryError(
+            "Stagger diagnostic-only Plan contains unselected changes"
+        )
+    excluded_binding_ids = diagnostic_scope.get(
+        "excluded_predecessor_binding_ids"
+    )
+    excluded_change_ids = diagnostic_scope.get(
+        "excluded_predecessor_change_ids"
+    )
+    if (
+        not isinstance(excluded_binding_ids, list)
+        or not isinstance(excluded_change_ids, list)
+        or set(selected_binding_ids).intersection(excluded_binding_ids)
+        or set(selected_change_ids).intersection(excluded_change_ids)
+    ):
+        raise ArtifactRegistryError(
+            "Stagger diagnostic-only Plan predecessor exclusion is invalid"
+        )
+    allowed_operations = {
+        (
+            "insert_observation_only_hud_parent_selection_state_"
+            "after_existing_assignment"
+        ),
+        (
+            "insert_observation_only_hud_parent_use_state_"
+            "before_existing_cast_and_guard"
+        ),
+        "insert_bounded_observation_state_after_existing_hud_parent_field",
+        (
+            "insert_observation_identity_helpers_before_existing_"
+            "hud_parent_resolver"
+        ),
+    }
+    if {
+        item.get("operation") for item in exact_changes
+    } != allowed_operations or any(
+        binding.get("usage") != "observation_only_edit_target_scope"
+        or binding.get("edit_authority_approval_ref") != approval_revision
+        or binding.get("repair_planner_allowed") is not False
+        or binding.get("source_patch_allowed") is not False
+        or not isinstance(binding.get("observation_contract"), dict)
+        for binding in exact_bindings
+    ) or any(
+        change.get("change_type")
+        != "add_observation_only_runtime_diagnostic"
+        for change in exact_changes
+    ):
+        raise ArtifactRegistryError(
+            "Stagger diagnostic-only binding contract is invalid"
+        )
+    test_plan = payload.get("test_plan")
+    if (
+        not isinstance(test_plan, dict)
+        or test_plan.get("schema_version")
+        != "stagger_hud_parent_diagnostic_test_plan_v1"
+        or test_plan.get("product_acceptance_allowed") is not False
+        or test_plan.get("repair_planner_allowed") is not False
+        or test_plan.get("required_signal")
+        != "STAGGER_HUD_PARENT_DIAGNOSTIC"
+    ):
+        raise ArtifactRegistryError(
+            "Stagger diagnostic-only test plan is invalid"
         )
 
 
@@ -834,6 +971,23 @@ def _validate_request_bound_edit_authority_approval(
             "create_observation_evidence_pack_revision",
             "create_diagnostic_implementation_plan_revision",
             "create_observation_only_edit_bindings",
+        ]
+        expected_forbidden_actions = [
+            "create_binding_resolution_revision",
+            "invoke_repair_planner",
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+        ]
+    elif (
+        authority_contract_version
+        == "edit_authority_stagger_hud_parent_diagnostic_plan_v2"
+    ):
+        expected_allowed_actions = [
+            "create_observation_evidence_pack_revision",
+            "create_diagnostic_only_implementation_plan_revision",
+            "create_exact_bounded_observation_bindings",
         ]
         expected_forbidden_actions = [
             "create_binding_resolution_revision",

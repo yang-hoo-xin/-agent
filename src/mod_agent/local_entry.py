@@ -77,6 +77,9 @@ _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA = (
 _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA = (
     "stagger_hud_parent_observation_authority_request_v1"
 )
+_STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA = (
+    "stagger_hud_parent_diagnostic_execution_authority_request_v2"
+)
 _EDIT_AUTHORITY_REVIEW_WRITE_TYPES = (
     "workflow_checkpoint",
     "resume_report",
@@ -270,6 +273,7 @@ def preflight_stagger_edit_authority_review(
     if request_schema not in {
         _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA,
         _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
+        _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
     }:
         raise LocalEntryError(
             "This no-write review preflight requires a supported exact "
@@ -277,7 +281,11 @@ def preflight_stagger_edit_authority_review(
         )
     write_types = (
         _STAGGER_OBSERVATION_REVIEW_WRITE_TYPES
-        if request_schema == _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA
+        if request_schema
+        in {
+            _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
+            _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
+        }
         else _EDIT_AUTHORITY_REVIEW_WRITE_TYPES
     )
     before_counts = {
@@ -413,7 +421,11 @@ def resume_stagger_edit_authority_review(
         else None
     )
     observation_plan_authorized = (
-        request_schema == _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA
+        request_schema
+        in {
+            _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
+            _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
+        }
         and result.get("current_stage") == "implementation_plan"
         and {
             "edit_authority_approval",
@@ -424,7 +436,12 @@ def resume_stagger_edit_authority_review(
     )
     return {
         "status": (
-            "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED"
+            (
+                "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED"
+                if request_schema
+                == _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA
+                else "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED"
+            )
             if observation_plan_authorized
             else "EXACT_EDIT_AUTHORITY_RESOLVED"
             if resolved

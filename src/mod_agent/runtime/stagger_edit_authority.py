@@ -46,20 +46,34 @@ _EXISTING_BINDING_REQUEST_SCHEMA = (
 _EXISTING_BINDING_AUTHORITY_CONTRACT = (
     "edit_authority_existing_binding_reauthorization_v1"
 )
-_STAGGER_OBSERVATION_PROPOSAL_SCHEMA = (
+_STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V1 = (
     "stagger_hud_parent_observation_authority_v1"
 )
-_STAGGER_OBSERVATION_REQUEST_SCHEMA = (
+_STAGGER_OBSERVATION_REQUEST_SCHEMA_V1 = (
     "stagger_hud_parent_observation_authority_request_v1"
 )
-_STAGGER_OBSERVATION_AUTHORITY_CONTRACT = (
+_STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1 = (
     "edit_authority_stagger_hud_parent_observation_plan_v1"
 )
-_STAGGER_SOURCE_PATH = "Patches/HitFeedbackBehaviorPatch.cs"
-_STAGGER_SELECTION_SYMBOL = (
-    "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
-    "ShowHitIndicator_Prefix"
+_STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2 = (
+    "stagger_hud_parent_diagnostic_execution_authority_v2"
 )
+_STAGGER_OBSERVATION_REQUEST_SCHEMA_V2 = (
+    "stagger_hud_parent_diagnostic_execution_authority_request_v2"
+)
+_STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2 = (
+    "edit_authority_stagger_hud_parent_diagnostic_plan_v2"
+)
+_STAGGER_SOURCE_PATH = "Patches/HitFeedbackBehaviorPatch.cs"
+_STAGGER_PLUGIN_PATH = "Plugin.cs"
+_STAGGER_BEHAVIOR_TYPE = (
+    "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch"
+)
+_STAGGER_SELECTION_SYMBOL = (
+    f"{_STAGGER_BEHAVIOR_TYPE}.ShowHitIndicator_Prefix"
+)
+_STAGGER_STATE_SYMBOL = f"{_STAGGER_BEHAVIOR_TYPE}._lastHudParent"
+_STAGGER_HELPER_SYMBOL = f"{_STAGGER_BEHAVIOR_TYPE}.TryGetLayerHudParent"
 _STAGGER_SELECTION_LINE = (
     "                _lastHudParent = TryGetLayerHudParent(__instance);"
 )
@@ -74,6 +88,31 @@ _STAGGER_USE_BLOCK = (
 _STAGGER_OBSERVATION_OPERATIONS = (
     "insert_observation_only_hud_parent_selection_state_after_existing_assignment",
     "insert_observation_only_hud_parent_use_state_before_existing_cast_and_guard",
+    "insert_bounded_observation_state_after_existing_hud_parent_field",
+    "insert_observation_identity_helpers_before_existing_hud_parent_resolver",
+)
+_STAGGER_DIAGNOSTIC_SIGNAL = "STAGGER_HUD_PARENT_DIAGNOSTIC"
+_STAGGER_DIAGNOSTIC_RECORD_LIMIT_PER_PHASE = 8
+_STAGGER_PLUGIN_DIAGNOSTIC_DECLARATION = (
+    "    public static ConfigEntry<bool> EnableDiagnosticLogging "
+    "{ get; private set; } = null!;"
+)
+_STAGGER_PLUGIN_DIAGNOSTIC_BIND_BLOCK = (
+    "        EnableDiagnosticLogging = Config.Bind(",
+    '            "General",',
+    '            "EnableDiagnosticLogging",',
+    "            false,",
+    '            "Enable diagnostic logging for hit feedback.");',
+)
+_STAGGER_STATE_LINE = "        private static Transform? _lastHudParent;"
+_STAGGER_HELPER_LINE = (
+    "        private static Transform? TryGetLayerHudParent("
+    "CrosshairGuiLayer? layer)"
+)
+_STAGGER_IDENTITY_ASSEMBLIES = (
+    ("unity_core_module", "interop/UnityEngine.CoreModule.dll"),
+    ("modules_asm", "interop/Modules-ASM.dll"),
+    ("il2cpp_interop_runtime", "core/Il2CppInterop.Runtime.dll"),
 )
 
 
@@ -863,12 +902,24 @@ def preflight_stagger_hud_parent_observation_authority(
     evidence_pack_path: str | Path,
     evidence_pack_hash: str,
     source_root: str | Path,
+    build_dependency_root: str | Path | None = None,
+    unity_core_module_hash: str | None = None,
+    modules_asm_hash: str | None = None,
+    il2cpp_interop_runtime_hash: str | None = None,
+    proposal_schema: str = _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2,
 ) -> dict[str, Any]:
-    """Prepare two exact observation-only bindings without writing."""
+    """Prepare an exact observation-only diagnostic Plan without writing."""
 
     if not feature_id or not run_id:
         raise StaggerEditAuthorityPreflightError(
             "feature_id and run_id must be non-empty."
+        )
+    if proposal_schema not in {
+        _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V1,
+        _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2,
+    }:
+        raise StaggerEditAuthorityPreflightError(
+            "The Stagger diagnostic proposal schema is not supported."
         )
     store = ArtifactStore(artifact_store_root)
     refs = _stagger_observation_authority_refs(
@@ -924,6 +975,7 @@ def preflight_stagger_hud_parent_observation_authority(
     _validate_stagger_observation_authority_lineage(
         feature_id=feature_id,
         run_id=run_id,
+        proposal_schema=proposal_schema,
         refs=refs,
         envelopes=envelopes,
         runtime_evidence=runtime_evidence,
@@ -936,7 +988,18 @@ def preflight_stagger_hud_parent_observation_authority(
     source = _extract_stagger_observation_source(
         source_root=source_root,
         current_plan=current_plan,
+        require_complete=(
+            proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+        ),
     )
+    identity_api_contract = None
+    if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2:
+        identity_api_contract = _validate_stagger_identity_api_dependencies(
+            build_dependency_root=build_dependency_root,
+            unity_core_module_hash=unity_core_module_hash,
+            modules_asm_hash=modules_asm_hash,
+            il2cpp_interop_runtime_hash=il2cpp_interop_runtime_hash,
+        )
     current_registry = current_plan.get("binding_registry")
     if (
         not isinstance(current_registry, dict)
@@ -945,6 +1008,11 @@ def preflight_stagger_hud_parent_observation_authority(
         raise StaggerEditAuthorityPreflightError(
             "The current Binding Registry is invalid."
         )
+    projection_count = (
+        4
+        if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+        else 2
+    )
     projected_binding_ids = _next_sequential_ids(
         (
             item.get("binding_id")
@@ -952,7 +1020,7 @@ def preflight_stagger_hud_parent_observation_authority(
             if isinstance(item, dict)
         ),
         prefix="edit_binding_",
-        count=2,
+        count=projection_count,
     )
     projected_change_ids = _next_sequential_ids(
         (
@@ -961,65 +1029,26 @@ def preflight_stagger_hud_parent_observation_authority(
             if isinstance(item, dict)
         ),
         prefix="chg_",
-        count=2,
+        count=projection_count,
     )
-    observation_fields = [
-        "reference_null",
-        "unity_null",
-        "runtime_type",
-        "rect_transform_compatible",
+    bindings = _build_stagger_diagnostic_binding_proposal(
+        source=source,
+        binding_ids=projected_binding_ids,
+        change_ids=projected_change_ids,
+        proposal_schema=proposal_schema,
+    )
+    prior_binding_ids = [
+        str(item["binding_id"])
+        for item in current_registry["edit_bindings"]
+        if isinstance(item, dict) and isinstance(item.get("binding_id"), str)
     ]
-    bindings = [
-        {
-            "binding_id": projected_binding_ids[0],
-            "change_id": projected_change_ids[0],
-            "canonical_target_path": _STAGGER_SOURCE_PATH,
-            "source_hash": source["sha256"],
-            "target_symbol": _STAGGER_SELECTION_SYMBOL,
-            "target_span": copy.deepcopy(source["selection_span"]),
-            "operation": _STAGGER_OBSERVATION_OPERATIONS[0],
-            "observation_contract": {
-                "signal": "STAGGER_HUD_PARENT_DIAGNOSTIC",
-                "phase": "selection",
-                "correlation_fields": ["hit_sequence_snapshot"],
-                "objects": ["CanvasTrans", "Root", "selected"],
-                "fields_per_object": observation_fields,
-                "selected_source_values": [
-                    "CanvasTrans",
-                    "Root",
-                    "observation_exception",
-                ],
-            },
-            "preserved_behavior": [
-                "_lastHudParent assignment expression",
-                "TryGetLayerHudParent invocation count",
-                "ShowHitIndicator_Prefix control flow",
-            ],
-        },
-        {
-            "binding_id": projected_binding_ids[1],
-            "change_id": projected_change_ids[1],
-            "canonical_target_path": _STAGGER_SOURCE_PATH,
-            "source_hash": source["sha256"],
-            "target_symbol": _STAGGER_RUNTIME_SYMBOL,
-            "target_span": copy.deepcopy(source["use_span"]),
-            "operation": _STAGGER_OBSERVATION_OPERATIONS[1],
-            "observation_contract": {
-                "signal": "STAGGER_HUD_PARENT_DIAGNOSTIC",
-                "phase": "stagger_use",
-                "correlation_fields": ["hit_sequence_snapshot"],
-                "objects": ["_lastHudParent"],
-                "fields_per_object": observation_fields,
-            },
-            "preserved_behavior": [
-                "_lastHudParent as RectTransform cast",
-                "missing_canvas_rect_for_stagger_x reason",
-                "existing false return",
-            ],
-        },
+    prior_change_ids = [
+        str(item["change_id"])
+        for item in current_plan.get("proposed_changes", ())
+        if isinstance(item, dict) and isinstance(item.get("change_id"), str)
     ]
     proposal = {
-        "schema_version": _STAGGER_OBSERVATION_PROPOSAL_SCHEMA,
+        "schema_version": proposal_schema,
         "feature_id": feature_id,
         "run_id": run_id,
         "feature_spec_revision": _revision(refs["feature_spec"]),
@@ -1040,7 +1069,36 @@ def preflight_stagger_hud_parent_observation_authority(
             "resolved_path": source["resolved_path"],
             "sha256": source["sha256"],
         },
+        "supporting_source": (
+            {
+                "canonical_target_path": _STAGGER_PLUGIN_PATH,
+                "resolved_path": source["plugin_resolved_path"],
+                "sha256": source["plugin_sha256"],
+                "config_gate": "Plugin.EnableDiagnosticLogging.Value",
+                "config_section": "General",
+                "config_key": "EnableDiagnosticLogging",
+                "default_value": False,
+            }
+            if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+            else None
+        ),
+        "identity_api_contract": identity_api_contract,
         "diagnostic_bindings": bindings,
+        "selected_binding_ids": [
+            str(item["binding_id"]) for item in bindings
+        ],
+        "selected_change_ids": [
+            str(item["change_id"]) for item in bindings
+        ],
+        "excluded_predecessor_binding_ids": prior_binding_ids,
+        "excluded_predecessor_change_ids": prior_change_ids,
+        "diagnostic_plan_projection": {
+            "new_plan_contains_only_selected_bindings": True,
+            "new_plan_contains_only_selected_changes": True,
+            "binding_count": len(bindings),
+            "change_count": len(bindings),
+            "product_test_plan_inherited": False,
+        },
         "why_existing_binding_is_insufficient": (
             "edit_binding_004 authorizes only "
             "replace_hud_recttransform_acquisition_and_null_guard_only; it "
@@ -1058,11 +1116,19 @@ def preflight_stagger_hud_parent_observation_authority(
             "game_directory_write_allowed": False,
             "diagnostic_result_counts_as_product_acceptance": False,
         },
-        "approval_scope": [
-            "create_observation_evidence_pack_revision",
-            "create_diagnostic_implementation_plan_revision",
-            "create_exact_observation_only_edit_bindings",
-        ],
+        "approval_scope": (
+            [
+                "create_observation_evidence_pack_revision",
+                "create_diagnostic_only_implementation_plan_revision",
+                "create_exact_bounded_observation_bindings",
+            ]
+            if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+            else [
+                "create_observation_evidence_pack_revision",
+                "create_diagnostic_implementation_plan_revision",
+                "create_exact_observation_only_edit_bindings",
+            ]
+        ),
     }
     proposal_hash = "sha256:" + hashlib.sha256(
         _canonical_json(proposal)
@@ -1074,6 +1140,14 @@ def preflight_stagger_hud_parent_observation_authority(
         "command": "preflight-stagger-hud-parent-observation-authority",
         "proposal": proposal,
         "proposal_hash": proposal_hash,
+        "selected_binding_ids": list(proposal["selected_binding_ids"]),
+        "selected_change_ids": list(proposal["selected_change_ids"]),
+        "excluded_predecessor_binding_ids": list(
+            proposal["excluded_predecessor_binding_ids"]
+        ),
+        "excluded_predecessor_change_ids": list(
+            proposal["excluded_predecessor_change_ids"]
+        ),
         "request_creation_required": True,
         "approval_required": True,
         "registry_mutation_allowed": False,
@@ -1090,7 +1164,7 @@ def preflight_stagger_hud_parent_observation_authority(
 def create_stagger_hud_parent_observation_authority_request(
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Persist one no-authority Request for two diagnostic bindings."""
+    """Persist one no-authority Request for the bounded diagnostic Plan."""
 
     preflight = preflight_stagger_hud_parent_observation_authority(
         **kwargs
@@ -1099,11 +1173,30 @@ def create_stagger_hud_parent_observation_authority_request(
     run_id = str(kwargs["run_id"])
     store = ArtifactStore(kwargs["artifact_store_root"])
     proposal = copy.deepcopy(preflight["proposal"])
+    request_schema = (
+        _STAGGER_OBSERVATION_REQUEST_SCHEMA_V2
+        if proposal.get("schema_version")
+        == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+        else _STAGGER_OBSERVATION_REQUEST_SCHEMA_V1
+    )
     request_payload = {
-        "schema_version": _STAGGER_OBSERVATION_REQUEST_SCHEMA,
+        "schema_version": request_schema,
         "proposal": proposal,
         "source_root": str(Path(kwargs["source_root"]).resolve()),
     }
+    if request_schema == _STAGGER_OBSERVATION_REQUEST_SCHEMA_V2:
+        request_payload["build_dependency_root"] = str(
+            Path(kwargs["build_dependency_root"]).resolve()
+        )
+        request_payload["dependency_hashes"] = {
+            "unity_core_module": str(
+                kwargs["unity_core_module_hash"]
+            ).upper(),
+            "modules_asm": str(kwargs["modules_asm_hash"]).upper(),
+            "il2cpp_interop_runtime": str(
+                kwargs["il2cpp_interop_runtime_hash"]
+            ).upper(),
+        }
     request_hash = "sha256:" + hashlib.sha256(
         _canonical_json(request_payload)
     ).hexdigest()
@@ -1537,7 +1630,8 @@ def materialize_stagger_edit_authority_approval(
     )
     if request_schema in {
         _EXISTING_BINDING_REQUEST_SCHEMA,
-        _STAGGER_OBSERVATION_REQUEST_SCHEMA,
+        _STAGGER_OBSERVATION_REQUEST_SCHEMA_V1,
+        _STAGGER_OBSERVATION_REQUEST_SCHEMA_V2,
     }:
         _require_latest_artifact_refs(store, (request_ref,))
     else:
@@ -1637,7 +1731,10 @@ def materialize_stagger_edit_authority_approval(
         )
     if (
         request_payload.get("schema_version")
-        == _STAGGER_OBSERVATION_REQUEST_SCHEMA
+        in {
+            _STAGGER_OBSERVATION_REQUEST_SCHEMA_V1,
+            _STAGGER_OBSERVATION_REQUEST_SCHEMA_V2,
+        }
     ):
         return _apply_approved_stagger_hud_parent_observation_authority(
             approval_hash=str(request["request_hash"]),
@@ -1976,6 +2073,15 @@ def _apply_approved_stagger_hud_parent_observation_authority(
         raise StaggerEditAuthorityApprovalError(
             "Stagger observation authority payload is invalid."
         )
+    proposal_schema = proposal.get("schema_version")
+    dependency_hashes = request_payload.get("dependency_hashes")
+    if (
+        proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+        and not isinstance(dependency_hashes, dict)
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "Complete Stagger diagnostic dependency hashes are missing."
+        )
     preflight = preflight_stagger_hud_parent_observation_authority(
         artifact_store_root=artifact_store_root,
         feature_id=feature_id,
@@ -2015,6 +2121,25 @@ def _apply_approved_stagger_hud_parent_observation_authority(
             "artifact_hash"
         ],
         source_root=source_root,
+        build_dependency_root=request_payload.get(
+            "build_dependency_root"
+        ),
+        unity_core_module_hash=(
+            dependency_hashes.get("unity_core_module")
+            if isinstance(dependency_hashes, dict)
+            else None
+        ),
+        modules_asm_hash=(
+            dependency_hashes.get("modules_asm")
+            if isinstance(dependency_hashes, dict)
+            else None
+        ),
+        il2cpp_interop_runtime_hash=(
+            dependency_hashes.get("il2cpp_interop_runtime")
+            if isinstance(dependency_hashes, dict)
+            else None
+        ),
+        proposal_schema=str(proposal_schema),
     )
     actor = approved_by.strip()
     approval_time = approved_at.strip()
@@ -2087,7 +2212,9 @@ def _apply_approved_stagger_hud_parent_observation_authority(
         request_ref=request_ref,
         resume_report_ref=resume_report_ref,
         authority_contract_version=(
-            _STAGGER_OBSERVATION_AUTHORITY_CONTRACT
+            _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2
+            if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+            else _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1
         ),
     )
     store.preflight_atomic_commit(
@@ -2132,11 +2259,20 @@ def _apply_approved_stagger_hud_parent_observation_authority(
             "evidence_pack",
         },
     )
-    plan_payload = _build_stagger_observation_plan_revision(
-        old_plan=old_plan,
-        proposal=proposal,
-        evidence_ref=evidence_ref,
-        approval_ref=approval_ref,
+    plan_payload = (
+        _build_stagger_diagnostic_only_plan_revision(
+            old_plan=old_plan,
+            proposal=proposal,
+            evidence_ref=evidence_ref,
+            approval_ref=approval_ref,
+        )
+        if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+        else _build_stagger_observation_plan_revision(
+            old_plan=old_plan,
+            proposal=proposal,
+            evidence_ref=evidence_ref,
+            approval_ref=approval_ref,
+        )
     )
     plan_ref = store.write(
         feature_id=feature_id,
@@ -2159,7 +2295,11 @@ def _apply_approved_stagger_hud_parent_observation_authority(
     )
     bindings = proposal["diagnostic_bindings"]
     return {
-        "status": "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED",
+        "status": (
+            "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED"
+            if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+            else "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED"
+        ),
         "command": "langgraph-edit-authority-approval",
         "approval_hash": approval_hash,
         "approved_by": actor,
@@ -2168,6 +2308,10 @@ def _apply_approved_stagger_hud_parent_observation_authority(
         "implementation_plan_revision": _revision(plan_ref),
         "allowed_edit_binding_ids": [
             item["binding_id"]
+            for item in bindings
+        ],
+        "selected_change_ids": [
+            item["change_id"]
             for item in bindings
         ],
         "binding_resolution_written": False,
@@ -2353,6 +2497,7 @@ def _validate_stagger_observation_authority_lineage(
     *,
     feature_id: str,
     run_id: str,
+    proposal_schema: str,
     refs: dict[str, ArtifactRef],
     envelopes: dict[str, dict[str, Any]],
     runtime_evidence: dict[str, Any],
@@ -2361,6 +2506,19 @@ def _validate_stagger_observation_authority_lineage(
     resolution: dict[str, Any],
     existing_approval: dict[str, Any],
 ) -> None:
+    if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2:
+        _validate_complete_stagger_diagnostic_lineage(
+            feature_id=feature_id,
+            run_id=run_id,
+            refs=refs,
+            envelopes=envelopes,
+            runtime_evidence=runtime_evidence,
+            current_plan=current_plan,
+            patch_proposal=patch_proposal,
+            resolution=resolution,
+            current_diagnostic_approval=existing_approval,
+        )
+        return
     current_plan_hash = refs[
         "current_implementation_plan"
     ].artifact_hash
@@ -2501,10 +2659,172 @@ def _validate_stagger_observation_authority_lineage(
             )
 
 
+def _validate_complete_stagger_diagnostic_lineage(
+    *,
+    feature_id: str,
+    run_id: str,
+    refs: dict[str, ArtifactRef],
+    envelopes: dict[str, dict[str, Any]],
+    runtime_evidence: dict[str, Any],
+    current_plan: dict[str, Any],
+    patch_proposal: dict[str, Any],
+    resolution: dict[str, Any],
+    current_diagnostic_approval: dict[str, Any],
+) -> None:
+    runtime_hash = refs["runtime_evidence"].artifact_hash
+    current_plan_hash = refs["current_implementation_plan"].artifact_hash
+    current_evidence_hash = refs["evidence_pack"].artifact_hash
+    current_approval_hash = refs[
+        "existing_edit_authority_approval"
+    ].artifact_hash
+    patch_hash = refs["patch_proposal"].artifact_hash
+    ownership = runtime_evidence.get("failure_ownership")
+    diagnostic_scope = current_plan.get("diagnostic_scope")
+    if (
+        runtime_evidence.get("feature_id") != feature_id
+        or runtime_evidence.get("run_id") != run_id
+        or not isinstance(ownership, dict)
+        or ownership.get("owner") != "observation"
+        or ownership.get("source_repair_allowed") is not False
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "RuntimeEvidence does not retain the exact observation-owned "
+            "no-source-repair boundary."
+        )
+    if (
+        current_plan.get("feature_id") != feature_id
+        or current_plan.get("blocking") is not False
+        or not isinstance(diagnostic_scope, dict)
+        or diagnostic_scope.get("schema_version")
+        != _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V1
+        or diagnostic_scope.get("edit_binding_ids")
+        != ["edit_binding_005", "edit_binding_006"]
+        or diagnostic_scope.get("observation_only") is not True
+        or diagnostic_scope.get("repair_planner_allowed") is not False
+        or diagnostic_scope.get("source_patch_allowed") is not False
+        or diagnostic_scope.get("product_acceptance_allowed") is not False
+        or diagnostic_scope.get(
+            "edit_authority_approval_revision", {}
+        ).get("artifact_hash")
+        != current_approval_hash
+        or not _has_upstream_revision(
+            envelopes["current_implementation_plan"],
+            artifact_type="feature_spec",
+            artifact_hash=refs["feature_spec"].artifact_hash,
+        )
+        or not _has_upstream_revision(
+            envelopes["current_implementation_plan"],
+            artifact_type="runtime_evidence",
+            artifact_hash=runtime_hash,
+        )
+        or not _has_upstream_revision(
+            envelopes["current_implementation_plan"],
+            artifact_type="evidence_pack",
+            artifact_hash=current_evidence_hash,
+        )
+        or not _has_upstream_revision(
+            envelopes["current_implementation_plan"],
+            artifact_type="edit_authority_approval",
+            artifact_hash=current_approval_hash,
+        )
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The current cumulative diagnostic Plan lineage is invalid."
+        )
+    predecessor_plan_revision = resolution.get(
+        "implementation_plan_revision"
+    )
+    resolution_evidence_revision = resolution.get(
+        "evidence_pack_revision"
+    )
+    resolution_approval_revision = resolution.get(
+        "edit_authority_approval_revision"
+    )
+    if (
+        not isinstance(predecessor_plan_revision, dict)
+        or not isinstance(resolution_evidence_revision, dict)
+        or not isinstance(resolution_approval_revision, dict)
+        or resolution.get("feature_id") != feature_id
+        or resolution.get("run_id") != run_id
+        or resolution.get("result_type") != "resolved_repair_target"
+        or resolution.get("authority_source") != "edit_authority_approval"
+        or resolution.get("authority_contract_version")
+        != _EXISTING_BINDING_AUTHORITY_CONTRACT
+        or resolution.get("runtime_evidence_revision", {}).get(
+            "artifact_hash"
+        )
+        != runtime_hash
+        or resolution.get("patch_proposal_revision", {}).get(
+            "artifact_hash"
+        )
+        != patch_hash
+        or resolution.get("allowed_edit_binding_ids")
+        != [_EXISTING_STAGGER_REPAIR_BINDING_ID]
+        or resolution.get("repair_planner_allowed") is not False
+        or resolution.get("source_patch_allowed") is not False
+        or resolution.get("resolved_repair_target", {}).get("binding_id")
+        != _EXISTING_STAGGER_REPAIR_BINDING_ID
+        or not _has_upstream_revision(
+            envelopes["current_implementation_plan"],
+            artifact_type="implementation_plan",
+            artifact_hash=predecessor_plan_revision.get("artifact_hash"),
+        )
+        or not _has_upstream_revision(
+            envelopes["existing_binding_resolution"],
+            artifact_type="implementation_plan",
+            artifact_hash=predecessor_plan_revision.get("artifact_hash"),
+        )
+        or not _has_upstream_revision(
+            envelopes["existing_binding_resolution"],
+            artifact_type="evidence_pack",
+            artifact_hash=resolution_evidence_revision.get("artifact_hash"),
+        )
+        or not _has_upstream_revision(
+            envelopes["existing_binding_resolution"],
+            artifact_type="edit_authority_approval",
+            artifact_hash=resolution_approval_revision.get("artifact_hash"),
+        )
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The predecessor edit_binding_004 resolution lineage is invalid."
+        )
+    context_pack = patch_proposal.get("context_pack")
+    if (
+        patch_proposal.get("feature_id") != feature_id
+        or not isinstance(context_pack, dict)
+        or current_diagnostic_approval.get("feature_id") != feature_id
+        or current_diagnostic_approval.get("run_id") != run_id
+        or current_diagnostic_approval.get("authority_contract_version")
+        != _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1
+        or current_diagnostic_approval.get("repair_planner_allowed") is not False
+        or current_diagnostic_approval.get("source_patch_allowed") is not False
+        or not _has_upstream_revision(
+            envelopes["evidence_pack"],
+            artifact_type="runtime_evidence",
+            artifact_hash=runtime_hash,
+        )
+        or not _has_upstream_revision(
+            envelopes["evidence_pack"],
+            artifact_type="edit_authority_approval",
+            artifact_hash=current_approval_hash,
+        )
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The current diagnostic Approval or EvidencePack lineage is "
+            "invalid."
+        )
+    if current_plan_hash == predecessor_plan_revision.get("artifact_hash"):
+        raise StaggerEditAuthorityPreflightError(
+            "The cumulative diagnostic Plan must be a new revision over the "
+            "edit_binding_004 predecessor Plan."
+        )
+
+
 def _extract_stagger_observation_source(
     *,
     source_root: str | Path,
     current_plan: dict[str, Any],
+    require_complete: bool = False,
 ) -> dict[str, Any]:
     root = Path(source_root).resolve()
     path = (root / PurePosixPath(_STAGGER_SOURCE_PATH)).resolve()
@@ -2571,12 +2891,321 @@ def _extract_stagger_observation_source(
         raise StaggerEditAuthorityPreflightError(
             "The exact observation target declarations do not match."
         )
-    return {
+    result = {
         "resolved_path": str(path),
         "sha256": source_hash,
         "selection_span": {"start_line": 301, "end_line": 301},
         "use_span": {"start_line": 979, "end_line": 984},
     }
+    if not require_complete:
+        return result
+    if (
+        len(lines) < 2511
+        or lines[26] != _STAGGER_STATE_LINE
+        or lines[2510] != _STAGGER_HELPER_LINE
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The exact diagnostic state or helper insertion anchor is "
+            "missing or moved."
+        )
+    plugin_path = (root / _STAGGER_PLUGIN_PATH).resolve()
+    try:
+        plugin_path.relative_to(root)
+    except ValueError as exc:
+        raise StaggerEditAuthorityPreflightError(
+            "The Stagger Plugin path escapes source_root."
+        ) from exc
+    if not plugin_path.is_file():
+        raise StaggerEditAuthorityPreflightError(
+            "The exact Stagger Plugin source file is missing."
+        )
+    plugin_lines = plugin_path.read_text(encoding="utf-8").splitlines()
+    if (
+        len(plugin_lines) < 33
+        or plugin_lines[19] != _STAGGER_PLUGIN_DIAGNOSTIC_DECLARATION
+        or tuple(plugin_lines[28:33])
+        != _STAGGER_PLUGIN_DIAGNOSTIC_BIND_BLOCK
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "The exact EnableDiagnosticLogging configuration contract is "
+            "missing or moved."
+        )
+    result.update(
+        {
+            "state_span": {"start_line": 27, "end_line": 27},
+            "helper_span": {"start_line": 2511, "end_line": 2511},
+            "plugin_resolved_path": str(plugin_path),
+            "plugin_sha256": hashlib.sha256(
+                plugin_path.read_bytes()
+            ).hexdigest().upper(),
+        }
+    )
+    return result
+
+
+def _validate_stagger_identity_api_dependencies(
+    *,
+    build_dependency_root: str | Path | None,
+    unity_core_module_hash: str | None,
+    modules_asm_hash: str | None,
+    il2cpp_interop_runtime_hash: str | None,
+) -> dict[str, Any]:
+    if build_dependency_root is None:
+        raise StaggerEditAuthorityPreflightError(
+            "Complete Stagger diagnostics require build_dependency_root."
+        )
+    declared_hashes = {
+        "unity_core_module": unity_core_module_hash,
+        "modules_asm": modules_asm_hash,
+        "il2cpp_interop_runtime": il2cpp_interop_runtime_hash,
+    }
+    if any(
+        not isinstance(value, str)
+        or re.fullmatch(r"[0-9A-Fa-f]{64}", value) is None
+        for value in declared_hashes.values()
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "Complete Stagger diagnostics require three exact dependency "
+            "SHA256 values."
+        )
+    root = Path(build_dependency_root).resolve()
+    assemblies: list[dict[str, str]] = []
+    for role, relative_path in _STAGGER_IDENTITY_ASSEMBLIES:
+        path = (root / PurePosixPath(relative_path)).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise StaggerEditAuthorityPreflightError(
+                "A Stagger identity dependency path escapes "
+                "build_dependency_root."
+            ) from exc
+        if not path.is_file():
+            raise StaggerEditAuthorityPreflightError(
+                f"The exact Stagger identity dependency is missing: {role}."
+            )
+        actual_hash = hashlib.sha256(path.read_bytes()).hexdigest().upper()
+        if actual_hash != str(declared_hashes[role]).upper():
+            raise StaggerEditAuthorityPreflightError(
+                f"The exact Stagger identity dependency changed: {role}."
+            )
+        assemblies.append(
+            {
+                "role": role,
+                "path": str(path),
+                "sha256": actual_hash,
+            }
+        )
+    return {
+        "build_dependency_root": str(root),
+        "assemblies": assemblies,
+        "crosshair_gui_layer_identity": {
+            "native_identity_expression": "layer.Pointer",
+            "managed_wrapper_identity_expression": (
+                "RuntimeHelpers.GetHashCode(layer)"
+            ),
+            "get_instance_id_allowed": False,
+        },
+        "unity_object_identity": {
+            "reference_null_expression": "ReferenceEquals(value, null)",
+            "unity_null_expression": "value == null",
+            "instance_identity_expression": "value.GetInstanceID()",
+        },
+        "compile_boundary": (
+            "CrosshairGuiLayer does not expose GetInstanceID; Transform and "
+            "RectTransform expose GetInstanceID in the bound dependency set."
+        ),
+    }
+
+
+def _build_stagger_diagnostic_binding_proposal(
+    *,
+    source: dict[str, Any],
+    binding_ids: list[str],
+    change_ids: list[str],
+    proposal_schema: str,
+) -> list[dict[str, Any]]:
+    object_state_fields = [
+        "reference_null",
+        "unity_null",
+        "native_pointer",
+        "managed_wrapper_identity",
+        "unity_instance_id",
+        "runtime_type",
+        "rect_transform_compatible",
+        "identity_read_error",
+    ]
+    base = [
+        {
+            "binding_id": binding_ids[0],
+            "change_id": change_ids[0],
+            "canonical_target_path": _STAGGER_SOURCE_PATH,
+            "source_hash": source["sha256"],
+            "target_symbol": _STAGGER_SELECTION_SYMBOL,
+            "target_span": copy.deepcopy(source["selection_span"]),
+            "operation": _STAGGER_OBSERVATION_OPERATIONS[0],
+            "observation_contract": {
+                "signal": _STAGGER_DIAGNOSTIC_SIGNAL,
+                "phase": "selection",
+                "correlation_fields": [
+                    "event_sequence",
+                    "utc_ticks",
+                    "hit_sequence_snapshot",
+                ],
+                "objects": [
+                    "CrosshairGuiLayer",
+                    "CanvasTrans",
+                    "Root",
+                    "selected",
+                ],
+                "fields_per_object": object_state_fields,
+                "selected_source_values": [
+                    "CanvasTrans",
+                    "Root",
+                    "none",
+                    "observation_exception",
+                ],
+            },
+            "preserved_behavior": [
+                "_lastHudParent assignment expression",
+                "TryGetLayerHudParent invocation count",
+                "ShowHitIndicator_Prefix control flow",
+            ],
+        },
+        {
+            "binding_id": binding_ids[1],
+            "change_id": change_ids[1],
+            "canonical_target_path": _STAGGER_SOURCE_PATH,
+            "source_hash": source["sha256"],
+            "target_symbol": _STAGGER_RUNTIME_SYMBOL,
+            "target_span": copy.deepcopy(source["use_span"]),
+            "operation": _STAGGER_OBSERVATION_OPERATIONS[1],
+            "observation_contract": {
+                "signal": _STAGGER_DIAGNOSTIC_SIGNAL,
+                "phase": "stagger_use",
+                "correlation_fields": [
+                    "event_sequence",
+                    "utc_ticks",
+                    "hit_sequence_snapshot",
+                    "last_assignment_event_sequence",
+                    "last_assignment_utc_ticks",
+                ],
+                "objects": [
+                    "stored_CrosshairGuiLayer",
+                    "_lastHudParent",
+                    "last_assigned_HUD_parent",
+                ],
+                "fields_per_object": object_state_fields,
+                "derived_fields": [
+                    "crosshair_instance_changed",
+                    "hud_parent_identity_changed",
+                    "assignment_seen",
+                ],
+            },
+            "preserved_behavior": [
+                "_lastHudParent as RectTransform cast",
+                "missing_canvas_rect_for_stagger_x reason",
+                "existing false return",
+            ],
+        },
+    ]
+    if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V1:
+        return base
+    bounded_logging = {
+        "config_gate_expression": "Plugin.EnableDiagnosticLogging.Value",
+        "config_section": "General",
+        "config_key": "EnableDiagnosticLogging",
+        "default_value": False,
+        "maximum_records_per_phase": (
+            _STAGGER_DIAGNOSTIC_RECORD_LIMIT_PER_PHASE
+        ),
+        "duplicate_suppression_key": [
+            "phase",
+            "CrosshairGuiLayer.native_pointer",
+            "selected.unity_instance_id",
+            "_lastHudParent.unity_instance_id",
+            "hit_sequence_snapshot",
+        ],
+        "per_frame_logging_allowed": False,
+        "hud_tree_traversal_allowed": False,
+        "additional_try_get_layer_hud_parent_calls_allowed": 0,
+    }
+    for binding in base:
+        binding["observation_contract"]["bounded_logging"] = copy.deepcopy(
+            bounded_logging
+        )
+    base.extend(
+        [
+            {
+                "binding_id": binding_ids[2],
+                "change_id": change_ids[2],
+                "canonical_target_path": _STAGGER_SOURCE_PATH,
+                "source_hash": source["sha256"],
+                "target_symbol": _STAGGER_STATE_SYMBOL,
+                "target_span": copy.deepcopy(source["state_span"]),
+                "operation": _STAGGER_OBSERVATION_OPERATIONS[2],
+                "observation_contract": {
+                    "signal": _STAGGER_DIAGNOSTIC_SIGNAL,
+                    "phase": "bounded_state",
+                    "state_fields": [
+                        "event_sequence",
+                        "selection_record_count",
+                        "stagger_use_record_count",
+                        "last_selection_dedup_key",
+                        "last_stagger_use_dedup_key",
+                        "last_assignment_event_sequence",
+                        "last_assignment_utc_ticks",
+                        "last_assignment_hit_sequence",
+                        "last_crosshair_native_pointer",
+                        "last_crosshair_managed_wrapper_identity",
+                        "last_hud_parent_unity_instance_id",
+                        "last_assignment_source",
+                    ],
+                    "bounded_logging": copy.deepcopy(bounded_logging),
+                },
+                "preserved_behavior": [
+                    "_lastHudParent field type",
+                    "all existing field initializers",
+                    "product behavior when diagnostic logging is disabled",
+                ],
+            },
+            {
+                "binding_id": binding_ids[3],
+                "change_id": change_ids[3],
+                "canonical_target_path": _STAGGER_SOURCE_PATH,
+                "source_hash": source["sha256"],
+                "target_symbol": _STAGGER_HELPER_SYMBOL,
+                "target_span": copy.deepcopy(source["helper_span"]),
+                "operation": _STAGGER_OBSERVATION_OPERATIONS[3],
+                "observation_contract": {
+                    "signal": _STAGGER_DIAGNOSTIC_SIGNAL,
+                    "phase": "identity_helpers",
+                    "identity_api_contract": {
+                        "CrosshairGuiLayer": [
+                            "Pointer",
+                            "RuntimeHelpers.GetHashCode",
+                        ],
+                        "Transform_or_RectTransform": [
+                            "ReferenceEquals",
+                            "operator_equals_null",
+                            "GetInstanceID",
+                            "GetType.FullName",
+                        ],
+                    },
+                    "exception_behavior": (
+                        "record identity_read_error without changing existing "
+                        "product control flow"
+                    ),
+                    "bounded_logging": copy.deepcopy(bounded_logging),
+                },
+                "preserved_behavior": [
+                    "TryGetLayerHudParent implementation",
+                    "HUD node selection order",
+                    "all existing callers and return values",
+                ],
+            },
+        ]
+    )
+    return base
 
 
 def _next_sequential_ids(
@@ -2996,15 +3625,24 @@ def _build_approval_payload(
             "launch_process",
             "write_game_directory",
         ]
-    elif (
-        authority_contract_version
-        == _STAGGER_OBSERVATION_AUTHORITY_CONTRACT
-    ):
-        allowed_actions = [
-            "create_observation_evidence_pack_revision",
-            "create_diagnostic_implementation_plan_revision",
-            "create_observation_only_edit_bindings",
-        ]
+    elif authority_contract_version in {
+        _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1,
+        _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2,
+    }:
+        allowed_actions = (
+            [
+                "create_observation_evidence_pack_revision",
+                "create_diagnostic_only_implementation_plan_revision",
+                "create_exact_bounded_observation_bindings",
+            ]
+            if authority_contract_version
+            == _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2
+            else [
+                "create_observation_evidence_pack_revision",
+                "create_diagnostic_implementation_plan_revision",
+                "create_observation_only_edit_bindings",
+            ]
+        )
         forbidden_actions = [
             "create_binding_resolution_revision",
             "invoke_repair_planner",
@@ -3282,6 +3920,12 @@ def _build_stagger_observation_evidence_pack_revision(
         raise StaggerEditAuthorityApprovalError(
             "The current EvidencePack items are invalid."
         )
+    complete_projection = (
+        proposal.get("schema_version")
+        == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+    )
+    if complete_projection:
+        items.clear()
     source_path = Path(proposal["current_source"]["resolved_path"])
     lines = source_path.read_text(encoding="utf-8").splitlines()
     for binding in proposal["diagnostic_bindings"]:
@@ -3351,9 +3995,81 @@ def _build_stagger_observation_evidence_pack_revision(
                 "runtime_evidence_ref": _revision(runtime_evidence_ref),
             }
         )
+    if complete_projection:
+        supporting_source = proposal["supporting_source"]
+        items.extend(
+            [
+                {
+                    "evidence_id": "stagger_diagnostic_config_gate",
+                    "authority": "current_source_read",
+                    "claim_supported": (
+                        "The diagnostic path is gated by the exact existing "
+                        "General.EnableDiagnosticLogging setting."
+                    ),
+                    "source_type": "target_source",
+                    "source_path": supporting_source[
+                        "canonical_target_path"
+                    ],
+                    "source_ref": supporting_source["resolved_path"],
+                    "source_hash": supporting_source["sha256"],
+                    "file_hash": supporting_source["sha256"],
+                    "symbol": (
+                        "BetterHitFeedback.Plugin.EnableDiagnosticLogging"
+                    ),
+                    "span": {"start_line": 20, "end_line": 33},
+                    "usage": "diagnostic_configuration_evidence",
+                    "score": 1.0,
+                    "risk_notes": [
+                        "This setting does not authorize a game config write."
+                    ],
+                    "edit_authority_approval_ref": _revision(approval_ref),
+                    "runtime_evidence_ref": _revision(
+                        runtime_evidence_ref
+                    ),
+                },
+                {
+                    "evidence_id": "stagger_diagnostic_identity_api",
+                    "authority": "bound_build_dependency_read",
+                    "claim_supported": (
+                        "The exact Build dependency hashes bind the identity "
+                        "expressions used by the diagnostic Plan."
+                    ),
+                    "source_type": "build_dependency_set",
+                    "source_path": None,
+                    "source_ref": proposal["identity_api_contract"][
+                        "build_dependency_root"
+                    ],
+                    "source_hash": None,
+                    "file_hash": None,
+                    "symbol": (
+                        "CrosshairGuiLayer.Pointer;"
+                        "UnityEngine.Object.GetInstanceID"
+                    ),
+                    "span": None,
+                    "usage": "diagnostic_identity_api_evidence",
+                    "score": 1.0,
+                    "risk_notes": [
+                        "This evidence binds API availability, not a product "
+                        "root cause."
+                    ],
+                    "dependency_assemblies": copy.deepcopy(
+                        proposal["identity_api_contract"]["assemblies"]
+                    ),
+                    "edit_authority_approval_ref": _revision(approval_ref),
+                    "runtime_evidence_ref": _revision(
+                        runtime_evidence_ref
+                    ),
+                },
+            ]
+        )
     payload["message"] = (
-        "The EvidencePack now includes two exact human-approved "
-        "observation-only source anchors."
+        "The EvidencePack contains only the exact bounded Stagger HUD parent "
+        "diagnostic source, config, and API evidence."
+        if complete_projection
+        else (
+            "The EvidencePack now includes two exact human-approved "
+            "observation-only source anchors."
+        )
     )
     trace_refs = [
         str(item)
@@ -3364,6 +4080,158 @@ def _build_stagger_observation_evidence_pack_revision(
         if ref_path not in trace_refs:
             trace_refs.append(ref_path)
     payload["trace_refs"] = trace_refs
+    return payload
+
+
+def _build_stagger_diagnostic_only_plan_revision(
+    *,
+    old_plan: dict[str, Any],
+    proposal: dict[str, Any],
+    evidence_ref: ArtifactRef,
+    approval_ref: ArtifactRef,
+) -> dict[str, Any]:
+    if (
+        proposal.get("schema_version")
+        != _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "Complete diagnostic Plan projection requires the v2 proposal."
+        )
+    base = copy.deepcopy(old_plan)
+    registry = base.get("binding_registry")
+    if not isinstance(registry, dict):
+        raise StaggerEditAuthorityApprovalError(
+            "The current ImplementationPlan Registry is invalid."
+        )
+    registry["edit_bindings"] = []
+    base["proposed_changes"] = []
+    base["evidence_refs"] = []
+    base["target_files"] = []
+    base["target_symbols"] = []
+    base["rollback_plan"] = []
+    base["open_questions"] = []
+    base["test_plan"] = {
+        "schema_version": "stagger_hud_parent_diagnostic_test_plan_v1",
+        "purpose": (
+            "Collect paired selection and stagger_use diagnostics without "
+            "changing or accepting product behavior."
+        ),
+        "required_configuration": {
+            "section": "General",
+            "key": "EnableDiagnosticLogging",
+            "value": True,
+        },
+        "required_signal": _STAGGER_DIAGNOSTIC_SIGNAL,
+        "required_phases": ["selection", "stagger_use"],
+        "required_comparability": [
+            "same FeatureSpec",
+            "same GTFO version",
+            "same Mod set",
+            "same BetterHitFeedback configuration except diagnostic logging",
+            "same reproducible hit operation",
+        ],
+        "allowed_classifications": [
+            "reference_null",
+            "unity_null",
+            "non_rect_transform",
+            "canvas_trans_or_root_selection",
+            "hud_parent_identity_changed",
+            "crosshair_instance_changed",
+            "inconclusive",
+        ],
+        "diagnostic_success_condition": (
+            "A bounded paired diagnostic record is captured and classified."
+        ),
+        "product_behavior_expectation": (
+            "The diagnostic DLL may still show no yellow X and no extra "
+            "feedback sound."
+        ),
+        "terminal_route": (
+            "RuntimeEvidence then STOP with root_cause_status confirmed or "
+            "inconclusive."
+        ),
+        "product_acceptance_allowed": False,
+        "repair_planner_allowed": False,
+    }
+    payload = _build_stagger_observation_plan_revision(
+        old_plan=base,
+        proposal=proposal,
+        evidence_ref=evidence_ref,
+        approval_ref=approval_ref,
+    )
+    binding_ids = [
+        str(item["binding_id"])
+        for item in proposal["diagnostic_bindings"]
+    ]
+    change_ids = [
+        str(item["change_id"])
+        for item in proposal["diagnostic_bindings"]
+    ]
+    payload["message"] = (
+        "ImplementationPlan contains only four exact bounded Stagger HUD "
+        "parent diagnostic changes; predecessor product changes are excluded."
+    )
+    payload["rollback_plan"] = [
+        "Remove the four exact diagnostic changes together and restore the "
+        "bound source bytes."
+    ]
+    payload["open_questions"] = [
+        (
+            "Unresolved Runtime root cause: classify the paired selection and "
+            "stagger_use identities without selecting a product repair."
+        )
+    ]
+    for change in payload["proposed_changes"]:
+        change["rationale"] = (
+            "Correlate exact selection, assignment, Crosshair wrapper, Unity "
+            "object identity, and stagger use state under bounded logging "
+            "without selecting a product repair."
+        )
+        change["expected_validation"] = [
+            (
+                "Verify selected_change_ids and selected_binding_ids contain "
+                "only the four v2 diagnostic identities."
+            ),
+            (
+                "Verify the exact source and Build dependency SHA256 values "
+                "before any source write."
+            ),
+            (
+                "Verify General.EnableDiagnosticLogging is the sole config "
+                "gate and each phase emits at most eight records."
+            ),
+            (
+                "Verify no per-frame logging, HUD tree traversal, or extra "
+                "TryGetLayerHudParent call is introduced."
+            ),
+            (
+                "Verify product control flow and the existing missing-canvas "
+                "failure behavior remain unchanged."
+            ),
+            (
+                "Require a separate exact-diff approval, Build permission, "
+                "and Runtime permission."
+            ),
+        ]
+    payload["diagnostic_scope"] = {
+        "schema_version": _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2,
+        "root_cause_status": "unresolved",
+        "observation_only": True,
+        "selected_binding_ids": binding_ids,
+        "selected_change_ids": change_ids,
+        "excluded_predecessor_binding_ids": list(
+            proposal["excluded_predecessor_binding_ids"]
+        ),
+        "excluded_predecessor_change_ids": list(
+            proposal["excluded_predecessor_change_ids"]
+        ),
+        "new_plan_contains_only_selected_bindings": True,
+        "new_plan_contains_only_selected_changes": True,
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+        "product_acceptance_allowed": False,
+        "edit_authority_approval_revision": _revision(approval_ref),
+    }
     return payload
 
 
@@ -3555,7 +4423,7 @@ def _build_stagger_observation_plan_revision(
     if root_question not in open_questions:
         open_questions.append(root_question)
     payload["diagnostic_scope"] = {
-        "schema_version": _STAGGER_OBSERVATION_PROPOSAL_SCHEMA,
+        "schema_version": _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V1,
         "root_cause_status": "unresolved",
         "observation_only": True,
         "edit_binding_ids": [

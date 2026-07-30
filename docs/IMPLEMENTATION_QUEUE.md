@@ -406,15 +406,28 @@ dependencies:
   checkpoint `cdf39288...f6bc4`, report `1d4d1309...8ddfe0`, Approval
   `8f05ce14...c318bf`, EvidencePack `2e4336d8...055dbf`, and diagnostic Plan
   `e45cda19...86a3c`; counts are now `2/3/3/3/2/3/3`.
-  The Plan contains only `edit_binding_005/chg_005` and
-  `edit_binding_006/chg_006`; Resolution remained at two revisions and no
+  The Plan is cumulative: it contains Registry/change identities `001-006`,
+  while `diagnostic_scope` selects `edit_binding_005/chg_005` and
+  `edit_binding_006/chg_006`. Resolution remained at two revisions and no
   source, Build, process, or game-directory action occurred. The CLI returned
   nonzero after emitting `STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED`
-  because its return-code branch has not yet admitted that bounded success
+  because its old return-code branch admitted only the resolved-binding
   status.
-  Python compilation passed. The focused authority/Store/Graph/CLI suite
-  passed 200 tests; the broader affected Runtime/deployment suite passed 349
-  tests in 36.04 seconds.
+  The complete v2 closure now projects a fresh diagnostic-only Plan containing
+  exactly `edit_binding_007-010/chg_007-010` and explicitly excludes
+  predecessor identities `001-006`. It binds exact source/config/dependency
+  hashes, Crosshair wrapper and Unity object identity, assignment/use event
+  order, an eight-record per-phase cap, duplicate suppression, and a
+  diagnostic-only Runtime test contract. It forbids per-frame logging, HUD
+  tree traversal, extra resolver calls, product acceptance, RepairPlanner,
+  source Patch, Build, launch, and game-directory writes. Graph, Store,
+  Registry, Proposal projection, and both CLI success statuses are
+  regression-tested.
+  Real zero-write preflight returned
+  `READY_TO_CREATE_STAGGER_HUD_PARENT_OBSERVATION_AUTHORITY_REQUEST` with
+  proposal hash
+  `sha256:ae129a2ed4312929f3c795ede58a9010b3231b4d1733696e4a188eed4a7f0f6b`.
+  Counts remained `2/3/3/3/2/3/3`; the new Request does not yet exist.
 permissions_and_disclosure:
   The one diagnostic Runtime was separately authorized, completed, and
   restored. One local-only Proposal model call was authorized and consumed;
@@ -453,6 +466,21 @@ files_in_scope:
   the approved Apply materialization, and the historical rejected Apply remain
   read-only.
 focused_verification:
+  python -m pytest tests/unit/test_stagger_edit_authority.py
+  tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
+  tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py -q passed
+  202 tests. This covers v1 history preservation, v2 exact-role Request and
+  Approval routing, pure four-change Plan projection, ordinary Proposal
+  consumption of only selected changes, dependency/config drift, zero-write
+  preflight, and CLI success exit codes.
+  Real shared-Store v2 preflight returned proposal hash
+  sha256:ae129a2ed4312929f3c795ede58a9010b3231b4d1733696e4a188eed4a7f0f6b
+  with selected bindings 007-010 and changes 007-010. Artifact counts before
+  and after were 2/3/3/3/2/3/3; no Request or other Artifact was written.
+  The broader affected authority, Artifact, Graph, repair, RuntimeEvidence,
+  and local-entry suite passed 302 tests in 58.23 seconds. A final focused
+  materialization check also validated the projected EvidencePack and Plan
+  through ArtifactTypeRegistry.
   python -m pytest tests/unit/test_stagger_edit_authority.py
   tests/unit/test_artifact_contract.py tests/unit/test_artifact_store.py
   tests/unit/test_mod_agent_cli.py tests/unit/test_workflow_graph.py

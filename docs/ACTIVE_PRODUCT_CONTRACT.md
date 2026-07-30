@@ -700,16 +700,39 @@ then entered the real LangGraph approval gate. Approval materialized
 WorkflowCheckpoint `cdf39288...f6bc4`, ResumeReport `1d4d1309...8ddfe0`,
 permission-only Approval `8f05ce14...c318bf`, EvidencePack
 `2e4336d8...055dbf`, and diagnostic ImplementationPlan
-`e45cda19...86a3c`. The Plan contains only `edit_binding_005/chg_005` and
-`edit_binding_006/chg_006`; no BindingResolution was created, and
+`e45cda19...86a3c`. Readback later proved that this is a cumulative Plan: its
+Registry and `proposed_changes` contain historical identities `001-006`, while
+`diagnostic_scope` selects only `edit_binding_005/chg_005` and
+`edit_binding_006/chg_006`. The earlier statement that the whole Plan contained
+only those two changes was incorrect. No BindingResolution was created, and
 `repair_planner_allowed=false` plus `source_patch_allowed=false` remain in
-force. The CLI printed
-`STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED` but returned a nonzero process
-code because its success-code branch currently recognizes only
-`EXACT_EDIT_AUTHORITY_RESOLVED`; this is an entry return-code defect, not an
-Artifact or approval failure. Python compilation passed; the focused
-authority/Store/Graph/CLI suite passed 200 tests, and the broader affected
-Runtime/deployment suite passed 349 tests.
+force.
+
+The v2 diagnostic execution-authority closure now projects a new Plan rather
+than appending to that cumulative predecessor. Its only executable identities
+are `edit_binding_007-010` and `chg_007-010`; predecessor identities `001-006`
+are explicit exclusions and the ordinary PatchProposal builder is
+regression-tested to see only the four selected changes. The four scopes bind
+selection, stagger-use, bounded diagnostic state, and identity helpers.
+`General.EnableDiagnosticLogging` is the sole gate, each phase is capped at
+eight records, duplicate suppression is required, and per-frame logging, HUD
+tree traversal, and extra `TryGetLayerHudParent` calls are forbidden. Exact
+Build dependencies bind `CrosshairGuiLayer.Pointer` plus
+`RuntimeHelpers.GetHashCode` for the IL2CPP wrapper and `GetInstanceID` for
+Unity objects. The diagnostic test contract ends at classified
+RuntimeEvidence and cannot count as product acceptance or enter RepairPlanner.
+The Graph and Store accept the v2 Request/Approval shape while preserving the
+v1 history, and both successful diagnostic Plan statuses now return CLI exit
+code zero.
+
+Real shared-Store no-write preflight passed against current Plan
+`e45cda19...86a3c`, Approval `8f05ce14...c318bf`, EvidencePack
+`2e4336d8...055dbf`, source SHA256 `65489604...BB3B`, and the exact three
+Build dependency hashes. It returned proposal hash
+`sha256:ae129a2ed4312929f3c795ede58a9010b3231b4d1733696e4a188eed4a7f0f6b`.
+Artifact counts remained Request/Approval/EvidencePack/Plan/
+BindingResolution/checkpoint/report `2/3/3/3/2/3/3`. No new Request was
+created, and no source, Build, process, or game-directory action occurred.
 
 This proves one local request-to-real-runtime gameplay slice, one bounded
 automatically collected accepted startup-marker slice, and one bounded

@@ -14,7 +14,7 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: build_complete_runtime_visual_failure_exact_request_review_preflight_ready
+stagger_implementation_plan_status: build_complete_runtime_visual_failure_diagnostic_v2_request_preflight_ready
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
 most_recent_completed_capability: STAGGER-EXACT-REQUEST-CHECKPOINT-PROJECTION-001
@@ -743,7 +743,7 @@ BindingResolution `0786c8cf...03200`. The resolution reauthorizes only
 `repair_planner_allowed=false`, and `source_patch_allowed=false` remain
 unchanged. The source SHA256 remains `65489604...BB3B`.
 
-The bounded observation-authority continuation now derives two and only two
+The bounded observation-authority continuation first derived two selected
 diagnostic scopes from that current source and authority chain. It uses
 `edit_binding_005/chg_005` for `ShowHitIndicator_Prefix` line 301 and
 `edit_binding_006/chg_006` for `TrySpawnStaggerYellowX` lines 979-984. The
@@ -776,15 +776,32 @@ Approval `8f05ce14...c318bf`, EvidencePack `2e4336d8...055dbf`, and
 diagnostic Plan `e45cda19...86a3c`. Revision counts are now
 Request/Approval/EvidencePack/Plan/BindingResolution/checkpoint/report
 `2/3/3/3/2/3/3`. The Plan contains exactly `edit_binding_005/chg_005` and
-`edit_binding_006/chg_006`; no BindingResolution, RepairPlan, source write,
+`edit_binding_006/chg_006` only inside `diagnostic_scope`; the whole Plan is
+cumulative and retains historical Registry/change identities `001-006`. No
+BindingResolution, RepairPlan, source write,
 Build, process launch, or game-directory write occurred. The source SHA256
-remains `65489604...BB3B`. The CLI emitted the successful
-`STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED` payload but returned nonzero
-because the command return-code branch recognizes only
-`EXACT_EDIT_AUTHORITY_RESOLVED`; this bounded CLI return-code defect remains
-open. Python compilation passed; focused authority/Store/Graph/CLI coverage
-passed 200 tests and the broader affected Runtime/deployment suite passed 349
-tests in 36.04 seconds.
+remains `65489604...BB3B`.
+
+The complete v2 diagnostic execution-authority path fixes that execution
+ambiguity without mutating any historical Artifact. A future approved
+projection will build a fresh diagnostic-only Plan containing exactly
+`edit_binding_007-010/chg_007-010`; `001-006` are explicit exclusions.
+Selection and use events carry sequence, time, Crosshair wrapper identity,
+Unity object identity, assignment identity, and change facts. The existing
+`General.EnableDiagnosticLogging` setting is the only gate; each phase has an
+eight-record cap and duplicate suppression, with no per-frame logging, HUD
+tree traversal, or extra resolver call. The Plan owns a diagnostic-only test
+contract and stops after classified RuntimeEvidence. Product acceptance,
+RepairPlanner, source Patch, Build, process launch, and game-directory writes
+remain false.
+
+The current source and Build dependency set passed real zero-write preflight.
+Proposal hash is
+`sha256:ae129a2ed4312929f3c795ede58a9010b3231b4d1733696e4a188eed4a7f0f6b`;
+selected identities are `edit_binding_007-010/chg_007-010`. Counts remained
+`2/3/3/3/2/3/3`, so this turn stopped before the new no-authority Request.
+The prior diagnostic success exit-code defect is fixed and covered for both
+v1 and v2 statuses.
 
 The explicit source-lineage input is the preserved final Phase 2B tree at
 `r/007b1b58/generated_mods/BetterHitFeedback`, not the unchanged pre-Phase-2B

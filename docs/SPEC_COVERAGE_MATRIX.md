@@ -181,6 +181,24 @@ The public no-write Graph interrupt preflight returned
 four downstream revision counts unchanged. This tests the repaired admission;
 it does not prove a completed Approval or BindingResolution continuation.
 
+The later observation Approval produced cumulative Plan `e45cda19...86a3c`.
+Its `diagnostic_scope` selects `edit_binding_005/006`, but the full Registry
+and `proposed_changes` retain identities `001-006`; earlier statements that
+the whole Plan contained only two changes are corrected. The v2 diagnostic
+execution contract projects a fresh Plan with only
+`edit_binding_007-010/chg_007-010` and explicit predecessor exclusions.
+Registry and ordinary Proposal construction reject or omit unselected
+historical work. Exact source, config, and three Build dependency hashes bind
+the wrapper/Unity identity expressions; bounded logging and the diagnostic
+test contract forbid product acceptance, RepairPlanner, source Patch, Build,
+launch, or game-directory writes. Focused authority/Store/Graph/CLI coverage
+passes 202 tests. Real shared-Store no-write preflight returned proposal hash
+`sha256:ae129a2ed4312929f3c795ede58a9010b3231b4d1733696e4a188eed4a7f0f6b`
+with Artifact counts unchanged at `2/3/3/3/2/3/3`; the v2 Request has not been
+created. This advances WF-004, ART-002, EXEC-009, and EXEC-010 only within the
+Stagger diagnostic authority boundary; the broader affected suite passes 302
+tests and root-cause accuracy remains unproven.
+
 ## Knowledge And Retrieval Coverage
 
 | Coverage ID | Spec Refs | Requirement | Module | Status | Implementation Record | Provenance / Current Evidence Or Gap |

@@ -106,6 +106,9 @@ _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA = (
 _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA = (
     "stagger_hud_parent_observation_authority_request_v1"
 )
+_STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA = (
+    "stagger_hud_parent_diagnostic_execution_authority_request_v2"
+)
 
 
 def build_graph(
@@ -1056,6 +1059,7 @@ def _run_stagger_edit_authority_gate(
     if request_schema not in {
         _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA,
         _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
+        _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
     }:
         for upstream in request_envelope.get("inputs", {}).get(
             "upstream_artifacts",
@@ -1102,12 +1106,24 @@ def _run_stagger_edit_authority_gate(
             "launch_process",
             "write_game_directory",
         ]
-    elif request_schema == _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA:
-        allowed_actions = [
-            "create_observation_evidence_pack_revision",
-            "create_diagnostic_implementation_plan_revision",
-            "create_observation_only_edit_bindings",
-        ]
+    elif request_schema in {
+        _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
+        _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
+    }:
+        allowed_actions = (
+            [
+                "create_observation_evidence_pack_revision",
+                "create_diagnostic_only_implementation_plan_revision",
+                "create_exact_bounded_observation_bindings",
+            ]
+            if request_schema
+            == _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA
+            else [
+                "create_observation_evidence_pack_revision",
+                "create_diagnostic_implementation_plan_revision",
+                "create_observation_only_edit_bindings",
+            ]
+        )
         forbidden_actions = [
             "create_binding_resolution_revision",
             "invoke_repair_planner",
@@ -1217,7 +1233,10 @@ def _run_stagger_edit_authority_gate(
         ("evidence_pack", "evidence_pack_revision"),
         ("implementation_plan", "implementation_plan_revision"),
     ]
-    if request_schema != _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA:
+    if request_schema not in {
+        _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
+        _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
+    }:
         materialized_fields.append(
             ("binding_resolution", "binding_resolution_revision")
         )
@@ -1235,7 +1254,11 @@ def _run_stagger_edit_authority_gate(
         )
     next_state["current_stage"] = (
         "implementation_plan"
-        if request_schema == _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA
+        if request_schema
+        in {
+            _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
+            _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
+        }
         else "binding_resolution"
     )
     next_state["approvals"] = {

@@ -33,6 +33,7 @@ from src.mod_agent.runtime.stagger_edit_authority import (
 from src.mod_agent.runtime.stagger_diagnosis import (
     STAGGER_VISUAL_ACCEPTANCE_CRITERION,
 )
+from src.mod_agent.proposal import PatchProposalBuilder
 
 
 FEATURE_ID = "feature_001"
@@ -788,7 +789,8 @@ def _observation_authority_setup(
     existing_args = _existing_binding_setup(tmp_path)
     source_root = Path(existing_args["source_root"])
     source_path = source_root / TARGET_PATH
-    lines = [f"// filler {index}" for index in range(1, 985)]
+    lines = [f"// filler {index}" for index in range(1, 2521)]
+    lines[26] = "        private static Transform? _lastHudParent;"
     lines[296] = (
         "        public static void ShowHitIndicator_Prefix("
         "CrosshairGuiLayer __instance, Vector3 worldPos, bool isWeakspot, "
@@ -817,7 +819,45 @@ def _observation_authority_setup(
         "                    return false;",
         "                }",
     ]
+    lines[2510] = (
+        "        private static Transform? "
+        "TryGetLayerHudParent(CrosshairGuiLayer? layer)"
+    )
     source_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    plugin_path = source_root / "Plugin.cs"
+    plugin_lines = [f"// plugin filler {index}" for index in range(1, 39)]
+    plugin_lines[19] = (
+        "    public static ConfigEntry<bool> EnableDiagnosticLogging "
+        "{ get; private set; } = null!;"
+    )
+    plugin_lines[28:33] = [
+        "        EnableDiagnosticLogging = Config.Bind(",
+        '            "General",',
+        '            "EnableDiagnosticLogging",',
+        "            false,",
+        '            "Enable diagnostic logging for hit feedback.");',
+    ]
+    plugin_path.write_text(
+        "\n".join(plugin_lines) + "\n",
+        encoding="utf-8",
+    )
+    dependency_root = tmp_path / "build-dependencies"
+    dependency_files = {
+        "unity_core_module": (
+            dependency_root / "interop" / "UnityEngine.CoreModule.dll"
+        ),
+        "modules_asm": dependency_root / "interop" / "Modules-ASM.dll",
+        "il2cpp_interop_runtime": (
+            dependency_root / "core" / "Il2CppInterop.Runtime.dll"
+        ),
+    }
+    dependency_hashes: dict[str, str] = {}
+    for role, dependency_path in dependency_files.items():
+        dependency_path.parent.mkdir(parents=True, exist_ok=True)
+        dependency_path.write_bytes(f"{role}-test-bytes".encode("ascii"))
+        dependency_hashes[role] = hashlib.sha256(
+            dependency_path.read_bytes()
+        ).hexdigest().upper()
     source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest().upper()
     current_plan_ref = _RoleAwareArtifactStore.latest_by_type[
         "implementation_plan"
@@ -846,35 +886,172 @@ def _observation_authority_setup(
         "start_line": 979,
         "end_line": 984,
     }
-    approval_path = tmp_path / "old-approval.json"
+    predecessor_evidence_ref = _RoleAwareArtifactStore.latest_by_type[
+        "evidence_pack"
+    ]
+    diagnostic_approval_path = tmp_path / "observation-approval.json"
     approval_ref = ArtifactRef(
         FEATURE_ID,
         "edit_authority_approval",
-        str(approval_path),
-        "a" * 64,
+        str(diagnostic_approval_path),
+        "b" * 64,
     )
     _RoleAwareArtifactStore.envelopes_by_path[
-        str(approval_path.resolve())
+        str(diagnostic_approval_path.resolve())
     ] = {
         "data": {
             "feature_id": FEATURE_ID,
             "run_id": RUN_ID,
             "status": "approved",
             "authority_contract_version": (
-                "edit_authority_existing_binding_reauthorization_v1"
+                "edit_authority_stagger_hud_parent_observation_plan_v1"
             ),
             "repair_planner_allowed": False,
             "source_patch_allowed": False,
         },
         "inputs": {"upstream_artifacts": []},
     }
+    diagnostic_evidence_ref = ArtifactRef(
+        FEATURE_ID,
+        "evidence_pack",
+        str(tmp_path / "observation-evidence.json"),
+        "c" * 64,
+    )
+    diagnostic_evidence = copy.deepcopy(
+        _RoleAwareArtifactStore.envelopes_by_path[
+            str(Path(predecessor_evidence_ref.path).resolve())
+        ]
+    )
+    diagnostic_evidence["inputs"] = {
+        "upstream_artifacts": [
+            {
+                "artifact_type": "runtime_evidence",
+                "artifact_hash": RUNTIME_EVIDENCE_HASH,
+                "path": str(existing_args["runtime_evidence_path"]),
+            },
+            {
+                "artifact_type": "edit_authority_approval",
+                "artifact_hash": approval_ref.artifact_hash,
+                "path": approval_ref.path,
+            },
+            {
+                "artifact_type": "evidence_pack",
+                "artifact_hash": predecessor_evidence_ref.artifact_hash,
+                "path": predecessor_evidence_ref.path,
+            },
+        ]
+    }
+    _RoleAwareArtifactStore.envelopes_by_path[
+        str(Path(diagnostic_evidence_ref.path).resolve())
+    ] = diagnostic_evidence
+    diagnostic_plan = copy.deepcopy(current_plan)
+    diagnostic_plan["binding_registry"]["edit_bindings"].extend(
+        [
+            {
+                "binding_id": "edit_binding_005",
+                "change_id": "chg_005",
+                "canonical_target_path": TARGET_PATH,
+                "source_hash": source_hash,
+                "target_symbol": (
+                    "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+                    "ShowHitIndicator_Prefix"
+                ),
+                "target_span": {"start_line": 301, "end_line": 301},
+            },
+            {
+                "binding_id": "edit_binding_006",
+                "change_id": "chg_006",
+                "canonical_target_path": TARGET_PATH,
+                "source_hash": source_hash,
+                "target_symbol": TARGET_SYMBOL,
+                "target_span": {"start_line": 979, "end_line": 984},
+            },
+        ]
+    )
+    diagnostic_plan["proposed_changes"].extend(
+        [
+            {
+                "change_id": "chg_005",
+                "edit_binding_id": "edit_binding_005",
+            },
+            {
+                "change_id": "chg_006",
+                "edit_binding_id": "edit_binding_006",
+            },
+        ]
+    )
+    diagnostic_plan["diagnostic_scope"] = {
+        "schema_version": "stagger_hud_parent_observation_authority_v1",
+        "root_cause_status": "unresolved",
+        "observation_only": True,
+        "edit_binding_ids": ["edit_binding_005", "edit_binding_006"],
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+        "product_acceptance_allowed": False,
+        "edit_authority_approval_revision": {
+            "feature_id": FEATURE_ID,
+            "path": approval_ref.path,
+            "artifact_hash": approval_ref.artifact_hash,
+        },
+    }
+    diagnostic_plan_ref = ArtifactRef(
+        FEATURE_ID,
+        "implementation_plan",
+        str(tmp_path / "observation-plan.json"),
+        "d" * 64,
+    )
+    _RoleAwareArtifactStore.envelopes_by_path[
+        str(Path(diagnostic_plan_ref.path).resolve())
+    ] = {
+        "data": diagnostic_plan,
+        "inputs": {
+            "upstream_artifacts": [
+                {
+                    "artifact_type": "feature_spec",
+                    "artifact_hash": FEATURE_SPEC_HASH,
+                    "path": str(existing_args["feature_spec_path"]),
+                },
+                {
+                    "artifact_type": "runtime_evidence",
+                    "artifact_hash": RUNTIME_EVIDENCE_HASH,
+                    "path": str(existing_args["runtime_evidence_path"]),
+                },
+                {
+                    "artifact_type": "evidence_pack",
+                    "artifact_hash": diagnostic_evidence_ref.artifact_hash,
+                    "path": diagnostic_evidence_ref.path,
+                },
+                {
+                    "artifact_type": "edit_authority_approval",
+                    "artifact_hash": approval_ref.artifact_hash,
+                    "path": approval_ref.path,
+                },
+                {
+                    "artifact_type": "implementation_plan",
+                    "artifact_hash": current_plan_ref.artifact_hash,
+                    "path": current_plan_ref.path,
+                },
+            ]
+        },
+    }
     _RoleAwareArtifactStore.latest_by_type[
         "edit_authority_approval"
     ] = approval_ref
+    _RoleAwareArtifactStore.latest_by_type[
+        "evidence_pack"
+    ] = diagnostic_evidence_ref
+    _RoleAwareArtifactStore.latest_by_type[
+        "implementation_plan"
+    ] = diagnostic_plan_ref
     _RoleAwareArtifactStore.revisions_by_type[
         "edit_authority_approval"
     ] = [approval_ref]
-    evidence_ref = _RoleAwareArtifactStore.latest_by_type["evidence_pack"]
+    _RoleAwareArtifactStore.revisions_by_type[
+        "evidence_pack"
+    ].append(diagnostic_evidence_ref)
+    _RoleAwareArtifactStore.revisions_by_type[
+        "implementation_plan"
+    ].append(diagnostic_plan_ref)
     return {
         "artifact_store_root": existing_args["artifact_store_root"],
         "feature_id": FEATURE_ID,
@@ -883,17 +1060,27 @@ def _observation_authority_setup(
         "feature_spec_hash": FEATURE_SPEC_HASH,
         "runtime_evidence_path": existing_args["runtime_evidence_path"],
         "runtime_evidence_hash": RUNTIME_EVIDENCE_HASH,
-        "current_implementation_plan_path": current_plan_ref.path,
-        "current_implementation_plan_hash": current_plan_ref.artifact_hash,
+        "current_implementation_plan_path": diagnostic_plan_ref.path,
+        "current_implementation_plan_hash": (
+            diagnostic_plan_ref.artifact_hash
+        ),
         "patch_proposal_path": existing_args["patch_proposal_path"],
         "patch_proposal_hash": PATCH_PROPOSAL_HASH,
         "existing_binding_resolution_path": resolution_ref.path,
         "existing_binding_resolution_hash": resolution_ref.artifact_hash,
         "existing_edit_authority_approval_path": approval_ref.path,
         "existing_edit_authority_approval_hash": approval_ref.artifact_hash,
-        "evidence_pack_path": evidence_ref.path,
-        "evidence_pack_hash": evidence_ref.artifact_hash,
+        "evidence_pack_path": diagnostic_evidence_ref.path,
+        "evidence_pack_hash": diagnostic_evidence_ref.artifact_hash,
         "source_root": source_root,
+        "build_dependency_root": dependency_root,
+        "unity_core_module_hash": dependency_hashes[
+            "unity_core_module"
+        ],
+        "modules_asm_hash": dependency_hashes["modules_asm"],
+        "il2cpp_interop_runtime_hash": dependency_hashes[
+            "il2cpp_interop_runtime"
+        ],
     }
 
 
@@ -1723,7 +1910,7 @@ def test_request_creation_blocks_same_hash_at_noncurrent_plan_path(
     )
 
 
-def test_observation_authority_preflight_projects_two_exact_no_write_bindings(
+def test_observation_authority_preflight_projects_complete_no_write_plan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1756,16 +1943,70 @@ def test_observation_authority_preflight_projects_two_exact_no_write_bindings(
         for item in bindings
     ] == [
         (
-            "edit_binding_005",
-            "chg_005",
+            "edit_binding_007",
+            "chg_007",
             {"start_line": 301, "end_line": 301},
         ),
         (
-            "edit_binding_006",
-            "chg_006",
+            "edit_binding_008",
+            "chg_008",
             {"start_line": 979, "end_line": 984},
         ),
+        (
+            "edit_binding_009",
+            "chg_009",
+            {"start_line": 27, "end_line": 27},
+        ),
+        (
+            "edit_binding_010",
+            "chg_010",
+            {"start_line": 2511, "end_line": 2511},
+        ),
     ]
+    assert first["proposal"]["selected_binding_ids"] == [
+        "edit_binding_007",
+        "edit_binding_008",
+        "edit_binding_009",
+        "edit_binding_010",
+    ]
+    assert first["proposal"]["selected_change_ids"] == [
+        "chg_007",
+        "chg_008",
+        "chg_009",
+        "chg_010",
+    ]
+    assert first["proposal"]["diagnostic_plan_projection"] == {
+        "new_plan_contains_only_selected_bindings": True,
+        "new_plan_contains_only_selected_changes": True,
+        "binding_count": 4,
+        "change_count": 4,
+        "product_test_plan_inherited": False,
+    }
+    assert "edit_binding_004" in first[
+        "excluded_predecessor_binding_ids"
+    ]
+    assert set(first["selected_binding_ids"]).isdisjoint(
+        first["excluded_predecessor_binding_ids"]
+    )
+    assert set(first["selected_change_ids"]).isdisjoint(
+        first["excluded_predecessor_change_ids"]
+    )
+    assert first["proposal"]["identity_api_contract"][
+        "crosshair_gui_layer_identity"
+    ]["get_instance_id_allowed"] is False
+    assert first["proposal"]["supporting_source"]["config_key"] == (
+        "EnableDiagnosticLogging"
+    )
+    selection_contract = bindings[0]["observation_contract"]
+    assert selection_contract["bounded_logging"][
+        "maximum_records_per_phase"
+    ] == 8
+    assert selection_contract["bounded_logging"][
+        "per_frame_logging_allowed"
+    ] is False
+    assert selection_contract["bounded_logging"][
+        "additional_try_get_layer_hud_parent_calls_allowed"
+    ] == 0
     assert first["proposal"]["claim_boundary"] == {
         "observation_only": True,
         "product_behavior_change_allowed": False,
@@ -1798,6 +2039,32 @@ def test_observation_authority_preflight_blocks_source_drift(
     with pytest.raises(
         StaggerEditAuthorityPreflightError,
         match="edit_binding_004 does not match",
+    ):
+        preflight_stagger_hud_parent_observation_authority(**args)
+
+    assert _RoleAwareArtifactStore.writes == []
+
+
+def test_observation_authority_preflight_blocks_dependency_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _observation_authority_setup(tmp_path)
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        _RoleAwareArtifactStore,
+    )
+    dependency_path = (
+        Path(args["build_dependency_root"])
+        / "interop"
+        / "Modules-ASM.dll"
+    )
+    dependency_path.write_bytes(b"changed")
+
+    with pytest.raises(
+        StaggerEditAuthorityPreflightError,
+        match="identity dependency changed: modules_asm",
     ):
         preflight_stagger_hud_parent_observation_authority(**args)
 
@@ -1899,7 +2166,7 @@ def test_observation_authority_request_and_graph_materialization_stop_at_plan(
     )
 
     assert result["status"] == (
-        "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED"
+        "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED"
     )
     assert result["written_artifact_types"] == [
         "edit_authority_approval",
@@ -1907,8 +2174,16 @@ def test_observation_authority_request_and_graph_materialization_stop_at_plan(
         "implementation_plan",
     ]
     assert result["allowed_edit_binding_ids"] == [
-        "edit_binding_005",
-        "edit_binding_006",
+        "edit_binding_007",
+        "edit_binding_008",
+        "edit_binding_009",
+        "edit_binding_010",
+    ]
+    assert result["selected_change_ids"] == [
+        "chg_007",
+        "chg_008",
+        "chg_009",
+        "chg_010",
     ]
     assert result["binding_resolution_written"] is False
     assert result["repair_planner_invoked"] is False
@@ -1930,19 +2205,64 @@ def test_observation_authority_request_and_graph_materialization_stop_at_plan(
     ]
     approval = _RoleAwareArtifactStore.writes[1]["payload"]
     assert approval["authority_contract_version"] == (
-        "edit_authority_stagger_hud_parent_observation_plan_v1"
+        "edit_authority_stagger_hud_parent_diagnostic_plan_v2"
     )
     assert approval["allowed_actions"] == [
         "create_observation_evidence_pack_revision",
-        "create_diagnostic_implementation_plan_revision",
-        "create_observation_only_edit_bindings",
+        "create_diagnostic_only_implementation_plan_revision",
+        "create_exact_bounded_observation_bindings",
     ]
     plan = _RoleAwareArtifactStore.writes[3]["payload"]
+    evidence = _RoleAwareArtifactStore.writes[2]["payload"]
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="evidence_pack",
+        status="success",
+        payload=evidence,
+    )
     diagnostic_scope = plan["diagnostic_scope"]
-    assert diagnostic_scope["edit_binding_ids"] == [
+    assert diagnostic_scope["selected_binding_ids"] == [
+        "edit_binding_007",
+        "edit_binding_008",
+        "edit_binding_009",
+        "edit_binding_010",
+    ]
+    assert len(plan["binding_registry"]["edit_bindings"]) == 4
+    assert len(plan["proposed_changes"]) == 4
+    assert {
+        item["binding_id"]
+        for item in plan["binding_registry"]["edit_bindings"]
+    } == set(result["allowed_edit_binding_ids"])
+    assert {
+        item["change_id"] for item in plan["proposed_changes"]
+    } == set(result["selected_change_ids"])
+    assert not {
+        "edit_binding_001",
+        "edit_binding_002",
+        "edit_binding_003",
+        "edit_binding_004",
         "edit_binding_005",
         "edit_binding_006",
-    ]
+    }.intersection(result["allowed_edit_binding_ids"])
+    proposal_projection = PatchProposalBuilder().build(
+        plan,
+        evidence_pack=evidence,
+        artifact_hashes={
+            "feature_spec": "1" * 64,
+            "evidence_pack": "2" * 64,
+            "implementation_plan": "3" * 64,
+        },
+    )
+    assert proposal_projection.context_pack[
+        "allowed_edit_binding_ids"
+    ] == result["allowed_edit_binding_ids"]
+    assert {
+        unit["change_id"]
+        for unit in proposal_projection.diff_intent
+    } == set(result["selected_change_ids"])
+    assert plan["test_plan"]["schema_version"] == (
+        "stagger_hud_parent_diagnostic_test_plan_v1"
+    )
+    assert plan["test_plan"]["product_acceptance_allowed"] is False
     assert diagnostic_scope["repair_planner_allowed"] is False
     assert diagnostic_scope["source_patch_allowed"] is False
     ArtifactTypeRegistry().validate_write(
@@ -1953,12 +2273,12 @@ def test_observation_authority_request_and_graph_materialization_stop_at_plan(
     diagnostic_binding = next(
         item
         for item in plan["binding_registry"]["edit_bindings"]
-        if item.get("binding_id") == "edit_binding_005"
+        if item.get("binding_id") == "edit_binding_007"
     )
     diagnostic_binding["source_patch_allowed"] = True
     with pytest.raises(
         ArtifactRegistryError,
-        match="exceeds its approved scope",
+        match="diagnostic-only binding contract is invalid",
     ):
         ArtifactTypeRegistry().validate_write(
             artifact_type="implementation_plan",

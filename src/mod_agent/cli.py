@@ -231,6 +231,10 @@ def _add_stagger_observation_authority_arguments(
     parser.add_argument("--evidence-pack-path", required=True)
     parser.add_argument("--evidence-pack-hash", required=True)
     parser.add_argument("--source-root", required=True)
+    parser.add_argument("--build-dependency-root", required=True)
+    parser.add_argument("--unity-core-module-hash", required=True)
+    parser.add_argument("--modules-asm-hash", required=True)
+    parser.add_argument("--il2cpp-interop-runtime-hash", required=True)
 
 
 def _stagger_observation_authority_arguments(
@@ -267,6 +271,12 @@ def _stagger_observation_authority_arguments(
         "evidence_pack_path": args.evidence_pack_path,
         "evidence_pack_hash": args.evidence_pack_hash,
         "source_root": args.source_root,
+        "build_dependency_root": args.build_dependency_root,
+        "unity_core_module_hash": args.unity_core_module_hash,
+        "modules_asm_hash": args.modules_asm_hash,
+        "il2cpp_interop_runtime_hash": (
+            args.il2cpp_interop_runtime_hash
+        ),
     }
 
 
@@ -549,8 +559,8 @@ def build_parser() -> argparse.ArgumentParser:
     preflight_observation_authority_parser = subparsers.add_parser(
         "preflight-stagger-hud-parent-observation-authority",
         help=(
-            "Read-validate two exact observation-only Stagger HUD parent "
-            "bindings and emit a no-write authority proposal."
+            "Read-validate the complete bounded Stagger HUD parent "
+            "diagnostic Plan and emit a no-write authority proposal."
         ),
     )
     _add_stagger_observation_authority_arguments(
@@ -559,8 +569,8 @@ def build_parser() -> argparse.ArgumentParser:
     request_observation_authority_parser = subparsers.add_parser(
         "request-stagger-hud-parent-observation-authority",
         help=(
-            "Persist one no-authority Request for the exact observation-only "
-            "Stagger HUD parent bindings and Plan."
+            "Persist one no-authority Request for the complete bounded "
+            "Stagger HUD parent diagnostic Plan."
         ),
     )
     _add_stagger_observation_authority_arguments(
@@ -1156,7 +1166,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return (
             0
-            if result["status"] == "EXACT_EDIT_AUTHORITY_RESOLVED"
+            if result["status"]
+            in {
+                "EXACT_EDIT_AUTHORITY_RESOLVED",
+                "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED",
+                "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED",
+            }
             else 2
         )
 

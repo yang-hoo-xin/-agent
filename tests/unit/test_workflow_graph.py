@@ -332,7 +332,7 @@ def test_existing_binding_reauthorization_exposes_narrow_graph_actions(
     ) == []
 
 
-def test_stagger_observation_authority_graph_stops_at_diagnostic_plan(
+def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -360,7 +360,7 @@ def test_stagger_observation_authority_graph_stops_at_diagnostic_plan(
     )
     request_payload = {
         "schema_version": (
-            "stagger_hud_parent_observation_authority_request_v1"
+            "stagger_hud_parent_diagnostic_execution_authority_request_v2"
         ),
         "proposal": {},
         "source_root": str(tmp_path),
@@ -439,8 +439,8 @@ def test_stagger_observation_authority_graph_stops_at_diagnostic_plan(
     interrupt_value = interrupted["__interrupt__"][0].value
     assert interrupt_value["payload"]["allowed_actions"] == [
         "create_observation_evidence_pack_revision",
-        "create_diagnostic_implementation_plan_revision",
-        "create_observation_only_edit_bindings",
+        "create_diagnostic_only_implementation_plan_revision",
+        "create_exact_bounded_observation_bindings",
     ]
     assert interrupt_value["payload"]["forbidden_actions"] == [
         "create_binding_resolution_revision",

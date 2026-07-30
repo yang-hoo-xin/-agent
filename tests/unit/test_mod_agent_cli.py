@@ -2024,6 +2024,14 @@ def test_cli_stagger_observation_authority_preflight_passes_exact_roles(
             "7" * 64,
             "--source-root",
             "source-root",
+            "--build-dependency-root",
+            "build-dependencies",
+            "--unity-core-module-hash",
+            "8" * 64,
+            "--modules-asm-hash",
+            "9" * 64,
+            "--il2cpp-interop-runtime-hash",
+            "a" * 64,
         ]
     )
 
@@ -2034,7 +2042,56 @@ def test_cli_stagger_observation_authority_preflight_passes_exact_roles(
     assert captured["existing_binding_resolution_hash"] == "5" * 64
     assert captured["existing_edit_authority_approval_hash"] == "6" * 64
     assert captured["evidence_pack_hash"] == "7" * 64
+    assert captured["build_dependency_root"] == "build-dependencies"
+    assert captured["unity_core_module_hash"] == "8" * 64
+    assert captured["modules_asm_hash"] == "9" * 64
+    assert captured["il2cpp_interop_runtime_hash"] == "a" * 64
     assert "approved_by" not in captured
+
+
+def test_cli_stagger_diagnostic_plan_authorization_returns_success(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def resume_review(**kwargs):
+        return {
+            "status": "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED",
+            "current_stage": "implementation_plan",
+            "repair_planner_invoked": False,
+        }
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli.resume_stagger_edit_authority_review",
+        resume_review,
+    )
+    exit_code = main(
+        [
+            "resume-stagger-edit-authority-review",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--request-path",
+            "request.json",
+            "--request-artifact-hash",
+            "b" * 64,
+            "--authority-request-hash",
+            "sha256:" + ("a" * 64),
+            "--resume-id",
+            "resume_001",
+            "--decision",
+            "approve",
+            "--approved-by",
+            "user",
+            "--approved-at",
+            "2026-07-30T12:00:00+08:00",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == (
+        "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED"
+    )
 
 
 def test_cli_stagger_edit_authority_review_delegates_to_graph_entry(
