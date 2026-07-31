@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import stat
@@ -484,6 +485,8 @@ def make_gtfo_stagger_runtime_evidence_factory(
     | None = None,
     screenshot_capturer: ScreenshotCapturer | None = None,
     operator_completion_reader: OperatorCompletionReader | None = None,
+    attempt_output_root: str | Path | None = None,
+    run_id: str | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Build the selected two-process graph Runtime factory."""
 
@@ -491,6 +494,23 @@ def make_gtfo_stagger_runtime_evidence_factory(
     build_path = Path(build_artifact_path)
     plugin_destination = Path(plugin_destination_path)
     backup_root = Path(backup_directory)
+    output_root = (
+        None
+        if attempt_output_root is None
+        else _empty_absolute_attempt_output_root(attempt_output_root)
+    )
+    if output_root is not None:
+        try:
+            backup_root.resolve().relative_to(output_root)
+        except ValueError as exc:
+            raise GTFOStaggerRuntimeError(
+                "Stagger Runtime backup_directory must remain inside "
+                "attempt_output_root."
+            ) from exc
+        if not run_id:
+            raise GTFOStaggerRuntimeError(
+                "Stagger Runtime run_id is required with attempt_output_root."
+            )
 
     def runtime_evidence_factory(
         feature_id: str,
@@ -602,6 +622,17 @@ def make_gtfo_stagger_runtime_evidence_factory(
                             / mode
                         ),
                     )
+                    if output_root is not None:
+                        payload["run_local_log_identity"] = (
+                            _capture_attempt_run_local_logs(
+                                output_root=output_root,
+                                mode=mode,
+                                payload=payload,
+                                output_limit_chars=(
+                                    mode_profile.output_limit_chars
+                                ),
+                            )
+                        )
             bound_attempt = bind_stagger_attempt_restoration(
                 payload,
                 mode=mode,
@@ -611,7 +642,7 @@ def make_gtfo_stagger_runtime_evidence_factory(
             attempt_payloads.append(bound_attempt)
             if bound_attempt.get("acceptance_verified") is not True:
                 break
-        return _aggregate_stagger_attempts(
+        aggregate = _aggregate_stagger_attempts(
             feature_id=feature_id,
             input_execution_mode=(
                 None
@@ -628,8 +659,165 @@ def make_gtfo_stagger_runtime_evidence_factory(
                 str(item["mode"]) for item in report["attempts"]
             ),
         )
+        if output_root is not None:
+            aggregate["run_id"] = run_id
+            aggregate["run_local_output_root"] = str(output_root)
+            aggregate["run_local_log_identities"] = {
+                str(item["stagger_attempt_mode"]): dict(
+                    item["run_local_log_identity"]
+                )
+                for item in attempt_payloads
+                if isinstance(item.get("run_local_log_identity"), Mapping)
+            }
+            _write_new_json(
+                output_root / "runtime_result.json",
+                aggregate,
+            )
+        return aggregate
 
     return runtime_evidence_factory
+
+
+def _empty_absolute_attempt_output_root(value: str | Path) -> Path:
+    raw = Path(value)
+    if not raw.is_absolute():
+        raise GTFOStaggerRuntimeError(
+            "attempt_output_root must be absolute."
+        )
+    root = raw.resolve()
+    if not root.is_dir():
+        raise GTFOStaggerRuntimeError(
+            "attempt_output_root must be an existing directory."
+        )
+    if any(root.iterdir()):
+        raise GTFOStaggerRuntimeError(
+            "attempt_output_root must be empty before Runtime."
+        )
+    return root
+
+
+def _capture_attempt_run_local_logs(
+    *,
+    output_root: Path,
+    mode: str,
+    payload: Mapping[str, Any],
+    output_limit_chars: int,
+) -> dict[str, Any]:
+    try:
+        windows = payload["runtime_trust_binding"]["checks"][
+            "current_run_logs"
+        ]["source_windows"]
+    except (KeyError, TypeError) as exc:
+        raise GTFOStaggerRuntimeError(
+            "Stagger Runtime trust binding lacks current-run source windows."
+        ) from exc
+    eligible = [
+        window
+        for window in windows
+        if isinstance(window, Mapping)
+        and window.get("status") == "passed"
+        and window.get("mode")
+        in {
+            "created_or_truncated_after_prelaunch_boundary",
+            "replaced_or_truncated_after_prelaunch_boundary",
+        }
+        and window.get("run_local_start_byte") == 0
+        and isinstance(window.get("run_local_size_bytes"), int)
+        and isinstance(window.get("run_local_sha256"), str)
+        and isinstance(window.get("path"), str)
+    ]
+    if not eligible:
+        raise GTFOStaggerRuntimeError(
+            "No complete current-run log generation is available."
+        )
+    window = max(
+        eligible,
+        key=lambda item: (
+            int(item.get("generation", 0)),
+            int(item["run_local_size_bytes"]),
+        ),
+    )
+    source = Path(str(window["path"])).resolve()
+    if not source.is_file():
+        raise GTFOStaggerRuntimeError(
+            "Current-run log source is missing after process termination."
+        )
+    source_bytes = source.read_bytes()
+    prefix_size = int(window["run_local_size_bytes"])
+    if len(source_bytes) < prefix_size:
+        raise GTFOStaggerRuntimeError(
+            "Post-run log is shorter than its observed current-run prefix."
+        )
+    prefix_sha256 = hashlib.sha256(
+        source_bytes[:prefix_size]
+    ).hexdigest()
+    if prefix_sha256 != str(window["run_local_sha256"]).lower():
+        raise GTFOStaggerRuntimeError(
+            "Post-run log no longer matches its observed current-run prefix."
+        )
+    bounded_output = payload.get("raw_supplied_output")
+    if not isinstance(bounded_output, str):
+        raise GTFOStaggerRuntimeError(
+            "Stagger Runtime bounded output projection is missing."
+        )
+    stored_bounded_output = bounded_output[-output_limit_chars:]
+    mode_root = output_root / "runtime_logs" / mode
+    bounded_path = mode_root / "LogOutput.bounded_projection.log"
+    full_path = mode_root / "LogOutput.post_run_full_copy.log"
+    _write_new_bytes(
+        bounded_path,
+        stored_bounded_output.encode("utf-8"),
+    )
+    _write_new_bytes(full_path, source_bytes)
+    return {
+        "mode": mode,
+        "bounded_projection": {
+            "path": str(bounded_path),
+            "sha256": _sha256_file(bounded_path),
+            "size_bytes": bounded_path.stat().st_size,
+            "character_count": len(stored_bounded_output),
+            "source_character_count": len(bounded_output),
+            "truncated": len(stored_bounded_output) < len(bounded_output),
+            "configured_character_limit": output_limit_chars,
+            "provenance": "runner_bounded_current_run_projection",
+        },
+        "post_run_full_copy": {
+            "path": str(full_path),
+            "sha256": _sha256_file(full_path),
+            "size_bytes": len(source_bytes),
+            "provenance": "post_run_copy_of_current_run_generation",
+            "source_path": str(source),
+            "observed_prefix_sha256": prefix_sha256,
+            "observed_prefix_size_bytes": prefix_size,
+            "observed_prefix_verified": True,
+        },
+    }
+
+
+def _write_new_json(path: Path, payload: Mapping[str, Any]) -> None:
+    _write_new_bytes(
+        path,
+        (
+            json.dumps(
+                dict(payload),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8"),
+    )
+
+
+def _write_new_bytes(path: Path, value: bytes) -> None:
+    if path.exists():
+        raise GTFOStaggerRuntimeError(
+            f"Stagger Runtime output already exists: {path.name}."
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".tmp-{uuid4().hex}{path.suffix}")
+    temporary.write_bytes(value)
+    os.replace(temporary, path)
 
 
 def _aggregate_stagger_attempts(

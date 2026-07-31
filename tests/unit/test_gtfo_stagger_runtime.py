@@ -335,6 +335,292 @@ def test_stagger_runtime_runs_disabled_then_enabled_and_restores_each_attempt(
     }
 
 
+def test_stagger_runtime_isolates_full_post_run_logs_and_bounded_projection(
+    tmp_path: Path,
+) -> None:
+    base_profile, stagger_profile = _profiles(tmp_path)
+    base_profile = gtfo_stagger_module.replace(
+        base_profile,
+        output_limit_chars=20_000,
+    )
+    build_dll = tmp_path / "build" / "BetterHitFeedback.dll"
+    build_dll.parent.mkdir()
+    build_dll.write_bytes(b"verified build dll")
+    build_hash = hashlib.sha256(build_dll.read_bytes()).hexdigest()
+    plugin_destination = (
+        tmp_path / "BepInEx" / "plugins" / "BetterHitFeedback.dll"
+    )
+    plugin_destination.parent.mkdir(parents=True)
+    output_root = tmp_path / "run_004"
+    output_root.mkdir()
+    persistent_log = tmp_path / "BepInEx" / "LogOutput.log"
+
+    class Process:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+        def poll(self):
+            return None
+
+        def terminate(self) -> None:
+            return None
+
+        def wait(self, timeout: int) -> int:
+            return 0
+
+    launches = 0
+
+    def launcher(profile: GTFORealRuntimeProfile) -> GTFOProcessHandle:
+        nonlocal launches
+        launches += 1
+        return GTFOProcessHandle(
+            pid=5200 + launches,
+            process=Process(5200 + launches),
+        )
+
+    def collector(profile: GTFORealRuntimeProfile, _):
+        marker = (
+            ""
+            if profile.profile_id.endswith("general_enabled_false")
+            else f"\n{ACCEPTANCE_MARKER}"
+        )
+        content = f"{STARTUP_MARKER}\n" + ("x" * 24_000) + marker + "\n"
+        content_bytes = content.encode("utf-8")
+        persistent_log.write_bytes(content_bytes)
+        from src.mod_agent.runtime import GTFOLogSnapshot
+
+        return GTFOLogSnapshot(
+            content=content,
+            sources=(str(persistent_log),),
+            source_windows=(
+                {
+                    "status": "passed",
+                    "mode": (
+                        "created_or_truncated_after_prelaunch_boundary"
+                        if launches == 1
+                        else "replaced_or_truncated_after_prelaunch_boundary"
+                    ),
+                    "generation": launches,
+                    "path": str(persistent_log),
+                    "run_local_start_byte": 0,
+                    "run_local_size_bytes": len(content_bytes),
+                    "run_local_sha256": hashlib.sha256(
+                        content_bytes
+                    ).hexdigest(),
+                },
+            ),
+        )
+
+    def operator_reader(request):
+        payload = request.to_dict()
+        return {
+            "schema_version": "gtfo_operator_completion_v1",
+            "request_sha256": payload["request_sha256"],
+            "feature_id": request.feature_id,
+            "status": "completed",
+            "observed_by": "local_operator",
+            "observations": [
+                {
+                    "criterion_sha256": item["criterion_sha256"],
+                    "status": "passed",
+                    "criterion_satisfied": True,
+                    "notes": "Direct observation completed.",
+                }
+                for item in payload["acceptance_criteria"]
+            ],
+        }
+
+    factory = make_gtfo_stagger_runtime_evidence_factory(
+        base_profile=base_profile,
+        stagger_profile=stagger_profile,
+        allow_game_launch=True,
+        allow_game_directory_write=True,
+        build_artifact_path=build_dll,
+        expected_artifact="bin/Debug/BetterHitFeedback.dll",
+        plugin_destination_path=plugin_destination,
+        backup_directory=output_root / "runtime_backup",
+        expected_plugin_destination_existed=False,
+        expected_plugin_destination_sha256=None,
+        expected_config_destination_existed=False,
+        expected_config_destination_sha256=None,
+        process_launcher=launcher,
+        log_collector=collector,
+        screenshot_capturer=lambda profile, feature_id: build_screenshot_metadata(
+            screenshot_id=f"shot_{profile.profile_id}",
+            feature_id=feature_id,
+            file_path=str(Path(profile.screenshot_directory) / "shot.png"),
+            source="desktop_screenshot",
+            content_hash=f"hash_{profile.profile_id}",
+        ),
+        operator_completion_reader=operator_reader,
+        attempt_output_root=output_root,
+        run_id="run_004",
+    )
+
+    payload = factory(
+        "feature_001",
+        {
+            "execution_mode": "local",
+            "claims_real_build_success": True,
+            "verified_artifacts": [
+                {
+                    "path": "bin/Debug/BetterHitFeedback.dll",
+                    "sha256": build_hash,
+                }
+            ],
+        },
+        {
+            "acceptance_criteria": [
+                DISABLED_CRITERION,
+                VISUAL_CRITERION,
+                MARKER_CRITERION,
+            ],
+            "runtime_verification_plan": ["Run both reviewed GTFO modes."],
+        },
+    )
+
+    assert payload["run_id"] == "run_004"
+    assert payload["run_local_output_root"] == str(output_root.resolve())
+    assert (output_root / "runtime_result.json").is_file()
+    for mode, identity in payload["run_local_log_identities"].items():
+        bounded = identity["bounded_projection"]
+        full = identity["post_run_full_copy"]
+        assert bounded["character_count"] == 20_000
+        assert bounded["configured_character_limit"] == 20_000
+        assert full["size_bytes"] > bounded["size_bytes"]
+        assert full["observed_prefix_verified"] is True
+        full_bytes = Path(full["path"]).read_bytes()
+        assert hashlib.sha256(full_bytes).hexdigest() == full["sha256"]
+        if mode == "general_enabled_false":
+            assert ACCEPTANCE_MARKER.encode("utf-8") not in full_bytes
+        else:
+            assert ACCEPTANCE_MARKER.encode("utf-8") in full_bytes
+    assert plugin_destination.exists() is False
+    assert Path(stagger_profile.config_path).exists() is False
+
+
+def test_stagger_runtime_full_log_mismatch_restores_plugin_and_config(
+    tmp_path: Path,
+) -> None:
+    base_profile, stagger_profile = _profiles(tmp_path)
+    build_dll = tmp_path / "build" / "BetterHitFeedback.dll"
+    build_dll.parent.mkdir()
+    build_dll.write_bytes(b"verified build dll")
+    build_hash = hashlib.sha256(build_dll.read_bytes()).hexdigest()
+    plugin_destination = (
+        tmp_path / "BepInEx" / "plugins" / "BetterHitFeedback.dll"
+    )
+    plugin_destination.parent.mkdir(parents=True)
+    output_root = tmp_path / "run_004"
+    output_root.mkdir()
+    persistent_log = tmp_path / "BepInEx" / "LogOutput.log"
+    persistent_log.write_bytes(b"current run")
+
+    class Process:
+        pid = 5301
+
+        def poll(self):
+            return None
+
+        def terminate(self) -> None:
+            return None
+
+        def wait(self, timeout: int) -> int:
+            return 0
+
+    def collector(profile: GTFORealRuntimeProfile, _):
+        from src.mod_agent.runtime import GTFOLogSnapshot
+
+        return GTFOLogSnapshot(
+            content=f"{STARTUP_MARKER}\n",
+            sources=(str(persistent_log),),
+            source_windows=(
+                {
+                    "status": "passed",
+                    "mode": "created_or_truncated_after_prelaunch_boundary",
+                    "generation": 1,
+                    "path": str(persistent_log),
+                    "run_local_start_byte": 0,
+                    "run_local_size_bytes": len(persistent_log.read_bytes()),
+                    "run_local_sha256": "0" * 64,
+                },
+            ),
+        )
+
+    factory = make_gtfo_stagger_runtime_evidence_factory(
+        base_profile=base_profile,
+        stagger_profile=stagger_profile,
+        allow_game_launch=True,
+        allow_game_directory_write=True,
+        build_artifact_path=build_dll,
+        expected_artifact="bin/Debug/BetterHitFeedback.dll",
+        plugin_destination_path=plugin_destination,
+        backup_directory=output_root / "runtime_backup",
+        expected_plugin_destination_existed=False,
+        expected_plugin_destination_sha256=None,
+        expected_config_destination_existed=False,
+        expected_config_destination_sha256=None,
+        process_launcher=lambda _: GTFOProcessHandle(pid=5301, process=Process()),
+        log_collector=collector,
+        screenshot_capturer=lambda profile, feature_id: build_screenshot_metadata(
+            screenshot_id="shot",
+            feature_id=feature_id,
+            file_path=str(Path(profile.screenshot_directory) / "shot.png"),
+            source="desktop_screenshot",
+            content_hash="hash",
+        ),
+        operator_completion_reader=lambda request: {
+            "schema_version": "gtfo_operator_completion_v1",
+            "request_sha256": request.to_dict()["request_sha256"],
+            "feature_id": request.feature_id,
+            "status": "completed",
+            "observed_by": "local_operator",
+            "observations": [
+                {
+                    "criterion_sha256": item["criterion_sha256"],
+                    "status": "passed",
+                    "criterion_satisfied": True,
+                    "notes": "Direct observation completed.",
+                }
+                for item in request.to_dict()["acceptance_criteria"]
+            ],
+        },
+        attempt_output_root=output_root,
+        run_id="run_004",
+    )
+
+    try:
+        factory(
+            "feature_001",
+            {
+                "execution_mode": "local",
+                "claims_real_build_success": True,
+                "verified_artifacts": [
+                    {
+                        "path": "bin/Debug/BetterHitFeedback.dll",
+                        "sha256": build_hash,
+                    }
+                ],
+            },
+            {
+                "acceptance_criteria": [
+                    DISABLED_CRITERION,
+                    VISUAL_CRITERION,
+                ],
+                "runtime_verification_plan": [
+                    "Run both reviewed GTFO modes."
+                ],
+            },
+        )
+    except gtfo_stagger_module.GTFOStaggerRuntimeError as exc:
+        assert "observed current-run prefix" in str(exc)
+    else:
+        raise AssertionError("Expected full-log prefix mismatch.")
+
+    assert plugin_destination.exists() is False
+    assert Path(stagger_profile.config_path).exists() is False
+
+
 def test_stagger_operator_semantic_conflict_is_separate_observation_failure() -> None:
     payload = gtfo_stagger_module._aggregate_stagger_attempts(
         feature_id="feature_001",
