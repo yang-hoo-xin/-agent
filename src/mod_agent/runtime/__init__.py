@@ -54,6 +54,10 @@ from .stagger_diagnostic_diff import (
     StaggerDiagnosticDiffPreflightError,
     preflight_stagger_hud_parent_diagnostic_exact_diff,
 )
+from .stagger_diagnostic_harness import (
+    StaggerDiagnosticHarnessError,
+    run_isolated_stagger_hud_parent_diagnostic,
+)
 from .probe import (
     RuntimeProbeCommandResult,
     RuntimeProbeError,
@@ -86,6 +90,7 @@ __all__ = [
     "StaggerEditAuthorityApprovalError",
     "StaggerEditAuthorityPreflightError",
     "StaggerDiagnosticDiffPreflightError",
+    "StaggerDiagnosticHarnessError",
     "GTFORuntimeAutomationError",
     "RuntimeProbeCommandResult",
     "RuntimeProbeError",
@@ -118,6 +123,7 @@ __all__ = [
     "preflight_stagger_existing_binding_reauthorization",
     "preflight_stagger_hud_parent_observation_authority",
     "preflight_stagger_hud_parent_diagnostic_exact_diff",
+    "run_isolated_stagger_hud_parent_diagnostic",
     "stagger_profile_from_settings",
     "screenshot_registry_to_runtime_item",
     "temporarily_deploy_verified_plugin",

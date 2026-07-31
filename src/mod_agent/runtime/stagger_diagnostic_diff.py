@@ -357,6 +357,42 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                     out string currentRuntimeType,
                     out bool currentRectTransformCompatible,
                     out string currentIdentityError);
+                Transform? currentParent = null;
+                RectTransform? currentOrAncestorRect = null;
+                string hierarchyObservationError = "none";
+                try
+                {
+                    if (!ReferenceEquals(currentHudParent, null)
+                        && currentHudParent != null)
+                    {
+                        currentParent = currentHudParent.parent;
+                        currentOrAncestorRect =
+                            currentHudParent.GetComponentInParent<RectTransform>();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    hierarchyObservationError =
+                        SafeName(ex.GetType().Name);
+                }
+                CaptureStaggerUnityObject(
+                    currentParent,
+                    out bool parentReferenceNull,
+                    out bool parentUnityNull,
+                    out int parentManagedIdentity,
+                    out int? parentInstanceId,
+                    out string parentRuntimeType,
+                    out bool parentRectTransformCompatible,
+                    out string parentIdentityError);
+                CaptureStaggerUnityObject(
+                    currentOrAncestorRect,
+                    out bool ancestorRectReferenceNull,
+                    out bool ancestorRectUnityNull,
+                    out int ancestorRectManagedIdentity,
+                    out int? ancestorRectInstanceId,
+                    out string ancestorRectRuntimeType,
+                    out bool ancestorRectCompatible,
+                    out string ancestorRectIdentityError);
                 bool assignmentSeen = _staggerDiagnosticAssignmentSeen;
                 bool hudParentIdentityChanged = assignmentSeen
                     && _staggerDiagnosticLastHudParentIdentityReadError
@@ -405,6 +441,10 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                     + $"{FormatStaggerDiagnosticBool(_staggerDiagnosticLastCrosshairInstanceChanged)} "
                     + "hud_parent_identity_changed="
                     + $"{FormatStaggerDiagnosticBool(hudParentIdentityChanged)} "
+                    + "hierarchy_observation_error="
+                    + $"{hierarchyObservationError} "
+                    + "rect_transform_route_found="
+                    + $"{FormatStaggerDiagnosticBool(!ancestorRectReferenceNull && !ancestorRectUnityNull && ancestorRectCompatible)} "
                     + "stored_CrosshairGuiLayer.reference_null="
                     + $"{FormatStaggerDiagnosticBool(_staggerDiagnosticLastCrosshairReferenceNull)} "
                     + "stored_CrosshairGuiLayer.unity_null=not_applicable "
@@ -428,6 +468,26 @@ _HELPER_AFTER = r"""        private static void RecordStaggerHudParentSelection(
                         currentRuntimeType,
                         currentRectTransformCompatible,
                         currentIdentityError)
+                    + " "
+                    + FormatStaggerUnityObjectSnapshot(
+                        "_lastHudParent.parent",
+                        parentReferenceNull,
+                        parentUnityNull,
+                        parentManagedIdentity,
+                        parentInstanceId,
+                        parentRuntimeType,
+                        parentRectTransformCompatible,
+                        parentIdentityError)
+                    + " "
+                    + FormatStaggerUnityObjectSnapshot(
+                        "_lastHudParent.GetComponentInParent<RectTransform>()",
+                        ancestorRectReferenceNull,
+                        ancestorRectUnityNull,
+                        ancestorRectManagedIdentity,
+                        ancestorRectInstanceId,
+                        ancestorRectRuntimeType,
+                        ancestorRectCompatible,
+                        ancestorRectIdentityError)
                     + " "
                     + "last_assigned_HUD_parent.reference_null="
                     + $"{FormatStaggerDiagnosticBool(_staggerDiagnosticLastHudParentReferenceNull)} "
@@ -959,6 +1019,17 @@ def _validate_diagnostic_evidence_truth() -> dict[str, bool]:
         "record_limit_saturation_is_observable": (
             helper.count('"record_limit_reached="') == 2
             and '"last_assignment_record_status="' in helper
+        ),
+        "stagger_use_observes_exact_rect_transform_route": (
+            "currentHudParent.GetComponentInParent<RectTransform>()"
+            in helper
+            and '"rect_transform_route_found="' in helper
+            and '"_lastHudParent.parent"' in helper
+            and (
+                '"_lastHudParent.GetComponentInParent'
+                '<RectTransform>()"'
+            )
+            in helper
         ),
     }
     failed = [name for name, passed in checks.items() if not passed]

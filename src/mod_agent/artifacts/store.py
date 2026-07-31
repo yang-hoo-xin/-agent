@@ -892,6 +892,37 @@ class ArtifactStore:
             )
         request_payload = payload.get("request_payload")
         if (
+            artifact_type == "repair_planning_request"
+            and isinstance(request_payload, Mapping)
+            and "binding_resolution"
+            in contract.required_upstream_artifacts
+        ):
+            binding_ref = next(
+                (
+                    ref
+                    for ref in upstream_refs
+                    if ref.artifact_type == "binding_resolution"
+                ),
+                None,
+            )
+            formal_lineage = request_payload.get("formal_lineage")
+            binding_identity = (
+                formal_lineage.get("binding_resolution")
+                if isinstance(formal_lineage, Mapping)
+                else None
+            )
+            if (
+                binding_ref is None
+                or not isinstance(binding_identity, Mapping)
+                or binding_identity.get("path") != binding_ref.path
+                or binding_identity.get("artifact_hash")
+                != binding_ref.artifact_hash
+            ):
+                raise ArtifactStoreError(
+                    "Repair planning Request does not bind the exact "
+                    "BindingResolution upstream."
+                )
+        if (
             artifact_type == "edit_authority_request"
             and isinstance(request_payload, Mapping)
             and request_payload.get("schema_version")
@@ -1142,6 +1173,62 @@ class ArtifactStore:
                     raise ArtifactStoreError(
                         "EditAuthorityApproval payload revision does not "
                         f"match exact {upstream_type} upstream."
+                    )
+        exact_revision_fields_by_artifact = {
+            "repair_planning_approval": (
+                (
+                    "repair_planning_authority_request_revision",
+                    "repair_planning_request",
+                ),
+                ("resume_report_revision", "resume_report"),
+            ),
+            "root_cause_evidence": (
+                (
+                    "repair_planning_authority_request_revision",
+                    "repair_planning_request",
+                ),
+                (
+                    "repair_planning_authority_approval_revision",
+                    "repair_planning_approval",
+                ),
+                ("binding_resolution_revision", "binding_resolution"),
+            ),
+            "repair_hypothesis_set": (
+                (
+                    "repair_planning_authority_approval_revision",
+                    "repair_planning_approval",
+                ),
+                (
+                    "root_cause_evidence_revision",
+                    "root_cause_evidence",
+                ),
+                ("binding_resolution_revision", "binding_resolution"),
+            ),
+        }
+        revision_fields = exact_revision_fields_by_artifact.get(
+            artifact_type,
+            (),
+        )
+        if revision_fields:
+            refs_by_type = {
+                ref.artifact_type: ref
+                for ref in upstream_refs
+                if ref.artifact_type
+                in {upstream_type for _, upstream_type in revision_fields}
+            }
+            for revision_field, upstream_type in revision_fields:
+                revision = payload.get(revision_field)
+                upstream = refs_by_type.get(upstream_type)
+                if (
+                    not isinstance(revision, Mapping)
+                    or upstream is None
+                    or revision.get("path") != upstream.path
+                    or revision.get("artifact_hash")
+                    != upstream.artifact_hash
+                ):
+                    raise ArtifactStoreError(
+                        f"{artifact_type} payload revision does not match "
+                        f"exact {upstream_type} upstream."
                     )
         conditional_upstreams_required = _requires_conditional_upstream_contract(
             artifact_type=artifact_type,

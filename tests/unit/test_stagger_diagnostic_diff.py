@@ -435,6 +435,16 @@ def test_exact_diff_template_emits_truthful_bounded_correlation() -> None:
         "_staggerDiagnosticLastHudParentIdentityReadError"
         in helper
     )
+    assert (
+        "currentHudParent.GetComponentInParent<RectTransform>()"
+        in helper
+    )
+    assert '"rect_transform_route_found="' in helper
+    assert '"_lastHudParent.parent"' in helper
+    assert (
+        '"_lastHudParent.GetComponentInParent<RectTransform>()"'
+        in helper
+    )
 
 
 def test_exact_diff_blocks_source_drift(

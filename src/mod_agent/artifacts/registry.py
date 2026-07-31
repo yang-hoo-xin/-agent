@@ -129,6 +129,14 @@ class ArtifactTypeRegistry:
             _validate_edit_authority_request(payload)
         if artifact_type == "edit_authority_approval":
             _validate_edit_authority_approval(payload)
+        if artifact_type == "repair_planning_request":
+            _validate_repair_planning_authority_request(payload)
+        if artifact_type == "repair_planning_approval":
+            _validate_repair_planning_authority_approval(payload)
+        if artifact_type == "root_cause_evidence":
+            _validate_root_cause_evidence(payload)
+        if artifact_type == "repair_hypothesis_set":
+            _validate_repair_hypothesis_set(payload)
         if artifact_type == "evidence_run_attempt":
             _validate_evidence_run_attempt(payload)
         if artifact_type == "evidence_post_run_validation":
@@ -786,6 +794,323 @@ def _validate_edit_authority_request(payload: dict[str, Any]) -> None:
     ):
         raise ArtifactRegistryError(
             "edit_authority_request cannot grant execution authority"
+        )
+
+
+def _validate_repair_planning_authority_request(
+    payload: dict[str, Any],
+) -> None:
+    if payload.get("status") != "pending_human_approval":
+        raise ArtifactRegistryError(
+            "repair_planning_authority_request status must be "
+            "pending_human_approval"
+        )
+    request_hash = payload.get("request_hash")
+    request_payload = payload.get("request_payload")
+    if (
+        not isinstance(request_hash, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", request_hash) is None
+        or not isinstance(request_payload, dict)
+    ):
+        raise ArtifactRegistryError(
+            "repair_planning_authority_request exact request binding is invalid"
+        )
+    computed_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if computed_hash != request_hash:
+        raise ArtifactRegistryError(
+            "repair_planning_authority_request request hash mismatch"
+        )
+    if (
+        request_payload.get("schema_version")
+        != "stagger_repair_planning_authority_request_v1"
+        or request_payload.get("feature_id") != payload.get("feature_id")
+        or request_payload.get("planning_run_id") != payload.get("run_id")
+        or not isinstance(request_payload.get("preprojection_hash"), str)
+        or not isinstance(request_payload.get("formal_lineage"), dict)
+        or not isinstance(
+            request_payload.get("root_cause_evidence_core"),
+            dict,
+        )
+        or not isinstance(
+            request_payload.get("repair_hypothesis_set_core"),
+            dict,
+        )
+        or request_payload.get("requested_actions")
+        != [
+            "materialize_root_cause_evidence",
+            "materialize_repair_hypothesis_set",
+            "invoke_repair_planner_for_semantic_decision",
+            "materialize_repair_plan",
+        ]
+        or request_payload.get("forbidden_actions")
+        != [
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+            "claim_product_acceptance",
+            "claim_audio_audibility",
+        ]
+    ):
+        raise ArtifactRegistryError(
+            "repair_planning_authority_request payload boundary is invalid"
+        )
+    if (
+        payload.get("authority_granted") is not False
+        or payload.get("artifact_materialization_allowed") is not False
+        or payload.get("repair_planner_allowed") is not False
+        or payload.get("source_patch_allowed") is not False
+        or payload.get("build_allowed") is not False
+        or payload.get("runtime_allowed") is not False
+    ):
+        raise ArtifactRegistryError(
+            "repair_planning_authority_request cannot grant execution authority"
+        )
+
+
+def _validate_repair_planning_authority_approval(
+    payload: dict[str, Any],
+) -> None:
+    if payload.get("status") != "approved":
+        raise ArtifactRegistryError(
+            "repair_planning_authority_approval status must be approved"
+        )
+    for field_name in (
+        "request_hash",
+        "approval_hash",
+    ):
+        value = payload.get(field_name)
+        if (
+            not isinstance(value, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None
+        ):
+            raise ArtifactRegistryError(
+                "repair_planning_authority_approval exact hash is invalid"
+            )
+    if payload["approval_hash"] != payload["request_hash"]:
+        raise ArtifactRegistryError(
+            "repair_planning_authority_approval must approve the exact request hash"
+        )
+    if (
+        not isinstance(payload.get("approved_by"), str)
+        or not payload["approved_by"].strip()
+        or not isinstance(payload.get("approved_at"), str)
+        or not payload["approved_at"].strip()
+    ):
+        raise ArtifactRegistryError(
+            "repair_planning_authority_approval human identity is incomplete"
+        )
+    for revision_field in (
+        "repair_planning_authority_request_revision",
+        "resume_report_revision",
+    ):
+        _validate_exact_revision(
+            payload.get(revision_field),
+            feature_id=payload.get("feature_id"),
+            field_name=revision_field,
+        )
+    if (
+        payload.get("allowed_actions")
+        != [
+            "materialize_root_cause_evidence",
+            "materialize_repair_hypothesis_set",
+            "invoke_repair_planner_for_semantic_decision",
+            "materialize_repair_plan",
+        ]
+        or payload.get("forbidden_actions")
+        != [
+            "modify_source",
+            "build",
+            "launch_process",
+            "write_game_directory",
+            "claim_product_acceptance",
+            "claim_audio_audibility",
+        ]
+        or payload.get("artifact_materialization_allowed") is not True
+        or payload.get("repair_planner_allowed") is not True
+        or payload.get("source_patch_allowed") is not False
+        or payload.get("build_allowed") is not False
+        or payload.get("runtime_allowed") is not False
+    ):
+        raise ArtifactRegistryError(
+            "repair_planning_authority_approval exceeds its planning boundary"
+        )
+
+
+def _validate_root_cause_evidence(payload: dict[str, Any]) -> None:
+    if (
+        payload.get("schema_version")
+        != "stagger_root_cause_evidence_v1"
+        or payload.get("failure_owner") != "product_behavior"
+        or payload.get("direct_failure_mechanism") != "confirmed"
+        or not isinstance(payload.get("confirmed_mechanism"), dict)
+        or payload.get("product_acceptance") != "not_evaluated"
+        or payload.get("audio_audibility") != "not_evaluated"
+        or payload.get("yellow_x_repaired") is not False
+        or payload.get("formal_runtime_evidence") is not False
+        or payload.get("source_patch_allowed") is not False
+    ):
+        raise ArtifactRegistryError(
+            "root_cause_evidence claim boundary is invalid"
+        )
+    if (
+        not isinstance(payload.get("failed_feature_spec_criterion"), str)
+        or not payload["failed_feature_spec_criterion"]
+        or not isinstance(payload.get("evidence_items"), list)
+        or not payload["evidence_items"]
+        or not isinstance(payload.get("evidence_gaps"), list)
+        or not payload["evidence_gaps"]
+        or not isinstance(payload.get("immutable_limitations"), list)
+        or not payload["immutable_limitations"]
+        or not isinstance(payload.get("unresolved"), list)
+        or not payload["unresolved"]
+    ):
+        raise ArtifactRegistryError(
+            "root_cause_evidence evidence or limitation set is incomplete"
+        )
+    if any(
+        not isinstance(item, dict)
+        or item.get("formal_runtime_evidence") is not False
+        or item.get("provenance_class")
+        not in {
+            "post_run_copy",
+            "derived_summary",
+            "runner_output_limit_projection",
+            "run_local_output",
+            "isolated_materialization",
+            "isolated_build_output",
+            "isolated_runtime_input",
+        }
+        for item in payload["evidence_items"]
+    ):
+        raise ArtifactRegistryError(
+            "root_cause_evidence provenance classification is invalid"
+        )
+    if any(
+        not isinstance(item, dict)
+        or item.get("status") != "missing"
+        or item.get("recoverable") is not False
+        for item in payload["evidence_gaps"]
+    ):
+        raise ArtifactRegistryError(
+            "root_cause_evidence missing evidence must remain an explicit gap"
+        )
+    for revision_field in (
+        "repair_planning_authority_request_revision",
+        "repair_planning_authority_approval_revision",
+        "binding_resolution_revision",
+    ):
+        _validate_exact_revision(
+            payload.get(revision_field),
+            feature_id=payload.get("feature_id"),
+            field_name=revision_field,
+        )
+
+
+def _validate_repair_hypothesis_set(payload: dict[str, Any]) -> None:
+    if (
+        payload.get("schema_version")
+        != "stagger_repair_hypothesis_set_v1"
+        or payload.get("selection_status")
+        not in {"unresolved", "selected"}
+        or payload.get("source_patch_allowed") is not False
+    ):
+        raise ArtifactRegistryError(
+            "repair_hypothesis_set boundary is invalid"
+        )
+    hypotheses = payload.get("hypotheses")
+    if not isinstance(hypotheses, list) or not hypotheses:
+        raise ArtifactRegistryError(
+            "repair_hypothesis_set requires hypotheses"
+        )
+    required_fields = {
+        "hypothesis_id",
+        "statement",
+        "proposed_edit_location",
+        "supporting_evidence",
+        "unverified_assumptions",
+        "binding_status",
+        "required_observation",
+        "status",
+    }
+    identifiers: list[str] = []
+    for item in hypotheses:
+        if (
+            not isinstance(item, dict)
+            or not required_fields.issubset(item)
+            or item.get("status")
+            not in {"unverified", "supported", "rejected"}
+            or item.get("binding_status")
+            not in {
+                "covered_by_current_binding",
+                "outside_current_binding",
+                "requires_exact_member_evidence",
+                "requires_semantic_decision",
+            }
+            or not isinstance(item.get("supporting_evidence"), list)
+            or not isinstance(item.get("unverified_assumptions"), list)
+        ):
+            raise ArtifactRegistryError(
+                "repair_hypothesis_set hypothesis entry is invalid"
+            )
+        identifiers.append(str(item["hypothesis_id"]))
+    if len(identifiers) != len(set(identifiers)):
+        raise ArtifactRegistryError(
+            "repair_hypothesis_set hypothesis ids must be unique"
+        )
+    supported_count = sum(
+        1
+        for item in hypotheses
+        if item.get("status") == "supported"
+    )
+    if (
+        payload["selection_status"] == "unresolved"
+        and supported_count != 0
+    ) or (
+        payload["selection_status"] == "selected"
+        and supported_count != 1
+    ):
+        raise ArtifactRegistryError(
+            "repair_hypothesis_set selection status does not match "
+            "supported hypotheses"
+        )
+    for revision_field in (
+        "repair_planning_authority_approval_revision",
+        "root_cause_evidence_revision",
+        "binding_resolution_revision",
+    ):
+        _validate_exact_revision(
+            payload.get(revision_field),
+            feature_id=payload.get("feature_id"),
+            field_name=revision_field,
+        )
+
+
+def _validate_exact_revision(
+    revision: Any,
+    *,
+    feature_id: Any,
+    field_name: str,
+) -> None:
+    if (
+        not isinstance(feature_id, str)
+        or not feature_id
+        or not isinstance(revision, dict)
+        or revision.get("feature_id") != feature_id
+        or not isinstance(revision.get("path"), str)
+        or not revision["path"]
+        or not isinstance(revision.get("artifact_hash"), str)
+        or not revision["artifact_hash"]
+    ):
+        raise ArtifactRegistryError(
+            f"{field_name} is not an exact revision for the current feature"
         )
 
 
@@ -1585,6 +1910,216 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             ),
         ),
         ArtifactContract(
+            artifact_type="repair_planning_request",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "status",
+                    "feature_id",
+                    "run_id",
+                    "request_hash",
+                    "request_payload",
+                    "authority_granted",
+                    "artifact_materialization_allowed",
+                    "repair_planner_allowed",
+                    "source_patch_allowed",
+                    "build_allowed",
+                    "runtime_allowed",
+                }
+            ),
+            producer_stage="repair_planning_authority_request",
+            consumer_stages=frozenset(
+                {
+                    "repair_planning_approval",
+                    "dashboard",
+                }
+            ),
+            allowed_statuses=statuses,
+            required_upstream_artifacts=frozenset(
+                {"binding_resolution"}
+            ),
+            required_exact_revision_upstream_artifacts=frozenset(
+                {"binding_resolution"}
+            ),
+            dashboard_projection=(
+                "message",
+                "status",
+                "request_hash",
+                "authority_granted",
+            ),
+        ),
+        ArtifactContract(
+            artifact_type="repair_planning_approval",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "status",
+                    "feature_id",
+                    "run_id",
+                    "request_hash",
+                    "approval_hash",
+                    "approved_by",
+                    "approved_at",
+                    "repair_planning_authority_request_revision",
+                    "resume_report_revision",
+                    "allowed_actions",
+                    "forbidden_actions",
+                    "artifact_materialization_allowed",
+                    "repair_planner_allowed",
+                    "source_patch_allowed",
+                    "build_allowed",
+                    "runtime_allowed",
+                }
+            ),
+            producer_stage="repair_planning_approval",
+            consumer_stages=frozenset(
+                {
+                    "root_cause_evidence",
+                    "repair_hypothesis_set",
+                    "repair_plan",
+                    "dashboard",
+                }
+            ),
+            allowed_statuses=statuses,
+            required_upstream_artifacts=frozenset(
+                {
+                    "repair_planning_request",
+                    "resume_report",
+                }
+            ),
+            required_exact_revision_upstream_artifacts=frozenset(
+                {
+                    "repair_planning_request",
+                    "resume_report",
+                }
+            ),
+            dashboard_projection=(
+                "message",
+                "status",
+                "approval_hash",
+                "repair_planner_allowed",
+            ),
+        ),
+        ArtifactContract(
+            artifact_type="root_cause_evidence",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "schema_version",
+                    "feature_id",
+                    "planning_run_id",
+                    "failed_feature_spec_criterion",
+                    "failure_owner",
+                    "direct_failure_mechanism",
+                    "confirmed_mechanism",
+                    "excluded_for_observed_event",
+                    "unresolved",
+                    "product_acceptance",
+                    "audio_audibility",
+                    "yellow_x_repaired",
+                    "formal_runtime_evidence",
+                    "evidence_items",
+                    "evidence_gaps",
+                    "immutable_limitations",
+                    "formal_lineage",
+                    "product_identity",
+                    "diagnostic_identity",
+                    "runtime_result_identity",
+                    "binding_identity",
+                    "preprojection_hash",
+                    "repair_planning_authority_request_revision",
+                    "repair_planning_authority_approval_revision",
+                    "binding_resolution_revision",
+                    "source_patch_allowed",
+                }
+            ),
+            producer_stage="root_cause_evidence",
+            consumer_stages=frozenset(
+                {
+                    "repair_hypothesis_set",
+                    "repair_plan",
+                    "dashboard",
+                }
+            ),
+            allowed_statuses=statuses,
+            required_upstream_artifacts=frozenset(
+                {
+                    "repair_planning_request",
+                    "repair_planning_approval",
+                    "binding_resolution",
+                }
+            ),
+            required_exact_revision_upstream_artifacts=frozenset(
+                {
+                    "repair_planning_request",
+                    "repair_planning_approval",
+                    "binding_resolution",
+                }
+            ),
+            dashboard_projection=(
+                "message",
+                "failure_owner",
+                "direct_failure_mechanism",
+                "product_acceptance",
+            ),
+        ),
+        ArtifactContract(
+            artifact_type="repair_hypothesis_set",
+            schema_version="1.0",
+            required_fields=frozenset(
+                {
+                    "node_name",
+                    "stage",
+                    "message",
+                    "schema_version",
+                    "feature_id",
+                    "planning_run_id",
+                    "selection_status",
+                    "hypotheses",
+                    "preprojection_hash",
+                    "repair_planning_authority_approval_revision",
+                    "root_cause_evidence_revision",
+                    "binding_resolution_revision",
+                    "source_patch_allowed",
+                }
+            ),
+            producer_stage="repair_hypothesis_set",
+            consumer_stages=frozenset(
+                {
+                    "repair_plan",
+                    "dashboard",
+                }
+            ),
+            allowed_statuses=statuses,
+            required_upstream_artifacts=frozenset(
+                {
+                    "repair_planning_approval",
+                    "root_cause_evidence",
+                    "binding_resolution",
+                }
+            ),
+            required_exact_revision_upstream_artifacts=frozenset(
+                {
+                    "repair_planning_approval",
+                    "root_cause_evidence",
+                    "binding_resolution",
+                }
+            ),
+            dashboard_projection=(
+                "message",
+                "selection_status",
+            ),
+        ),
+        ArtifactContract(
             artifact_type="manual_evidence",
             schema_version="1.0",
             required_fields=frozenset(
@@ -1727,7 +2262,14 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             allowed_statuses=statuses,
             required_exact_revision_upstream_artifacts=frozenset({"patch_proposal"}),
             required_one_of_upstream_artifact_groups=(
-                frozenset({"build_result", "runtime_evidence", "proposal_review"}),
+                frozenset(
+                    {
+                        "build_result",
+                        "runtime_evidence",
+                        "proposal_review",
+                        "root_cause_evidence",
+                    }
+                ),
             ),
             dashboard_projection=(
                 "message",
@@ -1833,7 +2375,12 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             ),
             producer_stage="resume",
             consumer_stages=frozenset(
-                {"edit_authority_approval", "dashboard", "eval"}
+                {
+                    "edit_authority_approval",
+                    "repair_planning_approval",
+                    "dashboard",
+                    "eval",
+                }
             ),
             allowed_statuses=statuses,
             required_upstream_artifacts=frozenset({"workflow_checkpoint"}),

@@ -28,6 +28,7 @@ class CheckpointPolicy:
         "build",
         "collect_runtime_evidence",
         "edit_authority_approval",
+        "repair_planning_approval",
     )
     backend: str = "langgraph_memory"
 
@@ -773,6 +774,9 @@ class WorkflowCheckpointStore:
             "edit_authority_request_ref": None,
             "edit_authority_request_artifact_hash": None,
             "edit_authority_request_hash": None,
+            "repair_planning_authority_request_ref": None,
+            "repair_planning_authority_request_artifact_hash": None,
+            "repair_planning_authority_request_hash": None,
         }
         if "patch_proposal" in state["artifacts"]:
             proposal_ref = self._artifact_ref_from_state(state, "patch_proposal")
@@ -806,6 +810,21 @@ class WorkflowCheckpointStore:
             )
             binding["edit_authority_request_hash"] = request_payload.get(
                 "request_hash"
+            )
+        if "repair_planning_request" in state["artifacts"]:
+            request_ref = self._artifact_ref_from_state(
+                state,
+                "repair_planning_request",
+            )
+            request_payload = self.artifact_store.read(request_ref)["data"]
+            binding["repair_planning_authority_request_ref"] = (
+                request_ref.path
+            )
+            binding[
+                "repair_planning_authority_request_artifact_hash"
+            ] = request_ref.artifact_hash
+            binding["repair_planning_authority_request_hash"] = (
+                request_payload.get("request_hash")
             )
         if state["current_stage"] == "build":
             binding["next_graph_node"] = "collect_runtime_evidence"

@@ -110,6 +110,9 @@ class ResumeValidator:
         "confirmed_apply": ("approvals.confirmed_write",),
         "collect_runtime_evidence": ("runtime_evidence.manual",),
         "edit_authority_approval": ("approvals.edit_authority",),
+        "repair_planning_approval": (
+            "approvals.repair_planning",
+        ),
     }
 
     ALLOWED_DECISIONS = frozenset({"approve", "reject", "correct", "provide_evidence"})
@@ -159,6 +162,12 @@ class ResumeValidator:
             )
         if payload.stage == "edit_authority_approval":
             self._validate_edit_authority_resume(
+                payload,
+                checkpoint=checkpoint,
+                blockers=blockers,
+            )
+        if payload.stage == "repair_planning_approval":
+            self._validate_repair_planning_resume(
                 payload,
                 checkpoint=checkpoint,
                 blockers=blockers,
@@ -245,6 +254,52 @@ class ResumeValidator:
                     "message": (
                         "Resume payload does not bind the exact "
                         "EditAuthorityRequest hash."
+                    ),
+                }
+            )
+
+    @staticmethod
+    def _validate_repair_planning_resume(
+        payload: ResumePayload,
+        *,
+        checkpoint: Mapping[str, Any],
+        blockers: list[dict[str, Any]],
+    ) -> None:
+        binding = checkpoint.get("resume_binding")
+        expected_hash = (
+            binding.get("repair_planning_authority_request_hash")
+            if isinstance(binding, Mapping)
+            else None
+        )
+        if payload.decision not in {"approve", "reject"}:
+            blockers.append(
+                {
+                    "code": "REPAIR_PLANNING_DECISION_UNSUPPORTED",
+                    "message": (
+                        "Repair planning resume supports only approve or reject."
+                    ),
+                }
+            )
+        if payload.decision == "approve" and not payload.approved_at:
+            blockers.append(
+                {
+                    "code": "REPAIR_PLANNING_APPROVAL_TIME_MISSING",
+                    "message": (
+                        "Repair planning approval requires approved_at."
+                    ),
+                }
+            )
+        if (
+            not isinstance(expected_hash, str)
+            or not expected_hash
+            or payload.authority_request_hash != expected_hash
+        ):
+            blockers.append(
+                {
+                    "code": "REPAIR_PLANNING_REQUEST_HASH_MISMATCH",
+                    "message": (
+                        "Resume payload does not bind the exact Repair "
+                        "planning Request hash."
                     ),
                 }
             )
@@ -344,6 +399,16 @@ class ResumeValidator:
         ):
             return {
                 "approvals": {"edit_authority": True},
+                "allowed_fields": list(allowed_fields),
+                "restored_state": restored_state,
+                "authority_request_hash": payload.authority_request_hash,
+            }
+        if (
+            payload.decision == "approve"
+            and payload.stage == "repair_planning_approval"
+        ):
+            return {
+                "approvals": {"repair_planning": True},
                 "allowed_fields": list(allowed_fields),
                 "restored_state": restored_state,
                 "authority_request_hash": payload.authority_request_hash,

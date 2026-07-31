@@ -62,6 +62,9 @@ from src.mod_agent.runtime.evidence import bind_runtime_evidence_context
 from src.mod_agent.runtime.stagger_edit_authority import (
     materialize_stagger_edit_authority_approval,
 )
+from src.mod_agent.runtime.stagger_planner_admission import (
+    materialize_stagger_planning_approval,
+)
 
 from .checkpointing import WorkflowCheckpointStore
 from .interrupts import InterruptRequest, ResumePayload
@@ -141,6 +144,7 @@ def build_graph(
     persist_build_runtime_handoff: bool = False,
     runtime_continuation_checkpoint_id: str | None = None,
     edit_authority_request_ref: ArtifactRef | None = None,
+    repair_planning_authority_request_ref: ArtifactRef | None = None,
     evaluation_context_factory: EvaluationContextFactory | None = None,
     require_external_evaluation: bool = False,
     require_review_approval_for_dry_run: bool = False,
@@ -159,17 +163,29 @@ def build_graph(
     if (
         enable_dynamic_review_interrupt
         or edit_authority_request_ref is not None
+        or repair_planning_authority_request_ref is not None
     ) and checkpointer is None:
         raise ValueError(
             "Human approval interrupts require a LangGraph checkpointer."
         )
     if (
         runtime_continuation_checkpoint_id is not None
-        and edit_authority_request_ref is not None
+        and (
+            edit_authority_request_ref is not None
+            or repair_planning_authority_request_ref is not None
+        )
     ):
         raise ValueError(
-            "Runtime continuation and Edit Authority approval cannot share "
+            "Runtime continuation and authority approval cannot share "
             "one graph entry."
+        )
+    if (
+        edit_authority_request_ref is not None
+        and repair_planning_authority_request_ref is not None
+    ):
+        raise ValueError(
+            "Edit Authority and Repair planning approval require separate "
+            "graph entries."
         )
     if persist_build_runtime_handoff and not stop_after_build:
         raise ValueError(
@@ -306,6 +322,18 @@ def build_graph(
                 ),
             ),
         )
+    if repair_planning_authority_request_ref is not None:
+        graph.add_node(
+            "stagger_repair_planning_gate",
+            _make_real_graph_node(
+                "stagger_repair_planning_gate",
+                lambda state: _run_stagger_repair_planning_gate(
+                    state,
+                    artifact_store,
+                    repair_planning_authority_request_ref,
+                ),
+            ),
+        )
 
     graph.add_node(
         "dry_run_apply",
@@ -392,7 +420,9 @@ def build_graph(
     )
     graph.add_node("blocked", _make_stub_graph_node("blocked", stub_runner))
 
-    if edit_authority_request_ref is not None:
+    if repair_planning_authority_request_ref is not None:
+        graph.add_edge(START, "stagger_repair_planning_gate")
+    elif edit_authority_request_ref is not None:
         graph.add_edge(START, "stagger_edit_authority_gate")
     elif runtime_continuation_checkpoint_id is None:
         graph.add_edge(START, "plan_request")
@@ -462,6 +492,8 @@ def build_graph(
         )
     if edit_authority_request_ref is not None:
         graph.add_edge("stagger_edit_authority_gate", END)
+    if repair_planning_authority_request_ref is not None:
+        graph.add_edge("stagger_repair_planning_gate", END)
     dry_run_routes = dict(registry["dry_run_apply"])
     if isolated_apply_factory is not None:
         dry_run_routes["continue"] = "isolated_apply"
@@ -1265,6 +1297,174 @@ def _run_stagger_edit_authority_gate(
         **dict(next_state["approvals"]),
         "edit_authority": True,
     }
+    return next_state
+
+
+def _run_stagger_repair_planning_gate(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    request_ref: ArtifactRef,
+) -> ModAgentState:
+    """Approve one exact planning Request before materialization or Planner."""
+
+    feature_id = state["feature_id"] or state["request_id"]
+    if request_ref.feature_id != feature_id:
+        raise ValueError(
+            "Repair planning Request feature does not match graph state."
+        )
+    request_envelope = artifact_store.read_for_stage(
+        request_ref,
+        consumer_stage="repair_planning_approval",
+    )
+    request = request_envelope["data"]
+    if (
+        request.get("feature_id") != feature_id
+        or request.get("run_id") != state["run_id"]
+        or request.get("authority_granted") is not False
+        or request.get("artifact_materialization_allowed") is not False
+        or request.get("repair_planner_allowed") is not False
+    ):
+        raise ValueError(
+            "Repair planning Request identity or no-authority boundary is invalid."
+        )
+    gate_state = _copy_state(state)
+    gate_state["current_stage"] = "repair_planning_approval"
+    _record_artifact(
+        gate_state,
+        "repair_planning_request",
+        request_ref,
+    )
+    interrupt_request = InterruptRequest(
+        interrupt_id=f"interrupt_{uuid4().hex}",
+        run_id=state["run_id"],
+        feature_id=feature_id,
+        stage="repair_planning_approval",
+        reason=(
+            "exact Repair planning Request requires human approval before "
+            "Artifact materialization or RepairPlanner invocation"
+        ),
+        payload={
+            "node_name": "stagger_repair_planning_gate",
+            "stage": "repair_planning_approval",
+            "required_decision": ["approve", "reject"],
+            "repair_planning_authority_request_revision": {
+                "feature_id": request_ref.feature_id,
+                "path": request_ref.path,
+                "artifact_hash": request_ref.artifact_hash,
+            },
+            "request_hash": request["request_hash"],
+            "allowed_actions": [
+                "materialize_root_cause_evidence",
+                "materialize_repair_hypothesis_set",
+                "invoke_repair_planner_for_semantic_decision",
+                "materialize_repair_plan",
+            ],
+            "forbidden_actions": [
+                "modify_source",
+                "build",
+                "launch_process",
+                "write_game_directory",
+                "claim_product_acceptance",
+                "claim_audio_audibility",
+            ],
+        },
+        resume_allowed_fields=("approvals.repair_planning",),
+        artifact_refs=tuple(gate_state["artifacts"].values()),
+    )
+    resume_value = interrupt(interrupt_request.to_dict())
+    checkpoint_store = WorkflowCheckpointStore(artifact_store)
+    checkpoint_ref = checkpoint_store.create_checkpoint(
+        gate_state,
+        interrupt_reason=interrupt_request.reason,
+        resume_allowed_fields=("approvals.repair_planning",),
+    )
+    checkpoint = artifact_store.read(checkpoint_ref)["data"]
+    payload = _resume_payload_from_dynamic_value(
+        resume_value,
+        state=gate_state,
+        checkpoint=checkpoint,
+    )
+    decision, report_ref = checkpoint_store.resume(
+        checkpoint_ref,
+        payload,
+    )
+    next_state = _copy_state(gate_state)
+    _record_artifact(next_state, "workflow_checkpoint", checkpoint_ref)
+    _record_artifact(next_state, "resume_report", report_ref)
+    if not decision.allowed or payload.decision != "approve":
+        next_state["current_stage"] = "blocked"
+        next_state["blockers"].extend(
+            decision.blockers
+            or (
+                {
+                    "stage": "repair_planning_approval",
+                    "code": "REPAIR_PLANNING_AUTHORITY_REJECTED",
+                    "message": (
+                        "Human review did not approve the exact Repair "
+                        "planning Request."
+                    ),
+                },
+            )
+        )
+        return next_state
+    try:
+        materialized = materialize_stagger_planning_approval(
+            artifact_store_root=artifact_store.root,
+            feature_id=feature_id,
+            repair_planning_authority_request_path=request_ref.path,
+            repair_planning_authority_request_hash=(
+                request_ref.artifact_hash
+            ),
+            resume_report_path=report_ref.path,
+            resume_report_hash=report_ref.artifact_hash,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        next_state["current_stage"] = "blocked"
+        next_state["blockers"].append(
+            {
+                "stage": "repair_planning_approval",
+                "code": "REPAIR_PLANNING_APPROVED_NOT_MATERIALIZED",
+                "message": str(exc),
+            }
+        )
+        return next_state
+    for artifact_type, field_name in (
+        (
+            "repair_planning_approval",
+            "repair_planning_authority_approval_revision",
+        ),
+        ("root_cause_evidence", "root_cause_evidence_revision"),
+        (
+            "repair_hypothesis_set",
+            "repair_hypothesis_set_revision",
+        ),
+        ("repair_plan", "repair_plan_revision"),
+    ):
+        revision = materialized[field_name]
+        _record_artifact(
+            next_state,
+            artifact_type,
+            ArtifactRef(
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                path=str(revision["path"]),
+                artifact_hash=str(revision["artifact_hash"]),
+            ),
+        )
+    next_state["current_stage"] = "repair_plan"
+    next_state["approvals"] = {
+        **dict(next_state["approvals"]),
+        "repair_planning": True,
+    }
+    semantic = materialized["semantic_decision"]
+    if semantic.get("decision") != "repair_ready":
+        next_state["blockers"].extend(
+            [
+                dict(blocker)
+                for blocker in semantic.get("blockers", ())
+                if isinstance(blocker, dict)
+            ]
+        )
     return next_state
 
 

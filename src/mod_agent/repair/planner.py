@@ -18,6 +18,40 @@ from src.mod_agent.proposal.models import (
 from src.mod_agent.runtime.evidence import normalize_runtime_failure_ownership
 
 FailureSource = Literal["build", "runtime", "eval", "proposal_review"]
+RepairSemanticDecisionKind = Literal[
+    "repair_ready",
+    "evidence_insufficient",
+    "binding_insufficient",
+]
+
+
+@dataclass(frozen=True)
+class RepairSemanticDecision:
+    """A semantic-only decision that grants no workflow authority."""
+
+    decision: RepairSemanticDecisionKind
+    reason: str
+    selected_hypothesis_id: str | None
+    required_next_action: str
+    blockers: tuple[dict[str, Any], ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the deterministic semantic decision payload."""
+
+        return {
+            "schema_version": "repair_semantic_decision_v1",
+            "decision": self.decision,
+            "decision_scope": "semantic_only",
+            "authority_granted": False,
+            "artifact_materialization_allowed": False,
+            "source_patch_allowed": False,
+            "build_allowed": False,
+            "runtime_allowed": False,
+            "reason": self.reason,
+            "selected_hypothesis_id": self.selected_hypothesis_id,
+            "required_next_action": self.required_next_action,
+            "blockers": [dict(blocker) for blocker in self.blockers],
+        }
 
 
 @dataclass(frozen=True)
@@ -48,6 +82,7 @@ class RepairPlan:
     failure_findings: tuple[dict[str, Any], ...] = ()
     repair_context: dict[str, Any] | None = None
     resolved_repair_target: dict[str, Any] | None = None
+    semantic_decision: dict[str, Any] | None = None
 
     def to_artifact_payload(self) -> dict[str, Any]:
         """Return payload compatible with the repair_plan artifact contract."""
@@ -87,6 +122,7 @@ class RepairPlan:
             "failure_findings": [dict(finding) for finding in self.failure_findings],
             "repair_context": dict(self.repair_context or {}),
             "resolved_repair_target": dict(self.resolved_repair_target or {}),
+            "semantic_decision": dict(self.semantic_decision or {}),
         }
 
     def _recommended_fix_strategy(self) -> str:
@@ -104,6 +140,326 @@ class RepairPlanner:
         if retry_budget < 0:
             raise ValueError("retry_budget must be non-negative")
         self.retry_budget = retry_budget
+
+    @staticmethod
+    def assess_stagger_semantic_decision(
+        *,
+        root_cause_evidence: dict[str, Any],
+        repair_hypothesis_set: dict[str, Any],
+        binding_resolution: dict[str, Any],
+    ) -> RepairSemanticDecision:
+        """Select one Stagger semantic route without granting outer authority."""
+
+        if (
+            root_cause_evidence.get("direct_failure_mechanism")
+            != "confirmed"
+            or root_cause_evidence.get("failure_owner")
+            != "product_behavior"
+        ):
+            return RepairSemanticDecision(
+                decision="evidence_insufficient",
+                reason=(
+                    "The direct product failure mechanism is not confirmed "
+                    "by the supplied RootCauseEvidence."
+                ),
+                selected_hypothesis_id=None,
+                required_next_action=(
+                    "Collect bounded evidence for the direct failure mechanism."
+                ),
+                blockers=(
+                    {
+                        "stage": "repair_plan",
+                        "code": "STAGGER_DIRECT_MECHANISM_EVIDENCE_REQUIRED",
+                        "message": (
+                            "Repair semantics require a confirmed product "
+                            "failure mechanism."
+                        ),
+                    },
+                ),
+            )
+        hypotheses = repair_hypothesis_set.get("hypotheses")
+        hypothesis_items = hypotheses if isinstance(hypotheses, list) else []
+        supported = [
+            item
+            for item in hypothesis_items
+            if isinstance(item, dict)
+            and item.get("status") == "supported"
+        ]
+        if len(supported) != 1:
+            return RepairSemanticDecision(
+                decision="evidence_insufficient",
+                reason=(
+                    "The current evidence does not support exactly one "
+                    "RectTransform acquisition hypothesis."
+                ),
+                selected_hypothesis_id=None,
+                required_next_action=(
+                    "Perform the bounded read-only observation named by the "
+                    "unresolved hypotheses."
+                ),
+                blockers=(
+                    {
+                        "stage": "repair_plan",
+                        "code": "STAGGER_RECT_TRANSFORM_SOURCE_UNRESOLVED",
+                        "message": (
+                            "The failed downcast is confirmed, but the correct "
+                            "RectTransform acquisition path is unresolved."
+                        ),
+                    },
+                ),
+            )
+        selected = supported[0]
+        resolved_target = binding_resolution.get("resolved_repair_target")
+        allowed_ids = binding_resolution.get("allowed_edit_binding_ids")
+        if (
+            binding_resolution.get("result_type")
+            != "resolved_repair_target"
+            or not isinstance(resolved_target, dict)
+            or resolved_target.get("status") != "resolved"
+            or not isinstance(allowed_ids, list)
+            or allowed_ids != [resolved_target.get("binding_id")]
+        ):
+            return RepairSemanticDecision(
+                decision="binding_insufficient",
+                reason=(
+                    "The selected semantic repair does not have one exact "
+                    "resolved Edit Binding."
+                ),
+                selected_hypothesis_id=str(
+                    selected.get("hypothesis_id") or ""
+                )
+                or None,
+                required_next_action=(
+                    "Create a no-write exact Binding request and obtain "
+                    "separate human approval."
+                ),
+                blockers=(
+                    {
+                        "stage": "repair_plan",
+                        "code": "STAGGER_EXACT_BINDING_REQUIRED",
+                        "message": (
+                            "Repair planning cannot expand or infer the "
+                            "writable source scope."
+                        ),
+                    },
+                ),
+            )
+        binding_status = selected.get("binding_status")
+        responsibility_anchors = resolved_target.get(
+            "responsibility_anchors"
+        )
+        target_symbol = (
+            responsibility_anchors.get("symbol")
+            if isinstance(responsibility_anchors, dict)
+            else None
+        )
+        proposed_location = selected.get("proposed_edit_location")
+        if (
+            binding_status != "covered_by_current_binding"
+            or proposed_location != target_symbol
+        ):
+            return RepairSemanticDecision(
+                decision="binding_insufficient",
+                reason=(
+                    "The supported semantic repair lies outside the current "
+                    "exact Edit Binding."
+                ),
+                selected_hypothesis_id=str(
+                    selected.get("hypothesis_id") or ""
+                )
+                or None,
+                required_next_action=(
+                    "Create a no-write exact Binding request for the supported "
+                    "source location."
+                ),
+                blockers=(
+                    {
+                        "stage": "repair_plan",
+                        "code": "STAGGER_BINDING_SCOPE_INSUFFICIENT",
+                        "message": (
+                            "The current Binding cannot be widened by "
+                            "RepairPlanner."
+                        ),
+                    },
+                ),
+            )
+        if not isinstance(selected.get("proposed_operation"), str) or not selected[
+            "proposed_operation"
+        ]:
+            return RepairSemanticDecision(
+                decision="evidence_insufficient",
+                reason=(
+                    "The supported hypothesis lacks one evidence-bound "
+                    "operation."
+                ),
+                selected_hypothesis_id=str(
+                    selected.get("hypothesis_id") or ""
+                )
+                or None,
+                required_next_action=(
+                    "Record the exact operation supported by the observation."
+                ),
+                blockers=(
+                    {
+                        "stage": "repair_plan",
+                        "code": "STAGGER_OPERATION_EVIDENCE_REQUIRED",
+                        "message": (
+                            "RepairPlanner cannot infer an operation from a "
+                            "source location alone."
+                        ),
+                    },
+                ),
+            )
+        return RepairSemanticDecision(
+            decision="repair_ready",
+            reason=(
+                "One supported hypothesis is fully covered by the current "
+                "exact Edit Binding."
+            ),
+            selected_hypothesis_id=str(selected["hypothesis_id"]),
+            required_next_action=(
+                "Create an intent-only RepairPlan and Proposal; source writes "
+                "remain separately gated."
+            ),
+            blockers=(),
+        )
+
+    def from_stagger_semantic_failure(
+        self,
+        *,
+        root_cause_evidence: dict[str, Any],
+        root_cause_evidence_ref: str,
+        repair_hypothesis_set: dict[str, Any],
+        repair_hypothesis_set_ref: str,
+        binding_resolution: dict[str, Any],
+        binding_resolution_ref: str,
+        retry_count: int,
+        target_behavior: str | None = None,
+    ) -> RepairPlan:
+        """Create an intent-only Stagger RepairPlan from formal planning inputs."""
+
+        feature_id = str(root_cause_evidence.get("feature_id") or "")
+        if (
+            not feature_id
+            or repair_hypothesis_set.get("feature_id") != feature_id
+            or binding_resolution.get("feature_id") != feature_id
+        ):
+            raise ValueError(
+                "Stagger planning inputs do not share one feature identity."
+            )
+        decision = self.assess_stagger_semantic_decision(
+            root_cause_evidence=root_cause_evidence,
+            repair_hypothesis_set=repair_hypothesis_set,
+            binding_resolution=binding_resolution,
+        )
+        decision_payload = decision.to_dict()
+        selected = next(
+            (
+                item
+                for item in repair_hypothesis_set.get("hypotheses", ())
+                if isinstance(item, dict)
+                and item.get("hypothesis_id")
+                == decision.selected_hypothesis_id
+            ),
+            None,
+        )
+        resolved_target = dict(
+            binding_resolution.get("resolved_repair_target") or {}
+        )
+        minimal_changes: tuple[dict[str, Any], ...] = ()
+        allowed_ids: tuple[str, ...] = ()
+        display_files: tuple[str, ...] = ()
+        if decision.decision == "repair_ready" and isinstance(selected, dict):
+            binding_id = str(resolved_target["binding_id"])
+            minimal_changes = (
+                {
+                    "change_id": "repair_stagger_semantic_001",
+                    "edit_binding_id": binding_id,
+                    "intent": str(selected["proposed_operation"]),
+                    "hypothesis_id": str(selected["hypothesis_id"]),
+                },
+            )
+            allowed_ids = (binding_id,)
+            display_files = (
+                str(resolved_target["canonical_target_path"]),
+            )
+        evidence_refs = _unique_strings(
+            [
+                root_cause_evidence_ref,
+                repair_hypothesis_set_ref,
+                binding_resolution_ref,
+                *(
+                    item.get("path")
+                    for item in root_cause_evidence.get(
+                        "evidence_items",
+                        (),
+                    )
+                    if isinstance(item, dict)
+                ),
+            ]
+        )
+        blockers = decision.blockers
+        hypothesis = (
+            str(selected["statement"])
+            if isinstance(selected, dict)
+            else (
+                "The current evidence confirms the failed RectTransform "
+                "downcast but does not select the correct acquisition path."
+            )
+        )
+        return RepairPlan(
+            repair_id=stable_repair_id(
+                feature_id=feature_id,
+                failure_source="runtime",
+                failure_class="stagger_yellow_x_visual",
+                retry_count=retry_count,
+                evidence_refs=evidence_refs,
+            ),
+            feature_id=feature_id,
+            failure_source="runtime",
+            failure_class="stagger_yellow_x_visual",
+            evidence_refs=evidence_refs,
+            hypothesis=hypothesis,
+            minimal_changes=minimal_changes,
+            retry_count=retry_count,
+            retry_budget=self.retry_budget,
+            retry_budget_remaining=max(
+                self.retry_budget - retry_count,
+                0,
+            ),
+            retry_exhausted=False,
+            scope_expansion_allowed=False,
+            stop_condition=(
+                "Stop before Proposal generation unless semantic_decision is "
+                "repair_ready and one exact Edit Binding covers the operation."
+            ),
+            forbidden_regressions=(
+                "Do not alter historical RuntimeEvidence.",
+                "Do not treat post-run copies as formal RuntimeEvidence.",
+                "Do not widen edit_binding_004.",
+                "Do not claim yellow-X or audio acceptance from this plan.",
+            ),
+            requires_new_evidence=(
+                decision.decision == "evidence_insufficient"
+            ),
+            allowed_next_stage=(
+                "generate_patch_proposal"
+                if decision.decision == "repair_ready"
+                else None
+            ),
+            blockers=blockers,
+            target_behavior=target_behavior,
+            allowed_edit_binding_ids=allowed_ids,
+            display_files=display_files,
+            repair_context={
+                "semantic_decision": decision_payload,
+                "root_cause_evidence_ref": root_cause_evidence_ref,
+                "repair_hypothesis_set_ref": repair_hypothesis_set_ref,
+                "binding_resolution_ref": binding_resolution_ref,
+            },
+            resolved_repair_target=resolved_target,
+            semantic_decision=decision_payload,
+        )
 
     def from_build_failure(
         self,
