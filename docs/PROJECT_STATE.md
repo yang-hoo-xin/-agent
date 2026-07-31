@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-30
+Last updated: 2026-07-31
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -14,10 +14,10 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 stagger_feature_spec_status: operator_guided_feature_spec_complete
 stagger_evidence_status: sufficient_7_supported_implementation_plan_created
 most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: build_complete_runtime_visual_failure_diagnostic_v2_corrected_exact_diff_ready_for_human_approval
+stagger_implementation_plan_status: repaired_build_and_two_mode_runtime_complete_formal_runtime_materialization_blocked
 local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
 phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: STAGGER-DIAGNOSTIC-EVIDENCE-TRUTH-PREFLIGHT-001
+most_recent_completed_capability: STAGGER-M1-BOUNDED-GTFO-HARNESS-OUTPUT-ISOLATION-001
 v2_c_evaluation_state: core_complete (single real-run evidence)
 ```
 
@@ -38,6 +38,46 @@ materialization. Separately authorized run `sfp_build_009` compiled that exact
 materialization and persisted a fresh Build-to-Runtime checkpoint. Product
 Runtime acceptance remains pending; this is not an Agent Harness Migration
 Boundary.
+
+### 1.1 Current Stagger M1 Checkpoint
+
+The current authoritative product source contains the human-approved
+`edit_binding_004` repair only: `_lastHudParent as RectTransform` became
+`_lastHudParent.GetComponentInParent<RectTransform>()`. The source SHA256 is
+`77D0E4C6554444AB027E2FD6F98A3BC2EC7C5D6BCC8F54F977B655920922F0AE`;
+the isolated Build completed with zero errors and two warnings and produced
+`BetterHitFeedback.dll` SHA256
+`129F13DD0C33CAD08610FE02F760251D54E4A3D26F78BB7BF22830C5CE8DD76D`.
+
+Run-local `run_004` failed inside the Harness after both operator exchanges
+because the full-copy saver rejected the second process's valid
+`replaced_or_truncated_after_prelaunch_boundary` generation. It produced no
+`runtime_result.json`; `HARNESS_FAILURE.json` preserves the exact failure,
+partial evidence, and restoration status. The fix remains bounded to accepting
+the two verified byte-zero generation modes. It does not add a provider,
+Artifact type, permission path, scheduler, or general recovery layer.
+
+Real `run_005` completed both modes and wrote `runtime_result.json` SHA256
+`227C2254F8A0D4FDCADC0B79CBFBD0D07134BF44206DCFF6F84D019B82707E8`.
+The disabled observation passed. In enabled mode the user observed the yellow
+X, extra audio cue, and the Mod's existing behavior as normal. Machine markers
+independently recorded successful visual creation and nonzero audio-event
+acceptance. The disabled full log is `64494` bytes, SHA256
+`770E715E...3696`; the enabled full log is `138910` bytes, SHA256
+`E72E971E...C9B1`. Both stored copies verify the complete observed prefix and
+are distinct from their bounded 20,000-character projections. Both GTFO
+processes and the launch Python process terminated, the deployed DLL is absent,
+and the config was restored to SHA256 `717C5F4B...DB82E`.
+
+The product result is still `inconclusive`: the implementation-side duplicate
+event scenario and the enumerated unmatched/non-local/stale/excluded negative
+paths were `not_observed`. The screenshots have no verified caption and remain
+confidence `0.0`. Existing blocked-report revision `967A9629...07F0` records a
+separate formal lineage blocker: the new DLL lacks a registered BuildResult and
+the full deterministic projection payload for approved diff
+`sha256:e8f41d05...b7163` was not persisted. No BuildResult or RuntimeEvidence
+was fabricated from the old DLL. H1.1 and H3 remain complete; H1.2, H2, and
+H4-H6 remain inactive.
 
 The Runtime visual failure now has one separately approved diagnostic-only
 continuation. Request

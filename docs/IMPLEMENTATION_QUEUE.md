@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-30
+Last updated: 2026-07-31
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -16,6 +16,11 @@ selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio
 
 ```text
 task_id: GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001
+current_checkpoint: STAGGER-M1-BOUNDED-GTFO-HARNESS-OUTPUT-ISOLATION-001
+checkpoint_status: harness_complete_product_runtime_inconclusive
+current_runtime_run_id: run_005
+current_runtime_result_sha256: 227C2254F8A0D4FDCADC0B79CBFBD0D07134BF44206DCFF6F84D019B82707E8
+formal_continuation_blocked_report: 967A96292933D6D7967D534D2E4AC4AC3C9CDC6B1A6BB3F8BF1049D5D3EA07F0
 product_request_or_failure:
   When a local player's weapon hit actually causes an enemy hit reaction,
   show one yellow X at the hit position, play one short sound, and emit
@@ -898,30 +903,27 @@ stop_condition:
   Observation retry #2 is immutable inconclusive Runtime history and exhausted
   the admitted retry. Preserve its initial audio response together with the
   later user correction; do not promote either into full audibility proof.
-  Preserve the historical EditAuthorityApproval, EvidencePack,
-  ImplementationPlan, and BindingResolution revisions above. The exact
-  authority closure grants only `edit_binding_004`; it does not select among
-  the unresolved HUD-parent causes and does not authorize source bytes.
-  RepairPlanner and every source-change Proposal remain closed until the next
-  separately reviewed product step consumes the unique
-  `resolved_repair_target`.
-  Before any new RepairPlanner step, create a fresh no-authority
-  EditAuthorityRequest from current exact inputs and complete its LangGraph
-  human approval/materialization path. The removed direct approval CLI and the
-  old approval hash cannot be reused.
-  The exact existing-binding reauthorization preflight now satisfies admission
-  without claiming that PatchProposal `37368a63...6dfa93` directly binds
-  current Plan `d18dfd13...e4f619`. Stop before the separately authorized
-  Graph review execution for Request hash
-  `sha256:06ed20c9c2ef7ef6c73b9208519eb52a1e92e52e798aa2dec0deaf16e545b2c3`.
-  The prior failed execution did not write or materialize approval state and
-  must not be retried without new authorization. After exact Graph approval and
-  unique re-resolution, remain stopped before RepairPlanner. Root cause requires
-  a separately reviewed diagnostic source scope and controlled Runtime
-  observation; do not replace diagnosis with an unverified product edit.
-  Do not call another model, reuse either prior approval hash, perform a second
-  Apply or Build, or claim Harmony runtime binding, visible, audible,
-  exactly-once, disabled-mode, marker, or product Runtime success.
+  Preserve the exact planning Request/Approval, RootCauseEvidence,
+  RepairHypothesisSet, RepairPlan, BindingResolution, and historical Runtime
+  revisions. The user approved exact product diff
+  `sha256:e8f41d054aacb845cf1df52af9873e5c83ee0c3df03ea03e1eb9d1eb007b7163`;
+  the one-line `edit_binding_004` repair changed source SHA256
+  `65489604...BB3B` to `77D0E4C6...F0AE`. The isolated Build produced DLL
+  SHA256 `129F13DD...76D`.
+  Run-local `run_004` is immutable Harness-failure history. It exposed the
+  second-mode full-copy rejection, produced no Runtime result, and restored the
+  game directory. The focused fix accepts both valid byte-zero log-generation
+  modes. Real `run_005` completed both ordered processes, preserved full logs
+  and bounded projections separately, terminated processes, and restored DLL
+  and config state. The user observed disabled behavior, yellow X, extra cue,
+  and existing Mod behavior as expected. Deduplication and the enumerated
+  negative paths were not observed, so product Runtime remains inconclusive.
+  Formal RuntimeEvidence materialization remains blocked by the missing new
+  BuildResult and the unpersisted complete exact-diff projection payload;
+  blocked-report `967A9629...07F0` records that boundary without inferring old
+  identities. Do not repeat product repair or Runtime automatically. A later
+  action may address only the explicit formal-lineage blocker or the two
+  unobserved criteria under fresh exact admission.
 status: blocked
 automation_claim: not_proven
 ```

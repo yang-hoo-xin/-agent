@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-07-30
+Last updated: 2026-07-31
 
 ## 1. Product
 
@@ -74,6 +74,46 @@ existing allowed edit binding may re-enter Proposal/Review. Other owners stop
 with an owner-specific RepairPlan result and do not repeat model, Proposal,
 Apply, or Build work. Older ownerless RuntimeEvidence remains readable but has
 no source-repair authority.
+
+The current Stagger M1 product continuation has now exercised the repaired
+BetterHitFeedback source and the bounded two-mode GTFO Harness. The approved
+`edit_binding_004` change replaced only the failed RectTransform acquisition;
+source SHA256 moved from `65489604...BB3B` to `77D0E4C6...F0AE`, and the real
+local Build produced DLL SHA256 `129F13DD...76D`. Run-local `run_004` exposed
+one Harness defect after the second process: a valid byte-zero
+`replaced_or_truncated_after_prelaunch_boundary` log generation was rejected
+by the post-run full-copy saver. That failed run remains immutable, records no
+product acceptance, and restored both DLL and config state. The bounded repair
+accepts both valid byte-zero generation modes and has focused success,
+exception, restoration, process-termination, independent-output-root, and full
+post-run-copy coverage.
+
+Real `run_005` then completed both ordered modes. The disabled process produced
+no BetterHitFeedback output. In the enabled process the operator directly
+observed the yellow X, attributable extra cue, and existing Mod feedback as
+normal; current-run markers also recorded `visual_reason=yellow_x_spawned` and
+nonzero audio acceptance. Both full current-run generations were copied under
+the run-local root with prefix identity verification, all GTFO/Python processes
+terminated, the temporary DLL was removed, and the config returned to SHA256
+`717C5F4B...DB82E`. The result remains `inconclusive`, not accepted: duplicate
+result-event behavior and the listed non-local/stale/excluded negative paths
+were not directly exercised. Screenshot files retain confidence `0.0` and do
+not replace the operator observations.
+
+The existing ArtifactStore now records blocked-report revision
+`967A9629...07F0` for the formal continuation boundary. It does not manufacture
+a new `BuildResult` or `RuntimeEvidence`: the latest registered BuildResult is
+for the prior DLL, and the complete deterministic projection payload behind
+approved diff hash `sha256:e8f41d05...b7163` was not persisted. Reconstructing
+that missing identity is forbidden. This formal blocker does not undo the real
+Harness result, but it prevents promotion to an ArtifactStore Runtime success.
+This Harness repair introduced no new Artifact, Approval, Request, or
+permission contract. Earlier in the same Stagger M1 branch, the
+Planner-admission slice had already added and materialized
+`repair_planning_request`, `repair_planning_approval`,
+`root_cause_evidence`, and `repair_hypothesis_set`; those persisted revisions
+remain readable, but the later contract-reuse-first rule forbids further
+Stagger-specific contract expansion without a separately proven repeated gap.
 
 Post-H3 mainline run `e7daa266` real-exercised the bounded Build-to-Runtime
 continuation. A fresh compile-only process persisted a Build checkpoint; a
