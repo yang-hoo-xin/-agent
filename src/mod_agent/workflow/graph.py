@@ -796,6 +796,14 @@ def _run_generate_patch_proposal(
             artifact_store,
             "implementation_plan",
         )
+        evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
+        if patch_change_factory is not None:
+            implementation = {
+                **implementation,
+                "proposed_changes": list(
+                    patch_change_factory(state, implementation, evidence_pack)
+                ),
+            }
         proposal = RepairPatchProposalBuilder().build(
             repair_plan,
             implementation_plan=implementation,

@@ -1202,6 +1202,51 @@ def test_repair_proposal_blocks_duplicate_plan_changes_for_one_binding() -> None
     ]
 
 
+def test_repair_proposal_reuses_existing_executable_patch_injection() -> None:
+    implementation_plan = _implementation_plan_payload()
+    implementation_plan["proposed_changes"] = [
+        {
+            "change_id": "chg_001",
+            "change_type": "repair_helper",
+            "edit_binding_id": "edit_binding_001",
+            "hook_target_binding_id": None,
+            "supporting_binding_ids": [],
+            "operation": "replace_helper_expression_only",
+            "expected_validation": ["compile"],
+            "rollback_hint": "Restore the helper expression.",
+            "patch": {
+                "kind": "exact_text_replace",
+                "before_text": "old helper",
+                "after_text": "new helper",
+                "expected_occurrences": 1,
+            },
+        }
+    ]
+    plan = RepairPlanner(retry_budget=2).from_build_failure(
+        build_result=_failed_build_result(
+            "feature_001",
+            diagnostic_file="mods/BetterHitFeedback/Plugin.cs",
+        ).to_artifact_payload(),
+        build_result_ref="artifacts/features/feature_001/build_result.json",
+        retry_count=0,
+        target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+
+    proposal = RepairPatchProposalBuilder().build(
+        plan,
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+
+    assert proposal["diff_intent"][0]["patch"] == {
+        "kind": "exact_text_replace",
+        "before_text": "old helper",
+        "after_text": "new helper",
+        "expected_occurrences": 1,
+    }
+
+
 def test_repair_plan_blocks_scope_outside_original_proposal_context() -> None:
     plan = RepairPlanner(retry_budget=2).from_build_failure(
         build_result=_failed_build_result("feature_001").to_artifact_payload(),

@@ -1193,7 +1193,7 @@ class RepairPatchProposalBuilder:
         planned_change: dict[str, Any] | None,
     ) -> dict[str, Any]:
         planned = planned_change if isinstance(planned_change, dict) else {}
-        return {
+        intent = {
             "change_id": change.get("change_id") or f"repair_change_{index}",
             "change_type": "repair",
             "edit_binding_id": change.get("edit_binding_id"),
@@ -1226,6 +1226,9 @@ class RepairPatchProposalBuilder:
                 or "Use git change metadata and artifact refs for rollback."
             ),
         }
+        if isinstance(planned.get("patch"), dict):
+            intent["patch"] = dict(planned["patch"])
+        return intent
 
     @staticmethod
     def _planned_changes_by_binding(
