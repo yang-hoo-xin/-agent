@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import hashlib
 import sys
@@ -11,7 +12,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.artifacts import (
+    ArtifactRef,
+    ArtifactStore,
+    ArtifactStoreError,
+    StaleArtifactError,
+)
 from src.mod_agent.artifacts.registry import (
     ArtifactContract,
     ArtifactTypeRegistry,
@@ -1215,6 +1221,579 @@ def _successful_build_handoff(
         artifact_hash=result["artifact_hashes"]["workflow_checkpoint"],
     )
     return store, result, checkpoint_ref
+
+
+def _state_artifact_ref(
+    result: dict[str, object],
+    artifact_type: str,
+) -> ArtifactRef:
+    return ArtifactRef(
+        feature_id=str(result["feature_id"]),
+        artifact_type=artifact_type,
+        path=str(result["artifacts"][artifact_type]),  # type: ignore[index]
+        artifact_hash=str(result["artifact_hashes"][artifact_type]),  # type: ignore[index]
+    )
+
+
+def _clone_as_latest_revision(
+    store: ArtifactStore,
+    ref: ArtifactRef,
+    *,
+    message_suffix: str,
+    replace_upstream: dict[str, ArtifactRef] | None = None,
+    payload_updates: dict[str, object] | None = None,
+    transitive_exact_types: set[str] | None = None,
+) -> ArtifactRef:
+    envelope = store.read(ref)
+    payload = copy.deepcopy(envelope["data"])
+    payload["message"] = f"{payload.get('message', '')} {message_suffix}".strip()
+    payload.update(payload_updates or {})
+    replacement = replace_upstream or {}
+    upstream_refs: list[ArtifactRef] = []
+    exact_types: set[str] = set()
+    for item in envelope["inputs"]["upstream_artifacts"]:
+        upstream = replacement.get(
+            item["artifact_type"],
+            ArtifactRef(
+                feature_id=ref.feature_id,
+                artifact_type=item["artifact_type"],
+                path=item["path"],
+                artifact_hash=item["artifact_hash"],
+            ),
+        )
+        upstream_refs.append(upstream)
+        if item.get("require_latest") is False:
+            exact_types.add(upstream.artifact_type)
+    exact_types.update(transitive_exact_types or set())
+    return store.write(
+        feature_id=ref.feature_id,
+        artifact_type=ref.artifact_type,
+        payload=payload,
+        status=envelope["status"],
+        blockers=list(envelope.get("blockers", [])),
+        trace_refs=list(envelope.get("trace_refs", [])),
+        upstream_refs=upstream_refs,
+        exact_revision_upstream_types=exact_types,
+    )
+
+
+def _build_handoff_with_diagnostic_latest(
+    tmp_path: Path,
+) -> tuple[
+    ArtifactStore,
+    dict[str, object],
+    ArtifactRef,
+    ArtifactRef,
+    ArtifactRef,
+    ArtifactRef,
+]:
+    store, result, old_checkpoint_ref = _successful_build_handoff(tmp_path)
+    state = copy.deepcopy(result)
+    state["artifacts"].pop("workflow_checkpoint")  # type: ignore[union-attr]
+    state["artifact_hashes"].pop("workflow_checkpoint")  # type: ignore[union-attr]
+    product_evidence = _state_artifact_ref(state, "evidence_pack")
+    product_plan = _state_artifact_ref(state, "implementation_plan")
+    diagnostic_evidence = _clone_as_latest_revision(
+        store,
+        product_evidence,
+        message_suffix="diagnostic track latest",
+    )
+    diagnostic_plan = _clone_as_latest_revision(
+        store,
+        product_plan,
+        message_suffix="diagnostic track latest",
+        replace_upstream={"evidence_pack": diagnostic_evidence},
+    )
+    return (
+        store,
+        state,
+        old_checkpoint_ref,
+        product_evidence,
+        product_plan,
+        diagnostic_evidence,
+        diagnostic_plan,
+    )
+
+
+def _build_handoff_with_applied_diff(
+    tmp_path: Path,
+    *,
+    dry_run_diff_hash: str,
+    apply_diff_hash: str,
+) -> tuple[ArtifactStore, dict[str, object]]:
+    store, state, _, _, _, _, _ = _build_handoff_with_diagnostic_latest(tmp_path)
+    dry_run_ref = _clone_as_latest_revision(
+        store,
+        _state_artifact_ref(state, "dry_run_result"),
+        message_suffix="exact diff execution",
+        payload_updates={"diff_hash": dry_run_diff_hash},
+        transitive_exact_types={"evidence_pack", "implementation_plan"},
+    )
+    state["artifacts"]["dry_run_result"] = dry_run_ref.path  # type: ignore[index]
+    state["artifact_hashes"]["dry_run_result"] = (  # type: ignore[index]
+        dry_run_ref.artifact_hash
+    )
+    apply_ref = store.write(
+        feature_id=str(state["feature_id"]),
+        artifact_type="isolated_apply_result",
+        payload={
+            "node_name": "isolated_apply",
+            "stage": "isolated_apply",
+            "message": "Approved patch was applied inside the isolated workspace.",
+            "execution_mode": "isolated_apply",
+            "actual_write_performed": True,
+            "real_patch_applied": True,
+            "approved_by_review": True,
+            "approved_by_user": True,
+            "write_scope_preapproved": True,
+            "exact_diff_approved": True,
+            "changed_files": ["Patches/HitFeedbackBehaviorPatch.cs"],
+            "diff_hash": apply_diff_hash,
+            "approved_diff_hash": apply_diff_hash,
+        },
+        upstream_refs=[
+            _state_artifact_ref(state, "patch_proposal"),
+            _state_artifact_ref(state, "proposal_review"),
+            dry_run_ref,
+        ],
+        exact_revision_upstream_types={
+            "evidence_pack",
+            "implementation_plan",
+        },
+    )
+    state["artifacts"]["isolated_apply_result"] = apply_ref.path  # type: ignore[index]
+    state["artifact_hashes"]["isolated_apply_result"] = (  # type: ignore[index]
+        apply_ref.artifact_hash
+    )
+    build_envelope = store.read(_state_artifact_ref(state, "build_result"))
+    build_ref = store.write(
+        feature_id=str(state["feature_id"]),
+        artifact_type="build_result",
+        payload=build_envelope["data"],
+        status=build_envelope["status"],
+        upstream_refs=[
+            _state_artifact_ref(state, "dry_run_result"),
+            _state_artifact_ref(state, "isolated_apply_result"),
+        ],
+    )
+    state["artifacts"]["build_result"] = build_ref.path  # type: ignore[index]
+    state["artifact_hashes"]["build_result"] = build_ref.artifact_hash  # type: ignore[index]
+    state["current_stage"] = "build"
+    state["next_stage"] = "runtime_evidence"
+    return store, state
+
+
+def test_build_checkpoint_default_still_blocks_old_product_revisions(
+    tmp_path: Path,
+) -> None:
+    store, state, _, _, _, _, _ = _build_handoff_with_diagnostic_latest(tmp_path)
+
+    with pytest.raises(StaleArtifactError, match="evidence_pack hash changed"):
+        WorkflowCheckpointStore(store).create_checkpoint(
+            state,  # type: ignore[arg-type]
+            interrupt_reason="default latest checkpoint",
+            resume_allowed_fields=(),
+        )
+
+
+def test_build_checkpoint_preserves_approved_product_exact_lineage(
+    tmp_path: Path,
+) -> None:
+    (
+        store,
+        state,
+        old_checkpoint_ref,
+        product_evidence,
+        product_plan,
+        diagnostic_evidence,
+        diagnostic_plan,
+    ) = _build_handoff_with_diagnostic_latest(tmp_path)
+    old_checkpoint_bytes = Path(old_checkpoint_ref.path).read_bytes()
+    build_ref = _state_artifact_ref(state, "build_result")
+    build = store.read(build_ref)["data"]
+    dll_path = Path(build["verified_artifacts"][0]["resolved_path"])
+    dll_bytes = dll_path.read_bytes()
+
+    checkpoint_ref = WorkflowCheckpointStore(store).create_checkpoint(
+        state,  # type: ignore[arg-type]
+        interrupt_reason="approved product exact-lineage handoff",
+        resume_allowed_fields=(),
+        exact_revision_upstream_types=frozenset(
+            {"evidence_pack", "implementation_plan"}
+        ),
+    )
+    envelope = store.read(checkpoint_ref)
+    checkpoint = envelope["data"]
+    upstreams = {
+        item["artifact_type"]: item
+        for item in envelope["inputs"]["upstream_artifacts"]
+    }
+    decision = WorkflowCheckpointStore(store).preflight_resume(
+        checkpoint_ref,
+        resume_id="preflight_exact_product_lineage",
+    )
+
+    assert checkpoint["state_snapshot"]["artifacts"]["evidence_pack"] == (
+        product_evidence.path
+    )
+    assert checkpoint["state_snapshot"]["artifacts"]["implementation_plan"] == (
+        product_plan.path
+    )
+    assert checkpoint["state_snapshot"]["artifacts"]["evidence_pack"] != (
+        diagnostic_evidence.path
+    )
+    assert checkpoint["state_snapshot"]["artifacts"]["implementation_plan"] != (
+        diagnostic_plan.path
+    )
+    assert upstreams["evidence_pack"]["require_latest"] is False
+    assert upstreams["implementation_plan"]["require_latest"] is False
+    assert checkpoint["resume_binding"]["build_result_hash"] == build_ref.artifact_hash
+    assert decision.allowed is True
+    assert decision.status == "ready"
+    assert Path(old_checkpoint_ref.path).read_bytes() == old_checkpoint_bytes
+    assert dll_path.read_bytes() == dll_bytes
+
+
+def test_build_checkpoint_resume_rejects_execution_diff_identity_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, state, _, _, _, _, _ = _build_handoff_with_diagnostic_latest(tmp_path)
+    checkpoint_store = WorkflowCheckpointStore(store)
+    checkpoint_ref = checkpoint_store.create_checkpoint(
+        state,  # type: ignore[arg-type]
+        interrupt_reason="approved product exact-lineage handoff",
+        resume_allowed_fields=(),
+        exact_revision_upstream_types=frozenset(
+            {"evidence_pack", "implementation_plan"}
+        ),
+    )
+    monkeypatch.setattr(
+        checkpoint_store,
+        "_persisted_execution_diff_hash",
+        lambda _state: "sha256:" + "0" * 64,
+    )
+
+    decision = checkpoint_store.preflight_resume(
+        checkpoint_ref,
+        resume_id="preflight_mismatched_execution_diff_identity",
+    )
+
+    assert decision.allowed is False
+    assert decision.status == "blocked"
+    assert any(
+        blocker["code"] == "CHECKPOINT_EXACT_DIFF_BINDING_MISMATCH"
+        for blocker in decision.blockers
+    )
+
+
+def test_build_checkpoint_writes_persisted_apply_diff_to_resume_binding(
+    tmp_path: Path,
+) -> None:
+    diff_hash = "sha256:" + "1" * 64
+    store, state = _build_handoff_with_applied_diff(
+        tmp_path,
+        dry_run_diff_hash=diff_hash,
+        apply_diff_hash=diff_hash,
+    )
+
+    checkpoint_ref = WorkflowCheckpointStore(store).create_checkpoint(
+        state,  # type: ignore[arg-type]
+        interrupt_reason="persisted exact Apply diff",
+        resume_allowed_fields=(),
+        exact_revision_upstream_types=frozenset(
+            {"evidence_pack", "implementation_plan"}
+        ),
+    )
+
+    checkpoint = store.read(checkpoint_ref)["data"]
+    assert checkpoint["resume_binding"]["diff_hash"] == diff_hash
+
+
+def test_build_checkpoint_blocks_dry_run_apply_diff_mismatch_before_write(
+    tmp_path: Path,
+) -> None:
+    store, state = _build_handoff_with_applied_diff(
+        tmp_path,
+        dry_run_diff_hash="sha256:" + "1" * 64,
+        apply_diff_hash="sha256:" + "2" * 64,
+    )
+    before_count = len(
+        store.list_feature_artifact_revisions(
+            str(state["feature_id"]),
+            "workflow_checkpoint",
+        )
+    )
+
+    with pytest.raises(
+        ArtifactStoreError,
+        match="DryRun/Apply exact diff identity is missing or inconsistent",
+    ):
+        WorkflowCheckpointStore(store).create_checkpoint(
+            state,  # type: ignore[arg-type]
+            interrupt_reason="mismatched exact Apply diff",
+            resume_allowed_fields=(),
+            exact_revision_upstream_types=frozenset(
+                {"evidence_pack", "implementation_plan"}
+            ),
+        )
+
+    assert len(
+        store.list_feature_artifact_revisions(
+            str(state["feature_id"]),
+            "workflow_checkpoint",
+        )
+    ) == before_count
+
+
+def test_build_checkpoint_blocks_two_nearest_revisions_of_one_exact_role(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        store,
+        state,
+        _,
+        _,
+        _,
+        diagnostic_evidence,
+        _,
+    ) = _build_handoff_with_diagnostic_latest(tmp_path)
+    checkpoint_store = WorkflowCheckpointStore(store)
+    original_ancestry = checkpoint_store._build_upstream_ancestry
+
+    def forked_ancestry(build_ref: ArtifactRef):
+        ancestry, blockers = original_ancestry(build_ref)
+        evidence_depths = ancestry["evidence_pack"]
+        nearest_depth = min(evidence_depths.values())
+        evidence_depths[
+            (diagnostic_evidence.path, diagnostic_evidence.artifact_hash)
+        ] = nearest_depth
+        return ancestry, blockers
+
+    monkeypatch.setattr(
+        checkpoint_store,
+        "_build_upstream_ancestry",
+        forked_ancestry,
+    )
+    before_count = len(
+        store.list_feature_artifact_revisions(
+            str(state["feature_id"]),
+            "workflow_checkpoint",
+        )
+    )
+
+    with pytest.raises(ArtifactStoreError, match="unique nearest evidence_pack"):
+        checkpoint_store.create_checkpoint(
+            state,  # type: ignore[arg-type]
+            interrupt_reason="ambiguous nearest EvidencePack",
+            resume_allowed_fields=(),
+            exact_revision_upstream_types=frozenset(
+                {"evidence_pack", "implementation_plan"}
+            ),
+        )
+
+    assert len(
+        store.list_feature_artifact_revisions(
+            str(state["feature_id"]),
+            "workflow_checkpoint",
+        )
+    ) == before_count
+
+
+def test_build_checkpoint_rejects_unsupported_exact_revision_role(
+    tmp_path: Path,
+) -> None:
+    store, state, _, _, _, _, _ = _build_handoff_with_diagnostic_latest(tmp_path)
+
+    with pytest.raises(
+        ArtifactStoreError,
+        match="unsupported.*binding_resolution",
+    ):
+        WorkflowCheckpointStore(store).create_checkpoint(
+            state,  # type: ignore[arg-type]
+            interrupt_reason="unsupported exact role",
+            resume_allowed_fields=(),
+            exact_revision_upstream_types=frozenset({"binding_resolution"}),
+        )
+
+
+@pytest.mark.parametrize("artifact_type", ["evidence_pack", "implementation_plan"])
+def test_build_checkpoint_rejects_wrong_exact_role_hash(
+    tmp_path: Path,
+    artifact_type: str,
+) -> None:
+    store, state, _, _, _, _, _ = _build_handoff_with_diagnostic_latest(tmp_path)
+    state["artifact_hashes"][artifact_type] = "0" * 64  # type: ignore[index]
+
+    with pytest.raises(ArtifactStoreError, match="not the unique nearest"):
+        WorkflowCheckpointStore(store).create_checkpoint(
+            state,  # type: ignore[arg-type]
+            interrupt_reason="wrong exact role hash",
+            resume_allowed_fields=(),
+            exact_revision_upstream_types=frozenset(
+                {"evidence_pack", "implementation_plan"}
+            ),
+        )
+
+
+def test_build_checkpoint_rejects_exact_role_path_hash_mismatch(
+    tmp_path: Path,
+) -> None:
+    (
+        store,
+        state,
+        _,
+        product_evidence,
+        _,
+        diagnostic_evidence,
+        _,
+    ) = _build_handoff_with_diagnostic_latest(tmp_path)
+    state["artifacts"]["evidence_pack"] = diagnostic_evidence.path  # type: ignore[index]
+    state["artifact_hashes"]["evidence_pack"] = product_evidence.artifact_hash  # type: ignore[index]
+
+    with pytest.raises(ArtifactStoreError, match="not the unique nearest"):
+        WorkflowCheckpointStore(store).create_checkpoint(
+            state,  # type: ignore[arg-type]
+            interrupt_reason="path hash mismatch",
+            resume_allowed_fields=(),
+            exact_revision_upstream_types=frozenset(
+                {"evidence_pack", "implementation_plan"}
+            ),
+        )
+
+
+def test_build_checkpoint_rejects_incomplete_exact_role_set(
+    tmp_path: Path,
+) -> None:
+    store, state, _, _, _, _, _ = _build_handoff_with_diagnostic_latest(tmp_path)
+
+    with pytest.raises(
+        ArtifactStoreError,
+        match="exact revision roles are incomplete.*implementation_plan",
+    ):
+        WorkflowCheckpointStore(store).create_checkpoint(
+            state,  # type: ignore[arg-type]
+            interrupt_reason="incomplete exact role set",
+            resume_allowed_fields=(),
+            exact_revision_upstream_types=frozenset({"evidence_pack"}),
+        )
+
+
+@pytest.mark.parametrize(
+    ("persisted_exact_roles", "expected_blocker"),
+    [
+        (
+            {"feature_spec"},
+            "BUILD_CHECKPOINT_EXACT_ROLE_UNSUPPORTED",
+        ),
+        (
+            {"evidence_pack"},
+            "BUILD_CHECKPOINT_EXACT_ROLE_SET_INCOMPLETE",
+        ),
+    ],
+)
+def test_build_checkpoint_preflight_rejects_invalid_persisted_exact_roles(
+    tmp_path: Path,
+    persisted_exact_roles: set[str],
+    expected_blocker: str,
+) -> None:
+    store, result, checkpoint_ref = _successful_build_handoff(tmp_path)
+    envelope = store.read(checkpoint_ref)
+    state = envelope["data"]["state_snapshot"]
+    upstream_refs = [
+        ArtifactRef(
+            feature_id=str(result["feature_id"]),
+            artifact_type=artifact_type,
+            path=str(path),
+            artifact_hash=str(state["artifact_hashes"][artifact_type]),
+        )
+        for artifact_type, path in state["artifacts"].items()
+    ]
+    invalid_ref = store.write(
+        feature_id=str(result["feature_id"]),
+        artifact_type="workflow_checkpoint",
+        payload=envelope["data"],
+        status=envelope["status"],
+        blockers=list(envelope.get("blockers", [])),
+        trace_refs=list(envelope.get("trace_refs", [])),
+        upstream_refs=upstream_refs,
+        exact_revision_upstream_types=persisted_exact_roles,
+    )
+
+    decision = WorkflowCheckpointStore(store).preflight_resume(
+        invalid_ref,
+        resume_id="preflight_invalid_persisted_exact_roles",
+    )
+
+    assert decision.allowed is False
+    assert decision.status == "blocked"
+    assert any(
+        blocker["code"] == expected_blocker
+        for blocker in decision.blockers
+    )
+
+
+def test_build_checkpoint_rejects_diagnostic_latest_as_product_exact_role(
+    tmp_path: Path,
+) -> None:
+    (
+        store,
+        state,
+        _,
+        _,
+        _,
+        diagnostic_evidence,
+        _,
+    ) = _build_handoff_with_diagnostic_latest(tmp_path)
+    state["artifacts"]["evidence_pack"] = diagnostic_evidence.path  # type: ignore[index]
+    state["artifact_hashes"]["evidence_pack"] = (  # type: ignore[index]
+        diagnostic_evidence.artifact_hash
+    )
+
+    with pytest.raises(
+        ArtifactStoreError,
+        match="not the unique nearest evidence_pack ancestor",
+    ):
+        WorkflowCheckpointStore(store).create_checkpoint(
+            state,  # type: ignore[arg-type]
+            interrupt_reason="diagnostic latest must not replace product lineage",
+            resume_allowed_fields=(),
+            exact_revision_upstream_types=frozenset(
+                {"evidence_pack", "implementation_plan"}
+            ),
+        )
+
+
+def test_build_checkpoint_rejects_changed_new_build_dll_before_write(
+    tmp_path: Path,
+) -> None:
+    store, state, _, _, _, _, _ = _build_handoff_with_diagnostic_latest(tmp_path)
+    build = store.read(_state_artifact_ref(state, "build_result"))["data"]
+    Path(build["verified_artifacts"][0]["resolved_path"]).write_bytes(b"changed")
+    before_count = len(
+        store.list_feature_artifact_revisions(
+            str(state["feature_id"]),
+            "workflow_checkpoint",
+        )
+    )
+
+    with pytest.raises(ArtifactStoreError, match="Verified Build output changed"):
+        WorkflowCheckpointStore(store).create_checkpoint(
+            state,  # type: ignore[arg-type]
+            interrupt_reason="changed Build DLL",
+            resume_allowed_fields=(),
+            exact_revision_upstream_types=frozenset(
+                {"evidence_pack", "implementation_plan"}
+            ),
+        )
+
+    assert len(
+        store.list_feature_artifact_revisions(
+            str(state["feature_id"]),
+            "workflow_checkpoint",
+        )
+    ) == before_count
 
 
 def test_fresh_process_continues_build_handoff_without_repeating_upstream_stages(

@@ -16,6 +16,10 @@ from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactStoreErr
 from .interrupts import ResumeDecision, ResumePayload, ResumeValidator
 from .state import ModAgentState
 
+BUILD_CHECKPOINT_EXACT_REVISION_TYPES = frozenset(
+    {"evidence_pack", "implementation_plan"}
+)
+
 
 @dataclass(frozen=True)
 class CheckpointPolicy:
@@ -195,10 +199,24 @@ class WorkflowCheckpointStore:
         *,
         interrupt_reason: str,
         resume_allowed_fields: tuple[str, ...],
+        exact_revision_upstream_types: frozenset[str] = frozenset(),
     ) -> ArtifactRef:
         """Persist a workflow_checkpoint artifact from current state."""
 
         feature_id = state["feature_id"] or state["request_id"]
+        exact_revision_types = tuple(
+            sorted(exact_revision_upstream_types)
+        )
+        exact_role_policy_blockers = self._build_checkpoint_exact_role_policy_blockers(
+            frozenset(exact_revision_types)
+        )
+        if exact_role_policy_blockers:
+            raise ArtifactStoreError(
+                "; ".join(
+                    str(blocker["message"])
+                    for blocker in exact_role_policy_blockers
+                )
+            )
         artifact_refs = tuple(state["artifacts"].values())
         checkpoint = WorkflowCheckpoint(
             checkpoint_id=f"checkpoint_{uuid4().hex}",
@@ -215,12 +233,34 @@ class WorkflowCheckpointStore:
             interrupt_reason=interrupt_reason,
             policy=self.policy,
         )
+        checkpoint_payload = checkpoint.to_artifact_payload()
+        if exact_revision_types:
+            prewrite_blockers = self._build_checkpoint_exact_lineage_blockers(
+                state,
+                exact_revision_types=frozenset(exact_revision_types),
+            )
+            prewrite_blockers.extend(
+                self._build_handoff_blockers(checkpoint_payload)
+            )
+            prewrite_blockers.extend(
+                self._checkpoint_execution_diff_binding_blockers(
+                    checkpoint_payload
+                )
+            )
+            if prewrite_blockers:
+                raise ArtifactStoreError(
+                    "; ".join(
+                        str(blocker["message"])
+                        for blocker in prewrite_blockers
+                    )
+                )
         return self.artifact_store.write(
             feature_id=feature_id,
             artifact_type="workflow_checkpoint",
-            payload=checkpoint.to_artifact_payload(),
+            payload=checkpoint_payload,
             status="success",
             upstream_refs=self._artifact_refs_from_state(state),
+            exact_revision_upstream_types=set(exact_revision_types),
         )
 
     def resume(
@@ -269,6 +309,27 @@ class WorkflowCheckpointStore:
         )
         return decision, report_ref
 
+    def _checkpoint_freshness(
+        self,
+        checkpoint_ref: ArtifactRef,
+        checkpoint_envelope: dict[str, Any],
+    ):
+        checkpoint = checkpoint_envelope["data"]
+        if checkpoint.get("checkpoint_stage") != "build":
+            return self.artifact_store.check_direct_freshness(checkpoint_ref)
+        exact_types = {
+            str(item.get("artifact_type"))
+            for item in checkpoint_envelope.get("inputs", {}).get(
+                "upstream_artifacts",
+                [],
+            )
+            if isinstance(item, dict) and item.get("require_latest") is False
+        }
+        return self.artifact_store.check_freshness_with_exact_revision_types(
+            checkpoint_ref,
+            exact_revision_types=exact_types,
+        )
+
     def preflight_resume(
         self,
         checkpoint_ref: ArtifactRef,
@@ -283,10 +344,9 @@ class WorkflowCheckpointStore:
             checkpoint_ref,
             checkpoint_envelope,
         )
-        freshness = (
-            self.artifact_store.check_freshness(checkpoint_ref)
-            if checkpoint.get("checkpoint_stage") == "build"
-            else self.artifact_store.check_direct_freshness(checkpoint_ref)
+        freshness = self._checkpoint_freshness(
+            checkpoint_ref,
+            checkpoint_envelope,
         )
         consumed, seen_resume_id = self._durable_consumption_state(
             checkpoint_ref.feature_id,
@@ -358,10 +418,9 @@ class WorkflowCheckpointStore:
             checkpoint_ref,
             checkpoint_envelope,
         )
-        freshness = (
-            self.artifact_store.check_freshness(checkpoint_ref)
-            if checkpoint.get("checkpoint_stage") == "build"
-            else self.artifact_store.check_direct_freshness(checkpoint_ref)
+        freshness = self._checkpoint_freshness(
+            checkpoint_ref,
+            checkpoint_envelope,
         )
         if not freshness.is_fresh:
             blockers.append(
@@ -482,10 +541,9 @@ class WorkflowCheckpointStore:
             checkpoint_envelope,
             allow_prior_runtime_state=True,
         )
-        freshness = (
-            self.artifact_store.check_freshness(checkpoint_ref)
-            if checkpoint.get("checkpoint_stage") == "build"
-            else self.artifact_store.check_direct_freshness(checkpoint_ref)
+        freshness = self._checkpoint_freshness(
+            checkpoint_ref,
+            checkpoint_envelope,
         )
         if not freshness.is_fresh:
             blockers.append(
@@ -786,6 +844,9 @@ class WorkflowCheckpointStore:
             binding["diff_hash"] = self._diff_hash_from_patch_proposal(
                 proposal_payload,
             )
+        execution_diff_hash = self._persisted_execution_diff_hash(state)
+        if execution_diff_hash is not None:
+            binding["diff_hash"] = execution_diff_hash
         if "proposal_review" in state["artifacts"]:
             review_ref = self._artifact_ref_from_state(state, "proposal_review")
             binding["proposal_review_ref"] = review_ref.path
@@ -829,6 +890,74 @@ class WorkflowCheckpointStore:
         if state["current_stage"] == "build":
             binding["next_graph_node"] = "collect_runtime_evidence"
         return binding
+
+    def _persisted_execution_diff_hash(
+        self,
+        state: ModAgentState | dict[str, Any],
+    ) -> str | None:
+        execution_diff_hash: str | None = None
+        for artifact_type in ("dry_run_result", "isolated_apply_result"):
+            if artifact_type not in state["artifacts"]:
+                continue
+            artifact_ref = self._artifact_ref_from_state(state, artifact_type)
+            value = self.artifact_store.read(artifact_ref)["data"].get("diff_hash")
+            if isinstance(value, str) and value:
+                execution_diff_hash = value
+        return execution_diff_hash
+
+    def _checkpoint_execution_diff_binding_blockers(
+        self,
+        checkpoint: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        state = checkpoint["state_snapshot"]
+        dry_run_data: dict[str, Any] = {}
+        apply_data: dict[str, Any] = {}
+        if "dry_run_result" in state["artifacts"]:
+            dry_run_data = self.artifact_store.read(
+                self._artifact_ref_from_state(state, "dry_run_result")
+            )["data"]
+        if "isolated_apply_result" in state["artifacts"]:
+            apply_data = self.artifact_store.read(
+                self._artifact_ref_from_state(state, "isolated_apply_result")
+            )["data"]
+        execution_diff_hash = self._persisted_execution_diff_hash(state)
+        blockers: list[dict[str, Any]] = []
+        if apply_data.get("actual_write_performed") is True:
+            apply_diff_hash = apply_data.get("diff_hash")
+            if (
+                not isinstance(apply_diff_hash, str)
+                or not apply_diff_hash
+                or dry_run_data.get("diff_hash") != apply_diff_hash
+                or apply_data.get("approved_diff_hash") != apply_diff_hash
+                or apply_data.get("exact_diff_approved") is not True
+            ):
+                blockers.append(
+                    {
+                        "code": "BUILD_CHECKPOINT_EXACT_DIFF_IDENTITY_INVALID",
+                        "message": (
+                            "Build checkpoint DryRun/Apply exact diff identity is "
+                            "missing or inconsistent."
+                        ),
+                    }
+                )
+        resume_binding = checkpoint.get("resume_binding")
+        if (
+            execution_diff_hash is not None
+            and (
+                not isinstance(resume_binding, dict)
+                or resume_binding.get("diff_hash") != execution_diff_hash
+            )
+        ):
+            blockers.append(
+                {
+                    "code": "CHECKPOINT_EXACT_DIFF_BINDING_MISMATCH",
+                    "message": (
+                        "Checkpoint resume diff hash disagrees with its "
+                        "persisted DryRun/Apply execution identity."
+                    ),
+                }
+            )
+        return blockers
 
     def _durable_consumption_state(
         self,
@@ -882,6 +1011,244 @@ class WorkflowCheckpointStore:
             )
         return matching_revisions[0]
 
+    def _build_checkpoint_exact_lineage_blockers(
+        self,
+        state: ModAgentState | dict[str, Any],
+        *,
+        exact_revision_types: frozenset[str],
+    ) -> list[dict[str, Any]]:
+        """Validate approved exact roles against one Build's immutable ancestry."""
+
+        stage = state.get("current_stage")
+        if stage != "build":
+            if exact_revision_types:
+                return [
+                    {
+                        "code": "CHECKPOINT_EXACT_LINEAGE_STAGE_INVALID",
+                        "message": (
+                            "Exact revision checkpoint roles are supported only "
+                            "at the Build handoff."
+                        ),
+                    }
+                ]
+            return []
+
+        feature_id = state.get("feature_id") or state.get("request_id")
+        if (
+            not isinstance(feature_id, str)
+            or not feature_id
+            or not isinstance(state.get("run_id"), str)
+            or not state.get("run_id")
+            or not isinstance(state.get("request_id"), str)
+            or not state.get("request_id")
+        ):
+            return [
+                {
+                    "code": "BUILD_CHECKPOINT_IDENTITY_INVALID",
+                    "message": (
+                        "Build checkpoint Feature, Run, and Request identities "
+                        "must be non-empty."
+                    ),
+                }
+            ]
+
+        artifacts = state.get("artifacts")
+        artifact_hashes = state.get("artifact_hashes")
+        if not isinstance(artifacts, dict) or not isinstance(artifact_hashes, dict):
+            return [
+                {
+                    "code": "BUILD_CHECKPOINT_STATE_INVALID",
+                    "message": "Build checkpoint Artifact bindings are incomplete.",
+                }
+            ]
+        if "build_result" not in artifacts or "build_result" not in artifact_hashes:
+            return [
+                {
+                    "code": "BUILD_CHECKPOINT_RESULT_MISSING",
+                    "message": "Build checkpoint is missing its BuildResult binding.",
+                }
+            ]
+
+        build_ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type="build_result",
+            path=str(artifacts["build_result"]),
+            artifact_hash=str(artifact_hashes["build_result"]),
+        )
+        blockers: list[dict[str, Any]] = []
+        ancestry, ancestry_blockers = self._build_upstream_ancestry(build_ref)
+        blockers.extend(ancestry_blockers)
+        lineage_roles = set(exact_revision_types)
+        lineage_roles.update(
+            artifact_type
+            for artifact_type in ("dry_run_result", "isolated_apply_result")
+            if artifact_type in artifacts
+        )
+        for artifact_type in sorted(lineage_roles):
+            path = artifacts.get(artifact_type)
+            artifact_hash = artifact_hashes.get(artifact_type)
+            if not isinstance(path, str) or not isinstance(artifact_hash, str):
+                blockers.append(
+                    {
+                        "code": "CHECKPOINT_EXACT_ROLE_MISSING",
+                        "message": (
+                            "Approved exact revision role is missing from state: "
+                            f"{artifact_type}."
+                        ),
+                    }
+                )
+                continue
+            state_ref = ArtifactRef(
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                path=path,
+                artifact_hash=artifact_hash,
+            )
+            role_refs = ancestry.get(artifact_type, {})
+            expected_identity = (state_ref.path, state_ref.artifact_hash)
+            nearest_depth = min(role_refs.values()) if role_refs else None
+            nearest_refs = {
+                identity
+                for identity, depth in role_refs.items()
+                if depth == nearest_depth
+            }
+            if nearest_refs != {expected_identity}:
+                role_kind = (
+                    "exact revision role"
+                    if artifact_type in exact_revision_types
+                    else "execution role"
+                )
+                blockers.append(
+                    {
+                        "code": "CHECKPOINT_EXACT_ROLE_NOT_BUILD_ANCESTOR",
+                        "message": (
+                            f"Build checkpoint {role_kind} is not the unique nearest "
+                            f"{artifact_type} ancestor of this BuildResult."
+                        ),
+                    }
+                )
+
+        return blockers
+
+    @staticmethod
+    def _build_checkpoint_exact_role_policy_blockers(
+        exact_revision_types: frozenset[str],
+    ) -> list[dict[str, Any]]:
+        if not exact_revision_types:
+            return []
+        unsupported = sorted(
+            set(exact_revision_types) - BUILD_CHECKPOINT_EXACT_REVISION_TYPES
+        )
+        missing = sorted(
+            BUILD_CHECKPOINT_EXACT_REVISION_TYPES - set(exact_revision_types)
+        )
+        blockers: list[dict[str, Any]] = []
+        if unsupported:
+            blockers.append(
+                {
+                    "code": "BUILD_CHECKPOINT_EXACT_ROLE_UNSUPPORTED",
+                    "message": (
+                        "Build checkpoint exact revision roles are unsupported: "
+                        f"{unsupported}"
+                    ),
+                }
+            )
+        if missing:
+            blockers.append(
+                {
+                    "code": "BUILD_CHECKPOINT_EXACT_ROLE_SET_INCOMPLETE",
+                    "message": (
+                        "Build checkpoint exact revision roles are incomplete: "
+                        f"{missing}"
+                    ),
+                }
+            )
+        return blockers
+
+    def _build_upstream_ancestry(
+        self,
+        build_ref: ArtifactRef,
+    ) -> tuple[dict[str, dict[tuple[str, str], int]], list[dict[str, Any]]]:
+        ancestry: dict[str, dict[tuple[str, str], int]] = {}
+        blockers: list[dict[str, Any]] = []
+        pending = [(build_ref, 0)]
+        visited_depths: dict[tuple[str, str, str], int] = {}
+        while pending:
+            current, current_depth = pending.pop()
+            identity = (
+                current.artifact_type,
+                current.path,
+                current.artifact_hash,
+            )
+            prior_depth = visited_depths.get(identity)
+            if prior_depth is not None and prior_depth <= current_depth:
+                continue
+            visited_depths[identity] = current_depth
+            try:
+                envelope = self.artifact_store.read(current)
+            except ArtifactStoreError as exc:
+                blockers.append(
+                    {
+                        "code": "BUILD_LINEAGE_ARTIFACT_INVALID",
+                        "message": (
+                            "Build lineage Artifact content validation failed: "
+                            f"{current.artifact_type}: {exc}"
+                        ),
+                    }
+                )
+                continue
+            inputs = envelope.get("inputs", {}).get("upstream_artifacts", [])
+            if not isinstance(inputs, list):
+                blockers.append(
+                    {
+                        "code": "BUILD_LINEAGE_INPUTS_INVALID",
+                        "message": (
+                            "Build lineage upstream representation is invalid for "
+                            f"{current.artifact_type}."
+                        ),
+                    }
+                )
+                continue
+            for item in inputs:
+                if not isinstance(item, dict):
+                    blockers.append(
+                        {
+                            "code": "BUILD_LINEAGE_INPUT_INVALID",
+                            "message": "Build lineage contains a malformed upstream.",
+                        }
+                    )
+                    continue
+                artifact_type = item.get("artifact_type")
+                path = item.get("path")
+                artifact_hash = item.get("artifact_hash")
+                if (
+                    not isinstance(artifact_type, str)
+                    or not isinstance(path, str)
+                    or not isinstance(artifact_hash, str)
+                ):
+                    blockers.append(
+                        {
+                            "code": "BUILD_LINEAGE_INPUT_INVALID",
+                            "message": "Build lineage upstream path/hash is incomplete.",
+                        }
+                    )
+                    continue
+                upstream = ArtifactRef(
+                    feature_id=build_ref.feature_id,
+                    artifact_type=artifact_type,
+                    path=path,
+                    artifact_hash=artifact_hash,
+                )
+                upstream_depth = current_depth + 1
+                role_depths = ancestry.setdefault(artifact_type, {})
+                upstream_identity = (path, artifact_hash)
+                role_depths[upstream_identity] = min(
+                    upstream_depth,
+                    role_depths.get(upstream_identity, upstream_depth),
+                )
+                pending.append((upstream, upstream_depth))
+        return ancestry, blockers
+
     def _checkpoint_lineage_blockers(
         self,
         checkpoint_ref: ArtifactRef,
@@ -901,6 +1268,7 @@ class WorkflowCheckpointStore:
             or not isinstance(snapshot.get("artifact_hashes"), dict)
             or not isinstance(artifact_hashes, dict)
             or not isinstance(artifact_refs, list)
+            or not isinstance(upstream, list)
         ):
             return [
                 {
@@ -915,6 +1283,11 @@ class WorkflowCheckpointStore:
         }
         snapshot_artifacts = snapshot["artifacts"]
         snapshot_hashes = snapshot["artifact_hashes"]
+        actual_exact_types = {
+            str(item.get("artifact_type"))
+            for item in upstream
+            if isinstance(item, dict) and item.get("require_latest") is False
+        }
         if (
             checkpoint.get("run_id") != snapshot.get("run_id")
             or checkpoint.get("request_id") != snapshot.get("request_id")
@@ -948,6 +1321,22 @@ class WorkflowCheckpointStore:
                     }
                 )
         if checkpoint.get("checkpoint_stage") == "build":
+            exact_role_policy_blockers = (
+                self._build_checkpoint_exact_role_policy_blockers(
+                    frozenset(actual_exact_types)
+                )
+            )
+            blockers.extend(exact_role_policy_blockers)
+            if actual_exact_types and not exact_role_policy_blockers:
+                blockers.extend(
+                    self._build_checkpoint_exact_lineage_blockers(
+                        snapshot,
+                        exact_revision_types=frozenset(actual_exact_types),
+                    )
+                )
+                blockers.extend(
+                    self._checkpoint_execution_diff_binding_blockers(checkpoint)
+                )
             blockers.extend(
                 self._build_handoff_blockers(
                     checkpoint,
@@ -1068,6 +1457,7 @@ class WorkflowCheckpointStore:
                         "message": f"Verified Build output changed: {resolved_path}",
                     }
                 )
+
         return blockers
 
     @staticmethod

@@ -66,7 +66,10 @@ from src.mod_agent.runtime.stagger_planner_admission import (
     materialize_stagger_planning_approval,
 )
 
-from .checkpointing import WorkflowCheckpointStore
+from .checkpointing import (
+    BUILD_CHECKPOINT_EXACT_REVISION_TYPES,
+    WorkflowCheckpointStore,
+)
 from .interrupts import InterruptRequest, ResumePayload
 from .nodes import StubNodeRunner
 from .state import ModAgentState
@@ -142,6 +145,7 @@ def build_graph(
     stop_after_evidence: bool = False,
     stop_after_build: bool = False,
     persist_build_runtime_handoff: bool = False,
+    build_checkpoint_exact_revision_upstream_types: frozenset[str] = frozenset(),
     runtime_continuation_checkpoint_id: str | None = None,
     edit_authority_request_ref: ArtifactRef | None = None,
     repair_planning_authority_request_ref: ArtifactRef | None = None,
@@ -190,6 +194,34 @@ def build_graph(
     if persist_build_runtime_handoff and not stop_after_build:
         raise ValueError(
             "Build-to-Runtime handoff persistence requires stop_after_build=True."
+        )
+    if (
+        build_checkpoint_exact_revision_upstream_types
+        and not persist_build_runtime_handoff
+    ):
+        raise ValueError(
+            "Build checkpoint exact revision roles require persisted "
+            "Build-to-Runtime handoff."
+        )
+    unsupported_checkpoint_exact_types = (
+        set(build_checkpoint_exact_revision_upstream_types)
+        - BUILD_CHECKPOINT_EXACT_REVISION_TYPES
+    )
+    if unsupported_checkpoint_exact_types:
+        raise ValueError(
+            "Build checkpoint exact revision roles are unsupported: "
+            f"{sorted(unsupported_checkpoint_exact_types)}"
+        )
+    missing_checkpoint_exact_types = (
+        BUILD_CHECKPOINT_EXACT_REVISION_TYPES
+        - set(build_checkpoint_exact_revision_upstream_types)
+        if build_checkpoint_exact_revision_upstream_types
+        else set()
+    )
+    if missing_checkpoint_exact_types:
+        raise ValueError(
+            "Build checkpoint exact revision roles are incomplete: "
+            f"{sorted(missing_checkpoint_exact_types)}"
         )
     if require_external_evaluation and evaluation_context_factory is None:
         raise ValueError("require_external_evaluation requires evaluation_context_factory")
@@ -368,6 +400,9 @@ def build_graph(
                 artifact_store,
                 build_result_factory,
                 persist_build_runtime_handoff=persist_build_runtime_handoff,
+                exact_revision_upstream_types=(
+                    build_checkpoint_exact_revision_upstream_types
+                ),
             ),
         ),
     )
@@ -1660,6 +1695,7 @@ def _run_build(
     build_result_factory: BuildResultFactory | None,
     *,
     persist_build_runtime_handoff: bool = False,
+    exact_revision_upstream_types: frozenset[str] = frozenset(),
 ) -> ModAgentState:
     dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
     feature_id = state["feature_id"] or state["request_id"]
@@ -1720,6 +1756,9 @@ def _run_build(
                 "Successful Build is ready for fresh-process Runtime continuation."
             ),
             resume_allowed_fields=(),
+            exact_revision_upstream_types=(
+                exact_revision_upstream_types
+            ),
         )
         _record_artifact(next_state, "workflow_checkpoint", checkpoint_ref)
     return next_state

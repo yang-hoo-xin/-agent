@@ -286,12 +286,27 @@ class ArtifactStore:
             require_latest=False,
         )
 
+    def check_freshness_with_exact_revision_types(
+        self,
+        ref: ArtifactRef,
+        *,
+        exact_revision_types: set[str],
+    ) -> FreshnessView:
+        """Check recursive freshness while preserving approved exact roles."""
+
+        return self._check_freshness(
+            ref,
+            recursive=True,
+            exact_revision_types=exact_revision_types,
+        )
+
     def _check_freshness(
         self,
         ref: ArtifactRef,
         *,
         recursive: bool,
         require_latest: bool = True,
+        exact_revision_types: set[str] | None = None,
     ) -> FreshnessView:
         envelope = self.read(ref)
         stale_reasons: list[str] = []
@@ -302,6 +317,7 @@ class ArtifactStore:
             seen,
             recursive=recursive,
             require_latest=require_latest,
+            exact_revision_types=set(exact_revision_types or set()),
         )
         if stale_reasons:
             return FreshnessView(status="stale", stale_reasons=stale_reasons)
@@ -315,11 +331,13 @@ class ArtifactStore:
         *,
         recursive: bool,
         require_latest: bool,
+        exact_revision_types: set[str],
     ) -> None:
         for upstream in envelope.get("inputs", {}).get("upstream_artifacts", []):
             upstream_requires_latest = (
                 require_latest
                 and upstream.get("require_latest", True) is not False
+                and upstream.get("artifact_type") not in exact_revision_types
             )
             upstream_ref = ArtifactRef(
                 feature_id=envelope["feature_id"],
@@ -372,12 +390,18 @@ class ArtifactStore:
                 continue
             seen.add(upstream_key)
             if recursive:
+                recursive_requires_latest = (
+                    require_latest
+                    if upstream_ref.artifact_type in exact_revision_types
+                    else upstream_requires_latest
+                )
                 self._collect_stale_reasons(
                     upstream_envelope,
                     stale_reasons,
                     seen,
                     recursive=recursive,
-                    require_latest=upstream_requires_latest,
+                    require_latest=recursive_requires_latest,
+                    exact_revision_types=exact_revision_types,
                 )
 
     def read_for_stage(self, ref: ArtifactRef, *, consumer_stage: str) -> dict[str, Any]:
@@ -1282,6 +1306,7 @@ class ArtifactStore:
             freshness = self._check_upstream_write_freshness(
                 upstream,
                 require_latest=upstream.artifact_type not in exact_revision_upstream_types,
+                exact_revision_types=exact_revision_upstream_types,
             )
             if not freshness.is_fresh and not allow_stale_upstreams:
                 raise StaleArtifactError("; ".join(freshness.stale_reasons))
@@ -1291,9 +1316,14 @@ class ArtifactStore:
         ref: ArtifactRef,
         *,
         require_latest: bool,
+        exact_revision_types: set[str],
     ) -> FreshnessView:
         if require_latest:
-            return self.check_direct_freshness(ref)
+            return self._check_freshness(
+                ref,
+                recursive=False,
+                exact_revision_types=exact_revision_types,
+            )
         try:
             self.read(ref)
         except ArtifactStoreError as exc:

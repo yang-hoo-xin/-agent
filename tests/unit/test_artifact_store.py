@@ -380,7 +380,7 @@ def test_existing_binding_reauthorization_store_requires_all_exact_roles(
     monkeypatch.setattr(
         store,
         "_check_upstream_write_freshness",
-        lambda item, require_latest: type(
+        lambda item, require_latest, exact_revision_types: type(
             "Freshness",
             (),
             {"is_fresh": True, "stale_reasons": ()},
@@ -543,7 +543,7 @@ def test_stagger_observation_request_store_requires_every_exact_role(
     monkeypatch.setattr(
         store,
         "_check_upstream_write_freshness",
-        lambda item, require_latest: type(
+        lambda item, require_latest, exact_revision_types: type(
             "Freshness",
             (),
             {"is_fresh": True, "stale_reasons": ()},
