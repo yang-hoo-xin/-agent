@@ -262,6 +262,32 @@ def bind_stagger_repair_attempt_runtime_results(
             raise ValueError("Stagger CriterionResult evaluation is missing.")
         outcome = result.get("outcome")
         owner_attempt = attempts_by_criterion.get(str(criterion))
+        prior_result = result.get("prior_criterion_result")
+        if isinstance(prior_result, Mapping) and outcome == "true":
+            if owner_attempt is not None:
+                raise ValueError(
+                    "Inherited Stagger CriterionResult was selected for rerun."
+                )
+            for key in (
+                "criterion_status",
+                "runtime_attempt_id",
+                "evidence_refs",
+                "impact_status",
+                "operator_required",
+            ):
+                item[key] = deepcopy(prior_result.get(key))
+            item["prior_result_inherited"] = True
+            item["prior_runtime_evidence_ref"] = next(
+                (
+                    dict(ref)
+                    for ref in result.get("evidence_refs", ())
+                    if isinstance(ref, Mapping)
+                    and ref.get("source") == "prior_runtime_evidence"
+                ),
+                None,
+            )
+            statuses.append(str(item["criterion_status"]))
+            continue
         if outcome == "true":
             criterion_status = "passed"
         elif outcome == "false":
@@ -277,10 +303,15 @@ def bind_stagger_repair_attempt_runtime_results(
         if item.get("impact_status") not in _IMPACT_STATUSES:
             raise ValueError("Stagger CriterionResult impact status is invalid.")
         item["criterion_status"] = criterion_status
+        result_runtime_attempt_id = result.get("runtime_attempt_id")
         item["runtime_attempt_id"] = (
-            None
-            if owner_attempt is None
-            else str(owner_attempt["runtime_attempt_id"])
+            str(owner_attempt["runtime_attempt_id"])
+            if owner_attempt is not None
+            else (
+                str(result_runtime_attempt_id)
+                if isinstance(result_runtime_attempt_id, str)
+                else None
+            )
         )
         item["evidence_refs"] = [
             dict(ref)
@@ -311,9 +342,198 @@ def bind_stagger_repair_attempt_runtime_results(
             str(attempt["runtime_attempt_id"])
             for attempt in attempt_payloads
         }
+        | {
+            str(item["runtime_attempt_id"])
+            for item in criterion_results
+            if isinstance(item, Mapping)
+            and item.get("prior_result_inherited") is True
+            and isinstance(item.get("runtime_attempt_id"), str)
+        }
     )
     bound["repair_attempt"] = repair_attempt
     return bound
+
+
+def inherit_stagger_repair_attempt_prior_results(
+    projection: Mapping[str, Any],
+    *,
+    prior_criterion_results: tuple[Mapping[str, Any], ...],
+    prior_runtime_evidence_ref: Mapping[str, Any],
+    retry_number: int,
+) -> dict[str, Any]:
+    """Project same-DLL passed results before a partial observation retry."""
+
+    if isinstance(retry_number, bool) or not isinstance(retry_number, int):
+        raise ValueError("Stagger observation retry number is invalid.")
+    path = prior_runtime_evidence_ref.get("path")
+    artifact_hash = prior_runtime_evidence_ref.get("artifact_hash")
+    if not isinstance(path, str) or not path or not isinstance(artifact_hash, str):
+        raise ValueError("Prior RuntimeEvidence identity is incomplete.")
+    bound = deepcopy(dict(projection))
+    repair_attempt = bound.get("repair_attempt")
+    criterion_results = bound.get("criterion_results")
+    if not isinstance(repair_attempt, dict) or not isinstance(
+        criterion_results, list
+    ):
+        raise ValueError("Stagger RepairAttempt projection is incomplete.")
+    by_criterion = {
+        item.get("acceptance_criterion"): item
+        for item in criterion_results
+        if isinstance(item, dict)
+        and isinstance(item.get("acceptance_criterion"), str)
+    }
+    if len(by_criterion) != len(criterion_results):
+        raise ValueError("Stagger CriterionResult ownership is invalid.")
+    seen: set[str] = set()
+    for prior in prior_criterion_results:
+        criterion = prior.get("acceptance_criterion")
+        current = by_criterion.get(criterion)
+        if (
+            not isinstance(criterion, str)
+            or criterion in seen
+            or not isinstance(current, dict)
+            or prior.get("criterion_status") != "passed"
+            or prior.get("criterion_id") != current.get("criterion_id")
+            or prior.get("source_sha256") != current.get("source_sha256")
+            or prior.get("source_snapshot_sha256")
+            != current.get("source_snapshot_sha256")
+            or prior.get("dll_sha256") != current.get("dll_sha256")
+        ):
+            raise ValueError(
+                "Prior Stagger CriterionResult does not match the current DLL."
+            )
+        seen.add(criterion)
+        for key in (
+            "criterion_status",
+            "runtime_attempt_id",
+            "evidence_refs",
+            "impact_status",
+            "operator_required",
+        ):
+            current[key] = deepcopy(prior.get(key))
+        current["prior_result_inherited"] = True
+        current["prior_runtime_evidence_ref"] = {
+            "source": "prior_runtime_evidence",
+            "locator": path,
+            "artifact_hash": artifact_hash,
+        }
+    repair_attempt["retry_count"] = retry_number
+    repair_attempt["runtime_status"] = "not_started"
+    repair_attempt["final_status"] = None
+    repair_attempt["runtime_attempt_ids"] = sorted(
+        {
+            str(item["runtime_attempt_id"])
+            for item in criterion_results
+            if isinstance(item, Mapping)
+            and item.get("prior_result_inherited") is True
+            and isinstance(item.get("runtime_attempt_id"), str)
+        }
+    )
+    bound["repair_attempt"] = repair_attempt
+    bound["criterion_results"] = criterion_results
+    return bound
+
+
+def build_stagger_observation_retry_criterion_binding(
+    runtime_evidence: Mapping[str, Any],
+    checkpoint: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Select unresolved Stagger criteria from one bound prior result."""
+
+    contract = runtime_evidence.get("acceptance_contract")
+    criteria = (
+        contract.get("acceptance_criteria")
+        if isinstance(contract, Mapping)
+        else None
+    )
+    results = runtime_evidence.get("criterion_results")
+    attempt = runtime_evidence.get("repair_attempt")
+    if (
+        not isinstance(criteria, list)
+        or not criteria
+        or any(not isinstance(item, str) or not item for item in criteria)
+        or len(set(criteria)) != len(criteria)
+        or not isinstance(results, list)
+        or len(results) != len(criteria)
+        or not isinstance(attempt, Mapping)
+    ):
+        raise ValueError(
+            "Runtime observation retry CriterionResult lineage is invalid."
+        )
+    by_criterion: dict[str, Mapping[str, Any]] = {}
+    for result in results:
+        if not isinstance(result, Mapping):
+            raise ValueError(
+                "Runtime observation retry CriterionResult is not structured."
+            )
+        criterion = result.get("acceptance_criterion")
+        if not isinstance(criterion, str) or criterion in by_criterion:
+            raise ValueError(
+                "Runtime observation retry CriterionResult ownership is invalid."
+            )
+        by_criterion[criterion] = result
+    if set(by_criterion) != set(criteria):
+        raise ValueError(
+            "Runtime observation retry CriterionResults changed from the "
+            "acceptance contract."
+        )
+
+    snapshot = checkpoint.get("state_snapshot") or {}
+    build_ref = (snapshot.get("artifacts") or {}).get("build_result")
+    build_hash = (snapshot.get("artifact_hashes") or {}).get("build_result")
+    attempt_build_ref = (attempt.get("identity_refs") or {}).get("build_result")
+    expected_source = attempt.get("source_sha256")
+    expected_snapshot = attempt.get("source_snapshot_sha256")
+    expected_dll = attempt.get("dll_sha256")
+    if (
+        not isinstance(attempt_build_ref, Mapping)
+        or attempt_build_ref.get("path") != build_ref
+        or attempt_build_ref.get("artifact_hash") != build_hash
+        or not all(
+            isinstance(value, str) and value
+            for value in (expected_source, expected_snapshot, expected_dll)
+        )
+    ):
+        raise ValueError(
+            "Runtime observation retry RepairAttempt identity is invalid."
+        )
+
+    inherited: list[dict[str, Any]] = []
+    unresolved: list[str] = []
+    for criterion in criteria:
+        result = by_criterion[criterion]
+        if (
+            result.get("source_sha256") != expected_source
+            or result.get("source_snapshot_sha256") != expected_snapshot
+            or result.get("dll_sha256") != expected_dll
+        ):
+            raise ValueError(
+                "Runtime observation retry CriterionResult identity changed."
+            )
+        status = result.get("criterion_status")
+        if status == "passed":
+            inherited.append(dict(result))
+        elif status in {"inconclusive", "not_evaluated"}:
+            unresolved.append(criterion)
+        else:
+            raise ValueError(
+                "Runtime observation retry cannot inherit a failed or unknown "
+                "CriterionResult."
+            )
+    if not unresolved:
+        raise ValueError(
+            "Runtime observation retry has no unresolved CriterionResult."
+        )
+    retry_modes = []
+    if any("General.Enabled=false" in item for item in unresolved):
+        retry_modes.append("general_enabled_false")
+    if any("General.Enabled=false" not in item for item in unresolved):
+        retry_modes.append("general_enabled_true")
+    return {
+        "retry_acceptance_criteria": unresolved,
+        "inherited_criterion_results": inherited,
+        "retry_modes": retry_modes,
+    }
 
 
 def _criterion_id(criterion: str) -> str:
@@ -354,6 +574,8 @@ def evaluate_stagger_acceptance(
     *,
     expected_modes: tuple[str, ...],
     acceptance_criteria: tuple[str, ...],
+    prior_criterion_results: tuple[Mapping[str, Any], ...] = (),
+    prior_runtime_evidence_ref: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Keep attempt completion, overall acceptance, and criterion facts separate."""
 
@@ -366,6 +588,45 @@ def evaluate_stagger_acceptance(
         }
         for criterion in acceptance_criteria
     }
+    if prior_criterion_results:
+        if (
+            not isinstance(prior_runtime_evidence_ref, Mapping)
+            or not isinstance(prior_runtime_evidence_ref.get("path"), str)
+            or not isinstance(
+                prior_runtime_evidence_ref.get("artifact_hash"), str
+            )
+        ):
+            raise ValueError(
+                "Inherited Stagger criteria require one prior RuntimeEvidence ref."
+            )
+        for prior in prior_criterion_results:
+            criterion = prior.get("acceptance_criterion")
+            if (
+                criterion not in criterion_results
+                or prior.get("criterion_status") != "passed"
+            ):
+                raise ValueError(
+                    "Only exact passed Stagger CriterionResults may be inherited."
+                )
+            result = criterion_results[str(criterion)]
+            result["outcome"] = "true"
+            result["evidence_strength"] = "inherited_bound_result"
+            result["evidence_refs"] = [
+                *[
+                    dict(item)
+                    for item in prior.get("evidence_refs", ())
+                    if isinstance(item, Mapping)
+                ],
+                {
+                    "source": "prior_runtime_evidence",
+                    "locator": prior_runtime_evidence_ref["path"],
+                    "artifact_hash": prior_runtime_evidence_ref[
+                        "artifact_hash"
+                    ],
+                },
+            ]
+            result["prior_result_inherited"] = True
+            result["prior_criterion_result"] = dict(prior)
     for attempt in attempts_by_mode.values():
         _apply_operator_observations(criterion_results, attempt)
         _apply_supported_acceptance(criterion_results, attempt)
@@ -383,6 +644,13 @@ def evaluate_stagger_acceptance(
         visual_result = criterion_results[STAGGER_VISUAL_ACCEPTANCE_CRITERION]
         visual_result["outcome"] = "false"
         visual_result["evidence_strength"] = "confirmed"
+        if "prior_criterion_result" in visual_result:
+            visual_result.pop("prior_criterion_result")
+            visual_result["prior_result_inherited"] = False
+            if isinstance(enabled_attempt.get("runtime_attempt_id"), str):
+                visual_result["runtime_attempt_id"] = enabled_attempt[
+                    "runtime_attempt_id"
+                ]
         visual_result["evidence_refs"] = _unique_evidence_refs(
             [
                 *visual_result["evidence_refs"],

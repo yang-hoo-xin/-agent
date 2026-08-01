@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from src.mod_agent.runtime import (
     GTFOProcessHandle,
     GTFORealRuntimeProfile,
@@ -17,7 +19,10 @@ from src.mod_agent.runtime import (
 from src.mod_agent.runtime import gtfo_stagger as gtfo_stagger_module
 from src.mod_agent.runtime.stagger_diagnosis import (
     bind_stagger_repair_attempt_runtime_results,
+    build_stagger_observation_retry_criterion_binding,
     build_stagger_repair_attempt_projection,
+    evaluate_stagger_acceptance,
+    inherit_stagger_repair_attempt_prior_results,
 )
 
 
@@ -168,6 +173,36 @@ def test_stagger_acceptance_report_binds_two_modes_without_writing(
         VISUAL_CRITERION,
         MARKER_CRITERION,
     ]
+
+
+def test_stagger_acceptance_report_selects_only_unresolved_enabled_criterion(
+    tmp_path: Path,
+) -> None:
+    base_profile, stagger_profile = _profiles(tmp_path)
+
+    report = build_gtfo_stagger_acceptance_report(
+        stagger_profile,
+        working_directory=base_profile.working_directory,
+        acceptance_criteria=(
+            DISABLED_CRITERION,
+            VISUAL_CRITERION,
+            MARKER_CRITERION,
+        ),
+        selected_acceptance_criteria=(VISUAL_CRITERION,),
+    )
+
+    assert report["status"] == "ready"
+    assert report["selected_acceptance_criteria"] == [VISUAL_CRITERION]
+    assert report["attempts"] == [
+        {
+            "mode": "general_enabled_true",
+            "acceptance_criteria": [VISUAL_CRITERION],
+            "requires_operator_completion": True,
+            "requires_product_marker": True,
+        }
+    ]
+    assert report["writes_performed"] is False
+    assert report["process_launched"] is False
 
 
 def test_stagger_acceptance_report_blocks_changed_reviewed_config(
@@ -1059,3 +1094,178 @@ def test_stagger_repair_attempt_preserves_partial_criterion_results() -> None:
     assert results[MARKER_CRITERION]["runtime_attempt_id"] is None
     assert bound["repair_attempt"]["runtime_status"] == "failed"
     assert bound["repair_attempt"]["final_status"] == "failed"
+
+
+def test_stagger_observation_retry_inherits_passed_results_for_same_dll() -> None:
+    projection = _repair_attempt_projection()
+    prior_results = []
+    for item in projection["criterion_results"]:
+        if item["acceptance_criterion"] == VISUAL_CRITERION:
+            continue
+        prior = dict(item)
+        prior["criterion_status"] = "passed"
+        prior["runtime_attempt_id"] = "runtime_initial_001"
+        prior["evidence_refs"] = [
+            {"source": "gtfo_operator_completion", "locator": "a" * 64}
+        ]
+        prior_results.append(prior)
+    enabled_attempt = {
+        "runtime_attempt_id": "runtime_retry_001",
+        "acceptance_contract": {"acceptance_criteria": [VISUAL_CRITERION]},
+        "operator_completion": {
+            "request_sha256": "b" * 64,
+            "semantic_consistency": {"status": "consistent"},
+            "observations": [
+                {
+                    "acceptance_criterion": VISUAL_CRITERION,
+                    "criterion_sha256": "c" * 64,
+                    "semantic_consistency": "consistent",
+                    "status": "passed",
+                }
+            ],
+        },
+        "evidence_items": [],
+    }
+    prior_ref = {
+        "path": "runtime-evidence.json",
+        "artifact_hash": "d" * 64,
+    }
+
+    evaluation = evaluate_stagger_acceptance(
+        {"general_enabled_true": enabled_attempt},
+        expected_modes=("general_enabled_true",),
+        acceptance_criteria=(
+            DISABLED_CRITERION,
+            VISUAL_CRITERION,
+            MARKER_CRITERION,
+        ),
+        prior_criterion_results=tuple(prior_results),
+        prior_runtime_evidence_ref=prior_ref,
+    )
+    bound = bind_stagger_repair_attempt_runtime_results(
+        projection,
+        acceptance_evaluation=evaluation,
+        attempt_payloads=(enabled_attempt,),
+    )
+
+    assert evaluation["overall_acceptance"] == "accepted"
+    results = {
+        item["acceptance_criterion"]: item
+        for item in bound["criterion_results"]
+    }
+    assert results[VISUAL_CRITERION]["prior_result_inherited"] is False
+    assert results[VISUAL_CRITERION]["runtime_attempt_id"] == "runtime_retry_001"
+    assert results[DISABLED_CRITERION]["prior_result_inherited"] is True
+    assert results[DISABLED_CRITERION]["runtime_attempt_id"] == (
+        "runtime_initial_001"
+    )
+    assert results[DISABLED_CRITERION]["prior_runtime_evidence_ref"] == {
+        "source": "prior_runtime_evidence",
+        "locator": "runtime-evidence.json",
+        "artifact_hash": "d" * 64,
+    }
+    assert results[MARKER_CRITERION]["prior_result_inherited"] is True
+    assert bound["repair_attempt"]["runtime_status"] == "passed"
+    assert bound["repair_attempt"]["final_status"] == "accepted"
+    assert bound["repair_attempt"]["runtime_attempt_ids"] == [
+        "runtime_initial_001",
+        "runtime_retry_001",
+    ]
+
+
+def test_stagger_observation_retry_preflight_projects_inherited_results() -> None:
+    projection = _repair_attempt_projection()
+    prior = dict(projection["criterion_results"][0])
+    prior["criterion_status"] = "passed"
+    prior["runtime_attempt_id"] = "runtime_initial_001"
+    prior["evidence_refs"] = [
+        {"source": "gtfo_operator_completion", "locator": "a" * 64}
+    ]
+
+    inherited = inherit_stagger_repair_attempt_prior_results(
+        projection,
+        prior_criterion_results=(prior,),
+        prior_runtime_evidence_ref={
+            "path": "runtime-evidence.json",
+            "artifact_hash": "b" * 64,
+        },
+        retry_number=1,
+    )
+
+    results = inherited["criterion_results"]
+    assert results[0]["criterion_status"] == "passed"
+    assert results[0]["prior_result_inherited"] is True
+    assert results[1]["criterion_status"] == "not_evaluated"
+    assert inherited["repair_attempt"]["retry_count"] == 1
+    assert inherited["repair_attempt"]["runtime_status"] == "not_started"
+    assert inherited["repair_attempt"]["final_status"] is None
+    assert inherited["repair_attempt"]["runtime_attempt_ids"] == [
+        "runtime_initial_001"
+    ]
+
+
+def test_stagger_observation_retry_selects_only_unresolved_bound_criteria() -> None:
+    checkpoint = {
+        "state_snapshot": {
+            "artifacts": {"build_result": "build-result.json"},
+            "artifact_hashes": {"build_result": "a" * 64},
+        }
+    }
+    base_result = {
+        "schema_version": "criterion_result_v1",
+        "source_sha256": "b" * 64,
+        "source_snapshot_sha256": "c" * 64,
+        "dll_sha256": "d" * 64,
+        "impact_status": "needs_regression",
+        "operator_required": True,
+        "prior_result_inherited": False,
+        "evidence_refs": [],
+    }
+    runtime = {
+        "acceptance_contract": {
+            "acceptance_criteria": [DISABLED_CRITERION, VISUAL_CRITERION]
+        },
+        "repair_attempt": {
+            "source_sha256": "b" * 64,
+            "source_snapshot_sha256": "c" * 64,
+            "dll_sha256": "d" * 64,
+            "identity_refs": {
+                "build_result": {
+                    "path": "build-result.json",
+                    "artifact_hash": "a" * 64,
+                }
+            },
+        },
+        "criterion_results": [
+            {
+                **base_result,
+                "acceptance_criterion": DISABLED_CRITERION,
+                "criterion_status": "passed",
+                "runtime_attempt_id": "runtime_initial_disabled",
+            },
+            {
+                **base_result,
+                "acceptance_criterion": VISUAL_CRITERION,
+                "criterion_status": "inconclusive",
+                "runtime_attempt_id": "runtime_initial_enabled",
+            },
+        ],
+    }
+
+    binding = build_stagger_observation_retry_criterion_binding(
+        runtime,
+        checkpoint,
+    )
+
+    assert binding["retry_acceptance_criteria"] == [VISUAL_CRITERION]
+    assert binding["retry_modes"] == ["general_enabled_true"]
+    assert binding["inherited_criterion_results"] == [
+        runtime["criterion_results"][0]
+    ]
+
+    runtime["criterion_results"][0]["dll_sha256"] = "e" * 64
+    with pytest.raises(ValueError, match="CriterionResult identity changed"):
+        build_stagger_observation_retry_criterion_binding(
+            runtime,
+            checkpoint,
+        )

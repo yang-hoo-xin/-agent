@@ -46,7 +46,9 @@ from src.mod_agent.runtime import (
     temporarily_deploy_verified_plugin,
 )
 from src.mod_agent.runtime.stagger_diagnosis import (
+    build_stagger_observation_retry_criterion_binding,
     build_stagger_repair_attempt_projection,
+    inherit_stagger_repair_attempt_prior_results,
 )
 from src.mod_agent.workflow import (
     ResumeDecision,
@@ -1500,6 +1502,7 @@ def _make_deploying_runtime_evidence_factory(
             run_id=runtime_run_id,
             repair_attempt_projection=repair_attempt_projection,
             runtime_attempt_namespace=runtime_attempt_namespace,
+            observation_retry_binding=runtime_observation_retry,
         )
         if runtime_observation_retry is None:
             return stagger_factory
@@ -2910,6 +2913,25 @@ def _load_runtime_continuation_handoff(
             "Runtime continuation preflight was blocked: "
             + ", ".join(blocker_codes)
         )
+    if (
+        retry_runtime_observation
+        and prior_runtime_evidence_ref is not None
+        and observation_retry_binding is not None
+    ):
+        prior_runtime = artifact_store.read(prior_runtime_evidence_ref)["data"]
+        if prior_runtime.get("criterion_results") is not None:
+            try:
+                observation_retry_binding.update(
+                    build_stagger_observation_retry_criterion_binding(
+                        prior_runtime,
+                        checkpoint,
+                    )
+                )
+            except ValueError as exc:
+                raise LocalEntryError(
+                    "Runtime observation retry CriterionResult preflight failed: "
+                    f"{exc}"
+                ) from exc
 
     return _RuntimeContinuationHandoff(
         run_root=root,
@@ -3061,7 +3083,7 @@ def _stagger_repair_attempt_projection(
             "Stagger RepairAttempt criterion ownership is incomplete."
         )
     try:
-        return build_stagger_repair_attempt_projection(
+        projection = build_stagger_repair_attempt_projection(
             feature_id=str(handoff.checkpoint["feature_id"]),
             run_id=str(handoff.checkpoint["run_id"]),
             repair_plan=payloads["repair_plan"],
@@ -3090,6 +3112,26 @@ def _stagger_repair_attempt_projection(
             dll_sha256=dll_sha256,
             diff_hash=diff_hash,
         )
+        retry_binding = handoff.observation_retry_binding
+        if retry_binding is not None and "inherited_criterion_results" in retry_binding:
+            projection = inherit_stagger_repair_attempt_prior_results(
+                projection,
+                prior_criterion_results=tuple(
+                    item
+                    for item in retry_binding.get(
+                        "inherited_criterion_results", ()
+                    )
+                    if isinstance(item, Mapping)
+                ),
+                prior_runtime_evidence_ref={
+                    "path": retry_binding.get("prior_runtime_evidence_ref"),
+                    "artifact_hash": retry_binding.get(
+                        "prior_runtime_evidence_hash"
+                    ),
+                },
+                retry_number=retry_binding.get("retry_number"),
+            )
+        return projection
     except ValueError as exc:
         raise LocalEntryError(
             f"Stagger RepairAttempt projection is invalid: {exc}"
@@ -3124,6 +3166,7 @@ def _runtime_continuation_backup_report(
     run_root: Path,
     *,
     stagger_enabled: bool,
+    stagger_modes: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Read-validate compact deployment backup paths and existing material state."""
 
@@ -3145,12 +3188,25 @@ def _runtime_continuation_backup_report(
         raise LocalEntryError(
             "Runtime continuation found unresolved prior deployment backup state."
         )
+    modes = (
+        stagger_modes
+        if stagger_enabled and stagger_modes is not None
+        else (
+            ("general_enabled_false", "general_enabled_true")
+            if stagger_enabled
+            else ("single_process",)
+        )
+    )
+    if not modes:
+        raise LocalEntryError("Stagger Runtime requires at least one mode.")
     relative_paths = (
-        (
-            "general_enabled_false/plugin/original.bin",
-            "general_enabled_false/config/original.bin",
-            "general_enabled_true/plugin/original.bin",
-            "general_enabled_true/config/original.bin",
+        tuple(
+            relative_path
+            for mode in modes
+            for relative_path in (
+                f"{mode}/plugin/original.bin",
+                f"{mode}/config/original.bin",
+            )
         )
         if stagger_enabled
         else ("original.bin",)
@@ -3161,11 +3217,13 @@ def _runtime_continuation_backup_report(
     ]
     maximum_path_chars = max(len(path) for path in planned_paths)
     diagnostic_relative_paths = (
-        (
-            "runtime_process_diagnostics/general_enabled_false/stdout.log",
-            "runtime_process_diagnostics/general_enabled_false/stderr.log",
-            "runtime_process_diagnostics/general_enabled_true/stdout.log",
-            "runtime_process_diagnostics/general_enabled_true/stderr.log",
+        tuple(
+            relative_path
+            for mode in modes
+            for relative_path in (
+                f"runtime_process_diagnostics/{mode}/stdout.log",
+                f"runtime_process_diagnostics/{mode}/stderr.log",
+            )
         )
         if stagger_enabled
         else (
@@ -3208,6 +3266,7 @@ def _runtime_observation_retry_output_report(
     runtime_output_root: str | Path,
     feature_id: str,
     stagger_enabled: bool,
+    stagger_modes: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Read-validate a fresh output root for one Stagger Runtime attempt."""
 
@@ -3249,9 +3308,14 @@ def _runtime_observation_retry_output_report(
     deployment_backup = _runtime_continuation_backup_report(
         output_root,
         stagger_enabled=stagger_enabled,
+        stagger_modes=stagger_modes,
     )
     modes = (
-        ("general_enabled_false", "general_enabled_true")
+        (
+            stagger_modes
+            if stagger_modes is not None
+            else ("general_enabled_false", "general_enabled_true")
+        )
         if stagger_enabled
         else ("single_process",)
     )
@@ -3536,6 +3600,18 @@ def preflight_local_runtime(
             runtime_plugin_destination=runtime_plugin_destination,
             feature_spec=handoff.feature_spec,
             runtime_output_root=selected_runtime_output_root,
+            selected_acceptance_criteria=(
+                tuple(
+                    str(item)
+                    for item in (handoff.observation_retry_binding or {}).get(
+                        "retry_acceptance_criteria", ()
+                    )
+                )
+                if retry_runtime_observation
+                and "retry_acceptance_criteria"
+                in (handoff.observation_retry_binding or {})
+                else None
+            ),
         )
         if Path(str(build_artifact["path"])).name != Path(
             str(runtime_profile["plugin_deployment"]["destination_path"])
@@ -3550,6 +3626,17 @@ def preflight_local_runtime(
                 feature_id=feature_id,
                 stagger_enabled=(
                     runtime_profile.get("stagger_acceptance") is not None
+                ),
+                stagger_modes=(
+                    tuple(
+                        str(item)
+                        for item in (handoff.observation_retry_binding or {}).get(
+                            "retry_modes", ()
+                        )
+                    )
+                    if retry_runtime_observation
+                    and "retry_modes" in (handoff.observation_retry_binding or {})
+                    else None
                 ),
             )
             runtime_profile["deployment_backup"] = runtime_output_report[
@@ -3748,6 +3835,7 @@ def _runtime_profile_preflight_record(
     runtime_plugin_destination: str | Path,
     feature_spec: Mapping[str, Any],
     runtime_output_root: str | Path | None = None,
+    selected_acceptance_criteria: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Validate one configured Runtime profile without granting external authority."""
 
@@ -3889,6 +3977,7 @@ def _runtime_profile_preflight_record(
             stagger_profile,
             working_directory=profile.working_directory,
             acceptance_criteria=tuple(acceptance_criteria),
+            selected_acceptance_criteria=selected_acceptance_criteria,
         )
         if stagger_acceptance["status"] != "ready":
             raise LocalEntryError(
@@ -4078,6 +4167,18 @@ def resume_local_runtime(
             runtime_output_root=(
                 root if selected_runtime_output_root is not None else None
             ),
+            selected_acceptance_criteria=(
+                tuple(
+                    str(item)
+                    for item in (handoff.observation_retry_binding or {}).get(
+                        "retry_acceptance_criteria", ()
+                    )
+                )
+                if retry_runtime_observation
+                and "retry_acceptance_criteria"
+                in (handoff.observation_retry_binding or {})
+                else None
+            ),
         )
         repair_attempt_projection = _stagger_repair_attempt_projection(
             handoff,
@@ -4125,6 +4226,17 @@ def resume_local_runtime(
                 feature_id=feature_id,
                 stagger_enabled=(
                     runtime_admission.get("stagger_acceptance") is not None
+                ),
+                stagger_modes=(
+                    tuple(
+                        str(item)
+                        for item in (handoff.observation_retry_binding or {}).get(
+                            "retry_modes", ()
+                        )
+                    )
+                    if retry_runtime_observation
+                    and "retry_modes" in (handoff.observation_retry_binding or {})
+                    else None
                 ),
             )
             backup_report = runtime_output_report["deployment_backup"]

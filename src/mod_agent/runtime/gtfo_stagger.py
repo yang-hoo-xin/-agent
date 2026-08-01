@@ -151,6 +151,7 @@ def build_gtfo_stagger_acceptance_report(
     *,
     working_directory: str | Path,
     acceptance_criteria: tuple[str, ...],
+    selected_acceptance_criteria: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Validate exact two-mode config and criterion ownership without writing."""
 
@@ -207,6 +208,42 @@ def build_gtfo_stagger_acceptance_report(
             "acceptance criterion"
         )
 
+    selected = (
+        list(acceptance_criteria)
+        if selected_acceptance_criteria is None
+        else list(selected_acceptance_criteria)
+    )
+    if (
+        not selected
+        or len(set(selected)) != len(selected)
+        or any(item not in acceptance_criteria for item in selected)
+    ):
+        blockers.append(
+            "Stagger Runtime selected acceptance criteria must be one non-empty "
+            "exact subset of the FeatureSpec acceptance criteria"
+        )
+    selected_disabled = [item for item in disabled_criteria if item in selected]
+    selected_enabled = [item for item in enabled_criteria if item in selected]
+    attempts = []
+    if selected_disabled:
+        attempts.append(
+            {
+                "mode": "general_enabled_false",
+                "acceptance_criteria": selected_disabled,
+                "requires_operator_completion": True,
+                "requires_product_marker": False,
+            }
+        )
+    if selected_enabled:
+        attempts.append(
+            {
+                "mode": "general_enabled_true",
+                "acceptance_criteria": selected_enabled,
+                "requires_operator_completion": True,
+                "requires_product_marker": True,
+            }
+        )
+
     return {
         "schema_version": "gtfo_stagger_acceptance_report_v1",
         "status": "ready" if not blockers else "blocked",
@@ -229,20 +266,12 @@ def build_gtfo_stagger_acceptance_report(
             "enabled": enabled_source,
             "restore_after_each_attempt": True,
         },
-        "attempts": [
-            {
-                "mode": "general_enabled_false",
-                "acceptance_criteria": disabled_criteria,
-                "requires_operator_completion": True,
-                "requires_product_marker": False,
-            },
-            {
-                "mode": "general_enabled_true",
-                "acceptance_criteria": enabled_criteria,
-                "requires_operator_completion": True,
-                "requires_product_marker": True,
-            },
-        ],
+        **(
+            {"selected_acceptance_criteria": selected}
+            if selected_acceptance_criteria is not None
+            else {}
+        ),
+        "attempts": attempts,
     }
 
 
@@ -490,6 +519,7 @@ def make_gtfo_stagger_runtime_evidence_factory(
     run_id: str | None = None,
     repair_attempt_projection: Mapping[str, Any] | None = None,
     runtime_attempt_namespace: str | None = None,
+    observation_retry_binding: Mapping[str, Any] | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Build the selected two-process graph Runtime factory."""
 
@@ -531,6 +561,16 @@ def make_gtfo_stagger_runtime_evidence_factory(
             stagger_profile,
             working_directory=base_profile.working_directory,
             acceptance_criteria=acceptance_criteria,
+            selected_acceptance_criteria=(
+                None
+                if observation_retry_binding is None
+                else tuple(
+                    str(item)
+                    for item in observation_retry_binding.get(
+                        "retry_acceptance_criteria", ()
+                    )
+                )
+            ),
         )
         if report["status"] != "ready":
             raise GTFOStaggerRuntimeError(
@@ -668,6 +708,29 @@ def make_gtfo_stagger_runtime_evidence_factory(
             attempt_payloads=attempt_payloads,
             expected_modes=tuple(
                 str(item["mode"]) for item in report["attempts"]
+            ),
+            prior_criterion_results=(
+                ()
+                if observation_retry_binding is None
+                else tuple(
+                    item
+                    for item in observation_retry_binding.get(
+                        "inherited_criterion_results", ()
+                    )
+                    if isinstance(item, Mapping)
+                )
+            ),
+            prior_runtime_evidence_ref=(
+                None
+                if observation_retry_binding is None
+                else {
+                    "path": observation_retry_binding.get(
+                        "prior_runtime_evidence_ref"
+                    ),
+                    "artifact_hash": observation_retry_binding.get(
+                        "prior_runtime_evidence_hash"
+                    ),
+                }
             ),
         )
         if repair_attempt_projection is not None:
@@ -853,6 +916,8 @@ def _aggregate_stagger_attempts(
     runtime_verification_plan: tuple[str, ...],
     attempt_payloads: list[dict[str, Any]],
     expected_modes: tuple[str, ...],
+    prior_criterion_results: tuple[Mapping[str, Any], ...] = (),
+    prior_runtime_evidence_ref: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     attempts_by_mode = {
         str(payload.get("stagger_attempt_mode")): payload
@@ -897,6 +962,8 @@ def _aggregate_stagger_attempts(
         attempts_by_mode,
         expected_modes=expected_modes,
         acceptance_criteria=acceptance_criteria,
+        prior_criterion_results=prior_criterion_results,
+        prior_runtime_evidence_ref=prior_runtime_evidence_ref,
     )
     runtime_failure_diagnosis = (
         build_stagger_runtime_failure_diagnosis(

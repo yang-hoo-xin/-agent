@@ -313,6 +313,8 @@ class WorkflowCheckpointStore:
         self,
         checkpoint_ref: ArtifactRef,
         checkpoint_envelope: dict[str, Any],
+        *,
+        additional_exact_revision_types: frozenset[str] = frozenset(),
     ):
         checkpoint = checkpoint_envelope["data"]
         if checkpoint.get("checkpoint_stage") != "build":
@@ -325,6 +327,7 @@ class WorkflowCheckpointStore:
             )
             if isinstance(item, dict) and item.get("require_latest") is False
         }
+        exact_types.update(additional_exact_revision_types)
         return self.artifact_store.check_freshness_with_exact_revision_types(
             checkpoint_ref,
             exact_revision_types=exact_types,
@@ -544,6 +547,7 @@ class WorkflowCheckpointStore:
         freshness = self._checkpoint_freshness(
             checkpoint_ref,
             checkpoint_envelope,
+            additional_exact_revision_types=frozenset({"repair_plan"}),
         )
         if not freshness.is_fresh:
             blockers.append(
