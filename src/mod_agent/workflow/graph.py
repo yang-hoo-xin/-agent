@@ -791,7 +791,15 @@ def _run_generate_patch_proposal(
 ) -> ModAgentState:
     if state["current_stage"] == "repair_plan" and "repair_plan" in state["artifacts"]:
         repair_plan = _read_artifact_data(state, artifact_store, "repair_plan")
-        proposal = RepairPatchProposalBuilder().build(repair_plan)
+        implementation = _read_artifact_data(
+            state,
+            artifact_store,
+            "implementation_plan",
+        )
+        proposal = RepairPatchProposalBuilder().build(
+            repair_plan,
+            implementation_plan=implementation,
+        )
         upstream_refs = [
             _artifact_ref_from_state(state, "implementation_plan"),
             _artifact_ref_from_state(state, "repair_plan"),

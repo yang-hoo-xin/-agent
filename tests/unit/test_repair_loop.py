@@ -1064,6 +1064,144 @@ def test_repair_proposal_reuses_non_hook_plan_validation_contract() -> None:
     )
 
 
+def test_repair_proposal_cannot_bypass_required_hook_binding() -> None:
+    implementation_plan = _implementation_plan_payload()
+    implementation_plan["binding_registry"]["supporting_bindings"] = [
+        {
+            "binding_id": "hook_target_001",
+            "evidence_id": "ev_hook_001",
+            "source_path": "decompiled/EnemyHook.cs",
+            "source_type": "decompiled_api",
+            "target_symbol": "EnemyHook.Apply",
+            "target_span": {"start_line": 20, "end_line": 30},
+            "declaring_type": "EnemyHook",
+            "method_name": "Apply",
+            "parameter_types": [],
+            "return_type": "System.Void",
+            "method_kind": "instance_method",
+            "retrieval_method": "symbol_exact",
+            "claim_supported": "EnemyHook.Apply is the selected Hook.",
+            "authority": "mod_agent_deterministic",
+            "usage": "hook_target",
+        }
+    ]
+    implementation_plan["proposed_changes"] = [
+        {
+            "change_id": "chg_001",
+            "change_type": "repair_hook",
+            "edit_binding_id": "edit_binding_001",
+            "hook_target_binding_id": "hook_target_001",
+            "supporting_binding_ids": ["hook_target_001"],
+            "operation": "repair_hook_behavior",
+            "expected_validation": ["compile"],
+            "rollback_hint": "Restore the Hook behavior.",
+        }
+    ]
+    evidence_pack = _evidence_pack()
+    evidence_pack["items"].append(
+        {
+            "evidence_id": "ev_hook_001",
+            "source_type": "decompiled_api",
+            "source_path": "decompiled/EnemyHook.cs",
+            "symbol": "EnemyHook.Apply",
+            "span": {"start_line": 20, "end_line": 30},
+            "declaring_type": "EnemyHook",
+            "method_name": "Apply",
+            "parameter_types": [],
+            "return_type": "System.Void",
+            "method_kind": "instance_method",
+        }
+    )
+    plan = RepairPlanner(retry_budget=2).from_build_failure(
+        build_result=_failed_build_result(
+            "feature_001",
+            diagnostic_file="mods/BetterHitFeedback/Plugin.cs",
+        ).to_artifact_payload(),
+        build_result_ref="artifacts/features/feature_001/build_result.json",
+        retry_count=0,
+        target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+
+    proposal = RepairPatchProposalBuilder().build(
+        plan,
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+    assert proposal["diff_intent"][0]["hook_target_binding_id"] == (
+        "hook_target_001"
+    )
+
+    for invalid_hook_id in (None, "hook_target_wrong"):
+        invalid = json.loads(json.dumps(proposal))
+        invalid["diff_intent"][0]["hook_target_binding_id"] = invalid_hook_id
+        review = ProposalReviewer().review(
+            invalid,
+            repair_plan=plan,
+            implementation_plan=implementation_plan,
+            evidence_pack=evidence_pack,
+            feature_spec={
+                "target_behavior": "make Load enable diagnostics",
+                "hook_requirement": {
+                    "required": True,
+                    "reason": "repair changes the selected Hook",
+                },
+            },
+            permission_level="dry_run_write",
+        )
+
+        assert review.allowed_next_stage is None
+        assert any(
+            finding.rule_id == "hook_target_binding"
+            for finding in review.findings
+        )
+
+
+def test_repair_proposal_blocks_duplicate_plan_changes_for_one_binding() -> None:
+    implementation_plan = _implementation_plan_payload()
+    implementation_plan["proposed_changes"] = [
+        {
+            "change_id": "chg_001",
+            "edit_binding_id": "edit_binding_001",
+            "expected_validation": ["compile"],
+        },
+        {
+            "change_id": "chg_002",
+            "edit_binding_id": "edit_binding_001",
+            "expected_validation": ["runtime regression"],
+        },
+    ]
+    plan = RepairPlanner(retry_budget=2).from_build_failure(
+        build_result=_failed_build_result(
+            "feature_001",
+            diagnostic_file="mods/BetterHitFeedback/Plugin.cs",
+        ).to_artifact_payload(),
+        build_result_ref="artifacts/features/feature_001/build_result.json",
+        retry_count=0,
+        target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+
+    proposal = RepairPatchProposalBuilder().build(
+        plan,
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+
+    assert proposal["blocked"] is True
+    assert proposal["diff_intent"] == []
+    assert proposal["blockers"] == [
+        {
+            "code": "REPAIR_PLAN_BINDING_AMBIGUOUS",
+            "message": (
+                "Repair Proposal cannot select among multiple "
+                "ImplementationPlan changes for one edit binding."
+            ),
+            "binding_id": "edit_binding_001",
+        }
+    ]
+
+
 def test_repair_plan_blocks_scope_outside_original_proposal_context() -> None:
     plan = RepairPlanner(retry_budget=2).from_build_failure(
         build_result=_failed_build_result("feature_001").to_artifact_payload(),
@@ -1183,7 +1321,9 @@ def test_repair_routes_are_explicit() -> None:
     assert route_after_review(state) == "blocked"
 
 
-def test_graph_repair_uses_current_proposal_review_failure_owner(tmp_path: Path) -> None:
+def test_graph_repair_reuses_plan_validation_before_second_build_failure(
+    tmp_path: Path,
+) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
     diagnostic_file = str(tmp_path / "source" / "Plugin.cs")
 
@@ -1223,11 +1363,11 @@ def test_graph_repair_uses_current_proposal_review_failure_owner(tmp_path: Path)
 
     assert result["current_stage"] == "blocked"
     assert "repair_plan" in result["artifacts"]
-    assert repair_plan["failure_source"] == "proposal_review"
-    assert repair_plan["failure_class"] == "proposal_review:validation_contract"
-    assert repair_plan["retry_exhausted"] is False
+    assert repair_plan["failure_source"] == "build"
+    assert repair_plan["failure_class"] == "missing_reference"
+    assert repair_plan["retry_exhausted"] is True
     assert repair_plan["allowed_next_stage"] is None
-    assert repair_plan["blockers"][0]["code"] == "REVIEW_REPLAN_REQUIRED"
+    assert repair_plan["blockers"][0]["code"] == "RETRY_BUDGET_EXHAUSTED"
     assert repair_plan["source_proposal"]["ref"] == (
         result["artifacts"]["patch_proposal"]
     )
@@ -1241,7 +1381,7 @@ def test_graph_repair_uses_current_proposal_review_failure_owner(tmp_path: Path)
         and event["event_type"] == "node_finished"
         for event in result["trace_events"]
     )
-    assert result["blockers"][-1]["code"] == "REVIEW_REPLAN_REQUIRED"
+    assert result["blockers"][-1]["code"] == "RETRY_BUDGET_EXHAUSTED"
 
 
 def test_graph_review_revision_creates_repair_plan_without_success_artifacts(

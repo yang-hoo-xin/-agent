@@ -1020,7 +1020,31 @@ class RepairPatchProposalBuilder:
 
         feature_id = str(repair_plan.get("feature_id") or "unknown_feature")
         evidence_refs = tuple(str(ref) for ref in repair_plan.get("evidence_refs", []))
-        blockers = tuple(repair_plan.get("blockers") or ())
+        minimal_changes = list(repair_plan.get("minimal_changes") or [])
+        (
+            planned_changes_by_binding,
+            ambiguous_planned_bindings,
+        ) = self._planned_changes_by_binding(implementation_plan)
+        selected_ambiguous_bindings = sorted(
+            {
+                str(change.get("edit_binding_id") or "")
+                for change in minimal_changes
+                if isinstance(change, dict)
+                and str(change.get("edit_binding_id") or "")
+                in ambiguous_planned_bindings
+            }
+        )
+        blockers = tuple(repair_plan.get("blockers") or ()) + tuple(
+            {
+                "code": "REPAIR_PLAN_BINDING_AMBIGUOUS",
+                "message": (
+                    "Repair Proposal cannot select among multiple "
+                    "ImplementationPlan changes for one edit binding."
+                ),
+                "binding_id": binding_id,
+            }
+            for binding_id in selected_ambiguous_bindings
+        )
         if repair_plan.get("retry_exhausted") or blockers:
             return PatchProposal(
                 proposal_id=stable_proposal_id(feature_id, evidence_refs),
@@ -1055,10 +1079,6 @@ class RepairPatchProposalBuilder:
                 blockers=blockers,
             )
 
-        minimal_changes = list(repair_plan.get("minimal_changes") or [])
-        planned_changes_by_binding = self._planned_changes_by_binding(
-            implementation_plan
-        )
         files = tuple(
             dict.fromkeys(str(path) for path in repair_plan.get("display_files") or [])
         )
@@ -1210,19 +1230,26 @@ class RepairPatchProposalBuilder:
     @staticmethod
     def _planned_changes_by_binding(
         implementation_plan: dict[str, Any] | None,
-    ) -> dict[str, dict[str, Any]]:
+    ) -> tuple[dict[str, dict[str, Any]], frozenset[str]]:
         if not isinstance(implementation_plan, dict):
-            return {}
+            return {}, frozenset()
         grouped: dict[str, list[dict[str, Any]]] = {}
         for change in implementation_plan.get("proposed_changes") or []:
             if not isinstance(change, dict) or not change.get("edit_binding_id"):
                 continue
             grouped.setdefault(str(change["edit_binding_id"]), []).append(change)
-        return {
-            binding_id: changes[0]
-            for binding_id, changes in grouped.items()
-            if len(changes) == 1
-        }
+        return (
+            {
+                binding_id: changes[0]
+                for binding_id, changes in grouped.items()
+                if len(changes) == 1
+            },
+            frozenset(
+                binding_id
+                for binding_id, changes in grouped.items()
+                if len(changes) > 1
+            ),
+        )
 
 
 def _failure_repair_context(

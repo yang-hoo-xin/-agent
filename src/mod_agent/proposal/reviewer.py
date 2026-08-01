@@ -1029,7 +1029,11 @@ class ProposalReviewer:
                         change_id=change_id,
                     )
                 )
-            planned_change = planned_changes.get(change_id or "")
+            planned_change = (
+                planned_repair
+                if repair_plan is not None and planned_repair is not None
+                else planned_changes.get(change_id or "")
+            )
             if not planned_change or str(
                 planned_change.get("hook_target_binding_id") or ""
             ) != binding_id:
