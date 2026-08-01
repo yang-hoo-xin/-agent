@@ -202,6 +202,7 @@ class ProposalReviewer:
                 implementation_plan=implementation_plan,
                 evidence_pack=evidence_pack,
                 feature_spec=feature_spec,
+                repair_plan=repair_plan,
             )
         )
 
@@ -961,6 +962,7 @@ class ProposalReviewer:
         implementation_plan: dict[str, Any] | None,
         evidence_pack: dict[str, Any] | None,
         feature_spec: dict[str, Any] | None,
+        repair_plan: dict[str, Any] | None,
     ) -> tuple[ReviewFinding, ...]:
         if not isinstance(feature_spec, dict):
             return ()
@@ -971,6 +973,9 @@ class ProposalReviewer:
             evidence_pack=evidence_pack,
         )
         planned_changes = _planned_changes_by_id(implementation_plan)
+        planned_repairs_by_binding = _planned_changes_by_binding(
+            implementation_plan
+        )
         findings: list[ReviewFinding] = []
         for change in diff_intent:
             if not isinstance(change, dict):
@@ -981,6 +986,15 @@ class ProposalReviewer:
                 else None
             )
             hook_target_binding_id = change.get("hook_target_binding_id")
+            planned_repair = planned_repairs_by_binding.get(
+                str(change.get("edit_binding_id") or "")
+            )
+            if (
+                repair_plan is not None
+                and planned_repair is not None
+                and planned_repair.get("hook_target_binding_id") is None
+            ):
+                continue
             if not hook_target_binding_id:
                 findings.append(
                     ReviewFinding(
@@ -1121,4 +1135,21 @@ def _planned_changes_by_id(
         str(change["change_id"]): change
         for change in implementation_plan.get("proposed_changes") or []
         if isinstance(change, dict) and change.get("change_id")
+    }
+
+
+def _planned_changes_by_binding(
+    implementation_plan: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(implementation_plan, dict):
+        return {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for change in implementation_plan.get("proposed_changes") or []:
+        if not isinstance(change, dict) or not change.get("edit_binding_id"):
+            continue
+        grouped.setdefault(str(change["edit_binding_id"]), []).append(change)
+    return {
+        binding_id: changes[0]
+        for binding_id, changes in grouped.items()
+        if len(changes) == 1
     }

@@ -1010,7 +1010,12 @@ class RepairPlanner:
 class RepairPatchProposalBuilder:
     """Convert a repair_plan into an intent-only patch proposal."""
 
-    def build(self, repair_plan: dict[str, Any]) -> PatchProposal:
+    def build(
+        self,
+        repair_plan: dict[str, Any],
+        *,
+        implementation_plan: dict[str, Any] | None = None,
+    ) -> PatchProposal:
         """Return a reviewable repair patch proposal without editing files."""
 
         feature_id = str(repair_plan.get("feature_id") or "unknown_feature")
@@ -1051,6 +1056,9 @@ class RepairPatchProposalBuilder:
             )
 
         minimal_changes = list(repair_plan.get("minimal_changes") or [])
+        planned_changes_by_binding = self._planned_changes_by_binding(
+            implementation_plan
+        )
         files = tuple(
             dict.fromkeys(str(path) for path in repair_plan.get("display_files") or [])
         )
@@ -1060,6 +1068,9 @@ class RepairPatchProposalBuilder:
                 repair_plan=repair_plan,
                 change=change,
                 evidence_refs=evidence_refs,
+                planned_change=planned_changes_by_binding.get(
+                    str(change.get("edit_binding_id") or "")
+                ),
             )
             for index, change in enumerate(minimal_changes)
             if isinstance(change, dict) and change.get("edit_binding_id")
@@ -1159,24 +1170,58 @@ class RepairPatchProposalBuilder:
         repair_plan: dict[str, Any],
         change: dict[str, Any],
         evidence_refs: tuple[str, ...],
+        planned_change: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        planned = planned_change if isinstance(planned_change, dict) else {}
         return {
             "change_id": change.get("change_id") or f"repair_change_{index}",
             "change_type": "repair",
             "edit_binding_id": change.get("edit_binding_id"),
-            "supporting_binding_ids": list(change.get("supporting_binding_ids") or []),
-            "operation": "modify",
+            "hook_target_binding_id": planned.get("hook_target_binding_id"),
+            "supporting_binding_ids": list(
+                change.get("supporting_binding_ids")
+                or planned.get("supporting_binding_ids")
+                or []
+            ),
+            "operation": (
+                change.get("operation")
+                or planned.get("operation")
+                or "modify"
+            ),
             "rationale": (
                 f"{repair_plan.get('hypothesis')} "
                 f"Intent: {change.get('intent')}"
             ),
             "evidence_refs": list(evidence_refs),
-            "expected_validation": [
-                "repair_plan reviewed",
-                "dry-run apply remains isolated",
-                "build/runtime failure evidence is rechecked",
-            ],
-            "rollback_hint": "Use git change metadata and artifact refs for rollback.",
+            "expected_validation": list(
+                planned.get("expected_validation")
+                or (
+                    "repair_plan reviewed",
+                    "dry-run apply remains isolated",
+                    "build/runtime failure evidence is rechecked",
+                )
+            ),
+            "rollback_hint": (
+                planned.get("rollback_hint")
+                or "Use git change metadata and artifact refs for rollback."
+            ),
+        }
+
+    @staticmethod
+    def _planned_changes_by_binding(
+        implementation_plan: dict[str, Any] | None,
+    ) -> dict[str, dict[str, Any]]:
+        if not isinstance(implementation_plan, dict):
+            return {}
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for change in implementation_plan.get("proposed_changes") or []:
+            if not isinstance(change, dict) or not change.get("edit_binding_id"):
+                continue
+            grouped.setdefault(str(change["edit_binding_id"]), []).append(change)
+        return {
+            binding_id: changes[0]
+            for binding_id, changes in grouped.items()
+            if len(changes) == 1
         }
 
 

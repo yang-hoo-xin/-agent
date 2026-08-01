@@ -1004,6 +1004,66 @@ def test_repair_proposal_reenters_review_gate() -> None:
     assert review.trace_metrics["num_changes_checked"] == 1
 
 
+def test_repair_proposal_reuses_non_hook_plan_validation_contract() -> None:
+    implementation_plan = _implementation_plan_payload()
+    implementation_plan["proposed_changes"] = [
+        {
+            "change_id": "chg_001",
+            "change_type": "repair_helper",
+            "edit_binding_id": "edit_binding_001",
+            "hook_target_binding_id": None,
+            "supporting_binding_ids": [],
+            "operation": "replace_helper_expression_only",
+            "expected_validation": ["compile", "runtime regression"],
+            "rollback_hint": "Restore the helper expression.",
+        }
+    ]
+    plan = RepairPlanner(retry_budget=2).from_build_failure(
+        build_result=_failed_build_result(
+            "feature_001",
+            diagnostic_file="mods/BetterHitFeedback/Plugin.cs",
+        ).to_artifact_payload(),
+        build_result_ref="artifacts/features/feature_001/build_result.json",
+        retry_count=0,
+        target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+
+    proposal = RepairPatchProposalBuilder().build(
+        plan,
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+    review = ProposalReviewer().review(
+        proposal,
+        repair_plan=plan,
+        implementation_plan=implementation_plan,
+        evidence_pack=_evidence_pack(),
+        feature_spec={
+            "target_behavior": "make Load enable diagnostics",
+            "hook_requirement": {
+                "required": True,
+                "reason": "existing product hook remains in scope",
+            },
+        },
+        permission_level="dry_run_write",
+    )
+
+    assert proposal["diff_intent"][0]["hook_target_binding_id"] is None
+    assert proposal["diff_intent"][0]["operation"] == (
+        "replace_helper_expression_only"
+    )
+    assert proposal["diff_intent"][0]["expected_validation"] == [
+        "compile",
+        "runtime regression",
+    ]
+    assert review.allowed_next_stage == "dry_run_apply"
+    assert not any(
+        finding.rule_id in {"hook_target_binding", "validation_contract"}
+        for finding in review.findings
+    )
+
+
 def test_repair_plan_blocks_scope_outside_original_proposal_context() -> None:
     plan = RepairPlanner(retry_budget=2).from_build_failure(
         build_result=_failed_build_result("feature_001").to_artifact_payload(),
