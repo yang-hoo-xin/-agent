@@ -1157,6 +1157,94 @@ def test_repair_proposal_cannot_bypass_required_hook_binding() -> None:
         )
 
 
+def test_repair_proposal_blocks_unplanned_hook_binding() -> None:
+    implementation_plan = _implementation_plan_payload()
+    implementation_plan["binding_registry"]["supporting_bindings"] = [
+        {
+            "binding_id": "hook_target_001",
+            "evidence_id": "ev_hook_001",
+            "source_path": "decompiled/EnemyHook.cs",
+            "source_type": "decompiled_api",
+            "target_symbol": "EnemyHook.Apply",
+            "target_span": {"start_line": 20, "end_line": 30},
+            "declaring_type": "EnemyHook",
+            "method_name": "Apply",
+            "parameter_types": [],
+            "return_type": "System.Void",
+            "method_kind": "instance_method",
+            "retrieval_method": "symbol_exact",
+            "claim_supported": "EnemyHook.Apply is available but not selected.",
+            "authority": "mod_agent_deterministic",
+            "usage": "hook_target",
+        }
+    ]
+    implementation_plan["proposed_changes"] = [
+        {
+            "change_id": "chg_001",
+            "change_type": "repair_helper",
+            "edit_binding_id": "edit_binding_001",
+            "hook_target_binding_id": None,
+            "supporting_binding_ids": [],
+            "operation": "replace_helper_expression_only",
+            "expected_validation": ["compile"],
+            "rollback_hint": "Restore the helper expression.",
+        }
+    ]
+    evidence_pack = _evidence_pack()
+    evidence_pack["items"].append(
+        {
+            "evidence_id": "ev_hook_001",
+            "source_type": "decompiled_api",
+            "source_path": "decompiled/EnemyHook.cs",
+            "symbol": "EnemyHook.Apply",
+            "span": {"start_line": 20, "end_line": 30},
+            "declaring_type": "EnemyHook",
+            "method_name": "Apply",
+            "parameter_types": [],
+            "return_type": "System.Void",
+            "method_kind": "instance_method",
+        }
+    )
+    plan = RepairPlanner(retry_budget=2).from_build_failure(
+        build_result=_failed_build_result(
+            "feature_001",
+            diagnostic_file="mods/BetterHitFeedback/Plugin.cs",
+        ).to_artifact_payload(),
+        build_result_ref="artifacts/features/feature_001/build_result.json",
+        retry_count=0,
+        target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+    proposal = RepairPatchProposalBuilder().build(
+        plan,
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+    proposal["diff_intent"][0]["hook_target_binding_id"] = "hook_target_001"
+
+    review = ProposalReviewer().review(
+        proposal,
+        repair_plan=plan,
+        implementation_plan=implementation_plan,
+        evidence_pack=evidence_pack,
+        feature_spec={
+            "target_behavior": "make Load enable diagnostics",
+            "hook_requirement": {
+                "required": True,
+                "reason": "the product contains an existing Hook",
+            },
+        },
+        permission_level="dry_run_write",
+    )
+
+    assert review.allowed_next_stage is None
+    assert any(
+        finding.rule_id == "hook_target_binding"
+        and "was not selected" in finding.message
+        for finding in review.findings
+    )
+
+
 def test_repair_proposal_blocks_duplicate_plan_changes_for_one_binding() -> None:
     implementation_plan = _implementation_plan_payload()
     implementation_plan["proposed_changes"] = [
@@ -1421,12 +1509,113 @@ def test_graph_repair_reuses_plan_validation_before_second_build_failure(
     assert patch_upstreams[0]["path"] == repair_plan["source_proposal"]["ref"]
     assert patch_upstreams[0]["artifact_hash"] == repair_plan["source_proposal"]["hash"]
     assert result["retry_count"] == 2
+    proposal_reviews = store.list_feature_artifact_revisions(
+        str(result["feature_id"]),
+        "proposal_review",
+    )
+    build_results = store.list_feature_artifact_revisions(
+        str(result["feature_id"]),
+        "build_result",
+    )
+    assert len(proposal_reviews) == 3
+    assert len(build_results) == 3
+    finished_nodes = [
+        event["node_name"]
+        for event in result["trace_events"]
+        if event["event_type"] == "node_finished"
+    ]
+    first_build_index = finished_nodes.index("build")
+    second_review_index = finished_nodes.index(
+        "review_proposal",
+        first_build_index + 1,
+    )
+    second_build_index = finished_nodes.index("build", first_build_index + 1)
+    assert first_build_index < second_review_index < second_build_index
     assert any(
         event["node_name"] == "create_repair_plan"
         and event["event_type"] == "node_finished"
         for event in result["trace_events"]
     )
     assert result["blockers"][-1]["code"] == "RETRY_BUDGET_EXHAUSTED"
+
+
+def test_graph_records_subsequent_repair_proposal_review_failure_owner(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    diagnostic_file = str(tmp_path / "source" / "Plugin.cs")
+
+    def build_result_factory(
+        feature_id: str,
+        input_execution_mode: str | None = None,
+    ) -> BuildResult:
+        return _failed_build_result(
+            feature_id,
+            input_execution_mode=input_execution_mode,
+            diagnostic_file=diagnostic_file,
+        )
+
+    def patch_change_factory(
+        state: dict[str, object],
+        implementation_plan: dict[str, object],
+        evidence_pack: dict[str, object],
+    ) -> list[dict[str, object]]:
+        del evidence_pack
+        changes = json.loads(
+            json.dumps(implementation_plan["proposed_changes"])
+        )
+        assert len(changes) == 1
+        changes[0]["patch"] = {
+            "kind": "exact_text_replace",
+            "before_text": "public void Load()",
+            "after_text": "public void Load() /* reviewed repair test */",
+            "expected_occurrences": 1,
+        }
+        if state["current_stage"] == "repair_plan":
+            changes[0]["expected_validation"] = []
+        return changes
+
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        build_result_factory=build_result_factory,
+        proposal_git_binding_factory=_proposal_git_binding,
+        patch_change_factory=patch_change_factory,
+    )
+    result = graph.invoke(
+        create_initial_state(
+            run_id="run_repair_review_failure",
+            request_id="req_repair_review_failure",
+            user_request="make Load enable diagnostics",
+            target_mod="BetterHitFeedback",
+        )
+    )
+
+    repair_plan = _artifact_data(store, result, "repair_plan")
+    build_results = store.list_feature_artifact_revisions(
+        str(result["feature_id"]),
+        "build_result",
+    )
+    patch_proposals = store.list_feature_artifact_revisions(
+        str(result["feature_id"]),
+        "patch_proposal",
+    )
+    proposal_reviews = store.list_feature_artifact_revisions(
+        str(result["feature_id"]),
+        "proposal_review",
+    )
+
+    assert result["current_stage"] == "blocked"
+    assert len(build_results) == 1
+    assert len(patch_proposals) == 2
+    assert len(proposal_reviews) == 2
+    assert repair_plan["failure_source"] == "proposal_review"
+    assert repair_plan["failure_class"] == "proposal_review:validation_contract"
+    assert repair_plan["source_proposal"]["ref"] == (
+        result["artifacts"]["patch_proposal"]
+    )
+    assert repair_plan["allowed_next_stage"] is None
+    assert repair_plan["blockers"][0]["code"] == "REVIEW_REPLAN_REQUIRED"
 
 
 def test_graph_review_revision_creates_repair_plan_without_success_artifacts(

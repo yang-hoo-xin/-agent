@@ -993,6 +993,7 @@ class ProposalReviewer:
                 repair_plan is not None
                 and planned_repair is not None
                 and planned_repair.get("hook_target_binding_id") is None
+                and hook_target_binding_id is None
             ):
                 continue
             if not hook_target_binding_id:
