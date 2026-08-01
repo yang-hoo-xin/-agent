@@ -1277,6 +1277,393 @@ def _clone_as_latest_revision(
     )
 
 
+def _feature_spec_revision_graph_fixture(tmp_path: Path) -> dict[str, object]:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_id = "feature_revision_gate"
+    request_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="request_planning_report",
+        payload={
+            "node_name": "plan_request",
+            "stage": "request_planning",
+            "message": "Request classified.",
+            "feature_id": feature_id,
+            "user_request": "Revise the Stagger M1 FeatureSpec.",
+            "route": "game_hook_investigation",
+            "risk_level": "high",
+            "requires_hook_evidence": True,
+            "requires_runtime_evidence": True,
+            "uncertainties": [],
+            "blocked": False,
+        },
+    )
+    predecessor_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="feature_spec",
+        payload={
+            "node_name": "draft_feature_spec",
+            "stage": "feature_spec",
+            "message": "Original FeatureSpec.",
+            "feature_id": feature_id,
+            "user_request": "Original request.",
+            "target_behavior": "Original behavior.",
+            "non_goals": [],
+            "target_mod": "BetterHitFeedback",
+            "risk_level": "high",
+            "acceptance_criteria": ["Original criterion."],
+            "evidence_requirements": ["Original evidence."],
+            "runtime_verification_plan": ["Original runtime plan."],
+            "hook_requirement": {"required": True, "reason": "Original Hook."},
+            "blocked": False,
+            "blockers": [],
+        },
+        upstream_refs=[request_ref],
+    )
+    payload = {
+        "acceptance_criteria": [
+            "C1",
+            "C2",
+            "C3",
+            "C4",
+            "C5",
+            "C6",
+            "C7",
+            "C8",
+        ],
+        "admission_boundary": {
+            "next_stage": None,
+            "source_write_authorized": False,
+        },
+        "automation_claim": "not_proven",
+        "blocked": False,
+        "blockers": [],
+        "evidence_requirements": [
+            "Bind the direct ES_Hitreact.ActivateState Hook.",
+            "C4 requires deterministic implementation evidence.",
+            "C6 and C7 require explicit negative inputs.",
+        ],
+        "feature_id": feature_id,
+        "hook_requirement": {
+            "required": True,
+            "reason": "Use the direct ES_Hitreact.ActivateState result Hook.",
+        },
+        "message": "FeatureSpec revision; downstream execution is not authorized.",
+        "node_name": "draft_feature_spec",
+        "non_goals": [
+            "Cross-invocation physical-hit duplicate suppression is deferred."
+        ],
+        "operator_guided_technical_hypotheses": {
+            "authority": "advisory_pending_current_evidence",
+            "essential_rejection_action": "block_before_implementation_plan",
+            "essential_unresolved_action": "block_and_return_for_operator_review",
+            "evidence_may_reject": True,
+            "hypotheses": [
+                {
+                    "essential": True,
+                    "id": "direct_activate_state_hook",
+                    "statement": "ActivateState is the direct Hook.",
+                    "invalidation_condition": "The Hook inputs are unavailable.",
+                }
+            ],
+        },
+        "revision_reason": "Use per-invocation M1 semantics.",
+        "risk_level": "high",
+        "runtime_verification_plan": [
+            "Re-review five historical facts.",
+            "Evaluate C4, C6, and C7 independently.",
+        ],
+        "source_lineage": {
+            "root": "reviewed-source",
+            "read_only": True,
+            "files": {"Plugin.cs": "a" * 64},
+        },
+        "specification_mode": "operator_guided",
+        "stage": "feature_spec",
+        "success_marker_contract": {
+            "signal": "STAGGER_FEEDBACK_SHOWN",
+        },
+        "supersedes_artifact_hash": predecessor_ref.artifact_hash,
+        "target_behavior": "One output group per qualifying ActivateState invocation.",
+        "target_mod": "BetterHitFeedback",
+        "user_request": "Original request remains preserved.",
+    }
+    projection = {
+        "schema_version": "1.0",
+        "artifact_type": "feature_spec",
+        "feature_id": feature_id,
+        "producer_stage": "feature_spec",
+        "status": "success",
+        "payload": payload,
+        "inputs": {
+            "upstream_artifacts": [
+                {
+                    "artifact_type": "request_planning_report",
+                    "path": request_ref.path,
+                    "artifact_hash": request_ref.artifact_hash,
+                    "require_latest": True,
+                }
+            ]
+        },
+        "blockers": [],
+        "trace_refs": ["feature-spec-revision-test"],
+    }
+    state = create_initial_state(
+        run_id="run_feature_spec_revision",
+        request_id="request_feature_spec_revision",
+        user_request="Revise the Stagger M1 FeatureSpec.",
+        target_mod="BetterHitFeedback",
+    )
+    state["feature_id"] = feature_id
+    state["artifacts"] = {"request_planning_report": request_ref.path}
+    state["artifact_hashes"] = {
+        "request_planning_report": request_ref.artifact_hash
+    }
+    state["approvals"] = {"feature_spec_revision": True}
+    return {
+        "store": store,
+        "feature_id": feature_id,
+        "request_ref": request_ref,
+        "predecessor_ref": predecessor_ref,
+        "projection": projection,
+        "state": state,
+    }
+
+
+def _canonical_projection_hash(value: object) -> str:
+    return "sha256:" + hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _invoke_feature_spec_revision_graph(
+    fixture: dict[str, object],
+    *,
+    projection: dict[str, object] | None = None,
+    approved_payload_hash: str | None = None,
+    approved_projection_hash: str | None = None,
+    thread_id: str = "feature_spec_revision_gate",
+) -> dict[str, object]:
+    effective_projection = projection or copy.deepcopy(fixture["projection"])
+    payload = effective_projection["payload"]
+    assert isinstance(payload, dict)
+    graph = build_graph(
+        fixture["store"],
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+        interrupt_after=["draft_feature_spec"],
+        feature_spec_revision_projection=effective_projection,
+        approved_feature_spec_revision_payload_hash=(
+            approved_payload_hash or _canonical_projection_hash(payload)
+        ),
+        approved_feature_spec_revision_projection_hash=(
+            approved_projection_hash
+            or _canonical_projection_hash(effective_projection)
+        ),
+    )
+    config = {"configurable": {"thread_id": thread_id}}
+    seeded = graph.update_state(
+        config,
+        copy.deepcopy(fixture["state"]),
+        as_node="planning_brief",
+    )
+    result = graph.invoke(None, seeded)
+    assert isinstance(result, dict)
+    result["_next"] = graph.get_state(config).next
+    return result
+
+
+def test_feature_spec_revision_gate_materializes_once_and_stops(
+    tmp_path: Path,
+) -> None:
+    fixture = _feature_spec_revision_graph_fixture(tmp_path)
+    store = fixture["store"]
+    assert isinstance(store, ArtifactStore)
+    feature_id = fixture["feature_id"]
+    assert isinstance(feature_id, str)
+    predecessor_ref = fixture["predecessor_ref"]
+    assert isinstance(predecessor_ref, ArtifactRef)
+    predecessor_bytes = Path(predecessor_ref.path).read_bytes()
+    before_count = len(
+        store.list_feature_artifact_revisions(feature_id, "feature_spec")
+    )
+
+    result = _invoke_feature_spec_revision_graph(fixture)
+
+    assert result["current_stage"] == "feature_spec"
+    assert result["next_stage"] is None
+    assert result["_next"] == ("retrieve_evidence",)
+    assert "evidence_pack" not in result["artifacts"]
+    assert "implementation_plan" not in result["artifacts"]
+    assert len(store.list_feature_artifact_revisions(feature_id, "feature_spec")) == (
+        before_count + 1
+    )
+    assert Path(predecessor_ref.path).read_bytes() == predecessor_bytes
+    latest_ref = next(
+        ref
+        for ref in store.list_feature_artifacts(feature_id)
+        if ref.artifact_type == "feature_spec"
+    )
+    assert latest_ref.artifact_hash == result["artifact_hashes"]["feature_spec"]
+    assert latest_ref.artifact_hash != predecessor_ref.artifact_hash
+
+    replay_count = len(
+        store.list_feature_artifact_revisions(feature_id, "feature_spec")
+    )
+    with pytest.raises(ValueError, match="predecessor is not the current latest"):
+        _invoke_feature_spec_revision_graph(
+            fixture,
+            thread_id="feature_spec_revision_gate_replay",
+        )
+    assert len(store.list_feature_artifact_revisions(feature_id, "feature_spec")) == (
+        replay_count
+    )
+
+
+def test_feature_spec_revision_gate_rejects_payload_hash_drift_without_write(
+    tmp_path: Path,
+) -> None:
+    fixture = _feature_spec_revision_graph_fixture(tmp_path)
+    projection = copy.deepcopy(fixture["projection"])
+    original_payload = copy.deepcopy(projection["payload"])
+    projection["payload"]["message"] = "Drifted message."
+    store = fixture["store"]
+    assert isinstance(store, ArtifactStore)
+    feature_id = fixture["feature_id"]
+    assert isinstance(feature_id, str)
+    before_count = len(
+        store.list_feature_artifact_revisions(feature_id, "feature_spec")
+    )
+
+    with pytest.raises(ValueError, match="payload hash is not approved"):
+        _invoke_feature_spec_revision_graph(
+            fixture,
+            projection=projection,
+            approved_payload_hash=_canonical_projection_hash(original_payload),
+            approved_projection_hash=_canonical_projection_hash(projection),
+        )
+
+    assert len(store.list_feature_artifact_revisions(feature_id, "feature_spec")) == (
+        before_count
+    )
+
+
+def test_feature_spec_revision_gate_rejects_non_latest_predecessor_without_write(
+    tmp_path: Path,
+) -> None:
+    fixture = _feature_spec_revision_graph_fixture(tmp_path)
+    projection = copy.deepcopy(fixture["projection"])
+    projection["payload"]["supersedes_artifact_hash"] = "f" * 64
+    store = fixture["store"]
+    assert isinstance(store, ArtifactStore)
+    feature_id = fixture["feature_id"]
+    assert isinstance(feature_id, str)
+    before_count = len(
+        store.list_feature_artifact_revisions(feature_id, "feature_spec")
+    )
+
+    with pytest.raises(ValueError, match="predecessor is not the current latest"):
+        _invoke_feature_spec_revision_graph(fixture, projection=projection)
+
+    assert len(store.list_feature_artifact_revisions(feature_id, "feature_spec")) == (
+        before_count
+    )
+
+
+@pytest.mark.parametrize(
+    ("drift", "message"),
+    [
+        ("feature", "identity metadata drifted"),
+        ("upstream", "RequestPlan upstream drifted"),
+        ("schema", "identity metadata drifted"),
+        ("producer", "identity metadata drifted"),
+    ],
+)
+def test_feature_spec_revision_gate_rejects_identity_drift_without_write(
+    tmp_path: Path,
+    drift: str,
+    message: str,
+) -> None:
+    fixture = _feature_spec_revision_graph_fixture(tmp_path)
+    projection = copy.deepcopy(fixture["projection"])
+    if drift == "feature":
+        projection["feature_id"] = "feature_drifted"
+    elif drift == "upstream":
+        projection["inputs"]["upstream_artifacts"][0]["artifact_type"] = (
+            "feature_spec"
+        )
+    elif drift == "schema":
+        projection["schema_version"] = "2.0"
+    else:
+        projection["producer_stage"] = "evidence_retrieval"
+    store = fixture["store"]
+    assert isinstance(store, ArtifactStore)
+    feature_id = fixture["feature_id"]
+    assert isinstance(feature_id, str)
+    before_count = len(
+        store.list_feature_artifact_revisions(feature_id, "feature_spec")
+    )
+
+    with pytest.raises(ValueError, match=message):
+        _invoke_feature_spec_revision_graph(fixture, projection=projection)
+
+    assert len(store.list_feature_artifact_revisions(feature_id, "feature_spec")) == (
+        before_count
+    )
+
+
+@pytest.mark.parametrize("field_drift", ["extra", "missing"])
+def test_feature_spec_revision_gate_rejects_payload_field_drift_without_write(
+    tmp_path: Path,
+    field_drift: str,
+) -> None:
+    fixture = _feature_spec_revision_graph_fixture(tmp_path)
+    projection = copy.deepcopy(fixture["projection"])
+    if field_drift == "extra":
+        projection["payload"]["unexpected_field"] = True
+    else:
+        projection["payload"].pop("automation_claim")
+    store = fixture["store"]
+    assert isinstance(store, ArtifactStore)
+    feature_id = fixture["feature_id"]
+    assert isinstance(feature_id, str)
+    before_count = len(
+        store.list_feature_artifact_revisions(feature_id, "feature_spec")
+    )
+
+    with pytest.raises(ValueError, match="payload fields do not match"):
+        _invoke_feature_spec_revision_graph(fixture, projection=projection)
+
+    assert len(store.list_feature_artifact_revisions(feature_id, "feature_spec")) == (
+        before_count
+    )
+
+
+def test_feature_spec_revision_gate_rejects_deferred_correlation_reentry(
+    tmp_path: Path,
+) -> None:
+    fixture = _feature_spec_revision_graph_fixture(tmp_path)
+    projection = copy.deepcopy(fixture["projection"])
+    projection["payload"]["operator_guided_technical_hypotheses"]["hypotheses"][
+        0
+    ]["id"] = "exactly_once_correlation"
+    store = fixture["store"]
+    assert isinstance(store, ArtifactStore)
+    feature_id = fixture["feature_id"]
+    assert isinstance(feature_id, str)
+    before_count = len(
+        store.list_feature_artifact_revisions(feature_id, "feature_spec")
+    )
+
+    with pytest.raises(ValueError, match="deferred correlation hypotheses"):
+        _invoke_feature_spec_revision_graph(fixture, projection=projection)
+
+    assert len(store.list_feature_artifact_revisions(feature_id, "feature_spec")) == (
+        before_count
+    )
 def _build_handoff_with_diagnostic_latest(
     tmp_path: Path,
 ) -> tuple[

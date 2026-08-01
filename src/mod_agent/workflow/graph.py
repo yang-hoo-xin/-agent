@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -105,6 +105,55 @@ PatchExecutionFactory = Callable[
     [dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]
 ]
 CriticRequirement = Literal["not_required", "required"]
+_FEATURE_SPEC_REVISION_APPROVAL_KEY = "feature_spec_revision"
+_FEATURE_SPEC_REVISION_PROJECTION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "artifact_type",
+        "feature_id",
+        "producer_stage",
+        "status",
+        "payload",
+        "inputs",
+        "blockers",
+        "trace_refs",
+    }
+)
+_FEATURE_SPEC_REVISION_PAYLOAD_FIELDS = frozenset(
+    {
+        "acceptance_criteria",
+        "admission_boundary",
+        "automation_claim",
+        "blocked",
+        "blockers",
+        "evidence_requirements",
+        "feature_id",
+        "hook_requirement",
+        "message",
+        "node_name",
+        "non_goals",
+        "operator_guided_technical_hypotheses",
+        "revision_reason",
+        "risk_level",
+        "runtime_verification_plan",
+        "source_lineage",
+        "specification_mode",
+        "stage",
+        "success_marker_contract",
+        "supersedes_artifact_hash",
+        "target_behavior",
+        "target_mod",
+        "user_request",
+    }
+)
+_DEFERRED_CORRELATION_HYPOTHESIS_IDS = frozenset(
+    {
+        "input_event_mapping",
+        "result_event_mapping",
+        "enemy_identity_mapping",
+        "exactly_once_correlation",
+    }
+)
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA = (
     "stagger_existing_binding_reauthorization_request_v1"
@@ -156,6 +205,9 @@ def build_graph(
     checkpointer: Any | None = None,
     interrupt_before: list[str] | None = None,
     interrupt_after: list[str] | None = None,
+    feature_spec_revision_projection: Mapping[str, Any] | None = None,
+    approved_feature_spec_revision_payload_hash: str | None = None,
+    approved_feature_spec_revision_projection_hash: str | None = None,
 ):
     """Build a compiled LangGraph graph with real planning/review routing.
 
@@ -183,6 +235,29 @@ def build_graph(
             "Runtime continuation and authority approval cannot share "
             "one graph entry."
         )
+    revision_configuration = (
+        feature_spec_revision_projection,
+        approved_feature_spec_revision_payload_hash,
+        approved_feature_spec_revision_projection_hash,
+    )
+    if any(value is not None for value in revision_configuration) and not all(
+        value is not None for value in revision_configuration
+    ):
+        raise ValueError(
+            "FeatureSpec revision materialization requires the complete "
+            "projection and both approved hashes."
+        )
+    if feature_spec_revision_projection is not None:
+        if checkpointer is None:
+            raise ValueError(
+                "FeatureSpec revision materialization requires a LangGraph "
+                "checkpointer for controlled node-level resume."
+            )
+        if "draft_feature_spec" not in set(interrupt_after or []):
+            raise ValueError(
+                "FeatureSpec revision materialization must interrupt after "
+                "draft_feature_spec before any downstream node."
+            )
     if (
         edit_authority_request_ref is not None
         and repair_planning_authority_request_ref is not None
@@ -271,7 +346,15 @@ def build_graph(
         "draft_feature_spec",
         _make_real_graph_node(
             "draft_feature_spec",
-            lambda state: _run_draft_feature_spec(state, artifact_store),
+            lambda state: _run_draft_feature_spec(
+                state,
+                artifact_store,
+                revision_projection=feature_spec_revision_projection,
+                approved_payload_hash=approved_feature_spec_revision_payload_hash,
+                approved_projection_hash=(
+                    approved_feature_spec_revision_projection_hash
+                ),
+            ),
         ),
     )
     graph.add_node(
@@ -687,7 +770,24 @@ def _run_plan_request(
 def _run_draft_feature_spec(
     state: ModAgentState,
     artifact_store: ArtifactStore,
+    *,
+    revision_projection: Mapping[str, Any] | None = None,
+    approved_payload_hash: str | None = None,
+    approved_projection_hash: str | None = None,
 ) -> ModAgentState:
+    if revision_projection is not None:
+        if approved_payload_hash is None or approved_projection_hash is None:
+            raise ValueError(
+                "FeatureSpec revision approval hashes are incomplete."
+            )
+        return _materialize_feature_spec_revision(
+            state,
+            artifact_store,
+            projection=revision_projection,
+            approved_payload_hash=approved_payload_hash,
+            approved_projection_hash=approved_projection_hash,
+        )
+
     plan_data = _read_artifact_data(state, artifact_store, "request_planning_report")
     plan = _request_plan_from_payload(plan_data)
     planning_brief = _read_artifact_data(state, artifact_store, "mod_planning_brief")
@@ -1349,6 +1449,240 @@ def _run_stagger_edit_authority_gate(
         "edit_authority": True,
     }
     return next_state
+
+
+def _materialize_feature_spec_revision(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    *,
+    projection: Mapping[str, Any],
+    approved_payload_hash: str,
+    approved_projection_hash: str,
+) -> ModAgentState:
+    """Materialize one approved FeatureSpec revision through its graph node."""
+
+    if state["approvals"].get(_FEATURE_SPEC_REVISION_APPROVAL_KEY) is not True:
+        raise ValueError(
+            "FeatureSpec revision materialization lacks node-level human approval."
+        )
+    if set(projection) != _FEATURE_SPEC_REVISION_PROJECTION_FIELDS:
+        raise ValueError(
+            "FeatureSpec revision projection fields do not match the approved shape."
+        )
+    payload = projection.get("payload")
+    if not isinstance(payload, Mapping):
+        raise ValueError("FeatureSpec revision payload must be an object.")
+    if set(payload) != _FEATURE_SPEC_REVISION_PAYLOAD_FIELDS:
+        raise ValueError(
+            "FeatureSpec revision payload fields do not match the approved shape."
+        )
+
+    payload_hash = _canonical_sha256(payload)
+    projection_hash = _canonical_sha256(projection)
+    if payload_hash != approved_payload_hash:
+        raise ValueError("FeatureSpec revision payload hash is not approved.")
+    if projection_hash != approved_projection_hash:
+        raise ValueError("FeatureSpec revision projection hash is not approved.")
+
+    feature_id = state.get("feature_id")
+    if not isinstance(feature_id, str) or not feature_id:
+        raise ValueError("FeatureSpec revision state feature_id is missing.")
+    if (
+        projection.get("schema_version") != "1.0"
+        or projection.get("artifact_type") != "feature_spec"
+        or projection.get("feature_id") != feature_id
+        or projection.get("producer_stage") != "feature_spec"
+        or projection.get("status") != "success"
+        or projection.get("blockers") != []
+        or payload.get("feature_id") != feature_id
+        or payload.get("node_name") != "draft_feature_spec"
+        or payload.get("stage") != "feature_spec"
+    ):
+        raise ValueError("FeatureSpec revision identity metadata drifted.")
+
+    contract = artifact_store.registry.validate_write(
+        artifact_type="feature_spec",
+        status="success",
+        payload=payload,
+    )
+    if (
+        contract.schema_version != projection["schema_version"]
+        or contract.producer_stage != projection["producer_stage"]
+    ):
+        raise ValueError("FeatureSpec revision Registry contract drifted.")
+    _validate_feature_spec_revision_semantics(payload)
+
+    inputs = projection.get("inputs")
+    if not isinstance(inputs, Mapping) or set(inputs) != {"upstream_artifacts"}:
+        raise ValueError("FeatureSpec revision inputs do not match the approved shape.")
+    upstreams = inputs.get("upstream_artifacts")
+    if not isinstance(upstreams, list) or len(upstreams) != 1:
+        raise ValueError(
+            "FeatureSpec revision requires exactly one RequestPlan upstream."
+        )
+    upstream = upstreams[0]
+    if (
+        not isinstance(upstream, Mapping)
+        or set(upstream)
+        != {"artifact_type", "path", "artifact_hash", "require_latest"}
+        or upstream.get("artifact_type") != "request_planning_report"
+        or upstream.get("require_latest") is not True
+    ):
+        raise ValueError("FeatureSpec revision RequestPlan upstream drifted.")
+    request_ref = ArtifactRef(
+        feature_id=feature_id,
+        artifact_type="request_planning_report",
+        path=str(upstream["path"]),
+        artifact_hash=str(upstream["artifact_hash"]),
+    )
+    if (
+        state["artifacts"].get("request_planning_report") != request_ref.path
+        or state["artifact_hashes"].get("request_planning_report")
+        != request_ref.artifact_hash
+    ):
+        raise ValueError(
+            "FeatureSpec revision state does not bind the approved RequestPlan."
+        )
+    artifact_store.read(request_ref)
+    latest_request = _latest_feature_artifact_ref(
+        artifact_store,
+        feature_id=feature_id,
+        artifact_type="request_planning_report",
+    )
+    if latest_request.artifact_hash != request_ref.artifact_hash:
+        raise ValueError("FeatureSpec revision RequestPlan is not latest.")
+
+    predecessor_hash = payload.get("supersedes_artifact_hash")
+    if not isinstance(predecessor_hash, str) or not predecessor_hash:
+        raise ValueError("FeatureSpec revision predecessor identity is missing.")
+    latest_feature_spec = _latest_feature_artifact_ref(
+        artifact_store,
+        feature_id=feature_id,
+        artifact_type="feature_spec",
+    )
+    artifact_store.read(latest_feature_spec)
+    if latest_feature_spec.artifact_hash != predecessor_hash:
+        raise ValueError(
+            "FeatureSpec revision predecessor is not the current latest revision."
+        )
+
+    trace_refs = projection.get("trace_refs")
+    if not isinstance(trace_refs, list) or any(
+        not isinstance(item, str) or not item for item in trace_refs
+    ):
+        raise ValueError("FeatureSpec revision trace refs are invalid.")
+    expected_artifact_hash = artifact_store._stable_hash(
+        {
+            "schema_version": projection["schema_version"],
+            "artifact_type": projection["artifact_type"],
+            "feature_id": feature_id,
+            "producer_stage": projection["producer_stage"],
+            "status": projection["status"],
+            "data": dict(payload),
+            "inputs": dict(inputs),
+            "blockers": [],
+            "trace_refs": list(trace_refs),
+        }
+    )
+    before_revisions = artifact_store.list_feature_artifact_revisions(
+        feature_id,
+        "feature_spec",
+    )
+    if any(ref.artifact_hash == expected_artifact_hash for ref in before_revisions):
+        raise ValueError(
+            "FeatureSpec revision approval was already materialized and cannot replay."
+        )
+
+    artifact_ref = artifact_store.write(
+        feature_id=feature_id,
+        artifact_type="feature_spec",
+        payload=payload,
+        status="success",
+        blockers=[],
+        trace_refs=list(trace_refs),
+        upstream_refs=[request_ref],
+    )
+    after_revisions = artifact_store.list_feature_artifact_revisions(
+        feature_id,
+        "feature_spec",
+    )
+    if (
+        artifact_ref.artifact_hash != expected_artifact_hash
+        or len(after_revisions) != len(before_revisions) + 1
+    ):
+        raise ValueError(
+            "FeatureSpec revision materialization did not create exactly one revision."
+        )
+
+    next_state = _copy_state(state)
+    next_state["current_stage"] = "feature_spec"
+    next_state["next_stage"] = None
+    _record_artifact(next_state, "feature_spec", artifact_ref)
+    return next_state
+
+
+def _validate_feature_spec_revision_semantics(payload: Mapping[str, Any]) -> None:
+    hypotheses = payload.get("operator_guided_technical_hypotheses")
+    if not isinstance(hypotheses, Mapping):
+        raise ValueError("FeatureSpec revision hypotheses are invalid.")
+    items = hypotheses.get("hypotheses")
+    if not isinstance(items, list) or any(not isinstance(item, Mapping) for item in items):
+        raise ValueError("FeatureSpec revision active hypotheses are invalid.")
+    active_ids = {item.get("id") for item in items}
+    if active_ids & _DEFERRED_CORRELATION_HYPOTHESIS_IDS:
+        raise ValueError(
+            "FeatureSpec revision reintroduced deferred correlation hypotheses."
+        )
+    evidence_requirements = payload.get("evidence_requirements")
+    runtime_plan = payload.get("runtime_verification_plan")
+    if not isinstance(evidence_requirements, list) or not isinstance(runtime_plan, list):
+        raise ValueError("FeatureSpec revision verification fields are invalid.")
+    if any(
+        token in item
+        for item in evidence_requirements
+        if isinstance(item, str)
+        for token in (
+            "one-time consumption",
+            "Dam_EnemyDamageBase.BulletDamage may",
+            "ES_Hitreact.DoHitReact may",
+        )
+    ) or any(
+        token in item
+        for item in runtime_plan
+        if isinstance(item, str)
+        for token in ("correlation/deduplication", "same physical hit")
+    ):
+        raise ValueError(
+            "FeatureSpec revision reintroduced deferred correlation requirements."
+        )
+
+
+def _latest_feature_artifact_ref(
+    artifact_store: ArtifactStore,
+    *,
+    feature_id: str,
+    artifact_type: str,
+) -> ArtifactRef:
+    refs = [
+        ref
+        for ref in artifact_store.list_feature_artifacts(feature_id)
+        if ref.artifact_type == artifact_type
+    ]
+    if len(refs) != 1:
+        raise ValueError(
+            f"FeatureSpec revision expected one latest {artifact_type} Artifact."
+        )
+    return refs[0]
+
+
+def _canonical_sha256(value: Mapping[str, Any]) -> str:
+    serialized = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "sha256:" + hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _run_stagger_repair_planning_gate(
