@@ -554,7 +554,7 @@ def test_runtime_observation_retry_output_requires_empty_separate_root(
             feature_id="feature_001",
             stagger_enabled=True,
         )
-    with pytest.raises(LocalEntryError, match="outside the original run root"):
+    with pytest.raises(LocalEntryError, match="outside the source Build run root"):
         _runtime_observation_retry_output_report(
             source_run_root=source_root,
             runtime_output_root=source_root.resolve(),

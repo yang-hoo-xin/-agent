@@ -2490,6 +2490,217 @@ def test_runtime_observation_retry_rejects_product_owned_latest_runtime(
         )
 
 
+def test_initial_stagger_repair_preflight_requires_empty_separate_output_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="shared-store",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    source_root = tmp_path / "source-run"
+    _write_runtime_handoff_manifest(
+        source_root,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    output_root = tmp_path / "runtime-output"
+    output_root.mkdir()
+    destination = tmp_path / "BepInEx" / "plugins" / "BetterHitFeedback.dll"
+    destination.parent.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.load_settings",
+        lambda _: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_profile_preflight_record",
+        lambda *_, **__: {
+            "plugin_deployment": {"destination_path": str(destination)},
+            "stagger_acceptance": {"status": "ready"},
+        },
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._stagger_repair_attempt_projection",
+        lambda *_: {
+            "repair_attempt": {"attempt_id": "repair_attempt_001"},
+            "criterion_results": [],
+        },
+    )
+    before = _tree_bytes(tmp_path)
+
+    with pytest.raises(
+        LocalEntryError,
+        match="Initial Stagger repair Runtime requires an independent",
+    ):
+        preflight_local_runtime(
+            run_root=source_root,
+            artifact_store_root=tmp_path / "shared-store",
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=checkpoint_ref.path,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+            settings_path=tmp_path / "runtime.yaml",
+            runtime_plugin_destination=destination,
+        )
+
+    result = preflight_local_runtime(
+        run_root=source_root,
+        artifact_store_root=tmp_path / "shared-store",
+        feature_id=str(build_result["feature_id"]),
+        checkpoint_path=checkpoint_ref.path,
+        checkpoint_hash=checkpoint_ref.artifact_hash,
+        settings_path=tmp_path / "runtime.yaml",
+        runtime_plugin_destination=destination,
+        runtime_output_root=output_root.resolve(),
+    )
+
+    assert result["status"] == "READY_FOR_EXTERNAL_AUTHORIZATION"
+    assert result["runtime_output"]["enabled"] is True
+    assert result["runtime_output"]["runtime_output_root"] == str(
+        output_root.resolve()
+    )
+    assert result["runtime_output"]["source_run_root"] == str(
+        source_root.resolve()
+    )
+    assert result["runtime_profile"]["deployment_backup"]["backup_root"] == str(
+        (output_root / "runtime_continuation_deployment_backup").resolve()
+    )
+    assert result["writes_performed"] is False
+    assert result["checkpoint_consumed"] is False
+    assert result["process_launched"] is False
+    assert result["dll_copied"] is False
+    assert _tree_bytes(tmp_path) == before
+
+
+def test_initial_stagger_repair_resume_routes_all_runtime_output_outside_build_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="shared-store",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    source_root = tmp_path / "source-run"
+    _write_runtime_handoff_manifest(
+        source_root,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+    output_root = tmp_path / "runtime-output"
+    output_root.mkdir()
+    destination = tmp_path / "BepInEx" / "plugins" / "BetterHitFeedback.dll"
+    destination.parent.mkdir(parents=True)
+    requested = ["runtime_execution", "process_launch", "game_directory_write"]
+    runtime_admission = {
+        "requested_side_effects": requested,
+        "authorized_side_effects": requested,
+        "evidence_source": "gtfo_real_runtime_automation",
+        "allow_game_launch": True,
+        "plugin_deployment": {
+            "destination_path": str(destination),
+            "destination_existed_at_admission": False,
+            "destination_sha256_at_admission": None,
+            "allow_game_directory_write": True,
+        },
+        "stagger_acceptance": {
+            "config": {
+                "destination_existed": False,
+                "destination_sha256": None,
+            }
+        },
+    }
+    projection = {
+        "repair_attempt": {
+            "attempt_id": "repair_attempt_001",
+            "run_id": str(checkpoint["run_id"]),
+        },
+        "criterion_results": [],
+    }
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.load_settings",
+        lambda _: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_admission_record",
+        lambda *_, **__: dict(runtime_admission),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._runtime_profile_preflight_record",
+        lambda *_, **__: {
+            "plugin_deployment": {"destination_path": str(destination)},
+            "stagger_acceptance": {"status": "ready"},
+        },
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._stagger_repair_attempt_projection",
+        lambda *_: projection,
+    )
+    captured: dict[str, object] = {}
+
+    def make_runtime_factory(**kwargs):
+        captured.update(kwargs)
+
+        def runtime_factory(
+            feature_id: str,
+            build: dict[str, object],
+            feature_spec: dict[str, object],
+        ) -> dict[str, object]:
+            return build_fake_runtime_evidence_payload(
+                feature_id=feature_id,
+                input_execution_mode=str(build.get("execution_mode")),
+                acceptance_criteria=tuple(
+                    feature_spec.get("acceptance_criteria") or ()
+                ),
+                runtime_verification_plan=tuple(
+                    feature_spec.get("runtime_verification_plan") or ()
+                ),
+            )
+
+        return runtime_factory
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._make_deploying_runtime_evidence_factory",
+        make_runtime_factory,
+    )
+    source_before = _tree_bytes(source_root)
+
+    summary = resume_local_runtime(
+        run_root=source_root,
+        artifact_store_root=tmp_path / "shared-store",
+        feature_id=str(build_result["feature_id"]),
+        checkpoint_path=checkpoint_ref.path,
+        checkpoint_hash=checkpoint_ref.artifact_hash,
+        settings_path=tmp_path / "runtime.yaml",
+        approved_by="human",
+        allow_game_launch=True,
+        runtime_plugin_destination=destination,
+        allow_game_directory_write=True,
+        resume_id="resume_initial_stagger_repair_001",
+        runtime_output_root=output_root.resolve(),
+    )
+
+    assert summary["current_stage"] == "done"
+    assert summary["runtime_output_root"] == str(output_root.resolve())
+    assert summary["source_run_root"] == str(source_root.resolve())
+    assert summary["runtime_admission"]["runtime_output_binding"][
+        "runtime_output_root"
+    ] == str(output_root.resolve())
+    assert captured["runtime_output_directory"] == output_root.resolve()
+    assert captured["backup_directory"] == (
+        output_root / "runtime_continuation_deployment_backup"
+    )
+    assert captured["operator_completion_directory"] == (
+        output_root / "operator_completion"
+    )
+    assert captured["runtime_run_id"] == checkpoint["run_id"]
+    assert (output_root / "runtime_resume_result.json").is_file()
+    assert not (source_root / "runtime_resume_result.json").exists()
+    assert _tree_bytes(source_root) == source_before
+
+
 def test_runtime_observation_retry_preflight_uses_empty_separate_output_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

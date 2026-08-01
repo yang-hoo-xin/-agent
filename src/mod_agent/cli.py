@@ -479,8 +479,8 @@ def build_parser() -> argparse.ArgumentParser:
     resume_runtime_parser.add_argument(
         "--runtime-output-root",
         help=(
-            "Absolute empty run-local output directory required by "
-            "--retry-runtime-observation."
+            "Absolute empty run-local output directory required for an initial "
+            "Stagger repair Runtime and for --retry-runtime-observation."
         ),
     )
     resume_runtime_parser.add_argument("--approved-by", required=True)
@@ -527,8 +527,8 @@ def build_parser() -> argparse.ArgumentParser:
     preflight_runtime_parser.add_argument(
         "--runtime-output-root",
         help=(
-            "Absolute empty run-local output directory required by "
-            "--retry-runtime-observation."
+            "Absolute empty run-local output directory required for an initial "
+            "Stagger repair Runtime and for --retry-runtime-observation."
         ),
     )
     preflight_runtime_parser.add_argument("--settings")
