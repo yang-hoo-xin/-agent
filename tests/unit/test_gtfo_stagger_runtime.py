@@ -43,6 +43,11 @@ ACCEPTANCE_MARKER = (
     "signal=STAGGER_FEEDBACK_SHOWN "
     "visual_spawn_succeeded=true audio_event_accepted=true"
 )
+DUPLICATE_RESULT_CRITERION = (
+    "The same accepted hit produces no more than one yellow X, one "
+    "feature-attributable cue, and one STAGGER_FEEDBACK_SHOWN signal even "
+    "if an implementation-side result event is observed more than once."
+)
 
 
 def _repair_attempt_projection(
@@ -1204,6 +1209,36 @@ def test_stagger_observation_retry_preflight_projects_inherited_results() -> Non
     ]
 
 
+def test_stagger_observation_retry_rejects_unsupported_duplicate_result_inheritance() -> None:
+    projection = _repair_attempt_projection(
+        acceptance_criteria=(
+            DUPLICATE_RESULT_CRITERION,
+            VISUAL_CRITERION,
+            MARKER_CRITERION,
+        )
+    )
+    prior = dict(projection["criterion_results"][0])
+    prior["criterion_status"] = "passed"
+    prior["runtime_attempt_id"] = "runtime_initial_enabled"
+    prior["evidence_refs"] = [
+        {"source": "gtfo_operator_completion", "locator": "a" * 64}
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="lacks bound implementation-event evidence",
+    ):
+        inherit_stagger_repair_attempt_prior_results(
+            projection,
+            prior_criterion_results=(prior,),
+            prior_runtime_evidence_ref={
+                "path": "runtime-evidence.json",
+                "artifact_hash": "b" * 64,
+            },
+            retry_number=1,
+        )
+
+
 def test_stagger_observation_retry_selects_only_unresolved_bound_criteria() -> None:
     checkpoint = {
         "state_snapshot": {
@@ -1223,7 +1258,11 @@ def test_stagger_observation_retry_selects_only_unresolved_bound_criteria() -> N
     }
     runtime = {
         "acceptance_contract": {
-            "acceptance_criteria": [DISABLED_CRITERION, VISUAL_CRITERION]
+            "acceptance_criteria": [
+                DISABLED_CRITERION,
+                DUPLICATE_RESULT_CRITERION,
+                VISUAL_CRITERION,
+            ]
         },
         "repair_attempt": {
             "source_sha256": "b" * 64,
@@ -1245,6 +1284,18 @@ def test_stagger_observation_retry_selects_only_unresolved_bound_criteria() -> N
             },
             {
                 **base_result,
+                "acceptance_criterion": DUPLICATE_RESULT_CRITERION,
+                "criterion_status": "passed",
+                "runtime_attempt_id": "runtime_initial_enabled",
+                "evidence_refs": [
+                    {
+                        "source": "gtfo_operator_completion",
+                        "locator": "f" * 64,
+                    }
+                ],
+            },
+            {
+                **base_result,
                 "acceptance_criterion": VISUAL_CRITERION,
                 "criterion_status": "inconclusive",
                 "runtime_attempt_id": "runtime_initial_enabled",
@@ -1257,10 +1308,29 @@ def test_stagger_observation_retry_selects_only_unresolved_bound_criteria() -> N
         checkpoint,
     )
 
-    assert binding["retry_acceptance_criteria"] == [VISUAL_CRITERION]
+    assert binding["retry_acceptance_criteria"] == [
+        DUPLICATE_RESULT_CRITERION,
+        VISUAL_CRITERION,
+    ]
     assert binding["retry_modes"] == ["general_enabled_true"]
     assert binding["inherited_criterion_results"] == [
         runtime["criterion_results"][0]
+    ]
+
+    runtime["criterion_results"][1]["evidence_refs"] = [
+        {
+            "source": "gtfo_persistent_log",
+            "locator": "BepInEx/LogOutput.log",
+        }
+    ]
+    supported_binding = build_stagger_observation_retry_criterion_binding(
+        runtime,
+        checkpoint,
+    )
+    assert supported_binding["retry_acceptance_criteria"] == [VISUAL_CRITERION]
+    assert supported_binding["inherited_criterion_results"] == [
+        runtime["criterion_results"][0],
+        runtime["criterion_results"][1],
     ]
 
     runtime["criterion_results"][0]["dll_sha256"] = "e" * 64
@@ -1269,3 +1339,54 @@ def test_stagger_observation_retry_selects_only_unresolved_bound_criteria() -> N
             runtime,
             checkpoint,
         )
+
+
+def test_stagger_duplicate_result_requires_bound_implementation_event_evidence() -> None:
+    criterion_hash = hashlib.sha256(
+        DUPLICATE_RESULT_CRITERION.encode("utf-8")
+    ).hexdigest()
+    attempt = {
+        "runtime_attempt_id": "runtime_initial_enabled",
+        "operator_completion": {
+            "request_sha256": "a" * 64,
+            "semantic_consistency": {"status": "consistent"},
+            "observations": [
+                {
+                    "acceptance_criterion": DUPLICATE_RESULT_CRITERION,
+                    "criterion_sha256": criterion_hash,
+                    "semantic_consistency": "consistent",
+                    "status": "passed",
+                }
+            ],
+        },
+        "evidence_items": [],
+    }
+
+    unsupported = evaluate_stagger_acceptance(
+        {"general_enabled_true": attempt},
+        expected_modes=("general_enabled_true",),
+        acceptance_criteria=(DUPLICATE_RESULT_CRITERION,),
+    )
+
+    assert unsupported["overall_acceptance"] == "inconclusive"
+    assert unsupported["criteria"][0]["outcome"] == "not_observed"
+    assert unsupported["criteria"][0]["evidence_strength"] == (
+        "insufficient_duplicate_result_event_evidence"
+    )
+
+    attempt["evidence_items"] = [
+        {
+            "source": "gtfo_persistent_log",
+            "locator": "BepInEx/LogOutput.log",
+            "supports_acceptance": [DUPLICATE_RESULT_CRITERION],
+        }
+    ]
+    supported = evaluate_stagger_acceptance(
+        {"general_enabled_true": attempt},
+        expected_modes=("general_enabled_true",),
+        acceptance_criteria=(DUPLICATE_RESULT_CRITERION,),
+    )
+
+    assert supported["overall_acceptance"] == "accepted"
+    assert supported["criteria"][0]["outcome"] == "true"
+    assert supported["criteria"][0]["evidence_strength"] == "bound_observation"

@@ -22,6 +22,11 @@ _RUNTIME_SYMBOL = (
     "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
     "TrySpawnStaggerYellowX"
 )
+STAGGER_DUPLICATE_RESULT_ACCEPTANCE_CRITERION = (
+    "The same accepted hit produces no more than one yellow X, one "
+    "feature-attributable cue, and one STAGGER_FEEDBACK_SHOWN signal even "
+    "if an implementation-side result event is observed more than once."
+)
 
 _CRITERION_STATUSES = {
     "passed",
@@ -402,6 +407,16 @@ def inherit_stagger_repair_attempt_prior_results(
             raise ValueError(
                 "Prior Stagger CriterionResult does not match the current DLL."
             )
+        if (
+            criterion == STAGGER_DUPLICATE_RESULT_ACCEPTANCE_CRITERION
+            and not _has_bound_duplicate_result_event_evidence(
+                prior.get("evidence_refs")
+            )
+        ):
+            raise ValueError(
+                "Duplicate-result Stagger CriterionResult lacks bound "
+                "implementation-event evidence."
+            )
         seen.add(criterion)
         for key in (
             "criterion_status",
@@ -511,7 +526,15 @@ def build_stagger_observation_retry_criterion_binding(
                 "Runtime observation retry CriterionResult identity changed."
             )
         status = result.get("criterion_status")
-        if status == "passed":
+        if (
+            status == "passed"
+            and criterion == STAGGER_DUPLICATE_RESULT_ACCEPTANCE_CRITERION
+            and not _has_bound_duplicate_result_event_evidence(
+                result.get("evidence_refs")
+            )
+        ):
+            unresolved.append(criterion)
+        elif status == "passed":
             inherited.append(dict(result))
         elif status in {"inconclusive", "not_evaluated"}:
             unresolved.append(criterion)
@@ -630,6 +653,23 @@ def evaluate_stagger_acceptance(
     for attempt in attempts_by_mode.values():
         _apply_operator_observations(criterion_results, attempt)
         _apply_supported_acceptance(criterion_results, attempt)
+
+    duplicate_result = criterion_results.get(
+        STAGGER_DUPLICATE_RESULT_ACCEPTANCE_CRITERION
+    )
+    if (
+        isinstance(duplicate_result, dict)
+        and duplicate_result.get("outcome") == "true"
+        and not _has_bound_duplicate_result_event_evidence(
+            duplicate_result.get("evidence_refs")
+        )
+    ):
+        duplicate_result["outcome"] = "not_observed"
+        duplicate_result["evidence_strength"] = (
+            "insufficient_duplicate_result_event_evidence"
+        )
+        duplicate_result.pop("prior_criterion_result", None)
+        duplicate_result["prior_result_inherited"] = False
 
     enabled_attempt = attempts_by_mode.get("general_enabled_true")
     machine_fact = (
@@ -827,6 +867,20 @@ def _apply_supported_acceptance(
                     },
                 ]
             )
+
+
+def _has_bound_duplicate_result_event_evidence(
+    evidence_refs: Any,
+) -> bool:
+    if not isinstance(evidence_refs, (list, tuple)):
+        return False
+    return any(
+        isinstance(item, Mapping)
+        and isinstance(item.get("source"), str)
+        and item.get("source")
+        not in {"gtfo_operator_completion", "prior_runtime_evidence"}
+        for item in evidence_refs
+    )
 
 
 def _confirmed_visual_machine_fact(
