@@ -15,6 +15,10 @@ from src.mod_agent.runtime import (
     temporarily_deploy_gtfo_config,
 )
 from src.mod_agent.runtime import gtfo_stagger as gtfo_stagger_module
+from src.mod_agent.runtime.stagger_diagnosis import (
+    bind_stagger_repair_attempt_runtime_results,
+    build_stagger_repair_attempt_projection,
+)
 
 
 DISABLED_CRITERION = (
@@ -34,6 +38,50 @@ ACCEPTANCE_MARKER = (
     "signal=STAGGER_FEEDBACK_SHOWN "
     "visual_spawn_succeeded=true audio_event_accepted=true"
 )
+
+
+def _repair_attempt_projection(
+    *,
+    acceptance_criteria: tuple[str, ...] = (
+        DISABLED_CRITERION,
+        VISUAL_CRITERION,
+        MARKER_CRITERION,
+    ),
+) -> dict[str, object]:
+    failed_criterion = VISUAL_CRITERION
+    return build_stagger_repair_attempt_projection(
+        feature_id="feature_001",
+        run_id="run_001",
+        repair_plan={
+            "feature_id": "feature_001",
+            "repair_id": "repair_001",
+            "retry_count": 0,
+            "retry_budget": 2,
+            "semantic_decision": {"selected_hypothesis_id": "H1"},
+        },
+        repair_plan_ref={"path": "repair-plan.json", "artifact_hash": "1" * 64},
+        root_cause_evidence={
+            "feature_id": "feature_001",
+            "failure_owner": "product_behavior",
+            "failed_feature_spec_criterion": failed_criterion,
+        },
+        root_cause_evidence_ref={
+            "path": "root-cause.json",
+            "artifact_hash": "2" * 64,
+        },
+        isolated_apply_result_ref={
+            "path": "apply.json",
+            "artifact_hash": "3" * 64,
+        },
+        build_result_ref={"path": "build.json", "artifact_hash": "4" * 64},
+        acceptance_criteria=acceptance_criteria,
+        marker_criteria=frozenset({MARKER_CRITERION}),
+        source_hash_before="5" * 64,
+        source_sha256="6" * 64,
+        source_snapshot_sha256="7" * 64,
+        dll_sha256="8" * 64,
+        diff_hash="sha256:" + "9" * 64,
+    )
 
 
 def _write_config(path: Path, *, enabled: bool) -> str:
@@ -269,6 +317,8 @@ def test_stagger_runtime_runs_disabled_then_enabled_and_restores_each_attempt(
             content_hash=f"hash_{profile.profile_id}",
         ),
         operator_completion_reader=operator_reader,
+        repair_attempt_projection=_repair_attempt_projection(),
+        runtime_attempt_namespace="repair_attempt_test:run_001:initial",
     )
 
     payload = factory(
@@ -302,6 +352,15 @@ def test_stagger_runtime_runs_disabled_then_enabled_and_restores_each_attempt(
     ]
     assert terminated_pids == [4101, 4102]
     assert len(payload["stagger_runtime_attempts"]) == 2
+    assert payload["repair_attempt"]["runtime_status"] == "passed"
+    assert payload["repair_attempt"]["final_status"] == "accepted"
+    assert {
+        item["runtime_attempt_id"]
+        for item in payload["criterion_results"]
+    } == {
+        "repair_attempt_test:run_001:initial:general_enabled_false",
+        "repair_attempt_test:run_001:initial:general_enabled_true",
+    }
     assert len(operator_requests) == 2
     assert operator_requests[0]["runtime_process_pid"] == 4101
     assert operator_requests[1]["runtime_process_pid"] == 4102
@@ -918,3 +977,85 @@ def test_stagger_machine_diagnosis_does_not_require_manual_observation() -> None
     assert manual_payload["failure_ownership"]["failure_class"] == (
         "product_behavior"
     )
+
+
+def test_stagger_repair_attempt_projection_does_not_inherit_old_dll_results() -> None:
+    projection = _repair_attempt_projection()
+    repair_attempt = projection["repair_attempt"]
+
+    assert repair_attempt["build_status"] == "passed"
+    assert repair_attempt["runtime_status"] == "not_started"
+    assert repair_attempt["final_status"] is None
+    assert repair_attempt["human_intervention_count"] is None
+    assert repair_attempt["additional_evidence_rounds"] is None
+    results = projection["criterion_results"]
+    assert isinstance(results, list)
+    assert len(results) == 3
+    assert {item["criterion_status"] for item in results} == {"not_evaluated"}
+    assert {item["dll_sha256"] for item in results} == {"8" * 64}
+    assert all(item["prior_result_inherited"] is False for item in results)
+    assert next(
+        item for item in results if item["acceptance_criterion"] == VISUAL_CRITERION
+    )["impact_status"] == "invalidated"
+    assert next(
+        item for item in results if item["acceptance_criterion"] == MARKER_CRITERION
+    )["operator_required"] is False
+
+
+def test_stagger_repair_attempt_preserves_partial_criterion_results() -> None:
+    projection = _repair_attempt_projection()
+    disabled_attempt = {
+        "runtime_attempt_id": "runtime_disabled_001",
+        "acceptance_contract": {
+            "acceptance_criteria": [DISABLED_CRITERION],
+        },
+    }
+    enabled_attempt = {
+        "runtime_attempt_id": "runtime_enabled_001",
+        "acceptance_contract": {
+            "acceptance_criteria": [VISUAL_CRITERION],
+        },
+    }
+    bound = bind_stagger_repair_attempt_runtime_results(
+        projection,
+        acceptance_evaluation={
+            "overall_acceptance": "failed",
+            "criteria": [
+                {
+                    "acceptance_criterion": DISABLED_CRITERION,
+                    "outcome": "true",
+                    "evidence_refs": [
+                        {"source": "gtfo_operator_completion", "locator": "a" * 64}
+                    ],
+                },
+                {
+                    "acceptance_criterion": VISUAL_CRITERION,
+                    "outcome": "false",
+                    "evidence_refs": [
+                        {"source": "gtfo_operator_completion", "locator": "b" * 64}
+                    ],
+                },
+                {
+                    "acceptance_criterion": MARKER_CRITERION,
+                    "outcome": "not_observed",
+                    "evidence_refs": [],
+                },
+            ]
+        },
+        attempt_payloads=(disabled_attempt, enabled_attempt),
+    )
+
+    results = {
+        item["acceptance_criterion"]: item
+        for item in bound["criterion_results"]
+    }
+    assert results[DISABLED_CRITERION]["criterion_status"] == "passed"
+    assert results[DISABLED_CRITERION]["runtime_attempt_id"] == (
+        "runtime_disabled_001"
+    )
+    assert results[VISUAL_CRITERION]["criterion_status"] == "failed"
+    assert results[VISUAL_CRITERION]["runtime_attempt_id"] == "runtime_enabled_001"
+    assert results[MARKER_CRITERION]["criterion_status"] == "not_evaluated"
+    assert results[MARKER_CRITERION]["runtime_attempt_id"] is None
+    assert bound["repair_attempt"]["runtime_status"] == "failed"
+    assert bound["repair_attempt"]["final_status"] == "failed"

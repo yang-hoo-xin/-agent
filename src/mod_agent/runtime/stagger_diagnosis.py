@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any
 
 
@@ -19,6 +22,331 @@ _RUNTIME_SYMBOL = (
     "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
     "TrySpawnStaggerYellowX"
 )
+
+_CRITERION_STATUSES = {
+    "passed",
+    "failed",
+    "inconclusive",
+    "not_evaluated",
+}
+_IMPACT_STATUSES = {
+    "unaffected",
+    "needs_regression",
+    "invalidated",
+    "unknown",
+}
+
+
+def build_stagger_repair_attempt_projection(
+    *,
+    feature_id: str,
+    run_id: str,
+    repair_plan: Mapping[str, Any],
+    repair_plan_ref: Mapping[str, str],
+    root_cause_evidence: Mapping[str, Any],
+    root_cause_evidence_ref: Mapping[str, str],
+    isolated_apply_result_ref: Mapping[str, str],
+    build_result_ref: Mapping[str, str],
+    acceptance_criteria: tuple[str, ...],
+    marker_criteria: frozenset[str],
+    source_hash_before: str,
+    source_sha256: str,
+    source_snapshot_sha256: str,
+    dll_sha256: str,
+    diff_hash: str,
+) -> dict[str, Any]:
+    """Project the current Stagger repair ledger without writing an Artifact."""
+
+    if not feature_id or not run_id:
+        raise ValueError("Stagger RepairAttempt requires Feature and Run identities.")
+    if not acceptance_criteria or len(set(acceptance_criteria)) != len(
+        acceptance_criteria
+    ):
+        raise ValueError("Stagger RepairAttempt criteria must be non-empty and unique.")
+    if not marker_criteria.issubset(set(acceptance_criteria)):
+        raise ValueError("Stagger marker criteria are outside the FeatureSpec.")
+    if repair_plan.get("feature_id") != feature_id:
+        raise ValueError("RepairPlan feature identity does not match.")
+    if root_cause_evidence.get("feature_id") != feature_id:
+        raise ValueError("RootCauseEvidence feature identity does not match.")
+    semantic_decision = repair_plan.get("semantic_decision")
+    if not isinstance(semantic_decision, Mapping):
+        raise ValueError("RepairPlan semantic decision is missing.")
+    hypothesis_id = semantic_decision.get("selected_hypothesis_id")
+    if not isinstance(hypothesis_id, str) or not hypothesis_id:
+        raise ValueError("RepairPlan selected hypothesis identity is missing.")
+    failed_criterion = root_cause_evidence.get("failed_feature_spec_criterion")
+    if failed_criterion not in acceptance_criteria:
+        raise ValueError(
+            "RootCauseEvidence failed criterion is outside the FeatureSpec."
+        )
+    failure_owner = root_cause_evidence.get("failure_owner")
+    if not isinstance(failure_owner, str) or not failure_owner:
+        raise ValueError("RootCauseEvidence failure owner is missing.")
+    repair_id = repair_plan.get("repair_id")
+    if not isinstance(repair_id, str) or not repair_id:
+        raise ValueError("RepairPlan repair identity is missing.")
+    retry_count = repair_plan.get("retry_count")
+    retry_budget = repair_plan.get("retry_budget")
+    if (
+        isinstance(retry_count, bool)
+        or not isinstance(retry_count, int)
+        or retry_count < 0
+        or isinstance(retry_budget, bool)
+        or not isinstance(retry_budget, int)
+        or retry_budget < 0
+    ):
+        raise ValueError("RepairPlan retry accounting is invalid.")
+    for name, value in (
+        ("source_hash_before", source_hash_before),
+        ("source_sha256", source_sha256),
+        ("source_snapshot_sha256", source_snapshot_sha256),
+        ("dll_sha256", dll_sha256),
+    ):
+        _require_sha256_hex(name, value)
+    _require_prefixed_sha256("diff_hash", diff_hash)
+    refs = {
+        "repair_plan": _normalized_identity_ref("repair_plan_ref", repair_plan_ref),
+        "root_cause_evidence": _normalized_identity_ref(
+            "root_cause_evidence_ref",
+            root_cause_evidence_ref,
+        ),
+        "isolated_apply_result": _normalized_identity_ref(
+            "isolated_apply_result_ref",
+            isolated_apply_result_ref,
+        ),
+        "build_result": _normalized_identity_ref(
+            "build_result_ref",
+            build_result_ref,
+        ),
+    }
+    attempt_seed = json.dumps(
+        {
+            "feature_id": feature_id,
+            "run_id": run_id,
+            "repair_plan_hash": refs["repair_plan"]["artifact_hash"],
+            "isolated_apply_result_hash": refs["isolated_apply_result"][
+                "artifact_hash"
+            ],
+            "build_result_hash": refs["build_result"]["artifact_hash"],
+            "source_sha256": source_sha256,
+            "dll_sha256": dll_sha256,
+            "diff_hash": diff_hash,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    attempt_id = "repair_attempt_" + hashlib.sha256(
+        attempt_seed.encode("utf-8")
+    ).hexdigest()[:16]
+    criterion_results = [
+        {
+            "schema_version": "criterion_result_v1",
+            "criterion_id": _criterion_id(criterion),
+            "acceptance_criterion": criterion,
+            "criterion_status": "not_evaluated",
+            "source_sha256": source_sha256,
+            "source_snapshot_sha256": source_snapshot_sha256,
+            "dll_sha256": dll_sha256,
+            "runtime_attempt_id": None,
+            "evidence_refs": [],
+            "impact_status": (
+                "invalidated"
+                if criterion == failed_criterion
+                else "needs_regression"
+            ),
+            "operator_required": criterion not in marker_criteria,
+            "prior_result_inherited": False,
+        }
+        for criterion in acceptance_criteria
+    ]
+    return {
+        "schema_version": "stagger_repair_attempt_projection_v1",
+        "repair_attempt": {
+            "schema_version": "stagger_repair_attempt_v1",
+            "attempt_id": attempt_id,
+            "feature_id": feature_id,
+            "run_id": run_id,
+            "repair_id": repair_id,
+            "hypothesis_id": hypothesis_id,
+            "source_hash_before": source_hash_before,
+            "source_sha256": source_sha256,
+            "source_snapshot_sha256": source_snapshot_sha256,
+            "dll_sha256": dll_sha256,
+            "diff_hash": diff_hash,
+            "build_status": "passed",
+            "runtime_status": "not_started",
+            "criteria": [item["criterion_id"] for item in criterion_results],
+            "failure_owner": failure_owner,
+            "retry_budget": retry_budget,
+            "retry_count": retry_count,
+            "human_intervention_count": None,
+            "additional_evidence_rounds": None,
+            "final_status": None,
+            "identity_refs": refs,
+            "measurement_limitations": [
+                (
+                    "human_intervention_count is null because the existing "
+                    "immutable lineage does not define which approval and "
+                    "operator events count."
+                ),
+                (
+                    "additional_evidence_rounds is null because the existing "
+                    "immutable lineage does not define an evidence-round counter."
+                ),
+                (
+                    "final_status remains null until this DLL receives bound "
+                    "Runtime results."
+                ),
+            ],
+        },
+        "criterion_results": criterion_results,
+    }
+
+
+def bind_stagger_repair_attempt_runtime_results(
+    projection: Mapping[str, Any],
+    *,
+    acceptance_evaluation: Mapping[str, Any],
+    attempt_payloads: tuple[Mapping[str, Any], ...],
+) -> dict[str, Any]:
+    """Bind current-run criterion outcomes without inheriting an older DLL result."""
+
+    bound = deepcopy(dict(projection))
+    raw_results = acceptance_evaluation.get("criteria")
+    if not isinstance(raw_results, list):
+        raise ValueError("Stagger acceptance evaluation criteria are missing.")
+    evaluated = {
+        item.get("acceptance_criterion"): item
+        for item in raw_results
+        if isinstance(item, Mapping)
+        and isinstance(item.get("acceptance_criterion"), str)
+    }
+    repair_attempt = bound.get("repair_attempt")
+    criterion_results = bound.get("criterion_results")
+    if not isinstance(repair_attempt, dict):
+        raise ValueError("Stagger RepairAttempt is missing.")
+    if not isinstance(criterion_results, list):
+        raise ValueError("Stagger RepairAttempt CriterionResults are missing.")
+    if set(evaluated) != {
+        item.get("acceptance_criterion")
+        for item in criterion_results
+        if isinstance(item, Mapping)
+    }:
+        raise ValueError("Stagger acceptance evaluation criteria changed.")
+    attempts_by_criterion: dict[str, Mapping[str, Any]] = {}
+    for attempt in attempt_payloads:
+        runtime_attempt_id = attempt.get("runtime_attempt_id")
+        acceptance_contract = attempt.get("acceptance_contract")
+        criteria = (
+            acceptance_contract.get("acceptance_criteria")
+            if isinstance(acceptance_contract, Mapping)
+            else None
+        )
+        if not isinstance(runtime_attempt_id, str) or not runtime_attempt_id:
+            raise ValueError("Started Stagger Runtime attempt identity is missing.")
+        if not isinstance(criteria, list):
+            raise ValueError("Started Stagger Runtime attempt criteria are missing.")
+        for criterion in criteria:
+            if not isinstance(criterion, str) or criterion in attempts_by_criterion:
+                raise ValueError("Stagger Runtime criterion ownership is invalid.")
+            attempts_by_criterion[criterion] = attempt
+    statuses: list[str] = []
+    for item in criterion_results:
+        if not isinstance(item, dict):
+            raise ValueError("Stagger CriterionResult is not structured.")
+        criterion = item.get("acceptance_criterion")
+        result = evaluated.get(criterion)
+        if not isinstance(result, Mapping):
+            raise ValueError("Stagger CriterionResult evaluation is missing.")
+        outcome = result.get("outcome")
+        owner_attempt = attempts_by_criterion.get(str(criterion))
+        if outcome == "true":
+            criterion_status = "passed"
+        elif outcome == "false":
+            criterion_status = "failed"
+        elif outcome == "not_observed" and owner_attempt is None:
+            criterion_status = "not_evaluated"
+        elif outcome == "not_observed":
+            criterion_status = "inconclusive"
+        else:
+            raise ValueError("Stagger acceptance evaluation outcome is invalid.")
+        if criterion_status not in _CRITERION_STATUSES:
+            raise ValueError("Stagger CriterionResult status is invalid.")
+        if item.get("impact_status") not in _IMPACT_STATUSES:
+            raise ValueError("Stagger CriterionResult impact status is invalid.")
+        item["criterion_status"] = criterion_status
+        item["runtime_attempt_id"] = (
+            None
+            if owner_attempt is None
+            else str(owner_attempt["runtime_attempt_id"])
+        )
+        item["evidence_refs"] = [
+            dict(ref)
+            for ref in result.get("evidence_refs", ())
+            if isinstance(ref, Mapping)
+        ]
+        item["prior_result_inherited"] = False
+        statuses.append(criterion_status)
+    overall_acceptance = acceptance_evaluation.get("overall_acceptance")
+    if statuses and all(status == "passed" for status in statuses):
+        runtime_status = "passed"
+        expected_acceptance = "accepted"
+    elif "failed" in statuses:
+        runtime_status = "failed"
+        expected_acceptance = "failed"
+    else:
+        runtime_status = "blocked"
+        expected_acceptance = "inconclusive"
+    if overall_acceptance != expected_acceptance:
+        raise ValueError(
+            "Stagger RepairAttempt status does not match aggregate acceptance."
+        )
+    repair_attempt["runtime_status"] = runtime_status
+    repair_attempt["final_status"] = overall_acceptance
+    bound["criterion_results"] = criterion_results
+    repair_attempt["runtime_attempt_ids"] = sorted(
+        {
+            str(attempt["runtime_attempt_id"])
+            for attempt in attempt_payloads
+        }
+    )
+    bound["repair_attempt"] = repair_attempt
+    return bound
+
+
+def _criterion_id(criterion: str) -> str:
+    return "sha256:" + hashlib.sha256(criterion.encode("utf-8")).hexdigest()
+
+
+def _normalized_identity_ref(
+    name: str,
+    value: Mapping[str, str],
+) -> dict[str, str]:
+    path = value.get("path")
+    artifact_hash = value.get("artifact_hash")
+    if not isinstance(path, str) or not path:
+        raise ValueError(f"{name} path is missing.")
+    if not isinstance(artifact_hash, str):
+        raise ValueError(f"{name} Artifact hash is missing.")
+    _require_sha256_hex(f"{name}.artifact_hash", artifact_hash)
+    return {"path": path, "artifact_hash": artifact_hash}
+
+
+def _require_sha256_hex(name: str, value: str) -> None:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(char not in "0123456789abcdefABCDEF" for char in value)
+    ):
+        raise ValueError(f"{name} must be one SHA256 hex digest.")
+
+
+def _require_prefixed_sha256(name: str, value: str) -> None:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        raise ValueError(f"{name} must use the sha256: prefix.")
+    _require_sha256_hex(name, value.removeprefix("sha256:"))
 
 
 def evaluate_stagger_acceptance(

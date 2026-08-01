@@ -35,6 +35,7 @@ from .gtfo_automation import (
     ScreenshotCapturer,
 )
 from .stagger_diagnosis import (
+    bind_stagger_repair_attempt_runtime_results,
     build_stagger_runtime_failure_diagnosis,
     evaluate_stagger_acceptance,
 )
@@ -487,6 +488,8 @@ def make_gtfo_stagger_runtime_evidence_factory(
     operator_completion_reader: OperatorCompletionReader | None = None,
     attempt_output_root: str | Path | None = None,
     run_id: str | None = None,
+    repair_attempt_projection: Mapping[str, Any] | None = None,
+    runtime_attempt_namespace: str | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Build the selected two-process graph Runtime factory."""
 
@@ -511,6 +514,10 @@ def make_gtfo_stagger_runtime_evidence_factory(
             raise GTFOStaggerRuntimeError(
                 "Stagger Runtime run_id is required with attempt_output_root."
             )
+    if repair_attempt_projection is not None and not runtime_attempt_namespace:
+        raise GTFOStaggerRuntimeError(
+            "Stagger RepairAttempt projection requires a Runtime attempt namespace."
+        )
 
     def runtime_evidence_factory(
         feature_id: str,
@@ -622,6 +629,10 @@ def make_gtfo_stagger_runtime_evidence_factory(
                             / mode
                         ),
                     )
+                    if runtime_attempt_namespace is not None:
+                        payload["runtime_attempt_id"] = (
+                            f"{runtime_attempt_namespace}:{mode}"
+                        )
                     if output_root is not None:
                         payload["run_local_log_identity"] = (
                             _capture_attempt_run_local_logs(
@@ -659,6 +670,20 @@ def make_gtfo_stagger_runtime_evidence_factory(
                 str(item["mode"]) for item in report["attempts"]
             ),
         )
+        if repair_attempt_projection is not None:
+            bound_repair_attempt = bind_stagger_repair_attempt_runtime_results(
+                repair_attempt_projection,
+                acceptance_evaluation=aggregate[
+                    "stagger_acceptance_evaluation"
+                ],
+                attempt_payloads=tuple(attempt_payloads),
+            )
+            aggregate["repair_attempt"] = dict(
+                bound_repair_attempt["repair_attempt"]
+            )
+            aggregate["criterion_results"] = list(
+                bound_repair_attempt["criterion_results"]
+            )
         if output_root is not None:
             aggregate["run_id"] = run_id
             aggregate["run_local_output_root"] = str(output_root)

@@ -45,6 +45,9 @@ from src.mod_agent.runtime import (
     stagger_profile_from_settings,
     temporarily_deploy_verified_plugin,
 )
+from src.mod_agent.runtime.stagger_diagnosis import (
+    build_stagger_repair_attempt_projection,
+)
 from src.mod_agent.workflow import (
     ResumeDecision,
     ResumePayload,
@@ -1453,6 +1456,8 @@ def _make_deploying_runtime_evidence_factory(
     runtime_output_directory: Path | None = None,
     runtime_observation_retry: Mapping[str, Any] | None = None,
     operator_completion_directory: Path | None = None,
+    repair_attempt_projection: Mapping[str, Any] | None = None,
+    runtime_attempt_namespace: str | None = None,
 ) -> Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]:
     """Wrap the existing GTFO runner with verified temporary deployment."""
 
@@ -1490,6 +1495,8 @@ def _make_deploying_runtime_evidence_factory(
                 if operator_completion_directory is not None
                 else None
             ),
+            repair_attempt_projection=repair_attempt_projection,
+            runtime_attempt_namespace=runtime_attempt_namespace,
         )
         if runtime_observation_retry is None:
             return stagger_factory
@@ -2922,6 +2929,194 @@ def _load_runtime_continuation_handoff(
     )
 
 
+def _stagger_repair_attempt_projection(
+    handoff: _RuntimeContinuationHandoff,
+    runtime_profile: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Resolve the current repair lineage into a no-write Runtime ledger."""
+
+    if not isinstance(runtime_profile, Mapping) or not isinstance(
+        runtime_profile.get("stagger_acceptance"),
+        Mapping,
+    ):
+        return None
+    snapshot = handoff.checkpoint.get("state_snapshot")
+    if not isinstance(snapshot, Mapping):
+        raise LocalEntryError("Stagger RepairAttempt checkpoint snapshot is missing.")
+    artifacts = snapshot.get("artifacts")
+    artifact_hashes = snapshot.get("artifact_hashes")
+    if not isinstance(artifacts, Mapping) or not isinstance(
+        artifact_hashes,
+        Mapping,
+    ):
+        raise LocalEntryError("Stagger RepairAttempt Artifact bindings are missing.")
+    if "repair_plan" not in artifacts and "repair_plan" not in artifact_hashes:
+        return None
+    required_types = (
+        "root_cause_evidence",
+        "repair_plan",
+        "isolated_apply_result",
+    )
+    if any(
+        artifact_type not in artifacts or artifact_type not in artifact_hashes
+        for artifact_type in required_types
+    ):
+        raise LocalEntryError(
+            "Stagger RepairAttempt exact lineage is incomplete."
+        )
+    manifest_inputs = handoff.manifest.get("input_artifacts")
+    if not isinstance(manifest_inputs, Mapping):
+        raise LocalEntryError(
+            "Stagger RepairAttempt Build manifest input lineage is missing."
+        )
+
+    refs: dict[str, ArtifactRef] = {}
+    payloads: dict[str, dict[str, Any]] = {}
+    for artifact_type in required_types:
+        path = artifacts.get(artifact_type)
+        artifact_hash = artifact_hashes.get(artifact_type)
+        manifest_identity = manifest_inputs.get(artifact_type)
+        if (
+            not isinstance(path, str)
+            or not isinstance(artifact_hash, str)
+            or not isinstance(manifest_identity, Mapping)
+            or manifest_identity.get("path") != path
+            or manifest_identity.get("artifact_hash") != artifact_hash
+        ):
+            raise LocalEntryError(
+                "Stagger RepairAttempt Build manifest lineage does not match "
+                f"checkpoint role {artifact_type}."
+            )
+        ref = ArtifactRef(
+            feature_id=str(handoff.checkpoint["feature_id"]),
+            artifact_type=artifact_type,
+            path=path,
+            artifact_hash=artifact_hash,
+        )
+        try:
+            payload = handoff.artifact_store.read(ref)["data"]
+        except (OSError, ValueError) as exc:
+            raise LocalEntryError(
+                f"Stagger RepairAttempt {artifact_type} is invalid: {exc}"
+            ) from exc
+        refs[artifact_type] = ref
+        payloads[artifact_type] = payload
+
+    apply_payload = payloads["isolated_apply_result"]
+    changes = apply_payload.get("changes")
+    if not isinstance(changes, list) or len(changes) != 1:
+        raise LocalEntryError(
+            "Stagger RepairAttempt requires the one-change isolated Apply."
+        )
+    change = changes[0]
+    if not isinstance(change, Mapping):
+        raise LocalEntryError("Stagger isolated Apply change is invalid.")
+    diff_hash = apply_payload.get("diff_hash")
+    resume_binding = handoff.checkpoint.get("resume_binding")
+    if (
+        not isinstance(diff_hash, str)
+        or not isinstance(resume_binding, Mapping)
+        or resume_binding.get("diff_hash") != diff_hash
+    ):
+        raise LocalEntryError(
+            "Stagger RepairAttempt diff does not match checkpoint handoff."
+        )
+    source_hash_before = change.get("before_sha256")
+    source_sha256 = change.get("after_sha256")
+    if (
+        not isinstance(source_hash_before, str)
+        or not isinstance(source_sha256, str)
+        or handoff.manifest.get("target_sha256") != source_sha256
+    ):
+        raise LocalEntryError(
+            "Stagger RepairAttempt source identity does not match Build manifest."
+        )
+    source_snapshot_sha256 = handoff.manifest.get("source_snapshot_sha256")
+    if not isinstance(source_snapshot_sha256, str):
+        raise LocalEntryError(
+            "Stagger RepairAttempt Build source snapshot identity is missing."
+        )
+    verified_artifacts = handoff.build.get("verified_artifacts")
+    if not isinstance(verified_artifacts, list) or len(verified_artifacts) != 1:
+        raise LocalEntryError("Stagger RepairAttempt Build output is not unique.")
+    dll_sha256 = verified_artifacts[0].get("sha256")
+    if not isinstance(dll_sha256, str):
+        raise LocalEntryError("Stagger RepairAttempt DLL identity is missing.")
+    acceptance_boundary = runtime_profile.get("acceptance_boundary")
+    marker_criterion = (
+        acceptance_boundary.get("feature_spec_marker_criterion")
+        if isinstance(acceptance_boundary, Mapping)
+        else None
+    )
+    acceptance_criteria = handoff.feature_spec.get("acceptance_criteria")
+    if (
+        not isinstance(marker_criterion, str)
+        or not isinstance(acceptance_criteria, list)
+        or any(not isinstance(item, str) for item in acceptance_criteria)
+    ):
+        raise LocalEntryError(
+            "Stagger RepairAttempt criterion ownership is incomplete."
+        )
+    try:
+        return build_stagger_repair_attempt_projection(
+            feature_id=str(handoff.checkpoint["feature_id"]),
+            run_id=str(handoff.checkpoint["run_id"]),
+            repair_plan=payloads["repair_plan"],
+            repair_plan_ref={
+                "path": refs["repair_plan"].path,
+                "artifact_hash": refs["repair_plan"].artifact_hash,
+            },
+            root_cause_evidence=payloads["root_cause_evidence"],
+            root_cause_evidence_ref={
+                "path": refs["root_cause_evidence"].path,
+                "artifact_hash": refs["root_cause_evidence"].artifact_hash,
+            },
+            isolated_apply_result_ref={
+                "path": refs["isolated_apply_result"].path,
+                "artifact_hash": refs["isolated_apply_result"].artifact_hash,
+            },
+            build_result_ref={
+                "path": handoff.build_ref.path,
+                "artifact_hash": handoff.build_ref.artifact_hash,
+            },
+            acceptance_criteria=tuple(acceptance_criteria),
+            marker_criteria=frozenset({marker_criterion}),
+            source_hash_before=source_hash_before,
+            source_sha256=source_sha256,
+            source_snapshot_sha256=source_snapshot_sha256,
+            dll_sha256=dll_sha256,
+            diff_hash=diff_hash,
+        )
+    except ValueError as exc:
+        raise LocalEntryError(
+            f"Stagger RepairAttempt projection is invalid: {exc}"
+        ) from exc
+
+
+def _stagger_runtime_attempt_namespace(
+    projection: Mapping[str, Any],
+    *,
+    runtime_observation_retry: Mapping[str, Any] | None,
+) -> str:
+    repair_attempt = projection.get("repair_attempt")
+    if not isinstance(repair_attempt, Mapping):
+        raise LocalEntryError("Stagger RepairAttempt projection is incomplete.")
+    attempt_id = repair_attempt.get("attempt_id")
+    run_id = repair_attempt.get("run_id")
+    if not isinstance(attempt_id, str) or not isinstance(run_id, str):
+        raise LocalEntryError("Stagger Runtime attempt namespace is incomplete.")
+    if runtime_observation_retry is None:
+        execution_id = "initial"
+    else:
+        retry_number = runtime_observation_retry.get("retry_number")
+        if isinstance(retry_number, bool) or not isinstance(retry_number, int):
+            raise LocalEntryError(
+                "Stagger Runtime observation retry number is missing."
+            )
+        execution_id = f"observation_retry_{retry_number}"
+    return f"{attempt_id}:{run_id}:{execution_id}"
+
+
 def _runtime_continuation_backup_report(
     run_root: Path,
     *,
@@ -3363,6 +3558,10 @@ def preflight_local_runtime(
         }
         status = "READY_FOR_EXTERNAL_AUTHORIZATION"
 
+    repair_attempt_projection = _stagger_repair_attempt_projection(
+        handoff,
+        runtime_profile,
+    )
     return {
         "status": status,
         "command": "preflight-runtime",
@@ -3410,6 +3609,19 @@ def preflight_local_runtime(
             ),
             "verified_artifact": dict(build_artifact),
         },
+        "repair_attempt_preflight": (
+            {
+                "status": "ready",
+                "writes_performed": False,
+                "artifact_writes_performed": False,
+                "repair_attempt": repair_attempt_projection["repair_attempt"],
+                "criterion_results": repair_attempt_projection[
+                    "criterion_results"
+                ],
+            }
+            if repair_attempt_projection is not None
+            else {"status": "not_applicable"}
+        ),
         "runtime_profile": runtime_profile,
         "accepted_resume_recovery": (
             {
@@ -3728,6 +3940,7 @@ def resume_local_runtime(
     artifact_store = handoff.artifact_store
     checkpoint_ref = handoff.checkpoint_ref
     checkpoint = handoff.checkpoint
+    repair_attempt_projection: dict[str, Any] | None = None
 
     if injected_runtime_admission is not None:
         if runtime_evidence_factory is None:
@@ -3758,13 +3971,17 @@ def resume_local_runtime(
             allow_game_directory_write=allow_game_directory_write,
             acceptance_criteria=exact_acceptance_criteria,
         )
-        _runtime_profile_preflight_record(
+        runtime_profile_record = _runtime_profile_preflight_record(
             settings,
             runtime_plugin_destination=runtime_plugin_destination,
             feature_spec=handoff.feature_spec,
             runtime_output_root=(
                 root if retry_runtime_observation else None
             ),
+        )
+        repair_attempt_projection = _stagger_repair_attempt_projection(
+            handoff,
+            runtime_profile_record,
         )
         build = handoff.build
         verified_artifacts = [
@@ -3857,6 +4074,19 @@ def resume_local_runtime(
                 root / "operator_completion"
                 if retry_runtime_observation
                 else None
+            ),
+            repair_attempt_projection=repair_attempt_projection,
+            runtime_attempt_namespace=(
+                None
+                if repair_attempt_projection is None
+                else _stagger_runtime_attempt_namespace(
+                    repair_attempt_projection,
+                    runtime_observation_retry=(
+                        handoff.observation_retry_binding
+                        if retry_runtime_observation
+                        else None
+                    ),
+                )
             ),
         )
 
