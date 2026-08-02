@@ -20,9 +20,13 @@ def build_transition_eval_gate_report(
     claims_real_success: bool,
     evaluation_context: Mapping[str, Any] | None = None,
     evaluation_required: bool = False,
+    continuation_mode: str = "mutation",
+    verification_only_lineage_verified: bool = False,
 ) -> dict[str, Any]:
     """Build the TRANSITION-001 eval gate report."""
 
+    if continuation_mode not in {"mutation", "verification_only"}:
+        raise ValueError(f"Unsupported continuation_mode: {continuation_mode}")
     context = evaluation_context or {}
     cases = [
         _claim_boundary_case(
@@ -33,15 +37,26 @@ def build_transition_eval_gate_report(
             v1_boundary=v1_boundary,
             claims_real_success=claims_real_success,
         ),
-        _false_continue_case(review=review, dry_run=dry_run, build=build),
-        _review_correctness_case(review=review),
-        _dry_run_safety_case(review=review, dry_run=dry_run),
         _build_claim_boundary_case(build=build),
         _runtime_claim_boundary_case(runtime=runtime),
         _insufficient_baseline_case(context),
         _stale_evidence_case(context),
         _missing_required_metric_case(context),
     ]
+    if continuation_mode == "verification_only":
+        cases.insert(
+            2,
+            _verification_only_continuation_case(
+                build=build,
+                lineage_verified=verification_only_lineage_verified,
+            ),
+        )
+    else:
+        cases[2:2] = [
+            _false_continue_case(review=review, dry_run=dry_run, build=build),
+            _review_correctness_case(review=review),
+            _dry_run_safety_case(review=review, dry_run=dry_run),
+        ]
     required = evaluation_required or context.get("evaluation_required") is True
     if required:
         cases.extend(_required_evaluation_contract_cases(evaluation_context))
@@ -56,6 +71,7 @@ def build_transition_eval_gate_report(
     ]
     return {
         "gate_name": "TRANSITION-001 Eval Gate",
+        "continuation_mode": continuation_mode,
         "status": "failed" if blockers else "passed",
         "summary": {
             "total": len(cases),
@@ -65,6 +81,30 @@ def build_transition_eval_gate_report(
         "cases": cases,
         "blockers": blockers,
     }
+
+
+def _verification_only_continuation_case(
+    *,
+    build: Mapping[str, Any],
+    lineage_verified: bool,
+) -> dict[str, str]:
+    if build.get("input_execution_mode") != "verification_only":
+        return _failed(
+            "verification_only_build_identity",
+            "verification_only_continuation",
+            "BuildResult does not preserve verification_only input identity.",
+        )
+    if not lineage_verified:
+        return _failed(
+            "verification_only_lineage",
+            "verification_only_continuation",
+            "Verification-only FeatureSpec/EvidencePack lineage is not fresh and exact.",
+        )
+    return _passed(
+        "verification_only_continuation",
+        "verification_only_continuation",
+        "Verification-only continuation is bound to fresh FeatureSpec and EvidencePack inputs.",
+    )
 
 
 def _claim_boundary_case(

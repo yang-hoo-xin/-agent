@@ -1440,7 +1440,12 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             ),
             producer_stage="feature_spec",
             consumer_stages=frozenset(
-                {"retrieve_evidence", "create_implementation_plan", "dashboard"}
+                {
+                    "retrieve_evidence",
+                    "create_implementation_plan",
+                    "build",
+                    "dashboard",
+                }
             ),
             allowed_statuses=statuses,
             dashboard_projection=("message", "target_behavior", "risk_level", "blocked"),
@@ -1542,7 +1547,12 @@ def default_artifact_contracts() -> list[ArtifactContract]:
             ),
             producer_stage="evidence_retrieval",
             consumer_stages=frozenset(
-                {"create_implementation_plan", "generate_patch_proposal", "dashboard"}
+                {
+                    "create_implementation_plan",
+                    "generate_patch_proposal",
+                    "build",
+                    "dashboard",
+                }
             ),
             allowed_statuses=statuses,
             required_upstream_artifacts=frozenset({"feature_spec"}),
@@ -1763,7 +1773,10 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 {"collect_runtime_evidence", "evaluate", "repair_plan", "dashboard"}
             ),
             allowed_statuses=statuses,
-            required_upstream_artifacts=frozenset({"dry_run_result"}),
+            required_one_of_upstream_artifact_groups=(
+                frozenset({"dry_run_result", "feature_spec"}),
+                frozenset({"dry_run_result", "evidence_pack"}),
+            ),
             dashboard_projection=("message", "status", "error_class"),
         ),
         ArtifactContract(

@@ -24,6 +24,11 @@ from .state import (
     StateOwnershipPolicy,
     create_initial_state,
 )
+from .verification_only import (
+    VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
+    VerificationOnlyContinuationInput,
+    preflight_verification_only_continuation,
+)
 
 
 def build_graph(*args, **kwargs):
@@ -52,9 +57,12 @@ __all__ = [
     "StubNodeResult",
     "StubNodeRunner",
     "TraceEvent",
+    "VERIFICATION_ONLY_INPUT_EXECUTION_MODE",
+    "VerificationOnlyContinuationInput",
     "WorkflowCheckpoint",
     "WorkflowCheckpointStore",
     "build_graph",
     "create_initial_state",
     "resumed_state_from_decision",
+    "preflight_verification_only_continuation",
 ]

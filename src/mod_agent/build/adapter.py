@@ -156,6 +156,7 @@ class BuildResult:
     input_execution_mode: str | None
     message: str
     build_status: str | None = None
+    build_profile: dict[str, Any] | None = None
 
     def to_artifact_payload(self) -> dict[str, Any]:
         """Return payload compatible with the build_result artifact contract."""
@@ -188,6 +189,9 @@ class BuildResult:
             "claims_real_build_success": self.claims_real_build_success,
             "input_execution_mode": self.input_execution_mode,
             "build_status": self.build_status or self.status,
+            "build_profile": (
+                dict(self.build_profile) if self.build_profile is not None else None
+            ),
         }
 
 
@@ -378,6 +382,7 @@ class BuildAdapter:
             input_execution_mode=input_execution_mode,
             message=message,
             build_status=build_status,
+            build_profile=profile.to_dict(),
         )
 
 
@@ -447,6 +452,7 @@ def _skipped_build_result(
         input_execution_mode=input_execution_mode,
         message=message,
         build_status=build_status,
+        build_profile=profile.to_dict(),
     )
 
 

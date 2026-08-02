@@ -876,6 +876,13 @@ def test_build_result_contract_requires_structured_build_fields() -> None:
         "real_build_performed",
         "claims_real_build_success",
     }.issubset(contract.required_fields)
+    assert contract.required_upstream_artifacts == frozenset()
+    assert contract.required_one_of_upstream_artifact_groups == (
+        frozenset({"dry_run_result", "feature_spec"}),
+        frozenset({"dry_run_result", "evidence_pack"}),
+    )
+    assert "build" in registry.get("feature_spec").consumer_stages
+    assert "build" in registry.get("evidence_pack").consumer_stages
 
 
 def test_repair_plan_contract_requires_retry_and_evidence_fields() -> None:

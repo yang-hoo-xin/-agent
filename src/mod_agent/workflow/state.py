@@ -81,7 +81,7 @@ class StateOwnershipPolicy:
     _WRITERS: Mapping[str, frozenset[str]] = {
         "run_id": frozenset({"state_initializer"}),
         "request_id": frozenset({"state_initializer"}),
-        "feature_id": frozenset({"plan_request"}),
+        "feature_id": frozenset({"plan_request", "verification_only_admission"}),
         "user_request": frozenset({"state_initializer", "human_correction"}),
         "target_domain": frozenset({"state_initializer", "plan_request", "domain_adapter"}),
         "target_mod": frozenset({"state_initializer", "plan_request"}),
@@ -94,7 +94,9 @@ class StateOwnershipPolicy:
         "approvals": frozenset({"state_initializer", "interrupt_resume_handler"}),
         "blockers": frozenset({"workflow_node", "transition_router", "review_proposal"}),
         "warnings": frozenset({"workflow_node", "review_proposal"}),
-        "evidence_summary": frozenset({"retrieve_evidence"}),
+        "evidence_summary": frozenset(
+            {"retrieve_evidence", "verification_only_admission"}
+        ),
         "review_summary": frozenset({"review_proposal"}),
         "build_summary": frozenset({"build"}),
         "runtime_summary": frozenset({"collect_runtime_evidence"}),

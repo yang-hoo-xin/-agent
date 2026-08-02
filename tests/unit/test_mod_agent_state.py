@@ -36,7 +36,25 @@ def test_state_ownership_policy_allows_declared_writer() -> None:
     """A field can be written only by declared workflow components."""
 
     assert StateOwnershipPolicy.can_write("feature_id", "plan_request") is True
+    assert (
+        StateOwnershipPolicy.can_write("feature_id", "verification_only_admission")
+        is True
+    )
     assert StateOwnershipPolicy.can_write("feature_id", "retrieve_evidence") is False
+    assert (
+        StateOwnershipPolicy.can_write(
+            "evidence_summary",
+            "verification_only_admission",
+        )
+        is True
+    )
+    assert (
+        StateOwnershipPolicy.can_write(
+            "review_summary",
+            "verification_only_admission",
+        )
+        is False
+    )
     assert StateOwnershipPolicy.can_write("artifacts", "artifact_producing_node") is True
     assert StateOwnershipPolicy.can_write("approvals", "interrupt_resume_handler") is True
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from src.mod_agent.evaluation import build_transition_eval_gate_report
 from src.mod_agent.workflow.transitions import route_after_evaluate
 
@@ -16,6 +18,60 @@ def test_transition_eval_gate_passes_controlled_fake_path() -> None:
 
     assert report["status"] == "passed"
     assert report["summary"]["failed"] == 0
+
+
+def test_transition_eval_gate_passes_verified_verification_only_lineage() -> None:
+    build = _verified_build()
+    build["input_execution_mode"] = "verification_only"
+
+    report = build_transition_eval_gate_report(
+        review={},
+        dry_run={},
+        build=build,
+        runtime=_real_runtime(),
+        v1_boundary={"v1_acceptance_status": "accepted"},
+        claims_real_success=True,
+        continuation_mode="verification_only",
+        verification_only_lineage_verified=True,
+    )
+
+    assert report["status"] == "passed"
+    assert _case_status(report, "verification_only_continuation") == "passed"
+    assert {item["case_id"] for item in report["cases"]}.isdisjoint(
+        {"review_correctness", "dry_run_safety"}
+    )
+
+
+def test_transition_eval_gate_rejects_unverified_verification_only_lineage() -> None:
+    build = _verified_build()
+    build["input_execution_mode"] = "verification_only"
+
+    report = build_transition_eval_gate_report(
+        review={},
+        dry_run={},
+        build=build,
+        runtime=_real_runtime(),
+        v1_boundary={"v1_acceptance_status": "accepted"},
+        claims_real_success=True,
+        continuation_mode="verification_only",
+        verification_only_lineage_verified=False,
+    )
+
+    assert report["status"] == "failed"
+    assert _case_status(report, "verification_only_lineage") == "failed"
+
+
+def test_transition_eval_gate_rejects_unknown_continuation_mode() -> None:
+    with pytest.raises(ValueError, match="Unsupported continuation_mode"):
+        build_transition_eval_gate_report(
+            review=_review(),
+            dry_run=_dry_run(),
+            build=_fake_build(),
+            runtime=_fake_runtime(),
+            v1_boundary={"v1_acceptance_status": "blocked"},
+            claims_real_success=False,
+            continuation_mode="unknown",
+        )
 
 
 def test_required_evaluation_fails_closed_without_context() -> None:

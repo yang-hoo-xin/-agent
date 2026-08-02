@@ -101,7 +101,11 @@ def route_after_isolated_apply(state: ModAgentState) -> str:
 def route_after_build(state: ModAgentState) -> str:
     """Route failed builds to repair planning."""
 
+    if state["build_summary"].get("status") == "blocked":
+        return "blocked"
     if state["build_summary"].get("status") == "failed":
+        if state["build_summary"].get("input_execution_mode") == "verification_only":
+            return "blocked"
         return "repair"
     return "continue"
 
@@ -111,6 +115,8 @@ def route_after_runtime_evidence(state: ModAgentState) -> str:
 
     if state["runtime_summary"].get("acceptance_verified") is True:
         return "continue"
+    if state["build_summary"].get("input_execution_mode") == "verification_only":
+        return "blocked"
     failure_ownership = state["runtime_summary"].get("failure_ownership")
     if (
         state["runtime_summary"].get("has_structured_diagnosis") is True
@@ -192,10 +198,12 @@ def route_registry() -> RouteRegistry:
             "continue": "build",
         },
         "build": {
+            "blocked": "blocked",
             "continue": "collect_runtime_evidence",
             "repair": "create_repair_plan",
         },
         "collect_runtime_evidence": {
+            "blocked": "blocked",
             "continue": "evaluate",
             "binding_resolution": "resolve_runtime_binding",
             "repair": "create_repair_plan",

@@ -91,6 +91,14 @@ from .transitions import (
     route_after_runtime_evidence,
     route_registry,
 )
+from .verification_only import (
+    VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
+    VerificationOnlyContinuationInput,
+    preflight_verification_only_continuation,
+    validate_verification_only_build_result,
+    verification_only_lineage_matches,
+    verification_only_lineage_payload,
+)
 
 GraphNode = Callable[[ModAgentState], ModAgentState]
 BuildResultFactory = Callable[[str, str | None], BuildResult]
@@ -208,6 +216,7 @@ def build_graph(
     feature_spec_revision_projection: Mapping[str, Any] | None = None,
     approved_feature_spec_revision_payload_hash: str | None = None,
     approved_feature_spec_revision_projection_hash: str | None = None,
+    verification_only_continuation: VerificationOnlyContinuationInput | None = None,
 ):
     """Build a compiled LangGraph graph with real planning/review routing.
 
@@ -235,6 +244,31 @@ def build_graph(
             "Runtime continuation and authority approval cannot share "
             "one graph entry."
         )
+    if verification_only_continuation is not None:
+        if (
+            runtime_continuation_checkpoint_id is not None
+            or edit_authority_request_ref is not None
+            or repair_planning_authority_request_ref is not None
+            or feature_spec_revision_projection is not None
+        ):
+            raise ValueError(
+                "Verification-only Build admission requires its own graph entry."
+            )
+        if not stop_after_build or not persist_build_runtime_handoff:
+            raise ValueError(
+                "Verification-only Build admission must stop after Build and "
+                "persist a separately authorized Runtime handoff."
+            )
+        if build_result_factory is None:
+            raise ValueError(
+                "Verification-only Build admission requires an explicit "
+                "build_result_factory."
+            )
+        if build_checkpoint_exact_revision_upstream_types:
+            raise ValueError(
+                "Verification-only Build admission uses fresh FeatureSpec and "
+                "EvidencePack lineage, not mutation exact-revision roles."
+            )
     revision_configuration = (
         feature_spec_revision_projection,
         approved_feature_spec_revision_payload_hash,
@@ -334,6 +368,19 @@ def build_graph(
     if effective_proposal_git_binding_factory is None and use_default_proposal_git_binding:
         effective_proposal_git_binding_factory = _default_proposal_git_binding_factory
     graph = StateGraph(ModAgentState)
+
+    if verification_only_continuation is not None:
+        graph.add_node(
+            "verification_only_admission",
+            _make_real_graph_node(
+                "verification_only_admission",
+                lambda state: _run_verification_only_admission(
+                    state,
+                    artifact_store,
+                    verification_only_continuation,
+                ),
+            ),
+        )
 
     graph.add_node(
         "plan_request",
@@ -482,6 +529,7 @@ def build_graph(
                 state,
                 artifact_store,
                 build_result_factory,
+                verification_only_continuation=verification_only_continuation,
                 persist_build_runtime_handoff=persist_build_runtime_handoff,
                 exact_revision_upstream_types=(
                     build_checkpoint_exact_revision_upstream_types
@@ -538,7 +586,9 @@ def build_graph(
     )
     graph.add_node("blocked", _make_stub_graph_node("blocked", stub_runner))
 
-    if repair_planning_authority_request_ref is not None:
+    if verification_only_continuation is not None:
+        graph.add_edge(START, "verification_only_admission")
+    elif repair_planning_authority_request_ref is not None:
         graph.add_edge(START, "stagger_repair_planning_gate")
     elif edit_authority_request_ref is not None:
         graph.add_edge(START, "stagger_edit_authority_gate")
@@ -555,6 +605,12 @@ def build_graph(
             {
                 "continue": "collect_runtime_evidence",
             },
+        )
+    if verification_only_continuation is not None:
+        graph.add_conditional_edges(
+            "verification_only_admission",
+            lambda state: "blocked" if state["blockers"] else "continue",
+            {"blocked": "blocked", "continue": "build"},
         )
     registry = route_registry()
     graph.add_conditional_edges(
@@ -630,7 +686,7 @@ def build_graph(
         graph.add_conditional_edges(
             "build",
             route_after_build,
-            {"continue": END, "repair": END},
+            {"blocked": END, "continue": END, "repair": END},
         )
     else:
         graph.add_conditional_edges(
@@ -2028,21 +2084,76 @@ def _run_build(
     artifact_store: ArtifactStore,
     build_result_factory: BuildResultFactory | None,
     *,
+    verification_only_continuation: VerificationOnlyContinuationInput | None = None,
     persist_build_runtime_handoff: bool = False,
     exact_revision_upstream_types: frozenset[str] = frozenset(),
 ) -> ModAgentState:
-    dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
     feature_id = state["feature_id"] or state["request_id"]
-    apply_result = (
-        _read_artifact_data(state, artifact_store, "isolated_apply_result")
-        if "isolated_apply_result" in state["artifacts"]
-        else None
-    )
-    input_execution_mode = (
-        apply_result.get("execution_mode")
-        if apply_result is not None
-        else dry_run.get("execution_mode")
-    )
+    if verification_only_continuation is not None:
+        preflight = preflight_verification_only_continuation(
+            artifact_store,
+            verification_only_continuation,
+            run_id=state["run_id"],
+            request_id=state["request_id"],
+            user_request=state["user_request"],
+            target_mod=state["target_mod"],
+        )
+        if (
+            state.get("feature_id") != verification_only_continuation.feature_spec_ref.feature_id
+            or preflight["status"] != "ready_for_build_authorization"
+        ):
+            next_state = _copy_state(state)
+            next_state["current_stage"] = "build"
+            next_state["build_summary"] = {
+                "status": "blocked",
+                "input_execution_mode": VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
+                "preflight_hash": preflight["projection_hash"],
+            }
+            preflight_blockers = list(preflight["blockers"])
+            if (
+                state.get("feature_id")
+                != verification_only_continuation.feature_spec_ref.feature_id
+            ):
+                preflight_blockers.append(
+                    {
+                        "code": "VERIFICATION_STATE_FEATURE_ID_MISMATCH",
+                        "message": "Graph state feature_id changed after verification admission.",
+                    }
+                )
+            next_state["blockers"].extend(
+                {
+                    "stage": "build",
+                    "code": blocker["code"],
+                    "message": blocker["message"],
+                }
+                for blocker in preflight_blockers
+            )
+            return next_state
+        input_execution_mode = VERIFICATION_ONLY_INPUT_EXECUTION_MODE
+        build_upstream_refs = [
+            verification_only_continuation.feature_spec_ref,
+            verification_only_continuation.evidence_pack_ref,
+        ]
+    else:
+        dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
+        apply_result = (
+            _read_artifact_data(state, artifact_store, "isolated_apply_result")
+            if "isolated_apply_result" in state["artifacts"]
+            else None
+        )
+        input_execution_mode = (
+            apply_result.get("execution_mode")
+            if apply_result is not None
+            else dry_run.get("execution_mode")
+        )
+        build_upstream_refs = [
+            _artifact_ref_from_state(state, "dry_run_result"),
+            *(
+                [_artifact_ref_from_state(state, "isolated_apply_result")]
+                if "isolated_apply_result" in state["artifacts"]
+                else []
+            ),
+        ]
     result = (
         build_result_factory(feature_id, input_execution_mode)
         if build_result_factory is not None
@@ -2052,19 +2163,93 @@ def _run_build(
         )
     )
     payload = result.to_artifact_payload()
+    if verification_only_continuation is not None:
+        post_build_preflight = preflight_verification_only_continuation(
+            artifact_store,
+            verification_only_continuation,
+            run_id=state["run_id"],
+            request_id=state["request_id"],
+            user_request=state["user_request"],
+            target_mod=state["target_mod"],
+        )
+        if (
+            post_build_preflight["status"]
+            != "ready_for_build_authorization"
+            or post_build_preflight["projection_hash"]
+            != preflight["projection_hash"]
+        ):
+            next_state = _copy_state(state)
+            next_state["current_stage"] = "build"
+            next_state["build_summary"] = {
+                "status": "blocked",
+                "input_execution_mode": VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
+                "preflight_hash": preflight["projection_hash"],
+                "post_build_preflight_hash": post_build_preflight[
+                    "projection_hash"
+                ],
+            }
+            next_state["blockers"].append(
+                {
+                    "stage": "build",
+                    "code": "VERIFICATION_BUILD_INPUT_DRIFT",
+                    "message": (
+                        "Verification source or Artifact identity changed during Build."
+                    ),
+                }
+            )
+            return next_state
+        build_validation_blockers = validate_verification_only_build_result(
+            payload,
+            post_build_preflight,
+        )
+        if build_validation_blockers:
+            next_state = _copy_state(state)
+            next_state["current_stage"] = "build"
+            next_state["build_summary"] = {
+                "status": "blocked",
+                "input_execution_mode": VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
+                "preflight_hash": preflight["projection_hash"],
+            }
+            next_state["blockers"].extend(
+                {
+                    "stage": "build",
+                    "code": blocker["code"],
+                    "message": blocker["message"],
+                }
+                for blocker in build_validation_blockers
+            )
+            return next_state
+        payload["verification_only_lineage"] = verification_only_lineage_payload(
+            post_build_preflight
+        )
+    if verification_only_continuation is not None and (
+        payload.get("feature_id") != feature_id
+        or payload.get("input_execution_mode")
+        != VERIFICATION_ONLY_INPUT_EXECUTION_MODE
+    ):
+        next_state = _copy_state(state)
+        next_state["current_stage"] = "build"
+        next_state["build_summary"] = {
+            "status": "blocked",
+            "input_execution_mode": VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
+        }
+        next_state["blockers"].append(
+            {
+                "stage": "build",
+                "code": "VERIFICATION_BUILD_RESULT_IDENTITY_MISMATCH",
+                "message": (
+                    "BuildResult does not preserve the verification-only "
+                    "Feature and input execution identity."
+                ),
+            }
+        )
+        return next_state
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
         artifact_type="build_result",
         payload=payload,
         status="failed" if payload["status"] == "failed" else "success",
-        upstream_refs=[
-            _artifact_ref_from_state(state, "dry_run_result"),
-            *(
-                [_artifact_ref_from_state(state, "isolated_apply_result")]
-                if "isolated_apply_result" in state["artifacts"]
-                else []
-            ),
-        ],
+        upstream_refs=build_upstream_refs,
     )
     next_state = _copy_state(state)
     next_state["current_stage"] = "build"
@@ -2076,6 +2261,7 @@ def _run_build(
         "error_class": payload["error_class"],
         "repair_handoff": payload["repair_handoff"],
         "claims_real_build_success": payload["claims_real_build_success"],
+        "input_execution_mode": payload.get("input_execution_mode"),
     }
     _record_artifact(next_state, "build_result", artifact_ref)
     if (
@@ -2095,6 +2281,45 @@ def _run_build(
             ),
         )
         _record_artifact(next_state, "workflow_checkpoint", checkpoint_ref)
+    return next_state
+
+
+def _run_verification_only_admission(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    continuation: VerificationOnlyContinuationInput,
+) -> ModAgentState:
+    """Hydrate one exact no-mutation lineage after a no-write preflight."""
+
+    preflight = preflight_verification_only_continuation(
+        artifact_store,
+        continuation,
+        run_id=state["run_id"],
+        request_id=state["request_id"],
+        user_request=state["user_request"],
+        target_mod=state["target_mod"],
+    )
+    next_state = _copy_state(state)
+    next_state["current_stage"] = "evidence_retrieval"
+    next_state["evidence_summary"] = {
+        "readiness": "partial",
+        "can_generate_patch": False,
+        "verification_only_preflight": preflight,
+    }
+    if preflight["status"] != "ready_for_build_authorization":
+        next_state["blockers"].extend(
+            {
+                "stage": "evidence_retrieval",
+                "code": blocker["code"],
+                "message": blocker["message"],
+            }
+            for blocker in preflight["blockers"]
+        )
+        return next_state
+    next_state["feature_id"] = continuation.feature_spec_ref.feature_id
+    next_state["next_stage"] = "build"
+    _record_artifact(next_state, "feature_spec", continuation.feature_spec_ref)
+    _record_artifact(next_state, "evidence_pack", continuation.evidence_pack_ref)
     return next_state
 
 
@@ -2418,20 +2643,42 @@ def _run_fake_evaluate(
     evaluation_context_factory: EvaluationContextFactory | None = None,
     require_external_evaluation: bool = False,
 ) -> ModAgentState:
-    review = _read_artifact_data(state, artifact_store, "proposal_review")
-    dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
     build = _read_artifact_data(state, artifact_store, "build_result")
     runtime = _read_artifact_data(state, artifact_store, "runtime_evidence")
+    verification_only = (
+        build.get("input_execution_mode")
+        == VERIFICATION_ONLY_INPUT_EXECUTION_MODE
+    )
+    verification_preflight: dict[str, Any] | None = None
+    mutation_artifacts = {
+        "implementation_plan",
+        "patch_proposal",
+        "proposal_review",
+        "dry_run_result",
+        "isolated_apply_result",
+    }.intersection(state["artifacts"])
+    if verification_only:
+        review = {}
+        dry_run = {}
+        if {"feature_spec", "evidence_pack"}.issubset(state["artifacts"]):
+            verification_preflight = preflight_verification_only_continuation(
+                artifact_store,
+                VerificationOnlyContinuationInput(
+                    feature_spec_ref=_artifact_ref_from_state(state, "feature_spec"),
+                    evidence_pack_ref=_artifact_ref_from_state(state, "evidence_pack"),
+                ),
+                run_id=state["run_id"],
+                request_id=state["request_id"],
+                user_request=state["user_request"],
+                target_mod=state["target_mod"],
+            )
+    else:
+        review = _read_artifact_data(state, artifact_store, "proposal_review")
+        dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
     feature_id = state["feature_id"] or state["request_id"]
     acceptance_verified = bool(runtime.get("acceptance_verified"))
     v1_boundary = _v1_acceptance_boundary(build=build, runtime=runtime)
     v1_accepted = v1_boundary["v1_acceptance_status"] == "accepted"
-    execution_mode = "real" if v1_accepted else "fake"
-    workflow_completion_status = (
-        "real_runtime_acceptance_completed"
-        if v1_accepted
-        else "fake_execution_completed"
-    )
     evaluation_gate = build_transition_eval_gate_report(
         review=review,
         dry_run=dry_run,
@@ -2445,27 +2692,71 @@ def _run_fake_evaluate(
             else None
         ),
         evaluation_required=require_external_evaluation,
+        continuation_mode=(
+            VERIFICATION_ONLY_INPUT_EXECUTION_MODE
+            if verification_only
+            else "mutation"
+        ),
+        verification_only_lineage_verified=(
+            verification_preflight is not None
+            and verification_preflight["status"]
+            == "ready_for_build_authorization"
+            and not mutation_artifacts
+            and verification_only_lineage_matches(build, verification_preflight)
+        ),
+    )
+    gate_failed = evaluation_gate.get("status") == "failed"
+    accepted = v1_accepted and not gate_failed
+    execution_mode = "real" if runtime.get("execution_mode") == "real" else "fake"
+    workflow_completion_status = (
+        "real_runtime_acceptance_completed"
+        if accepted
+        else ("evaluation_blocked" if gate_failed else "fake_execution_completed")
     )
     payload = {
         "node_name": "evaluate",
         "stage": "evaluation",
         "message": (
             "Evaluation completed with real build and runtime acceptance evidence."
-            if v1_accepted
+            if accepted
             else (
-                "Evaluation completed for a fake/local workflow path. Result remains "
-                "inconclusive for real build and runtime success."
+                "Evaluation blocked by deterministic transition gates."
+                if gate_failed
+                else (
+                    "Evaluation completed for a fake/local workflow path. Result "
+                    "remains inconclusive for real build and runtime success."
+                )
             )
         ),
         "execution_mode": execution_mode,
         "workflow_completion_status": workflow_completion_status,
-        "requested_behavior_status": "verified" if acceptance_verified else "not_verified",
-        "verdict": "accepted" if v1_accepted else "inconclusive",
-        "claims_real_success": v1_accepted,
+        "requested_behavior_status": (
+            "verified" if acceptance_verified and not gate_failed else "not_verified"
+        ),
+        "verdict": "accepted" if accepted else ("blocked" if gate_failed else "inconclusive"),
+        "claims_real_success": accepted,
         "checks": [
             {
-                "check": "review_gate_approved",
-                "status": "passed",
+                "check": (
+                    "verification_only_lineage_admitted"
+                    if verification_only
+                    else "review_gate_approved"
+                ),
+                "status": (
+                    "passed"
+                    if not verification_only
+                    or (
+                        verification_preflight is not None
+                        and verification_preflight["status"]
+                        == "ready_for_build_authorization"
+                        and not mutation_artifacts
+                        and verification_only_lineage_matches(
+                            build,
+                            verification_preflight,
+                        )
+                    )
+                    else "failed"
+                ),
             },
             {
                 "check": "real_build",
@@ -2487,7 +2778,6 @@ def _run_fake_evaluate(
         "evaluation_gate": evaluation_gate,
         **v1_boundary,
     }
-    gate_failed = evaluation_gate.get("status") == "failed"
     gate_blockers = list(evaluation_gate.get("blockers") or [])
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
@@ -2626,7 +2916,24 @@ def _run_workflow_summary(
 ) -> ModAgentState:
     eval_report = _read_artifact_data(state, artifact_store, "eval_report")
     feature_id = state["feature_id"] or state["request_id"]
-    accepted = eval_report.get("v1_acceptance_status") == "accepted"
+    evaluation_gate = eval_report.get("evaluation_gate")
+    evaluation_gate_passed = (
+        isinstance(evaluation_gate, dict)
+        and evaluation_gate.get("status") == "passed"
+    )
+    accepted = (
+        eval_report.get("v1_acceptance_status") == "accepted"
+        and eval_report.get("verdict") == "accepted"
+        and eval_report.get("claims_real_success") is True
+        and evaluation_gate_passed
+    )
+    evaluation_blocked = (
+        eval_report.get("verdict") == "blocked" or not evaluation_gate_passed
+    )
+    verification_only = (
+        state["build_summary"].get("input_execution_mode")
+        == VERIFICATION_ONLY_INPUT_EXECUTION_MODE
+    )
     payload = {
         "node_name": "done",
         "stage": "done",
@@ -2634,6 +2941,10 @@ def _run_workflow_summary(
             "Workflow reached done with real build and runtime acceptance evidence."
             if accepted
             else (
+                "Workflow stopped because deterministic evaluation gates blocked "
+                "acceptance. No real Mod success is claimed."
+                if evaluation_blocked
+                else
                 "Workflow reached the end of the controlled fake execution loop. "
                 "No real file write, real build, or real runtime success is claimed."
             )
@@ -2641,8 +2952,10 @@ def _run_workflow_summary(
         "execution_mode": eval_report.get("execution_mode"),
         "workflow_completion_status": eval_report.get("workflow_completion_status"),
         "requested_behavior_status": eval_report.get("requested_behavior_status"),
-        "final_status": "accepted" if accepted else "inconclusive",
-        "claims_real_mod_success": bool(eval_report.get("claims_real_success")),
+        "final_status": (
+            "accepted" if accepted else ("blocked" if evaluation_blocked else "inconclusive")
+        ),
+        "claims_real_mod_success": accepted,
         "claims_real_build_success": bool(
             state["build_summary"].get("claims_real_build_success")
         ),
@@ -2655,11 +2968,19 @@ def _run_workflow_summary(
         "eval_verdict": eval_report.get("verdict"),
         "v1_acceptance_status": eval_report.get("v1_acceptance_status"),
         "v1_acceptance_blockers": list(eval_report.get("v1_acceptance_blockers") or []),
-        "next_required_evidence": [
-            "real dry-run/apply result",
-            "real build output",
-            "real runtime or manual verification evidence",
-        ],
+        "next_required_evidence": (
+            []
+            if accepted
+            else (
+                ["real build output", "real runtime or manual verification evidence"]
+                if verification_only
+                else [
+                    "real dry-run/apply result",
+                    "real build output",
+                    "real runtime or manual verification evidence",
+                ]
+            )
+        ),
     }
     artifact_ref = artifact_store.write(
         feature_id=feature_id,
@@ -2894,6 +3215,16 @@ def _node_artifact_refs(state: ModAgentState, node_name: str) -> list[str]:
 
 
 def _node_trace_details(state: ModAgentState, node_name: str) -> dict[str, Any]:
+    if node_name == "verification_only_admission":
+        preflight = state["evidence_summary"].get("verification_only_preflight")
+        if isinstance(preflight, dict):
+            return {
+                "status": preflight.get("status"),
+                "projection_hash": preflight.get("projection_hash"),
+                "source_files_verified": (
+                    preflight.get("source_lineage", {}).get("all_files_verified")
+                ),
+            }
     if node_name == "retrieve_evidence" and state["evidence_summary"]:
         missing_evidence = list(state["evidence_summary"].get("missing_evidence") or [])
         return {

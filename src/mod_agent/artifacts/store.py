@@ -905,6 +905,53 @@ class ArtifactStore:
         exact_revision_upstream_types: set[str],
     ) -> None:
         provided_types = {ref.artifact_type for ref in upstream_refs}
+        if artifact_type == "build_result":
+            verification_only = (
+                payload.get("input_execution_mode") == "verification_only"
+            )
+            verification_types = {"feature_spec", "evidence_pack"}
+            mutation_types = {"dry_run_result", "isolated_apply_result"}
+            if verification_only:
+                if (
+                    provided_types != verification_types
+                    or len(upstream_refs) != len(verification_types)
+                ):
+                    raise ArtifactStoreError(
+                        "Verification-only BuildResult requires only one exact "
+                        "FeatureSpec and one exact EvidencePack upstream."
+                    )
+                lineage = payload.get("verification_only_lineage")
+                refs_by_type = {ref.artifact_type: ref for ref in upstream_refs}
+                if not isinstance(lineage, Mapping) or any(
+                    not isinstance(lineage.get(field), Mapping)
+                    or lineage[field].get("path") != refs_by_type[upstream_type].path
+                    or lineage[field].get("artifact_hash")
+                    != refs_by_type[upstream_type].artifact_hash
+                    for field, upstream_type in (
+                        ("feature_spec", "feature_spec"),
+                        ("evidence_pack", "evidence_pack"),
+                    )
+                ):
+                    raise ArtifactStoreError(
+                        "Verification-only BuildResult lineage does not match "
+                        "its exact upstreams."
+                    )
+                if not isinstance(lineage.get("preflight_hash"), str) or not lineage.get(
+                    "preflight_hash"
+                ):
+                    raise ArtifactStoreError(
+                        "Verification-only BuildResult is missing its preflight hash."
+                    )
+            elif (
+                "dry_run_result" not in provided_types
+                or not provided_types.issubset(mutation_types)
+                or len(upstream_refs) != len(provided_types)
+                or payload.get("verification_only_lineage") is not None
+            ):
+                raise ArtifactStoreError(
+                    "Mutation BuildResult requires dry_run_result, optional "
+                    "isolated_apply_result, and no verification-only roles."
+                )
         if (
             artifact_type == "edit_authority_approval"
             and payload.get("authority_source")
@@ -1259,7 +1306,10 @@ class ArtifactStore:
             payload=payload,
             status=status,
         )
-        if conditional_upstreams_required:
+        one_of_upstreams_required = bool(
+            contract.required_one_of_upstream_artifact_groups
+        ) and (artifact_type != "repair_plan" or conditional_upstreams_required)
+        if one_of_upstreams_required:
             for group in contract.required_one_of_upstream_artifact_groups:
                 if not provided_types.intersection(group):
                     raise ArtifactStoreError(
