@@ -64,6 +64,9 @@ _STAGGER_OBSERVATION_REQUEST_SCHEMA_V2 = (
 _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2 = (
     "edit_authority_stagger_hud_parent_diagnostic_plan_v2"
 )
+_STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND = (
+    "bounded_observation_only_plan_materialization"
+)
 _STAGGER_SOURCE_PATH = "Patches/HitFeedbackBehaviorPatch.cs"
 _STAGGER_PLUGIN_PATH = "Plugin.cs"
 _STAGGER_BEHAVIOR_TYPE = (
@@ -521,6 +524,322 @@ def create_stagger_edit_authority_request(
         "registry_mutation_allowed": False,
         "repair_planner_invoked": False,
         "repair_allowed": False,
+        "source_patch_allowed": False,
+        "source_modified": False,
+        "build_performed": False,
+        "process_launched": False,
+        "writes_performed": True,
+        "written_artifact_types": ["edit_authority_request"],
+    }
+
+
+def preflight_stagger_bounded_observation_authority(
+    *,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    run_id: str,
+    feature_spec_path: str | Path,
+    feature_spec_hash: str,
+    runtime_evidence_path: str | Path,
+    runtime_evidence_hash: str,
+    evidence_pack_path: str | Path,
+    evidence_pack_hash: str,
+    historical_implementation_plan_path: str | Path,
+    historical_implementation_plan_hash: str,
+    historical_patch_proposal_path: str | Path,
+    historical_patch_proposal_hash: str,
+    source_root: str | Path,
+    reviewed_projection_hash: str,
+    implementation_plan_projection: dict[str, Any],
+    implementation_plan_projection_hash: str,
+    patch_proposal_projection_hash: str,
+    standard_diff_hash: str,
+    unified_diff_sha256: str,
+    projected_after_source_sha256: str,
+    target_source_evidence_item: dict[str, Any],
+) -> dict[str, Any]:
+    """Project one exact observation-only Evidence/Plan request."""
+
+    store = ArtifactStore(artifact_store_root)
+    refs = _bounded_observation_authority_refs(
+        feature_id=feature_id,
+        feature_spec_path=feature_spec_path,
+        feature_spec_hash=feature_spec_hash,
+        runtime_evidence_path=runtime_evidence_path,
+        runtime_evidence_hash=runtime_evidence_hash,
+        evidence_pack_path=evidence_pack_path,
+        evidence_pack_hash=evidence_pack_hash,
+        historical_implementation_plan_path=(
+            historical_implementation_plan_path
+        ),
+        historical_implementation_plan_hash=(
+            historical_implementation_plan_hash
+        ),
+        historical_patch_proposal_path=historical_patch_proposal_path,
+        historical_patch_proposal_hash=historical_patch_proposal_hash,
+    )
+    envelopes = {role: store.read(ref) for role, ref in refs.items()}
+    for role in ("feature_spec", "runtime_evidence", "evidence_pack"):
+        _require_latest_artifact_refs(store, (refs[role],))
+        freshness = store.check_freshness(refs[role])
+        if not freshness.is_fresh:
+            raise StaggerEditAuthorityPreflightError(
+                f"Current {role} is stale: {list(freshness.stale_reasons)}"
+            )
+    for role in (
+        "historical_implementation_plan",
+        "historical_patch_proposal",
+    ):
+        _require_registered_exact_revision(store, refs[role])
+    historical_freshness = {
+        role: store.check_freshness(refs[role])
+        for role in (
+            "historical_implementation_plan",
+            "historical_patch_proposal",
+        )
+    }
+
+    runtime_payload = _artifact_data(envelopes["runtime_evidence"])
+    if (
+        runtime_payload.get("feature_id") != feature_id
+        or runtime_payload.get("run_id") != run_id
+        or not _has_upstream_revision(
+            envelopes["runtime_evidence"],
+            artifact_type="feature_spec",
+            artifact_hash=refs["feature_spec"].artifact_hash,
+        )
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "RuntimeEvidence does not bind the current FeatureSpec/run."
+        )
+    evidence_envelope = envelopes["evidence_pack"]
+    if not _has_upstream_revision(
+        evidence_envelope,
+        artifact_type="feature_spec",
+        artifact_hash=refs["feature_spec"].artifact_hash,
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "EvidencePack does not bind the current FeatureSpec."
+        )
+
+    plan_template = copy.deepcopy(implementation_plan_projection)
+    evidence_item = copy.deepcopy(target_source_evidence_item)
+    projection = _validate_bounded_observation_projection(
+        feature_id=feature_id,
+        source_root=source_root,
+        reviewed_projection_hash=reviewed_projection_hash,
+        implementation_plan_projection=plan_template,
+        implementation_plan_projection_hash=(
+            implementation_plan_projection_hash
+        ),
+        patch_proposal_projection_hash=patch_proposal_projection_hash,
+        standard_diff_hash=standard_diff_hash,
+        unified_diff_sha256=unified_diff_sha256,
+        projected_after_source_sha256=projected_after_source_sha256,
+        target_source_evidence_item=evidence_item,
+    )
+    expected_binding_id, expected_change_id = _next_registered_plan_ids(
+        store,
+        feature_id=feature_id,
+    )
+    if (
+        projection["binding_id"] != expected_binding_id
+        or projection["change_id"] != expected_change_id
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "Projected Binding or change identity is not the next exact "
+            "registered identifier."
+        )
+    proposal = {
+        "projection_kind": _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND,
+        "feature_id": feature_id,
+        "run_id": run_id,
+        "feature_spec_revision": _revision(refs["feature_spec"]),
+        "runtime_evidence_revision": _revision(refs["runtime_evidence"]),
+        "evidence_pack_revision": _revision(refs["evidence_pack"]),
+        "historical_identifier_baseline": {
+            "implementation_plan_revision": _revision(
+                refs["historical_implementation_plan"]
+            ),
+            "implementation_plan_recursive_freshness": (
+                "fresh"
+                if historical_freshness[
+                    "historical_implementation_plan"
+                ].is_fresh
+                else "stale"
+            ),
+            "implementation_plan_stale_reasons": list(
+                historical_freshness[
+                    "historical_implementation_plan"
+                ].stale_reasons
+            ),
+            "patch_proposal_revision": _revision(
+                refs["historical_patch_proposal"]
+            ),
+            "patch_proposal_recursive_freshness": (
+                "fresh"
+                if historical_freshness[
+                    "historical_patch_proposal"
+                ].is_fresh
+                else "stale"
+            ),
+            "patch_proposal_stale_reasons": list(
+                historical_freshness[
+                    "historical_patch_proposal"
+                ].stale_reasons
+            ),
+            "authority": "identifier_derivation_only",
+            "downstream_authority": False,
+        },
+        "reviewed_no_write_projection": projection,
+        "target_source_evidence_item": evidence_item,
+        "implementation_plan_template": plan_template,
+        "current_source": projection["current_source"],
+        "materialization_boundary": {
+            "request_creation_artifact_types": [
+                "edit_authority_request",
+            ],
+            "graph_resume_protocol_artifact_types": [
+                "workflow_checkpoint",
+                "resume_report",
+            ],
+            "approved_materializer_artifact_types": [
+                "edit_authority_approval",
+                "evidence_pack",
+                "implementation_plan",
+            ],
+            "approved_graph_total_artifact_types": [
+                "workflow_checkpoint",
+                "resume_report",
+                "edit_authority_approval",
+                "evidence_pack",
+                "implementation_plan",
+            ],
+            "full_request_to_plan_artifact_types": [
+                "edit_authority_request",
+                "workflow_checkpoint",
+                "resume_report",
+                "edit_authority_approval",
+                "evidence_pack",
+                "implementation_plan",
+            ],
+            "new_implementation_plan_upstream_roles": [
+                "current_feature_spec",
+                "new_evidence_pack",
+                "edit_authority_approval",
+            ],
+            "historical_identifier_baseline_is_plan_upstream": False,
+            "binding_resolution_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+            "build_allowed": False,
+            "runtime_allowed": False,
+        },
+    }
+    request_payload = {
+        "schema_version": "stagger_edit_authority_request_v1",
+        "projection_kind": _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND,
+        "proposal": proposal,
+        "source_root": str(Path(source_root).resolve()),
+        "projected_ids": {
+            "binding_id": projection["binding_id"],
+            "change_id": projection["change_id"],
+            "evidence_id": evidence_item["evidence_id"],
+        },
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        _canonical_json(request_payload)
+    ).hexdigest()
+    return {
+        "status": "READY_TO_CREATE_BOUNDED_OBSERVATION_AUTHORITY_REQUEST",
+        "command": "preflight-stagger-bounded-observation-authority",
+        "request_payload": request_payload,
+        "request_hash": request_hash,
+        "request_creation_required": True,
+        "approval_required": True,
+        "authority_granted": False,
+        "repair_planner_invoked": False,
+        "source_patch_allowed": False,
+        "source_modified": False,
+        "build_performed": False,
+        "process_launched": False,
+        "writes_performed": False,
+        "artifact_writes_performed": False,
+    }
+
+
+def create_stagger_bounded_observation_authority_request(
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Persist one reviewed observation-only request without authority."""
+
+    preflight = preflight_stagger_bounded_observation_authority(**kwargs)
+    feature_id = str(kwargs["feature_id"])
+    store = ArtifactStore(kwargs["artifact_store_root"])
+    refs = _bounded_observation_authority_refs(
+        feature_id=feature_id,
+        feature_spec_path=kwargs["feature_spec_path"],
+        feature_spec_hash=kwargs["feature_spec_hash"],
+        runtime_evidence_path=kwargs["runtime_evidence_path"],
+        runtime_evidence_hash=kwargs["runtime_evidence_hash"],
+        evidence_pack_path=kwargs["evidence_pack_path"],
+        evidence_pack_hash=kwargs["evidence_pack_hash"],
+        historical_implementation_plan_path=(
+            kwargs["historical_implementation_plan_path"]
+        ),
+        historical_implementation_plan_hash=(
+            kwargs["historical_implementation_plan_hash"]
+        ),
+        historical_patch_proposal_path=(
+            kwargs["historical_patch_proposal_path"]
+        ),
+        historical_patch_proposal_hash=(
+            kwargs["historical_patch_proposal_hash"]
+        ),
+    )
+    request_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": "request_stagger_edit_authority",
+            "stage": "edit_authority_request",
+            "message": (
+                "Exact bounded observation Evidence/Plan request awaits "
+                "LangGraph human review."
+            ),
+            "status": "pending_human_approval",
+            "feature_id": feature_id,
+            "run_id": str(kwargs["run_id"]),
+            "request_hash": preflight["request_hash"],
+            "request_payload": preflight["request_payload"],
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+        status="success",
+        upstream_refs=[
+            refs["feature_spec"],
+            refs["runtime_evidence"],
+            refs["historical_implementation_plan"],
+            refs["historical_patch_proposal"],
+            refs["evidence_pack"],
+        ],
+        exact_revision_upstream_types={
+            "feature_spec",
+            "runtime_evidence",
+            "implementation_plan",
+            "patch_proposal",
+            "evidence_pack",
+        },
+    )
+    return {
+        "status": "BOUNDED_OBSERVATION_AUTHORITY_REQUEST_CREATED",
+        "command": "request-stagger-bounded-observation-authority",
+        "request_hash": preflight["request_hash"],
+        "edit_authority_request_revision": _revision(request_ref),
+        "authority_granted": False,
+        "repair_planner_invoked": False,
         "source_patch_allowed": False,
         "source_modified": False,
         "build_performed": False,
@@ -1588,6 +1907,276 @@ def _apply_approved_stagger_edit_authority(
     }
 
 
+def _apply_approved_stagger_bounded_observation_authority(
+    *,
+    approval_hash: str,
+    approved_by: str,
+    approved_at: str,
+    resume_id: str,
+    request_ref: ArtifactRef,
+    resume_report_ref: ArtifactRef,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    run_id: str,
+    request_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Materialize one exact observation Evidence/Plan and stop."""
+
+    proposal = request_payload.get("proposal")
+    source_root = request_payload.get("source_root")
+    if not isinstance(proposal, dict) or not isinstance(source_root, str):
+        raise StaggerEditAuthorityApprovalError(
+            "Bounded observation request payload is invalid."
+        )
+    historical = proposal.get("historical_identifier_baseline")
+    reviewed = proposal.get("reviewed_no_write_projection")
+    evidence_item = proposal.get("target_source_evidence_item")
+    plan_template = proposal.get("implementation_plan_template")
+    if not all(
+        isinstance(value, dict)
+        for value in (historical, reviewed, evidence_item, plan_template)
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "Bounded observation projection is incomplete."
+        )
+    preflight = preflight_stagger_bounded_observation_authority(
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        run_id=run_id,
+        feature_spec_path=proposal["feature_spec_revision"]["path"],
+        feature_spec_hash=proposal["feature_spec_revision"][
+            "artifact_hash"
+        ],
+        runtime_evidence_path=proposal["runtime_evidence_revision"][
+            "path"
+        ],
+        runtime_evidence_hash=proposal["runtime_evidence_revision"][
+            "artifact_hash"
+        ],
+        evidence_pack_path=proposal["evidence_pack_revision"]["path"],
+        evidence_pack_hash=proposal["evidence_pack_revision"][
+            "artifact_hash"
+        ],
+        historical_implementation_plan_path=historical[
+            "implementation_plan_revision"
+        ]["path"],
+        historical_implementation_plan_hash=historical[
+            "implementation_plan_revision"
+        ]["artifact_hash"],
+        historical_patch_proposal_path=historical[
+            "patch_proposal_revision"
+        ]["path"],
+        historical_patch_proposal_hash=historical[
+            "patch_proposal_revision"
+        ]["artifact_hash"],
+        source_root=source_root,
+        reviewed_projection_hash=reviewed["reviewed_projection_hash"],
+        implementation_plan_projection=plan_template,
+        implementation_plan_projection_hash=reviewed[
+            "implementation_plan_projection_hash"
+        ],
+        patch_proposal_projection_hash=reviewed[
+            "patch_proposal_projection_hash"
+        ],
+        standard_diff_hash=reviewed["standard_diff_hash"],
+        unified_diff_sha256=reviewed["unified_diff_sha256"],
+        projected_after_source_sha256=reviewed[
+            "projected_after_source_sha256"
+        ],
+        target_source_evidence_item=evidence_item,
+    )
+    store = ArtifactStore(artifact_store_root)
+    request = _artifact_data(store.read(request_ref))
+    if (
+        request.get("request_hash") != approval_hash
+        or preflight["request_hash"] != approval_hash
+        or preflight["request_payload"] != request_payload
+        or "sha256:"
+        + hashlib.sha256(_canonical_json(request_payload)).hexdigest()
+        != approval_hash
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "Approved bounded observation request is not exact and fresh."
+        )
+
+    refs = _bounded_observation_authority_refs(
+        feature_id=feature_id,
+        feature_spec_path=proposal["feature_spec_revision"]["path"],
+        feature_spec_hash=proposal["feature_spec_revision"][
+            "artifact_hash"
+        ],
+        runtime_evidence_path=proposal["runtime_evidence_revision"][
+            "path"
+        ],
+        runtime_evidence_hash=proposal["runtime_evidence_revision"][
+            "artifact_hash"
+        ],
+        evidence_pack_path=proposal["evidence_pack_revision"]["path"],
+        evidence_pack_hash=proposal["evidence_pack_revision"][
+            "artifact_hash"
+        ],
+        historical_implementation_plan_path=historical[
+            "implementation_plan_revision"
+        ]["path"],
+        historical_implementation_plan_hash=historical[
+            "implementation_plan_revision"
+        ]["artifact_hash"],
+        historical_patch_proposal_path=historical[
+            "patch_proposal_revision"
+        ]["path"],
+        historical_patch_proposal_hash=historical[
+            "patch_proposal_revision"
+        ]["artifact_hash"],
+    )
+    old_evidence_envelope = store.read(refs["evidence_pack"])
+    old_evidence = _artifact_data(old_evidence_envelope)
+    items = old_evidence.get("items")
+    if not isinstance(items, list) or any(
+        isinstance(item, dict)
+        and item.get("evidence_id") == evidence_item.get("evidence_id")
+        for item in items
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "Bounded observation EvidenceItem is invalid or already exists."
+        )
+
+    approval_payload = _build_approval_payload(
+        feature_id=feature_id,
+        run_id=run_id,
+        approved_by=approved_by,
+        approved_at=approved_at,
+        resume_id=resume_id,
+        approval_hash=approval_hash,
+        request_ref=request_ref,
+        resume_report_ref=resume_report_ref,
+        authority_contract_version=(
+            _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2
+        ),
+    )
+    store.preflight_atomic_commit(
+        feature_id=feature_id,
+        artifact_types=(
+            "edit_authority_approval",
+            "evidence_pack",
+            "implementation_plan",
+        ),
+    )
+    approval_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="edit_authority_approval",
+        payload=approval_payload,
+        status="success",
+        upstream_refs=[request_ref, resume_report_ref],
+        exact_revision_upstream_types={
+            "edit_authority_request",
+            "resume_report",
+        },
+    )
+
+    bounded_item = copy.deepcopy(evidence_item)
+    bounded_item["authority"] = "human_exact_edit_authority"
+    bounded_item["edit_authority_approval_ref"] = _revision(approval_ref)
+    bounded_item["runtime_evidence_ref"] = _revision(
+        refs["runtime_evidence"]
+    )
+    evidence_payload = copy.deepcopy(old_evidence)
+    evidence_payload["items"].append(bounded_item)
+    evidence_payload["message"] = (
+        "The fresh EvidencePack now includes one exact bounded C6/C7 "
+        "observation-only target-source scope."
+    )
+    trace_refs = [
+        str(item)
+        for item in evidence_payload.get("trace_refs", ())
+        if isinstance(item, str)
+    ]
+    for ref_path in (approval_ref.path, refs["runtime_evidence"].path):
+        if ref_path not in trace_refs:
+            trace_refs.append(ref_path)
+    evidence_payload["trace_refs"] = trace_refs
+    evidence_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="evidence_pack",
+        payload=evidence_payload,
+        status=str(old_evidence_envelope["status"]),
+        upstream_refs=[
+            refs["feature_spec"],
+            refs["runtime_evidence"],
+            approval_ref,
+            refs["evidence_pack"],
+        ],
+        exact_revision_upstream_types={
+            "runtime_evidence",
+            "edit_authority_approval",
+            "evidence_pack",
+        },
+    )
+
+    plan_payload = copy.deepcopy(plan_template)
+    bindings = plan_payload["binding_registry"]["edit_bindings"]
+    if len(bindings) != 1:
+        raise StaggerEditAuthorityApprovalError(
+            "Bounded observation Plan must contain one exact binding."
+        )
+    binding = bindings[0]
+    binding["authority"] = "human_exact_edit_authority"
+    binding["edit_authority_approval_ref"] = _revision(approval_ref)
+    binding["evidence_pack_ref"] = _revision(evidence_ref)
+    binding["repair_planner_allowed"] = False
+    binding["source_patch_allowed"] = False
+    plan_payload["materialization_context"] = {
+        "projection_kind": _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND,
+        "reviewed_no_write_projection": copy.deepcopy(reviewed),
+        "edit_authority_request_revision": _revision(request_ref),
+        "edit_authority_approval_revision": _revision(approval_ref),
+        "evidence_pack_revision": _revision(evidence_ref),
+        "runtime_evidence_revision": _revision(refs["runtime_evidence"]),
+        "historical_identifier_baseline": copy.deepcopy(historical),
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+    }
+    plan_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="implementation_plan",
+        payload=plan_payload,
+        status="success",
+        upstream_refs=[
+            refs["feature_spec"],
+            evidence_ref,
+            approval_ref,
+        ],
+        exact_revision_upstream_types={
+            "edit_authority_approval",
+        },
+    )
+    return {
+        "status": "BOUNDED_OBSERVATION_PLAN_AUTHORIZED",
+        "command": "langgraph-edit-authority-approval",
+        "approval_hash": approval_hash,
+        "approved_by": approved_by,
+        "edit_authority_approval_revision": _revision(approval_ref),
+        "evidence_pack_revision": _revision(evidence_ref),
+        "implementation_plan_revision": _revision(plan_ref),
+        "allowed_edit_binding_ids": [binding["binding_id"]],
+        "selected_change_ids": [
+            plan_payload["proposed_changes"][0]["change_id"]
+        ],
+        "binding_resolution_written": False,
+        "writes_performed": True,
+        "artifact_writes_performed": True,
+        "written_artifact_types": [
+            "edit_authority_approval",
+            "evidence_pack",
+            "implementation_plan",
+        ],
+        "repair_planner_invoked": False,
+        "source_patch_allowed": False,
+        "source_modified": False,
+        "build_performed": False,
+        "process_launched": False,
+    }
+
+
 def materialize_stagger_edit_authority_approval(
     *,
     artifact_store_root: str | Path,
@@ -1618,6 +2207,11 @@ def materialize_stagger_edit_authority_approval(
         if isinstance(request_payload, dict)
         else None
     )
+    projection_kind = (
+        request_payload.get("projection_kind")
+        if isinstance(request_payload, dict)
+        else None
+    )
     request_freshness = store.check_freshness(request_ref)
     if not request_freshness.is_fresh:
         raise StaggerEditAuthorityApprovalError(
@@ -1632,7 +2226,7 @@ def materialize_stagger_edit_authority_approval(
         _EXISTING_BINDING_REQUEST_SCHEMA,
         _STAGGER_OBSERVATION_REQUEST_SCHEMA_V1,
         _STAGGER_OBSERVATION_REQUEST_SCHEMA_V2,
-    }:
+    } or projection_kind == _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND:
         _require_latest_artifact_refs(store, (request_ref,))
     else:
         _require_latest_artifact_refs(
@@ -1737,6 +2331,24 @@ def materialize_stagger_edit_authority_approval(
         }
     ):
         return _apply_approved_stagger_hud_parent_observation_authority(
+            approval_hash=str(request["request_hash"]),
+            approved_by=str(report["approved_by"]),
+            approved_at=str(report["approved_at"]),
+            resume_id=str(report["resume_id"]),
+            request_ref=request_ref,
+            resume_report_ref=report_ref,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            run_id=str(request["run_id"]),
+            request_payload=request_payload,
+        )
+    if (
+        request_payload.get("schema_version")
+        == "stagger_edit_authority_request_v1"
+        and request_payload.get("projection_kind")
+        == _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND
+    ):
+        return _apply_approved_stagger_bounded_observation_authority(
             approval_hash=str(request["request_hash"]),
             approved_by=str(report["approved_by"]),
             approved_at=str(report["approved_at"]),
@@ -3206,6 +3818,283 @@ def _build_stagger_diagnostic_binding_proposal(
         ]
     )
     return base
+
+
+def _bounded_observation_authority_refs(
+    *,
+    feature_id: str,
+    feature_spec_path: str | Path,
+    feature_spec_hash: str,
+    runtime_evidence_path: str | Path,
+    runtime_evidence_hash: str,
+    evidence_pack_path: str | Path,
+    evidence_pack_hash: str,
+    historical_implementation_plan_path: str | Path,
+    historical_implementation_plan_hash: str,
+    historical_patch_proposal_path: str | Path,
+    historical_patch_proposal_hash: str,
+) -> dict[str, ArtifactRef]:
+    return {
+        "feature_spec": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="feature_spec",
+            path=feature_spec_path,
+            artifact_hash=feature_spec_hash,
+        ),
+        "runtime_evidence": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="runtime_evidence",
+            path=runtime_evidence_path,
+            artifact_hash=runtime_evidence_hash,
+        ),
+        "evidence_pack": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="evidence_pack",
+            path=evidence_pack_path,
+            artifact_hash=evidence_pack_hash,
+        ),
+        "historical_implementation_plan": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="implementation_plan",
+            path=historical_implementation_plan_path,
+            artifact_hash=historical_implementation_plan_hash,
+        ),
+        "historical_patch_proposal": _artifact_ref(
+            feature_id=feature_id,
+            artifact_type="patch_proposal",
+            path=historical_patch_proposal_path,
+            artifact_hash=historical_patch_proposal_hash,
+        ),
+    }
+
+
+def _next_registered_plan_ids(
+    store: ArtifactStore,
+    *,
+    feature_id: str,
+) -> tuple[str, str]:
+    binding_ids: set[str] = set()
+    change_ids: set[str] = set()
+    for ref in store.list_feature_artifact_revisions(
+        feature_id,
+        "implementation_plan",
+    ):
+        plan = _artifact_data(store.read(ref))
+        bindings = plan.get("binding_registry", {}).get("edit_bindings")
+        changes = plan.get("proposed_changes")
+        if not isinstance(bindings, list) or not isinstance(changes, list):
+            raise StaggerEditAuthorityPreflightError(
+                "Registered ImplementationPlan identifiers are invalid."
+            )
+        binding_ids.update(
+            str(item["binding_id"])
+            for item in bindings
+            if isinstance(item, dict) and item.get("binding_id")
+        )
+        change_ids.update(
+            str(item["change_id"])
+            for item in changes
+            if isinstance(item, dict) and item.get("change_id")
+        )
+    return (
+        _next_sequential_id(sorted(binding_ids), prefix="edit_binding_"),
+        _next_sequential_id(sorted(change_ids), prefix="chg_"),
+    )
+
+
+def _validate_bounded_observation_projection(
+    *,
+    feature_id: str,
+    source_root: str | Path,
+    reviewed_projection_hash: str,
+    implementation_plan_projection: dict[str, Any],
+    implementation_plan_projection_hash: str,
+    patch_proposal_projection_hash: str,
+    standard_diff_hash: str,
+    unified_diff_sha256: str,
+    projected_after_source_sha256: str,
+    target_source_evidence_item: dict[str, Any],
+) -> dict[str, Any]:
+    hash_fields = (
+        reviewed_projection_hash,
+        implementation_plan_projection_hash,
+        patch_proposal_projection_hash,
+        standard_diff_hash,
+    )
+    if any(
+        not isinstance(value, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None
+        for value in hash_fields
+    ) or (
+        not isinstance(unified_diff_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", unified_diff_sha256) is None
+        or not isinstance(projected_after_source_sha256, str)
+        or re.fullmatch(
+            r"[0-9A-F]{64}", projected_after_source_sha256
+        )
+        is None
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "Bounded observation projection hashes are invalid."
+        )
+    computed_plan_hash = "sha256:" + hashlib.sha256(
+        _canonical_json(implementation_plan_projection)
+    ).hexdigest()
+    if computed_plan_hash != implementation_plan_projection_hash:
+        raise StaggerEditAuthorityPreflightError(
+            "ImplementationPlan projection hash does not match its payload."
+        )
+    if implementation_plan_projection.get("feature_id") != feature_id:
+        raise StaggerEditAuthorityPreflightError(
+            "ImplementationPlan projection feature identity is invalid."
+        )
+    registry = implementation_plan_projection.get("binding_registry")
+    bindings = (
+        registry.get("edit_bindings")
+        if isinstance(registry, dict)
+        else None
+    )
+    changes = implementation_plan_projection.get("proposed_changes")
+    if (
+        not isinstance(bindings, list)
+        or len(bindings) != 1
+        or not isinstance(bindings[0], dict)
+        or not isinstance(changes, list)
+        or len(changes) != 1
+        or not isinstance(changes[0], dict)
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "Bounded observation Plan must contain one binding and change."
+        )
+    binding = bindings[0]
+    change = changes[0]
+    evidence_id = target_source_evidence_item.get("evidence_id")
+    source_identity = _validate_bounded_observation_source(
+        source_root=source_root,
+        evidence_item=target_source_evidence_item,
+    )
+    if (
+        not isinstance(evidence_id, str)
+        or not evidence_id
+        or target_source_evidence_item.get("source_type")
+        != "target_source"
+        or target_source_evidence_item.get("usage")
+        != "observation_only_edit_target_scope"
+        or binding.get("evidence_id") != evidence_id
+        or binding.get("canonical_target_path")
+        != source_identity["canonical_target_path"]
+        or binding.get("source_hash") != source_identity["sha256"]
+        or binding.get("target_symbol")
+        != target_source_evidence_item.get("symbol")
+        or binding.get("target_span")
+        != target_source_evidence_item.get("span")
+        or binding.get("source_type") != "target_source"
+        or binding.get("usage")
+        != "observation_only_edit_target_scope"
+        or binding.get("observation_only") is not True
+        or binding.get("source_patch_allowed") is not False
+        or not isinstance(binding.get("operation"), str)
+        or not binding["operation"]
+        or change.get("edit_binding_id") != binding.get("binding_id")
+        or change.get("change_type")
+        != "add_observation_only_runtime_diagnostic"
+        or change.get("operation") != binding.get("operation")
+        or change.get("hook_target_binding_id") is not None
+        or change.get("supporting_binding_ids") != []
+        or not isinstance(change.get("expected_validation"), list)
+        or not change["expected_validation"]
+        or implementation_plan_projection.get("blocking") is not False
+        or implementation_plan_projection.get("blockers") != []
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "Bounded observation Evidence, Binding, or change is inconsistent."
+        )
+    if projected_after_source_sha256 == source_identity["sha256"]:
+        raise StaggerEditAuthorityPreflightError(
+            "Observation projection does not identify changed source bytes."
+        )
+    return {
+        "projection_kind": _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND,
+        "reviewed_projection_hash": reviewed_projection_hash,
+        "implementation_plan_projection_hash": (
+            implementation_plan_projection_hash
+        ),
+        "patch_proposal_projection_hash": (
+            patch_proposal_projection_hash
+        ),
+        "standard_diff_hash": standard_diff_hash,
+        "unified_diff_sha256": unified_diff_sha256,
+        "projected_after_source_sha256": projected_after_source_sha256,
+        "binding_id": str(binding["binding_id"]),
+        "change_id": str(change["change_id"]),
+        "current_source": source_identity,
+    }
+
+
+def _validate_bounded_observation_source(
+    *,
+    source_root: str | Path,
+    evidence_item: dict[str, Any],
+) -> dict[str, Any]:
+    root = Path(source_root).resolve()
+    source_path_value = evidence_item.get("source_path")
+    span = evidence_item.get("span")
+    if (
+        not root.is_dir()
+        or not isinstance(source_path_value, str)
+        or not isinstance(span, dict)
+        or not isinstance(span.get("start_line"), int)
+        or not isinstance(span.get("end_line"), int)
+        or span["start_line"] <= 0
+        or span["end_line"] < span["start_line"]
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "Bounded observation source identity is invalid."
+        )
+    canonical = PurePosixPath(source_path_value)
+    if canonical.is_absolute() or ".." in canonical.parts:
+        raise StaggerEditAuthorityPreflightError(
+            "Bounded observation source path is unsafe."
+        )
+    source_path = (root / Path(*canonical.parts)).resolve()
+    try:
+        relative = source_path.relative_to(root)
+    except ValueError as exc:
+        raise StaggerEditAuthorityPreflightError(
+            "Bounded observation source is outside the source root."
+        ) from exc
+    if relative.as_posix() != source_path_value or not source_path.is_file():
+        raise StaggerEditAuthorityPreflightError(
+            "Bounded observation source path does not resolve exactly."
+        )
+    source_bytes = source_path.read_bytes()
+    source_hash = hashlib.sha256(source_bytes).hexdigest().upper()
+    lines = source_bytes.splitlines(keepends=True)
+    if span["end_line"] > len(lines):
+        raise StaggerEditAuthorityPreflightError(
+            "Bounded observation span exceeds the current source."
+        )
+    excerpt = b"".join(
+        lines[span["start_line"] - 1 : span["end_line"]]
+    ).decode("utf-8")
+    if (
+        evidence_item.get("source_hash") != source_hash
+        or evidence_item.get("file_hash") != source_hash
+        or evidence_item.get("excerpt") != excerpt
+        or not isinstance(evidence_item.get("symbol"), str)
+        or not evidence_item["symbol"]
+    ):
+        raise StaggerEditAuthorityPreflightError(
+            "Bounded observation source hash, span, excerpt, or symbol drifted."
+        )
+    return {
+        "canonical_target_path": source_path_value,
+        "resolved_path": str(source_path),
+        "sha256": source_hash,
+        "line_count": len(lines),
+        "target_span": copy.deepcopy(span),
+        "target_symbol": str(evidence_item["symbol"]),
+    }
 
 
 def _next_sequential_ids(

@@ -338,9 +338,24 @@ def test_existing_binding_reauthorization_exposes_narrow_graph_actions(
     ) == []
 
 
+@pytest.mark.parametrize(
+    ("request_schema", "projection_kind"),
+    [
+        (
+            "stagger_hud_parent_diagnostic_execution_authority_request_v2",
+            None,
+        ),
+        (
+            "stagger_edit_authority_request_v1",
+            "bounded_observation_only_plan_materialization",
+        ),
+    ],
+)
 def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request_schema: str,
+    projection_kind: str | None,
 ) -> None:
     from langgraph.types import Command
 
@@ -365,12 +380,12 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
         lambda **_kwargs: None,
     )
     request_payload = {
-        "schema_version": (
-            "stagger_hud_parent_diagnostic_execution_authority_request_v2"
-        ),
+        "schema_version": request_schema,
         "proposal": {},
         "source_root": str(tmp_path),
     }
+    if projection_kind is not None:
+        request_payload["projection_kind"] = projection_kind
     request_hash = "sha256:" + hashlib.sha256(
         json.dumps(
             request_payload,
@@ -400,7 +415,16 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
         },
     )
 
+    materializer_output_types: list[str] = []
+
     def materialize(**_kwargs):
+        materializer_output_types.extend(
+            [
+                "edit_authority_approval",
+                "evidence_pack",
+                "implementation_plan",
+            ]
+        )
         return {
             field_name: {
                 "feature_id": "feature_observation_authority",
@@ -476,6 +500,122 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
     assert "implementation_plan" in result["artifacts"]
     assert "binding_resolution" not in result["artifacts"]
     assert "repair_plan" not in result["artifacts"]
+    assert materializer_output_types == [
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+    ]
+    assert len(
+        store.list_feature_artifact_revisions(
+            "feature_observation_authority",
+            "edit_authority_request",
+        )
+    ) == 1
+    assert len(
+        store.list_feature_artifact_revisions(
+            "feature_observation_authority",
+            "workflow_checkpoint",
+        )
+    ) == 1
+    assert len(
+        store.list_feature_artifact_revisions(
+            "feature_observation_authority",
+            "resume_report",
+        )
+    ) == 1
+    assert {
+        "edit_authority_request",
+        "workflow_checkpoint",
+        "resume_report",
+        *materializer_output_types,
+    } == {
+        "edit_authority_request",
+        "workflow_checkpoint",
+        "resume_report",
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+    }
+
+
+def test_bounded_observation_projection_kind_requires_exact_request_schema(
+    tmp_path: Path,
+) -> None:
+    default_registry = ArtifactTypeRegistry()
+    request_contract = replace(
+        default_registry.get("edit_authority_request"),
+        required_upstream_artifacts=frozenset(),
+        required_exact_revision_upstream_artifacts=frozenset(),
+    )
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            request_contract,
+            default_registry.get("workflow_checkpoint"),
+            default_registry.get("resume_report"),
+            default_registry.get("workflow_trace"),
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    request_payload = {
+        "schema_version": "wrong_edit_authority_request_schema",
+        "projection_kind": (
+            "bounded_observation_only_plan_materialization"
+        ),
+        "proposal": {},
+        "source_root": str(tmp_path),
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id="feature_wrong_bounded_schema",
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": "request_stagger_edit_authority",
+            "stage": "edit_authority_request",
+            "message": "Wrong schema must not gain bounded actions.",
+            "status": "pending_human_approval",
+            "feature_id": "feature_wrong_bounded_schema",
+            "run_id": "run_wrong_bounded_schema",
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+    )
+    graph = build_graph(
+        store,
+        edit_authority_request_ref=request_ref,
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+    )
+    state = create_initial_state(
+        run_id="run_wrong_bounded_schema",
+        request_id="feature_wrong_bounded_schema",
+        user_request="Wrong schema must fail closed.",
+    )
+    state["feature_id"] = "feature_wrong_bounded_schema"
+
+    interrupted = graph.invoke(
+        state,
+        {"configurable": {"thread_id": "wrong_bounded_schema"}},
+    )
+
+    interrupt_value = interrupted["__interrupt__"][0].value
+    assert interrupt_value["payload"]["allowed_actions"] == [
+        "create_evidence_pack_revision",
+        "create_implementation_plan_revision",
+        "resolve_exact_edit_binding",
+    ]
+    assert "create_exact_bounded_observation_bindings" not in (
+        interrupt_value["payload"]["allowed_actions"]
+    )
 
 
 def test_existing_binding_review_preserves_exact_request_subgraph(

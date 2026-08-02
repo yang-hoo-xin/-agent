@@ -172,6 +172,9 @@ _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA = (
 _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA = (
     "stagger_hud_parent_diagnostic_execution_authority_request_v2"
 )
+_STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND = (
+    "bounded_observation_only_plan_materialization"
+)
 
 
 def build_graph(
@@ -1295,6 +1298,16 @@ def _run_stagger_edit_authority_gate(
         if isinstance(request_payload, dict)
         else None
     )
+    projection_kind = (
+        request_payload.get("projection_kind")
+        if isinstance(request_payload, dict)
+        else None
+    )
+    is_bounded_observation_request = (
+        request_schema == "stagger_edit_authority_request_v1"
+        and projection_kind
+        == _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND
+    )
     if request_schema not in {
         _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA,
         _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
@@ -1348,7 +1361,7 @@ def _run_stagger_edit_authority_gate(
     elif request_schema in {
         _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
         _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
-    }:
+    } or is_bounded_observation_request:
         allowed_actions = (
             [
                 "create_observation_evidence_pack_revision",
@@ -1357,6 +1370,7 @@ def _run_stagger_edit_authority_gate(
             ]
             if request_schema
             == _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA
+            or is_bounded_observation_request
             else [
                 "create_observation_evidence_pack_revision",
                 "create_diagnostic_implementation_plan_revision",
@@ -1475,7 +1489,7 @@ def _run_stagger_edit_authority_gate(
     if request_schema not in {
         _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
         _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
-    }:
+    } and not is_bounded_observation_request:
         materialized_fields.append(
             ("binding_resolution", "binding_resolution_revision")
         )
@@ -1498,6 +1512,7 @@ def _run_stagger_edit_authority_gate(
             _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
             _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
         }
+        or is_bounded_observation_request
         else "binding_resolution"
     )
     next_state["approvals"] = {

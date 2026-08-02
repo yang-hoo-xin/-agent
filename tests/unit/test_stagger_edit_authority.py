@@ -12,9 +12,11 @@ import pytest
 
 from src.mod_agent.runtime import (
     StaggerEditAuthorityPreflightError,
+    create_stagger_bounded_observation_authority_request,
     create_stagger_existing_binding_reauthorization_request,
     create_stagger_edit_authority_request,
     create_stagger_hud_parent_observation_authority_request,
+    preflight_stagger_bounded_observation_authority,
     preflight_stagger_existing_binding_reauthorization,
     preflight_stagger_edit_authority,
     preflight_stagger_hud_parent_observation_authority,
@@ -1081,6 +1083,175 @@ def _observation_authority_setup(
         "il2cpp_interop_runtime_hash": dependency_hashes[
             "il2cpp_interop_runtime"
         ],
+    }
+
+
+def _bounded_observation_authority_setup(
+    tmp_path: Path,
+) -> dict[str, object]:
+    existing = _observation_authority_setup(tmp_path)
+    current_evidence_ref = _RoleAwareArtifactStore.latest_by_type[
+        "evidence_pack"
+    ]
+    current_evidence_envelope = _RoleAwareArtifactStore.envelopes_by_path[
+        str(Path(current_evidence_ref.path).resolve())
+    ]
+    current_evidence_envelope["inputs"]["upstream_artifacts"].append(
+        {
+            "artifact_type": "feature_spec",
+            "artifact_hash": FEATURE_SPEC_HASH,
+            "path": str(existing["feature_spec_path"]),
+        }
+    )
+    source_root = Path(existing["source_root"])
+    source_path = source_root / TARGET_PATH
+    lines = [f"// filler {index}" for index in range(1, 321)]
+    lines[244] = "        private static void Postfix(ES_HitreactType __0)"
+    lines[245] = "        {"
+    lines[246] = "            if (!Plugin.ConfigEnabled.Value)"
+    lines[247] = "            {"
+    lines[248] = "                return;"
+    lines[249] = "            }"
+    lines[250] = "            if (__0 != ES_HitreactType.Micro)"
+    lines[251] = "            {"
+    lines[252] = "                return;"
+    lines[253] = "            }"
+    lines[254] = "            PlayerAgent? sourcePlayer = TryGetPlayerAgent();"
+    lines[255] = "            if (sourcePlayer == null || !sourcePlayer.IsLocallyOwned)"
+    lines[256] = "            {"
+    lines[257] = "                return;"
+    lines[258] = "            }"
+    lines[259] = "            TrySpawnStaggerYellowX();"
+    lines[260] = "            TryPlayStaggerFeedbackSound();"
+    lines[261] = '            Log.LogInfo("signal=STAGGER_FEEDBACK_SHOWN");'
+    lines[262] = "        }"
+    source_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest().upper()
+    span = {"start_line": 245, "end_line": 292}
+    excerpt = b"".join(
+        source_path.read_bytes().splitlines(keepends=True)[244:292]
+    ).decode("utf-8")
+
+    binding_numbers: set[int] = set()
+    change_numbers: set[int] = set()
+    for ref in _RoleAwareArtifactStore.revisions_by_type[
+        "implementation_plan"
+    ]:
+        plan = _RoleAwareArtifactStore.envelopes_by_path[
+            str(Path(ref.path).resolve())
+        ]["data"]
+        for binding in plan["binding_registry"]["edit_bindings"]:
+            binding_numbers.add(int(str(binding["binding_id"])[-3:]))
+        for change in plan["proposed_changes"]:
+            change_numbers.add(int(str(change["change_id"])[-3:]))
+    binding_id = f"edit_binding_{max(binding_numbers) + 1:03d}"
+    change_id = f"chg_{max(change_numbers) + 1:03d}"
+    evidence_id = "stagger_c6_c7_guard_observation_target_source"
+    operation = "insert_diagnostic_gated_c6_c7_guard_rejection_markers_only"
+    evidence_item = {
+        "evidence_id": evidence_id,
+        "source_type": "target_source",
+        "source_path": TARGET_PATH,
+        "symbol": (
+            "BetterHitFeedback.Patches.HitFeedbackBehaviorPatch."
+            "StaggerFeedbackActivateStatePatch.Postfix"
+        ),
+        "span": span,
+        "retrieval_method": "exact_current_source_read",
+        "excerpt": excerpt,
+        "source_ref": "sha256:" + source_hash.lower(),
+        "source_hash": source_hash,
+        "file_hash": source_hash,
+        "claim_supported": "Exact guard source scope.",
+        "authority": "mod_agent_deterministic",
+        "usage": "observation_only_edit_target_scope",
+        "risk_notes": ["No source authority."],
+    }
+    expected_validation = ["Verify exact source and diagnostic-only output."]
+    plan = {
+        "node_name": "create_implementation_plan",
+        "stage": "implementation_plan",
+        "message": "Bounded observation Plan.",
+        "feature_id": FEATURE_ID,
+        "evidence_source_paths": [TARGET_PATH],
+        "target_files": [TARGET_PATH],
+        "target_symbols": [evidence_item["symbol"]],
+        "evidence_refs": [evidence_id],
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": binding_id,
+                    "evidence_id": evidence_id,
+                    "canonical_target_path": TARGET_PATH,
+                    "source_type": "target_source",
+                    "target_symbol": evidence_item["symbol"],
+                    "target_span": span,
+                    "source_hash": source_hash,
+                    "usage": "observation_only_edit_target_scope",
+                    "authority": "pending_exact_human_edit_authority",
+                    "operation": operation,
+                    "observation_only": True,
+                    "source_patch_allowed": False,
+                }
+            ],
+            "supporting_bindings": [],
+        },
+        "proposed_changes": [
+            {
+                "change_id": change_id,
+                "change_type": "add_observation_only_runtime_diagnostic",
+                "edit_binding_id": binding_id,
+                "hook_target_binding_id": None,
+                "supporting_binding_ids": [],
+                "operation": operation,
+                "expected_validation": expected_validation,
+            }
+        ],
+        "side_effect_boundaries": ["Observation only."],
+        "test_plan": expected_validation,
+        "rollback_plan": ["Restore source."],
+        "open_questions": [],
+        "blocking": False,
+        "blockers": [],
+    }
+    plan_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            plan,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return {
+        "artifact_store_root": existing["artifact_store_root"],
+        "feature_id": FEATURE_ID,
+        "run_id": RUN_ID,
+        "feature_spec_path": existing["feature_spec_path"],
+        "feature_spec_hash": FEATURE_SPEC_HASH,
+        "runtime_evidence_path": existing["runtime_evidence_path"],
+        "runtime_evidence_hash": RUNTIME_EVIDENCE_HASH,
+        "evidence_pack_path": existing["evidence_pack_path"],
+        "evidence_pack_hash": existing["evidence_pack_hash"],
+        "historical_implementation_plan_path": existing[
+            "current_implementation_plan_path"
+        ],
+        "historical_implementation_plan_hash": existing[
+            "current_implementation_plan_hash"
+        ],
+        "historical_patch_proposal_path": existing[
+            "patch_proposal_path"
+        ],
+        "historical_patch_proposal_hash": PATCH_PROPOSAL_HASH,
+        "source_root": source_root,
+        "reviewed_projection_hash": "sha256:" + "a" * 64,
+        "implementation_plan_projection": plan,
+        "implementation_plan_projection_hash": plan_hash,
+        "patch_proposal_projection_hash": "sha256:" + "b" * 64,
+        "standard_diff_hash": "sha256:" + "c" * 64,
+        "unified_diff_sha256": "d" * 64,
+        "projected_after_source_sha256": "E" * 64,
+        "target_source_evidence_item": evidence_item,
     }
 
 
@@ -2285,3 +2456,262 @@ def test_observation_authority_request_and_graph_materialization_stop_at_plan(
             status="success",
             payload=plan,
         )
+
+
+
+def test_bounded_observation_preflight_is_exact_and_no_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _bounded_observation_authority_setup(tmp_path)
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        _RoleAwareArtifactStore,
+    )
+
+    first = preflight_stagger_bounded_observation_authority(**args)
+    second = preflight_stagger_bounded_observation_authority(**args)
+
+    assert first == second
+    assert first["writes_performed"] is False
+    assert first["artifact_writes_performed"] is False
+    assert first["request_payload"]["projection_kind"] == (
+        "bounded_observation_only_plan_materialization"
+    )
+    assert _RoleAwareArtifactStore.writes == []
+
+    changed = copy.deepcopy(args)
+    changed_item = copy.deepcopy(args["target_source_evidence_item"])
+    changed_item["source_hash"] = "0" * 64
+    changed["target_source_evidence_item"] = changed_item
+    with pytest.raises(
+        StaggerEditAuthorityPreflightError,
+        match="source hash, span, excerpt, or symbol drifted",
+    ):
+        preflight_stagger_bounded_observation_authority(**changed)
+    assert _RoleAwareArtifactStore.writes == []
+
+    wrong_id = copy.deepcopy(args)
+    wrong_plan = copy.deepcopy(args["implementation_plan_projection"])
+    wrong_plan["binding_registry"]["edit_bindings"][0][
+        "binding_id"
+    ] = "edit_binding_099"
+    wrong_plan["proposed_changes"][0][
+        "edit_binding_id"
+    ] = "edit_binding_099"
+    wrong_id["implementation_plan_projection"] = wrong_plan
+    wrong_id["implementation_plan_projection_hash"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                wrong_plan,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    )
+    with pytest.raises(
+        StaggerEditAuthorityPreflightError,
+        match="not the next exact registered identifier",
+    ):
+        preflight_stagger_bounded_observation_authority(**wrong_id)
+    assert _RoleAwareArtifactStore.writes == []
+
+
+def test_bounded_observation_graph_materialization_writes_only_plan_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _bounded_observation_authority_setup(tmp_path)
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        _RoleAwareArtifactStore,
+    )
+    request_result = create_stagger_bounded_observation_authority_request(
+        **args
+    )
+    request_payload = _RoleAwareArtifactStore.writes[0]["payload"][
+        "request_payload"
+    ]
+    boundary = request_payload["proposal"]["materialization_boundary"]
+    assert boundary["request_creation_artifact_types"] == [
+        "edit_authority_request"
+    ]
+    assert boundary["approved_graph_total_artifact_types"] == [
+        "workflow_checkpoint",
+        "resume_report",
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+    ]
+    assert boundary["historical_identifier_baseline_is_plan_upstream"] is False
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="edit_authority_request",
+        status="success",
+        payload=_RoleAwareArtifactStore.writes[0]["payload"],
+    )
+    request_revision = request_result["edit_authority_request_revision"]
+    request_ref = ArtifactRef(
+        FEATURE_ID,
+        "edit_authority_request",
+        request_revision["path"],
+        request_revision["artifact_hash"],
+    )
+    checkpoint_ref = ArtifactRef(
+        FEATURE_ID,
+        "workflow_checkpoint",
+        str(tmp_path / "bounded-checkpoint.json"),
+        "6" * 64,
+    )
+    report_ref = ArtifactRef(
+        FEATURE_ID,
+        "resume_report",
+        str(tmp_path / "bounded-resume.json"),
+        "7" * 64,
+    )
+    _RoleAwareArtifactStore.envelopes_by_path[
+        str(Path(checkpoint_ref.path).resolve())
+    ] = {
+        "data": {
+            "checkpoint_stage": "edit_authority_approval",
+            "run_id": RUN_ID,
+            "feature_id": FEATURE_ID,
+            "state_snapshot": {
+                "artifacts": {
+                    "edit_authority_request": request_ref.path,
+                },
+                "artifact_hashes": {
+                    "edit_authority_request": request_ref.artifact_hash,
+                },
+            },
+            "resume_binding": {
+                "edit_authority_request_ref": request_ref.path,
+                "edit_authority_request_artifact_hash": (
+                    request_ref.artifact_hash
+                ),
+                "edit_authority_request_hash": request_result[
+                    "request_hash"
+                ],
+            },
+        },
+        "inputs": {"upstream_artifacts": []},
+    }
+    _RoleAwareArtifactStore.envelopes_by_path[
+        str(Path(report_ref.path).resolve())
+    ] = {
+        "data": {
+            "resume_id": "resume_bounded_observation_001",
+            "status": "accepted",
+            "allowed": True,
+            "decision": "approve",
+            "resume_stage": "edit_authority_approval",
+            "run_id": RUN_ID,
+            "approved_by": "user",
+            "approved_at": "2026-08-02T12:00:00+08:00",
+            "authority_request_hash": request_result["request_hash"],
+        },
+        "inputs": {
+            "upstream_artifacts": [
+                {
+                    "artifact_type": "workflow_checkpoint",
+                    "path": checkpoint_ref.path,
+                    "artifact_hash": checkpoint_ref.artifact_hash,
+                }
+            ]
+        },
+    }
+
+    result = materialize_stagger_edit_authority_approval(
+        artifact_store_root=args["artifact_store_root"],
+        feature_id=FEATURE_ID,
+        edit_authority_request_path=request_ref.path,
+        edit_authority_request_hash=request_ref.artifact_hash,
+        resume_report_path=report_ref.path,
+        resume_report_hash=report_ref.artifact_hash,
+    )
+
+    assert result["status"] == "BOUNDED_OBSERVATION_PLAN_AUTHORIZED"
+    assert result["written_artifact_types"] == [
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+    ]
+    assert result["binding_resolution_written"] is False
+    assert result["repair_planner_invoked"] is False
+    assert result["source_patch_allowed"] is False
+    assert _RoleAwareArtifactStore.preflight_types == (
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+    )
+    written_types = [
+        item["artifact_type"] for item in _RoleAwareArtifactStore.writes
+    ]
+    assert written_types == [
+        "edit_authority_request",
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+    ]
+    approval = _RoleAwareArtifactStore.writes[1]["payload"]
+    assert approval["allowed_actions"] == [
+        "create_observation_evidence_pack_revision",
+        "create_diagnostic_only_implementation_plan_revision",
+        "create_exact_bounded_observation_bindings",
+    ]
+    plan = _RoleAwareArtifactStore.writes[3]["payload"]
+    evidence = _RoleAwareArtifactStore.writes[2]["payload"]
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="edit_authority_approval",
+        status="success",
+        payload=approval,
+    )
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="evidence_pack",
+        status="success",
+        payload=evidence,
+    )
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="implementation_plan",
+        status="success",
+        payload=plan,
+    )
+    binding = plan["binding_registry"]["edit_bindings"][0]
+    assert binding["authority"] == "human_exact_edit_authority"
+    assert binding["edit_authority_approval_ref"] == {
+        "feature_id": FEATURE_ID,
+        "path": _RoleAwareArtifactStore.writes[1]["ref"].path,
+        "artifact_hash": _RoleAwareArtifactStore.writes[1][
+            "ref"
+        ].artifact_hash,
+    }
+    assert plan["materialization_context"]["source_patch_allowed"] is False
+    assert "binding_resolution" not in written_types
+    plan_write = _RoleAwareArtifactStore.writes[3]
+    assert [
+        ref.artifact_type for ref in plan_write["upstream_refs"]
+    ] == [
+        "feature_spec",
+        "evidence_pack",
+        "edit_authority_approval",
+    ]
+    assert plan_write["exact_revision_upstream_types"] == {
+        "edit_authority_approval"
+    }
+
+    writes_before_replay = len(_RoleAwareArtifactStore.writes)
+    with pytest.raises(
+        StaggerEditAuthorityPreflightError,
+        match="evidence_pack is no longer the current revision",
+    ):
+        materialize_stagger_edit_authority_approval(
+            artifact_store_root=args["artifact_store_root"],
+            feature_id=FEATURE_ID,
+            edit_authority_request_path=request_ref.path,
+            edit_authority_request_hash=request_ref.artifact_hash,
+            resume_report_path=report_ref.path,
+            resume_report_hash=report_ref.artifact_hash,
+        )
+    assert len(_RoleAwareArtifactStore.writes) == writes_before_replay
