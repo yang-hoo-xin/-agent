@@ -1312,7 +1312,7 @@ def _run_stagger_edit_authority_gate(
         _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA,
         _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
         _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
-    }:
+    } and not is_bounded_observation_request:
         for upstream in request_envelope.get("inputs", {}).get(
             "upstream_artifacts",
             (),

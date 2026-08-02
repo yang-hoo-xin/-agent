@@ -414,6 +414,37 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
             "source_patch_allowed": False,
         },
     )
+    if projection_kind == "bounded_observation_only_plan_materialization":
+        original_read_for_stage = store.read_for_stage
+
+        def read_for_stage_with_registered_request_upstreams(
+            ref: ArtifactRef,
+            *,
+            consumer_stage: str,
+        ) -> dict[str, Any]:
+            envelope = original_read_for_stage(
+                ref,
+                consumer_stage=consumer_stage,
+            )
+            if ref.artifact_type != "edit_authority_request":
+                return envelope
+            expanded = copy.deepcopy(envelope)
+            expanded["inputs"]["upstream_artifacts"] = [
+                {
+                    "feature_id": "feature_observation_authority",
+                    "artifact_type": "implementation_plan",
+                    "path": str(tmp_path / "historical_plan.json"),
+                    "artifact_hash": "f" * 64,
+                    "require_latest": False,
+                }
+            ]
+            return expanded
+
+        monkeypatch.setattr(
+            store,
+            "read_for_stage",
+            read_for_stage_with_registered_request_upstreams,
+        )
 
     materializer_output_types: list[str] = []
 
@@ -467,6 +498,7 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
     state["feature_id"] = "feature_observation_authority"
     interrupted = graph.invoke(state, config)
     interrupt_value = interrupted["__interrupt__"][0].value
+    assert interrupt_value["artifact_refs"] == [request_ref.path]
     assert interrupt_value["payload"]["allowed_actions"] == [
         "create_observation_evidence_pack_revision",
         "create_diagnostic_only_implementation_plan_revision",
