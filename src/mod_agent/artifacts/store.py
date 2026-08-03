@@ -7,8 +7,9 @@ import json
 import os
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 from uuid import uuid4
 
 from .envelope import ArtifactEnvelope, ArtifactRef
@@ -83,6 +84,99 @@ class ArtifactStorePreflightError(ArtifactStoreError):
         self.winerror = winerror
 
 
+ArtifactWriteOutcome = Literal["committed", "blocked_before_commit", "partial"]
+ArtifactRevisionState = Literal[
+    "unavailable",
+    "absent",
+    "valid",
+    "invalid",
+    "unknown",
+]
+ArtifactLatestAliasState = Literal[
+    "unavailable",
+    "absent",
+    "matches_identity",
+    "different_identity",
+    "invalid",
+    "unknown",
+]
+ArtifactPendingMarkerState = Literal[
+    "unavailable",
+    "absent",
+    "present",
+    "invalid",
+    "unknown",
+]
+ArtifactWriteFailureStage = Literal[
+    "admission_validation",
+    "pending_marker_write",
+    "immutable_revision_write",
+    "latest_alias_write",
+    "commit_verification",
+    "pending_marker_cleanup",
+]
+
+
+@dataclass(frozen=True)
+class ArtifactWriteResult:
+    """Authoritative API result for one ArtifactStore write attempt."""
+
+    outcome: ArtifactWriteOutcome
+    feature_id: str
+    artifact_type: str
+    artifact_hash: str | None
+    artifact_ref: ArtifactRef | None
+    revision_path: str | None
+    latest_alias_path: str | None
+    pending_marker_path: str | None
+    commit_started: bool
+    revision_state: ArtifactRevisionState
+    latest_alias_state: ArtifactLatestAliasState
+    pending_marker_state: ArtifactPendingMarkerState
+    failure_stage: ArtifactWriteFailureStage | None
+    failure_class: str | None
+    failure_message: str | None
+    recovery_available: bool
+    recovery_authorized: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-safe projection without changing Artifact identity."""
+
+        artifact_ref = None
+        if self.artifact_ref is not None:
+            artifact_ref = {
+                "feature_id": self.artifact_ref.feature_id,
+                "artifact_type": self.artifact_ref.artifact_type,
+                "path": self.artifact_ref.path,
+                "artifact_hash": self.artifact_ref.artifact_hash,
+            }
+        return {
+            "outcome": self.outcome,
+            "feature_id": self.feature_id,
+            "artifact_type": self.artifact_type,
+            "artifact_hash": self.artifact_hash,
+            "artifact_ref": artifact_ref,
+            "revision_path": self.revision_path,
+            "latest_alias_path": self.latest_alias_path,
+            "pending_marker_path": self.pending_marker_path,
+            "commit_started": self.commit_started,
+            "revision_state": self.revision_state,
+            "latest_alias_state": self.latest_alias_state,
+            "pending_marker_state": self.pending_marker_state,
+            "failure_stage": self.failure_stage,
+            "failure_class": self.failure_class,
+            "failure_message": self.failure_message,
+            "recovery_available": self.recovery_available,
+            "recovery_authorized": self.recovery_authorized,
+        }
+
+
+@dataclass(frozen=True)
+class _ArtifactWriteAttempt:
+    result: ArtifactWriteResult
+    error: Exception | None
+
+
 class _AtomicReplaceFailure(RuntimeError):
     """Carry exact source/target evidence from a preflight replace failure."""
 
@@ -132,121 +226,338 @@ class ArtifactStore:
         allow_stale_upstreams: bool = False,
         exact_revision_upstream_types: set[str] | None = None,
     ) -> ArtifactRef:
-        """Wrap payload in an envelope and write it to disk."""
+        """Write an Artifact and preserve the historical return/error contract."""
 
-        self._validate_feature_id(feature_id)
-        self._validate_artifact_type(artifact_type)
-        data = dict(payload)
-        try:
-            contract = self.registry.validate_write(
-                artifact_type=artifact_type,
-                status=status,
-                payload=data,
-            )
-        except ArtifactRegistryError as exc:
-            raise ArtifactStoreError(str(exc)) from exc
-        upstream_refs = list(upstream_refs or [])
-        exact_revision_upstream_types = set(exact_revision_upstream_types or set())
-        self._validate_upstream_refs(
+        attempt = self._execute_write(
             feature_id=feature_id,
             artifact_type=artifact_type,
-            contract=contract,
-            payload=data,
+            payload=payload,
             status=status,
+            blockers=blockers,
+            trace_refs=trace_refs,
             upstream_refs=upstream_refs,
             allow_stale_upstreams=allow_stale_upstreams,
             exact_revision_upstream_types=exact_revision_upstream_types,
         )
-        inputs = {
-            "upstream_artifacts": [
-                {
-                    "artifact_type": upstream.artifact_type,
-                    "path": upstream.path,
-                    "artifact_hash": upstream.artifact_hash,
-                    "require_latest": (
-                        upstream.artifact_type not in exact_revision_upstream_types
-                    ),
-                }
-                for upstream in (upstream_refs or [])
-            ]
-        }
-        envelope_content = {
-            "schema_version": contract.schema_version,
-            "artifact_type": artifact_type,
-            "feature_id": feature_id,
-            "producer_stage": contract.producer_stage,
-            "status": status,
-            "data": data,
-            "inputs": inputs,
-            "blockers": blockers or [],
-            "trace_refs": trace_refs or [],
-        }
-        artifact_hash = self._stable_hash(self._envelope_content_for_hash(envelope_content))
-        envelope = ArtifactEnvelope(
-            schema_version=contract.schema_version,
-            artifact_type=artifact_type,
-            feature_id=feature_id,
-            producer_stage=contract.producer_stage,
-            status=status,
-            data=data,
-            artifact_hash=artifact_hash,
-            inputs=inputs,
-            blockers=blockers or [],
-            trace_refs=trace_refs or [],
+        if attempt.result.outcome == "committed":
+            if attempt.result.artifact_ref is None:
+                raise ArtifactStoreError(
+                    "Committed Artifact write result is missing artifact_ref"
+                )
+            return attempt.result.artifact_ref
+        if attempt.error is not None:
+            raise attempt.error
+        raise ArtifactStoreError(
+            "Artifact write did not commit: "
+            f"{attempt.result.outcome} at {attempt.result.failure_stage or 'unknown'}"
         )
 
-        serialized_envelope = (
-            json.dumps(envelope.to_dict(), ensure_ascii=False, indent=2, sort_keys=True)
-            + "\n"
-        )
-        existing_revision_path = self._find_existing_revision_path(
-            feature_id,
-            artifact_type,
-            artifact_hash,
-        )
-        revision_path = existing_revision_path or self._revision_artifact_path(
-            feature_id,
-            artifact_type,
-            artifact_hash,
-        )
-        latest_path = self._artifact_path(feature_id, artifact_type)
-        pending_path = self._pending_write_path(
-            feature_id,
-            artifact_type,
-            artifact_hash,
-        )
-        self._validate_pending_locator(
-            pending_path,
+    def write_with_result(
+        self,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        payload: Mapping[str, Any],
+        status: str = "success",
+        blockers: list[dict[str, Any]] | None = None,
+        trace_refs: list[str] | None = None,
+        upstream_refs: list[ArtifactRef] | None = None,
+        allow_stale_upstreams: bool = False,
+        exact_revision_upstream_types: set[str] | None = None,
+    ) -> ArtifactWriteResult:
+        """Return the Store-owned outcome without retrying or recovering."""
+
+        return self._execute_write(
             feature_id=feature_id,
             artifact_type=artifact_type,
-            artifact_hash=artifact_hash,
-        )
-        self._write_text_atomic(
-            pending_path,
-            self._serialize_pending_write(
+            payload=payload,
+            status=status,
+            blockers=blockers,
+            trace_refs=trace_refs,
+            upstream_refs=upstream_refs,
+            allow_stale_upstreams=allow_stale_upstreams,
+            exact_revision_upstream_types=exact_revision_upstream_types,
+        ).result
+
+    def _execute_write(
+        self,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        payload: Mapping[str, Any],
+        status: str,
+        blockers: list[dict[str, Any]] | None,
+        trace_refs: list[str] | None,
+        upstream_refs: list[ArtifactRef] | None,
+        allow_stale_upstreams: bool,
+        exact_revision_upstream_types: set[str] | None,
+    ) -> _ArtifactWriteAttempt:
+        failure_stage: ArtifactWriteFailureStage = "admission_validation"
+        artifact_hash: str | None = None
+        revision_path: Path | None = None
+        latest_path: Path | None = None
+        pending_path: Path | None = None
+        commit_started = False
+        pending_write_attempted = False
+        try:
+            self._validate_feature_id(feature_id)
+            self._validate_artifact_type(artifact_type)
+            data = dict(payload)
+            try:
+                contract = self.registry.validate_write(
+                    artifact_type=artifact_type,
+                    status=status,
+                    payload=data,
+                )
+            except ArtifactRegistryError as exc:
+                raise ArtifactStoreError(str(exc)) from exc
+            resolved_upstream_refs = list(upstream_refs or [])
+            exact_upstream_types = set(exact_revision_upstream_types or set())
+            self._validate_upstream_refs(
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                contract=contract,
+                payload=data,
+                status=status,
+                upstream_refs=resolved_upstream_refs,
+                allow_stale_upstreams=allow_stale_upstreams,
+                exact_revision_upstream_types=exact_upstream_types,
+            )
+            inputs = {
+                "upstream_artifacts": [
+                    {
+                        "artifact_type": upstream.artifact_type,
+                        "path": upstream.path,
+                        "artifact_hash": upstream.artifact_hash,
+                        "require_latest": (
+                            upstream.artifact_type not in exact_upstream_types
+                        ),
+                    }
+                    for upstream in resolved_upstream_refs
+                ]
+            }
+            envelope_content = {
+                "schema_version": contract.schema_version,
+                "artifact_type": artifact_type,
+                "feature_id": feature_id,
+                "producer_stage": contract.producer_stage,
+                "status": status,
+                "data": data,
+                "inputs": inputs,
+                "blockers": blockers or [],
+                "trace_refs": trace_refs or [],
+            }
+            artifact_hash = self._stable_hash(
+                self._envelope_content_for_hash(envelope_content)
+            )
+            envelope = ArtifactEnvelope(
+                schema_version=contract.schema_version,
+                artifact_type=artifact_type,
+                feature_id=feature_id,
+                producer_stage=contract.producer_stage,
+                status=status,
+                data=data,
+                artifact_hash=artifact_hash,
+                inputs=inputs,
+                blockers=blockers or [],
+                trace_refs=trace_refs or [],
+            )
+            serialized_envelope = (
+                json.dumps(
+                    envelope.to_dict(),
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            latest_path = self._artifact_path(feature_id, artifact_type)
+            pending_path = self._pending_write_path(
+                feature_id,
+                artifact_type,
+                artifact_hash,
+            )
+            existing_pending = self._validate_pending_locator(
+                pending_path,
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                artifact_hash=artifact_hash,
+            )
+            if existing_pending is not None:
+                revision_path = self._guard_path(
+                    Path(str(existing_pending["revision_path"]))
+                )
+                error = ArtifactStoreError(
+                    "Existing pending write requires explicit recovery"
+                )
+                return _ArtifactWriteAttempt(
+                    result=self._artifact_write_result(
+                        outcome="partial",
+                        feature_id=feature_id,
+                        artifact_type=artifact_type,
+                        artifact_hash=artifact_hash,
+                        revision_path=revision_path,
+                        latest_path=latest_path,
+                        pending_path=pending_path,
+                        commit_started=False,
+                        failure_stage="admission_validation",
+                        error=error,
+                    ),
+                    error=error,
+                )
+
+            existing_revision_path = self._find_existing_revision_path(
+                feature_id,
+                artifact_type,
+                artifact_hash,
+            )
+            revision_path = existing_revision_path or self._revision_artifact_path(
+                feature_id,
+                artifact_type,
+                artifact_hash,
+            )
+            initial_state = self._artifact_write_result(
+                outcome="blocked_before_commit",
                 feature_id=feature_id,
                 artifact_type=artifact_type,
                 artifact_hash=artifact_hash,
                 revision_path=revision_path,
                 latest_path=latest_path,
-            ),
-        )
-        try:
+                pending_path=pending_path,
+                commit_started=False,
+                failure_stage=None,
+                error=None,
+            )
+            if (
+                initial_state.revision_state == "valid"
+                and initial_state.latest_alias_state == "matches_identity"
+                and initial_state.pending_marker_state == "absent"
+            ):
+                return _ArtifactWriteAttempt(
+                    result=self._artifact_write_result(
+                        outcome="committed",
+                        feature_id=feature_id,
+                        artifact_type=artifact_type,
+                        artifact_hash=artifact_hash,
+                        revision_path=revision_path,
+                        latest_path=latest_path,
+                        pending_path=pending_path,
+                        commit_started=False,
+                        failure_stage=None,
+                        error=None,
+                    ),
+                    error=None,
+                )
+
+            failure_stage = "pending_marker_write"
+            pending_write_attempted = True
+            self._write_text_atomic(
+                pending_path,
+                self._serialize_pending_write(
+                    feature_id=feature_id,
+                    artifact_type=artifact_type,
+                    artifact_hash=artifact_hash,
+                    revision_path=revision_path,
+                    latest_path=latest_path,
+                ),
+            )
+            commit_started = True
+            failure_stage = "immutable_revision_write"
             if existing_revision_path is None:
                 self._write_text_atomic(revision_path, serialized_envelope)
+            failure_stage = "latest_alias_write"
             self._write_text_atomic(latest_path, serialized_envelope)
-        except Exception:
-            if not revision_path.exists():
-                self._unlink_if_exists(pending_path)
-            raise
-        else:
+            failure_stage = "commit_verification"
+            before_cleanup = self._artifact_write_result(
+                outcome="partial",
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                artifact_hash=artifact_hash,
+                revision_path=revision_path,
+                latest_path=latest_path,
+                pending_path=pending_path,
+                commit_started=True,
+                failure_stage=None,
+                error=None,
+            )
+            if (
+                before_cleanup.revision_state != "valid"
+                or before_cleanup.latest_alias_state != "matches_identity"
+                or before_cleanup.pending_marker_state != "present"
+            ):
+                raise ArtifactStoreError(
+                    "Artifact commit verification failed before pending cleanup"
+                )
+            failure_stage = "pending_marker_cleanup"
             self._unlink_if_exists(pending_path)
-        return ArtifactRef(
-            feature_id=feature_id,
-            artifact_type=artifact_type,
-            path=str(revision_path),
-            artifact_hash=artifact_hash,
-        )
+            committed = self._artifact_write_result(
+                outcome="committed",
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                artifact_hash=artifact_hash,
+                revision_path=revision_path,
+                latest_path=latest_path,
+                pending_path=pending_path,
+                commit_started=True,
+                failure_stage=None,
+                error=None,
+            )
+            if (
+                committed.revision_state != "valid"
+                or committed.latest_alias_state != "matches_identity"
+                or committed.pending_marker_state != "absent"
+            ):
+                failure_stage = "commit_verification"
+                raise ArtifactStoreError(
+                    "Artifact commit verification failed after pending cleanup"
+                )
+            return _ArtifactWriteAttempt(result=committed, error=None)
+        except Exception as exc:
+            if (
+                commit_started
+                and revision_path is not None
+                and pending_path is not None
+                and not revision_path.exists()
+            ):
+                try:
+                    self._unlink_if_exists(pending_path)
+                except Exception:
+                    pass
+            if (
+                not commit_started
+                and pending_write_attempted
+                and artifact_hash is not None
+                and pending_path is not None
+            ):
+                try:
+                    installed_marker = self._validate_pending_locator(
+                        pending_path,
+                        feature_id=feature_id,
+                        artifact_type=artifact_type,
+                        artifact_hash=artifact_hash,
+                    )
+                except (ArtifactStoreError, OSError):
+                    commit_started = False
+                else:
+                    commit_started = installed_marker is not None
+            outcome: ArtifactWriteOutcome = (
+                "partial" if commit_started else "blocked_before_commit"
+            )
+            return _ArtifactWriteAttempt(
+                result=self._artifact_write_result(
+                    outcome=outcome,
+                    feature_id=feature_id,
+                    artifact_type=artifact_type,
+                    artifact_hash=artifact_hash,
+                    revision_path=revision_path,
+                    latest_path=latest_path,
+                    pending_path=pending_path,
+                    commit_started=commit_started,
+                    failure_stage=failure_stage,
+                    error=exc,
+                ),
+                error=exc,
+            )
 
     def read(self, ref: ArtifactRef) -> dict[str, Any]:
         """Read an artifact envelope from a guarded artifact reference."""
@@ -859,9 +1170,9 @@ class ArtifactStore:
         feature_id: str,
         artifact_type: str,
         artifact_hash: str,
-    ) -> None:
+    ) -> dict[str, Any] | None:
         if not path.exists():
-            return
+            return None
         try:
             marker = json.loads(path.read_text(encoding="utf-8"))
             self._validate_pending_write_marker(marker)
@@ -873,6 +1184,203 @@ class ArtifactStore:
             or marker.get("artifact_hash") != artifact_hash
         ):
             raise ArtifactStoreError("Artifact pending locator collision")
+        try:
+            revision_path = self._guard_path(Path(str(marker["revision_path"])))
+            latest_path = self._guard_path(Path(str(marker["latest_path"])))
+        except (ArtifactStoreError, OSError, ValueError) as exc:
+            raise ArtifactStoreError("Existing pending write marker is invalid") from exc
+        allowed_revision_paths = {
+            self._revision_artifact_path(feature_id, artifact_type, artifact_hash),
+            self._legacy_revision_artifact_path(
+                feature_id,
+                artifact_type,
+                artifact_hash,
+            ),
+        }
+        if revision_path not in allowed_revision_paths:
+            raise ArtifactStoreError("Existing pending write marker is invalid")
+        if latest_path != self._artifact_path(feature_id, artifact_type):
+            raise ArtifactStoreError("Existing pending write marker is invalid")
+        return dict(marker)
+
+    def _artifact_write_result(
+        self,
+        *,
+        outcome: ArtifactWriteOutcome,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str | None,
+        revision_path: Path | None,
+        latest_path: Path | None,
+        pending_path: Path | None,
+        commit_started: bool,
+        failure_stage: ArtifactWriteFailureStage | None,
+        error: Exception | None,
+    ) -> ArtifactWriteResult:
+        revision_state = self._artifact_revision_state(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            artifact_hash=artifact_hash,
+            revision_path=revision_path,
+        )
+        latest_alias_state = self._artifact_latest_alias_state(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            artifact_hash=artifact_hash,
+            latest_path=latest_path,
+        )
+        pending_marker_state = self._artifact_pending_marker_state(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            artifact_hash=artifact_hash,
+            pending_path=pending_path,
+        )
+        artifact_ref = None
+        if (
+            outcome == "committed"
+            and artifact_hash is not None
+            and revision_path is not None
+            and revision_state == "valid"
+            and latest_alias_state == "matches_identity"
+            and pending_marker_state == "absent"
+        ):
+            artifact_ref = ArtifactRef(
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                path=str(revision_path),
+                artifact_hash=artifact_hash,
+            )
+        return ArtifactWriteResult(
+            outcome=outcome,
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            artifact_hash=artifact_hash,
+            artifact_ref=artifact_ref,
+            revision_path=(None if revision_path is None else str(revision_path)),
+            latest_alias_path=(None if latest_path is None else str(latest_path)),
+            pending_marker_path=(None if pending_path is None else str(pending_path)),
+            commit_started=commit_started,
+            revision_state=revision_state,
+            latest_alias_state=latest_alias_state,
+            pending_marker_state=pending_marker_state,
+            failure_stage=failure_stage,
+            failure_class=None if error is None else type(error).__name__,
+            failure_message=None if error is None else str(error),
+            recovery_available=(
+                outcome == "partial"
+                and pending_marker_state == "present"
+                and revision_state == "valid"
+            ),
+            recovery_authorized=False,
+        )
+
+    def _artifact_revision_state(
+        self,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str | None,
+        revision_path: Path | None,
+    ) -> ArtifactRevisionState:
+        if artifact_hash is None or revision_path is None:
+            return "unavailable"
+        try:
+            if not revision_path.exists():
+                return "absent"
+            self.read(
+                ArtifactRef(
+                    feature_id=feature_id,
+                    artifact_type=artifact_type,
+                    path=str(revision_path),
+                    artifact_hash=artifact_hash,
+                )
+            )
+        except ArtifactStoreError:
+            return "invalid"
+        except OSError:
+            return "unknown"
+        return "valid"
+
+    def _artifact_latest_alias_state(
+        self,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str | None,
+        latest_path: Path | None,
+    ) -> ArtifactLatestAliasState:
+        if artifact_hash is None or latest_path is None:
+            return "unavailable"
+        try:
+            if not latest_path.exists():
+                return "absent"
+            envelope = json.loads(latest_path.read_text(encoding="utf-8"))
+            latest_hash = envelope.get("artifact_hash")
+            if not isinstance(latest_hash, str):
+                return "invalid"
+            self.read(
+                ArtifactRef(
+                    feature_id=feature_id,
+                    artifact_type=artifact_type,
+                    path=str(latest_path),
+                    artifact_hash=latest_hash,
+                )
+            )
+        except ArtifactStoreError:
+            return "invalid"
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return "invalid"
+        except OSError:
+            return "unknown"
+        return (
+            "matches_identity"
+            if latest_hash == artifact_hash
+            else "different_identity"
+        )
+
+    def _artifact_pending_marker_state(
+        self,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str | None,
+        pending_path: Path | None,
+    ) -> ArtifactPendingMarkerState:
+        if artifact_hash is None or pending_path is None:
+            return "unavailable"
+        try:
+            if not pending_path.exists():
+                return "absent"
+            marker = json.loads(pending_path.read_text(encoding="utf-8"))
+            self._validate_pending_write_marker(marker)
+            if (
+                marker.get("feature_id") != feature_id
+                or marker.get("artifact_type") != artifact_type
+                or marker.get("artifact_hash") != artifact_hash
+            ):
+                return "invalid"
+            marker_revision = self._guard_path(Path(str(marker["revision_path"])))
+            marker_latest = self._guard_path(Path(str(marker["latest_path"])))
+            if marker_revision not in {
+                self._revision_artifact_path(
+                    feature_id,
+                    artifact_type,
+                    artifact_hash,
+                ),
+                self._legacy_revision_artifact_path(
+                    feature_id,
+                    artifact_type,
+                    artifact_hash,
+                ),
+            }:
+                return "invalid"
+            if marker_latest != self._artifact_path(feature_id, artifact_type):
+                return "invalid"
+        except (ArtifactStoreError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            return "invalid"
+        except OSError:
+            return "unknown"
+        return "present"
 
     def _missing_probe_directories(self, paths: Iterable[Path]) -> set[Path]:
         missing: set[Path] = set()

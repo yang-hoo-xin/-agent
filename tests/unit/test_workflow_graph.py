@@ -433,6 +433,7 @@ def _write_historical_edit_authority_request(
     """Seed a frozen v0 Request without reopening the new-write contract."""
 
     original_validate_write = store.registry.validate_write
+    original_validate_envelope = store.registry.validate_envelope
 
     def validate_historical_write(
         *,
@@ -448,10 +449,21 @@ def _write_historical_edit_authority_request(
             payload=payload,
         )
 
+    def validate_historical_envelope(
+        envelope: dict[str, object],
+    ) -> ArtifactContract:
+        if envelope.get("artifact_type") == "edit_authority_request":
+            return store.registry.get("edit_authority_request")
+        return original_validate_envelope(envelope)
+
     with patch.object(
         store.registry,
         "validate_write",
         side_effect=validate_historical_write,
+    ), patch.object(
+        store.registry,
+        "validate_envelope",
+        side_effect=validate_historical_envelope,
     ), patch.object(
         store,
         "_validate_edit_authority_request_identity_upstreams",

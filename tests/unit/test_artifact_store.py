@@ -1281,6 +1281,278 @@ def test_write_removes_pending_marker_after_success(tmp_path: Path) -> None:
     assert list(pending_dir.rglob("*.json")) == []
 
 
+def test_write_with_result_reports_committed_logical_identity(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+
+    result = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    assert result.outcome == "committed"
+    assert result.commit_started is True
+    assert result.artifact_ref is not None
+    assert result.revision_path == result.artifact_ref.path
+    assert result.revision_path != result.latest_alias_path
+    assert result.revision_state == "valid"
+    assert result.latest_alias_state == "matches_identity"
+    assert result.pending_marker_state == "absent"
+    assert result.failure_stage is None
+    assert result.failure_class is None
+    assert result.failure_message is None
+    assert result.recovery_available is False
+    assert result.recovery_authorized is False
+    assert result.to_dict()["artifact_ref"] == {
+        "feature_id": "feature_001",
+        "artifact_type": "feature_spec",
+        "path": result.artifact_ref.path,
+        "artifact_hash": result.artifact_ref.artifact_hash,
+    }
+
+
+def test_write_with_result_reports_blocked_before_commit_on_validation(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+
+    result = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload={},
+    )
+
+    assert result.outcome == "blocked_before_commit"
+    assert result.commit_started is False
+    assert result.artifact_hash is None
+    assert result.artifact_ref is None
+    assert result.revision_state == "unavailable"
+    assert result.latest_alias_state == "unavailable"
+    assert result.pending_marker_state == "unavailable"
+    assert result.failure_stage == "admission_validation"
+    assert result.failure_class == "ArtifactStoreError"
+    assert result.recovery_available is False
+    assert list((tmp_path / "artifacts").rglob("*.json")) == []
+
+
+def test_write_with_result_reports_partial_without_implicit_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    original_write = store._write_text_atomic
+    latest_path = store._artifact_path("feature_001", "feature_spec")
+
+    def fail_latest(
+        path: Path,
+        content: str,
+        *,
+        capture_replace_error: bool = False,
+    ) -> None:
+        if path == latest_path:
+            raise OSError("latest write failed")
+        original_write(
+            path,
+            content,
+            capture_replace_error=capture_replace_error,
+        )
+
+    monkeypatch.setattr(store, "_write_text_atomic", fail_latest)
+
+    first = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    assert first.outcome == "partial"
+    assert first.commit_started is True
+    assert first.revision_state == "valid"
+    assert first.latest_alias_state == "absent"
+    assert first.pending_marker_state == "present"
+    assert first.failure_stage == "latest_alias_write"
+    assert first.failure_class == "OSError"
+    assert first.recovery_available is True
+    pending_bytes = Path(first.pending_marker_path or "").read_bytes()
+
+    second = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    assert second.outcome == "partial"
+    assert second.commit_started is False
+    assert second.revision_state == "valid"
+    assert second.latest_alias_state == "absent"
+    assert second.pending_marker_state == "present"
+    assert second.failure_stage == "admission_validation"
+    assert second.failure_class == "ArtifactStoreError"
+    assert second.recovery_available is True
+    assert Path(second.pending_marker_path or "").read_bytes() == pending_bytes
+    assert not latest_path.exists()
+
+    with pytest.raises(
+        ArtifactStoreError,
+        match="Existing pending write requires explicit recovery",
+    ):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="feature_spec",
+            payload=_feature_payload(),
+        )
+
+
+def test_preexisting_pending_precedes_missing_revision_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    original_write = store._write_text_atomic
+    latest_path = store._artifact_path("feature_001", "feature_spec")
+
+    def fail_latest(
+        path: Path,
+        content: str,
+        *,
+        capture_replace_error: bool = False,
+    ) -> None:
+        if path == latest_path:
+            raise OSError("latest write failed")
+        original_write(
+            path,
+            content,
+            capture_replace_error=capture_replace_error,
+        )
+
+    monkeypatch.setattr(store, "_write_text_atomic", fail_latest)
+    first = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    assert first.outcome == "partial"
+    Path(first.revision_path or "").unlink()
+
+    second = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    assert second.outcome == "partial"
+    assert second.commit_started is False
+    assert second.revision_state == "absent"
+    assert second.pending_marker_state == "present"
+    assert second.recovery_available is False
+
+
+def test_write_with_result_reuses_preexisting_committed_identity_without_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    first = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    def reject_write(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("idempotent committed path must not write")
+
+    monkeypatch.setattr(store, "_write_text_atomic", reject_write)
+    second = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    assert second.outcome == "committed"
+    assert second.commit_started is False
+    assert second.artifact_ref == first
+    assert second.revision_state == "valid"
+    assert second.latest_alias_state == "matches_identity"
+    assert second.pending_marker_state == "absent"
+
+
+def test_historical_revision_does_not_mask_pending_before_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    historical = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    current = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_changed_feature_payload(),
+    )
+    original_write = store._write_text_atomic
+
+    def fail_pending(
+        path: Path,
+        content: str,
+        *,
+        capture_replace_error: bool = False,
+    ) -> None:
+        if path.parent.name == "feature_spec" and path.parent.parent.name == "p":
+            raise OSError("pending write failed")
+        original_write(
+            path,
+            content,
+            capture_replace_error=capture_replace_error,
+        )
+
+    monkeypatch.setattr(store, "_write_text_atomic", fail_pending)
+    result = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    assert result.outcome == "blocked_before_commit"
+    assert result.commit_started is False
+    assert result.artifact_hash == historical.artifact_hash
+    assert result.revision_state == "valid"
+    assert result.latest_alias_state == "different_identity"
+    assert result.pending_marker_state == "absent"
+    assert result.failure_stage == "pending_marker_write"
+    assert result.failure_class == "OSError"
+    assert result.artifact_ref is None
+    assert store.list_feature_artifacts("feature_001")[0].artifact_hash == current.artifact_hash
+
+
+def test_pending_cleanup_failure_is_partial_even_when_alias_matches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    original_unlink = store._unlink_if_exists
+
+    def fail_pending_cleanup(path: Path) -> None:
+        if path.parent.name == "feature_spec" and path.parent.parent.name == "p":
+            raise OSError("pending cleanup failed")
+        original_unlink(path)
+
+    monkeypatch.setattr(store, "_unlink_if_exists", fail_pending_cleanup)
+    result = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+
+    assert result.outcome == "partial"
+    assert result.commit_started is True
+    assert result.revision_state == "valid"
+    assert result.latest_alias_state == "matches_identity"
+    assert result.pending_marker_state == "present"
+    assert result.failure_stage == "pending_marker_cleanup"
+    assert result.failure_class == "OSError"
+    assert result.recovery_available is True
+
+
 def test_write_cleans_atomic_temp_file_when_replace_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1451,12 +1723,73 @@ def test_write_rejects_short_pending_locator_collision(
         encoding="utf-8",
     )
 
+    result = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    assert result.outcome == "blocked_before_commit"
+    assert result.commit_started is False
+    assert result.pending_marker_state == "invalid"
+    assert result.failure_stage == "admission_validation"
+    assert result.failure_class == "ArtifactStoreError"
+    assert result.failure_message == "Artifact pending locator collision"
+    assert pending_path.read_text(encoding="utf-8") == store._serialize_pending_write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        artifact_hash=other_hash,
+        revision_path=revision_path,
+        latest_path=latest_path,
+    )
+
     with pytest.raises(ArtifactStoreError, match="pending locator collision"):
         store.write(
             feature_id="feature_001",
             artifact_type="feature_spec",
             payload=_feature_payload(),
         )
+
+
+def test_preexisting_invalid_pending_is_blocked_before_commit_without_writes(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    committed = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    pending_path = store._pending_write_path(
+        "feature_001",
+        "feature_spec",
+        committed.artifact_hash,
+    )
+    pending_path.parent.mkdir(parents=True, exist_ok=True)
+    pending_path.write_text("{}\n", encoding="utf-8")
+    before = {
+        str(path): path.read_bytes()
+        for path in (tmp_path / "artifacts").rglob("*.json")
+    }
+
+    result = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    after = {
+        str(path): path.read_bytes()
+        for path in (tmp_path / "artifacts").rglob("*.json")
+    }
+
+    assert result.outcome == "blocked_before_commit"
+    assert result.commit_started is False
+    assert result.revision_state == "unavailable"
+    assert result.latest_alias_state == "matches_identity"
+    assert result.pending_marker_state == "invalid"
+    assert result.failure_stage == "admission_validation"
+    assert result.failure_class == "ArtifactStoreError"
+    assert result.failure_message == "Existing pending write marker is invalid"
+    assert before == after
 
 
 def test_explicit_ref_rejects_feature_and_type_identity_mismatch(
