@@ -14,6 +14,13 @@ from uuid import uuid4
 from .envelope import ArtifactEnvelope, ArtifactRef
 from .freshness import FreshnessView, StaleArtifactError
 from .registry import ArtifactContract, ArtifactRegistryError, ArtifactTypeRegistry
+from ..edit_authority_capabilities import (
+    InvalidEditAuthorityApprovalIdentityError,
+    bind_edit_authority_exact_input_upstreams,
+    validate_edit_authority_exact_input_admission,
+    validate_edit_authority_request_identity,
+    validate_edit_authority_resume_report_against_approval,
+)
 
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _ARTIFACT_TYPE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -892,6 +899,74 @@ class ArtifactStore:
             raise ArtifactStoreError("Invalid artifact_hash for physical locator")
         return artifact_hash[:_PHYSICAL_LOCATOR_HEX_LENGTH]
 
+    def _validate_edit_authority_request_identity_upstreams(
+        self,
+        *,
+        feature_id: str,
+        payload: Mapping[str, Any],
+        upstream_refs: list[ArtifactRef],
+    ) -> None:
+        try:
+            validate_edit_authority_request_identity(
+                payload,
+                allow_legacy=False,
+            )
+            bindings = bind_edit_authority_exact_input_upstreams(
+                payload,
+                [
+                    {
+                        "artifact_type": ref.artifact_type,
+                        "artifact_hash": ref.artifact_hash,
+                    }
+                    for ref in upstream_refs
+                ],
+            )
+        except InvalidEditAuthorityApprovalIdentityError as exc:
+            raise ArtifactStoreError(str(exc)) from exc
+        refs_by_identity: dict[tuple[str, str], list[ArtifactRef]] = {}
+        for ref in upstream_refs:
+            refs_by_identity.setdefault(
+                (ref.artifact_type, ref.artifact_hash),
+                [],
+            ).append(ref)
+        input_facts: list[dict[str, Any]] = []
+        for requirement, _ in bindings:
+            key = (
+                str(requirement.get("artifact_type")),
+                str(requirement.get("artifact_hash")),
+            )
+            matches = refs_by_identity.get(key)
+            if not matches:
+                raise ArtifactStoreError(
+                    "Edit Authority Request exact input has no immutable upstream."
+                )
+            ref = matches.pop(0)
+            if ref.feature_id != feature_id:
+                raise ArtifactStoreError(
+                    "Edit Authority Request exact input feature_id mismatch."
+                )
+            self.read(ref)
+            input_facts.append(
+                {
+                    "role": requirement["role"],
+                    "artifact_type": ref.artifact_type,
+                    "artifact_hash": ref.artifact_hash,
+                    "registered": True,
+                    "latest_artifact_hash": self._latest_artifact_hash(
+                        feature_id,
+                        ref.artifact_type,
+                    ),
+                    "recursive_fresh": self.check_freshness(ref).is_fresh,
+                    "exact_recursive_fresh": (
+                        self.check_exact_revision_freshness(ref).is_fresh
+                    ),
+                }
+            )
+        try:
+            validate_edit_authority_exact_input_admission(payload, input_facts)
+        except InvalidEditAuthorityApprovalIdentityError as exc:
+            raise ArtifactStoreError(str(exc)) from exc
+
     def _validate_upstream_refs(
         self,
         *,
@@ -905,6 +980,12 @@ class ArtifactStore:
         exact_revision_upstream_types: set[str],
     ) -> None:
         provided_types = {ref.artifact_type for ref in upstream_refs}
+        if artifact_type == "edit_authority_request":
+            self._validate_edit_authority_request_identity_upstreams(
+                feature_id=feature_id,
+                payload=payload,
+                upstream_refs=upstream_refs,
+            )
         if artifact_type == "build_result":
             verification_only = (
                 payload.get("input_execution_mode") == "verification_only"
@@ -1245,6 +1326,31 @@ class ArtifactStore:
                         "EditAuthorityApproval payload revision does not "
                         f"match exact {upstream_type} upstream."
                     )
+            request_ref = refs_by_type.get("edit_authority_request")
+            resume_ref = refs_by_type.get("resume_report")
+            if request_ref is None or resume_ref is None:
+                raise ArtifactStoreError(
+                    "EditAuthorityApproval requires its exact Request and "
+                    "ResumeReport upstreams."
+                )
+            request_data = self.read(request_ref).get("data")
+            resume_data = self.read(resume_ref).get("data")
+            if not isinstance(request_data, Mapping):
+                raise ArtifactStoreError(
+                    "EditAuthorityApproval Request upstream data is invalid."
+                )
+            if not isinstance(resume_data, Mapping):
+                raise ArtifactStoreError(
+                    "EditAuthorityApproval ResumeReport upstream data is invalid."
+                )
+            try:
+                validate_edit_authority_resume_report_against_approval(
+                    approval_payload=payload,
+                    request_artifact_payload=request_data,
+                    resume_report_payload=resume_data,
+                )
+            except InvalidEditAuthorityApprovalIdentityError as exc:
+                raise ArtifactStoreError(str(exc)) from exc
         exact_revision_fields_by_artifact = {
             "repair_planning_approval": (
                 (

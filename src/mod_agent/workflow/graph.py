@@ -24,8 +24,13 @@ from src.mod_agent.domain import (
 )
 from src.mod_agent.evaluation import build_transition_eval_gate_report
 from src.mod_agent.edit_authority_capabilities import (
+    InvalidEditAuthorityApprovalIdentityError,
     UnsupportedEditAuthorityCapabilityError,
+    bind_edit_authority_exact_input_upstreams,
+    edit_authority_identity_sections,
     resolve_edit_authority_request_capability,
+    validate_edit_authority_exact_input_admission,
+    validate_edit_authority_request_identity,
 )
 from src.mod_agent.evidence import (
     DenseRetrievalProvider,
@@ -1253,6 +1258,76 @@ def _run_dynamic_human_review_gate(
     return next_state
 
 
+def _validate_graph_edit_authority_exact_inputs(
+    *,
+    artifact_store: ArtifactStore,
+    feature_id: str,
+    request: Mapping[str, Any],
+    request_envelope: Mapping[str, Any],
+) -> None:
+    upstreams = request_envelope.get("inputs", {}).get(
+        "upstream_artifacts",
+        (),
+    )
+    if not isinstance(upstreams, list):
+        raise ValueError("Edit Authority Request upstreams are invalid.")
+    try:
+        bindings = bind_edit_authority_exact_input_upstreams(request, upstreams)
+    except InvalidEditAuthorityApprovalIdentityError as exc:
+        raise ValueError(str(exc)) from exc
+    if not bindings:
+        return
+    refs_by_identity: dict[tuple[str, str], list[ArtifactRef]] = {}
+    for item in upstreams:
+        if not isinstance(item, Mapping):
+            raise ValueError("Edit Authority Request upstream is invalid.")
+        ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type=str(item.get("artifact_type", "")),
+            path=str(item.get("path", "")),
+            artifact_hash=str(item.get("artifact_hash", "")),
+        )
+        refs_by_identity.setdefault(
+            (ref.artifact_type, ref.artifact_hash),
+            [],
+        ).append(ref)
+    latest_by_type = {
+        ref.artifact_type: ref
+        for ref in artifact_store.list_feature_artifacts(feature_id)
+    }
+    input_facts: list[dict[str, Any]] = []
+    for requirement, _ in bindings:
+        key = (
+            str(requirement.get("artifact_type")),
+            str(requirement.get("artifact_hash")),
+        )
+        matches = refs_by_identity.get(key)
+        if not matches:
+            raise ValueError("Edit Authority exact input lineage is incomplete.")
+        ref = matches.pop(0)
+        artifact_store.read(ref)
+        latest = latest_by_type.get(ref.artifact_type)
+        input_facts.append(
+            {
+                "role": requirement["role"],
+                "artifact_type": ref.artifact_type,
+                "artifact_hash": ref.artifact_hash,
+                "registered": True,
+                "latest_artifact_hash": (
+                    latest.artifact_hash if latest is not None else None
+                ),
+                "recursive_fresh": artifact_store.check_freshness(ref).is_fresh,
+                "exact_recursive_fresh": (
+                    artifact_store.check_exact_revision_freshness(ref).is_fresh
+                ),
+            }
+        )
+    try:
+        validate_edit_authority_exact_input_admission(request, input_facts)
+    except InvalidEditAuthorityApprovalIdentityError as exc:
+        raise ValueError(str(exc)) from exc
+
+
 def _run_stagger_edit_authority_gate(
     state: ModAgentState,
     artifact_store: ArtifactStore,
@@ -1278,16 +1353,30 @@ def _run_stagger_edit_authority_gate(
         raise ValueError(
             "EditAuthorityRequest identity or no-authority boundary is invalid."
         )
+    _validate_graph_edit_authority_exact_inputs(
+        artifact_store=artifact_store,
+        feature_id=feature_id,
+        request=request,
+        request_envelope=request_envelope,
+    )
 
     gate_state = _copy_state(state)
     gate_state["current_stage"] = "edit_authority_approval"
     _record_artifact(gate_state, "edit_authority_request", request_ref)
     request_payload = request.get("request_payload")
     try:
-        capability = resolve_edit_authority_request_capability(
-            request_payload
+        capability, _, _ = validate_edit_authority_request_identity(
+            request,
+            allow_legacy=False,
         )
-    except UnsupportedEditAuthorityCapabilityError as exc:
+        identity_sections = edit_authority_identity_sections(
+            request,
+            allow_legacy=False,
+        )
+    except (
+        InvalidEditAuthorityApprovalIdentityError,
+        UnsupportedEditAuthorityCapabilityError,
+    ) as exc:
         raise ValueError(str(exc)) from exc
     if (
         capability.checkpoint_input_mode
@@ -1320,8 +1409,9 @@ def _run_stagger_edit_authority_gate(
                         ),
                     ),
                 )
-    allowed_actions = list(capability.allowed_actions)
-    forbidden_actions = list(capability.forbidden_actions)
+    execution_contract = identity_sections["execution_contract_summary"]
+    allowed_actions = list(execution_contract["allowed_actions"])
+    forbidden_actions = list(execution_contract["forbidden_actions"])
     interrupt_request = InterruptRequest(
         interrupt_id=f"interrupt_{uuid4().hex}",
         run_id=state["run_id"],
@@ -1341,6 +1431,10 @@ def _run_stagger_edit_authority_gate(
                 "artifact_hash": request_ref.artifact_hash,
             },
             "request_hash": request["request_hash"],
+            "approval_identity_mode": identity_sections["identity_mode"],
+            "approval_identity_schema_version": identity_sections[
+                "identity_schema_version"
+            ],
             "allowed_actions": allowed_actions,
             "forbidden_actions": forbidden_actions,
         },

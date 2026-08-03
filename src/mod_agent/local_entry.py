@@ -27,9 +27,14 @@ from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import RgLiveEvidenceProvider
 from src.mod_agent.edit_authority_capabilities import (
     EditAuthorityCapabilityDeclaration,
+    InvalidEditAuthorityApprovalIdentityError,
     UnsupportedEditAuthorityCapabilityError,
+    bind_edit_authority_exact_input_upstreams,
+    edit_authority_identity_sections,
     require_edit_authority_public_operation,
     resolve_edit_authority_request_capability,
+    validate_edit_authority_exact_input_admission,
+    validate_edit_authority_request_identity,
 )
 from src.mod_agent.evidence.dotnet_metadata import (
     DotNetMetadataEnrichmentError,
@@ -90,6 +95,83 @@ class _EditAuthorityReviewAdmission:
     request_envelope: dict[str, Any]
     run_id: str
     capability: EditAuthorityCapabilityDeclaration
+    identity_sections: dict[str, Any]
+
+
+def _validate_edit_authority_public_exact_inputs(
+    *,
+    store: ArtifactStore,
+    feature_id: str,
+    request: Mapping[str, Any],
+    request_envelope: Mapping[str, Any],
+) -> None:
+    upstreams = request_envelope.get("inputs", {}).get(
+        "upstream_artifacts",
+        (),
+    )
+    if not isinstance(upstreams, list):
+        raise LocalEntryError(
+            "Edit Authority Request upstream projection is invalid."
+        )
+    try:
+        bindings = bind_edit_authority_exact_input_upstreams(request, upstreams)
+    except InvalidEditAuthorityApprovalIdentityError as exc:
+        raise LocalEntryError(str(exc)) from exc
+    if not bindings:
+        return
+    refs_by_identity: dict[tuple[str, str], list[ArtifactRef]] = {}
+    for item in upstreams:
+        if not isinstance(item, Mapping):
+            raise LocalEntryError(
+                "Edit Authority Request upstream entry is invalid."
+            )
+        ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type=str(item.get("artifact_type", "")),
+            path=str(item.get("path", "")),
+            artifact_hash=str(item.get("artifact_hash", "")),
+        )
+        refs_by_identity.setdefault(
+            (ref.artifact_type, ref.artifact_hash),
+            [],
+        ).append(ref)
+    latest_by_type = {
+        ref.artifact_type: ref
+        for ref in store.list_feature_artifacts(feature_id)
+    }
+    input_facts: list[dict[str, Any]] = []
+    for requirement, _ in bindings:
+        key = (
+            str(requirement.get("artifact_type")),
+            str(requirement.get("artifact_hash")),
+        )
+        matches = refs_by_identity.get(key)
+        if not matches:
+            raise LocalEntryError(
+                "Edit Authority exact input is absent from its Request lineage."
+            )
+        ref = matches.pop(0)
+        store.read(ref)
+        latest = latest_by_type.get(ref.artifact_type)
+        input_facts.append(
+            {
+                "role": requirement["role"],
+                "artifact_type": ref.artifact_type,
+                "artifact_hash": ref.artifact_hash,
+                "registered": True,
+                "latest_artifact_hash": (
+                    latest.artifact_hash if latest is not None else None
+                ),
+                "recursive_fresh": store.check_freshness(ref).is_fresh,
+                "exact_recursive_fresh": (
+                    store.check_exact_revision_freshness(ref).is_fresh
+                ),
+            }
+        )
+    try:
+        validate_edit_authority_exact_input_admission(request, input_facts)
+    except InvalidEditAuthorityApprovalIdentityError as exc:
+        raise LocalEntryError(str(exc)) from exc
 
 
 def _admit_stagger_edit_authority_review(
@@ -160,10 +242,24 @@ def _admit_stagger_edit_authority_review(
             "Edit Authority Request run_id is missing."
         )
     try:
-        capability = resolve_edit_authority_request_capability(
-            request.get("request_payload")
+        capability, _, _ = validate_edit_authority_request_identity(
+            request,
+            allow_legacy=False,
         )
-    except UnsupportedEditAuthorityCapabilityError as exc:
+        identity_sections = edit_authority_identity_sections(
+            request,
+            allow_legacy=False,
+        )
+        _validate_edit_authority_public_exact_inputs(
+            store=store,
+            feature_id=feature_id,
+            request=request,
+            request_envelope=request_envelope,
+        )
+    except (
+        InvalidEditAuthorityApprovalIdentityError,
+        UnsupportedEditAuthorityCapabilityError,
+    ) as exc:
         raise LocalEntryError(str(exc)) from exc
     return _EditAuthorityReviewAdmission(
         store=store,
@@ -172,6 +268,7 @@ def _admit_stagger_edit_authority_review(
         request_envelope=request_envelope,
         run_id=run_id,
         capability=capability,
+        identity_sections=identity_sections,
     )
 
 
@@ -332,6 +429,23 @@ def preflight_stagger_edit_authority_review(
         "feature_id": feature_id,
         "run_id": admission.run_id,
         "request_hash": authority_request_hash,
+        "approval_identity_mode": admission.identity_sections[
+            "identity_mode"
+        ],
+        "approval_identity_schema_version": admission.identity_sections[
+            "identity_schema_version"
+        ],
+        "approval_identity": admission.identity_sections[
+            "approval_identity"
+        ],
+        "execution_contract_summary": admission.identity_sections[
+            "execution_contract_summary"
+        ],
+        "audit_snapshot": {
+            "artifact_revision_counts": after_counts,
+            "writes_performed": False,
+            "artifact_writes_performed": False,
+        },
         "edit_authority_request_revision": {
             "feature_id": feature_id,
             "path": admission.request_ref.path,
@@ -385,6 +499,16 @@ def resume_stagger_edit_authority_review(
         )
     except UnsupportedEditAuthorityCapabilityError as exc:
         raise LocalEntryError(str(exc)) from exc
+    write_types = admission.capability.review_write_artifact_types
+    before_counts = {
+        artifact_type: len(
+            admission.store.list_feature_artifact_revisions(
+                feature_id,
+                artifact_type,
+            )
+        )
+        for artifact_type in write_types
+    }
     graph, artifact_refs, config, _ = (
         _invoke_stagger_edit_authority_interrupt(
             admission=admission,
@@ -434,6 +558,16 @@ def resume_stagger_edit_authority_review(
             or "binding_resolution" not in artifact_types
         )
     )
+    after_counts = {
+        artifact_type: len(
+            admission.store.list_feature_artifact_revisions(
+                feature_id,
+                artifact_type,
+            )
+        )
+        for artifact_type in write_types
+    }
+    writes_performed = after_counts != before_counts
     return {
         "status": (
             admission.capability.public_success_status
@@ -446,6 +580,24 @@ def resume_stagger_edit_authority_review(
         "resume_id": resume_id,
         "decision": decision,
         "request_hash": authority_request_hash,
+        "approval_identity_mode": admission.identity_sections[
+            "identity_mode"
+        ],
+        "approval_identity_schema_version": admission.identity_sections[
+            "identity_schema_version"
+        ],
+        "approval_identity": admission.identity_sections[
+            "approval_identity"
+        ],
+        "execution_contract_summary": admission.identity_sections[
+            "execution_contract_summary"
+        ],
+        "audit_snapshot": {
+            "artifact_revision_counts_before": before_counts,
+            "artifact_revision_counts_after": after_counts,
+            "writes_performed": writes_performed,
+            "artifact_writes_performed": writes_performed,
+        },
         "current_stage": result.get("current_stage"),
         "artifacts": dict(result.get("artifacts") or {}),
         "artifact_hashes": dict(result.get("artifact_hashes") or {}),

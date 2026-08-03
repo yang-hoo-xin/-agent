@@ -8,6 +8,13 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from ..edit_authority_capabilities import (
+    InvalidEditAuthorityApprovalIdentityError,
+    UnsupportedEditAuthorityCapabilityError,
+    validate_edit_authority_approval_contract,
+    validate_edit_authority_request_identity,
+)
+
 
 @dataclass(frozen=True)
 class ArtifactContract:
@@ -66,6 +73,10 @@ class ArtifactTypeRegistry:
             raise ArtifactRegistryError(
                 f"Artifact {artifact_type!r} missing required fields: {missing}"
             )
+        if artifact_type == "edit_authority_request":
+            _validate_edit_authority_request(payload, allow_legacy=False)
+        if artifact_type == "edit_authority_approval":
+            _validate_edit_authority_approval(payload, allow_legacy=False)
         self._validate_payload_contract(artifact_type, payload)
         return contract
 
@@ -126,9 +137,12 @@ class ArtifactTypeRegistry:
         if artifact_type == "binding_resolution":
             _validate_binding_resolution(payload)
         if artifact_type == "edit_authority_request":
-            _validate_edit_authority_request(payload)
+            _validate_edit_authority_request(
+                payload,
+                allow_legacy=True,
+            )
         if artifact_type == "edit_authority_approval":
-            _validate_edit_authority_approval(payload)
+            _validate_edit_authority_approval(payload, allow_legacy=True)
         if artifact_type == "repair_planning_request":
             _validate_repair_planning_authority_request(payload)
         if artifact_type == "repair_planning_approval":
@@ -759,7 +773,11 @@ def _validate_stagger_diagnostic_only_plan(
         )
 
 
-def _validate_edit_authority_request(payload: dict[str, Any]) -> None:
+def _validate_edit_authority_request(
+    payload: dict[str, Any],
+    *,
+    allow_legacy: bool,
+) -> None:
     if payload.get("status") != "pending_human_approval":
         raise ArtifactRegistryError(
             "edit_authority_request status must be pending_human_approval"
@@ -774,18 +792,16 @@ def _validate_edit_authority_request(payload: dict[str, Any]) -> None:
         raise ArtifactRegistryError(
             "edit_authority_request exact request binding is invalid"
         )
-    computed_hash = "sha256:" + hashlib.sha256(
-        json.dumps(
-            request_payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    if computed_hash != request_hash:
-        raise ArtifactRegistryError(
-            "edit_authority_request request hash mismatch"
+    try:
+        validate_edit_authority_request_identity(
+            payload,
+            allow_legacy=allow_legacy,
         )
+    except (
+        InvalidEditAuthorityApprovalIdentityError,
+        UnsupportedEditAuthorityCapabilityError,
+    ) as exc:
+        raise ArtifactRegistryError(str(exc)) from exc
     if (
         payload.get("authority_granted") is not False
         or payload.get("registry_mutation_allowed") is not False
@@ -1114,14 +1130,25 @@ def _validate_exact_revision(
         )
 
 
-def _validate_edit_authority_approval(payload: dict[str, Any]) -> None:
+def _validate_edit_authority_approval(
+    payload: dict[str, Any],
+    *,
+    allow_legacy: bool,
+) -> None:
     if payload.get("status") != "approved":
         raise ArtifactRegistryError(
             "edit_authority_approval status must be approved"
         )
     if payload.get("authority_source") == "edit_authority_request":
-        _validate_request_bound_edit_authority_approval(payload)
+        _validate_request_bound_edit_authority_approval(
+            payload,
+            allow_legacy=allow_legacy,
+        )
         return
+    if not allow_legacy:
+        raise ArtifactRegistryError(
+            "New Edit Authority Approval writes require versioned_v1 identity."
+        )
     approval_hash = payload.get("approval_hash")
     if (
         not isinstance(approval_hash, str)
@@ -1201,6 +1228,8 @@ def _validate_edit_authority_approval(payload: dict[str, Any]) -> None:
 
 def _validate_request_bound_edit_authority_approval(
     payload: dict[str, Any],
+    *,
+    allow_legacy: bool,
 ) -> None:
     allowed_fields = {
         "node_name",
@@ -1211,6 +1240,10 @@ def _validate_request_bound_edit_authority_approval(
         "run_id",
         "authority_source",
         "authority_contract_version",
+        "approval_identity_mode",
+        "approval_identity_schema_version",
+        "capability_id",
+        "capability_contract_version",
         "approval_hash",
         "request_hash",
         "approved_by",
@@ -1266,87 +1299,13 @@ def _validate_request_bound_edit_authority_approval(
         raise ArtifactRegistryError(
             "edit_authority_approval human decision identity is invalid"
         )
-    authority_contract_version = payload.get(
-        "authority_contract_version",
-        "edit_authority_request_approval_v1",
-    )
-    if (
-        authority_contract_version
-        == "edit_authority_existing_binding_reauthorization_v1"
-    ):
-        expected_allowed_actions = [
-            "reauthorize_existing_edit_binding",
-            "create_binding_resolution_revision",
-        ]
-        expected_forbidden_actions = [
-            "create_evidence_pack_revision",
-            "create_implementation_plan_revision",
-            "create_edit_binding",
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ]
-    elif (
-        authority_contract_version
-        == "edit_authority_stagger_hud_parent_observation_plan_v1"
-    ):
-        expected_allowed_actions = [
-            "create_observation_evidence_pack_revision",
-            "create_diagnostic_implementation_plan_revision",
-            "create_observation_only_edit_bindings",
-        ]
-        expected_forbidden_actions = [
-            "create_binding_resolution_revision",
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ]
-    elif (
-        authority_contract_version
-        == "edit_authority_stagger_hud_parent_diagnostic_plan_v2"
-    ):
-        expected_allowed_actions = [
-            "create_observation_evidence_pack_revision",
-            "create_diagnostic_only_implementation_plan_revision",
-            "create_exact_bounded_observation_bindings",
-        ]
-        expected_forbidden_actions = [
-            "create_binding_resolution_revision",
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ]
-    elif authority_contract_version == "edit_authority_request_approval_v1":
-        expected_allowed_actions = [
-            "create_evidence_pack_revision",
-            "create_implementation_plan_revision",
-            "resolve_exact_edit_binding",
-        ]
-        expected_forbidden_actions = [
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ]
-    else:
-        raise ArtifactRegistryError(
-            "edit_authority_approval authority contract is invalid"
+    try:
+        validate_edit_authority_approval_contract(
+            payload,
+            allow_legacy=allow_legacy,
         )
-    if payload.get("allowed_actions") != expected_allowed_actions:
-        raise ArtifactRegistryError(
-            "edit_authority_approval allowed_actions are invalid"
-        )
-    if payload.get("forbidden_actions") != expected_forbidden_actions:
-        raise ArtifactRegistryError(
-            "edit_authority_approval forbidden_actions are invalid"
-        )
+    except InvalidEditAuthorityApprovalIdentityError as exc:
+        raise ArtifactRegistryError(str(exc)) from exc
     if (
         payload.get("repair_planner_allowed") is not False
         or payload.get("source_patch_allowed") is not False

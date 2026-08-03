@@ -15,6 +15,11 @@ from src.mod_agent.artifacts import (
     ArtifactTypeRegistry,
     StaleArtifactError,
 )
+from src.mod_agent.edit_authority_capabilities import (
+    APPROVAL_IDENTITY_SCHEMA_VERSION,
+    VERSIONED_APPROVAL_IDENTITY_MODE,
+    attach_edit_authority_approval_identity,
+)
 
 
 def _payload(node_name: str, stage: str) -> dict[str, str]:
@@ -123,6 +128,53 @@ def _patch_payload() -> dict[str, object]:
     }
 
 
+def _generic_edit_authority_request_payload() -> dict[str, object]:
+    def revision(fill: str) -> dict[str, str]:
+        return {
+            "feature_id": "feature_001",
+            "path": f"{fill}.json",
+            "artifact_hash": fill * 64,
+        }
+
+    return {
+        "schema_version": "stagger_edit_authority_request_v1",
+        "proposal": {
+            "feature_spec_revision": revision("1"),
+            "runtime_evidence_revision": revision("2"),
+            "implementation_plan_revision": revision("3"),
+            "patch_proposal_revision": revision("4"),
+            "ownership_review": {
+                "stored_runtime_failure_ownership": {"owner": "observation"},
+                "replayed_runtime_failure_ownership": {
+                    "owner": "product_behavior"
+                },
+                "reclassification_approval_required": True,
+                "runtime_evidence_mutation_allowed": False,
+            },
+            "diagnosed_responsibility_anchor": "runtime_result",
+            "current_source": {
+                "canonical_target_path": "Patches/HitFeedbackBehaviorPatch.cs",
+                "sha256": "5" * 64,
+                "target_span": {"start_line": 979, "end_line": 984},
+            },
+            "proposed_target_symbol": "TrySpawnStaggerYellowX",
+            "proposed_exact_span": {"start_line": 979, "end_line": 984},
+            "proposed_operation": "replace_hud_recttransform_acquisition",
+            "existing_binding_gap": "none",
+            "current_edit_authority": "edit_binding_004",
+            "approval_scope": ["create_exact_binding"],
+            "root_cause_status": "confirmed",
+            "unresolved_root_causes": [],
+        },
+        "source_root": "C:/source",
+        "projected_ids": {
+            "binding_id": "edit_binding_004",
+            "change_id": "chg_004",
+            "evidence_id": "stagger_repair_001",
+        },
+    }
+
+
 def _edit_authority_approval_payload() -> dict[str, object]:
     proposal = {
         "schema_version": "stagger_edit_authority_proposal_v1",
@@ -167,51 +219,41 @@ def _edit_authority_approval_payload() -> dict[str, object]:
     }
 
 
-def test_edit_authority_approval_contract_binds_exact_proposal_hash() -> None:
+def test_legacy_edit_authority_approval_envelope_binds_exact_proposal_hash() -> None:
     registry = ArtifactTypeRegistry()
     payload = _edit_authority_approval_payload()
+    contract = registry.get("edit_authority_approval")
 
-    contract = registry.validate_write(
-        artifact_type="edit_authority_approval",
-        status="success",
-        payload=payload,
-    )
+    def envelope(data: dict[str, object]) -> dict[str, object]:
+        return {
+            "schema_version": contract.schema_version,
+            "artifact_type": "edit_authority_approval",
+            "feature_id": "feature_001",
+            "producer_stage": contract.producer_stage,
+            "status": "success",
+            "data": data,
+        }
 
-    assert contract.producer_stage == "edit_authority_approval"
-    assert "binding_resolution" in contract.consumer_stages
+    validated = registry.validate_envelope(envelope(payload))
+
+    assert validated.producer_stage == "edit_authority_approval"
+    assert "binding_resolution" in validated.consumer_stages
 
     payload["approval_hash"] = "sha256:" + ("0" * 64)
     with pytest.raises(
         ArtifactRegistryError,
         match="proposal hash mismatch",
     ):
-        registry.validate_write(
-            artifact_type="edit_authority_approval",
-            status="success",
-            payload=payload,
-        )
+        registry.validate_envelope(envelope(payload))
 
 
 def test_edit_authority_request_has_no_authority_and_requires_exact_inputs() -> None:
     registry = ArtifactTypeRegistry()
-    request_payload = {
-        "schema_version": "stagger_edit_authority_request_v1",
-        "proposal": {"feature_id": "feature_001"},
-        "source_root": "C:/source",
-        "projected_ids": {
-            "binding_id": "edit_binding_004",
-            "change_id": "chg_004",
-            "evidence_id": "stagger_repair_001",
-        },
-    }
-    request_hash = "sha256:" + hashlib.sha256(
-        json.dumps(
-            request_payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
+    request_payload, request_hash = attach_edit_authority_approval_identity(
+        request_payload=_generic_edit_authority_request_payload(),
+        feature_id="feature_001",
+        run_id="run_001",
+    )
     payload = {
         "node_name": "request_stagger_edit_authority",
         "stage": "edit_authority_request",
@@ -271,6 +313,11 @@ def test_request_bound_approval_is_permission_only() -> None:
         "feature_id": "feature_001",
         "run_id": "run_001",
         "authority_source": "edit_authority_request",
+        "authority_contract_version": "edit_authority_request_approval_v1",
+        "approval_identity_mode": VERSIONED_APPROVAL_IDENTITY_MODE,
+        "approval_identity_schema_version": APPROVAL_IDENTITY_SCHEMA_VERSION,
+        "capability_id": "stagger_edit_authority_generic",
+        "capability_contract_version": "stagger_edit_authority_capability_v1",
         "approval_hash": "sha256:" + ("b" * 64),
         "request_hash": "sha256:" + ("b" * 64),
         "approved_by": "user",
@@ -337,6 +384,10 @@ def test_existing_binding_reauthorization_contract_adds_no_technical_write() -> 
         "authority_contract_version": (
             "edit_authority_existing_binding_reauthorization_v1"
         ),
+        "approval_identity_mode": VERSIONED_APPROVAL_IDENTITY_MODE,
+        "approval_identity_schema_version": APPROVAL_IDENTITY_SCHEMA_VERSION,
+        "capability_id": "stagger_existing_binding_reauthorization",
+        "capability_contract_version": "stagger_edit_authority_capability_v1",
         "approval_hash": "sha256:" + ("b" * 64),
         "request_hash": "sha256:" + ("b" * 64),
         "approved_by": "user",
@@ -442,6 +493,10 @@ def test_stagger_observation_plan_approval_is_permission_only() -> None:
         "authority_contract_version": (
             "edit_authority_stagger_hud_parent_observation_plan_v1"
         ),
+        "approval_identity_mode": VERSIONED_APPROVAL_IDENTITY_MODE,
+        "approval_identity_schema_version": APPROVAL_IDENTITY_SCHEMA_VERSION,
+        "capability_id": "stagger_hud_parent_observation",
+        "capability_contract_version": "stagger_edit_authority_capability_v1",
         "approval_hash": "sha256:" + ("b" * 64),
         "request_hash": "sha256:" + ("b" * 64),
         "approved_by": "user",
@@ -476,7 +531,7 @@ def test_stagger_observation_plan_approval_is_permission_only() -> None:
     approval["allowed_actions"].append("modify_source")
     with pytest.raises(
         ArtifactRegistryError,
-        match="allowed_actions",
+        match="capability contract",
     ):
         registry.validate_write(
             artifact_type="edit_authority_approval",

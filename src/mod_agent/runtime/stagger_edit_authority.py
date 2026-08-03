@@ -14,6 +14,8 @@ from ..bindings.runtime_resolution import resolve_runtime_diagnosis_binding
 from ..edit_authority_capabilities import (
     EXISTING_BINDING_AUTHORITY_CONTRACT as _EXISTING_BINDING_AUTHORITY_CONTRACT,
     EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA as _EXISTING_BINDING_REQUEST_SCHEMA,
+    APPROVAL_IDENTITY_SCHEMA_VERSION,
+    VERSIONED_APPROVAL_IDENTITY_MODE,
     STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND as _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND,
     STAGGER_EDIT_AUTHORITY_REQUEST_SCHEMA as _STAGGER_EDIT_AUTHORITY_REQUEST_SCHEMA,
     STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA as _STAGGER_OBSERVATION_REQUEST_SCHEMA_V2,
@@ -24,7 +26,12 @@ from ..edit_authority_capabilities import (
     STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2 as _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2,
     EditAuthorityCapabilityDeclaration,
     UnsupportedEditAuthorityCapabilityError,
+    attach_edit_authority_approval_identity,
+    bind_edit_authority_exact_input_upstreams,
     resolve_edit_authority_request_capability,
+    validate_edit_authority_approval_against_request,
+    validate_edit_authority_exact_input_admission,
+    validate_edit_authority_request_identity,
 )
 from .evidence import build_runtime_failure_ownership
 from .stagger_diagnosis import (
@@ -466,9 +473,11 @@ def create_stagger_edit_authority_request(
             ),
         },
     }
-    request_hash = "sha256:" + hashlib.sha256(
-        _canonical_json(request_payload)
-    ).hexdigest()
+    request_payload, request_hash = attach_edit_authority_approval_identity(
+        request_payload=request_payload,
+        feature_id=feature_id,
+        run_id=run_id,
+    )
     request_ref = store.write(
         feature_id=feature_id,
         artifact_type="edit_authority_request",
@@ -735,9 +744,11 @@ def preflight_stagger_bounded_observation_authority(
             "evidence_id": evidence_item["evidence_id"],
         },
     }
-    request_hash = "sha256:" + hashlib.sha256(
-        _canonical_json(request_payload)
-    ).hexdigest()
+    request_payload, request_hash = attach_edit_authority_approval_identity(
+        request_payload=request_payload,
+        feature_id=feature_id,
+        run_id=run_id,
+    )
     return {
         "status": "READY_TO_CREATE_BOUNDED_OBSERVATION_AUTHORITY_REQUEST",
         "command": "preflight-stagger-bounded-observation-authority",
@@ -1127,9 +1138,11 @@ def create_stagger_existing_binding_reauthorization_request(
         "proposal": copy.deepcopy(preflight["proposal"]),
         "source_root": str(Path(kwargs["source_root"]).resolve()),
     }
-    request_hash = "sha256:" + hashlib.sha256(
-        _canonical_json(request_payload)
-    ).hexdigest()
+    request_payload, request_hash = attach_edit_authority_approval_identity(
+        request_payload=request_payload,
+        feature_id=feature_id,
+        run_id=run_id,
+    )
     request_ref = store.write(
         feature_id=feature_id,
         artifact_type="edit_authority_request",
@@ -1504,9 +1517,11 @@ def create_stagger_hud_parent_observation_authority_request(
                 kwargs["il2cpp_interop_runtime_hash"]
             ).upper(),
         }
-    request_hash = "sha256:" + hashlib.sha256(
-        _canonical_json(request_payload)
-    ).hexdigest()
+    request_payload, request_hash = attach_edit_authority_approval_identity(
+        request_payload=request_payload,
+        feature_id=feature_id,
+        run_id=run_id,
+    )
     refs = _stagger_observation_authority_refs(
         feature_id=feature_id,
         feature_spec_path=kwargs["feature_spec_path"],
@@ -1600,6 +1615,7 @@ def _apply_approved_stagger_edit_authority(
     feature_id: str,
     run_id: str,
     capability: EditAuthorityCapabilityDeclaration,
+    request_payload: dict[str, Any],
     feature_spec_path: str | Path,
     feature_spec_hash: str,
     runtime_evidence_path: str | Path,
@@ -1646,13 +1662,25 @@ def _apply_approved_stagger_edit_authority(
     store = ArtifactStore(artifact_store_root)
     request = _artifact_data(store.read(request_ref))
     request_payload = request.get("request_payload")
+    try:
+        validate_edit_authority_request_identity(
+            request,
+            allow_legacy=False,
+        )
+    except ValueError as exc:
+        raise StaggerEditAuthorityApprovalError(str(exc)) from exc
     if (
-        request.get("request_hash") != approval_hash
-        or not isinstance(request_payload, dict)
-        or request_payload.get("proposal") != preflight["proposal"]
-        or "sha256:"
-        + hashlib.sha256(_canonical_json(request_payload)).hexdigest()
-        != approval_hash
+        not isinstance(request_payload, dict)
+        or not _request_matches_fresh_approval_identity(
+            request=request,
+            fresh_request_payload={
+                **copy.deepcopy(request_payload),
+                "proposal": copy.deepcopy(preflight["proposal"]),
+            },
+            feature_id=feature_id,
+            run_id=run_id,
+            approval_hash=approval_hash,
+        )
     ):
         raise StaggerEditAuthorityApprovalError(
             "The graph-approved request does not match the fresh proposal."
@@ -1721,6 +1749,7 @@ def _apply_approved_stagger_edit_authority(
         request_ref=request_ref,
         resume_report_ref=resume_report_ref,
         capability=capability,
+        request_payload=request_payload,
     )
 
     store.preflight_atomic_commit(
@@ -1978,13 +2007,21 @@ def _apply_approved_stagger_bounded_observation_authority(
     )
     store = ArtifactStore(artifact_store_root)
     request = _artifact_data(store.read(request_ref))
+    try:
+        validate_edit_authority_request_identity(
+            request,
+            allow_legacy=False,
+        )
+    except ValueError as exc:
+        raise StaggerEditAuthorityApprovalError(str(exc)) from exc
     if (
-        request.get("request_hash") != approval_hash
-        or preflight["request_hash"] != approval_hash
-        or preflight["request_payload"] != request_payload
-        or "sha256:"
-        + hashlib.sha256(_canonical_json(request_payload)).hexdigest()
-        != approval_hash
+        not _request_matches_fresh_approval_identity(
+            request=request,
+            fresh_request_payload=preflight["request_payload"],
+            feature_id=feature_id,
+            run_id=run_id,
+            approval_hash=approval_hash,
+        )
     ):
         raise StaggerEditAuthorityApprovalError(
             "Approved bounded observation request is not exact and fresh."
@@ -2041,6 +2078,7 @@ def _apply_approved_stagger_bounded_observation_authority(
         request_ref=request_ref,
         resume_report_ref=resume_report_ref,
         capability=capability,
+        request_payload=request_payload,
     )
     store.preflight_atomic_commit(
         feature_id=feature_id,
@@ -2166,6 +2204,82 @@ def _apply_approved_stagger_bounded_observation_authority(
     }
 
 
+def _validate_materializer_edit_authority_exact_inputs(
+    *,
+    store: ArtifactStore,
+    feature_id: str,
+    request: dict[str, Any],
+    request_envelope: dict[str, Any],
+) -> None:
+    upstreams = request_envelope.get("inputs", {}).get(
+        "upstream_artifacts",
+        (),
+    )
+    if not isinstance(upstreams, list):
+        raise StaggerEditAuthorityApprovalError(
+            "EditAuthorityRequest upstreams are invalid."
+        )
+    try:
+        bindings = bind_edit_authority_exact_input_upstreams(request, upstreams)
+    except ValueError as exc:
+        raise StaggerEditAuthorityApprovalError(str(exc)) from exc
+    if not bindings:
+        return
+    refs_by_identity: dict[tuple[str, str], list[ArtifactRef]] = {}
+    for item in upstreams:
+        if not isinstance(item, dict):
+            raise StaggerEditAuthorityApprovalError(
+                "EditAuthorityRequest upstream entry is invalid."
+            )
+        ref = _artifact_ref(
+            feature_id=feature_id,
+            artifact_type=str(item.get("artifact_type", "")),
+            path=str(item.get("path", "")),
+            artifact_hash=str(item.get("artifact_hash", "")),
+        )
+        refs_by_identity.setdefault(
+            (ref.artifact_type, ref.artifact_hash),
+            [],
+        ).append(ref)
+    latest_by_type = {
+        ref.artifact_type: ref
+        for ref in store.list_feature_artifacts(feature_id)
+    }
+    input_facts: list[dict[str, Any]] = []
+    for requirement, _ in bindings:
+        key = (
+            str(requirement.get("artifact_type")),
+            str(requirement.get("artifact_hash")),
+        )
+        matches = refs_by_identity.get(key)
+        if not matches:
+            raise StaggerEditAuthorityApprovalError(
+                "EditAuthorityRequest exact input lineage is incomplete."
+            )
+        ref = matches.pop(0)
+        store.read(ref)
+        latest = latest_by_type.get(ref.artifact_type)
+        input_facts.append(
+            {
+                "role": requirement["role"],
+                "artifact_type": ref.artifact_type,
+                "artifact_hash": ref.artifact_hash,
+                "registered": True,
+                "latest_artifact_hash": (
+                    latest.artifact_hash if latest is not None else None
+                ),
+                "recursive_fresh": store.check_freshness(ref).is_fresh,
+                "exact_recursive_fresh": (
+                    store.check_exact_revision_freshness(ref).is_fresh
+                ),
+            }
+        )
+    try:
+        validate_edit_authority_exact_input_admission(request, input_facts)
+    except ValueError as exc:
+        raise StaggerEditAuthorityApprovalError(str(exc)) from exc
+
+
 def materialize_stagger_edit_authority_approval(
     *,
     artifact_store_root: str | Path,
@@ -2192,11 +2306,21 @@ def materialize_stagger_edit_authority_approval(
         )
     request_payload = request.get("request_payload")
     try:
-        capability = resolve_edit_authority_request_capability(
-            request_payload
+        capability, _, _ = validate_edit_authority_request_identity(
+            request,
+            allow_legacy=False,
         )
-    except UnsupportedEditAuthorityCapabilityError as exc:
+    except (
+        UnsupportedEditAuthorityCapabilityError,
+        ValueError,
+    ) as exc:
         raise StaggerEditAuthorityApprovalError(str(exc)) from exc
+    _validate_materializer_edit_authority_exact_inputs(
+        store=store,
+        feature_id=feature_id,
+        request=request,
+        request_envelope=request_envelope,
+    )
     request_freshness = store.check_freshness(request_ref)
     if not request_freshness.is_fresh:
         raise StaggerEditAuthorityApprovalError(
@@ -2318,6 +2442,7 @@ def materialize_stagger_edit_authority_approval(
     elif capability.materializer_kind == "generic":
         result = _apply_approved_stagger_edit_authority(
             **common_kwargs,
+            request_payload=request_payload,
             feature_spec_path=proposal["feature_spec_revision"]["path"],
             feature_spec_hash=proposal["feature_spec_revision"][
                 "artifact_hash"
@@ -2439,12 +2564,24 @@ def _apply_approved_existing_binding_reauthorization(
         )
     store = ArtifactStore(artifact_store_root)
     request = _artifact_data(store.read(request_ref))
+    try:
+        validate_edit_authority_request_identity(
+            request,
+            allow_legacy=False,
+        )
+    except ValueError as exc:
+        raise StaggerEditAuthorityApprovalError(str(exc)) from exc
     if (
-        request.get("request_hash") != approval_hash
-        or preflight["proposal"] != proposal
-        or "sha256:"
-        + hashlib.sha256(_canonical_json(request_payload)).hexdigest()
-        != approval_hash
+        not _request_matches_fresh_approval_identity(
+            request=request,
+            fresh_request_payload={
+                **copy.deepcopy(request_payload),
+                "proposal": copy.deepcopy(preflight["proposal"]),
+            },
+            feature_id=feature_id,
+            run_id=run_id,
+            approval_hash=approval_hash,
+        )
     ):
         raise StaggerEditAuthorityApprovalError(
             "The graph-approved Request does not match the fresh "
@@ -2519,6 +2656,7 @@ def _apply_approved_existing_binding_reauthorization(
         request_ref=request_ref,
         resume_report_ref=resume_report_ref,
         capability=capability,
+        request_payload=request_payload,
     )
     store.preflight_atomic_commit(
         feature_id=feature_id,
@@ -2730,12 +2868,24 @@ def _apply_approved_stagger_hud_parent_observation_authority(
         )
     store = ArtifactStore(artifact_store_root)
     request = _artifact_data(store.read(request_ref))
+    try:
+        validate_edit_authority_request_identity(
+            request,
+            allow_legacy=False,
+        )
+    except ValueError as exc:
+        raise StaggerEditAuthorityApprovalError(str(exc)) from exc
     if (
-        request.get("request_hash") != approval_hash
-        or preflight["proposal"] != proposal
-        or "sha256:"
-        + hashlib.sha256(_canonical_json(request_payload)).hexdigest()
-        != approval_hash
+        not _request_matches_fresh_approval_identity(
+            request=request,
+            fresh_request_payload={
+                **copy.deepcopy(request_payload),
+                "proposal": copy.deepcopy(preflight["proposal"]),
+            },
+            feature_id=feature_id,
+            run_id=run_id,
+            approval_hash=approval_hash,
+        )
     ):
         raise StaggerEditAuthorityApprovalError(
             "The graph-approved Request does not match the fresh "
@@ -2793,6 +2943,7 @@ def _apply_approved_stagger_hud_parent_observation_authority(
         request_ref=request_ref,
         resume_report_ref=resume_report_ref,
         capability=capability,
+        request_payload=request_payload,
     )
     store.preflight_atomic_commit(
         feature_id=feature_id,
@@ -4454,8 +4605,9 @@ def _build_approval_payload(
     request_ref: ArtifactRef,
     resume_report_ref: ArtifactRef,
     capability: EditAuthorityCapabilityDeclaration,
+    request_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "node_name": "approve_stagger_edit_authority",
         "stage": "edit_authority_approval",
         "message": (
@@ -4482,6 +4634,20 @@ def _build_approval_payload(
         "repair_planner_allowed": False,
         "source_patch_allowed": False,
     }
+    if isinstance(request_payload.get("approval_identity"), dict):
+        payload.update(
+            {
+                "approval_identity_mode": VERSIONED_APPROVAL_IDENTITY_MODE,
+                "approval_identity_schema_version": (
+                    APPROVAL_IDENTITY_SCHEMA_VERSION
+                ),
+                "capability_id": capability.capability_id,
+                "capability_contract_version": (
+                    capability.capability_contract_version
+                ),
+            }
+        )
+    return payload
 
 
 def _build_evidence_pack_revision(
@@ -5368,6 +5534,37 @@ def _approved_bound_diagnosis(
         approved_anchor["source_span"]
     )
     return bound
+
+
+def _request_matches_fresh_approval_identity(
+    *,
+    request: dict[str, Any],
+    fresh_request_payload: dict[str, Any],
+    feature_id: str,
+    run_id: str,
+    approval_hash: str,
+) -> bool:
+    """Compare a fresh preflight only through the canonical action identity."""
+
+    stored_payload = request.get("request_payload")
+    if not isinstance(stored_payload, dict):
+        return False
+    projected_payload = copy.deepcopy(fresh_request_payload)
+    projected_payload.pop("approval_identity", None)
+    try:
+        enriched, projected_hash = attach_edit_authority_approval_identity(
+            request_payload=projected_payload,
+            feature_id=feature_id,
+            run_id=run_id,
+        )
+    except ValueError:
+        return False
+    return (
+        request.get("request_hash") == approval_hash
+        and projected_hash == approval_hash
+        and stored_payload.get("approval_identity")
+        == enriched.get("approval_identity")
+    )
 
 
 def _artifact_ref(

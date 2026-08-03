@@ -2486,6 +2486,41 @@ def test_bounded_observation_preflight_is_exact_and_no_write(
     )
     assert _RoleAwareArtifactStore.writes == []
 
+    presentation_changed = copy.deepcopy(args)
+    presentation_changed["reviewed_projection_hash"] = (
+        "sha256:" + "f" * 64
+    )
+    changed_projection = preflight_stagger_bounded_observation_authority(
+        **presentation_changed
+    )
+    assert changed_projection["request_hash"] == first["request_hash"]
+    assert changed_projection["request_payload"]["approval_identity"] == (
+        first["request_payload"]["approval_identity"]
+    )
+
+    freshness_display_changed = copy.deepcopy(first["request_payload"])
+    freshness_display_changed.pop("approval_identity")
+    historical = freshness_display_changed["proposal"][
+        "historical_identifier_baseline"
+    ]
+    historical["implementation_plan_recursive_freshness"] = "fresh"
+    historical["implementation_plan_stale_reasons"] = ["display-only"]
+    _, freshness_display_hash = (
+        edit_authority_module.attach_edit_authority_approval_identity(
+            request_payload=freshness_display_changed,
+            feature_id=FEATURE_ID,
+            run_id=RUN_ID,
+        )
+    )
+    assert freshness_display_hash == first["request_hash"]
+
+    diff_changed = copy.deepcopy(args)
+    diff_changed["standard_diff_hash"] = "sha256:" + "e" * 64
+    diff_projection = preflight_stagger_bounded_observation_authority(
+        **diff_changed
+    )
+    assert diff_projection["request_hash"] != first["request_hash"]
+
     changed = copy.deepcopy(args)
     changed_item = copy.deepcopy(args["target_source_evidence_item"])
     changed_item["source_hash"] = "0" * 64
@@ -2709,7 +2744,7 @@ def test_bounded_observation_graph_materialization_writes_only_plan_inputs(
     writes_before_replay = len(_RoleAwareArtifactStore.writes)
     with pytest.raises(
         StaggerEditAuthorityPreflightError,
-        match="evidence_pack is no longer the current revision",
+        match="latest exact input is stale for role evidence_pack",
     ):
         materialize_stagger_edit_authority_approval(
             artifact_store_root=args["artifact_store_root"],
@@ -2904,6 +2939,27 @@ def test_bounded_observation_public_entry_uses_real_store_graph_and_materializer
         for artifact_type, count in before_counts.items()
         if artifact_type != "binding_resolution"
     }
+
+    original_bounded_preflight = (
+        edit_authority_module.preflight_stagger_bounded_observation_authority
+    )
+
+    def audit_snapshot_changed_preflight(**kwargs: object) -> dict[str, object]:
+        refreshed = original_bounded_preflight(**kwargs)
+        historical = refreshed["request_payload"]["proposal"][
+            "historical_identifier_baseline"
+        ]
+        historical["implementation_plan_recursive_freshness"] = "fresh"
+        historical["implementation_plan_stale_reasons"] = [
+            "audit snapshot changed after approval"
+        ]
+        return refreshed
+
+    monkeypatch.setattr(
+        edit_authority_module,
+        "preflight_stagger_bounded_observation_authority",
+        audit_snapshot_changed_preflight,
+    )
 
     result = resume_stagger_edit_authority_review(
         artifact_store_root=store_root,
