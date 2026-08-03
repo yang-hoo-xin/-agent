@@ -27,6 +27,9 @@ from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.domain import DomainAdapterRegistry, build_gtfo_profile
 from src.mod_agent.evidence import EvidencePack, FakeDenseRetrievalProvider
 from src.mod_agent.execution import ExactDiffApprovalRejectedError
+from src.mod_agent.edit_authority_capabilities import (
+    resolve_edit_authority_capability,
+)
 from src.mod_agent.knowledge import (
     IDENTITY_FIELD_MAPPING,
     IDENTITY_SCHEMA_VERSION,
@@ -59,6 +62,10 @@ from src.mod_agent.runtime import (
     build_screenshot_metadata,
     make_gtfo_runtime_evidence_factory_from_settings,
     make_runtime_probe_evidence_factory,
+)
+from src.mod_agent.runtime.stagger_edit_authority import (
+    StaggerEditAuthorityApprovalError,
+    materialize_stagger_edit_authority_approval,
 )
 from src.mod_agent.workflow import (
     ResumePayload,
@@ -149,23 +156,26 @@ def test_stagger_edit_authority_approval_runs_only_through_graph_interrupt(
         if materialization_fails:
             raise RuntimeError("projection stopped after approval")
         return {
-            field_name: {
-                "feature_id": "feature_edit_authority",
-                "path": str(tmp_path / f"{artifact_type}.json"),
-                "artifact_hash": artifact_type.ljust(64, "0")[:64],
-            }
-            for artifact_type, field_name in (
-                (
-                    "edit_authority_approval",
-                    "edit_authority_approval_revision",
-                ),
-                ("evidence_pack", "evidence_pack_revision"),
-                (
-                    "implementation_plan",
-                    "implementation_plan_revision",
-                ),
-                ("binding_resolution", "binding_resolution_revision"),
-            )
+            "status": "EXACT_EDIT_AUTHORITY_RESOLVED",
+            **{
+                field_name: {
+                    "feature_id": "feature_edit_authority",
+                    "path": str(tmp_path / f"{artifact_type}.json"),
+                    "artifact_hash": artifact_type.ljust(64, "0")[:64],
+                }
+                for artifact_type, field_name in (
+                    (
+                        "edit_authority_approval",
+                        "edit_authority_approval_revision",
+                    ),
+                    ("evidence_pack", "evidence_pack_revision"),
+                    (
+                        "implementation_plan",
+                        "implementation_plan_revision",
+                    ),
+                    ("binding_resolution", "binding_resolution_revision"),
+                )
+            },
         }
 
     monkeypatch.setattr(
@@ -381,7 +391,16 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
     )
     request_payload = {
         "schema_version": request_schema,
-        "proposal": {},
+        "proposal": (
+            {
+                "schema_version": (
+                    "stagger_hud_parent_diagnostic_execution_authority_v2"
+                )
+            }
+            if request_schema
+            == "stagger_hud_parent_diagnostic_execution_authority_request_v2"
+            else {}
+        ),
         "source_root": str(tmp_path),
     }
     if projection_kind is not None:
@@ -457,22 +476,30 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
             ]
         )
         return {
-            field_name: {
-                "feature_id": "feature_observation_authority",
-                "path": str(tmp_path / f"{artifact_type}.json"),
-                "artifact_hash": artifact_type.ljust(64, "0")[:64],
-            }
-            for artifact_type, field_name in (
-                (
-                    "edit_authority_approval",
-                    "edit_authority_approval_revision",
-                ),
-                ("evidence_pack", "evidence_pack_revision"),
-                (
-                    "implementation_plan",
-                    "implementation_plan_revision",
-                ),
-            )
+            "status": (
+                "BOUNDED_OBSERVATION_PLAN_AUTHORIZED"
+                if projection_kind
+                == "bounded_observation_only_plan_materialization"
+                else "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED"
+            ),
+            **{
+                field_name: {
+                    "feature_id": "feature_observation_authority",
+                    "path": str(tmp_path / f"{artifact_type}.json"),
+                    "artifact_hash": artifact_type.ljust(64, "0")[:64],
+                }
+                for artifact_type, field_name in (
+                    (
+                        "edit_authority_approval",
+                        "edit_authority_approval_revision",
+                    ),
+                    ("evidence_pack", "evidence_pack_revision"),
+                    (
+                        "implementation_plan",
+                        "implementation_plan_revision",
+                    ),
+                )
+            },
         }
 
     monkeypatch.setattr(
@@ -570,8 +597,32 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
     }
 
 
-def test_bounded_observation_projection_kind_requires_exact_request_schema(
+@pytest.mark.parametrize(
+    ("case_id", "schema_version", "projection_kind"),
+    (
+        (
+            "wrong_schema_known_projection",
+            "wrong_edit_authority_request_schema",
+            "bounded_observation_only_plan_materialization",
+        ),
+        (
+            "known_schema_unknown_projection",
+            "stagger_edit_authority_request_v1",
+            "unknown_projection_kind",
+        ),
+        (
+            "known_schema_wrong_known_projection",
+            "stagger_hud_parent_observation_authority_request_v1",
+            "bounded_observation_only_plan_materialization",
+        ),
+    ),
+)
+def test_unsupported_discriminators_fail_at_all_three_layers_without_writes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case_id: str,
+    schema_version: str,
+    projection_kind: str,
 ) -> None:
     default_registry = ArtifactTypeRegistry()
     request_contract = replace(
@@ -588,11 +639,14 @@ def test_bounded_observation_projection_kind_requires_exact_request_schema(
         ]
     )
     store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    monkeypatch.setattr(
+        store,
+        "_validate_upstream_refs",
+        lambda **_kwargs: None,
+    )
     request_payload = {
-        "schema_version": "wrong_edit_authority_request_schema",
-        "projection_kind": (
-            "bounded_observation_only_plan_materialization"
-        ),
+        "schema_version": schema_version,
+        "projection_kind": projection_kind,
         "proposal": {},
         "source_root": str(tmp_path),
     }
@@ -605,15 +659,15 @@ def test_bounded_observation_projection_kind_requires_exact_request_schema(
         ).encode("utf-8")
     ).hexdigest()
     request_ref = store.write(
-        feature_id="feature_wrong_bounded_schema",
+        feature_id=f"feature_{case_id}",
         artifact_type="edit_authority_request",
         payload={
             "node_name": "request_stagger_edit_authority",
             "stage": "edit_authority_request",
             "message": "Wrong schema must not gain bounded actions.",
             "status": "pending_human_approval",
-            "feature_id": "feature_wrong_bounded_schema",
-            "run_id": "run_wrong_bounded_schema",
+            "feature_id": f"feature_{case_id}",
+            "run_id": f"run_{case_id}",
             "request_hash": request_hash,
             "request_payload": request_payload,
             "authority_granted": False,
@@ -628,26 +682,357 @@ def test_bounded_observation_projection_kind_requires_exact_request_schema(
         checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
     )
     state = create_initial_state(
-        run_id="run_wrong_bounded_schema",
-        request_id="feature_wrong_bounded_schema",
-        user_request="Wrong schema must fail closed.",
+        run_id=f"run_{case_id}",
+        request_id=f"feature_{case_id}",
+        user_request="Unsupported discriminator must fail closed.",
     )
-    state["feature_id"] = "feature_wrong_bounded_schema"
+    state["feature_id"] = f"feature_{case_id}"
 
-    interrupted = graph.invoke(
-        state,
-        {"configurable": {"thread_id": "wrong_bounded_schema"}},
+    guarded_types = (
+        "workflow_checkpoint",
+        "resume_report",
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+        "binding_resolution",
+    )
+    before_counts = {
+        artifact_type: len(
+            store.list_feature_artifact_revisions(
+                f"feature_{case_id}",
+                artifact_type,
+            )
+        )
+        for artifact_type in guarded_types
+    }
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.ArtifactStore",
+        lambda _root: store,
+    )
+    with pytest.raises(
+        LocalEntryError,
+        match="schema_version/projection_kind is not supported",
+    ):
+        preflight_stagger_edit_authority_review(
+            artifact_store_root=tmp_path / "artifacts",
+            feature_id=f"feature_{case_id}",
+            edit_authority_request_path=request_ref.path,
+            edit_authority_request_hash=request_ref.artifact_hash,
+            authority_request_hash=request_hash,
+        )
+    with pytest.raises(
+        ValueError,
+        match="schema_version/projection_kind is not supported",
+    ):
+        graph.invoke(
+            state,
+            {"configurable": {"thread_id": case_id}},
+        )
+    with pytest.raises(
+        StaggerEditAuthorityApprovalError,
+        match="schema_version/projection_kind is not supported",
+    ):
+        materialize_stagger_edit_authority_approval(
+            artifact_store_root=tmp_path / "artifacts",
+            feature_id=f"feature_{case_id}",
+            edit_authority_request_path=request_ref.path,
+            edit_authority_request_hash=request_ref.artifact_hash,
+            resume_report_path=str(tmp_path / "missing-resume-report.json"),
+            resume_report_hash="0" * 64,
+        )
+    assert {
+        artifact_type: len(
+            store.list_feature_artifact_revisions(
+                f"feature_{case_id}",
+                artifact_type,
+            )
+        )
+        for artifact_type in guarded_types
+    } == before_counts
+
+
+@pytest.mark.parametrize("operation", ("preflight", "resume"))
+def test_public_entry_cannot_bypass_declared_operation_applicability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    default_registry = ArtifactTypeRegistry()
+    request_contract = replace(
+        default_registry.get("edit_authority_request"),
+        required_upstream_artifacts=frozenset(),
+        required_exact_revision_upstream_artifacts=frozenset(),
+    )
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            request_contract,
+            default_registry.get("workflow_checkpoint"),
+            default_registry.get("resume_report"),
+            default_registry.get("workflow_trace"),
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    feature_id = f"feature_public_operation_{operation}"
+    request_payload = {
+        "schema_version": "stagger_edit_authority_request_v1",
+        "proposal": {},
+        "source_root": str(tmp_path),
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": "request_stagger_edit_authority",
+            "stage": "edit_authority_request",
+            "message": "Public operation applicability test.",
+            "status": "pending_human_approval",
+            "feature_id": feature_id,
+            "run_id": f"run_public_operation_{operation}",
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+    )
+    declaration = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    retained_operation = "resume" if operation == "preflight" else "preflight"
+    restricted = replace(
+        declaration,
+        public_operations=frozenset({retained_operation}),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.ArtifactStore",
+        lambda _root: store,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.resolve_edit_authority_request_capability",
+        lambda _payload: restricted,
+    )
+    interrupt_called = False
+
+    def reject_interrupt(**_kwargs):
+        nonlocal interrupt_called
+        interrupt_called = True
+        raise AssertionError("Graph interrupt must not run.")
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._invoke_stagger_edit_authority_interrupt",
+        reject_interrupt,
+    )
+    guarded_types = (
+        "workflow_checkpoint",
+        "resume_report",
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+        "binding_resolution",
+    )
+    before_counts = {
+        artifact_type: len(
+            store.list_feature_artifact_revisions(
+                feature_id,
+                artifact_type,
+            )
+        )
+        for artifact_type in guarded_types
+    }
+
+    with pytest.raises(
+        LocalEntryError,
+        match="does not support the requested public operation",
+    ):
+        if operation == "preflight":
+            preflight_stagger_edit_authority_review(
+                artifact_store_root=tmp_path / "artifacts",
+                feature_id=feature_id,
+                edit_authority_request_path=request_ref.path,
+                edit_authority_request_hash=request_ref.artifact_hash,
+                authority_request_hash=request_hash,
+            )
+        else:
+            resume_stagger_edit_authority_review(
+                artifact_store_root=tmp_path / "artifacts",
+                feature_id=feature_id,
+                edit_authority_request_path=request_ref.path,
+                edit_authority_request_hash=request_ref.artifact_hash,
+                authority_request_hash=request_hash,
+                resume_id=f"resume_public_operation_{operation}",
+                decision="approve",
+                approved_by="user",
+                approved_at="2026-08-03T12:00:00+08:00",
+            )
+    assert interrupt_called is False
+    assert {
+        artifact_type: len(
+            store.list_feature_artifact_revisions(
+                feature_id,
+                artifact_type,
+            )
+        )
+        for artifact_type in guarded_types
+    } == before_counts
+
+
+@pytest.mark.parametrize(
+    ("case_id", "request_schema", "proposal_schema"),
+    (
+        (
+            "hud_v1_request_with_v2_proposal",
+            "stagger_hud_parent_observation_authority_request_v1",
+            "stagger_hud_parent_diagnostic_execution_authority_v2",
+        ),
+        (
+            "hud_v2_request_with_v1_proposal",
+            "stagger_hud_parent_diagnostic_execution_authority_request_v2",
+            "stagger_hud_parent_observation_authority_v1",
+        ),
+    ),
+)
+def test_hud_request_proposal_schema_mismatch_fails_at_all_layers_before_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case_id: str,
+    request_schema: str,
+    proposal_schema: str,
+) -> None:
+    default_registry = ArtifactTypeRegistry()
+    request_contract = replace(
+        default_registry.get("edit_authority_request"),
+        required_upstream_artifacts=frozenset(),
+        required_exact_revision_upstream_artifacts=frozenset(),
+    )
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            request_contract,
+            default_registry.get("workflow_checkpoint"),
+            default_registry.get("resume_report"),
+            default_registry.get("workflow_trace"),
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    monkeypatch.setattr(
+        store,
+        "_validate_upstream_refs",
+        lambda **_kwargs: None,
+    )
+    feature_id = f"feature_{case_id}"
+    request_payload = {
+        "schema_version": request_schema,
+        "proposal": {"schema_version": proposal_schema},
+        "source_root": str(tmp_path),
+    }
+    request_hash = "sha256:" + hashlib.sha256(
+        json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    request_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": "request_stagger_hud_authority",
+            "stage": "edit_authority_request",
+            "message": "HUD Request and proposal schemas must match.",
+            "status": "pending_human_approval",
+            "feature_id": feature_id,
+            "run_id": f"run_{case_id}",
+            "request_hash": request_hash,
+            "request_payload": request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+    )
+    graph = build_graph(
+        store,
+        edit_authority_request_ref=request_ref,
+        checkpointer=WorkflowCheckpointStore.langgraph_memory_checkpointer(),
+    )
+    state = create_initial_state(
+        run_id=f"run_{case_id}",
+        request_id=feature_id,
+        user_request="HUD Request/Proposal mismatch must fail closed.",
+    )
+    state["feature_id"] = feature_id
+    guarded_types = (
+        "workflow_checkpoint",
+        "resume_report",
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+        "binding_resolution",
+    )
+    before_counts = {
+        artifact_type: len(
+            store.list_feature_artifact_revisions(
+                feature_id,
+                artifact_type,
+            )
+        )
+        for artifact_type in guarded_types
+    }
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.ArtifactStore",
+        lambda _root: store,
     )
 
-    interrupt_value = interrupted["__interrupt__"][0].value
-    assert interrupt_value["payload"]["allowed_actions"] == [
-        "create_evidence_pack_revision",
-        "create_implementation_plan_revision",
-        "resolve_exact_edit_binding",
-    ]
-    assert "create_exact_bounded_observation_bindings" not in (
-        interrupt_value["payload"]["allowed_actions"]
-    )
+    with pytest.raises(
+        LocalEntryError,
+        match="does not match its technical proposal schema",
+    ):
+        preflight_stagger_edit_authority_review(
+            artifact_store_root=tmp_path / "artifacts",
+            feature_id=feature_id,
+            edit_authority_request_path=request_ref.path,
+            edit_authority_request_hash=request_ref.artifact_hash,
+            authority_request_hash=request_hash,
+        )
+    with pytest.raises(
+        ValueError,
+        match="does not match its technical proposal schema",
+    ):
+        graph.invoke(
+            state,
+            {"configurable": {"thread_id": case_id}},
+        )
+    with pytest.raises(
+        StaggerEditAuthorityApprovalError,
+        match="does not match its technical proposal schema",
+    ):
+        materialize_stagger_edit_authority_approval(
+            artifact_store_root=tmp_path / "artifacts",
+            feature_id=feature_id,
+            edit_authority_request_path=request_ref.path,
+            edit_authority_request_hash=request_ref.artifact_hash,
+            resume_report_path=str(tmp_path / "missing-resume-report.json"),
+            resume_report_hash="0" * 64,
+        )
+    assert {
+        artifact_type: len(
+            store.list_feature_artifact_revisions(
+                feature_id,
+                artifact_type,
+            )
+        )
+        for artifact_type in guarded_types
+    } == before_counts
 
 
 def test_existing_binding_review_preserves_exact_request_subgraph(
@@ -817,7 +1202,7 @@ def test_existing_binding_review_preserves_exact_request_subgraph(
     assert preflight["writes_performed"] is False
 
     def materialize(**_kwargs):
-        return {
+        revisions = {
             field_name: {
                 "feature_id": feature_id,
                 "path": str(tmp_path / f"{artifact_type}.json"),
@@ -838,6 +1223,10 @@ def test_existing_binding_review_preserves_exact_request_subgraph(
                     "binding_resolution_revision",
                 ),
             )
+        }
+        return {
+            "status": "EXISTING_EDIT_AUTHORITY_REAUTHORIZED",
+            **revisions,
         }
 
     monkeypatch.setattr(
@@ -874,6 +1263,7 @@ def test_existing_binding_review_preserves_exact_request_subgraph(
 
 def test_original_edit_authority_request_keeps_upstream_projection(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     default_registry = ArtifactTypeRegistry()
     request_contract = replace(
@@ -945,6 +1335,29 @@ def test_original_edit_authority_request_keeps_upstream_projection(
         },
         upstream_refs=[feature_ref],
     )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.ArtifactStore",
+        lambda _root: store,
+    )
+    preflight = preflight_stagger_edit_authority_review(
+        artifact_store_root=tmp_path / "artifacts",
+        feature_id="feature_original_request",
+        edit_authority_request_path=request_ref.path,
+        edit_authority_request_hash=request_ref.artifact_hash,
+        authority_request_hash=request_hash,
+    )
+    assert preflight["checkpoint_artifact_refs"] == [
+        request_ref.path,
+        feature_ref.path,
+    ]
+    assert preflight["artifact_revision_counts"] == {
+        "workflow_checkpoint": 0,
+        "resume_report": 0,
+        "edit_authority_approval": 0,
+        "evidence_pack": 0,
+        "implementation_plan": 0,
+        "binding_resolution": 0,
+    }
     graph = build_graph(
         store,
         edit_authority_request_ref=request_ref,
@@ -1060,7 +1473,7 @@ def test_stagger_edit_authority_local_entry_carries_decision_through_graph(
     )
 
     def materialize(**_kwargs):
-        return {
+        revisions = {
             field_name: {
                 "feature_id": "feature_edit_authority_entry",
                 "path": str(tmp_path / f"{artifact_type}.json"),
@@ -1078,6 +1491,10 @@ def test_stagger_edit_authority_local_entry_carries_decision_through_graph(
                 ),
                 ("binding_resolution", "binding_resolution_revision"),
             )
+        }
+        return {
+            "status": "EXACT_EDIT_AUTHORITY_RESOLVED",
+            **revisions,
         }
 
     monkeypatch.setattr(

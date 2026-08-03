@@ -23,6 +23,10 @@ from src.mod_agent.domain import (
     UnsupportedDomainAdapter,
 )
 from src.mod_agent.evaluation import build_transition_eval_gate_report
+from src.mod_agent.edit_authority_capabilities import (
+    UnsupportedEditAuthorityCapabilityError,
+    resolve_edit_authority_request_capability,
+)
 from src.mod_agent.evidence import (
     DenseRetrievalProvider,
     DeterministicEvidenceRetriever,
@@ -163,20 +167,6 @@ _DEFERRED_CORRELATION_HYPOTHESIS_IDS = frozenset(
     }
 )
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA = (
-    "stagger_existing_binding_reauthorization_request_v1"
-)
-_STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA = (
-    "stagger_hud_parent_observation_authority_request_v1"
-)
-_STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA = (
-    "stagger_hud_parent_diagnostic_execution_authority_request_v2"
-)
-_STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND = (
-    "bounded_observation_only_plan_materialization"
-)
-
-
 def build_graph(
     artifact_store: ArtifactStore,
     *,
@@ -1293,26 +1283,16 @@ def _run_stagger_edit_authority_gate(
     gate_state["current_stage"] = "edit_authority_approval"
     _record_artifact(gate_state, "edit_authority_request", request_ref)
     request_payload = request.get("request_payload")
-    request_schema = (
-        request_payload.get("schema_version")
-        if isinstance(request_payload, dict)
-        else None
-    )
-    projection_kind = (
-        request_payload.get("projection_kind")
-        if isinstance(request_payload, dict)
-        else None
-    )
-    is_bounded_observation_request = (
-        request_schema == "stagger_edit_authority_request_v1"
-        and projection_kind
-        == _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND
-    )
-    if request_schema not in {
-        _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA,
-        _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
-        _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
-    } and not is_bounded_observation_request:
+    try:
+        capability = resolve_edit_authority_request_capability(
+            request_payload
+        )
+    except UnsupportedEditAuthorityCapabilityError as exc:
+        raise ValueError(str(exc)) from exc
+    if (
+        capability.checkpoint_input_mode
+        == "request_and_registered_upstreams"
+    ):
         for upstream in request_envelope.get("inputs", {}).get(
             "upstream_artifacts",
             (),
@@ -1340,64 +1320,8 @@ def _run_stagger_edit_authority_gate(
                         ),
                     ),
                 )
-    if (
-        request_schema
-        == _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA
-    ):
-        allowed_actions = [
-            "reauthorize_existing_edit_binding",
-            "create_binding_resolution_revision",
-        ]
-        forbidden_actions = [
-            "create_evidence_pack_revision",
-            "create_implementation_plan_revision",
-            "create_edit_binding",
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ]
-    elif request_schema in {
-        _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
-        _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
-    } or is_bounded_observation_request:
-        allowed_actions = (
-            [
-                "create_observation_evidence_pack_revision",
-                "create_diagnostic_only_implementation_plan_revision",
-                "create_exact_bounded_observation_bindings",
-            ]
-            if request_schema
-            == _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA
-            or is_bounded_observation_request
-            else [
-                "create_observation_evidence_pack_revision",
-                "create_diagnostic_implementation_plan_revision",
-                "create_observation_only_edit_bindings",
-            ]
-        )
-        forbidden_actions = [
-            "create_binding_resolution_revision",
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ]
-    else:
-        allowed_actions = [
-            "create_evidence_pack_revision",
-            "create_implementation_plan_revision",
-            "resolve_exact_edit_binding",
-        ]
-        forbidden_actions = [
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ]
+    allowed_actions = list(capability.allowed_actions)
+    forbidden_actions = list(capability.forbidden_actions)
     interrupt_request = InterruptRequest(
         interrupt_id=f"interrupt_{uuid4().hex}",
         run_id=state["run_id"],
@@ -1470,6 +1394,14 @@ def _run_stagger_edit_authority_gate(
             resume_report_path=report_ref.path,
             resume_report_hash=report_ref.artifact_hash,
         )
+        if (
+            materialized.get("status")
+            != capability.materializer_success_status
+        ):
+            raise ValueError(
+                "Edit Authority materializer result does not match the "
+                "capability declaration."
+            )
     except (OSError, RuntimeError, ValueError) as exc:
         next_state["current_stage"] = "blocked"
         next_state["blockers"].append(
@@ -1481,19 +1413,9 @@ def _run_stagger_edit_authority_gate(
         )
         return next_state
 
-    materialized_fields = [
-        ("edit_authority_approval", "edit_authority_approval_revision"),
-        ("evidence_pack", "evidence_pack_revision"),
-        ("implementation_plan", "implementation_plan_revision"),
-    ]
-    if request_schema not in {
-        _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
-        _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
-    } and not is_bounded_observation_request:
-        materialized_fields.append(
-            ("binding_resolution", "binding_resolution_revision")
-        )
-    for artifact_type, field_name in materialized_fields:
+    for artifact_type, field_name in (
+        capability.materialized_artifact_fields
+    ):
         revision = materialized[field_name]
         _record_artifact(
             next_state,
@@ -1505,16 +1427,7 @@ def _run_stagger_edit_authority_gate(
                 artifact_hash=str(revision["artifact_hash"]),
             ),
         )
-    next_state["current_stage"] = (
-        "implementation_plan"
-        if request_schema
-        in {
-            _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
-            _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
-        }
-        or is_bounded_observation_request
-        else "binding_resolution"
-    )
+    next_state["current_stage"] = capability.terminal_stage
     next_state["approvals"] = {
         **dict(next_state["approvals"]),
         "edit_authority": True,

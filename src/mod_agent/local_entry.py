@@ -25,6 +25,12 @@ from src.libs.llm import LLMFactory, OllamaLLM, validate_loopback_http_base_url
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import RgLiveEvidenceProvider
+from src.mod_agent.edit_authority_capabilities import (
+    EditAuthorityCapabilityDeclaration,
+    UnsupportedEditAuthorityCapabilityError,
+    require_edit_authority_public_operation,
+    resolve_edit_authority_request_capability,
+)
 from src.mod_agent.evidence.dotnet_metadata import (
     DotNetMetadataEnrichmentError,
     RunLocalMemberAccessResolver,
@@ -76,30 +82,6 @@ LOCAL_DIAGNOSTIC_CONTENT_FILENAME = "patch_generation_failure_message_content.tx
 EXACT_DIFF_REJECTION_TOKEN = "REJECTED_BY_USER"
 OllamaModelIdentityReader = Callable[[str, str], dict[str, Any]]
 OllamaServerVersionReader = Callable[[str], str]
-_EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA = (
-    "stagger_existing_binding_reauthorization_request_v1"
-)
-_STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA = (
-    "stagger_hud_parent_observation_authority_request_v1"
-)
-_STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA = (
-    "stagger_hud_parent_diagnostic_execution_authority_request_v2"
-)
-_EDIT_AUTHORITY_REVIEW_WRITE_TYPES = (
-    "workflow_checkpoint",
-    "resume_report",
-    "edit_authority_approval",
-    "binding_resolution",
-)
-_STAGGER_OBSERVATION_REVIEW_WRITE_TYPES = (
-    "workflow_checkpoint",
-    "resume_report",
-    "edit_authority_approval",
-    "evidence_pack",
-    "implementation_plan",
-)
-
-
 @dataclass(frozen=True)
 class _EditAuthorityReviewAdmission:
     store: ArtifactStore
@@ -107,6 +89,7 @@ class _EditAuthorityReviewAdmission:
     request: dict[str, Any]
     request_envelope: dict[str, Any]
     run_id: str
+    capability: EditAuthorityCapabilityDeclaration
 
 
 def _admit_stagger_edit_authority_review(
@@ -176,13 +159,43 @@ def _admit_stagger_edit_authority_review(
         raise LocalEntryError(
             "Edit Authority Request run_id is missing."
         )
+    try:
+        capability = resolve_edit_authority_request_capability(
+            request.get("request_payload")
+        )
+    except UnsupportedEditAuthorityCapabilityError as exc:
+        raise LocalEntryError(str(exc)) from exc
     return _EditAuthorityReviewAdmission(
         store=store,
         request_ref=request_ref,
         request=request,
         request_envelope=request_envelope,
         run_id=run_id,
+        capability=capability,
     )
+
+
+def _expected_edit_authority_checkpoint_refs(
+    admission: _EditAuthorityReviewAdmission,
+) -> list[str]:
+    if admission.capability.checkpoint_input_mode == "request_only":
+        return [admission.request_ref.path]
+    upstreams = admission.request_envelope.get("inputs", {}).get(
+        "upstream_artifacts",
+        (),
+    )
+    artifact_paths: dict[str, str] = {}
+    for upstream in upstreams:
+        if (
+            isinstance(upstream, dict)
+            and isinstance(upstream.get("artifact_type"), str)
+            and isinstance(upstream.get("path"), str)
+            and isinstance(upstream.get("artifact_hash"), str)
+        ):
+            artifact_paths[str(upstream["artifact_type"])] = str(
+                upstream["path"]
+            )
+    return [admission.request_ref.path, *artifact_paths.values()]
 
 
 def _invoke_stagger_edit_authority_interrupt(
@@ -269,30 +282,14 @@ def preflight_stagger_edit_authority_review(
         edit_authority_request_hash=edit_authority_request_hash,
         authority_request_hash=authority_request_hash,
     )
-    request_payload = admission.request.get("request_payload")
-    request_schema = (
-        request_payload.get("schema_version")
-        if isinstance(request_payload, dict)
-        else None
-    )
-    if request_schema not in {
-        _EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA,
-        _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
-        _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
-    }:
-        raise LocalEntryError(
-            "This no-write review preflight requires a supported exact "
-            "Stagger EditAuthorityRequest schema."
+    try:
+        require_edit_authority_public_operation(
+            admission.capability,
+            "preflight",
         )
-    write_types = (
-        _STAGGER_OBSERVATION_REVIEW_WRITE_TYPES
-        if request_schema
-        in {
-            _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
-            _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
-        }
-        else _EDIT_AUTHORITY_REVIEW_WRITE_TYPES
-    )
+    except UnsupportedEditAuthorityCapabilityError as exc:
+        raise LocalEntryError(str(exc)) from exc
+    write_types = admission.capability.review_write_artifact_types
     before_counts = {
         artifact_type: len(
             admission.store.list_feature_artifact_revisions(
@@ -310,10 +307,11 @@ def preflight_stagger_edit_authority_review(
             thread_id=f"preflight_edit_authority_{uuid4().hex}",
         )
     )
-    if artifact_refs != [admission.request_ref.path]:
+    expected_refs = _expected_edit_authority_checkpoint_refs(admission)
+    if artifact_refs != expected_refs:
         raise LocalEntryError(
-            "Stagger authority review checkpoint projection must contain "
-            "only the exact EditAuthorityRequest."
+            "Stagger authority review checkpoint projection does not "
+            "match the capability declaration."
         )
     after_counts = {
         artifact_type: len(
@@ -329,7 +327,7 @@ def preflight_stagger_edit_authority_review(
             "Edit Authority review preflight changed Artifact revisions."
         )
     return {
-        "status": "READY_FOR_EDIT_AUTHORITY_REVIEW_EXECUTION",
+        "status": admission.capability.preflight_success_status,
         "command": "preflight-stagger-edit-authority-review",
         "feature_id": feature_id,
         "run_id": admission.run_id,
@@ -380,6 +378,13 @@ def resume_stagger_edit_authority_review(
         edit_authority_request_hash=edit_authority_request_hash,
         authority_request_hash=authority_request_hash,
     )
+    try:
+        require_edit_authority_public_operation(
+            admission.capability,
+            "resume",
+        )
+    except UnsupportedEditAuthorityCapabilityError as exc:
+        raise LocalEntryError(str(exc)) from exc
     graph, artifact_refs, config, _ = (
         _invoke_stagger_edit_authority_interrupt(
             admission=admission,
@@ -415,41 +420,24 @@ def resume_stagger_edit_authority_review(
             "Edit Authority graph exceeded its stop-before-RepairPlanner "
             "boundary."
         )
-    resolved = (
-        result.get("current_stage") == "binding_resolution"
-        and "binding_resolution" in artifact_types
-    )
-    request_payload = admission.request.get("request_payload")
-    request_schema = (
-        request_payload.get("schema_version")
-        if isinstance(request_payload, dict)
-        else None
-    )
-    observation_plan_authorized = (
-        request_schema
-        in {
-            _STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA,
-            _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA,
-        }
-        and result.get("current_stage") == "implementation_plan"
-        and {
-            "edit_authority_approval",
-            "evidence_pack",
-            "implementation_plan",
-        }.issubset(artifact_types)
-        and "binding_resolution" not in artifact_types
+    expected_artifact_types = {
+        artifact_type
+        for artifact_type, _ in (
+            admission.capability.materialized_artifact_fields
+        )
+    }
+    capability_succeeded = (
+        result.get("current_stage") == admission.capability.terminal_stage
+        and expected_artifact_types.issubset(artifact_types)
+        and (
+            "binding_resolution" in expected_artifact_types
+            or "binding_resolution" not in artifact_types
+        )
     )
     return {
         "status": (
-            (
-                "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED"
-                if request_schema
-                == _STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA
-                else "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED"
-            )
-            if observation_plan_authorized
-            else "EXACT_EDIT_AUTHORITY_RESOLVED"
-            if resolved
+            admission.capability.public_success_status
+            if capability_succeeded
             else "BLOCKED"
         ),
         "command": "resume-stagger-edit-authority-review",

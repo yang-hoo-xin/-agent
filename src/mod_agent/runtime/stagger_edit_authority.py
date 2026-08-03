@@ -11,6 +11,21 @@ from typing import Any
 
 from ..artifacts import ArtifactRef, ArtifactStore
 from ..bindings.runtime_resolution import resolve_runtime_diagnosis_binding
+from ..edit_authority_capabilities import (
+    EXISTING_BINDING_AUTHORITY_CONTRACT as _EXISTING_BINDING_AUTHORITY_CONTRACT,
+    EXISTING_BINDING_REAUTHORIZATION_REQUEST_SCHEMA as _EXISTING_BINDING_REQUEST_SCHEMA,
+    STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND as _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND,
+    STAGGER_EDIT_AUTHORITY_REQUEST_SCHEMA as _STAGGER_EDIT_AUTHORITY_REQUEST_SCHEMA,
+    STAGGER_HUD_PARENT_DIAGNOSTIC_REQUEST_SCHEMA as _STAGGER_OBSERVATION_REQUEST_SCHEMA_V2,
+    STAGGER_HUD_PARENT_DIAGNOSTIC_PROPOSAL_SCHEMA as _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2,
+    STAGGER_HUD_PARENT_OBSERVATION_REQUEST_SCHEMA as _STAGGER_OBSERVATION_REQUEST_SCHEMA_V1,
+    STAGGER_HUD_PARENT_OBSERVATION_PROPOSAL_SCHEMA as _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V1,
+    STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1 as _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1,
+    STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2 as _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2,
+    EditAuthorityCapabilityDeclaration,
+    UnsupportedEditAuthorityCapabilityError,
+    resolve_edit_authority_request_capability,
+)
 from .evidence import build_runtime_failure_ownership
 from .stagger_diagnosis import (
     build_stagger_runtime_failure_diagnosis,
@@ -39,33 +54,6 @@ _DEPENDENCY_BLOCK_TOKENS = (
 _EXISTING_STAGGER_REPAIR_BINDING_ID = "edit_binding_004"
 _EXISTING_BINDING_REAUTHORIZATION_SCHEMA = (
     "stagger_existing_binding_reauthorization_v1"
-)
-_EXISTING_BINDING_REQUEST_SCHEMA = (
-    "stagger_existing_binding_reauthorization_request_v1"
-)
-_EXISTING_BINDING_AUTHORITY_CONTRACT = (
-    "edit_authority_existing_binding_reauthorization_v1"
-)
-_STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V1 = (
-    "stagger_hud_parent_observation_authority_v1"
-)
-_STAGGER_OBSERVATION_REQUEST_SCHEMA_V1 = (
-    "stagger_hud_parent_observation_authority_request_v1"
-)
-_STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1 = (
-    "edit_authority_stagger_hud_parent_observation_plan_v1"
-)
-_STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2 = (
-    "stagger_hud_parent_diagnostic_execution_authority_v2"
-)
-_STAGGER_OBSERVATION_REQUEST_SCHEMA_V2 = (
-    "stagger_hud_parent_diagnostic_execution_authority_request_v2"
-)
-_STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2 = (
-    "edit_authority_stagger_hud_parent_diagnostic_plan_v2"
-)
-_STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND = (
-    "bounded_observation_only_plan_materialization"
 )
 _STAGGER_SOURCE_PATH = "Patches/HitFeedbackBehaviorPatch.cs"
 _STAGGER_PLUGIN_PATH = "Plugin.cs"
@@ -465,7 +453,7 @@ def create_stagger_edit_authority_request(
         prefix="chg_",
     )
     request_payload = {
-        "schema_version": "stagger_edit_authority_request_v1",
+        "schema_version": _STAGGER_EDIT_AUTHORITY_REQUEST_SCHEMA,
         "proposal": proposal,
         "source_root": str(Path(source_root).resolve()),
         "projected_ids": {
@@ -737,7 +725,7 @@ def preflight_stagger_bounded_observation_authority(
         },
     }
     request_payload = {
-        "schema_version": "stagger_edit_authority_request_v1",
+        "schema_version": _STAGGER_EDIT_AUTHORITY_REQUEST_SCHEMA,
         "projection_kind": _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND,
         "proposal": proposal,
         "source_root": str(Path(source_root).resolve()),
@@ -1611,6 +1599,7 @@ def _apply_approved_stagger_edit_authority(
     artifact_store_root: str | Path,
     feature_id: str,
     run_id: str,
+    capability: EditAuthorityCapabilityDeclaration,
     feature_spec_path: str | Path,
     feature_spec_hash: str,
     runtime_evidence_path: str | Path,
@@ -1731,6 +1720,7 @@ def _apply_approved_stagger_edit_authority(
         approval_hash=approval_hash,
         request_ref=request_ref,
         resume_report_ref=resume_report_ref,
+        capability=capability,
     )
 
     store.preflight_atomic_commit(
@@ -1838,7 +1828,7 @@ def _apply_approved_stagger_edit_authority(
         )
     resolution["authority_source"] = "edit_authority_approval"
     resolution["authority_contract_version"] = (
-        "edit_authority_request_approval_v1"
+        capability.authority_contract_version
     )
     resolution["edit_authority_approval_revision"] = _revision(
         approval_ref
@@ -1918,6 +1908,7 @@ def _apply_approved_stagger_bounded_observation_authority(
     artifact_store_root: str | Path,
     feature_id: str,
     run_id: str,
+    capability: EditAuthorityCapabilityDeclaration,
     request_payload: dict[str, Any],
 ) -> dict[str, Any]:
     """Materialize one exact observation Evidence/Plan and stop."""
@@ -2049,9 +2040,7 @@ def _apply_approved_stagger_bounded_observation_authority(
         approval_hash=approval_hash,
         request_ref=request_ref,
         resume_report_ref=resume_report_ref,
-        authority_contract_version=(
-            _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2
-        ),
+        capability=capability,
     )
     store.preflight_atomic_commit(
         feature_id=feature_id,
@@ -2202,16 +2191,12 @@ def materialize_stagger_edit_authority_approval(
             "EditAuthorityRequest feature identity is invalid."
         )
     request_payload = request.get("request_payload")
-    request_schema = (
-        request_payload.get("schema_version")
-        if isinstance(request_payload, dict)
-        else None
-    )
-    projection_kind = (
-        request_payload.get("projection_kind")
-        if isinstance(request_payload, dict)
-        else None
-    )
+    try:
+        capability = resolve_edit_authority_request_capability(
+            request_payload
+        )
+    except UnsupportedEditAuthorityCapabilityError as exc:
+        raise StaggerEditAuthorityApprovalError(str(exc)) from exc
     request_freshness = store.check_freshness(request_ref)
     if not request_freshness.is_fresh:
         raise StaggerEditAuthorityApprovalError(
@@ -2222,11 +2207,7 @@ def materialize_stagger_edit_authority_approval(
         request_envelope,
         feature_id=feature_id,
     )
-    if request_schema in {
-        _EXISTING_BINDING_REQUEST_SCHEMA,
-        _STAGGER_OBSERVATION_REQUEST_SCHEMA_V1,
-        _STAGGER_OBSERVATION_REQUEST_SCHEMA_V2,
-    } or projection_kind == _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND:
+    if capability.latest_admission_mode == "request_only":
         _require_latest_artifact_refs(store, (request_ref,))
     else:
         _require_latest_artifact_refs(
@@ -2307,100 +2288,75 @@ def materialize_stagger_edit_authority_approval(
         raise StaggerEditAuthorityApprovalError(
             "EditAuthorityRequest technical payload is invalid."
         )
-    if (
-        request_payload.get("schema_version")
-        == _EXISTING_BINDING_REQUEST_SCHEMA
-    ):
-        return _apply_approved_existing_binding_reauthorization(
-            approval_hash=str(request["request_hash"]),
-            approved_by=str(report["approved_by"]),
-            approved_at=str(report["approved_at"]),
-            resume_id=str(report["resume_id"]),
-            request_ref=request_ref,
-            resume_report_ref=report_ref,
-            artifact_store_root=artifact_store_root,
-            feature_id=feature_id,
-            run_id=str(request["run_id"]),
+    common_kwargs = {
+        "approval_hash": str(request["request_hash"]),
+        "approved_by": str(report["approved_by"]),
+        "approved_at": str(report["approved_at"]),
+        "resume_id": str(report["resume_id"]),
+        "request_ref": request_ref,
+        "resume_report_ref": report_ref,
+        "artifact_store_root": artifact_store_root,
+        "feature_id": feature_id,
+        "run_id": str(request["run_id"]),
+        "capability": capability,
+    }
+    if capability.materializer_kind == "existing_binding":
+        result = _apply_approved_existing_binding_reauthorization(
+            **common_kwargs,
             request_payload=request_payload,
         )
-    if (
-        request_payload.get("schema_version")
-        in {
-            _STAGGER_OBSERVATION_REQUEST_SCHEMA_V1,
-            _STAGGER_OBSERVATION_REQUEST_SCHEMA_V2,
-        }
-    ):
-        return _apply_approved_stagger_hud_parent_observation_authority(
-            approval_hash=str(request["request_hash"]),
-            approved_by=str(report["approved_by"]),
-            approved_at=str(report["approved_at"]),
-            resume_id=str(report["resume_id"]),
-            request_ref=request_ref,
-            resume_report_ref=report_ref,
-            artifact_store_root=artifact_store_root,
-            feature_id=feature_id,
-            run_id=str(request["run_id"]),
+    elif capability.materializer_kind == "hud_observation":
+        result = _apply_approved_stagger_hud_parent_observation_authority(
+            **common_kwargs,
             request_payload=request_payload,
         )
-    if (
-        request_payload.get("schema_version")
-        == "stagger_edit_authority_request_v1"
-        and request_payload.get("projection_kind")
-        == _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND
-    ):
-        return _apply_approved_stagger_bounded_observation_authority(
-            approval_hash=str(request["request_hash"]),
-            approved_by=str(report["approved_by"]),
-            approved_at=str(report["approved_at"]),
-            resume_id=str(report["resume_id"]),
-            request_ref=request_ref,
-            resume_report_ref=report_ref,
-            artifact_store_root=artifact_store_root,
-            feature_id=feature_id,
-            run_id=str(request["run_id"]),
+    elif capability.materializer_kind == "bounded_observation":
+        result = _apply_approved_stagger_bounded_observation_authority(
+            **common_kwargs,
             request_payload=request_payload,
         )
-    if request_payload.get("schema_version") != (
-        "stagger_edit_authority_request_v1"
-    ):
+    elif capability.materializer_kind == "generic":
+        result = _apply_approved_stagger_edit_authority(
+            **common_kwargs,
+            feature_spec_path=proposal["feature_spec_revision"]["path"],
+            feature_spec_hash=proposal["feature_spec_revision"][
+                "artifact_hash"
+            ],
+            runtime_evidence_path=proposal["runtime_evidence_revision"][
+                "path"
+            ],
+            runtime_evidence_hash=proposal["runtime_evidence_revision"][
+                "artifact_hash"
+            ],
+            implementation_plan_path=proposal[
+                "implementation_plan_revision"
+            ]["path"],
+            implementation_plan_hash=proposal[
+                "implementation_plan_revision"
+            ]["artifact_hash"],
+            patch_proposal_path=proposal["patch_proposal_revision"]["path"],
+            patch_proposal_hash=proposal["patch_proposal_revision"][
+                "artifact_hash"
+            ],
+            source_root=source_root,
+            canonical_target_path=proposal["current_source"][
+                "canonical_target_path"
+            ],
+            target_symbol=proposal["proposed_target_symbol"],
+            target_start_line=proposal["proposed_exact_span"]["start_line"],
+            target_end_line=proposal["proposed_exact_span"]["end_line"],
+            proposed_operation=proposal["proposed_operation"],
+        )
+    else:
         raise StaggerEditAuthorityApprovalError(
-            "EditAuthorityRequest schema is not supported."
+            "Edit Authority materializer kind is not supported."
         )
-    return _apply_approved_stagger_edit_authority(
-        approval_hash=str(request["request_hash"]),
-        approved_by=str(report["approved_by"]),
-        approved_at=str(report["approved_at"]),
-        resume_id=str(report["resume_id"]),
-        request_ref=request_ref,
-        resume_report_ref=report_ref,
-        artifact_store_root=artifact_store_root,
-        feature_id=feature_id,
-        run_id=str(request["run_id"]),
-        feature_spec_path=proposal["feature_spec_revision"]["path"],
-        feature_spec_hash=proposal["feature_spec_revision"]["artifact_hash"],
-        runtime_evidence_path=proposal["runtime_evidence_revision"]["path"],
-        runtime_evidence_hash=proposal["runtime_evidence_revision"][
-            "artifact_hash"
-        ],
-        implementation_plan_path=proposal[
-            "implementation_plan_revision"
-        ]["path"],
-        implementation_plan_hash=proposal[
-            "implementation_plan_revision"
-        ]["artifact_hash"],
-        patch_proposal_path=proposal["patch_proposal_revision"]["path"],
-        patch_proposal_hash=proposal["patch_proposal_revision"][
-            "artifact_hash"
-        ],
-        source_root=source_root,
-        canonical_target_path=proposal["current_source"][
-            "canonical_target_path"
-        ],
-        target_symbol=proposal["proposed_target_symbol"],
-        target_start_line=proposal["proposed_exact_span"]["start_line"],
-        target_end_line=proposal["proposed_exact_span"]["end_line"],
-        proposed_operation=proposal["proposed_operation"],
-    )
+    if result.get("status") != capability.materializer_success_status:
+        raise StaggerEditAuthorityApprovalError(
+            "Edit Authority materializer status does not match the "
+            "capability declaration."
+        )
+    return result
 
 
 def _apply_approved_existing_binding_reauthorization(
@@ -2414,6 +2370,7 @@ def _apply_approved_existing_binding_reauthorization(
     artifact_store_root: str | Path,
     feature_id: str,
     run_id: str,
+    capability: EditAuthorityCapabilityDeclaration,
     request_payload: dict[str, Any],
 ) -> dict[str, Any]:
     """Reauthorize one existing binding without changing its technical scope."""
@@ -2561,9 +2518,7 @@ def _apply_approved_existing_binding_reauthorization(
         approval_hash=approval_hash,
         request_ref=request_ref,
         resume_report_ref=resume_report_ref,
-        authority_contract_version=(
-            _EXISTING_BINDING_AUTHORITY_CONTRACT
-        ),
+        capability=capability,
     )
     store.preflight_atomic_commit(
         feature_id=feature_id,
@@ -2586,7 +2541,7 @@ def _apply_approved_existing_binding_reauthorization(
     resolution = copy.deepcopy(existing_resolution)
     resolution["authority_source"] = "edit_authority_approval"
     resolution["authority_contract_version"] = (
-        _EXISTING_BINDING_AUTHORITY_CONTRACT
+        capability.authority_contract_version
     )
     resolution["edit_authority_request_revision"] = _revision(
         request_ref
@@ -2675,6 +2630,7 @@ def _apply_approved_stagger_hud_parent_observation_authority(
     artifact_store_root: str | Path,
     feature_id: str,
     run_id: str,
+    capability: EditAuthorityCapabilityDeclaration,
     request_payload: dict[str, Any],
 ) -> dict[str, Any]:
     """Materialize only the reviewed diagnostic EvidencePack and Plan."""
@@ -2686,9 +2642,22 @@ def _apply_approved_stagger_hud_parent_observation_authority(
             "Stagger observation authority payload is invalid."
         )
     proposal_schema = proposal.get("schema_version")
+    expected_proposal_schema = capability.proposal_schema_version
+    if (
+        expected_proposal_schema is None
+        or proposal_schema != expected_proposal_schema
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "Stagger observation Request capability does not match its "
+            "technical proposal schema."
+        )
+    diagnostic_variant = (
+        expected_proposal_schema
+        == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+    )
     dependency_hashes = request_payload.get("dependency_hashes")
     if (
-        proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+        diagnostic_variant
         and not isinstance(dependency_hashes, dict)
     ):
         raise StaggerEditAuthorityApprovalError(
@@ -2751,7 +2720,7 @@ def _apply_approved_stagger_hud_parent_observation_authority(
             if isinstance(dependency_hashes, dict)
             else None
         ),
-        proposal_schema=str(proposal_schema),
+        proposal_schema=expected_proposal_schema,
     )
     actor = approved_by.strip()
     approval_time = approved_at.strip()
@@ -2823,11 +2792,7 @@ def _apply_approved_stagger_hud_parent_observation_authority(
         approval_hash=approval_hash,
         request_ref=request_ref,
         resume_report_ref=resume_report_ref,
-        authority_contract_version=(
-            _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2
-            if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
-            else _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1
-        ),
+        capability=capability,
     )
     store.preflight_atomic_commit(
         feature_id=feature_id,
@@ -2878,7 +2843,7 @@ def _apply_approved_stagger_hud_parent_observation_authority(
             evidence_ref=evidence_ref,
             approval_ref=approval_ref,
         )
-        if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
+        if diagnostic_variant
         else _build_stagger_observation_plan_revision(
             old_plan=old_plan,
             proposal=proposal,
@@ -2907,11 +2872,7 @@ def _apply_approved_stagger_hud_parent_observation_authority(
     )
     bindings = proposal["diagnostic_bindings"]
     return {
-        "status": (
-            "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED"
-            if proposal_schema == _STAGGER_OBSERVATION_PROPOSAL_SCHEMA_V2
-            else "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED"
-        ),
+        "status": capability.materializer_success_status,
         "command": "langgraph-edit-authority-approval",
         "approval_hash": approval_hash,
         "approved_by": actor,
@@ -4492,67 +4453,8 @@ def _build_approval_payload(
     approval_hash: str,
     request_ref: ArtifactRef,
     resume_report_ref: ArtifactRef,
-    authority_contract_version: str = (
-        "edit_authority_request_approval_v1"
-    ),
+    capability: EditAuthorityCapabilityDeclaration,
 ) -> dict[str, Any]:
-    if (
-        authority_contract_version
-        == _EXISTING_BINDING_AUTHORITY_CONTRACT
-    ):
-        allowed_actions = [
-            "reauthorize_existing_edit_binding",
-            "create_binding_resolution_revision",
-        ]
-        forbidden_actions = [
-            "create_evidence_pack_revision",
-            "create_implementation_plan_revision",
-            "create_edit_binding",
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ]
-    elif authority_contract_version in {
-        _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1,
-        _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2,
-    }:
-        allowed_actions = (
-            [
-                "create_observation_evidence_pack_revision",
-                "create_diagnostic_only_implementation_plan_revision",
-                "create_exact_bounded_observation_bindings",
-            ]
-            if authority_contract_version
-            == _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2
-            else [
-                "create_observation_evidence_pack_revision",
-                "create_diagnostic_implementation_plan_revision",
-                "create_observation_only_edit_bindings",
-            ]
-        )
-        forbidden_actions = [
-            "create_binding_resolution_revision",
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ]
-    else:
-        allowed_actions = [
-            "create_evidence_pack_revision",
-            "create_implementation_plan_revision",
-            "resolve_exact_edit_binding",
-        ]
-        forbidden_actions = [
-            "invoke_repair_planner",
-            "modify_source",
-            "build",
-            "launch_process",
-            "write_game_directory",
-        ]
     return {
         "node_name": "approve_stagger_edit_authority",
         "stage": "edit_authority_approval",
@@ -4564,7 +4466,9 @@ def _build_approval_payload(
         "feature_id": feature_id,
         "run_id": run_id,
         "authority_source": "edit_authority_request",
-        "authority_contract_version": authority_contract_version,
+        "authority_contract_version": (
+            capability.authority_contract_version
+        ),
         "approval_hash": approval_hash,
         "request_hash": approval_hash,
         "approved_by": approved_by,
@@ -4573,8 +4477,8 @@ def _build_approval_payload(
         "decision": "approve",
         "edit_authority_request_revision": _revision(request_ref),
         "resume_report_revision": _revision(resume_report_ref),
-        "allowed_actions": allowed_actions,
-        "forbidden_actions": forbidden_actions,
+        "allowed_actions": list(capability.allowed_actions),
+        "forbidden_actions": list(capability.forbidden_actions),
         "repair_planner_allowed": False,
         "source_patch_allowed": False,
     }

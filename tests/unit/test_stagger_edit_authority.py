@@ -21,10 +21,15 @@ from src.mod_agent.runtime import (
     preflight_stagger_edit_authority,
     preflight_stagger_hud_parent_observation_authority,
 )
-from src.mod_agent.artifacts import ArtifactRef
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.artifacts.registry import (
+    ArtifactContract,
     ArtifactRegistryError,
     ArtifactTypeRegistry,
+)
+from src.mod_agent.local_entry import (
+    preflight_stagger_edit_authority_review,
+    resume_stagger_edit_authority_review,
 )
 from src.mod_agent.runtime import (
     stagger_edit_authority as edit_authority_module,
@@ -2715,3 +2720,240 @@ def test_bounded_observation_graph_materialization_writes_only_plan_inputs(
             resume_report_hash=report_ref.artifact_hash,
         )
     assert len(_RoleAwareArtifactStore.writes) == writes_before_replay
+
+
+def test_bounded_observation_public_entry_uses_real_store_graph_and_materializer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    args = _bounded_observation_authority_setup(tmp_path)
+    default_registry = ArtifactTypeRegistry()
+    relaxed_types = {
+        "feature_spec": "feature_spec",
+        "runtime_evidence": "runtime_evidence",
+        "evidence_pack": "evidence_retrieval",
+        "implementation_plan": "implementation_plan",
+        "patch_proposal": "patch_proposal",
+    }
+
+    class _BoundedIntegrationRegistry(ArtifactTypeRegistry):
+        def _validate_payload_contract(
+            self,
+            artifact_type: str,
+            payload: dict[str, object],
+        ) -> None:
+            if (
+                artifact_type == "implementation_plan"
+                and "materialization_context" not in payload
+            ):
+                return
+            super()._validate_payload_contract(artifact_type, payload)
+
+    relaxed_contracts = [
+        ArtifactContract(
+            artifact_type=artifact_type,
+            schema_version="1.0",
+            required_fields=frozenset(),
+            producer_stage=producer_stage,
+            consumer_stages=frozenset(
+                {
+                    "edit_authority_request",
+                    "edit_authority_approval",
+                    "evidence_retrieval",
+                    "implementation_plan",
+                }
+            ),
+            allowed_statuses=frozenset({"success", "blocked"}),
+        )
+        for artifact_type, producer_stage in relaxed_types.items()
+    ]
+    registry = _BoundedIntegrationRegistry(
+        contracts=[
+            *relaxed_contracts,
+            default_registry.get("edit_authority_request"),
+            default_registry.get("workflow_checkpoint"),
+            default_registry.get("resume_report"),
+            default_registry.get("workflow_trace"),
+            default_registry.get("edit_authority_approval"),
+        ]
+    )
+    store_root = tmp_path / "real-artifacts"
+    store = ArtifactStore(store_root, registry=registry)
+
+    def fake_latest_payload(artifact_type: str) -> tuple[dict[str, object], str]:
+        fake_ref = _RoleAwareArtifactStore.latest_by_type[artifact_type]
+        envelope = _RoleAwareArtifactStore.envelopes_by_path[
+            str(Path(fake_ref.path).resolve())
+        ]
+        return (
+            copy.deepcopy(envelope["data"]),
+            str(envelope.get("status") or "success"),
+        )
+
+    feature_payload, feature_status = fake_latest_payload("feature_spec")
+    feature_ref = store.write(
+        feature_id=FEATURE_ID,
+        artifact_type="feature_spec",
+        payload=feature_payload,
+        status=feature_status,
+    )
+    runtime_payload, runtime_status = fake_latest_payload("runtime_evidence")
+    runtime_ref = store.write(
+        feature_id=FEATURE_ID,
+        artifact_type="runtime_evidence",
+        payload=runtime_payload,
+        status=runtime_status,
+        upstream_refs=[feature_ref],
+    )
+    evidence_payload, evidence_status = fake_latest_payload("evidence_pack")
+    evidence_ref = store.write(
+        feature_id=FEATURE_ID,
+        artifact_type="evidence_pack",
+        payload=evidence_payload,
+        status=evidence_status,
+        upstream_refs=[feature_ref],
+    )
+    historical_plan, historical_plan_status = fake_latest_payload(
+        "implementation_plan"
+    )
+    historical_plan_ref = store.write(
+        feature_id=FEATURE_ID,
+        artifact_type="implementation_plan",
+        payload=historical_plan,
+        status=historical_plan_status,
+        upstream_refs=[feature_ref, evidence_ref],
+    )
+    patch_payload, patch_status = fake_latest_payload("patch_proposal")
+    patch_payload["context_pack"]["binding_registry_ref"][
+        "artifact_hash"
+    ] = historical_plan_ref.artifact_hash
+    patch_ref = store.write(
+        feature_id=FEATURE_ID,
+        artifact_type="patch_proposal",
+        payload=patch_payload,
+        status=patch_status,
+        upstream_refs=[evidence_ref, historical_plan_ref],
+    )
+
+    args.update(
+        {
+            "artifact_store_root": store_root,
+            "feature_spec_path": feature_ref.path,
+            "feature_spec_hash": feature_ref.artifact_hash,
+            "runtime_evidence_path": runtime_ref.path,
+            "runtime_evidence_hash": runtime_ref.artifact_hash,
+            "evidence_pack_path": evidence_ref.path,
+            "evidence_pack_hash": evidence_ref.artifact_hash,
+            "historical_implementation_plan_path": historical_plan_ref.path,
+            "historical_implementation_plan_hash": (
+                historical_plan_ref.artifact_hash
+            ),
+            "historical_patch_proposal_path": patch_ref.path,
+            "historical_patch_proposal_hash": patch_ref.artifact_hash,
+        }
+    )
+    monkeypatch.setattr(
+        edit_authority_module,
+        "ArtifactStore",
+        lambda _root: store,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.ArtifactStore",
+        lambda _root: store,
+    )
+    source_path = Path(args["source_root"]) / TARGET_PATH
+    source_before = source_path.read_bytes()
+
+    request_result = create_stagger_bounded_observation_authority_request(
+        **args
+    )
+    request_revision = request_result["edit_authority_request_revision"]
+    request_ref = ArtifactRef(
+        FEATURE_ID,
+        "edit_authority_request",
+        request_revision["path"],
+        request_revision["artifact_hash"],
+    )
+    guarded_types = (
+        "workflow_checkpoint",
+        "resume_report",
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+        "binding_resolution",
+    )
+    before_counts = {
+        artifact_type: len(
+            store.list_feature_artifact_revisions(
+                FEATURE_ID,
+                artifact_type,
+            )
+        )
+        for artifact_type in guarded_types
+    }
+    preflight = preflight_stagger_edit_authority_review(
+        artifact_store_root=store_root,
+        feature_id=FEATURE_ID,
+        edit_authority_request_path=request_ref.path,
+        edit_authority_request_hash=request_ref.artifact_hash,
+        authority_request_hash=request_result["request_hash"],
+    )
+    assert preflight["checkpoint_artifact_refs"] == [request_ref.path]
+    assert preflight["artifact_revision_counts"] == {
+        artifact_type: count
+        for artifact_type, count in before_counts.items()
+        if artifact_type != "binding_resolution"
+    }
+
+    result = resume_stagger_edit_authority_review(
+        artifact_store_root=store_root,
+        feature_id=FEATURE_ID,
+        edit_authority_request_path=request_ref.path,
+        edit_authority_request_hash=request_ref.artifact_hash,
+        authority_request_hash=request_result["request_hash"],
+        resume_id="resume_bounded_public_integration_001",
+        decision="approve",
+        approved_by="user",
+        approved_at="2026-08-03T12:00:00+08:00",
+    )
+
+    assert result["status"] == "STAGGER_BOUNDED_OBSERVATION_PLAN_AUTHORIZED"
+    assert result["current_stage"] == "implementation_plan"
+    assert set(result["artifacts"]) == {
+        "edit_authority_request",
+        "workflow_checkpoint",
+        "resume_report",
+        "edit_authority_approval",
+        "evidence_pack",
+        "implementation_plan",
+    }
+    after_counts = {
+        artifact_type: len(
+            store.list_feature_artifact_revisions(
+                FEATURE_ID,
+                artifact_type,
+            )
+        )
+        for artifact_type in guarded_types
+    }
+    assert {
+        artifact_type: after_counts[artifact_type] - before_counts[artifact_type]
+        for artifact_type in guarded_types
+    } == {
+        "workflow_checkpoint": 1,
+        "resume_report": 1,
+        "edit_authority_approval": 1,
+        "evidence_pack": 1,
+        "implementation_plan": 1,
+        "binding_resolution": 0,
+    }
+    latest = {
+        ref.artifact_type: ref
+        for ref in store.list_feature_artifacts(FEATURE_ID)
+    }
+    assert store.check_freshness(latest["evidence_pack"]).is_fresh
+    assert store.check_freshness(latest["implementation_plan"]).is_fresh
+    assert not list(
+        (store_root / "features" / FEATURE_ID / "p").rglob("*.json")
+    )
+    assert source_path.read_bytes() == source_before
