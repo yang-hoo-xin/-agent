@@ -1101,6 +1101,11 @@ def test_existing_binding_reauthorization_store_requires_all_exact_roles(
     feature_id = "feature_001"
     monkeypatch.setattr(
         store,
+        "_validate_immutable_upstream_ref",
+        lambda *, feature_id, upstream: None,
+    )
+    monkeypatch.setattr(
+        store,
         "read",
         lambda item: {
             "feature_id": item.feature_id,
@@ -1262,6 +1267,11 @@ def test_stagger_observation_request_store_requires_every_exact_role(
 ) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
     feature_id = "feature_001"
+    monkeypatch.setattr(
+        store,
+        "_validate_immutable_upstream_ref",
+        lambda *, feature_id, upstream: None,
+    )
     monkeypatch.setattr(
         store,
         "read",
@@ -2202,6 +2212,187 @@ def test_list_feature_artifacts_returns_refs(tmp_path: Path) -> None:
         first.artifact_hash,
         second.artifact_hash,
     }
+
+
+def test_write_apis_reject_latest_alias_upstream_before_commit(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    latest_alias = store.list_feature_artifacts("feature_001")[0]
+    assert latest_alias.artifact_hash == feature_spec.artifact_hash
+    assert latest_alias.path != feature_spec.path
+    assert store.read(latest_alias)["artifact_hash"] == feature_spec.artifact_hash
+    before = {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*.json")
+    }
+
+    result = store.write_with_result(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[latest_alias],
+    )
+
+    assert result.outcome == "blocked_before_commit"
+    assert result.commit_started is False
+    assert result.failure_stage == "admission_validation"
+    assert result.failure_message == (
+        "Upstream artifact must reference a registered immutable revision: "
+        "'feature_spec'"
+    )
+    assert {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*.json")
+    } == before
+
+    with pytest.raises(
+        ArtifactStoreError,
+        match="must reference a registered immutable revision",
+    ):
+        store.write(
+            feature_id="feature_001",
+            artifact_type="evidence_pack",
+            payload=_evidence_payload(),
+            upstream_refs=[latest_alias],
+        )
+    assert {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*.json")
+    } == before
+
+
+def test_new_write_rejects_nonrevision_and_drifted_upstream_refs(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    invalid_refs = (
+        ArtifactRef(
+            feature_id="feature_001",
+            artifact_type="feature_spec",
+            path=str(store.root / "features" / "feature_001" / "lookup.json"),
+            artifact_hash=feature_spec.artifact_hash,
+        ),
+        ArtifactRef(
+            feature_id="feature_001",
+            artifact_type="feature_spec",
+            path=feature_spec.path,
+            artifact_hash="0" * 64,
+        ),
+        ArtifactRef(
+            feature_id="feature_001",
+            artifact_type="evidence_pack",
+            path=feature_spec.path,
+            artifact_hash=feature_spec.artifact_hash,
+        ),
+        ArtifactRef(
+            feature_id="feature_other",
+            artifact_type="feature_spec",
+            path=feature_spec.path,
+            artifact_hash=feature_spec.artifact_hash,
+        ),
+    )
+    before = {
+        str(path.relative_to(store.root)): path.read_bytes()
+        for path in store.root.rglob("*.json")
+    }
+
+    for invalid_ref in invalid_refs:
+        result = store.write_with_result(
+            feature_id="feature_001",
+            artifact_type="evidence_pack",
+            payload=_evidence_payload(),
+            upstream_refs=[invalid_ref],
+        )
+        assert result.outcome == "blocked_before_commit"
+        assert result.commit_started is False
+        assert result.failure_stage == "admission_validation"
+        assert {
+            str(path.relative_to(store.root)): path.read_bytes()
+            for path in store.root.rglob("*.json")
+        } == before
+
+
+def test_legacy_immutable_revision_is_accepted_as_new_upstream(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    legacy_path = store._legacy_revision_artifact_path(
+        "feature_001",
+        "feature_spec",
+        feature_spec.artifact_hash,
+    )
+    legacy_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_path.write_bytes(Path(feature_spec.path).read_bytes())
+    Path(feature_spec.path).unlink()
+    legacy_ref = replace(feature_spec, path=str(legacy_path))
+
+    evidence_pack = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[legacy_ref],
+    )
+
+    upstream = store.read(evidence_pack)["inputs"]["upstream_artifacts"][0]
+    assert upstream["path"] == str(legacy_path)
+    assert upstream["artifact_hash"] == feature_spec.artifact_hash
+
+
+def test_immutable_upstream_path_preserves_both_freshness_modes(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_spec_v1 = store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_feature_payload(),
+    )
+    exact_child = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=_evidence_payload(),
+        upstream_refs=[feature_spec_v1],
+        exact_revision_upstream_types={"feature_spec"},
+    )
+    latest_child_payload = _evidence_payload()
+    latest_child_payload["message"] = "latest-bound"
+    latest_child = store.write(
+        feature_id="feature_001",
+        artifact_type="evidence_pack",
+        payload=latest_child_payload,
+        upstream_refs=[feature_spec_v1],
+    )
+
+    store.write(
+        feature_id="feature_001",
+        artifact_type="feature_spec",
+        payload=_changed_feature_payload(),
+    )
+
+    exact_upstream = store.read(exact_child)["inputs"]["upstream_artifacts"][0]
+    latest_upstream = store.read(latest_child)["inputs"]["upstream_artifacts"][0]
+    assert exact_upstream["path"] == feature_spec_v1.path
+    assert exact_upstream["require_latest"] is False
+    assert latest_upstream["path"] == feature_spec_v1.path
+    assert latest_upstream["require_latest"] is True
+    assert store.check_freshness(exact_child).status == "fresh"
+    assert store.check_freshness(latest_child).status == "stale"
 
 
 def test_write_preserves_immutable_revisions_and_latest_pointer(tmp_path: Path) -> None:

@@ -167,8 +167,14 @@ def test_build_contract_requires_complete_verification_upstreams(tmp_path: Path)
 
 def test_build_contract_rejects_mixed_lineage_in_both_directions(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store, continuation = _verification_inputs(tmp_path)
+    monkeypatch.setattr(
+        store,
+        "_validate_immutable_upstream_ref",
+        lambda *, feature_id, upstream: None,
+    )
     fake_dry_run = ArtifactRef(
         feature_id=FEATURE_ID,
         artifact_type="dry_run_result",

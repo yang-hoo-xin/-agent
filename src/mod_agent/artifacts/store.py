@@ -1475,6 +1475,39 @@ class ArtifactStore:
         except InvalidEditAuthorityApprovalIdentityError as exc:
             raise ArtifactStoreError(str(exc)) from exc
 
+    def _validate_immutable_upstream_ref(
+        self,
+        *,
+        feature_id: str,
+        upstream: ArtifactRef,
+    ) -> None:
+        """Require one new durable upstream to name a registered revision."""
+
+        if upstream.feature_id != feature_id:
+            raise ArtifactStoreError(
+                f"Upstream artifact feature_id mismatch for {upstream.artifact_type!r}"
+            )
+        self._validate_artifact_type(upstream.artifact_type)
+        upstream_path = self._guard_path(Path(upstream.path))
+        allowed_revision_paths = {
+            self._revision_artifact_path(
+                feature_id,
+                upstream.artifact_type,
+                upstream.artifact_hash,
+            ),
+            self._legacy_revision_artifact_path(
+                feature_id,
+                upstream.artifact_type,
+                upstream.artifact_hash,
+            ),
+        }
+        if upstream_path not in allowed_revision_paths:
+            raise ArtifactStoreError(
+                "Upstream artifact must reference a registered immutable revision: "
+                f"{upstream.artifact_type!r}"
+            )
+        self.read(upstream)
+
     def _validate_upstream_refs(
         self,
         *,
@@ -1487,6 +1520,11 @@ class ArtifactStore:
         allow_stale_upstreams: bool,
         exact_revision_upstream_types: set[str],
     ) -> None:
+        for upstream in upstream_refs:
+            self._validate_immutable_upstream_ref(
+                feature_id=feature_id,
+                upstream=upstream,
+            )
         provided_types = {ref.artifact_type for ref in upstream_refs}
         if artifact_type == "edit_authority_request":
             self._validate_edit_authority_request_identity_upstreams(
@@ -1952,21 +1990,6 @@ class ArtifactStore:
                 )
 
         for upstream in upstream_refs:
-            if upstream.feature_id != feature_id:
-                raise ArtifactStoreError(
-                    f"Upstream artifact feature_id mismatch for {upstream.artifact_type!r}"
-                )
-
-            envelope = self.read(upstream)
-            if envelope.get("feature_id") != feature_id:
-                raise ArtifactStoreError(
-                    f"Upstream artifact feature_id mismatch for {upstream.artifact_type!r}"
-                )
-            if envelope.get("artifact_type") != upstream.artifact_type:
-                raise ArtifactStoreError(
-                    f"Upstream artifact_type mismatch for {upstream.artifact_type!r}"
-                )
-
             freshness = self._check_upstream_write_freshness(
                 upstream,
                 require_latest=upstream.artifact_type not in exact_revision_upstream_types,
