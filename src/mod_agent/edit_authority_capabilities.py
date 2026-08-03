@@ -7,7 +7,7 @@ import hashlib
 import json
 import re
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
@@ -340,6 +340,37 @@ class EditAuthorityCapabilityDeclaration:
     automatic_retry_budget: int
 
 
+ApprovalIdentityBuilder: TypeAlias = Callable[
+    [
+        "VersionedEditAuthorityCapabilityRecord",
+        Mapping[str, Any],
+        str,
+        str,
+    ],
+    dict[str, Any],
+]
+ApprovalIdentityHasher: TypeAlias = Callable[[Mapping[str, Any]], str]
+ActionScopeBuilder: TypeAlias = Callable[
+    [Mapping[str, Any], EditAuthorityCapabilityDeclaration],
+    dict[str, Any],
+]
+
+
+@dataclass(frozen=True)
+class VersionedEditAuthorityCapabilityRecord:
+    """Append-only canonical identity semantics for one contract version."""
+
+    declaration: EditAuthorityCapabilityDeclaration
+    identity_schema_version: str
+    hash_domain: str
+    canonical_serialization_id: str
+    identity_builder_id: str
+    action_projection_id: str
+    identity_builder: ApprovalIdentityBuilder
+    identity_hasher: ApprovalIdentityHasher
+    action_scope_builder: ActionScopeBuilder
+
+
 @dataclass(frozen=True)
 class LegacyV0CapabilitySnapshot:
     """Literal read-only semantics for already-materialized v0 envelopes."""
@@ -410,7 +441,7 @@ def _declaration(
     )
 
 
-EDIT_AUTHORITY_CAPABILITIES = (
+_V1_EDIT_AUTHORITY_DECLARATIONS = (
     _declaration(
         capability_id="stagger_edit_authority_generic",
         schema_version=STAGGER_EDIT_AUTHORITY_REQUEST_SCHEMA,
@@ -531,19 +562,6 @@ EDIT_AUTHORITY_CAPABILITIES = (
         approval_input_bindings=_BOUNDED_APPROVAL_INPUTS,
     ),
 )
-
-_CAPABILITIES_BY_DISCRIMINATOR = {
-    (declaration.schema_version, declaration.projection_kind): declaration
-    for declaration in EDIT_AUTHORITY_CAPABILITIES
-}
-if len(_CAPABILITIES_BY_DISCRIMINATOR) != len(EDIT_AUTHORITY_CAPABILITIES):
-    raise RuntimeError("Edit Authority capability discriminator is duplicated.")
-_CAPABILITIES_BY_ID = {
-    declaration.capability_id: declaration
-    for declaration in EDIT_AUTHORITY_CAPABILITIES
-}
-if len(_CAPABILITIES_BY_ID) != len(EDIT_AUTHORITY_CAPABILITIES):
-    raise RuntimeError("Edit Authority capability_id is duplicated.")
 
 def _build_frozen_legacy_v0_capability_snapshots(
 ) -> tuple[LegacyV0CapabilitySnapshot, ...]:
@@ -711,9 +729,9 @@ def resolve_edit_authority_capability(
             "Edit Authority projection_kind must be an exact string or null."
         )
     try:
-        return _CAPABILITIES_BY_DISCRIMINATOR[
+        return _CURRENT_CAPABILITY_RECORDS_BY_DISCRIMINATOR[
             (schema_version, projection_kind)
-        ]
+        ].declaration
     except KeyError as exc:
         raise UnsupportedEditAuthorityCapabilityError(
             "Edit Authority schema_version/projection_kind is not supported."
@@ -799,7 +817,9 @@ def require_edit_authority_public_operation(
         )
 
 
-def _canonical_json(value: Any) -> bytes:
+def _canonical_json_v1(value: Any) -> bytes:
+    """Frozen v1 canonical serialization for Approval Identity."""
+
     return json.dumps(
         value,
         ensure_ascii=False,
@@ -808,8 +828,26 @@ def _canonical_json(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _canonical_json(value: Any) -> bytes:
+    """Compatibility alias for the frozen v1 canonical serializer."""
+
+    return _canonical_json_v1(value)
+
+
+def _approval_identity_hash_v1(
+    identity: Mapping[str, Any],
+    *,
+    _serializer: Callable[[Any], bytes] = _canonical_json_v1,
+) -> str:
+    """Hash one v1 Approval Identity without consulting current authority."""
+
+    return "sha256:" + hashlib.sha256(_serializer(identity)).hexdigest()
+
+
 def _approval_identity_hash(identity: Mapping[str, Any]) -> str:
-    return "sha256:" + hashlib.sha256(_canonical_json(identity)).hexdigest()
+    """Compatibility alias for the frozen v1 identity hash."""
+
+    return _approval_identity_hash_v1(identity)
 
 
 def _require_mapping(
@@ -904,29 +942,37 @@ def _revision_hash(
     return artifact_hash
 
 
-def _common_source_scope(proposal: Mapping[str, Any]) -> dict[str, Any]:
-    return _select_fields(
+def _common_source_scope_v1(
+    proposal: Mapping[str, Any],
+    *,
+    _selector: Callable[..., dict[str, Any]] = _select_fields,
+) -> dict[str, Any]:
+    return _selector(
         proposal.get("current_source"),
         ("canonical_target_path", "sha256", "target_span"),
         field_name="proposal.current_source",
     )
 
 
-def _hud_action_scope(
+def _hud_action_scope_v1(
     request_payload: Mapping[str, Any],
     declaration: EditAuthorityCapabilityDeclaration,
+    *,
+    _mapping_reader: Callable[..., Mapping[str, Any]] = _require_mapping,
+    _selector: Callable[..., dict[str, Any]] = _select_fields,
+    _diagnostic_schema: str = STAGGER_HUD_PARENT_DIAGNOSTIC_PROPOSAL_SCHEMA,
 ) -> dict[str, Any]:
-    proposal = _require_mapping(
+    proposal = _mapping_reader(
         request_payload.get("proposal"),
         field_name="request_payload.proposal",
     )
     scope: dict[str, Any] = {
-        "current_source": _select_fields(
+        "current_source": _selector(
             proposal.get("current_source"),
             ("canonical_target_path", "sha256"),
             field_name="proposal.current_source",
         ),
-        "diagnostic_contract": _select_fields(
+        "diagnostic_contract": _selector(
             proposal,
             (
                 "diagnostic_bindings",
@@ -945,9 +991,9 @@ def _hud_action_scope(
     }
     if (
         declaration.proposal_schema_version
-        == STAGGER_HUD_PARENT_DIAGNOSTIC_PROPOSAL_SCHEMA
+        == _diagnostic_schema
     ):
-        scope["supporting_source"] = _select_fields(
+        scope["supporting_source"] = _selector(
             proposal.get("supporting_source"),
             (
                 "canonical_target_path",
@@ -959,7 +1005,7 @@ def _hud_action_scope(
             ),
             field_name="proposal.supporting_source",
         )
-        api_contract = _require_mapping(
+        api_contract = _mapping_reader(
             proposal.get("identity_api_contract"),
             field_name="proposal.identity_api_contract",
         )
@@ -971,7 +1017,7 @@ def _hud_action_scope(
             )
         scope["identity_api_contract"] = {
             "assemblies": [
-                _select_fields(
+                _selector(
                     item,
                     ("role", "sha256"),
                     field_name=(
@@ -980,7 +1026,7 @@ def _hud_action_scope(
                 )
                 for item in assemblies
             ],
-            **_select_fields(
+            **_selector(
                 api_contract,
                 (
                     "crosshair_gui_layer_identity",
@@ -991,7 +1037,7 @@ def _hud_action_scope(
             ),
         }
         scope["dependency_hashes"] = copy.deepcopy(
-            _require_mapping(
+            _mapping_reader(
                 request_payload.get("dependency_hashes"),
                 field_name="request_payload.dependency_hashes",
             )
@@ -999,18 +1045,26 @@ def _hud_action_scope(
     return scope
 
 
-def _bounded_action_scope(
+def _bounded_action_scope_v1(
     request_payload: Mapping[str, Any],
+    *,
+    _mapping_reader: Callable[..., Mapping[str, Any]] = _require_mapping,
+    _selector: Callable[..., dict[str, Any]] = _select_fields,
+    _value_reader: Callable[..., Any] = _require_value,
+    _source_builder: Callable[[Mapping[str, Any]], dict[str, Any]] = (
+        _common_source_scope_v1
+    ),
+    _serializer: Callable[[Any], bytes] = _canonical_json_v1,
 ) -> dict[str, Any]:
-    proposal = _require_mapping(
+    proposal = _mapping_reader(
         request_payload.get("proposal"),
         field_name="request_payload.proposal",
     )
-    reviewed = _require_mapping(
+    reviewed = _mapping_reader(
         proposal.get("reviewed_no_write_projection"),
         field_name="proposal.reviewed_no_write_projection",
     )
-    action_hashes = _select_fields(
+    action_hashes = _selector(
         reviewed,
         (
             "implementation_plan_projection_hash",
@@ -1023,12 +1077,12 @@ def _bounded_action_scope(
         ),
         field_name="proposal.reviewed_no_write_projection",
     )
-    plan_template = _require_mapping(
+    plan_template = _mapping_reader(
         proposal.get("implementation_plan_template"),
         field_name="proposal.implementation_plan_template",
     )
     actual_plan_hash = "sha256:" + hashlib.sha256(
-        _canonical_json(plan_template)
+        _serializer(plan_template)
     ).hexdigest()
     if actual_plan_hash != action_hashes["implementation_plan_projection_hash"]:
         raise InvalidEditAuthorityApprovalIdentityError(
@@ -1037,25 +1091,25 @@ def _bounded_action_scope(
         )
     return {
         "action_hashes": action_hashes,
-        "current_source": _common_source_scope(proposal),
-        "target_source_evidence_item": _require_value(
+        "current_source": _source_builder(proposal),
+        "target_source_evidence_item": _value_reader(
             proposal,
             "target_source_evidence_item",
             field_name="proposal",
         ),
-        "historical_identifier_baseline": _select_fields(
+        "historical_identifier_baseline": _selector(
             proposal.get("historical_identifier_baseline"),
             ("authority", "downstream_authority"),
             field_name="proposal.historical_identifier_baseline",
         ),
         "materialization_boundary": copy.deepcopy(
-            _require_mapping(
+            _mapping_reader(
                 proposal.get("materialization_boundary"),
                 field_name="proposal.materialization_boundary",
             )
         ),
         "projected_ids": copy.deepcopy(
-            _require_mapping(
+            _mapping_reader(
                 request_payload.get("projected_ids"),
                 field_name="request_payload.projected_ids",
             )
@@ -1063,17 +1117,31 @@ def _bounded_action_scope(
     }
 
 
-def _build_action_scope(
+def _build_action_scope_v1(
     request_payload: Mapping[str, Any],
     declaration: EditAuthorityCapabilityDeclaration,
+    *,
+    _mapping_reader: Callable[..., Mapping[str, Any]] = _require_mapping,
+    _selector: Callable[..., dict[str, Any]] = _select_fields,
+    _value_reader: Callable[..., Any] = _require_value,
+    _source_builder: Callable[[Mapping[str, Any]], dict[str, Any]] = (
+        _common_source_scope_v1
+    ),
+    _hud_builder: Callable[
+        [Mapping[str, Any], EditAuthorityCapabilityDeclaration],
+        dict[str, Any],
+    ] = _hud_action_scope_v1,
+    _bounded_builder: Callable[[Mapping[str, Any]], dict[str, Any]] = (
+        _bounded_action_scope_v1
+    ),
 ) -> dict[str, Any]:
-    proposal = _require_mapping(
+    proposal = _mapping_reader(
         request_payload.get("proposal"),
         field_name="request_payload.proposal",
     )
     if declaration.materializer_kind == "generic":
         return {
-            "ownership_review": _select_fields(
+            "ownership_review": _selector(
                 proposal.get("ownership_review"),
                 (
                     "stored_runtime_failure_ownership",
@@ -1083,13 +1151,13 @@ def _build_action_scope(
                 ),
                 field_name="proposal.ownership_review",
             ),
-            "diagnosed_responsibility_anchor": _require_value(
+            "diagnosed_responsibility_anchor": _value_reader(
                 proposal,
                 "diagnosed_responsibility_anchor",
                 field_name="proposal",
             ),
-            "current_source": _common_source_scope(proposal),
-            "technical_scope": _select_fields(
+            "current_source": _source_builder(proposal),
+            "technical_scope": _selector(
                 proposal,
                 (
                     "proposed_target_symbol",
@@ -1104,7 +1172,7 @@ def _build_action_scope(
                 field_name="proposal",
             ),
             "projected_ids": copy.deepcopy(
-                _require_mapping(
+                _mapping_reader(
                     request_payload.get("projected_ids"),
                     field_name="request_payload.projected_ids",
                 )
@@ -1112,7 +1180,7 @@ def _build_action_scope(
         }
     if declaration.materializer_kind == "existing_binding":
         return {
-            "binding_scope": _select_fields(
+            "binding_scope": _selector(
                 proposal,
                 (
                     "binding_id",
@@ -1122,8 +1190,8 @@ def _build_action_scope(
                 ),
                 field_name="proposal",
             ),
-            "current_source": _common_source_scope(proposal),
-            "ownership_review": _select_fields(
+            "current_source": _source_builder(proposal),
+            "ownership_review": _selector(
                 proposal.get("ownership_review"),
                 (
                     "stored_runtime_failure_ownership",
@@ -1132,7 +1200,7 @@ def _build_action_scope(
                 ),
                 field_name="proposal.ownership_review",
             ),
-            "decision_boundary": _select_fields(
+            "decision_boundary": _selector(
                 proposal,
                 (
                     "root_cause_status",
@@ -1143,37 +1211,38 @@ def _build_action_scope(
             ),
         }
     if declaration.materializer_kind == "hud_observation":
-        return _hud_action_scope(request_payload, declaration)
+        return _hud_builder(request_payload, declaration)
     if declaration.materializer_kind == "bounded_observation":
-        return _bounded_action_scope(request_payload)
+        return _bounded_builder(request_payload)
     raise InvalidEditAuthorityApprovalIdentityError(
         "Edit Authority materializer kind has no identity projection."
     )
 
 
-def build_edit_authority_approval_identity(
-    *,
+_V1_CANONICAL_SERIALIZATION_ID = "json_utf8_sort_keys_compact_v1"
+_V1_IDENTITY_BUILDER_ID = "edit_authority_approval_identity_builder_v1"
+_V1_ACTION_PROJECTION_ID = "stagger_edit_authority_action_scope_v1"
+
+
+def _build_approval_identity_v1(
+    record: VersionedEditAuthorityCapabilityRecord,
     request_payload: Mapping[str, Any],
     feature_id: str,
     run_id: str,
+    *,
+    _revision_reader: Callable[
+        [Mapping[str, Any], ApprovalInputBinding], str
+    ] = _revision_hash,
 ) -> dict[str, Any]:
-    """Build the sole versioned identity for one supported approved action."""
+    """Rebuild one v1 identity solely from its append-only version record."""
 
-    if not isinstance(feature_id, str) or not feature_id:
-        raise InvalidEditAuthorityApprovalIdentityError(
-            "Edit Authority feature_id must be non-empty."
-        )
-    if not isinstance(run_id, str) or not run_id:
-        raise InvalidEditAuthorityApprovalIdentityError(
-            "Edit Authority run_id must be non-empty."
-        )
-    declaration = resolve_edit_authority_request_capability(request_payload)
+    declaration = record.declaration
     exact_inputs = sorted(
         (
             {
                 "role": binding.role,
                 "artifact_type": binding.artifact_type,
-                "artifact_hash": _revision_hash(request_payload, binding),
+                "artifact_hash": _revision_reader(request_payload, binding),
                 "required_freshness": binding.required_freshness,
             }
             for binding in declaration.approval_input_bindings
@@ -1184,8 +1253,8 @@ def build_edit_authority_approval_identity(
         item for item in exact_inputs if item["role"] == "feature_spec"
     )
     return {
-        "identity_schema_version": APPROVAL_IDENTITY_SCHEMA_VERSION,
-        "hash_domain": APPROVAL_IDENTITY_HASH_DOMAIN,
+        "identity_schema_version": record.identity_schema_version,
+        "hash_domain": record.hash_domain,
         "capability": {
             "capability_id": declaration.capability_id,
             "capability_contract_version": (
@@ -1207,7 +1276,10 @@ def build_edit_authority_approval_identity(
             "artifact_hash": feature_spec_input["artifact_hash"],
         },
         "exact_inputs": exact_inputs,
-        "action_scope": _build_action_scope(request_payload, declaration),
+        "action_scope": record.action_scope_builder(
+            request_payload,
+            declaration,
+        ),
         "allowed_actions": list(declaration.allowed_actions),
         "forbidden_actions": list(declaration.forbidden_actions),
         "execution_contract": {
@@ -1240,6 +1312,177 @@ def build_edit_authority_approval_identity(
     }
 
 
+def _versioned_v1_record(
+    declaration: EditAuthorityCapabilityDeclaration,
+) -> VersionedEditAuthorityCapabilityRecord:
+    return VersionedEditAuthorityCapabilityRecord(
+        declaration=declaration,
+        identity_schema_version=APPROVAL_IDENTITY_SCHEMA_VERSION,
+        hash_domain=APPROVAL_IDENTITY_HASH_DOMAIN,
+        canonical_serialization_id=_V1_CANONICAL_SERIALIZATION_ID,
+        identity_builder_id=_V1_IDENTITY_BUILDER_ID,
+        action_projection_id=_V1_ACTION_PROJECTION_ID,
+        identity_builder=_build_approval_identity_v1,
+        identity_hasher=_approval_identity_hash_v1,
+        action_scope_builder=_build_action_scope_v1,
+    )
+
+
+# Append-only historical records own canonical reconstruction semantics.  A
+# future current version adds records and advances the two current maps; it does
+# not edit or replace the v1 records below.
+_VERSIONED_EDIT_AUTHORITY_CAPABILITY_RECORDS = tuple(
+    _versioned_v1_record(declaration)
+    for declaration in _V1_EDIT_AUTHORITY_DECLARATIONS
+)
+_VERSIONED_CAPABILITY_RECORDS_BY_KEY = {
+    (
+        record.identity_schema_version,
+        record.declaration.capability_id,
+        record.declaration.capability_contract_version,
+    ): record
+    for record in _VERSIONED_EDIT_AUTHORITY_CAPABILITY_RECORDS
+}
+if len(_VERSIONED_CAPABILITY_RECORDS_BY_KEY) != len(
+    _VERSIONED_EDIT_AUTHORITY_CAPABILITY_RECORDS
+):
+    raise RuntimeError("Versioned Edit Authority capability key is duplicated.")
+
+_CURRENT_CAPABILITY_RECORDS_BY_DISCRIMINATOR = {
+    (
+        record.declaration.schema_version,
+        record.declaration.projection_kind,
+    ): record
+    for record in _VERSIONED_EDIT_AUTHORITY_CAPABILITY_RECORDS
+}
+_CURRENT_CAPABILITY_RECORDS_BY_ID = {
+    record.declaration.capability_id: record
+    for record in _VERSIONED_EDIT_AUTHORITY_CAPABILITY_RECORDS
+}
+if len(_CURRENT_CAPABILITY_RECORDS_BY_DISCRIMINATOR) != len(
+    _VERSIONED_EDIT_AUTHORITY_CAPABILITY_RECORDS
+):
+    raise RuntimeError("Edit Authority capability discriminator is duplicated.")
+if len(_CURRENT_CAPABILITY_RECORDS_BY_ID) != len(
+    _VERSIONED_EDIT_AUTHORITY_CAPABILITY_RECORDS
+):
+    raise RuntimeError("Edit Authority capability_id is duplicated.")
+
+EDIT_AUTHORITY_CAPABILITIES = tuple(
+    record.declaration
+    for record in _CURRENT_CAPABILITY_RECORDS_BY_DISCRIMINATOR.values()
+)
+
+
+def _validate_versioned_record(
+    record: VersionedEditAuthorityCapabilityRecord,
+) -> None:
+    if (
+        record.identity_builder_id != _V1_IDENTITY_BUILDER_ID
+        or record.canonical_serialization_id
+        != _V1_CANONICAL_SERIALIZATION_ID
+        or record.identity_builder is not _build_approval_identity_v1
+        or record.identity_hasher is not _approval_identity_hash_v1
+        or not isinstance(record.action_projection_id, str)
+        or not record.action_projection_id
+        or not callable(record.action_scope_builder)
+    ):
+        raise InvalidEditAuthorityApprovalIdentityError(
+            "Edit Authority historical identity reconstruction contract is "
+            "not supported."
+        )
+
+
+def _resolve_current_request_record(
+    request_payload: Mapping[str, Any],
+) -> VersionedEditAuthorityCapabilityRecord:
+    declaration = resolve_edit_authority_request_capability(request_payload)
+    record = _CURRENT_CAPABILITY_RECORDS_BY_DISCRIMINATOR[
+        (declaration.schema_version, declaration.projection_kind)
+    ]
+    if _CURRENT_CAPABILITY_RECORDS_BY_ID.get(declaration.capability_id) is not record:
+        raise InvalidEditAuthorityApprovalIdentityError(
+            "Edit Authority current capability indexes are inconsistent."
+        )
+    return record
+
+
+def _resolve_historical_versioned_record(
+    stored_identity: Mapping[str, Any],
+) -> VersionedEditAuthorityCapabilityRecord:
+    capability = _require_mapping(
+        stored_identity.get("capability"),
+        field_name="request_payload.approval_identity.capability",
+    )
+    key = (
+        stored_identity.get("identity_schema_version"),
+        capability.get("capability_id"),
+        capability.get("capability_contract_version"),
+    )
+    record = _VERSIONED_CAPABILITY_RECORDS_BY_KEY.get(key)
+    if record is None:
+        raise InvalidEditAuthorityApprovalIdentityError(
+            "Edit Authority historical capability version is not registered."
+        )
+    _validate_versioned_record(record)
+    return record
+
+
+def _validate_request_discriminator_for_record(
+    request_payload: Mapping[str, Any],
+    record: VersionedEditAuthorityCapabilityRecord,
+) -> None:
+    declaration = record.declaration
+    if (
+        request_payload.get("schema_version") != declaration.schema_version
+        or request_payload.get("projection_kind")
+        != declaration.projection_kind
+    ):
+        raise InvalidEditAuthorityApprovalIdentityError(
+            "Edit Authority Request discriminator does not match its "
+            "historical capability version."
+        )
+    proposal = _require_mapping(
+        request_payload.get("proposal"),
+        field_name="request_payload.proposal",
+    )
+    if (
+        declaration.proposal_schema_version is not None
+        and proposal.get("schema_version")
+        != declaration.proposal_schema_version
+    ):
+        raise InvalidEditAuthorityApprovalIdentityError(
+            "Edit Authority Request proposal does not match its historical "
+            "capability version."
+        )
+
+
+def build_edit_authority_approval_identity(
+    *,
+    request_payload: Mapping[str, Any],
+    feature_id: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Build the sole versioned identity for one supported approved action."""
+
+    if not isinstance(feature_id, str) or not feature_id:
+        raise InvalidEditAuthorityApprovalIdentityError(
+            "Edit Authority feature_id must be non-empty."
+        )
+    if not isinstance(run_id, str) or not run_id:
+        raise InvalidEditAuthorityApprovalIdentityError(
+            "Edit Authority run_id must be non-empty."
+        )
+    record = _resolve_current_request_record(request_payload)
+    _validate_versioned_record(record)
+    return record.identity_builder(
+        record,
+        request_payload,
+        feature_id,
+        run_id,
+    )
+
+
 def attach_edit_authority_approval_identity(
     *,
     request_payload: Mapping[str, Any],
@@ -1258,8 +1501,10 @@ def attach_edit_authority_approval_identity(
         feature_id=feature_id,
         run_id=run_id,
     )
+    record = _resolve_current_request_record(enriched)
+    _validate_versioned_record(record)
     enriched["approval_identity"] = identity
-    return enriched, _approval_identity_hash(identity)
+    return enriched, record.identity_hasher(identity)
 
 
 def validate_edit_authority_request_identity(
@@ -1301,28 +1546,34 @@ def validate_edit_authority_request_identity(
                 "Legacy Edit Authority Request hash mismatch."
             )
         return declaration, LEGACY_APPROVAL_IDENTITY_MODE, request_hash
-    declaration = resolve_edit_authority_request_capability(request_payload)
     identity_mapping = _require_mapping(
         stored_identity,
         field_name="request_payload.approval_identity",
     )
+    if allow_legacy:
+        record = _resolve_historical_versioned_record(identity_mapping)
+        _validate_request_discriminator_for_record(request_payload, record)
+    else:
+        record = _resolve_current_request_record(request_payload)
+        _validate_versioned_record(record)
     payload_without_identity = copy.deepcopy(dict(request_payload))
     payload_without_identity.pop("approval_identity", None)
-    expected_identity = build_edit_authority_approval_identity(
-        request_payload=payload_without_identity,
-        feature_id=str(request_artifact_payload.get("feature_id", "")),
-        run_id=str(request_artifact_payload.get("run_id", "")),
+    expected_identity = record.identity_builder(
+        record,
+        payload_without_identity,
+        str(request_artifact_payload.get("feature_id", "")),
+        str(request_artifact_payload.get("run_id", "")),
     )
     if dict(identity_mapping) != expected_identity:
         raise InvalidEditAuthorityApprovalIdentityError(
             "Edit Authority approval_identity does not match the approved action."
         )
-    expected_hash = _approval_identity_hash(expected_identity)
+    expected_hash = record.identity_hasher(expected_identity)
     if request_hash != expected_hash:
         raise InvalidEditAuthorityApprovalIdentityError(
             "Edit Authority Request Approval Identity hash mismatch."
         )
-    return declaration, VERSIONED_APPROVAL_IDENTITY_MODE, request_hash
+    return record.declaration, VERSIONED_APPROVAL_IDENTITY_MODE, request_hash
 
 
 def edit_authority_identity_sections(
@@ -1346,7 +1597,7 @@ def edit_authority_identity_sections(
     return {
         "identity_mode": identity_mode,
         "identity_schema_version": (
-            APPROVAL_IDENTITY_SCHEMA_VERSION
+            identity.get("identity_schema_version")
             if identity_mode == VERSIONED_APPROVAL_IDENTITY_MODE
             else None
         ),
@@ -1640,14 +1891,25 @@ def validate_edit_authority_approval_contract(
     identity_mode = approval_payload.get("approval_identity_mode")
     if identity_mode == VERSIONED_APPROVAL_IDENTITY_MODE:
         capability_id = approval_payload.get("capability_id")
-        declaration = _CAPABILITIES_BY_ID.get(capability_id)
-        if declaration is None:
-            raise InvalidEditAuthorityApprovalIdentityError(
-                "Edit Authority Approval capability_id is not supported."
+        if allow_legacy:
+            record = _VERSIONED_CAPABILITY_RECORDS_BY_KEY.get(
+                (
+                    approval_payload.get("approval_identity_schema_version"),
+                    capability_id,
+                    approval_payload.get("capability_contract_version"),
+                )
             )
+        else:
+            record = _CURRENT_CAPABILITY_RECORDS_BY_ID.get(capability_id)
+        if record is None:
+            raise InvalidEditAuthorityApprovalIdentityError(
+                "Edit Authority Approval capability version is not supported."
+            )
+        _validate_versioned_record(record)
+        declaration = record.declaration
         if (
             approval_payload.get("approval_identity_schema_version")
-            != APPROVAL_IDENTITY_SCHEMA_VERSION
+            != record.identity_schema_version
             or approval_payload.get("capability_contract_version")
             != declaration.capability_contract_version
             or approval_payload.get("authority_contract_version")

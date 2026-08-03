@@ -12,14 +12,33 @@ from src.mod_agent.edit_authority_capabilities import (
     EDIT_AUTHORITY_CAPABILITIES,
     UnsupportedEditAuthorityCapabilityError,
     attach_edit_authority_approval_identity,
+    edit_authority_identity_sections,
     require_edit_authority_public_operation,
     resolve_edit_authority_capability,
     resolve_edit_authority_request_capability,
+    validate_edit_authority_approval_contract,
     validate_edit_authority_request_identity,
 )
 
 
 _PROTOCOL_WRITES = ("workflow_checkpoint", "resume_report")
+
+
+def _replace_current_record(
+    monkeypatch: pytest.MonkeyPatch,
+    record: capabilities_module.VersionedEditAuthorityCapabilityRecord,
+) -> None:
+    declaration = record.declaration
+    monkeypatch.setitem(
+        capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_DISCRIMINATOR,
+        (declaration.schema_version, declaration.projection_kind),
+        record,
+    )
+    monkeypatch.setitem(
+        capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_ID,
+        declaration.capability_id,
+        record,
+    )
 
 
 def _generic_identity_request_payload() -> dict[str, object]:
@@ -149,14 +168,16 @@ def test_v1_identity_changes_with_public_capability_contract(
         run_id="run_identity",
     )
     discriminator = ("stagger_edit_authority_request_v1", None)
+    current_record = capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_DISCRIMINATOR[
+        discriminator
+    ]
     changed_declaration = replace(
-        capabilities_module._CAPABILITIES_BY_DISCRIMINATOR[discriminator],
+        current_record.declaration,
         **declaration_change,
     )
-    monkeypatch.setitem(
-        capabilities_module._CAPABILITIES_BY_DISCRIMINATOR,
-        discriminator,
-        changed_declaration,
+    _replace_current_record(
+        monkeypatch,
+        replace(current_record, declaration=changed_declaration),
     )
 
     _, changed_hash = attach_edit_authority_approval_identity(
@@ -177,15 +198,21 @@ def test_v1_identity_changes_with_required_freshness_policy(
         run_id="run_identity",
     )
     discriminator = ("stagger_edit_authority_request_v1", None)
-    declaration = capabilities_module._CAPABILITIES_BY_DISCRIMINATOR[
+    current_record = capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_DISCRIMINATOR[
         discriminator
     ]
+    declaration = current_record.declaration
     inputs = list(declaration.approval_input_bindings)
     inputs[0] = replace(inputs[0], required_freshness="registered_exact")
-    monkeypatch.setitem(
-        capabilities_module._CAPABILITIES_BY_DISCRIMINATOR,
-        discriminator,
-        replace(declaration, approval_input_bindings=tuple(inputs)),
+    _replace_current_record(
+        monkeypatch,
+        replace(
+            current_record,
+            declaration=replace(
+                declaration,
+                approval_input_bindings=tuple(inputs),
+            ),
+        ),
     )
 
     _, changed_hash = attach_edit_authority_approval_identity(
@@ -213,13 +240,19 @@ def test_legacy_v0_read_uses_frozen_capability_not_current_v1_lookup(
         "request_payload": request_payload,
     }
     discriminator = ("stagger_edit_authority_request_v1", None)
-    current = capabilities_module._CAPABILITIES_BY_DISCRIMINATOR[
+    current_record = capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_DISCRIMINATOR[
         discriminator
     ]
-    monkeypatch.setitem(
-        capabilities_module._CAPABILITIES_BY_DISCRIMINATOR,
-        discriminator,
-        replace(current, allowed_actions=("future_v1_action",)),
+    current = current_record.declaration
+    _replace_current_record(
+        monkeypatch,
+        replace(
+            current_record,
+            declaration=replace(
+                current,
+                allowed_actions=("future_v1_action",),
+            ),
+        ),
     )
 
     declaration, identity_mode, validated_hash = (
@@ -250,6 +283,222 @@ def test_legacy_v0_read_uses_frozen_capability_not_current_v1_lookup(
     assert rebuilt_generic.allowed_actions != (
         "future_v1_action",
     )
+
+
+def test_historical_v1_identity_survives_current_version_and_projection_advance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _generic_identity_request_payload()
+    old_enriched, old_hash = attach_edit_authority_approval_identity(
+        request_payload=payload,
+        feature_id="feature_identity",
+        run_id="run_identity",
+    )
+    old_artifact = {
+        "feature_id": "feature_identity",
+        "run_id": "run_identity",
+        "request_hash": old_hash,
+        "request_payload": old_enriched,
+    }
+    old_identity = copy.deepcopy(old_enriched["approval_identity"])
+    old_record = capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_ID[
+        "stagger_edit_authority_generic"
+    ]
+    old_declaration = old_record.declaration
+    old_approval = {
+        "approval_identity_mode": "versioned_v1",
+        "approval_identity_schema_version": (
+            old_record.identity_schema_version
+        ),
+        "capability_id": old_declaration.capability_id,
+        "capability_contract_version": (
+            old_declaration.capability_contract_version
+        ),
+        "authority_contract_version": (
+            old_declaration.authority_contract_version
+        ),
+        "allowed_actions": list(old_declaration.allowed_actions),
+        "forbidden_actions": list(old_declaration.forbidden_actions),
+    }
+
+    def v2_action_scope(
+        _request_payload: object,
+        declaration: object,
+    ) -> dict[str, object]:
+        return {
+            "identity_contract_revision": "v2",
+            "capability_id": declaration.capability_id,
+        }
+
+    v2_declaration = replace(
+        old_declaration,
+        capability_contract_version="stagger_edit_authority_capability_v2",
+    )
+    v2_record = replace(
+        old_record,
+        declaration=v2_declaration,
+        action_projection_id="stagger_edit_authority_action_scope_v2",
+        action_scope_builder=v2_action_scope,
+    )
+    monkeypatch.setitem(
+        capabilities_module._VERSIONED_CAPABILITY_RECORDS_BY_KEY,
+        (
+            v2_record.identity_schema_version,
+            v2_declaration.capability_id,
+            v2_declaration.capability_contract_version,
+        ),
+        v2_record,
+    )
+    _replace_current_record(monkeypatch, v2_record)
+    monkeypatch.setattr(
+        capabilities_module,
+        "_build_action_scope_v1",
+        lambda _payload, _declaration: {"future_current_helper": True},
+    )
+    monkeypatch.setattr(
+        capabilities_module,
+        "APPROVAL_IDENTITY_SCHEMA_VERSION",
+        "edit_authority_approval_identity_future",
+    )
+
+    historical, mode, validated_hash = validate_edit_authority_request_identity(
+        old_artifact,
+        allow_legacy=True,
+    )
+    assert historical is old_declaration
+    assert mode == "versioned_v1"
+    assert validated_hash == old_hash
+    assert old_enriched["approval_identity"] == old_identity
+    assert validate_edit_authority_approval_contract(
+        old_approval,
+        allow_legacy=True,
+    ) is old_declaration
+    assert edit_authority_identity_sections(
+        old_artifact,
+        allow_legacy=True,
+    )["identity_schema_version"] == "edit_authority_approval_identity_v1"
+
+    with pytest.raises(
+        capabilities_module.InvalidEditAuthorityApprovalIdentityError,
+        match="does not match the approved action",
+    ):
+        validate_edit_authority_request_identity(
+            old_artifact,
+            allow_legacy=False,
+        )
+    with pytest.raises(
+        capabilities_module.InvalidEditAuthorityApprovalIdentityError,
+        match="does not match its declaration",
+    ):
+        validate_edit_authority_approval_contract(
+            old_approval,
+            allow_legacy=False,
+        )
+
+    new_enriched, new_hash = attach_edit_authority_approval_identity(
+        request_payload=payload,
+        feature_id="feature_identity",
+        run_id="run_identity",
+    )
+    assert new_hash != old_hash
+    assert new_enriched["approval_identity"]["capability"][
+        "capability_contract_version"
+    ] == "stagger_edit_authority_capability_v2"
+    assert new_enriched["approval_identity"]["action_scope"] == {
+        "identity_contract_revision": "v2",
+        "capability_id": "stagger_edit_authority_generic",
+    }
+    new_artifact = {
+        "feature_id": "feature_identity",
+        "run_id": "run_identity",
+        "request_hash": new_hash,
+        "request_payload": new_enriched,
+    }
+    assert validate_edit_authority_request_identity(
+        new_artifact,
+        allow_legacy=False,
+    )[0] is v2_declaration
+
+
+def test_historical_v1_unknown_reconstruction_builder_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _generic_identity_request_payload()
+    enriched, _ = attach_edit_authority_approval_identity(
+        request_payload=payload,
+        feature_id="feature_identity",
+        run_id="run_identity",
+    )
+    identity = copy.deepcopy(enriched["approval_identity"])
+    identity["capability"][
+        "capability_contract_version"
+    ] = "stagger_edit_authority_capability_unknown_builder"
+    enriched["approval_identity"] = identity
+    artifact = {
+        "feature_id": "feature_identity",
+        "run_id": "run_identity",
+        "request_hash": capabilities_module._approval_identity_hash(identity),
+        "request_payload": enriched,
+    }
+    old_record = capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_ID[
+        "stagger_edit_authority_generic"
+    ]
+    unknown_declaration = replace(
+        old_record.declaration,
+        capability_contract_version=(
+            "stagger_edit_authority_capability_unknown_builder"
+        ),
+    )
+    unknown_record = replace(
+        old_record,
+        declaration=unknown_declaration,
+        identity_builder_id="unknown_identity_builder",
+    )
+    monkeypatch.setitem(
+        capabilities_module._VERSIONED_CAPABILITY_RECORDS_BY_KEY,
+        (
+            unknown_record.identity_schema_version,
+            unknown_declaration.capability_id,
+            unknown_declaration.capability_contract_version,
+        ),
+        unknown_record,
+    )
+
+    with pytest.raises(
+        capabilities_module.InvalidEditAuthorityApprovalIdentityError,
+        match="reconstruction contract is not supported",
+    ):
+        validate_edit_authority_request_identity(artifact, allow_legacy=True)
+
+
+def test_current_capability_indexes_cannot_mix_versions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_record = capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_ID[
+        "stagger_edit_authority_generic"
+    ]
+    mixed_record = replace(
+        old_record,
+        declaration=replace(
+            old_record.declaration,
+            capability_contract_version="stagger_edit_authority_capability_v2",
+        ),
+    )
+    monkeypatch.setitem(
+        capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_ID,
+        old_record.declaration.capability_id,
+        mixed_record,
+    )
+
+    with pytest.raises(
+        capabilities_module.InvalidEditAuthorityApprovalIdentityError,
+        match="current capability indexes are inconsistent",
+    ):
+        attach_edit_authority_approval_identity(
+            request_payload=_generic_identity_request_payload(),
+            feature_id="feature_identity",
+            run_id="run_identity",
+        )
 
 
 @pytest.mark.parametrize(
@@ -349,10 +598,18 @@ def test_all_five_identity_vectors_lock_role_sorted_exact_inputs(
     }
     if declaration.projection_kind is not None:
         request_payload["projection_kind"] = declaration.projection_kind
-    monkeypatch.setattr(
-        capabilities_module,
-        "_build_action_scope",
-        lambda _payload, resolved: {"vector": resolved.capability_id},
+    record = capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_ID[
+        declaration.capability_id
+    ]
+    _replace_current_record(
+        monkeypatch,
+        replace(
+            record,
+            action_projection_id="test_vector_projection",
+            action_scope_builder=(
+                lambda _payload, resolved: {"vector": resolved.capability_id}
+            ),
+        ),
     )
 
     enriched, request_hash = attach_edit_authority_approval_identity(

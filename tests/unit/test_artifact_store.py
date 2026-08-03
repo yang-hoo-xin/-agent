@@ -5,11 +5,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 import src.mod_agent.artifacts.store as artifact_store_module
+import src.mod_agent.edit_authority_capabilities as capabilities_module
 from src.mod_agent.artifacts import (
     ArtifactRef,
     ArtifactStore,
@@ -225,8 +227,276 @@ def _legacy_edit_authority_request_payload() -> dict[str, object]:
     }
 
 
+def _generic_versioned_request_for_refs(
+    *,
+    feature_id: str,
+    run_id: str,
+    refs: dict[str, ArtifactRef],
+) -> tuple[dict[str, object], str]:
+    def revision(artifact_type: str) -> dict[str, str]:
+        ref = refs[artifact_type]
+        return {
+            "feature_id": feature_id,
+            "path": ref.path,
+            "artifact_hash": ref.artifact_hash,
+        }
+
+    return attach_edit_authority_approval_identity(
+        request_payload={
+            "schema_version": "stagger_edit_authority_request_v1",
+            "proposal": {
+                "feature_spec_revision": revision("feature_spec"),
+                "runtime_evidence_revision": revision("runtime_evidence"),
+                "implementation_plan_revision": revision("implementation_plan"),
+                "patch_proposal_revision": revision("patch_proposal"),
+                "ownership_review": {
+                    "stored_runtime_failure_ownership": {
+                        "owner": "observation"
+                    },
+                    "replayed_runtime_failure_ownership": {
+                        "owner": "product_behavior"
+                    },
+                    "reclassification_approval_required": True,
+                    "runtime_evidence_mutation_allowed": False,
+                },
+                "diagnosed_responsibility_anchor": "runtime_result",
+                "current_source": {
+                    "canonical_target_path": (
+                        "Patches/HitFeedbackBehaviorPatch.cs"
+                    ),
+                    "sha256": "5" * 64,
+                    "target_span": {"start_line": 979, "end_line": 984},
+                },
+                "proposed_target_symbol": "TrySpawnStaggerYellowX",
+                "proposed_exact_span": {
+                    "start_line": 979,
+                    "end_line": 984,
+                },
+                "proposed_operation": (
+                    "replace_hud_recttransform_acquisition"
+                ),
+                "existing_binding_gap": "none",
+                "current_edit_authority": "edit_binding_004",
+                "approval_scope": ["create_exact_binding"],
+                "root_cause_status": "confirmed",
+                "unresolved_root_causes": [],
+            },
+            "source_root": "C:/source",
+            "projected_ids": {
+                "binding_id": "edit_binding_004",
+                "change_id": "chg_004",
+                "evidence_id": "stagger_repair_001",
+            },
+        },
+        feature_id=feature_id,
+        run_id=run_id,
+    )
+
+
+def _advance_generic_capability_to_v2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> capabilities_module.VersionedEditAuthorityCapabilityRecord:
+    old_record = capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_ID[
+        "stagger_edit_authority_generic"
+    ]
+    v2_declaration = replace(
+        old_record.declaration,
+        capability_contract_version="stagger_edit_authority_capability_v2",
+    )
+    v2_record = replace(
+        old_record,
+        declaration=v2_declaration,
+        action_projection_id="stagger_edit_authority_action_scope_v2",
+        action_scope_builder=lambda _payload, _declaration: {
+            "identity_contract_revision": "v2"
+        },
+    )
+    monkeypatch.setitem(
+        capabilities_module._VERSIONED_CAPABILITY_RECORDS_BY_KEY,
+        (
+            v2_record.identity_schema_version,
+            v2_declaration.capability_id,
+            v2_declaration.capability_contract_version,
+        ),
+        v2_record,
+    )
+    monkeypatch.setitem(
+        capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_DISCRIMINATOR,
+        (v2_declaration.schema_version, v2_declaration.projection_kind),
+        v2_record,
+    )
+    monkeypatch.setitem(
+        capabilities_module._CURRENT_CAPABILITY_RECORDS_BY_ID,
+        v2_declaration.capability_id,
+        v2_record,
+    )
+    return v2_record
+
+
+def test_historical_v1_request_and_descendant_remain_readable_after_version_advance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    statuses = frozenset({"success"})
+    simple_contracts = [
+        ArtifactContract(
+            artifact_type=artifact_type,
+            schema_version="1.0",
+            required_fields=frozenset({"node_name", "stage", "message"}),
+            producer_stage=artifact_type,
+            consumer_stages=frozenset({"edit_authority_request"}),
+            allowed_statuses=statuses,
+        )
+        for artifact_type in (
+            "feature_spec",
+            "runtime_evidence",
+            "implementation_plan",
+            "patch_proposal",
+        )
+    ]
+    child_contract = ArtifactContract(
+        artifact_type="historical_identity_child",
+        schema_version="1.0",
+        required_fields=frozenset({"node_name", "stage", "message"}),
+        producer_stage="historical_identity_child",
+        consumer_stages=frozenset(),
+        allowed_statuses=statuses,
+        required_upstream_artifacts=frozenset({"edit_authority_request"}),
+        required_exact_revision_upstream_artifacts=frozenset(
+            {"edit_authority_request"}
+        ),
+    )
+    default_registry = ArtifactTypeRegistry()
+    registry = ArtifactTypeRegistry(
+        contracts=[
+            *simple_contracts,
+            default_registry.get("edit_authority_request"),
+            child_contract,
+        ]
+    )
+    store = ArtifactStore(tmp_path / "artifacts", registry=registry)
+    feature_id = "feature_historical_v1"
+    upstream_refs: dict[str, ArtifactRef] = {}
+    for artifact_type in (
+        "feature_spec",
+        "runtime_evidence",
+        "implementation_plan",
+        "patch_proposal",
+    ):
+        payload: dict[str, object] = {
+            "node_name": artifact_type,
+            "stage": artifact_type,
+            "message": artifact_type,
+        }
+        if artifact_type == "implementation_plan":
+            payload["blocking"] = True
+        upstream_refs[artifact_type] = store.write(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            payload=payload,
+        )
+    request_payload, request_hash = _generic_versioned_request_for_refs(
+        feature_id=feature_id,
+        run_id="run_historical_v1",
+        refs=upstream_refs,
+    )
+    request_artifact_payload = {
+        "node_name": "request_stagger_edit_authority",
+        "stage": "edit_authority_request",
+        "message": "Historical v1 Request.",
+        "status": "pending_human_approval",
+        "feature_id": feature_id,
+        "run_id": "run_historical_v1",
+        "request_hash": request_hash,
+        "request_payload": request_payload,
+        "authority_granted": False,
+        "registry_mutation_allowed": False,
+        "repair_planner_allowed": False,
+        "source_patch_allowed": False,
+    }
+    request_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        payload=request_artifact_payload,
+        upstream_refs=list(upstream_refs.values()),
+        exact_revision_upstream_types=set(upstream_refs),
+    )
+    child_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="historical_identity_child",
+        payload={
+            "node_name": "historical_identity_child",
+            "stage": "historical_identity_child",
+            "message": "Exact historical identity lineage.",
+        },
+        upstream_refs=[request_ref],
+        exact_revision_upstream_types={"edit_authority_request"},
+    )
+    request_bytes = Path(request_ref.path).read_bytes()
+
+    _advance_generic_capability_to_v2(monkeypatch)
+    before_old_request_revisions = len(
+        store.list_feature_artifact_revisions(
+            feature_id,
+            "edit_authority_request",
+        )
+    )
+    blocked_old_write = store.write_with_result(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        payload=request_artifact_payload,
+        upstream_refs=list(upstream_refs.values()),
+        exact_revision_upstream_types=set(upstream_refs),
+    )
+    assert blocked_old_write.outcome == "blocked_before_commit"
+    assert blocked_old_write.commit_started is False
+    assert len(
+        store.list_feature_artifact_revisions(
+            feature_id,
+            "edit_authority_request",
+        )
+    ) == before_old_request_revisions
+    pending_root = store.root / "features" / feature_id / "p"
+    assert not pending_root.exists() or list(pending_root.rglob("*.json")) == []
+    v2_request_payload, v2_request_hash = _generic_versioned_request_for_refs(
+        feature_id=feature_id,
+        run_id="run_current_v2",
+        refs=upstream_refs,
+    )
+    v2_request_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="edit_authority_request",
+        payload={
+            "node_name": "request_stagger_edit_authority",
+            "stage": "edit_authority_request",
+            "message": "Current v2 Request.",
+            "status": "pending_human_approval",
+            "feature_id": feature_id,
+            "run_id": "run_current_v2",
+            "request_hash": v2_request_hash,
+            "request_payload": v2_request_payload,
+            "authority_granted": False,
+            "registry_mutation_allowed": False,
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        },
+        upstream_refs=list(upstream_refs.values()),
+        exact_revision_upstream_types=set(upstream_refs),
+    )
+
+    assert store.read(request_ref)["artifact_hash"] == request_ref.artifact_hash
+    assert store.read(v2_request_ref)["artifact_hash"] == (
+        v2_request_ref.artifact_hash
+    )
+    assert Path(request_ref.path).read_bytes() == request_bytes
+    freshness = store.check_freshness(child_ref)
+    assert freshness.is_fresh is True
+    assert freshness.stale_reasons == []
+
+
 def test_request_bound_approval_requires_exact_request_and_resume_refs(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     statuses = frozenset({"success"})
     simple_contracts = [
@@ -274,54 +544,10 @@ def test_request_bound_approval_requires_exact_request_and_resume_refs(
             artifact_type=artifact_type,
             payload=payload,
         )
-    def revision(artifact_type: str) -> dict[str, str]:
-        ref = upstream_refs[artifact_type]
-        return {
-            "feature_id": "feature_001",
-            "path": ref.path,
-            "artifact_hash": ref.artifact_hash,
-        }
-
-    request_payload, request_hash = attach_edit_authority_approval_identity(
-        request_payload={
-        "schema_version": "stagger_edit_authority_request_v1",
-        "proposal": {
-            "feature_spec_revision": revision("feature_spec"),
-            "runtime_evidence_revision": revision("runtime_evidence"),
-            "implementation_plan_revision": revision("implementation_plan"),
-            "patch_proposal_revision": revision("patch_proposal"),
-            "ownership_review": {
-                "stored_runtime_failure_ownership": {"owner": "observation"},
-                "replayed_runtime_failure_ownership": {
-                    "owner": "product_behavior"
-                },
-                "reclassification_approval_required": True,
-                "runtime_evidence_mutation_allowed": False,
-            },
-            "diagnosed_responsibility_anchor": "runtime_result",
-            "current_source": {
-                "canonical_target_path": "Patches/HitFeedbackBehaviorPatch.cs",
-                "sha256": "5" * 64,
-                "target_span": {"start_line": 979, "end_line": 984},
-            },
-            "proposed_target_symbol": "TrySpawnStaggerYellowX",
-            "proposed_exact_span": {"start_line": 979, "end_line": 984},
-            "proposed_operation": "replace_hud_recttransform_acquisition",
-            "existing_binding_gap": "none",
-            "current_edit_authority": "edit_binding_004",
-            "approval_scope": ["create_exact_binding"],
-            "root_cause_status": "confirmed",
-            "unresolved_root_causes": [],
-        },
-        "source_root": str(tmp_path),
-        "projected_ids": {
-            "binding_id": "edit_binding_004",
-            "change_id": "chg_004",
-            "evidence_id": "stagger_repair_001",
-        },
-        },
+    request_payload, request_hash = _generic_versioned_request_for_refs(
         feature_id="feature_001",
         run_id="run_001",
+        refs=upstream_refs,
     )
     request_artifact_payload = {
             "node_name": "request_stagger_edit_authority",
@@ -554,6 +780,13 @@ def test_request_bound_approval_requires_exact_request_and_resume_refs(
     )
 
     assert store.read(approval_ref)["data"]["request_hash"] == request_hash
+    request_bytes = Path(request_ref.path).read_bytes()
+    approval_bytes = Path(approval_ref.path).read_bytes()
+    _advance_generic_capability_to_v2(monkeypatch)
+    assert store.read(request_ref)["data"]["request_hash"] == request_hash
+    assert store.read(approval_ref)["data"]["request_hash"] == request_hash
+    assert Path(request_ref.path).read_bytes() == request_bytes
+    assert Path(approval_ref.path).read_bytes() == approval_bytes
 
 
 def test_store_rejects_new_legacy_edit_authority_approval_write(
