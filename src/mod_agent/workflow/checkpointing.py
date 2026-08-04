@@ -782,6 +782,197 @@ class WorkflowCheckpointStore:
             (),
         )
 
+    def preflight_runtime_evidence_consolidation(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_report_ref: ArtifactRef,
+        prior_runtime_evidence_ref: ArtifactRef,
+        resume_id: str,
+        approved_by: str,
+    ) -> tuple[ResumeDecision, dict[str, Any], tuple[ArtifactRef, ...]]:
+        """Validate one exact no-Runtime RuntimeEvidence consolidation."""
+
+        checkpoint_envelope = self.artifact_store.read(checkpoint_ref)
+        checkpoint = checkpoint_envelope["data"]
+        blockers = self._checkpoint_lineage_blockers(
+            checkpoint_ref,
+            checkpoint_envelope,
+            allow_prior_runtime_state=True,
+            require_current_build_output=False,
+        )
+        checkpoint_freshness = self._checkpoint_freshness(
+            checkpoint_ref,
+            checkpoint_envelope,
+        )
+        if not checkpoint_freshness.is_fresh:
+            blockers.append(
+                {
+                    "code": "RUNTIME_CONSOLIDATION_CHECKPOINT_STALE",
+                    "message": "RuntimeEvidence consolidation checkpoint is stale.",
+                }
+            )
+
+        report_envelope = self.artifact_store.read(resume_report_ref)
+        report = report_envelope["data"]
+        report_upstreams = report_envelope.get("inputs", {}).get(
+            "upstream_artifacts",
+            [],
+        )
+        restored_state = (report.get("applied_updates") or {}).get(
+            "restored_state"
+        )
+        if (
+            resume_report_ref.feature_id != checkpoint_ref.feature_id
+            or report.get("checkpoint_id") != checkpoint.get("checkpoint_id")
+            or report.get("run_id") != checkpoint.get("run_id")
+            or report.get("resume_stage") != checkpoint.get("checkpoint_stage")
+            or report.get("resume_id") != resume_id
+            or report.get("approved_by") != approved_by
+            or report.get("decision") != "approve"
+            or report.get("status") != "accepted"
+            or report.get("allowed") is not True
+            or restored_state != checkpoint.get("state_snapshot")
+            or not isinstance(report_upstreams, list)
+            or len(report_upstreams) != 1
+            or report_upstreams[0].get("artifact_type")
+            != "workflow_checkpoint"
+            or report_upstreams[0].get("path") != checkpoint_ref.path
+            or report_upstreams[0].get("artifact_hash")
+            != checkpoint_ref.artifact_hash
+        ):
+            blockers.append(
+                {
+                    "code": "RUNTIME_CONSOLIDATION_RESUME_REPORT_INVALID",
+                    "message": (
+                        "Accepted ResumeReport does not bind the exact Build "
+                        "checkpoint and approved resume identity."
+                    ),
+                }
+            )
+        report_freshness = self.artifact_store.check_freshness(
+            resume_report_ref
+        )
+        if not report_freshness.is_fresh:
+            blockers.append(
+                {
+                    "code": "RUNTIME_CONSOLIDATION_RESUME_REPORT_STALE",
+                    "message": "Accepted ResumeReport inputs are stale.",
+                }
+            )
+
+        runtime_envelope = self.artifact_store.read(
+            prior_runtime_evidence_ref
+        )
+        runtime = runtime_envelope["data"]
+        runtime_upstreams = runtime_envelope.get("inputs", {}).get(
+            "upstream_artifacts",
+            [],
+        )
+        snapshot = checkpoint.get("state_snapshot") or {}
+        snapshot_artifacts = snapshot.get("artifacts") or {}
+        snapshot_hashes = snapshot.get("artifact_hashes") or {}
+        runtime_upstreams_by_type = {
+            item.get("artifact_type"): item
+            for item in runtime_upstreams
+            if isinstance(item, dict)
+            and isinstance(item.get("artifact_type"), str)
+        }
+        expected_build_ref = {
+            "feature_id": checkpoint_ref.feature_id,
+            "artifact_type": "build_result",
+            "path": snapshot_artifacts.get("build_result"),
+            "artifact_hash": snapshot_hashes.get("build_result"),
+        }
+        if (
+            prior_runtime_evidence_ref.feature_id != checkpoint_ref.feature_id
+            or runtime.get("feature_id") != checkpoint_ref.feature_id
+            or runtime.get("run_id") != checkpoint.get("run_id")
+            or runtime.get("input_execution_mode")
+            != VERIFICATION_ONLY_INPUT_EXECUTION_MODE
+            or runtime.get("build_artifact_ref") != expected_build_ref
+            or runtime.get("build_artifact_hash")
+            != snapshot_hashes.get("build_result")
+            or "build_result" not in runtime_upstreams_by_type
+            or "feature_spec" not in runtime_upstreams_by_type
+            or runtime_upstreams_by_type["build_result"].get("path")
+            != snapshot_artifacts.get("build_result")
+            or runtime_upstreams_by_type["build_result"].get("artifact_hash")
+            != snapshot_hashes.get("build_result")
+            or runtime_upstreams_by_type["feature_spec"].get("path")
+            != snapshot_artifacts.get("feature_spec")
+            or runtime_upstreams_by_type["feature_spec"].get("artifact_hash")
+            != snapshot_hashes.get("feature_spec")
+        ):
+            blockers.append(
+                {
+                    "code": "RUNTIME_CONSOLIDATION_EVIDENCE_LINEAGE_INVALID",
+                    "message": (
+                        "Prior RuntimeEvidence does not bind the exact "
+                        "checkpoint FeatureSpec and BuildResult lineage."
+                    ),
+                }
+            )
+        runtime_freshness = self.artifact_store.check_freshness(
+            prior_runtime_evidence_ref
+        )
+        if not runtime_freshness.is_fresh:
+            blockers.append(
+                {
+                    "code": "RUNTIME_CONSOLIDATION_EVIDENCE_STALE",
+                    "message": "Prior RuntimeEvidence inputs are stale.",
+                }
+            )
+        latest_runtime = [
+            ref
+            for ref in self.artifact_store.list_feature_artifacts(
+                checkpoint_ref.feature_id
+            )
+            if ref.artifact_type == "runtime_evidence"
+        ]
+        if (
+            len(latest_runtime) != 1
+            or latest_runtime[0].artifact_hash
+            != prior_runtime_evidence_ref.artifact_hash
+        ):
+            blockers.append(
+                {
+                    "code": "RUNTIME_CONSOLIDATION_EVIDENCE_NOT_LATEST",
+                    "message": "Prior RuntimeEvidence is not the latest revision.",
+                }
+            )
+
+        if blockers:
+            return (
+                ResumeDecision(
+                    status="blocked",
+                    allowed=False,
+                    reason="RuntimeEvidence consolidation was blocked.",
+                    applied_updates={},
+                    blockers=tuple(blockers),
+                    stale_reasons=tuple(
+                        checkpoint_freshness.stale_reasons
+                        + report_freshness.stale_reasons
+                        + runtime_freshness.stale_reasons
+                    ),
+                ),
+                runtime,
+                (),
+            )
+        return (
+            ResumeDecision(
+                status="accepted",
+                allowed=True,
+                reason=(
+                    "Exact RuntimeEvidence predecessor is ready for one "
+                    "implementation-evidence consolidation."
+                ),
+                applied_updates=dict(report["applied_updates"]),
+            ),
+            runtime,
+            (),
+        )
+
     def _runtime_terminal_artifact_refs(
         self,
         runtime_evidence_ref: ArtifactRef,

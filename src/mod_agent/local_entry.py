@@ -80,9 +80,27 @@ from src.mod_agent.workflow import (
     preflight_verification_only_continuation,
     resumed_state_from_decision,
 )
+from src.mod_agent.action_identity import hash_canonical_value
+from src.mod_agent.artifact_semantics import (
+    ArtifactWriteIntent,
+    project_artifact_write_intent,
+)
 from src.mod_agent.workflow.graph import (
     _RuntimeEvidenceExecutionBoundaryError,
     _runtime_summary_from_payload,
+)
+from src.mod_agent.runtime_evidence_consolidation import (
+    logical_identity as consolidation_logical_identity,
+    project_operation_payload as project_runtime_evidence_consolidation_payload,
+    runtime_evidence_consolidation_child_refs,
+)
+from src.mod_agent.verification_operations import (
+    EVIDENCE_CONSOLIDATION_KIND,
+    VerificationOperationEnvelope,
+    VerificationOperationSpec,
+    project_verification_operation,
+    resolve_verification_operation,
+    validate_verification_operation_envelope,
 )
 
 
@@ -659,6 +677,22 @@ class _RuntimeTerminalHandoff:
     runtime_evidence: dict[str, Any]
     decision: ResumeDecision
     existing_terminal_refs: tuple[ArtifactRef, ...]
+
+
+@dataclass(frozen=True)
+class _RuntimeEvidenceConsolidationHandoff:
+    """Exact inputs and derived output for one no-Runtime consolidation."""
+
+    build_handoff: _RuntimeContinuationHandoff
+    resume_report_ref: ArtifactRef
+    prior_runtime_evidence_ref: ArtifactRef
+    evidence_pack_ref: ArtifactRef
+    decision: ResumeDecision
+    existing_child_refs: tuple[ArtifactRef, ...]
+    operation: VerificationOperationEnvelope
+    semantic_intent: ArtifactWriteIntent | None
+    derived_payload: Mapping[str, Any] | None
+    derived_payload_hash: str | None
 
 
 @dataclass(frozen=True)
@@ -4021,6 +4055,10 @@ def _artifact_logical_identity(ref: ArtifactRef) -> dict[str, str]:
     }
 
 
+def _artifact_ref_projection(ref: ArtifactRef) -> dict[str, str]:
+    return {**_artifact_logical_identity(ref), "path": ref.path}
+
+
 def _verification_only_runtime_terminal_identity(
     *,
     handoff: _RuntimeTerminalHandoff,
@@ -4273,6 +4311,238 @@ def _preflight_runtime_terminal_continuation(
     }
 
 
+def _load_runtime_evidence_consolidation_handoff(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    operation: VerificationOperationEnvelope,
+) -> _RuntimeEvidenceConsolidationHandoff:
+    """Read and validate one exact no-Runtime consolidation action."""
+
+    envelope = validate_verification_operation_envelope(operation)
+    declaration = resolve_verification_operation(envelope)
+    if declaration.operation_kind != EVIDENCE_CONSOLIDATION_KIND:
+        raise LocalEntryError("Verification operation is not evidence consolidation.")
+    protocol = envelope.protocol_binding
+    variant = envelope.variant_payload
+    if (
+        protocol.checkpoint_ref.feature_id != feature_id
+        or protocol.checkpoint_ref.path != str(Path(checkpoint_path).resolve())
+        or protocol.checkpoint_ref.artifact_hash != checkpoint_hash
+    ):
+        raise LocalEntryError("Verification operation checkpoint input changed.")
+    build_handoff = _load_runtime_continuation_handoff(
+        run_root=run_root,
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        checkpoint_path=checkpoint_path,
+        checkpoint_hash=checkpoint_hash,
+        resume_id=protocol.resume_id,
+        require_manifest=False,
+        allow_blocked_resume=True,
+        require_current_build_output=False,
+    )
+    store = build_handoff.artifact_store
+    exact_checkpoint_ref = _exact_runtime_terminal_revision_ref(
+        store,
+        feature_id=feature_id,
+        artifact_type="workflow_checkpoint",
+        path=checkpoint_path,
+        artifact_hash=checkpoint_hash,
+    )
+    if exact_checkpoint_ref != build_handoff.checkpoint_ref:
+        raise LocalEntryError(
+            "RuntimeEvidence consolidation checkpoint identity changed."
+        )
+    exact_refs = tuple(
+        _exact_runtime_terminal_revision_ref(
+            store,
+            feature_id=feature_id,
+            artifact_type=ref.artifact_type,
+            path=ref.path,
+            artifact_hash=ref.artifact_hash,
+        )
+        for ref in (
+            protocol.accepted_resume_report_ref,
+            variant.prior_runtime_evidence_ref,
+            variant.evidence_pack_ref,
+            variant.feature_spec_ref,
+            variant.build_result_ref,
+        )
+    )
+    (
+        resume_report_ref,
+        prior_runtime_ref,
+        evidence_pack_ref,
+        feature_spec_ref,
+        build_result_ref,
+    ) = exact_refs
+    if (
+        resume_report_ref != protocol.accepted_resume_report_ref
+        or prior_runtime_ref != variant.prior_runtime_evidence_ref
+        or evidence_pack_ref != variant.evidence_pack_ref
+        or feature_spec_ref != build_handoff.feature_spec_ref
+        or build_result_ref != build_handoff.build_ref
+    ):
+        raise LocalEntryError("Verification operation exact inputs changed.")
+    decision, prior_payload, _ = WorkflowCheckpointStore(
+        store
+    ).preflight_runtime_evidence_consolidation(
+        build_handoff.checkpoint_ref,
+        resume_report_ref=resume_report_ref,
+        prior_runtime_evidence_ref=prior_runtime_ref,
+        resume_id=protocol.resume_id,
+        approved_by=protocol.approved_by,
+    )
+    existing_child_refs = runtime_evidence_consolidation_child_refs(
+        store,
+        feature_id=feature_id,
+        prior_ref=prior_runtime_ref,
+        feature_adapter=str(variant.canonical_delta.get("feature_adapter") or ""),
+    )
+    derived_payload = None
+    semantic_intent = None
+    upstream_refs = (
+        build_handoff.build_ref,
+        build_handoff.feature_spec_ref,
+        prior_runtime_ref,
+        evidence_pack_ref,
+    )
+    if decision.allowed and not existing_child_refs:
+        derived_payload = project_runtime_evidence_consolidation_payload(
+            envelope,
+            store,
+        )
+        semantic_intent = project_artifact_write_intent(
+            reader=store,
+            feature_id=feature_id,
+            artifact_type="runtime_evidence",
+            payload=derived_payload,
+            status="blocked",
+            upstream_refs=upstream_refs,
+            exact_revision_upstream_types={"runtime_evidence", "evidence_pack"},
+            blockers=(),
+            trace_refs=(),
+            protocol_refs=(build_handoff.checkpoint_ref, resume_report_ref),
+            execution_file_bindings=variant.execution_file_bindings,
+        )
+    return _RuntimeEvidenceConsolidationHandoff(
+        build_handoff=build_handoff,
+        resume_report_ref=resume_report_ref,
+        prior_runtime_evidence_ref=prior_runtime_ref,
+        evidence_pack_ref=evidence_pack_ref,
+        decision=decision,
+        existing_child_refs=existing_child_refs,
+        operation=envelope,
+        semantic_intent=semantic_intent,
+        derived_payload=derived_payload,
+        derived_payload_hash=(
+            None
+            if derived_payload is None
+            else hash_canonical_value(derived_payload)
+        ),
+    )
+
+
+def _preflight_runtime_evidence_consolidation(
+    *,
+    verification_operation: VerificationOperationSpec,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Project one exact no-write implementation-evidence action."""
+
+    envelope = project_verification_operation(verification_operation)
+    handoff = _load_runtime_evidence_consolidation_handoff(
+        operation=envelope,
+        **kwargs,
+    )
+    variant = envelope.variant_payload
+    return {
+        "status": (
+            "READY_FOR_RUNTIME_EVIDENCE_CONSOLIDATION"
+            if handoff.decision.allowed and not handoff.existing_child_refs
+            else "BLOCKED"
+        ),
+        "command": "preflight-verification-operation",
+        "writes_performed": False,
+        "graph_invoked": False,
+        "checkpoint_consumed": True,
+        "resume_report_created": False,
+        "runtime_evidence_created": False,
+        "runtime_factory_invoked": False,
+        "process_launched": False,
+        "dll_copied": False,
+        "manifest_required": False,
+        "identity": {
+            "run_id": handoff.build_handoff.checkpoint["run_id"],
+            "request_id": handoff.build_handoff.checkpoint["request_id"],
+            "feature_id": envelope.protocol_binding.checkpoint_ref.feature_id,
+        },
+        "verification_operation": envelope,
+        "checkpoint": _artifact_ref_projection(
+            envelope.protocol_binding.checkpoint_ref
+        ),
+        "accepted_resume_report": _artifact_ref_projection(
+            envelope.protocol_binding.accepted_resume_report_ref
+        ),
+        "prior_runtime_evidence": _artifact_ref_projection(
+            variant.prior_runtime_evidence_ref
+        ),
+        "evidence_pack": _artifact_ref_projection(variant.evidence_pack_ref),
+        "canonical_delta": dict(variant.canonical_delta),
+        "canonical_delta_hash": hash_canonical_value(variant.canonical_delta),
+        "execution_file_bindings": [
+            {
+                "role": item.role,
+                "absolute_path": item.absolute_path,
+                "content_sha256": item.content_sha256,
+                "logical_target_path": item.logical_target_path,
+            }
+            for item in variant.execution_file_bindings
+        ],
+        "approval_identity": dict(envelope.approval_identity),
+        "approval_identity_hash": envelope.approval_identity_hash,
+        "artifact_write_intent": (
+            None
+            if handoff.semantic_intent is None
+            else {
+                "schema_version": handoff.semantic_intent.schema_version,
+                "semantic_binding_key": (
+                    handoff.semantic_intent.semantic_binding_key
+                ),
+                "semantic_binding_version": (
+                    handoff.semantic_intent.semantic_binding_version
+                ),
+                "expected_payload_hash": (
+                    handoff.semantic_intent.expected_payload_hash
+                ),
+                "expected_artifact_hash": (
+                    handoff.semantic_intent.expected_artifact_hash
+                ),
+                "commit_conflict_key_hash": (
+                    handoff.semantic_intent.commit_conflict_key_hash
+                ),
+            }
+        ),
+        "runtime_evidence_consolidation_identity": dict(
+            envelope.approval_identity
+        ),
+        "runtime_evidence_consolidation_identity_hash": envelope.approval_identity_hash,
+        "derived_runtime_evidence_payload_hash": handoff.derived_payload_hash,
+        "existing_child_refs": [
+            _artifact_ref_projection(ref) for ref in handoff.existing_child_refs
+        ],
+        "decision": handoff.decision.to_dict(),
+        "blockers": list(handoff.decision.blockers),
+        "new_build_performed": False,
+        "new_runtime_performed": False,
+        "product_source_modified": False,
+    }
+
+
 def _verification_only_runtime_resume_payload(
     *,
     handoff: _RuntimeContinuationHandoff,
@@ -4411,6 +4681,7 @@ def preflight_local_runtime(
     injected_runtime_admission: Mapping[str, Any] | None = None,
     runtime_evidence_only: bool = False,
     runtime_terminalization_only: bool = False,
+    verification_operation: VerificationOperationSpec | None = None,
     accepted_resume_report_path: str | Path | None = None,
     accepted_resume_report_hash: str | None = None,
     runtime_evidence_path: str | Path | None = None,
@@ -4418,6 +4689,36 @@ def preflight_local_runtime(
 ) -> dict[str, Any]:
     """Read-validate one Runtime continuation without writing or entering graph."""
 
+    if verification_operation is not None:
+        if (
+            runtime_evidence_only
+            or runtime_terminalization_only
+            or recover_accepted_resume
+            or retry_runtime_observation
+            or injected_runtime_admission is not None
+            or runtime_output_root is not None
+            or runtime_plugin_destination is not None
+            or settings_path is not None
+        ):
+            raise LocalEntryError(
+                "Typed verification operation cannot mix with legacy Runtime scope."
+            )
+        protocol = verification_operation.protocol_binding
+        if resume_id not in {None, protocol.resume_id} or approved_by not in {
+            None,
+            protocol.approved_by,
+        }:
+            raise LocalEntryError(
+                "Typed verification operation protocol identity changed."
+            )
+        return _preflight_runtime_evidence_consolidation(
+            verification_operation=verification_operation,
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+        )
     if runtime_terminalization_only:
         if (
             runtime_evidence_only
@@ -5543,6 +5844,228 @@ def _execute_runtime_evidence_only_continuation(
     )
 
 
+def _runtime_evidence_consolidation_public_result(
+    *,
+    status: str,
+    failure_stage: str | None,
+    preflight: Mapping[str, Any] | None,
+    runtime_evidence: Mapping[str, Any] | None = None,
+    runtime_summary: Mapping[str, Any] | None = None,
+    blockers: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    selected = dict(preflight or {})
+    summary = dict(runtime_summary or {})
+    return {
+        "status": status,
+        "failure_stage": failure_stage,
+        "feature_id": (selected.get("identity") or {}).get("feature_id"),
+        "run_id": (selected.get("identity") or {}).get("run_id"),
+        "request_id": (selected.get("identity") or {}).get("request_id"),
+        "resume_id": (
+            selected.get("runtime_evidence_consolidation_identity") or {}
+        ).get("protocol_binding", {}).get("resume_id"),
+        "runtime_evidence_consolidation_identity": selected.get(
+            "runtime_evidence_consolidation_identity"
+        ),
+        "runtime_evidence_consolidation_identity_hash": selected.get(
+            "runtime_evidence_consolidation_identity_hash"
+        ),
+        "canonical_delta_hash": selected.get("canonical_delta_hash"),
+        "derived_runtime_evidence_payload_hash": selected.get(
+            "derived_runtime_evidence_payload_hash"
+        ),
+        "runtime_evidence_consolidation_preflight": selected or None,
+        "runtime_evidence": (
+            None if runtime_evidence is None else dict(runtime_evidence)
+        ),
+        "domain_result": {
+            "criterion_id": (selected.get("canonical_delta") or {}).get(
+                "criterion_id"
+            ),
+            "before": (selected.get("canonical_delta") or {}).get("before"),
+            "after": (selected.get("canonical_delta") or {}).get("after"),
+            "acceptance_status": summary.get("acceptance_status"),
+            "acceptance_verified": summary.get("acceptance_verified"),
+            "claims_real_runtime_success": summary.get(
+                "claims_real_runtime_success"
+            ),
+        },
+        "new_build_performed": False,
+        "new_runtime_performed": False,
+        "product_source_modified": False,
+        "runtime_factory_invocation_count": 0,
+        "automatic_retry_count": 0,
+        "recovery_performed": False,
+        "presentation_written": False,
+        "blockers": list(blockers or ()),
+    }
+
+
+def _execute_runtime_evidence_consolidation(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    operation: VerificationOperationEnvelope,
+    expected_identity_hash: str | None,
+) -> dict[str, Any]:
+    """Execute one admitted Store-only RuntimeEvidence consolidation."""
+
+    try:
+        validated_operation = validate_verification_operation_envelope(operation)
+        protocol = validated_operation.protocol_binding
+        preflight = preflight_local_runtime(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            resume_id=protocol.resume_id,
+            approved_by=protocol.approved_by,
+            verification_operation=validated_operation.to_spec(),
+        )
+    except (LocalEntryError, OSError, ValueError) as exc:
+        return _runtime_evidence_consolidation_public_result(
+            status="blocked",
+            failure_stage="consolidation_admission",
+            preflight=None,
+            blockers=[
+                {
+                    "stage": "runtime_evidence_consolidation",
+                    "code": "RUNTIME_EVIDENCE_CONSOLIDATION_ADMISSION_FAILED",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        )
+    actual_identity_hash = str(
+        preflight["approval_identity_hash"]
+    )
+    expected_hash_is_valid = bool(
+        isinstance(expected_identity_hash, str)
+        and re.fullmatch(r"sha256:[0-9a-f]{64}", expected_identity_hash)
+    )
+    if not expected_hash_is_valid or not hmac.compare_digest(
+        str(expected_identity_hash),
+        actual_identity_hash,
+    ):
+        return _runtime_evidence_consolidation_public_result(
+            status="blocked",
+            failure_stage="authorization",
+            preflight=preflight,
+            blockers=[
+                {
+                    "stage": "runtime_evidence_consolidation",
+                    "code": (
+                        "RUNTIME_EVIDENCE_CONSOLIDATION_IDENTITY_MISMATCH"
+                        if expected_hash_is_valid
+                        else "RUNTIME_EVIDENCE_CONSOLIDATION_IDENTITY_REQUIRED"
+                    ),
+                    "message": "Consolidation action changed after preflight.",
+                }
+            ],
+        )
+    if preflight["status"] != "READY_FOR_RUNTIME_EVIDENCE_CONSOLIDATION":
+        return _runtime_evidence_consolidation_public_result(
+            status="blocked",
+            failure_stage="consolidation_admission",
+            preflight=preflight,
+            blockers=list(preflight.get("blockers") or ()),
+        )
+    try:
+        handoff = _load_runtime_evidence_consolidation_handoff(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            operation=validated_operation,
+        )
+        if handoff.operation.approval_identity_hash != actual_identity_hash:
+            raise LocalEntryError(
+                "RuntimeEvidence consolidation identity drifted before Graph."
+            )
+        state = resumed_state_from_decision(
+            handoff.decision,
+            checkpoint_ref=handoff.build_handoff.checkpoint_ref,
+            resume_report_ref=handoff.resume_report_ref,
+        )
+        state["artifacts"]["runtime_evidence"] = (
+            handoff.prior_runtime_evidence_ref.path
+        )
+        state["artifact_hashes"]["runtime_evidence"] = (
+            handoff.prior_runtime_evidence_ref.artifact_hash
+        )
+        state["artifacts"]["evidence_pack"] = handoff.evidence_pack_ref.path
+        state["artifact_hashes"]["evidence_pack"] = (
+            handoff.evidence_pack_ref.artifact_hash
+        )
+        prior_payload = handoff.build_handoff.artifact_store.read(
+            handoff.prior_runtime_evidence_ref
+        )["data"]
+        state["runtime_summary"] = _runtime_summary_from_payload(prior_payload)
+        state["current_stage"] = "runtime_evidence"
+        graph = build_graph(
+            handoff.build_handoff.artifact_store,
+            verification_operation=handoff.operation,
+            runtime_evidence_write_results=True,
+            use_default_proposal_git_binding=False,
+            interrupt_after=["collect_runtime_evidence"],
+        )
+        graph_result = graph.invoke(state)
+    except Exception as exc:
+        return _runtime_evidence_consolidation_public_result(
+            status="blocked",
+            failure_stage="graph_consolidation_admission",
+            preflight=preflight,
+            blockers=[
+                {
+                    "stage": "runtime_evidence_consolidation",
+                    "code": "RUNTIME_EVIDENCE_CONSOLIDATION_GRAPH_FAILED",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        )
+
+    runtime_summary = dict(graph_result.get("runtime_summary") or {})
+    store_result = runtime_summary.get("runtime_evidence_store_result")
+    runtime_ref = None
+    artifact_path = (graph_result.get("artifacts") or {}).get(
+        "runtime_evidence"
+    )
+    artifact_hash = (graph_result.get("artifact_hashes") or {}).get(
+        "runtime_evidence"
+    )
+    if isinstance(artifact_path, str) and isinstance(artifact_hash, str):
+        runtime_ref = {
+            "feature_id": feature_id,
+            "artifact_type": "runtime_evidence",
+            "path": artifact_path,
+            "artifact_hash": artifact_hash,
+        }
+    runtime_projection = (
+        None
+        if store_result is None and runtime_ref is None
+        else {"artifact_ref": runtime_ref, "store_result": store_result}
+    )
+    failure_stage = runtime_summary.get("platform_failure_stage")
+    outer_status = "completed" if failure_stage is None else "blocked"
+    if isinstance(store_result, Mapping):
+        if store_result.get("outcome") == "partial":
+            outer_status = "partial"
+        elif store_result.get("outcome") == "blocked_before_commit":
+            outer_status = "blocked"
+    return _runtime_evidence_consolidation_public_result(
+        status=outer_status,
+        failure_stage=failure_stage,
+        preflight=preflight,
+        runtime_evidence=runtime_projection,
+        runtime_summary=runtime_summary,
+        blockers=list(graph_result.get("blockers") or ()),
+    )
+
+
 def _runtime_terminal_artifact_projection(
     state: Mapping[str, Any],
     artifact_type: str,
@@ -5836,7 +6359,7 @@ def resume_local_runtime(
     feature_id: str,
     checkpoint_path: str | Path,
     checkpoint_hash: str,
-    settings_path: str | Path,
+    settings_path: str | Path | None = None,
     approved_by: str,
     allow_game_launch: bool,
     runtime_plugin_destination: str | Path | None,
@@ -5852,6 +6375,8 @@ def resume_local_runtime(
     runtime_evidence_only: bool = False,
     expected_runtime_execution_identity_hash: str | None = None,
     runtime_terminalization_only: bool = False,
+    verification_operation: VerificationOperationEnvelope | None = None,
+    expected_approval_identity_hash: str | None = None,
     accepted_resume_report_path: str | Path | None = None,
     accepted_resume_report_hash: str | None = None,
     runtime_evidence_path: str | Path | None = None,
@@ -5860,6 +6385,80 @@ def resume_local_runtime(
 ) -> dict[str, Any]:
     """Continue one validated Build handoff through the existing Runtime graph."""
 
+    if verification_operation is not None:
+        authorization_blockers: list[dict[str, Any]] = []
+        try:
+            operation = validate_verification_operation_envelope(
+                verification_operation
+            )
+        except ValueError as exc:
+            operation = None
+            authorization_blockers.append(
+                {
+                    "stage": "verification_operation",
+                    "code": "VERIFICATION_OPERATION_INVALID",
+                    "message": str(exc),
+                }
+            )
+        if not approved_by.strip():
+            authorization_blockers.append(
+                {
+                    "stage": "verification_operation",
+                    "code": "VERIFICATION_OPERATION_APPROVER_REQUIRED",
+                    "message": "Verification operation requires exact approved_by.",
+                }
+            )
+        if operation is not None and (
+            approved_by != operation.protocol_binding.approved_by
+            or resume_id not in {None, operation.protocol_binding.resume_id}
+        ):
+            authorization_blockers.append(
+                {
+                    "stage": "verification_operation",
+                    "code": "VERIFICATION_OPERATION_PROTOCOL_MISMATCH",
+                    "message": "Verification operation protocol identity changed.",
+                }
+            )
+        if (
+            runtime_evidence_only
+            or runtime_terminalization_only
+            or recover_accepted_resume
+            or retry_runtime_observation
+            or runtime_output_root is not None
+            or runtime_evidence_factory is not None
+            or injected_runtime_admission is not None
+            or allow_game_launch
+            or allow_game_directory_write
+            or runtime_plugin_destination is not None
+            or settings_path is not None
+            or accepted_resume_report_path is not None
+            or accepted_resume_report_hash is not None
+            or runtime_evidence_path is not None
+            or runtime_evidence_hash is not None
+        ):
+            authorization_blockers.append(
+                {
+                    "stage": "verification_operation",
+                    "code": "VERIFICATION_OPERATION_SCOPE_INVALID",
+                    "message": "Typed operation cannot mix with legacy Runtime scope.",
+                }
+            )
+        if authorization_blockers:
+            return _runtime_evidence_consolidation_public_result(
+                status="blocked",
+                failure_stage="authorization",
+                preflight=None,
+                blockers=authorization_blockers,
+            )
+        return _execute_runtime_evidence_consolidation(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            operation=operation,
+            expected_identity_hash=expected_approval_identity_hash,
+        )
     if runtime_terminalization_only:
         authorization_blockers: list[dict[str, Any]] = []
         if not approved_by.strip():
@@ -5872,6 +6471,7 @@ def resume_local_runtime(
             )
         if (
             runtime_evidence_only
+            or verification_operation is not None
             or recover_accepted_resume
             or retry_runtime_observation
             or runtime_output_root is not None

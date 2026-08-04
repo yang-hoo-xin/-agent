@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
+import json
 import shutil
 from pathlib import Path
+from threading import Barrier, Event, Thread, local
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import src.mod_agent.artifacts.store as artifact_store_module
 import src.mod_agent.local_entry as local_entry_module
 import src.mod_agent.workflow.graph as workflow_graph_module
 
@@ -36,6 +40,16 @@ from src.mod_agent.workflow import (
     preflight_verification_only_continuation,
     resumed_state_from_decision,
 )
+from src.mod_agent.verification_operations import (
+    EVIDENCE_CONSOLIDATION_CONTRACT_VERSION,
+    EVIDENCE_CONSOLIDATION_KIND,
+    EvidenceConsolidationOperationV1,
+    ImplementationEvidenceFileBinding,
+    VerificationAttemptPolicy,
+    VerificationOperationSpec,
+    VerificationProtocolBinding,
+    project_verification_operation,
+)
 from src.mod_agent.workflow.verification_only import (
     verification_only_lineage_payload,
 )
@@ -44,6 +58,9 @@ from src.mod_agent.runtime import (
     build_fake_runtime_evidence_payload,
     build_real_runtime_evidence_payload,
     build_supplied_runtime_evidence_payload,
+)
+from src.mod_agent.runtime_evidence_consolidation import (
+    runtime_evidence_consolidation_child_refs,
 )
 from src.mod_agent.workflow.graph import _run_workflow_summary
 from src.mod_agent.local_entry import (
@@ -2624,6 +2641,1006 @@ def _public_runtime_evidence_handoff(
     return store, build_result, runtime_result, runtime_root
 
 
+def test_runtime_evidence_consolidation_public_path_commits_one_child(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    first = preflight_local_runtime(**arguments)
+    second = preflight_local_runtime(**arguments)
+    assert first == second
+    assert first["status"] == "READY_FOR_RUNTIME_EVIDENCE_CONSOLIDATION"
+    before_counts = _artifact_counts(store)
+
+    result = resume_local_runtime(
+        **_runtime_consolidation_execute_arguments(
+            arguments,
+            expected_hash=first[
+                "runtime_evidence_consolidation_identity_hash"
+            ],
+        )
+    )
+
+    assert result["status"] == "completed"
+    assert result["failure_stage"] is None
+    assert result["runtime_factory_invocation_count"] == 0
+    assert result["new_build_performed"] is False
+    assert result["new_runtime_performed"] is False
+    assert result["product_source_modified"] is False
+    runtime_projection = result["runtime_evidence"]
+    assert runtime_projection["store_result"]["outcome"] == "committed"
+    child_ref = ArtifactRef(**runtime_projection["artifact_ref"])
+    envelope = store.read(child_ref)
+    assert envelope["status"] == "blocked"
+    assert [item["artifact_type"] for item in envelope["inputs"]["upstream_artifacts"]] == [
+        "build_result",
+        "feature_spec",
+        "runtime_evidence",
+        "evidence_pack",
+    ]
+    assert [item["require_latest"] for item in envelope["inputs"]["upstream_artifacts"]] == [
+        True,
+        True,
+        False,
+        False,
+    ]
+    criteria = envelope["data"]["stagger_acceptance_evaluation"]["criteria"]
+    assert criteria[0]["outcome"] == "true"
+    assert criteria[0]["evidence_strength"] == "bound_implementation_evidence"
+    assert envelope["data"]["acceptance_verified"] is False
+    assert envelope["data"]["claims_real_runtime_success"] is False
+    after_counts = _artifact_counts(store)
+    assert after_counts["runtime_evidence"] == before_counts["runtime_evidence"] + 1
+    for artifact_type in set(after_counts) - {"runtime_evidence"}:
+        assert after_counts[artifact_type] == before_counts[artifact_type]
+    assert store.check_freshness(child_ref).is_fresh
+
+
+def test_runtime_evidence_consolidation_identity_excludes_run_root_and_binds_delta(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    first = preflight_local_runtime(**arguments)
+    alternate_root = tmp_path / "presentation-only-root"
+    alternate_root.mkdir()
+    second = preflight_local_runtime(**{**arguments, "run_root": alternate_root})
+    assert first["runtime_evidence_consolidation_identity_hash"] == second[
+        "runtime_evidence_consolidation_identity_hash"
+    ]
+
+    changed_delta = copy.deepcopy(action["delta"])
+    changed_delta["evidence_ids"] = [*changed_delta["evidence_ids"], "extra"]
+    original_operation = arguments["verification_operation"]
+    changed_operation = dataclasses.replace(
+        original_operation,
+        variant_payload=dataclasses.replace(
+            original_operation.variant_payload,
+            canonical_delta=changed_delta,
+        ),
+    )
+    with pytest.raises(ValueError, match="registered adapter"):
+        preflight_local_runtime(
+            **{**arguments, "verification_operation": changed_operation}
+        )
+
+
+def test_typed_consolidation_identity_excludes_physical_file_locators(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    operation = arguments["verification_operation"]
+    relocated = tuple(
+        dataclasses.replace(
+            binding,
+            absolute_path=str(tmp_path / "relocated" / Path(binding.absolute_path).name),
+        )
+        for binding in operation.variant_payload.execution_file_bindings
+    )
+    relocated_operation = dataclasses.replace(
+        operation,
+        variant_payload=dataclasses.replace(
+            operation.variant_payload,
+            execution_file_bindings=relocated,
+        ),
+    )
+    changed_content = list(relocated)
+    changed_content[0] = dataclasses.replace(
+        changed_content[0],
+        content_sha256="0" * 64,
+    )
+    changed_content_operation = dataclasses.replace(
+        relocated_operation,
+        variant_payload=dataclasses.replace(
+            relocated_operation.variant_payload,
+            execution_file_bindings=tuple(changed_content),
+        ),
+    )
+
+    assert (
+        project_verification_operation(operation).approval_identity_hash
+        == project_verification_operation(relocated_operation).approval_identity_hash
+    )
+    assert (
+        project_verification_operation(operation).approval_identity_hash
+        != project_verification_operation(
+            changed_content_operation
+        ).approval_identity_hash
+    )
+
+
+@pytest.mark.parametrize(
+    "drift",
+    ("unknown_contract", "legacy_scope"),
+)
+def test_typed_consolidation_authority_drift_is_zero_write(
+    tmp_path: Path,
+    drift: str,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    if drift == "unknown_contract":
+        arguments["verification_operation"] = dataclasses.replace(
+            arguments["verification_operation"],
+            operation_contract_version="runtime_evidence_consolidation_v2",
+        )
+    else:
+        arguments["runtime_evidence_only"] = True
+    before = _store_snapshot(store.root)
+    with pytest.raises((LocalEntryError, ValueError)):
+        preflight_local_runtime(**arguments)
+    assert _store_snapshot(store.root) == before
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "claims",
+        "non_target_criterion",
+        "canonical_delta_hash",
+        "file_binding",
+        "action_scope",
+        "binding_version",
+        "feature_adapter",
+    ),
+)
+def test_runtime_evidence_consolidation_direct_store_rejects_semantic_tamper(
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(arguments)
+    )
+    tampered = copy.deepcopy(handoff.derived_payload)
+    binding = tampered["verification_only_evidence_consolidation"]
+    if tamper == "claims":
+        tampered["acceptance_verified"] = True
+        tampered["claims_real_runtime_success"] = True
+    elif tamper == "non_target_criterion":
+        tampered["stagger_acceptance_evaluation"]["criteria"][1][
+            "outcome"
+        ] = "true"
+    elif tamper == "canonical_delta_hash":
+        binding["canonical_delta_hash"] = "sha256:" + "0" * 64
+    elif tamper == "file_binding":
+        binding["file_bindings"][0]["content_sha256"] = "0" * 64
+    elif tamper == "action_scope":
+        binding["action_scope"]["new_runtime_performed"] = True
+    elif tamper == "binding_version":
+        binding["semantic_binding"]["version"] = "2"
+    else:
+        binding["feature_adapter"] = "unknown_adapter_v1"
+    before = _store_snapshot(store.root)
+    result = store.write_with_result(
+        feature_id=FEATURE_ID,
+        artifact_type="runtime_evidence",
+        payload=tampered,
+        status="blocked",
+        upstream_refs=[
+            handoff.build_handoff.build_ref,
+            handoff.build_handoff.feature_spec_ref,
+            handoff.prior_runtime_evidence_ref,
+            handoff.evidence_pack_ref,
+        ],
+        exact_revision_upstream_types={"runtime_evidence", "evidence_pack"},
+        semantic_intent=handoff.semantic_intent,
+    )
+    assert result.outcome == "blocked_before_commit"
+    assert result.commit_started is False
+    assert result.artifact_ref is None
+    assert _store_snapshot(store.root) == before
+
+
+@pytest.mark.parametrize("outcome", ("blocked_before_commit", "partial"))
+def test_runtime_evidence_consolidation_preserves_c5_store_outcome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    preflight = preflight_local_runtime(**arguments)
+    monkeypatch.setattr(
+        ArtifactStore,
+        "write_with_result",
+        lambda selected, **kwargs: _store_failure_result(
+            selected,
+            artifact_type=kwargs["artifact_type"],
+            outcome=outcome,
+        ),
+    )
+    result = resume_local_runtime(
+        **_runtime_consolidation_execute_arguments(
+            arguments,
+            expected_hash=preflight[
+                "runtime_evidence_consolidation_identity_hash"
+            ],
+        )
+    )
+    assert result["status"] == ("partial" if outcome == "partial" else "blocked")
+    assert result["failure_stage"] == "runtime_evidence_store"
+    assert result["runtime_evidence"]["artifact_ref"] is None
+    assert result["runtime_evidence"]["store_result"]["outcome"] == outcome
+
+
+def test_runtime_evidence_consolidation_replay_and_file_drift_fail_closed(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    preflight = preflight_local_runtime(**arguments)
+    first = resume_local_runtime(
+        **_runtime_consolidation_execute_arguments(
+            arguments,
+            expected_hash=preflight[
+                "runtime_evidence_consolidation_identity_hash"
+            ],
+        )
+    )
+    assert first["status"] == "completed"
+    before = _store_snapshot(store.root)
+    replay = preflight_local_runtime(**arguments)
+    assert replay["status"] == "BLOCKED"
+    assert replay["existing_child_refs"]
+    assert _store_snapshot(store.root) == before
+
+    other_tmp = tmp_path / "drift"
+    other_tmp.mkdir()
+    store2, build2, runtime2, root2, action2 = (
+        _c4_public_runtime_evidence_handoff(other_tmp)
+    )
+    arguments2 = _runtime_consolidation_preflight_arguments(
+        store2,
+        build2,
+        runtime2,
+        runtime_root=root2,
+        action=action2,
+    )
+    Path(action2["bindings"][0].absolute_path).write_text(
+        "drift", encoding="utf-8"
+    )
+    before2 = _store_snapshot(store2.root)
+    with pytest.raises(ValueError, match="hash changed"):
+        preflight_local_runtime(**arguments2)
+    assert _store_snapshot(store2.root) == before2
+
+
+def test_runtime_evidence_consolidation_successor_owner_filters_exact_adapter(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(arguments)
+    )
+    prior_ref = handoff.prior_runtime_evidence_ref
+    foreign_payload = copy.deepcopy(store.read(prior_ref)["data"])
+    foreign_payload["message"] = "Independent RuntimeEvidence child."
+    foreign_ref = store.write(
+        feature_id=FEATURE_ID,
+        artifact_type="runtime_evidence",
+        payload=foreign_payload,
+        status="blocked",
+        upstream_refs=[
+            handoff.build_handoff.build_ref,
+            handoff.build_handoff.feature_spec_ref,
+            prior_ref,
+        ],
+        exact_revision_upstream_types={"runtime_evidence"},
+    )
+    assert foreign_ref != prior_ref
+    assert runtime_evidence_consolidation_child_refs(
+        store,
+        feature_id=FEATURE_ID,
+        prior_ref=prior_ref,
+        feature_adapter="stagger_c4_implementation_evidence_v1",
+    ) == ()
+    decision, _, checkpoint_child_refs = WorkflowCheckpointStore(
+        store
+    ).preflight_runtime_evidence_consolidation(
+        handoff.build_handoff.checkpoint_ref,
+        resume_report_ref=handoff.resume_report_ref,
+        prior_runtime_evidence_ref=prior_ref,
+        resume_id=handoff.operation.protocol_binding.resume_id,
+        approved_by=handoff.operation.protocol_binding.approved_by,
+    )
+    assert checkpoint_child_refs == ()
+    blocker_codes = {str(item.get("code")) for item in decision.blockers}
+    assert "RUNTIME_CONSOLIDATION_ALREADY_STARTED" not in blocker_codes
+    assert "RUNTIME_CONSOLIDATION_EVIDENCE_NOT_LATEST" in blocker_codes
+
+
+def test_runtime_evidence_consolidation_direct_graph_wrong_state_is_zero_write(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(arguments)
+    )
+    state = resumed_state_from_decision(
+        handoff.decision,
+        checkpoint_ref=handoff.build_handoff.checkpoint_ref,
+        resume_report_ref=handoff.resume_report_ref,
+    )
+    state["artifacts"]["runtime_evidence"] = handoff.prior_runtime_evidence_ref.path
+    state["artifact_hashes"]["runtime_evidence"] = (
+        handoff.prior_runtime_evidence_ref.artifact_hash
+    )
+    state["artifacts"]["evidence_pack"] = handoff.evidence_pack_ref.path
+    state["artifact_hashes"]["evidence_pack"] = (
+        handoff.evidence_pack_ref.artifact_hash
+    )
+    state["current_stage"] = "build"
+    before = _store_snapshot(store.root)
+    graph = build_graph(
+        store,
+        verification_operation=handoff.operation,
+        runtime_evidence_write_results=True,
+        use_default_proposal_git_binding=False,
+        interrupt_after=["collect_runtime_evidence"],
+    )
+    with pytest.raises(ValueError, match="RuntimeEvidence boundary"):
+        graph.invoke(state)
+    assert _store_snapshot(store.root) == before
+
+
+def test_runtime_evidence_consolidation_expected_identity_drift_is_zero_write(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    before = _store_snapshot(store.root)
+    result = resume_local_runtime(
+        **_runtime_consolidation_execute_arguments(
+            arguments,
+            expected_hash="sha256:" + "0" * 64,
+        )
+    )
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "authorization"
+    assert result["runtime_evidence"] is None
+    assert _store_snapshot(store.root) == before
+
+
+def test_runtime_evidence_consolidation_uses_durable_build_identity_after_cleanup(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    build_ref = ArtifactRef(**build_result["build_result"]["artifact_ref"])
+    build_payload = store.read(build_ref)["data"]
+    Path(build_payload["verified_artifacts"][0]["resolved_path"]).unlink()
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    preflight = preflight_local_runtime(**arguments)
+    result = resume_local_runtime(
+        **_runtime_consolidation_execute_arguments(
+            arguments,
+            expected_hash=preflight[
+                "runtime_evidence_consolidation_identity_hash"
+            ],
+        )
+    )
+    assert result["status"] == "completed"
+    assert result["new_build_performed"] is False
+    assert result["new_runtime_performed"] is False
+
+
+def test_runtime_evidence_consolidation_direct_store_cannot_bypass_lineage(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(arguments)
+    )
+    before = _store_snapshot(store.root)
+    result = store.write_with_result(
+        feature_id=FEATURE_ID,
+        artifact_type="runtime_evidence",
+        payload=dict(handoff.derived_payload),
+        status="blocked",
+        upstream_refs=[
+            handoff.build_handoff.build_ref,
+            handoff.build_handoff.feature_spec_ref,
+            handoff.prior_runtime_evidence_ref,
+            handoff.evidence_pack_ref,
+        ],
+        exact_revision_upstream_types={"runtime_evidence", "evidence_pack"},
+    )
+    assert result.outcome == "blocked_before_commit"
+    assert result.commit_started is False
+    assert result.artifact_ref is None
+    assert _store_snapshot(store.root) == before
+
+
+def test_runtime_evidence_consolidation_compat_write_fails_before_pending(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(arguments)
+    )
+    tampered = copy.deepcopy(handoff.derived_payload)
+    tampered["claims_real_runtime_success"] = True
+    write_arguments = _runtime_consolidation_store_arguments(handoff)
+    write_arguments["payload"] = tampered
+    before = _store_snapshot(store.root)
+
+    with pytest.raises(ArtifactStoreError):
+        store.write(**write_arguments)
+
+    assert _store_snapshot(store.root) == before
+
+
+def test_semantic_reservation_validation_failure_keeps_c5_attempt_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(arguments)
+    )
+    original = artifact_store_module.project_artifact_write_intent
+    invocation_count = 0
+
+    def fail_second_projection(**kwargs):
+        nonlocal invocation_count
+        invocation_count += 1
+        if invocation_count == 2:
+            raise ValueError("semantic TOCTOU drift")
+        return original(**kwargs)
+
+    monkeypatch.setattr(
+        artifact_store_module,
+        "project_artifact_write_intent",
+        fail_second_projection,
+    )
+    before = _store_snapshot(store.root)
+    result = store.write_with_result(
+        **_runtime_consolidation_store_arguments(handoff)
+    )
+
+    assert result.outcome == "partial"
+    assert result.commit_started is True
+    assert result.failure_stage == "commit_verification"
+    assert result.pending_marker_state == "absent"
+    assert result.revision_state == "absent"
+    assert result.recovery_available is False
+    assert result.recovery_authorized is False
+    assert _store_snapshot(store.root) == before
+
+
+def test_semantic_reservation_loser_and_recovery_are_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(arguments)
+    )
+    original_projector = artifact_store_module.project_artifact_write_intent
+    invocation_count = 0
+
+    def fail_second_projection(**kwargs):
+        nonlocal invocation_count
+        invocation_count += 1
+        if invocation_count == 2:
+            raise ValueError("semantic TOCTOU drift")
+        return original_projector(**kwargs)
+
+    monkeypatch.setattr(
+        artifact_store_module,
+        "project_artifact_write_intent",
+        fail_second_projection,
+    )
+    original_cleanup = store._unlink_exact_semantic_pending_marker
+    monkeypatch.setattr(
+        store,
+        "_unlink_exact_semantic_pending_marker",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("reservation cleanup failed")
+        ),
+    )
+    winner = store.write_with_result(
+        **_runtime_consolidation_store_arguments(handoff)
+    )
+    assert winner.outcome == "partial"
+    assert winner.commit_started is True
+    assert winner.failure_stage == "pending_marker_cleanup"
+    assert winner.pending_marker_state == "present"
+    assert winner.recovery_available is False
+
+    monkeypatch.setattr(
+        artifact_store_module,
+        "project_artifact_write_intent",
+        original_projector,
+    )
+    monkeypatch.setattr(
+        store,
+        "_unlink_exact_semantic_pending_marker",
+        original_cleanup,
+    )
+    loser = store.write_with_result(
+        **_runtime_consolidation_store_arguments(handoff)
+    )
+    assert loser.outcome == "partial"
+    assert loser.commit_started is False
+    assert loser.failure_stage == "admission_validation"
+    assert loser.pending_marker_state == "present"
+    assert loser.recovery_available is False
+    recovery = store.recover_pending_writes()
+    assert recovery == [
+        {
+            "feature_id": FEATURE_ID,
+            "artifact_type": "runtime_evidence",
+            "artifact_hash": handoff.semantic_intent.expected_artifact_hash,
+            "status": "blocked",
+            "reason": "semantic_recovery_not_authorized",
+        }
+    ]
+    assert Path(str(winner.pending_marker_path)).exists()
+
+
+def test_semantic_reservation_binding_tamper_is_admission_failure(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(arguments)
+    )
+    intent = handoff.semantic_intent
+    pending_path = store._semantic_pending_write_path(
+        FEATURE_ID,
+        "runtime_evidence",
+        intent.commit_conflict_key_hash,
+    )
+    revision_path = store._revision_artifact_path(
+        FEATURE_ID,
+        "runtime_evidence",
+        intent.expected_artifact_hash,
+    )
+    latest_path = store._artifact_path(FEATURE_ID, "runtime_evidence")
+    marker = json.loads(
+        store._serialize_semantic_pending_write(
+            feature_id=FEATURE_ID,
+            artifact_type="runtime_evidence",
+            artifact_hash=intent.expected_artifact_hash,
+            revision_path=revision_path,
+            latest_path=latest_path,
+            semantic_intent=intent,
+        )
+    )
+    marker["semantic_binding_version"] = "tampered"
+    pending_path.parent.mkdir(parents=True, exist_ok=True)
+    pending_path.write_text(
+        json.dumps(marker, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    before = _store_snapshot(store.root)
+
+    result = store.write_with_result(
+        **_runtime_consolidation_store_arguments(handoff)
+    )
+
+    assert result.outcome == "blocked_before_commit"
+    assert result.commit_started is False
+    assert result.failure_stage == "admission_validation"
+    assert result.pending_marker_state == "invalid"
+    assert not revision_path.exists()
+    assert _store_snapshot(store.root) == before
+
+
+def test_semantic_reservation_racing_full_key_collision_is_admission_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(arguments)
+    )
+    intent = handoff.semantic_intent
+    revision_path = store._revision_artifact_path(
+        FEATURE_ID,
+        "runtime_evidence",
+        intent.expected_artifact_hash,
+    )
+    latest_path = store._artifact_path(FEATURE_ID, "runtime_evidence")
+    marker = json.loads(
+        store._serialize_semantic_pending_write(
+            feature_id=FEATURE_ID,
+            artifact_type="runtime_evidence",
+            artifact_hash=intent.expected_artifact_hash,
+            revision_path=revision_path,
+            latest_path=latest_path,
+            semantic_intent=intent,
+        )
+    )
+    collision_key = dict(intent.commit_conflict_key)
+    collision_key["predecessor_artifact_hash"] = "0" * 64
+    marker["commit_conflict_key"] = collision_key
+    marker["commit_conflict_key_hash"] = artifact_store_module.hash_action_identity(
+        collision_key,
+        expected_hash_domain=(
+            artifact_store_module.SEMANTIC_CONFLICT_HASH_DOMAIN
+        ),
+    )
+    collision_bytes = (
+        json.dumps(marker, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    )
+
+    def install_competing_marker(path: Path, _content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(collision_bytes, encoding="utf-8")
+        raise FileExistsError(str(path))
+
+    monkeypatch.setattr(
+        store,
+        "_write_text_exclusive_atomic",
+        install_competing_marker,
+    )
+    result = store.write_with_result(
+        **_runtime_consolidation_store_arguments(handoff)
+    )
+
+    assert result.outcome == "blocked_before_commit"
+    assert result.commit_started is False
+    assert result.failure_stage == "admission_validation"
+    assert result.revision_state == "absent"
+    assert Path(str(result.pending_marker_path)).read_text(encoding="utf-8") == (
+        collision_bytes
+    )
+
+
+def test_semantic_reservation_full_write_chain_has_one_successor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    first_handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(arguments)
+    )
+    first_spec = arguments["verification_operation"]
+    first_protocol = first_spec.protocol_binding
+    first_report = copy.deepcopy(
+        store.read(first_protocol.accepted_resume_report_ref)["data"]
+    )
+    first_report["resume_id"] = "verification_only_runtime_resume_002"
+    first_report["approved_by"] = "second-human"
+    first_report["approved_at"] = "2026-08-04T00:00:00Z"
+    second_report_ref = store.write(
+        feature_id=FEATURE_ID,
+        artifact_type="resume_report",
+        payload=first_report,
+        status="success",
+        upstream_refs=[first_protocol.checkpoint_ref],
+        exact_revision_upstream_types={"workflow_checkpoint"},
+    )
+    second_spec = dataclasses.replace(
+        first_spec,
+        protocol_binding=VerificationProtocolBinding(
+            checkpoint_ref=first_protocol.checkpoint_ref,
+            accepted_resume_report_ref=second_report_ref,
+            resume_id="verification_only_runtime_resume_002",
+            approved_by="second-human",
+        ),
+    )
+    second_arguments = {
+        **arguments,
+        "resume_id": "verification_only_runtime_resume_002",
+        "approved_by": "second-human",
+        "verification_operation": second_spec,
+    }
+    second_handoff = local_entry_module._load_runtime_evidence_consolidation_handoff(
+        **_runtime_consolidation_loader_arguments(second_arguments)
+    )
+    assert (
+        first_handoff.operation.approval_identity_hash
+        != second_handoff.operation.approval_identity_hash
+    )
+    assert (
+        first_handoff.semantic_intent.commit_conflict_key_hash
+        == second_handoff.semantic_intent.commit_conflict_key_hash
+    )
+    assert (
+        first_handoff.semantic_intent.expected_artifact_hash
+        != second_handoff.semantic_intent.expected_artifact_hash
+    )
+
+    admission_barrier = Barrier(2)
+    loser_validated = Event()
+    thread_state = local()
+    original_projector = artifact_store_module.project_artifact_write_intent
+    original_install = ArtifactStore._write_text_exclusive_atomic
+    original_validate = ArtifactStore._validate_semantic_pending_locator
+
+    def synchronized_projector(**kwargs):
+        result = original_projector(**kwargs)
+        invocation = getattr(thread_state, "projection_invocation", 0) + 1
+        thread_state.projection_invocation = invocation
+        if invocation == 1:
+            admission_barrier.wait(timeout=10)
+        return result
+
+    def coordinated_install(selected, path, content):
+        try:
+            original_install(selected, path, content)
+        except FileExistsError:
+            thread_state.lost_reservation = True
+            raise
+        if not loser_validated.wait(timeout=10):
+            raise AssertionError("Competing reservation was not validated.")
+
+    def recording_validate(selected, path, **kwargs):
+        result = original_validate(selected, path, **kwargs)
+        if getattr(thread_state, "lost_reservation", False):
+            loser_validated.set()
+        return result
+
+    monkeypatch.setattr(
+        artifact_store_module,
+        "project_artifact_write_intent",
+        synchronized_projector,
+    )
+    monkeypatch.setattr(
+        ArtifactStore,
+        "_write_text_exclusive_atomic",
+        coordinated_install,
+    )
+    monkeypatch.setattr(
+        ArtifactStore,
+        "_validate_semantic_pending_locator",
+        recording_validate,
+    )
+    stores = (ArtifactStore(store.root), ArtifactStore(store.root))
+    handoffs = (first_handoff, second_handoff)
+    results: list[ArtifactWriteResult] = []
+    errors: list[BaseException] = []
+    baseline_runtime_revisions = len(
+        store.list_feature_artifact_revisions(FEATURE_ID, "runtime_evidence")
+    )
+
+    def write(selected: ArtifactStore, handoff: Any) -> None:
+        try:
+            results.append(
+                selected.write_with_result(
+                    **_runtime_consolidation_store_arguments(handoff)
+                )
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [
+        Thread(target=write, args=(selected, handoff))
+        for selected, handoff in zip(stores, handoffs)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert sorted(result.outcome for result in results) == ["committed", "partial"]
+    committed = next(result for result in results if result.outcome == "committed")
+    loser = next(result for result in results if result.outcome == "partial")
+    assert committed.commit_started is True
+    assert committed.artifact_ref is not None
+    assert loser.commit_started is False
+    assert loser.failure_stage == "admission_validation"
+    children = runtime_evidence_consolidation_child_refs(
+        store,
+        feature_id=FEATURE_ID,
+        prior_ref=first_handoff.prior_runtime_evidence_ref,
+        feature_adapter="stagger_c4_implementation_evidence_v1",
+    )
+    assert children == (committed.artifact_ref,)
+    assert len(
+        store.list_feature_artifact_revisions(FEATURE_ID, "runtime_evidence")
+    ) == baseline_runtime_revisions + 1
+    pending_root = store.root / "features" / FEATURE_ID / "p"
+    assert list(pending_root.rglob("*.json")) == []
+
+
+def test_runtime_evidence_consolidation_committed_receipt_is_terminal_truth(
+    tmp_path: Path,
+) -> None:
+    store, build_result, runtime_result, runtime_root, action = (
+        _c4_public_runtime_evidence_handoff(tmp_path)
+    )
+    arguments = _runtime_consolidation_preflight_arguments(
+        store,
+        build_result,
+        runtime_result,
+        runtime_root=runtime_root,
+        action=action,
+    )
+    preflight = preflight_local_runtime(**arguments)
+    result = resume_local_runtime(
+        **_runtime_consolidation_execute_arguments(
+            arguments,
+            expected_hash=preflight[
+                "runtime_evidence_consolidation_identity_hash"
+            ],
+        )
+    )
+    assert result["status"] == "completed"
+    assert result["failure_stage"] is None
+    assert result["runtime_evidence"]["artifact_ref"] is not None
+    assert result["runtime_evidence"]["store_result"]["outcome"] == "committed"
+
+
 def _runtime_terminal_preflight_arguments(
     store: ArtifactStore,
     build_result: dict[str, object],
@@ -3057,6 +4074,405 @@ def _resume_payload(checkpoint: dict[str, object]) -> ResumePayload:
             "provider": "injected_test",
         },
     )
+
+
+C4_CRITERION = (
+    "Each ES_Hitreact.ActivateState invocation with General.Enabled=true, "
+    "a reaction type of Micro, Light, or Heavy, and a source that resolves "
+    "to a locally owned PlayerAgent produces no more than one additional "
+    "yellow X, one feature-attributable short audio cue, and one "
+    "STAGGER_FEEDBACK_SHOWN signal within that invocation."
+)
+C4_EVIDENCE_IDS = (
+    "stagger_fresh_audio_source",
+    "stagger_fresh_direct_activate_state_source",
+    "stagger_fresh_source_contract_report",
+    "stagger_fresh_yellow_x_source",
+)
+UNCHANGED_CRITERION = "A separate Runtime criterion remains not observed."
+
+
+def _c4_public_runtime_evidence_handoff(
+    tmp_path: Path,
+) -> tuple[ArtifactStore, dict[str, object], dict[str, Any], Path, dict[str, Any]]:
+    store, continuation, action = _c4_verification_inputs(tmp_path)
+    build_result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+    assert build_result["status"] == "completed"
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    preflight = preflight_local_runtime(
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+        )
+    )
+    runtime_result = resume_local_runtime(
+        **_runtime_execute_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+            expected_hash=preflight["runtime_execution_identity_hash"],
+            runtime_factory=_c4_unverified_runtime_payload,
+        )
+    )
+    assert runtime_result["status"] == "completed"
+    return store, build_result, runtime_result, runtime_root, action
+
+
+def _c4_verification_inputs(
+    tmp_path: Path,
+) -> tuple[ArtifactStore, VerificationOnlyContinuationInput, dict[str, Any]]:
+    store = ArtifactStore(tmp_path / "artifacts")
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    files = {
+        "Plugin.cs": "plugin source",
+        "Patches/HitFeedbackBehaviorPatch.cs": "patch source",
+    }
+    for relative_path, content in files.items():
+        path = source_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    source_hashes = {
+        relative_path: _sha256(source_root / relative_path)
+        for relative_path in files
+    }
+    feature_payload = {
+        "node_name": "draft_feature_spec",
+        "stage": "feature_spec",
+        "message": "Fresh C4 verification FeatureSpec.",
+        "feature_id": FEATURE_ID,
+        "user_request": USER_REQUEST,
+        "target_behavior": "Verify existing C4 behavior.",
+        "non_goals": ["No source change."],
+        "target_mod": TARGET_MOD,
+        "risk_level": "high",
+        "acceptance_criteria": [C4_CRITERION, UNCHANGED_CRITERION],
+        "evidence_requirements": ["Current deterministic source contract."],
+        "runtime_verification_plan": ["Bind implementation evidence."],
+        "blocked": False,
+        "blockers": [],
+        "source_lineage": {
+            "root": str(source_root.resolve()),
+            "read_only": True,
+            "files": source_hashes,
+        },
+    }
+    feature_ref = store.write(
+        feature_id=FEATURE_ID,
+        artifact_type="feature_spec",
+        payload=feature_payload,
+        status="success",
+    )
+    evidence_root = tmp_path / "implementation-evidence"
+    evidence_root.mkdir()
+    source_path = source_root / "Patches/HitFeedbackBehaviorPatch.cs"
+    source_hash = _sha256(source_path)
+    report = {
+        "status": "passed",
+        "feature_spec_artifact_hash": feature_ref.artifact_hash,
+        "source_sha256_before": source_hash,
+        "source_sha256_after": source_hash,
+        "target_code_executed": False,
+        "invocation_counts": {
+            "visual": 1,
+            "audio": 1,
+            "marker": 1,
+            "recursive_postfix": 0,
+        },
+        "loop_count": 0,
+        "checks": {
+            name: True
+            for name in (
+                "one_visual_call",
+                "one_audio_call",
+                "one_marker_emission",
+                "no_loop_in_postfix",
+                "outputs_not_nested_in_loop",
+                "no_recursive_postfix_call",
+                "enabled_guard_precedes_outputs",
+                "reaction_guard_precedes_outputs",
+                "source_guard_precedes_outputs",
+                "marker_guard_precedes_marker",
+                "visual_precedes_audio",
+                "audio_precedes_marker_guard",
+                "source_unchanged_during_inspection",
+            )
+        },
+    }
+    report_path = evidence_root / "source_contract_report.json"
+    repeat_path = evidence_root / "source_contract_report_repeat.json"
+    report_bytes = json.dumps(
+        report,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    report_path.write_text(report_bytes, encoding="utf-8")
+    repeat_path.write_text(report_bytes, encoding="utf-8")
+    report_hash = _sha256(report_path)
+    evidence_blockers = [
+        {
+            "code": HANDOFF_CODE,
+            "message": "Existing source requires fresh verification, not a patch.",
+        }
+    ]
+    evidence_items = [
+        {
+            "evidence_id": "stagger_fresh_source_contract_report",
+            "file_hash": report_hash,
+            "source_hash": report_hash,
+            "source_path": str(report_path.resolve()),
+        },
+        *[
+            {
+                "evidence_id": evidence_id,
+                "file_hash": source_hash,
+                "source_hash": source_hash,
+                "source_path": str(source_path.resolve()),
+            }
+            for evidence_id in C4_EVIDENCE_IDS
+            if evidence_id != "stagger_fresh_source_contract_report"
+        ],
+    ]
+    evidence_payload = {
+        "node_name": "retrieve_evidence",
+        "stage": "evidence_retrieval",
+        "message": "Fresh C4 evidence is ready for verification only.",
+        "query": USER_REQUEST,
+        "readiness": "partial",
+        "can_generate_patch": False,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": False,
+        "identity_schema_version": "1.0",
+        "identity_field_mapping": {},
+        "items": evidence_items,
+        "gaps": ["C4 RuntimeEvidence binding is missing."],
+        "excluded": [],
+        "blockers": evidence_blockers,
+        "retrieval_methods_used": ["source_inspection"],
+        "missing_evidence": ["Bound implementation evidence"],
+        "disabled_modes": {},
+        "timing": {},
+        "trace_refs": [f"feature_spec:{feature_ref.artifact_hash}"],
+    }
+    evidence_ref = store.write(
+        feature_id=FEATURE_ID,
+        artifact_type="evidence_pack",
+        payload=evidence_payload,
+        status="blocked",
+        blockers=evidence_blockers,
+        trace_refs=evidence_payload["trace_refs"],
+        upstream_refs=[feature_ref],
+    )
+    criterion_id = "sha256:" + hashlib.sha256(
+        C4_CRITERION.encode("utf-8")
+    ).hexdigest()
+    action = {
+        "delta": {
+            "schema_version": "verification_only_criterion_evidence_delta_v1",
+            "feature_adapter": "stagger_c4_implementation_evidence_v1",
+            "criterion_id": criterion_id,
+            "acceptance_criterion": C4_CRITERION,
+            "before": {"outcome": "not_observed", "evidence_strength": "none"},
+            "after": {
+                "outcome": "true",
+                "evidence_strength": "bound_implementation_evidence",
+            },
+            "evidence_ids": list(C4_EVIDENCE_IDS),
+            "file_roles": [
+                "source_contract_report",
+                "source_contract_report_repeat",
+                "target_source",
+            ],
+            "evidence_level": "implementation",
+            "new_build_performed": False,
+            "new_runtime_performed": False,
+            "product_source_modified": False,
+        },
+        "bindings": (
+            ImplementationEvidenceFileBinding(
+                role="source_contract_report",
+                absolute_path=str(report_path.resolve()),
+                content_sha256=report_hash,
+            ),
+            ImplementationEvidenceFileBinding(
+                role="source_contract_report_repeat",
+                absolute_path=str(repeat_path.resolve()),
+                content_sha256=report_hash,
+            ),
+            ImplementationEvidenceFileBinding(
+                role="target_source",
+                absolute_path=str(source_path.resolve()),
+                content_sha256=source_hash,
+                logical_target_path="Patches/HitFeedbackBehaviorPatch.cs",
+            ),
+        ),
+        "evidence_ref": evidence_ref,
+        "feature_ref": feature_ref,
+    }
+    return (
+        store,
+        VerificationOnlyContinuationInput(
+            feature_spec_ref=feature_ref,
+            evidence_pack_ref=evidence_ref,
+        ),
+        action,
+    )
+
+
+def _c4_unverified_runtime_payload(feature_id, build, feature_spec):
+    payload = build_real_runtime_evidence_payload(
+        feature_id=feature_id,
+        input_execution_mode=build.get("input_execution_mode"),
+        evidence_items=(),
+        startup_loaded=False,
+        gameplay_behavior_verified=False,
+        verification_status="inconclusive",
+        limitations=("C4 implementation evidence is not yet bound.",),
+        acceptance_criteria=(C4_CRITERION, UNCHANGED_CRITERION),
+        runtime_verification_plan=tuple(
+            feature_spec.get("runtime_verification_plan") or ()
+        ),
+    )
+    payload["stagger_acceptance_evaluation"] = {
+        "criteria": [
+            {
+                "acceptance_criterion": C4_CRITERION,
+                "outcome": "not_observed",
+                "evidence_strength": "none",
+                "evidence_refs": [],
+            },
+            {
+                "acceptance_criterion": UNCHANGED_CRITERION,
+                "outcome": "not_observed",
+                "evidence_strength": "none",
+                "evidence_refs": [],
+            },
+        ],
+        "attempt_completion": "incomplete",
+        "overall_acceptance": "inconclusive",
+    }
+    return payload
+
+
+def _runtime_consolidation_preflight_arguments(
+    store: ArtifactStore,
+    build_result: dict[str, object],
+    runtime_result: dict[str, Any],
+    *,
+    runtime_root: Path,
+    action: dict[str, Any],
+) -> dict[str, Any]:
+    checkpoint_ref = build_result["workflow_checkpoint"]["artifact_ref"]
+    report_ref = runtime_result["resume_report"]["artifact_ref"]
+    runtime_ref = runtime_result["runtime_evidence"]["artifact_ref"]
+    evidence_ref = action["evidence_ref"]
+    feature_ref = action["feature_ref"]
+    build_ref = ArtifactRef(**build_result["build_result"]["artifact_ref"])
+    operation = VerificationOperationSpec(
+        operation_kind=EVIDENCE_CONSOLIDATION_KIND,
+        operation_contract_version=EVIDENCE_CONSOLIDATION_CONTRACT_VERSION,
+        attempt_policy=VerificationAttemptPolicy(
+            attempt_budget=1,
+            retry_allowed=False,
+            recovery_allowed=False,
+        ),
+        protocol_binding=VerificationProtocolBinding(
+            checkpoint_ref=ArtifactRef(**checkpoint_ref),
+            accepted_resume_report_ref=ArtifactRef(**report_ref),
+            resume_id="verification_only_runtime_resume_001",
+            approved_by="human",
+        ),
+        variant_payload=EvidenceConsolidationOperationV1(
+            feature_spec_ref=feature_ref,
+            build_result_ref=build_ref,
+            prior_runtime_evidence_ref=ArtifactRef(**runtime_ref),
+            evidence_pack_ref=evidence_ref,
+            canonical_delta=action["delta"],
+            execution_file_bindings=action["bindings"],
+        ),
+    )
+    return {
+        "run_root": runtime_root,
+        "artifact_store_root": store.root,
+        "feature_id": FEATURE_ID,
+        "checkpoint_path": checkpoint_ref["path"],
+        "checkpoint_hash": checkpoint_ref["artifact_hash"],
+        "resume_id": "verification_only_runtime_resume_001",
+        "approved_by": "human",
+        "verification_operation": operation,
+    }
+
+
+def _runtime_consolidation_execute_arguments(
+    preflight_arguments: dict[str, Any],
+    *,
+    expected_hash: str,
+) -> dict[str, Any]:
+    return {
+        **{
+            **preflight_arguments,
+            "verification_operation": project_verification_operation(
+                preflight_arguments["verification_operation"]
+            ),
+        },
+        "allow_game_launch": False,
+        "runtime_plugin_destination": None,
+        "allow_game_directory_write": False,
+        "expected_approval_identity_hash": expected_hash,
+    }
+
+
+def _runtime_consolidation_loader_arguments(
+    arguments: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "run_root": arguments["run_root"],
+        "artifact_store_root": arguments["artifact_store_root"],
+        "feature_id": arguments["feature_id"],
+        "checkpoint_path": arguments["checkpoint_path"],
+        "checkpoint_hash": arguments["checkpoint_hash"],
+        "operation": project_verification_operation(
+            arguments["verification_operation"]
+        ),
+    }
+
+
+def _runtime_consolidation_store_arguments(
+    handoff: Any,
+) -> dict[str, Any]:
+    return {
+        "feature_id": FEATURE_ID,
+        "artifact_type": "runtime_evidence",
+        "payload": dict(handoff.derived_payload),
+        "status": "blocked",
+        "upstream_refs": [
+            handoff.build_handoff.build_ref,
+            handoff.build_handoff.feature_spec_ref,
+            handoff.prior_runtime_evidence_ref,
+            handoff.evidence_pack_ref,
+        ],
+        "exact_revision_upstream_types": {
+            "runtime_evidence",
+            "evidence_pack",
+        },
+        "semantic_intent": handoff.semantic_intent,
+    }
+
+
+def _artifact_counts(store: ArtifactStore) -> dict[str, int]:
+    return {
+        artifact_type: len(
+            store.list_feature_artifact_revisions(FEATURE_ID, artifact_type)
+        )
+        for artifact_type in store.registry.artifact_types()
+    }
 
 
 def _sha256(path: Path) -> str:

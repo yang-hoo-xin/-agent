@@ -11,6 +11,8 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
+from src.mod_agent.action_identity import canonical_action_json, hash_action_identity
+
 
 PublicOperation: TypeAlias = Literal["preflight", "resume"]
 GraphRoute: TypeAlias = Literal["stagger_edit_authority_gate"]
@@ -820,12 +822,7 @@ def require_edit_authority_public_operation(
 def _canonical_json_v1(value: Any) -> bytes:
     """Frozen v1 canonical serialization for Approval Identity."""
 
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+    return canonical_action_json(value)
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -841,6 +838,11 @@ def _approval_identity_hash_v1(
 ) -> str:
     """Hash one v1 Approval Identity without consulting current authority."""
 
+    if _serializer is _canonical_json_v1:
+        return hash_action_identity(
+            identity,
+            expected_hash_domain=APPROVAL_IDENTITY_HASH_DOMAIN,
+        )
     return "sha256:" + hashlib.sha256(_serializer(identity)).hexdigest()
 
 

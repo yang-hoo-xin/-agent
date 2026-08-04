@@ -143,6 +143,8 @@ class ArtifactTypeRegistry:
             )
         if artifact_type == "edit_authority_approval":
             _validate_edit_authority_approval(payload, allow_legacy=True)
+        if artifact_type == "runtime_evidence":
+            _validate_runtime_evidence_consolidation_binding(payload)
         if artifact_type == "repair_planning_request":
             _validate_repair_planning_authority_request(payload)
         if artifact_type == "repair_planning_approval":
@@ -1313,6 +1315,23 @@ def _validate_request_bound_edit_authority_approval(
         raise ArtifactRegistryError(
             "edit_authority_approval exceeds its approved action boundary"
         )
+
+
+def _validate_runtime_evidence_consolidation_binding(
+    payload: dict[str, Any],
+) -> None:
+    """Validate only the registered semantic binding discriminator."""
+
+    if payload.get("verification_only_evidence_consolidation") is None:
+        return
+    from src.mod_agent.artifact_semantics import (
+        require_registered_semantic_binding,
+    )
+
+    try:
+        require_registered_semantic_binding("runtime_evidence", payload)
+    except ValueError as exc:
+        raise ArtifactRegistryError(str(exc)) from exc
 
 
 def default_artifact_contracts() -> list[ArtifactContract]:

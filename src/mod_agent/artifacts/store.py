@@ -12,6 +12,14 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 from uuid import uuid4
 
+from src.mod_agent.artifact_semantics import (
+    ArtifactWriteIntent,
+    SEMANTIC_CONFLICT_HASH_DOMAIN,
+    project_artifact_write_intent,
+    semantic_binding_from_payload,
+)
+from src.mod_agent.action_identity import hash_action_identity
+
 from .envelope import ArtifactEnvelope, ArtifactRef
 from .freshness import FreshnessView, StaleArtifactError
 from .registry import ArtifactContract, ArtifactRegistryError, ArtifactTypeRegistry
@@ -49,6 +57,22 @@ _PENDING_WRITE_FIELDS = frozenset(
     )
 )
 _PENDING_WRITE_STATUS = "pending_latest_replace"
+_SEMANTIC_PENDING_WRITE_FIELDS = frozenset(
+    (
+        "schema_version",
+        "status",
+        "feature_id",
+        "artifact_type",
+        "artifact_hash",
+        "revision_path",
+        "latest_path",
+        "semantic_binding_key",
+        "semantic_binding_version",
+        "commit_conflict_key",
+        "commit_conflict_key_hash",
+    )
+)
+_SEMANTIC_PENDING_WRITE_STATUS = "pending_semantic_commit"
 _PHYSICAL_LOCATOR_HEX_LENGTH = 32
 _REVISION_DIRECTORY = "r"
 _PENDING_DIRECTORY = "p"
@@ -225,6 +249,7 @@ class ArtifactStore:
         upstream_refs: list[ArtifactRef] | None = None,
         allow_stale_upstreams: bool = False,
         exact_revision_upstream_types: set[str] | None = None,
+        semantic_intent: ArtifactWriteIntent | None = None,
     ) -> ArtifactRef:
         """Write an Artifact and preserve the historical return/error contract."""
 
@@ -238,6 +263,7 @@ class ArtifactStore:
             upstream_refs=upstream_refs,
             allow_stale_upstreams=allow_stale_upstreams,
             exact_revision_upstream_types=exact_revision_upstream_types,
+            semantic_intent=semantic_intent,
         )
         if attempt.result.outcome == "committed":
             if attempt.result.artifact_ref is None:
@@ -264,6 +290,7 @@ class ArtifactStore:
         upstream_refs: list[ArtifactRef] | None = None,
         allow_stale_upstreams: bool = False,
         exact_revision_upstream_types: set[str] | None = None,
+        semantic_intent: ArtifactWriteIntent | None = None,
     ) -> ArtifactWriteResult:
         """Return the Store-owned outcome without retrying or recovering."""
 
@@ -277,6 +304,7 @@ class ArtifactStore:
             upstream_refs=upstream_refs,
             allow_stale_upstreams=allow_stale_upstreams,
             exact_revision_upstream_types=exact_revision_upstream_types,
+            semantic_intent=semantic_intent,
         ).result
 
     def _execute_write(
@@ -291,6 +319,7 @@ class ArtifactStore:
         upstream_refs: list[ArtifactRef] | None,
         allow_stale_upstreams: bool,
         exact_revision_upstream_types: set[str] | None,
+        semantic_intent: ArtifactWriteIntent | None,
     ) -> _ArtifactWriteAttempt:
         failure_stage: ArtifactWriteFailureStage = "admission_validation"
         artifact_hash: str | None = None
@@ -299,6 +328,7 @@ class ArtifactStore:
         pending_path: Path | None = None
         commit_started = False
         pending_write_attempted = False
+        validated_semantic_intent: ArtifactWriteIntent | None = None
         try:
             self._validate_feature_id(feature_id)
             self._validate_artifact_type(artifact_type)
@@ -323,6 +353,43 @@ class ArtifactStore:
                 allow_stale_upstreams=allow_stale_upstreams,
                 exact_revision_upstream_types=exact_upstream_types,
             )
+            try:
+                semantic_binding = semantic_binding_from_payload(
+                    artifact_type,
+                    data,
+                )
+                if semantic_binding is None:
+                    if semantic_intent is not None:
+                        raise ValueError(
+                            "Artifact write intent was supplied without a semantic binding."
+                        )
+                else:
+                    if semantic_intent is None:
+                        raise ValueError(
+                            "Registered semantic Artifact writes require an exact intent."
+                        )
+                    expected_intent = project_artifact_write_intent(
+                        reader=self,
+                        feature_id=feature_id,
+                        artifact_type=artifact_type,
+                        payload=data,
+                        status=status,
+                        upstream_refs=resolved_upstream_refs,
+                        exact_revision_upstream_types=exact_upstream_types,
+                        blockers=tuple(blockers or ()),
+                        trace_refs=tuple(trace_refs or ()),
+                        protocol_refs=semantic_intent.protocol_refs,
+                        execution_file_bindings=(
+                            semantic_intent.execution_file_bindings
+                        ),
+                    )
+                    if semantic_intent != expected_intent:
+                        raise ValueError(
+                            "Artifact semantic write intent changed after projection."
+                        )
+                    validated_semantic_intent = expected_intent
+            except ValueError as exc:
+                raise ArtifactStoreError(str(exc)) from exc
             inputs = {
                 "upstream_artifacts": [
                     {
@@ -350,6 +417,14 @@ class ArtifactStore:
             artifact_hash = self._stable_hash(
                 self._envelope_content_for_hash(envelope_content)
             )
+            if (
+                validated_semantic_intent is not None
+                and artifact_hash
+                != validated_semantic_intent.expected_artifact_hash
+            ):
+                raise ArtifactStoreError(
+                    "Artifact semantic intent content identity changed."
+                )
             envelope = ArtifactEnvelope(
                 schema_version=contract.schema_version,
                 artifact_type=artifact_type,
@@ -372,20 +447,46 @@ class ArtifactStore:
                 + "\n"
             )
             latest_path = self._artifact_path(feature_id, artifact_type)
-            pending_path = self._pending_write_path(
-                feature_id,
-                artifact_type,
-                artifact_hash,
-            )
-            existing_pending = self._validate_pending_locator(
-                pending_path,
-                feature_id=feature_id,
-                artifact_type=artifact_type,
-                artifact_hash=artifact_hash,
-            )
+            if validated_semantic_intent is None:
+                pending_path = self._pending_write_path(
+                    feature_id,
+                    artifact_type,
+                    artifact_hash,
+                )
+                existing_pending = self._validate_pending_locator(
+                    pending_path,
+                    feature_id=feature_id,
+                    artifact_type=artifact_type,
+                    artifact_hash=artifact_hash,
+                )
+            else:
+                pending_path = self._semantic_pending_write_path(
+                    feature_id,
+                    artifact_type,
+                    validated_semantic_intent.commit_conflict_key_hash,
+                )
+                existing_pending = self._validate_semantic_pending_locator(
+                    pending_path,
+                    feature_id=feature_id,
+                    artifact_type=artifact_type,
+                    semantic_binding_key=(
+                        validated_semantic_intent.semantic_binding_key
+                    ),
+                    semantic_binding_version=(
+                        validated_semantic_intent.semantic_binding_version
+                    ),
+                    commit_conflict_key=(
+                        validated_semantic_intent.commit_conflict_key
+                    ),
+                    commit_conflict_key_hash=(
+                        validated_semantic_intent.commit_conflict_key_hash
+                    ),
+                )
             if existing_pending is not None:
-                revision_path = self._guard_path(
-                    Path(str(existing_pending["revision_path"]))
+                revision_path = self._revision_artifact_path(
+                    feature_id,
+                    artifact_type,
+                    artifact_hash,
                 )
                 error = ArtifactStoreError(
                     "Existing pending write requires explicit recovery"
@@ -402,6 +503,7 @@ class ArtifactStore:
                         commit_started=False,
                         failure_stage="admission_validation",
                         error=error,
+                        semantic_intent=validated_semantic_intent,
                     ),
                     error=error,
                 )
@@ -427,6 +529,7 @@ class ArtifactStore:
                 commit_started=False,
                 failure_stage=None,
                 error=None,
+                semantic_intent=validated_semantic_intent,
             )
             if (
                 initial_state.revision_state == "valid"
@@ -445,23 +548,138 @@ class ArtifactStore:
                         commit_started=False,
                         failure_stage=None,
                         error=None,
+                        semantic_intent=validated_semantic_intent,
                     ),
                     error=None,
                 )
 
             failure_stage = "pending_marker_write"
             pending_write_attempted = True
-            self._write_text_atomic(
-                pending_path,
-                self._serialize_pending_write(
+            if validated_semantic_intent is None:
+                self._write_text_atomic(
+                    pending_path,
+                    self._serialize_pending_write(
+                        feature_id=feature_id,
+                        artifact_type=artifact_type,
+                        artifact_hash=artifact_hash,
+                        revision_path=revision_path,
+                        latest_path=latest_path,
+                    ),
+                )
+            else:
+                try:
+                    self._write_text_exclusive_atomic(
+                        pending_path,
+                        self._serialize_semantic_pending_write(
+                            feature_id=feature_id,
+                            artifact_type=artifact_type,
+                            artifact_hash=artifact_hash,
+                            revision_path=revision_path,
+                            latest_path=latest_path,
+                            semantic_intent=validated_semantic_intent,
+                        ),
+                    )
+                except FileExistsError:
+                    failure_stage = "admission_validation"
+                    existing_semantic_pending = (
+                        self._validate_semantic_pending_locator(
+                            pending_path,
+                            feature_id=feature_id,
+                            artifact_type=artifact_type,
+                            semantic_binding_key=(
+                                validated_semantic_intent.semantic_binding_key
+                            ),
+                            semantic_binding_version=(
+                                validated_semantic_intent.semantic_binding_version
+                            ),
+                            commit_conflict_key=(
+                                validated_semantic_intent.commit_conflict_key
+                            ),
+                            commit_conflict_key_hash=(
+                                validated_semantic_intent.commit_conflict_key_hash
+                            ),
+                        )
+                    )
+                    if existing_semantic_pending is None:
+                        raise ArtifactStoreError(
+                            "Semantic reservation disappeared during admission."
+                        )
+                    error = ArtifactStoreError(
+                        "Existing semantic reservation requires a new attempt"
+                    )
+                    return _ArtifactWriteAttempt(
+                        result=self._artifact_write_result(
+                            outcome="partial",
+                            feature_id=feature_id,
+                            artifact_type=artifact_type,
+                            artifact_hash=artifact_hash,
+                            revision_path=revision_path,
+                            latest_path=latest_path,
+                            pending_path=pending_path,
+                            commit_started=False,
+                            failure_stage="admission_validation",
+                            error=error,
+                            semantic_intent=validated_semantic_intent,
+                        ),
+                        error=error,
+                    )
+                installed = self._validate_semantic_pending_locator(
+                    pending_path,
                     feature_id=feature_id,
                     artifact_type=artifact_type,
-                    artifact_hash=artifact_hash,
-                    revision_path=revision_path,
-                    latest_path=latest_path,
-                ),
-            )
+                    semantic_binding_key=(
+                        validated_semantic_intent.semantic_binding_key
+                    ),
+                    semantic_binding_version=(
+                        validated_semantic_intent.semantic_binding_version
+                    ),
+                    commit_conflict_key=(
+                        validated_semantic_intent.commit_conflict_key
+                    ),
+                    commit_conflict_key_hash=(
+                        validated_semantic_intent.commit_conflict_key_hash
+                    ),
+                )
+                if (
+                    installed is None
+                    or installed.get("artifact_hash") != artifact_hash
+                ):
+                    raise ArtifactStoreError(
+                        "Semantic reservation readback identity changed."
+                    )
             commit_started = True
+            if validated_semantic_intent is not None:
+                failure_stage = "commit_verification"
+                try:
+                    second_intent = project_artifact_write_intent(
+                        reader=self,
+                        feature_id=feature_id,
+                        artifact_type=artifact_type,
+                        payload=data,
+                        status=status,
+                        upstream_refs=resolved_upstream_refs,
+                        exact_revision_upstream_types=exact_upstream_types,
+                        blockers=tuple(blockers or ()),
+                        trace_refs=tuple(trace_refs or ()),
+                        protocol_refs=validated_semantic_intent.protocol_refs,
+                        execution_file_bindings=(
+                            validated_semantic_intent.execution_file_bindings
+                        ),
+                    )
+                    if second_intent != validated_semantic_intent:
+                        raise ArtifactStoreError(
+                            "Semantic write identity changed after reservation."
+                        )
+                except Exception:
+                    try:
+                        self._unlink_exact_semantic_pending_marker(
+                            pending_path,
+                            validated_semantic_intent,
+                        )
+                    except Exception as cleanup_exc:
+                        failure_stage = "pending_marker_cleanup"
+                        raise cleanup_exc
+                    raise
             failure_stage = "immutable_revision_write"
             if existing_revision_path is None:
                 self._write_text_atomic(revision_path, serialized_envelope)
@@ -479,6 +697,7 @@ class ArtifactStore:
                 commit_started=True,
                 failure_stage=None,
                 error=None,
+                semantic_intent=validated_semantic_intent,
             )
             if (
                 before_cleanup.revision_state != "valid"
@@ -489,7 +708,13 @@ class ArtifactStore:
                     "Artifact commit verification failed before pending cleanup"
                 )
             failure_stage = "pending_marker_cleanup"
-            self._unlink_if_exists(pending_path)
+            if validated_semantic_intent is None:
+                self._unlink_if_exists(pending_path)
+            else:
+                self._unlink_exact_semantic_pending_marker(
+                    pending_path,
+                    validated_semantic_intent,
+                )
             committed = self._artifact_write_result(
                 outcome="committed",
                 feature_id=feature_id,
@@ -501,6 +726,7 @@ class ArtifactStore:
                 commit_started=True,
                 failure_stage=None,
                 error=None,
+                semantic_intent=validated_semantic_intent,
             )
             if (
                 committed.revision_state != "valid"
@@ -515,6 +741,7 @@ class ArtifactStore:
         except Exception as exc:
             if (
                 commit_started
+                and validated_semantic_intent is None
                 and revision_path is not None
                 and pending_path is not None
                 and not revision_path.exists()
@@ -530,12 +757,39 @@ class ArtifactStore:
                 and pending_path is not None
             ):
                 try:
-                    installed_marker = self._validate_pending_locator(
-                        pending_path,
-                        feature_id=feature_id,
-                        artifact_type=artifact_type,
-                        artifact_hash=artifact_hash,
-                    )
+                    if validated_semantic_intent is None:
+                        installed_marker = self._validate_pending_locator(
+                            pending_path,
+                            feature_id=feature_id,
+                            artifact_type=artifact_type,
+                            artifact_hash=artifact_hash,
+                        )
+                    else:
+                        installed_marker = (
+                            self._validate_semantic_pending_locator(
+                                pending_path,
+                                feature_id=feature_id,
+                                artifact_type=artifact_type,
+                                semantic_binding_key=(
+                                    validated_semantic_intent.semantic_binding_key
+                                ),
+                                semantic_binding_version=(
+                                    validated_semantic_intent.semantic_binding_version
+                                ),
+                                commit_conflict_key=(
+                                    validated_semantic_intent.commit_conflict_key
+                                ),
+                                commit_conflict_key_hash=(
+                                    validated_semantic_intent.commit_conflict_key_hash
+                                ),
+                            )
+                        )
+                        if (
+                            installed_marker is not None
+                            and installed_marker.get("artifact_hash")
+                            != artifact_hash
+                        ):
+                            installed_marker = None
                 except (ArtifactStoreError, OSError):
                     commit_started = False
                 else:
@@ -555,6 +809,7 @@ class ArtifactStore:
                     commit_started=commit_started,
                     failure_stage=failure_stage,
                     error=exc,
+                    semantic_intent=validated_semantic_intent,
                 ),
                 error=exc,
             )
@@ -897,6 +1152,64 @@ class ArtifactStore:
                 except (FileNotFoundError, OSError):
                     pass
 
+    def semantic_read_immutable(self, ref: ArtifactRef) -> Mapping[str, Any]:
+        """Read one exact immutable revision for trusted semantic admission."""
+
+        self._validate_immutable_upstream_ref(
+            feature_id=ref.feature_id,
+            upstream=ref,
+        )
+        return self.read(ref)
+
+    def project_artifact_hash(
+        self,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        payload: Mapping[str, Any],
+        status: str,
+        blockers: Iterable[Mapping[str, Any]],
+        trace_refs: Iterable[str],
+        upstream_refs: Iterable[ArtifactRef],
+        exact_revision_upstream_types: set[str],
+    ) -> str:
+        """Project the Store-owned envelope content hash without writing."""
+
+        self._validate_feature_id(feature_id)
+        self._validate_artifact_type(artifact_type)
+        try:
+            contract = self.registry.validate_write(
+                artifact_type=artifact_type,
+                status=status,
+                payload=dict(payload),
+            )
+        except ArtifactRegistryError as exc:
+            raise ArtifactStoreError(str(exc)) from exc
+        exact_types = set(exact_revision_upstream_types)
+        inputs = {
+            "upstream_artifacts": [
+                {
+                    "artifact_type": ref.artifact_type,
+                    "path": ref.path,
+                    "artifact_hash": ref.artifact_hash,
+                    "require_latest": ref.artifact_type not in exact_types,
+                }
+                for ref in upstream_refs
+            ]
+        }
+        content = {
+            "schema_version": contract.schema_version,
+            "artifact_type": artifact_type,
+            "feature_id": feature_id,
+            "producer_stage": contract.producer_stage,
+            "status": status,
+            "data": dict(payload),
+            "inputs": inputs,
+            "blockers": [dict(item) for item in blockers],
+            "trace_refs": list(trace_refs),
+        }
+        return self._stable_hash(self._envelope_content_for_hash(content))
+
     def exists(self, ref: ArtifactRef) -> bool:
         """Return whether a guarded artifact reference exists."""
 
@@ -955,6 +1268,25 @@ class ArtifactStore:
             / f"{self._physical_locator(artifact_hash)}.json"
         )
 
+    def _semantic_pending_write_path(
+        self,
+        feature_id: str,
+        artifact_type: str,
+        commit_conflict_key_hash: str,
+    ) -> Path:
+        prefix = "sha256:"
+        if not commit_conflict_key_hash.startswith(prefix):
+            raise ArtifactStoreError("Semantic conflict key hash is invalid")
+        digest = commit_conflict_key_hash[len(prefix) :]
+        return self._guard_path(
+            self.root
+            / "features"
+            / feature_id
+            / _PENDING_DIRECTORY
+            / artifact_type
+            / f"{self._physical_locator(digest)}.json"
+        )
+
     def _latest_artifact_hash(self, feature_id: str, artifact_type: str) -> str | None:
         latest_path = self._artifact_path(feature_id, artifact_type)
         if not latest_path.exists():
@@ -998,10 +1330,53 @@ class ArtifactStore:
             if temp_path.exists():
                 temp_path.unlink()
 
+    def _write_text_exclusive_atomic(self, path: Path, content: str) -> None:
+        """Install complete marker bytes without replacing a competing marker."""
+
+        guarded_path = self._guard_path(path)
+        guarded_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self._guard_path(
+            guarded_path.with_name(f".tmp-{uuid4().hex[:12]}.json")
+        )
+        try:
+            with temp_path.open("x", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.link(temp_path, guarded_path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+
     def _recover_pending_write(self, marker_path: Path) -> dict[str, str]:
         guarded_marker_path = self._guard_path(marker_path)
         marker = json.loads(guarded_marker_path.read_text(encoding="utf-8"))
         self._validate_pending_write_marker(marker)
+
+        if marker.get("schema_version") == "2.0":
+            conflict_key = marker.get("commit_conflict_key")
+            if not isinstance(conflict_key, Mapping):
+                raise ArtifactStoreError("Semantic pending marker key is invalid")
+            conflict_hash = hash_action_identity(
+                conflict_key,
+                expected_hash_domain=SEMANTIC_CONFLICT_HASH_DOMAIN,
+            )
+            if marker.get("commit_conflict_key_hash") != conflict_hash:
+                raise ArtifactStoreError("Semantic pending marker hash mismatch")
+            self._validate_semantic_pending_locator(
+                guarded_marker_path,
+                feature_id=str(marker["feature_id"]),
+                artifact_type=str(marker["artifact_type"]),
+                semantic_binding_key=str(marker["semantic_binding_key"]),
+                semantic_binding_version=str(marker["semantic_binding_version"]),
+                commit_conflict_key=conflict_key,
+                commit_conflict_key_hash=conflict_hash,
+            )
+            return self._pending_write_result(
+                marker,
+                status="blocked",
+                reason="semantic_recovery_not_authorized",
+            )
 
         feature_id = str(marker["feature_id"])
         artifact_type = str(marker["artifact_type"])
@@ -1081,6 +1456,33 @@ class ArtifactStore:
         }
         return json.dumps(marker, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
+    def _serialize_semantic_pending_write(
+        self,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        artifact_hash: str,
+        revision_path: Path,
+        latest_path: Path,
+        semantic_intent: ArtifactWriteIntent,
+    ) -> str:
+        marker = {
+            "schema_version": "2.0",
+            "status": _SEMANTIC_PENDING_WRITE_STATUS,
+            "feature_id": feature_id,
+            "artifact_type": artifact_type,
+            "artifact_hash": artifact_hash,
+            "revision_path": str(revision_path),
+            "latest_path": str(latest_path),
+            "semantic_binding_key": semantic_intent.semantic_binding_key,
+            "semantic_binding_version": semantic_intent.semantic_binding_version,
+            "commit_conflict_key": dict(semantic_intent.commit_conflict_key),
+            "commit_conflict_key_hash": (
+                semantic_intent.commit_conflict_key_hash
+            ),
+        }
+        return json.dumps(marker, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
     @staticmethod
     def _pending_write_result(
         marker: Mapping[str, Any],
@@ -1100,6 +1502,9 @@ class ArtifactStore:
 
     @staticmethod
     def _validate_pending_write_marker(marker: Mapping[str, Any]) -> None:
+        if marker.get("schema_version") == "2.0":
+            ArtifactStore._validate_semantic_pending_write_marker(marker)
+            return
         fields = set(marker)
         missing = sorted(_PENDING_WRITE_FIELDS - fields)
         if missing:
@@ -1111,6 +1516,31 @@ class ArtifactStore:
             raise ArtifactStoreError("Pending write marker schema_version mismatch")
         if marker["status"] != _PENDING_WRITE_STATUS:
             raise ArtifactStoreError("Pending write marker status mismatch")
+
+    @staticmethod
+    def _validate_semantic_pending_write_marker(marker: Mapping[str, Any]) -> None:
+        fields = set(marker)
+        missing = sorted(_SEMANTIC_PENDING_WRITE_FIELDS - fields)
+        if missing:
+            raise ArtifactStoreError(
+                f"Semantic pending marker missing fields: {missing}"
+            )
+        unexpected = sorted(fields - _SEMANTIC_PENDING_WRITE_FIELDS)
+        if unexpected:
+            raise ArtifactStoreError(
+                f"Semantic pending marker unexpected fields: {unexpected}"
+            )
+        if (
+            marker.get("schema_version") != "2.0"
+            or marker.get("status") != _SEMANTIC_PENDING_WRITE_STATUS
+            or not isinstance(marker.get("semantic_binding_key"), str)
+            or not marker.get("semantic_binding_key")
+            or not isinstance(marker.get("semantic_binding_version"), str)
+            or not marker.get("semantic_binding_version")
+            or not isinstance(marker.get("commit_conflict_key"), Mapping)
+            or not isinstance(marker.get("commit_conflict_key_hash"), str)
+        ):
+            raise ArtifactStoreError("Semantic pending marker contract mismatch")
 
     @staticmethod
     def _unlink_if_exists(path: Path) -> None:
@@ -1203,6 +1633,84 @@ class ArtifactStore:
             raise ArtifactStoreError("Existing pending write marker is invalid")
         return dict(marker)
 
+    def _validate_semantic_pending_locator(
+        self,
+        path: Path,
+        *,
+        feature_id: str,
+        artifact_type: str,
+        semantic_binding_key: str,
+        semantic_binding_version: str,
+        commit_conflict_key: Mapping[str, Any],
+        commit_conflict_key_hash: str,
+    ) -> dict[str, Any] | None:
+        if not path.exists():
+            return None
+        try:
+            marker = json.loads(path.read_text(encoding="utf-8"))
+            self._validate_semantic_pending_write_marker(marker)
+        except (ArtifactStoreError, json.JSONDecodeError, OSError) as exc:
+            raise ArtifactStoreError(
+                "Existing semantic reservation is invalid"
+            ) from exc
+        expected_path = self._semantic_pending_write_path(
+            feature_id,
+            artifact_type,
+            commit_conflict_key_hash,
+        )
+        if path != expected_path:
+            raise ArtifactStoreError("Semantic reservation path mismatch")
+        if (
+            marker.get("feature_id") != feature_id
+            or marker.get("artifact_type") != artifact_type
+            or marker.get("semantic_binding_key") != semantic_binding_key
+            or marker.get("semantic_binding_version")
+            != semantic_binding_version
+            or commit_conflict_key.get("semantic_binding_key")
+            != semantic_binding_key
+            or commit_conflict_key.get("semantic_binding_version")
+            != semantic_binding_version
+            or marker.get("commit_conflict_key_hash")
+            != commit_conflict_key_hash
+            or marker.get("commit_conflict_key") != dict(commit_conflict_key)
+        ):
+            raise ArtifactStoreError("Semantic reservation locator collision")
+        artifact_hash = marker.get("artifact_hash")
+        if not isinstance(artifact_hash, str):
+            raise ArtifactStoreError("Semantic reservation artifact hash is invalid")
+        revision_path = self._guard_path(Path(str(marker["revision_path"])))
+        latest_path = self._guard_path(Path(str(marker["latest_path"])))
+        if revision_path not in {
+            self._revision_artifact_path(feature_id, artifact_type, artifact_hash),
+            self._legacy_revision_artifact_path(
+                feature_id,
+                artifact_type,
+                artifact_hash,
+            ),
+        }:
+            raise ArtifactStoreError("Semantic reservation revision path mismatch")
+        if latest_path != self._artifact_path(feature_id, artifact_type):
+            raise ArtifactStoreError("Semantic reservation latest path mismatch")
+        return dict(marker)
+
+    def _unlink_exact_semantic_pending_marker(
+        self,
+        path: Path,
+        semantic_intent: ArtifactWriteIntent,
+    ) -> None:
+        marker = self._validate_semantic_pending_locator(
+            path,
+            feature_id=semantic_intent.feature_id,
+            artifact_type=semantic_intent.artifact_type,
+            semantic_binding_key=semantic_intent.semantic_binding_key,
+            semantic_binding_version=semantic_intent.semantic_binding_version,
+            commit_conflict_key=semantic_intent.commit_conflict_key,
+            commit_conflict_key_hash=semantic_intent.commit_conflict_key_hash,
+        )
+        if marker is None:
+            raise ArtifactStoreError("Semantic reservation is missing during cleanup")
+        path.unlink()
+
     def _artifact_write_result(
         self,
         *,
@@ -1216,6 +1724,7 @@ class ArtifactStore:
         commit_started: bool,
         failure_stage: ArtifactWriteFailureStage | None,
         error: Exception | None,
+        semantic_intent: ArtifactWriteIntent | None = None,
     ) -> ArtifactWriteResult:
         revision_state = self._artifact_revision_state(
             feature_id=feature_id,
@@ -1234,6 +1743,7 @@ class ArtifactStore:
             artifact_type=artifact_type,
             artifact_hash=artifact_hash,
             pending_path=pending_path,
+            semantic_intent=semantic_intent,
         )
         artifact_ref = None
         if (
@@ -1267,7 +1777,8 @@ class ArtifactStore:
             failure_class=None if error is None else type(error).__name__,
             failure_message=None if error is None else str(error),
             recovery_available=(
-                outcome == "partial"
+                semantic_intent is None
+                and outcome == "partial"
                 and pending_marker_state == "present"
                 and revision_state == "valid"
             ),
@@ -1345,12 +1856,28 @@ class ArtifactStore:
         artifact_type: str,
         artifact_hash: str | None,
         pending_path: Path | None,
+        semantic_intent: ArtifactWriteIntent | None = None,
     ) -> ArtifactPendingMarkerState:
         if artifact_hash is None or pending_path is None:
             return "unavailable"
         try:
             if not pending_path.exists():
                 return "absent"
+            if semantic_intent is not None:
+                marker = self._validate_semantic_pending_locator(
+                    pending_path,
+                    feature_id=feature_id,
+                    artifact_type=artifact_type,
+                    semantic_binding_key=semantic_intent.semantic_binding_key,
+                    semantic_binding_version=(
+                        semantic_intent.semantic_binding_version
+                    ),
+                    commit_conflict_key=semantic_intent.commit_conflict_key,
+                    commit_conflict_key_hash=(
+                        semantic_intent.commit_conflict_key_hash
+                    ),
+                )
+                return "present" if marker is not None else "absent"
             marker = json.loads(pending_path.read_text(encoding="utf-8"))
             self._validate_pending_write_marker(marker)
             if (

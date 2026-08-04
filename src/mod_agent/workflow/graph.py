@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactStoreError
+from src.mod_agent.artifact_semantics import project_artifact_write_intent
 from src.mod_agent.bindings import resolve_runtime_diagnosis_binding
 from src.mod_agent.build import BuildResult, build_fake_build_result
 from src.mod_agent.domain import (
@@ -68,11 +69,20 @@ from src.mod_agent.runtime import (
     make_gtfo_runtime_evidence_factory_from_settings,
 )
 from src.mod_agent.runtime.evidence import bind_runtime_evidence_context
+from src.mod_agent.runtime_evidence_consolidation import (
+    project_operation_payload as project_consolidated_runtime_evidence,
+)
 from src.mod_agent.runtime.stagger_edit_authority import (
     materialize_stagger_edit_authority_approval,
 )
 from src.mod_agent.runtime.stagger_planner_admission import (
     materialize_stagger_planning_approval,
+)
+from src.mod_agent.verification_operations import (
+    EVIDENCE_CONSOLIDATION_KIND,
+    VerificationOperationEnvelope,
+    resolve_verification_operation,
+    validate_verification_operation_envelope,
 )
 
 from .checkpointing import (
@@ -109,7 +119,6 @@ from .verification_only import (
     verification_only_lineage_matches,
     verification_only_lineage_payload,
 )
-
 GraphNode = Callable[[ModAgentState], ModAgentState]
 BuildResultFactory = Callable[[str, str | None], BuildResult]
 RuntimeEvidenceFactory = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -236,6 +245,7 @@ def build_graph(
     approved_feature_spec_revision_payload_hash: str | None = None,
     approved_feature_spec_revision_projection_hash: str | None = None,
     verification_only_continuation: VerificationOnlyContinuationInput | None = None,
+    verification_operation: VerificationOperationEnvelope | None = None,
     runtime_terminal_continuation: VerificationOnlyRuntimeTerminalInput | None = None,
     runtime_terminal_write_results: bool = False,
 ):
@@ -266,7 +276,10 @@ def build_graph(
             "one graph entry."
         )
     if runtime_evidence_write_results and (
-        runtime_continuation_checkpoint_id is None
+        (
+            runtime_continuation_checkpoint_id is None
+            and verification_operation is None
+        )
         or "collect_runtime_evidence" not in set(interrupt_after or ())
     ):
         raise ValueError(
@@ -281,6 +294,7 @@ def build_graph(
     if runtime_terminal_continuation is not None:
         if (
             verification_only_continuation is not None
+            or verification_operation is not None
             or runtime_continuation_checkpoint_id is not None
             or edit_authority_request_ref is not None
             or repair_planning_authority_request_ref is not None
@@ -296,6 +310,30 @@ def build_graph(
             raise ValueError(
                 "Post-Runtime terminal continuation requires its own no-effect "
                 "Graph entry."
+            )
+    if verification_operation is not None:
+        declaration = resolve_verification_operation(
+            validate_verification_operation_envelope(verification_operation)
+        )
+        if declaration.operation_kind != EVIDENCE_CONSOLIDATION_KIND:
+            raise ValueError("Verification operation Graph route is unsupported.")
+        if (
+            verification_only_continuation is not None
+            or runtime_terminal_continuation is not None
+            or runtime_continuation_checkpoint_id is not None
+            or edit_authority_request_ref is not None
+            or repair_planning_authority_request_ref is not None
+            or feature_spec_revision_projection is not None
+            or build_result_factory is not None
+            or runtime_evidence_factory is not None
+            or allow_game_launch
+            or stop_after_evidence
+            or stop_after_build
+            or persist_build_runtime_handoff
+            or not runtime_evidence_write_results
+        ):
+            raise ValueError(
+                "RuntimeEvidence consolidation requires its own no-effect Graph entry."
             )
     if verification_only_continuation is not None:
         if (
@@ -411,10 +449,14 @@ def build_graph(
     stub_runner = StubNodeRunner(artifact_store)
     effective_domain_registry = domain_adapter_registry or _default_domain_adapter_registry()
     effective_runtime_evidence_factory = (
-        runtime_evidence_factory
-        or _runtime_evidence_factory_from_settings(
-            settings,
-            allow_game_launch=allow_game_launch,
+        None
+        if verification_operation is not None
+        else (
+            runtime_evidence_factory
+            or _runtime_evidence_factory_from_settings(
+                settings,
+                allow_game_launch=allow_game_launch,
+            )
         )
     )
     effective_proposal_git_binding_factory = proposal_git_binding_factory
@@ -599,6 +641,7 @@ def build_graph(
                 artifact_store,
                 effective_runtime_evidence_factory,
                 use_store_result=runtime_evidence_write_results,
+                verification_operation=verification_operation,
             ),
         ),
     )
@@ -676,6 +719,16 @@ def build_graph(
                 "blocked": "blocked",
                 "continue": "evaluate",
             },
+        )
+    elif verification_operation is not None:
+        graph.add_conditional_edges(
+            START,
+            lambda state: _route_runtime_evidence_consolidation_entry(
+                state,
+                artifact_store,
+                verification_operation,
+            ),
+            {"continue": "collect_runtime_evidence"},
         )
     elif verification_only_continuation is not None:
         graph.add_edge(START, "verification_only_admission")
@@ -2740,6 +2793,54 @@ def _route_runtime_terminal_continuation_entry(
     return route_after_runtime_evidence(state)
 
 
+def _route_runtime_evidence_consolidation_entry(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    verification_operation: VerificationOperationEnvelope,
+) -> str:
+    """Admit one exact implementation-evidence delta before its only write."""
+
+    envelope = validate_verification_operation_envelope(verification_operation)
+    operation = envelope.variant_payload
+    protocol = envelope.protocol_binding
+    if state.get("current_stage") != "runtime_evidence":
+        raise ValueError(
+            "RuntimeEvidence consolidation must restore the RuntimeEvidence boundary."
+        )
+    if state.get("blockers"):
+        raise ValueError(
+            "RuntimeEvidence consolidation state contains unresolved blockers."
+        )
+    exact_refs = {
+        "workflow_checkpoint": protocol.checkpoint_ref,
+        "resume_report": protocol.accepted_resume_report_ref,
+        "runtime_evidence": operation.prior_runtime_evidence_ref,
+        "evidence_pack": operation.evidence_pack_ref,
+        "feature_spec": operation.feature_spec_ref,
+        "build_result": operation.build_result_ref,
+    }
+    for artifact_type, expected_ref in exact_refs.items():
+        if _artifact_ref_from_state(state, artifact_type) != expected_ref:
+            raise ValueError(
+                f"RuntimeEvidence consolidation state changed {artifact_type}."
+            )
+    decision, _prior_payload, child_refs = WorkflowCheckpointStore(
+        artifact_store
+    ).preflight_runtime_evidence_consolidation(
+        protocol.checkpoint_ref,
+        resume_report_ref=protocol.accepted_resume_report_ref,
+        prior_runtime_evidence_ref=operation.prior_runtime_evidence_ref,
+        resume_id=protocol.resume_id,
+        approved_by=protocol.approved_by,
+    )
+    if not decision.allowed or child_refs:
+        raise ValueError(
+            "RuntimeEvidence consolidation admission changed before Graph routing."
+        )
+    project_consolidated_runtime_evidence(envelope, artifact_store)
+    return "continue"
+
+
 def _route_after_terminal_evaluate(state: ModAgentState) -> str:
     """Stop a terminal continuation after any non-committed EvalReport result."""
 
@@ -2951,6 +3052,7 @@ def _run_runtime_evidence(
     runtime_evidence_factory: RuntimeEvidenceFactory | None,
     *,
     use_store_result: bool = False,
+    verification_operation: VerificationOperationEnvelope | None = None,
 ) -> ModAgentState:
     build = _read_artifact_data(state, artifact_store, "build_result")
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
@@ -2958,17 +3060,26 @@ def _run_runtime_evidence(
     build_artifact_ref = _artifact_ref_from_state(state, "build_result")
     try:
         payload = (
-            runtime_evidence_factory(feature_id, build, feature_spec)
-            if runtime_evidence_factory is not None
-            else build_fake_runtime_evidence_payload(
-                feature_id=feature_id,
-                input_execution_mode=build.get("execution_mode"),
-                acceptance_criteria=tuple(
-                    feature_spec.get("acceptance_criteria") or ()
+            project_consolidated_runtime_evidence(
+                validate_verification_operation_envelope(
+                    verification_operation
                 ),
-                runtime_verification_plan=tuple(
-                    feature_spec.get("runtime_verification_plan") or ()
-                ),
+                artifact_store,
+            )
+            if verification_operation is not None
+            else (
+                runtime_evidence_factory(feature_id, build, feature_spec)
+                if runtime_evidence_factory is not None
+                else build_fake_runtime_evidence_payload(
+                    feature_id=feature_id,
+                    input_execution_mode=build.get("execution_mode"),
+                    acceptance_criteria=tuple(
+                        feature_spec.get("acceptance_criteria") or ()
+                    ),
+                    runtime_verification_plan=tuple(
+                        feature_spec.get("runtime_verification_plan") or ()
+                    ),
+                )
             )
         )
     except Exception as exc:
@@ -2978,7 +3089,11 @@ def _run_runtime_evidence(
             failure_stage = exc.failure_stage
             failure_class = exc.failure_class
         else:
-            failure_stage = "runtime_execution"
+            failure_stage = (
+                "graph_consolidation_admission"
+                if verification_operation is not None
+                else "runtime_execution"
+            )
             failure_class = type(exc).__name__
         next_state = _copy_state(state)
         next_state["current_stage"] = "runtime_evidence"
@@ -3024,11 +3139,16 @@ def _run_runtime_evidence(
     except Exception as exc:
         if not use_store_result:
             raise
+        validation_stage = (
+            "graph_consolidation_admission"
+            if verification_operation is not None
+            else "post_runtime_validation"
+        )
         next_state = _copy_state(state)
         next_state["current_stage"] = "runtime_evidence"
         next_state["runtime_summary"] = {
             "status": "blocked",
-            "platform_failure_stage": "post_runtime_validation",
+            "platform_failure_stage": validation_stage,
             "runtime_evidence_store_result": None,
             "runtime_evidence_ready": False,
             "failure_class": type(exc).__name__,
@@ -3037,20 +3157,63 @@ def _run_runtime_evidence(
         next_state["blockers"].append(
             {
                 "stage": "runtime_evidence",
-                "code": "RUNTIME_EVIDENCE_POST_VALIDATION_FAILED",
+                "code": (
+                    "RUNTIME_EVIDENCE_CONSOLIDATION_VALIDATION_FAILED"
+                    if verification_operation is not None
+                    else "RUNTIME_EVIDENCE_POST_VALIDATION_FAILED"
+                ),
                 "message": f"{type(exc).__name__}: {exc}",
             }
         )
         return next_state
+    upstream_refs = [
+        build_artifact_ref,
+        _artifact_ref_from_state(state, "feature_spec"),
+    ]
+    exact_revision_upstream_types: set[str] | None = None
+    semantic_intent = None
+    if verification_operation is not None:
+        operation = verification_operation.variant_payload
+        upstream_refs.extend(
+            [
+                operation.prior_runtime_evidence_ref,
+                operation.evidence_pack_ref,
+            ]
+        )
+        exact_revision_upstream_types = {
+            "runtime_evidence",
+            "evidence_pack",
+        }
+        semantic_intent = project_artifact_write_intent(
+            reader=artifact_store,
+            feature_id=feature_id,
+            artifact_type="runtime_evidence",
+            payload=payload,
+            status="blocked",
+            upstream_refs=upstream_refs,
+            exact_revision_upstream_types=exact_revision_upstream_types,
+            blockers=(),
+            trace_refs=(),
+            protocol_refs=(
+                verification_operation.protocol_binding.checkpoint_ref,
+                verification_operation.protocol_binding.accepted_resume_report_ref,
+            ),
+            execution_file_bindings=(
+                operation.execution_file_bindings
+            ),
+        )
     write_arguments = {
         "feature_id": feature_id,
         "artifact_type": "runtime_evidence",
         "payload": payload,
-        "status": "success" if acceptance_verified else "blocked",
-        "upstream_refs": [
-            build_artifact_ref,
-            _artifact_ref_from_state(state, "feature_spec"),
-        ],
+        "status": (
+            "blocked"
+            if verification_operation is not None
+            else ("success" if acceptance_verified else "blocked")
+        ),
+        "upstream_refs": upstream_refs,
+        "exact_revision_upstream_types": exact_revision_upstream_types,
+        "semantic_intent": semantic_intent,
     }
     write_result = None
     if use_store_result:
@@ -3059,6 +3222,9 @@ def _run_runtime_evidence(
     else:
         artifact_ref = artifact_store.write(**write_arguments)
     next_state = _copy_state(state)
+    if verification_operation is not None:
+        next_state["artifacts"].pop("runtime_evidence", None)
+        next_state["artifact_hashes"].pop("runtime_evidence", None)
     next_state["current_stage"] = "runtime_evidence"
     next_state["runtime_summary"] = _runtime_summary_from_payload(payload)
     if write_result is not None:
