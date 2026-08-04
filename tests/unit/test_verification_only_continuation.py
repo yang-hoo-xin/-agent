@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import src.mod_agent.local_entry as local_entry_module
 import src.mod_agent.workflow.graph as workflow_graph_module
 
 from src.mod_agent.artifacts import (
@@ -23,7 +24,9 @@ from src.mod_agent.build import (
     build_fake_build_result,
 )
 from src.mod_agent.workflow import (
+    ResumeDecision,
     ResumePayload,
+    ResumeValidator,
     VerificationOnlyContinuationInput,
     WorkflowCheckpointStore,
     build_graph,
@@ -36,13 +39,17 @@ from src.mod_agent.workflow.verification_only import (
 )
 from src.mod_agent.runtime import (
     RuntimeEvidenceItem,
+    build_fake_runtime_evidence_payload,
     build_real_runtime_evidence_payload,
     build_supplied_runtime_evidence_payload,
 )
 from src.mod_agent.workflow.graph import _run_workflow_summary
 from src.mod_agent.local_entry import (
+    LocalEntryError,
     execute_verification_only_build_continuation,
+    preflight_local_runtime,
     preflight_verification_only_build_continuation,
+    resume_local_runtime,
 )
 
 
@@ -50,6 +57,13 @@ FEATURE_ID = "feature_verification_only_001"
 USER_REQUEST = "Verify the existing implementation without changing source."
 TARGET_MOD = "BetterHitFeedback"
 HANDOFF_CODE = "VERIFICATION_ONLY_FRESH_LINEAGE_HANDOFF_UNSUPPORTED"
+RUNTIME_ADMISSION = {
+    "status": "admitted",
+    "authorization_scope": "this_resume_only",
+    "requested_side_effects": ["runtime_execution"],
+    "authorized_side_effects": ["runtime_execution"],
+    "provider": "injected_test",
+}
 
 
 def test_preflight_is_deterministic_and_performs_no_write(tmp_path: Path) -> None:
@@ -1121,6 +1135,728 @@ def test_verification_only_configuration_keeps_build_runtime_authority_separate(
             build_result_factory=_real_build_factory(tmp_path),
             verification_only_continuation=continuation,
         )
+
+    with pytest.raises(ValueError, match="interrupt_after collect_runtime_evidence"):
+        build_graph(
+            store,
+            runtime_evidence_write_results=True,
+            runtime_continuation_checkpoint_id="checkpoint_001",
+        )
+
+
+def test_public_build_handoff_enters_manifest_free_runtime_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    calls = {"probe": 0, "factory": 0}
+
+    def forbidden_probe(*_args, **_kwargs) -> None:
+        calls["probe"] += 1
+        raise AssertionError("Runtime preflight must not probe Store writes.")
+
+    monkeypatch.setattr(ArtifactStore, "preflight_atomic_commit", forbidden_probe)
+    arguments = _runtime_preflight_arguments(
+        store,
+        build_result,
+        runtime_root=runtime_root,
+    )
+    first = preflight_local_runtime(**arguments)
+    second = preflight_local_runtime(**arguments)
+
+    assert first == second
+    assert first["status"] == "READY_FOR_RUNTIME_EXECUTION"
+    assert first["runtime_execution_identity"] == second[
+        "runtime_execution_identity"
+    ]
+    assert first["runtime_execution_identity_hash"] == second[
+        "runtime_execution_identity_hash"
+    ]
+    assert first["manifest_required"] is False
+    assert first["writes_performed"] is False
+    assert calls == {"probe": 0, "factory": 0}
+    assert not (runtime_root / "run_manifest.json").exists()
+
+
+def test_runtime_execution_identity_excludes_run_root_and_binds_action(
+    tmp_path: Path,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    first_root = tmp_path / "runtime-a"
+    second_root = tmp_path / "runtime-b"
+    first_root.mkdir()
+    second_root.mkdir()
+    first = preflight_local_runtime(
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=first_root,
+        )
+    )
+    same_action = preflight_local_runtime(
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=second_root,
+        )
+    )
+    changed_approver = preflight_local_runtime(
+        **{
+            **_runtime_preflight_arguments(
+                store,
+                build_result,
+                runtime_root=second_root,
+            ),
+            "approved_by": "different-human",
+        }
+    )
+    changed_admission = preflight_local_runtime(
+        **{
+            **_runtime_preflight_arguments(
+                store,
+                build_result,
+                runtime_root=second_root,
+            ),
+            "injected_runtime_admission": {
+                **RUNTIME_ADMISSION,
+                "provider": "different-provider",
+            },
+        }
+    )
+
+    assert first["runtime_execution_identity_hash"] == same_action[
+        "runtime_execution_identity_hash"
+    ]
+    assert first["runtime_execution_identity_hash"] != changed_approver[
+        "runtime_execution_identity_hash"
+    ]
+    assert first["runtime_execution_identity_hash"] != changed_admission[
+        "runtime_execution_identity_hash"
+    ]
+    with pytest.raises(LocalEntryError, match="non-JSON"):
+        preflight_local_runtime(
+            **{
+                **_runtime_preflight_arguments(
+                    store,
+                    build_result,
+                    runtime_root=second_root,
+                ),
+                "injected_runtime_admission": {
+                    **RUNTIME_ADMISSION,
+                    "invalid": object(),
+                },
+            }
+        )
+
+
+@pytest.mark.parametrize("expected_hash", (None, "sha256:not-valid", "sha256:" + "0" * 64))
+def test_runtime_execute_identity_gate_blocks_before_resume_or_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    expected_hash: str | None,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    before_resume_count = len(
+        store.list_feature_artifact_revisions(FEATURE_ID, "resume_report")
+    )
+    calls = {"probe": 0, "factory": 0}
+
+    def forbidden_probe(*_args, **_kwargs) -> None:
+        calls["probe"] += 1
+        raise AssertionError("Identity rejection must precede Store probe.")
+
+    def forbidden_factory(*_args, **_kwargs):
+        calls["factory"] += 1
+        raise AssertionError("Identity rejection must precede Runtime execution.")
+
+    monkeypatch.setattr(ArtifactStore, "preflight_atomic_commit", forbidden_probe)
+    result = resume_local_runtime(
+        **_runtime_execute_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+            expected_hash=expected_hash,
+            runtime_factory=forbidden_factory,
+        )
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "authorization"
+    assert result["runtime_preflight"] is not None
+    assert result["runtime_execution_identity"] is not None
+    assert result["runtime_execution_identity_hash"].startswith("sha256:")
+    assert result["resume_report"] is None
+    assert result["runtime_evidence"] is None
+    assert calls == {"probe": 0, "factory": 0}
+    assert len(
+        store.list_feature_artifact_revisions(FEATURE_ID, "resume_report")
+    ) == before_resume_count
+
+
+def test_runtime_only_preflight_projects_consumed_checkpoint_as_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    checkpoint_projection = build_result["workflow_checkpoint"]
+    assert isinstance(checkpoint_projection, dict)
+    checkpoint_ref_value = checkpoint_projection["artifact_ref"]
+    assert isinstance(checkpoint_ref_value, dict)
+    checkpoint_ref = ArtifactRef(**checkpoint_ref_value)
+    checkpoint = store.read(checkpoint_ref)["data"]
+    payload = _resume_payload(checkpoint)
+    decision, _ = WorkflowCheckpointStore(store).resume(checkpoint_ref, payload)
+    assert decision.allowed is True
+    original_validate = ResumeValidator.validate
+    validator_calls = 0
+
+    def recording_validate(selected, *args, **kwargs):
+        nonlocal validator_calls
+        validator_calls += 1
+        return original_validate(selected, *args, **kwargs)
+
+    monkeypatch.setattr(ResumeValidator, "validate", recording_validate)
+
+    result = preflight_local_runtime(
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+        )
+    )
+
+    assert result["status"] == "BLOCKED"
+    assert result["resume_decision"]["allowed"] is False
+    assert result["blockers"][0]["code"] == "DOUBLE_RESUME_REJECTED"
+    assert result["checkpoint"]["consumption_status"] == "consumed"
+    assert validator_calls == 1
+    assert result["writes_performed"] is False
+
+
+def test_runtime_execute_rechecks_handoff_before_resume_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    arguments = _runtime_preflight_arguments(
+        store,
+        build_result,
+        runtime_root=runtime_root,
+    )
+    preflight = preflight_local_runtime(**arguments)
+    original_loader = local_entry_module._load_runtime_continuation_handoff
+    loader_calls = 0
+
+    def drifting_loader(*args, **kwargs):
+        nonlocal loader_calls
+        loader_calls += 1
+        handoff = original_loader(*args, **kwargs)
+        if loader_calls == 2:
+            return dataclasses.replace(
+                handoff,
+                resume_readiness=ResumeDecision(
+                    status="blocked",
+                    allowed=False,
+                    reason="checkpoint changed before ResumeReport",
+                    applied_updates={},
+                    blockers=(
+                        {
+                            "code": "DOUBLE_RESUME_REJECTED",
+                            "message": "checkpoint was consumed concurrently",
+                        },
+                    ),
+                ),
+            )
+        return handoff
+
+    monkeypatch.setattr(
+        local_entry_module,
+        "_load_runtime_continuation_handoff",
+        drifting_loader,
+    )
+    result = resume_local_runtime(
+        **_runtime_execute_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+            expected_hash=preflight["runtime_execution_identity_hash"],
+            runtime_factory=_runtime_payload,
+        )
+    )
+
+    assert loader_calls == 2
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "admission"
+    assert result["resume_report"] is None
+    assert result["runtime_execution"]["factory_invocation_count"] == 0
+    assert store.list_feature_artifact_revisions(FEATURE_ID, "resume_report") == []
+
+
+def test_runtime_evidence_only_missing_factory_is_structured_admission_failure(
+    tmp_path: Path,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    preflight = preflight_local_runtime(
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+        )
+    )
+    before = _store_snapshot(store.root)
+
+    result = resume_local_runtime(
+        **_runtime_execute_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+            expected_hash=preflight["runtime_execution_identity_hash"],
+            runtime_factory=None,
+        )
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "admission"
+    assert result["runtime_execution"]["factory_invocation_count"] == 0
+    assert result["resume_report"] is None
+    assert result["runtime_evidence"] is None
+    assert result["blockers"][0]["code"] == "RUNTIME_EVIDENCE_FACTORY_REQUIRED"
+    assert _store_snapshot(store.root) == before
+
+
+def test_runtime_evidence_only_normalizes_resume_write_exception_before_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    preflight = preflight_local_runtime(
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+        )
+    )
+    before = _store_snapshot(store.root)
+
+    def failing_resume(*_args, **_kwargs):
+        raise ArtifactStoreError("resume admission changed")
+
+    monkeypatch.setattr(
+        WorkflowCheckpointStore,
+        "resume_with_result",
+        failing_resume,
+    )
+    result = resume_local_runtime(
+        **_runtime_execute_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+            expected_hash=preflight["runtime_execution_identity_hash"],
+            runtime_factory=_runtime_payload,
+        )
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "resume_admission"
+    assert result["runtime_execution"]["factory_invocation_count"] == 0
+    assert result["resume_report"] is None
+    assert result["runtime_evidence"] is None
+    assert result["blockers"][0]["code"] == "RUNTIME_RESUME_ADMISSION_FAILED"
+    assert _store_snapshot(store.root) == before
+
+
+def test_runtime_evidence_only_preserves_committed_report_on_state_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    preflight = preflight_local_runtime(
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+        )
+    )
+    before_reports = store.list_feature_artifact_revisions(
+        FEATURE_ID,
+        "resume_report",
+    )
+
+    def failing_state(*_args, **_kwargs):
+        raise ValueError("resumed state cannot be reconstructed")
+
+    monkeypatch.setattr(
+        local_entry_module,
+        "resumed_state_from_decision",
+        failing_state,
+    )
+    result = resume_local_runtime(
+        **_runtime_execute_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+            expected_hash=preflight["runtime_execution_identity_hash"],
+            runtime_factory=_runtime_payload,
+        )
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "resume_admission"
+    assert result["runtime_execution"]["factory_invocation_count"] == 0
+    assert result["resume_report"]["artifact_ref"] is not None
+    assert result["resume_report"]["store_result"]["outcome"] == "committed"
+    assert result["runtime_evidence"] is None
+    assert result["blockers"][0]["code"] == (
+        "RUNTIME_RESUMED_STATE_RECONSTRUCTION_FAILED"
+    )
+    after_reports = store.list_feature_artifact_revisions(
+        FEATURE_ID,
+        "resume_report",
+    )
+    assert len(after_reports) == len(before_reports) + 1
+
+
+def test_runtime_evidence_only_public_path_orders_effect_and_interrupts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    preflight = preflight_local_runtime(
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+        )
+    )
+    original_write = ArtifactStore.write_with_result
+    original_probe = ArtifactStore.preflight_atomic_commit
+    original_graph_admission = (
+        workflow_graph_module._route_runtime_continuation_entry
+    )
+    events: list[str] = []
+
+    def recording_write(selected: ArtifactStore, **kwargs) -> ArtifactWriteResult:
+        result = original_write(selected, **kwargs)
+        if kwargs["artifact_type"] == "resume_report":
+            events.append("resume_report_committed")
+        return result
+
+    def recording_probe(selected: ArtifactStore, **kwargs) -> None:
+        events.append("store_preflight")
+        original_probe(selected, **kwargs)
+
+    def recording_graph_admission(*args, **kwargs):
+        events.append("graph_admission")
+        return original_graph_admission(*args, **kwargs)
+
+    def runtime_factory(feature_id, build, feature_spec):
+        events.append("caller_factory")
+        return _runtime_payload(feature_id, build, feature_spec)
+
+    monkeypatch.setattr(ArtifactStore, "write_with_result", recording_write)
+    monkeypatch.setattr(ArtifactStore, "preflight_atomic_commit", recording_probe)
+    monkeypatch.setattr(
+        workflow_graph_module,
+        "_route_runtime_continuation_entry",
+        recording_graph_admission,
+    )
+    result = resume_local_runtime(
+        **_runtime_execute_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+            expected_hash=preflight["runtime_execution_identity_hash"],
+            runtime_factory=runtime_factory,
+        )
+    )
+
+    assert events == [
+        "resume_report_committed",
+        "graph_admission",
+        "store_preflight",
+        "caller_factory",
+    ]
+    assert result["status"] == "completed"
+    assert result["failure_stage"] is None
+    assert result["runtime_execution"]["factory_invocation_count"] == 1
+    assert result["resume_report"]["store_result"]["outcome"] == "committed"
+    assert result["runtime_evidence"]["store_result"]["outcome"] == "committed"
+    assert result["runtime_evidence_ready"] is True
+    assert not (runtime_root / "run_manifest.json").exists()
+    assert not (runtime_root / "runtime_resume_result.json").exists()
+    for artifact_type in ("blocked_report", "eval_report", "workflow_summary"):
+        assert store.list_feature_artifact_revisions(FEATURE_ID, artifact_type) == []
+    runtime_ref = ArtifactRef(**result["runtime_evidence"]["artifact_ref"])
+    runtime_payload = store.read(runtime_ref)["data"]
+    assert "runtime_evidence_store_result" not in runtime_payload
+
+
+@pytest.mark.parametrize(
+    ("artifact_type", "outcome", "expected_status", "expected_stage"),
+    (
+        ("resume_report", "blocked_before_commit", "blocked", "resume_report_store"),
+        ("resume_report", "partial", "partial", "resume_report_store"),
+        ("runtime_evidence", "blocked_before_commit", "blocked", "runtime_evidence_store"),
+        ("runtime_evidence", "partial", "partial", "runtime_evidence_store"),
+    ),
+)
+def test_runtime_evidence_only_preserves_store_outcome(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_type: str,
+    outcome: str,
+    expected_status: str,
+    expected_stage: str,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    preflight = preflight_local_runtime(
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+        )
+    )
+    original_write = ArtifactStore.write_with_result
+
+    def selected_write(selected: ArtifactStore, **kwargs) -> ArtifactWriteResult:
+        if kwargs["artifact_type"] == artifact_type:
+            return _store_failure_result(
+                selected,
+                artifact_type=artifact_type,
+                outcome=outcome,
+            )
+        return original_write(selected, **kwargs)
+
+    monkeypatch.setattr(ArtifactStore, "write_with_result", selected_write)
+    result = resume_local_runtime(
+        **_runtime_execute_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+            expected_hash=preflight["runtime_execution_identity_hash"],
+            runtime_factory=_runtime_payload,
+        )
+    )
+
+    assert result["status"] == expected_status
+    assert result["failure_stage"] == expected_stage
+    if artifact_type == "resume_report":
+        assert result["runtime_execution"]["factory_invocation_count"] == 0
+        assert result["runtime_evidence"] is None
+    else:
+        assert result["runtime_execution"]["factory_invocation_count"] == 1
+        assert result["runtime_evidence"]["artifact_ref"] is None
+        assert result["runtime_evidence"]["store_result"]["outcome"] == outcome
+
+
+def test_resume_with_result_consumes_checkpoint_only_after_committed_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    checkpoint_projection = build_result["workflow_checkpoint"]
+    assert isinstance(checkpoint_projection, dict)
+    checkpoint_ref_value = checkpoint_projection["artifact_ref"]
+    assert isinstance(checkpoint_ref_value, dict)
+    checkpoint_ref = ArtifactRef(**checkpoint_ref_value)
+    checkpoint = store.read(checkpoint_ref)["data"]
+    checkpoint_store = WorkflowCheckpointStore(store)
+    payload = _resume_payload(checkpoint)
+    original_write = store.write_with_result
+
+    monkeypatch.setattr(
+        store,
+        "write_with_result",
+        lambda **_kwargs: _store_failure_result(
+            store,
+            artifact_type="resume_report",
+            outcome="blocked_before_commit",
+        ),
+    )
+    first_decision, first_result = checkpoint_store.resume_with_result(
+        checkpoint_ref,
+        payload,
+    )
+    assert first_decision.allowed is True
+    assert first_result.outcome == "blocked_before_commit"
+    assert checkpoint_store.preflight_resume(
+        checkpoint_ref,
+        resume_id=payload.resume_id,
+    ).allowed is True
+
+    monkeypatch.setattr(store, "write_with_result", original_write)
+    second_decision, second_result = checkpoint_store.resume_with_result(
+        checkpoint_ref,
+        payload,
+    )
+    assert second_decision.allowed is True
+    assert second_result.outcome == "committed"
+    assert second_result.artifact_ref is not None
+    assert checkpoint_store.preflight_resume(
+        checkpoint_ref,
+        resume_id=payload.resume_id,
+    ).allowed is False
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_stage", "expected_count"),
+    (
+        ("probe", "store_preflight", 0),
+        ("factory", "runtime_execution", 1),
+        ("factory_named_store_preflight", "runtime_execution", 1),
+        ("factory_named_post_validation", "runtime_execution", 1),
+        ("payload", "post_runtime_validation", 1),
+    ),
+)
+def test_runtime_evidence_only_normalizes_effect_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_kind: str,
+    expected_stage: str,
+    expected_count: int,
+) -> None:
+    store, build_result = _public_build_handoff(tmp_path)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir()
+    preflight = preflight_local_runtime(
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+        )
+    )
+    if failure_kind == "probe":
+        monkeypatch.setattr(
+            ArtifactStore,
+            "preflight_atomic_commit",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                ArtifactStoreError("probe failed")
+            ),
+        )
+
+    def runtime_factory(feature_id, build, feature_spec):
+        if failure_kind == "factory":
+            raise OSError("runtime failed")
+        if failure_kind == "factory_named_store_preflight":
+            error_type = type(
+                "_RuntimeEvidenceStorePreflightError",
+                (RuntimeError,),
+                {},
+            )
+            raise error_type("caller must not select store_preflight")
+        if failure_kind == "factory_named_post_validation":
+            error_type = type(
+                "_RuntimeEvidencePostValidationError",
+                (RuntimeError,),
+                {},
+            )
+            raise error_type("caller must not select post_runtime_validation")
+        payload = _runtime_payload(feature_id, build, feature_spec)
+        if failure_kind == "payload":
+            payload["run_id"] = "wrong-run"
+        return payload
+
+    result = resume_local_runtime(
+        **_runtime_execute_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+            expected_hash=preflight["runtime_execution_identity_hash"],
+            runtime_factory=runtime_factory,
+        )
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == expected_stage
+    assert result["runtime_execution"]["factory_invocation_count"] == expected_count
+    assert result["runtime_evidence"] is None
+
+
+def _public_build_handoff(tmp_path: Path) -> tuple[ArtifactStore, dict[str, object]]:
+    store, continuation = _verification_inputs(tmp_path)
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+    assert result["status"] == "completed"
+    assert result["handoff_ready"] is True
+    return store, result
+
+
+def _runtime_preflight_arguments(
+    store: ArtifactStore,
+    build_result: dict[str, object],
+    *,
+    runtime_root: Path,
+) -> dict[str, object]:
+    checkpoint = build_result["workflow_checkpoint"]
+    assert isinstance(checkpoint, dict)
+    checkpoint_ref = checkpoint["artifact_ref"]
+    assert isinstance(checkpoint_ref, dict)
+    return {
+        "run_root": runtime_root,
+        "artifact_store_root": store.root,
+        "feature_id": FEATURE_ID,
+        "checkpoint_path": checkpoint_ref["path"],
+        "checkpoint_hash": checkpoint_ref["artifact_hash"],
+        "resume_id": "verification_only_runtime_resume_001",
+        "approved_by": "human",
+        "injected_runtime_admission": dict(RUNTIME_ADMISSION),
+        "runtime_evidence_only": True,
+    }
+
+
+def _runtime_execute_arguments(
+    store: ArtifactStore,
+    build_result: dict[str, object],
+    *,
+    runtime_root: Path,
+    expected_hash: str | None,
+    runtime_factory,
+) -> dict[str, object]:
+    return {
+        **_runtime_preflight_arguments(
+            store,
+            build_result,
+            runtime_root=runtime_root,
+        ),
+        "settings_path": runtime_root / "unused-runtime.yaml",
+        "allow_game_launch": False,
+        "runtime_plugin_destination": None,
+        "allow_game_directory_write": False,
+        "runtime_evidence_factory": runtime_factory,
+        "expected_runtime_execution_identity_hash": expected_hash,
+    }
+
+
+def _runtime_payload(feature_id, build, feature_spec):
+    return build_fake_runtime_evidence_payload(
+        feature_id=feature_id,
+        input_execution_mode=build.get("input_execution_mode"),
+        acceptance_criteria=tuple(feature_spec.get("acceptance_criteria") or ()),
+        runtime_verification_plan=tuple(
+            feature_spec.get("runtime_verification_plan") or ()
+        ),
+    )
 
 
 def _verification_inputs(

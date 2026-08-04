@@ -121,6 +121,25 @@ PatchChangeFactory = Callable[
 PatchExecutionFactory = Callable[
     [dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]
 ]
+
+
+class _RuntimeEvidenceExecutionBoundaryError(RuntimeError):
+    """Carry a platform-owned RuntimeEvidence failure stage across the Graph."""
+
+    _ALLOWED_STAGES = frozenset(
+        {"store_preflight", "runtime_execution", "post_runtime_validation"}
+    )
+
+    def __init__(self, failure_stage: str, cause: Exception) -> None:
+        if failure_stage not in self._ALLOWED_STAGES:
+            raise ValueError(
+                f"Unsupported RuntimeEvidence failure stage: {failure_stage}"
+            )
+        super().__init__(str(cause))
+        self.failure_stage = failure_stage
+        self.failure_class = type(cause).__name__
+
+
 CriticRequirement = Literal["not_required", "required"]
 _FEATURE_SPEC_REVISION_APPROVAL_KEY = "feature_spec_revision"
 _FEATURE_SPEC_REVISION_PROJECTION_FIELDS = frozenset(
@@ -187,6 +206,7 @@ def build_graph(
     domain_review_policy: DomainReviewPolicy | None = None,
     build_result_factory: BuildResultFactory | None = None,
     runtime_evidence_factory: RuntimeEvidenceFactory | None = None,
+    runtime_evidence_write_results: bool = False,
     allow_game_launch: bool = False,
     proposal_git_binding_factory: ProposalGitBindingFactory | None = None,
     use_default_proposal_git_binding: bool = True,
@@ -241,6 +261,14 @@ def build_graph(
         raise ValueError(
             "Runtime continuation and authority approval cannot share "
             "one graph entry."
+        )
+    if runtime_evidence_write_results and (
+        runtime_continuation_checkpoint_id is None
+        or "collect_runtime_evidence" not in set(interrupt_after or ())
+    ):
+        raise ValueError(
+            "RuntimeEvidence Store results require an exact Runtime continuation "
+            "and interrupt_after collect_runtime_evidence."
         )
     if verification_only_continuation is not None:
         if (
@@ -543,6 +571,7 @@ def build_graph(
                 state,
                 artifact_store,
                 effective_runtime_evidence_factory,
+                use_store_result=runtime_evidence_write_results,
             ),
         ),
     )
@@ -2739,39 +2768,115 @@ def _run_runtime_evidence(
     state: ModAgentState,
     artifact_store: ArtifactStore,
     runtime_evidence_factory: RuntimeEvidenceFactory | None,
+    *,
+    use_store_result: bool = False,
 ) -> ModAgentState:
     build = _read_artifact_data(state, artifact_store, "build_result")
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
     feature_id = state["feature_id"] or state["request_id"]
     build_artifact_ref = _artifact_ref_from_state(state, "build_result")
-    payload = (
-        runtime_evidence_factory(feature_id, build, feature_spec)
-        if runtime_evidence_factory is not None
-        else build_fake_runtime_evidence_payload(
-            feature_id=feature_id,
-            input_execution_mode=build.get("execution_mode"),
-            acceptance_criteria=tuple(feature_spec.get("acceptance_criteria") or ()),
-            runtime_verification_plan=tuple(
-                feature_spec.get("runtime_verification_plan") or ()
-            ),
+    try:
+        payload = (
+            runtime_evidence_factory(feature_id, build, feature_spec)
+            if runtime_evidence_factory is not None
+            else build_fake_runtime_evidence_payload(
+                feature_id=feature_id,
+                input_execution_mode=build.get("execution_mode"),
+                acceptance_criteria=tuple(
+                    feature_spec.get("acceptance_criteria") or ()
+                ),
+                runtime_verification_plan=tuple(
+                    feature_spec.get("runtime_verification_plan") or ()
+                ),
+            )
         )
-    )
-    payload = bind_runtime_evidence_context(
-        payload,
-        run_id=state["run_id"],
-        build_artifact_ref=build_artifact_ref,
-    )
-    acceptance_verified = bool(payload["acceptance_verified"])
-    artifact_ref = artifact_store.write(
-        feature_id=feature_id,
-        artifact_type="runtime_evidence",
-        payload=payload,
-        status="success" if acceptance_verified else "blocked",
-        upstream_refs=[
+    except Exception as exc:
+        if not use_store_result:
+            raise
+        if isinstance(exc, _RuntimeEvidenceExecutionBoundaryError):
+            failure_stage = exc.failure_stage
+            failure_class = exc.failure_class
+        else:
+            failure_stage = "runtime_execution"
+            failure_class = type(exc).__name__
+        next_state = _copy_state(state)
+        next_state["current_stage"] = "runtime_evidence"
+        next_state["runtime_summary"] = {
+            "status": "blocked",
+            "platform_failure_stage": failure_stage,
+            "runtime_evidence_store_result": None,
+            "runtime_evidence_ready": False,
+            "failure_class": failure_class,
+            "failure_message": str(exc),
+        }
+        next_state["blockers"].append(
+            {
+                "stage": "runtime_evidence",
+                "code": (
+                    "RUNTIME_EVIDENCE_STORE_PREFLIGHT_FAILED"
+                    if failure_stage == "store_preflight"
+                    else (
+                        "RUNTIME_EVIDENCE_POST_VALIDATION_FAILED"
+                        if failure_stage == "post_runtime_validation"
+                        else "RUNTIME_EVIDENCE_FACTORY_FAILED"
+                    )
+                ),
+                "message": f"{failure_class}: {exc}",
+            }
+        )
+        return next_state
+    try:
+        payload = bind_runtime_evidence_context(
+            payload,
+            run_id=state["run_id"],
+            build_artifact_ref=build_artifact_ref,
+        )
+        if use_store_result:
+            _validate_runtime_evidence_result_identity(
+                state,
+                artifact_store,
+                payload,
+                build=build,
+                build_artifact_ref=build_artifact_ref,
+            )
+        acceptance_verified = bool(payload["acceptance_verified"])
+    except Exception as exc:
+        if not use_store_result:
+            raise
+        next_state = _copy_state(state)
+        next_state["current_stage"] = "runtime_evidence"
+        next_state["runtime_summary"] = {
+            "status": "blocked",
+            "platform_failure_stage": "post_runtime_validation",
+            "runtime_evidence_store_result": None,
+            "runtime_evidence_ready": False,
+            "failure_class": type(exc).__name__,
+            "failure_message": str(exc),
+        }
+        next_state["blockers"].append(
+            {
+                "stage": "runtime_evidence",
+                "code": "RUNTIME_EVIDENCE_POST_VALIDATION_FAILED",
+                "message": f"{type(exc).__name__}: {exc}",
+            }
+        )
+        return next_state
+    write_arguments = {
+        "feature_id": feature_id,
+        "artifact_type": "runtime_evidence",
+        "payload": payload,
+        "status": "success" if acceptance_verified else "blocked",
+        "upstream_refs": [
             build_artifact_ref,
             _artifact_ref_from_state(state, "feature_spec"),
         ],
-    )
+    }
+    write_result = None
+    if use_store_result:
+        write_result = artifact_store.write_with_result(**write_arguments)
+        artifact_ref = write_result.artifact_ref
+    else:
+        artifact_ref = artifact_store.write(**write_arguments)
     next_state = _copy_state(state)
     next_state["current_stage"] = "runtime_evidence"
     next_state["runtime_summary"] = {
@@ -2797,8 +2902,84 @@ def _run_runtime_evidence(
         "plugin_deployment_binding": payload.get("plugin_deployment_binding"),
         "non_goal_preservation": payload["non_goal_preservation"],
     }
-    _record_artifact(next_state, "runtime_evidence", artifact_ref)
+    if write_result is not None:
+        next_state["runtime_summary"].update(
+            {
+                "runtime_evidence_store_result": write_result.to_dict(),
+                "runtime_evidence_ready": (
+                    write_result.outcome == "committed" and artifact_ref is not None
+                ),
+                "platform_failure_stage": (
+                    None
+                    if write_result.outcome == "committed"
+                    else "runtime_evidence_store"
+                ),
+            }
+        )
+    if artifact_ref is not None:
+        _record_artifact(next_state, "runtime_evidence", artifact_ref)
+    elif use_store_result:
+        next_state["blockers"].append(
+            {
+                "stage": "runtime_evidence",
+                "code": "RUNTIME_EVIDENCE_STORE_NOT_COMMITTED",
+                "message": (
+                    "RuntimeEvidence did not reach a committed Store outcome."
+                ),
+            }
+        )
     return next_state
+
+
+def _validate_runtime_evidence_result_identity(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    payload: Mapping[str, Any],
+    *,
+    build: Mapping[str, Any],
+    build_artifact_ref: ArtifactRef,
+) -> None:
+    """Validate exact post-effect RuntimeEvidence identity before Store write."""
+
+    feature_id = state["feature_id"] or state["request_id"]
+    expected_build_ref = {
+        "feature_id": build_artifact_ref.feature_id,
+        "artifact_type": build_artifact_ref.artifact_type,
+        "path": build_artifact_ref.path,
+        "artifact_hash": build_artifact_ref.artifact_hash,
+    }
+    expected_input_mode = build.get("input_execution_mode")
+    mismatches = []
+    if expected_input_mode != VERIFICATION_ONLY_INPUT_EXECUTION_MODE:
+        mismatches.append("verification_only_input_execution_mode")
+    if payload.get("feature_id") != feature_id:
+        mismatches.append("feature_id")
+    if payload.get("run_id") != state["run_id"]:
+        mismatches.append("run_id")
+    if payload.get("build_artifact_ref") != expected_build_ref:
+        mismatches.append("build_artifact_ref")
+    if payload.get("build_artifact_hash") != build_artifact_ref.artifact_hash:
+        mismatches.append("build_artifact_hash")
+    if (
+        expected_input_mode is not None
+        and payload.get("input_execution_mode") != expected_input_mode
+    ):
+        mismatches.append("input_execution_mode")
+    artifact_store.registry.validate_write(
+        artifact_type="runtime_evidence",
+        status=("success" if payload.get("acceptance_verified") is True else "blocked"),
+        payload=dict(payload),
+    )
+    for artifact_type in ("feature_spec", "build_result"):
+        artifact_ref = _artifact_ref_from_state(state, artifact_type)
+        freshness = artifact_store.check_freshness(artifact_ref)
+        if not freshness.is_fresh:
+            mismatches.append(f"{artifact_type}_freshness")
+    if mismatches:
+        raise ValueError(
+            "RuntimeEvidence post-effect identity validation failed: "
+            + ", ".join(sorted(mismatches))
+        )
 
 
 def _run_fake_evaluate(

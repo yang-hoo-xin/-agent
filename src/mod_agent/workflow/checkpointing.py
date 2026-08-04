@@ -316,6 +316,42 @@ class WorkflowCheckpointStore:
     ) -> tuple[ResumeDecision, ArtifactRef]:
         """Validate a resume payload and write a resume_report artifact."""
 
+        checkpoint, decision, write_arguments = self._resume_write_arguments(
+            checkpoint_ref,
+            payload,
+        )
+
+        if decision.allowed:
+            self._seen_resume_ids.add(payload.resume_id)
+            self._consumed_checkpoint_ids.add(checkpoint["checkpoint_id"])
+
+        report_ref = self.artifact_store.write(**write_arguments)
+        return decision, report_ref
+
+    def resume_with_result(
+        self,
+        checkpoint_ref: ArtifactRef,
+        payload: ResumePayload,
+    ) -> tuple[ResumeDecision, ArtifactWriteResult]:
+        """Validate one resume and return the Store-owned commit outcome."""
+
+        checkpoint, decision, write_arguments = self._resume_write_arguments(
+            checkpoint_ref,
+            payload,
+        )
+        write_result = self.artifact_store.write_with_result(**write_arguments)
+        if decision.allowed and write_result.outcome == "committed":
+            self._seen_resume_ids.add(payload.resume_id)
+            self._consumed_checkpoint_ids.add(checkpoint["checkpoint_id"])
+        return decision, write_result
+
+    def _resume_write_arguments(
+        self,
+        checkpoint_ref: ArtifactRef,
+        payload: ResumePayload,
+    ) -> tuple[dict[str, Any], ResumeDecision, dict[str, Any]]:
+        """Build the shared ResumeReport decision and Store write arguments."""
+
         checkpoint = self.artifact_store.read(checkpoint_ref)["data"]
         decision = self.preflight_resume(
             checkpoint_ref,
@@ -323,11 +359,6 @@ class WorkflowCheckpointStore:
         )
         if decision.allowed:
             decision = self.resume_validator.validate(payload, checkpoint=checkpoint)
-
-        if decision.allowed:
-            self._seen_resume_ids.add(payload.resume_id)
-            self._consumed_checkpoint_ids.add(checkpoint["checkpoint_id"])
-
         report = ResumeReport(
             resume_id=payload.resume_id,
             checkpoint_id=str(checkpoint["checkpoint_id"]),
@@ -344,16 +375,17 @@ class WorkflowCheckpointStore:
             approved_at=payload.approved_at,
             authority_request_hash=payload.authority_request_hash,
         )
-        report_ref = self.artifact_store.write(
-            feature_id=checkpoint_ref.feature_id,
-            artifact_type="resume_report",
-            payload=report.to_artifact_payload(),
-            status="success" if decision.allowed else "blocked",
-            upstream_refs=[checkpoint_ref],
-            allow_stale_upstreams=not decision.allowed and bool(decision.stale_reasons),
-            exact_revision_upstream_types={"workflow_checkpoint"},
-        )
-        return decision, report_ref
+        return checkpoint, decision, {
+            "feature_id": checkpoint_ref.feature_id,
+            "artifact_type": "resume_report",
+            "payload": report.to_artifact_payload(),
+            "status": "success" if decision.allowed else "blocked",
+            "upstream_refs": [checkpoint_ref],
+            "allow_stale_upstreams": (
+                not decision.allowed and bool(decision.stale_reasons)
+            ),
+            "exact_revision_upstream_types": {"workflow_checkpoint"},
+        }
 
     def _checkpoint_freshness(
         self,

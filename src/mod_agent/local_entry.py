@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -69,6 +71,7 @@ from src.mod_agent.runtime.stagger_diagnosis import (
 from src.mod_agent.workflow import (
     ResumeDecision,
     ResumePayload,
+    ResumeValidator,
     VerificationOnlyContinuationInput,
     WorkflowCheckpointStore,
     build_graph,
@@ -76,6 +79,7 @@ from src.mod_agent.workflow import (
     preflight_verification_only_continuation,
     resumed_state_from_decision,
 )
+from src.mod_agent.workflow.graph import _RuntimeEvidenceExecutionBoundaryError
 
 
 class LocalEntryError(RuntimeError):
@@ -638,6 +642,7 @@ class _RuntimeContinuationHandoff:
     prior_runtime_evidence_ref: ArtifactRef | None = None
     prior_repair_plan_ref: ArtifactRef | None = None
     observation_retry_binding: Mapping[str, Any] | None = None
+    resume_readiness: ResumeDecision | None = None
 
 
 @dataclass(frozen=True)
@@ -3226,6 +3231,8 @@ def _load_runtime_continuation_handoff(
     resume_id: str | None = None,
     recover_accepted_resume: bool = False,
     retry_runtime_observation: bool = False,
+    require_manifest: bool = True,
+    allow_blocked_resume: bool = False,
 ) -> _RuntimeContinuationHandoff:
     if recover_accepted_resume and retry_runtime_observation:
         raise LocalEntryError(
@@ -3270,43 +3277,46 @@ def _load_runtime_continuation_handoff(
             "Runtime continuation requires a Build-stage checkpoint."
         )
 
-    manifest_path = root / "run_manifest.json"
-    if not manifest_path.is_file():
-        raise LocalEntryError("Runtime continuation run_manifest.json is missing.")
-    try:
-        manifest_value = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise LocalEntryError(
-            f"Runtime continuation run_manifest.json is invalid: {exc}"
-        ) from exc
-    if not isinstance(manifest_value, dict):
-        raise LocalEntryError(
-            "Runtime continuation run_manifest.json must contain an object."
-        )
-    manifest = manifest_value
-    if (
-        manifest.get("run_id") != checkpoint.get("run_id")
-        or manifest.get("request_id") != checkpoint.get("request_id")
-        or (
-            manifest.get("feature_id") is not None
-            and manifest.get("feature_id") != checkpoint.get("feature_id")
-        )
-    ):
-        raise LocalEntryError(
-            "Runtime continuation manifest identity does not match checkpoint."
-        )
-    manifest_checkpoint_ref = manifest.get("workflow_checkpoint_ref")
-    manifest_checkpoint_hash = manifest.get("workflow_checkpoint_hash")
-    if (
-        manifest_checkpoint_ref is not None
-        and Path(str(manifest_checkpoint_ref)).resolve() != resolved_checkpoint_path
-    ) or (
-        manifest_checkpoint_hash is not None
-        and manifest_checkpoint_hash != checkpoint_hash
-    ):
-        raise LocalEntryError(
-            "Runtime continuation manifest checkpoint binding does not match."
-        )
+    manifest: dict[str, Any] = {}
+    if require_manifest:
+        manifest_path = root / "run_manifest.json"
+        if not manifest_path.is_file():
+            raise LocalEntryError("Runtime continuation run_manifest.json is missing.")
+        try:
+            manifest_value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise LocalEntryError(
+                f"Runtime continuation run_manifest.json is invalid: {exc}"
+            ) from exc
+        if not isinstance(manifest_value, dict):
+            raise LocalEntryError(
+                "Runtime continuation run_manifest.json must contain an object."
+            )
+        manifest = manifest_value
+        if (
+            manifest.get("run_id") != checkpoint.get("run_id")
+            or manifest.get("request_id") != checkpoint.get("request_id")
+            or (
+                manifest.get("feature_id") is not None
+                and manifest.get("feature_id") != checkpoint.get("feature_id")
+            )
+        ):
+            raise LocalEntryError(
+                "Runtime continuation manifest identity does not match checkpoint."
+            )
+        manifest_checkpoint_ref = manifest.get("workflow_checkpoint_ref")
+        manifest_checkpoint_hash = manifest.get("workflow_checkpoint_hash")
+        if (
+            manifest_checkpoint_ref is not None
+            and Path(str(manifest_checkpoint_ref)).resolve()
+            != resolved_checkpoint_path
+        ) or (
+            manifest_checkpoint_hash is not None
+            and manifest_checkpoint_hash != checkpoint_hash
+        ):
+            raise LocalEntryError(
+                "Runtime continuation manifest checkpoint binding does not match."
+            )
 
     try:
         snapshot = checkpoint["state_snapshot"]
@@ -3332,18 +3342,20 @@ def _load_runtime_continuation_handoff(
         raise LocalEntryError(
             "Runtime continuation BuildResult feature_id does not match checkpoint."
         )
-    manifest_build_ref = manifest.get("build_result_ref")
-    manifest_build_hash = manifest.get("build_result_hash")
-    if (
-        manifest_build_ref is not None
-        and Path(str(manifest_build_ref)).resolve() != Path(build_ref.path).resolve()
-    ) or (
-        manifest_build_hash is not None
-        and manifest_build_hash != build_ref.artifact_hash
-    ):
-        raise LocalEntryError(
-            "Runtime continuation manifest BuildResult binding does not match."
-        )
+    if require_manifest:
+        manifest_build_ref = manifest.get("build_result_ref")
+        manifest_build_hash = manifest.get("build_result_hash")
+        if (
+            manifest_build_ref is not None
+            and Path(str(manifest_build_ref)).resolve()
+            != Path(build_ref.path).resolve()
+        ) or (
+            manifest_build_hash is not None
+            and manifest_build_hash != build_ref.artifact_hash
+        ):
+            raise LocalEntryError(
+                "Runtime continuation manifest BuildResult binding does not match."
+            )
 
     verified_artifacts = [
         item
@@ -3428,7 +3440,7 @@ def _load_runtime_continuation_handoff(
         raise LocalEntryError(
             f"Runtime continuation checkpoint preflight failed: {exc}"
         ) from exc
-    if not readiness.allowed:
+    if not readiness.allowed and not allow_blocked_resume:
         blocker_codes = [
             str(blocker.get("code"))
             for blocker in readiness.blockers
@@ -3476,6 +3488,7 @@ def _load_runtime_continuation_handoff(
         prior_runtime_evidence_ref=prior_runtime_evidence_ref,
         prior_repair_plan_ref=prior_repair_plan_ref,
         observation_retry_binding=observation_retry_binding,
+        resume_readiness=readiness,
     )
 
 
@@ -3940,6 +3953,71 @@ def _runtime_observation_retry_output_report(
     }
 
 
+def _verification_only_runtime_execution_identity(
+    *,
+    handoff: _RuntimeContinuationHandoff,
+    resume_id: str,
+    approved_by: str,
+    runtime_admission: Mapping[str, Any],
+) -> tuple[dict[str, Any], str]:
+    """Build the stable cross-call identity for one RuntimeEvidence action."""
+
+    identity = {
+        "schema_version": "verification_only_runtime_execution_identity_v1",
+        "hash_domain": "mod_agent.verification_only_runtime_execution_identity.v1",
+        "checkpoint": {
+            "artifact_type": handoff.checkpoint_ref.artifact_type,
+            "artifact_hash": handoff.checkpoint_ref.artifact_hash,
+            "feature_id": handoff.checkpoint_ref.feature_id,
+            "checkpoint_id": handoff.checkpoint["checkpoint_id"],
+            "run_id": handoff.checkpoint["run_id"],
+            "request_id": handoff.checkpoint["request_id"],
+        },
+        "resume_id": resume_id,
+        "approved_by": approved_by,
+        "runtime_admission": dict(runtime_admission),
+    }
+    try:
+        serialized = json.dumps(
+            identity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise LocalEntryError(
+            "Runtime execution identity contains a non-JSON value."
+        ) from exc
+    canonical_identity = json.loads(serialized.decode("utf-8"))
+    return canonical_identity, "sha256:" + hashlib.sha256(serialized).hexdigest()
+
+
+def _verification_only_runtime_resume_payload(
+    *,
+    handoff: _RuntimeContinuationHandoff,
+    resume_id: str,
+    approved_by: str,
+    runtime_admission: Mapping[str, Any],
+    approved_at: str,
+) -> ResumePayload:
+    """Build the exact payload shared by Runtime preflight and execution."""
+
+    return ResumePayload(
+        resume_id=resume_id,
+        run_id=str(handoff.checkpoint["run_id"]),
+        request_id=str(handoff.checkpoint["request_id"]),
+        feature_id=str(handoff.checkpoint["feature_id"]),
+        stage="build",
+        decision="approve",
+        approved_by=approved_by,
+        approved_at=approved_at,
+        artifact_refs=tuple(handoff.checkpoint["artifact_refs"]),
+        notes="Initial verification-only RuntimeEvidence continuation.",
+        runtime_admission=dict(runtime_admission),
+    )
+
+
 def _runtime_output_admission_binding(
     report: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -4049,9 +4127,29 @@ def preflight_local_runtime(
     runtime_output_root: str | Path | None = None,
     settings_path: str | Path | None = None,
     runtime_plugin_destination: str | Path | None = None,
+    approved_by: str | None = None,
+    injected_runtime_admission: Mapping[str, Any] | None = None,
+    runtime_evidence_only: bool = False,
 ) -> dict[str, Any]:
     """Read-validate one Runtime continuation without writing or entering graph."""
 
+    if runtime_evidence_only:
+        if recover_accepted_resume or retry_runtime_observation:
+            raise LocalEntryError(
+                "RuntimeEvidence-only continuation supports only an initial resume."
+            )
+        if not isinstance(resume_id, str) or not resume_id:
+            raise LocalEntryError(
+                "RuntimeEvidence-only continuation requires the exact resume_id."
+            )
+        if not isinstance(approved_by, str) or not approved_by.strip():
+            raise LocalEntryError(
+                "RuntimeEvidence-only continuation requires exact approved_by."
+            )
+        if not isinstance(injected_runtime_admission, Mapping):
+            raise LocalEntryError(
+                "RuntimeEvidence-only continuation requires injected Runtime admission."
+            )
     if retry_runtime_observation and runtime_output_root is None:
         raise LocalEntryError(
             "Runtime observation retry requires runtime_output_root."
@@ -4076,7 +4174,123 @@ def preflight_local_runtime(
         resume_id=resume_id,
         recover_accepted_resume=recover_accepted_resume,
         retry_runtime_observation=retry_runtime_observation,
+        require_manifest=not runtime_evidence_only,
+        allow_blocked_resume=runtime_evidence_only,
     )
+    if runtime_evidence_only:
+        runtime_admission = _runtime_resume_admission_snapshot(
+            injected_runtime_admission
+        )
+        resume_payload = _verification_only_runtime_resume_payload(
+            handoff=handoff,
+            resume_id=resume_id,
+            approved_by=approved_by,
+            runtime_admission=runtime_admission,
+            approved_at="",
+        )
+        readiness = handoff.resume_readiness
+        payload_decision = ResumeValidator().validate(
+            resume_payload,
+            checkpoint=handoff.checkpoint,
+        )
+        decision = payload_decision
+        if readiness is not None and not readiness.allowed:
+            decision = ResumeDecision(
+                status="blocked",
+                allowed=False,
+                reason="Runtime continuation preflight failed validation.",
+                applied_updates={},
+                blockers=tuple(readiness.blockers) + tuple(payload_decision.blockers),
+                stale_reasons=tuple(readiness.stale_reasons),
+            )
+        execution_identity, execution_identity_hash = (
+            _verification_only_runtime_execution_identity(
+                handoff=handoff,
+                resume_id=resume_id,
+                approved_by=approved_by,
+                runtime_admission=runtime_admission,
+            )
+        )
+        build_artifact = handoff.build["verified_artifacts"][0]
+        blocker_codes = {
+            str(blocker.get("code"))
+            for blocker in decision.blockers
+            if isinstance(blocker, Mapping)
+        }
+        return {
+            "status": (
+                "READY_FOR_RUNTIME_EXECUTION"
+                if decision.allowed
+                else "BLOCKED"
+            ),
+            "command": "preflight-runtime-evidence-only",
+            "writes_performed": False,
+            "graph_invoked": False,
+            "checkpoint_consumed": False,
+            "resume_report_created": False,
+            "runtime_evidence_created": False,
+            "process_launched": False,
+            "dll_copied": False,
+            "run_root": str(handoff.run_root),
+            "artifact_store_root": str(handoff.artifact_store_root),
+            "identity": {
+                "run_id": handoff.checkpoint["run_id"],
+                "request_id": handoff.checkpoint["request_id"],
+                "feature_id": handoff.checkpoint["feature_id"],
+            },
+            "checkpoint": {
+                "checkpoint_id": handoff.checkpoint["checkpoint_id"],
+                "checkpoint_stage": handoff.checkpoint["checkpoint_stage"],
+                "path": handoff.checkpoint_ref.path,
+                "artifact_hash": handoff.checkpoint_ref.artifact_hash,
+                "store_bound": True,
+                "lineage_status": (
+                    "invalid"
+                    if any("LINEAGE" in code for code in blocker_codes)
+                    else "valid"
+                ),
+                "freshness_status": (
+                    "stale"
+                    if decision.stale_reasons
+                    or "STALE_RESUME_REJECTED" in blocker_codes
+                    else "fresh"
+                ),
+                "consumption_status": (
+                    "consumed"
+                    if "DOUBLE_RESUME_REJECTED" in blocker_codes
+                    else "unconsumed"
+                ),
+                "next_graph_node": (
+                    handoff.checkpoint.get("resume_binding") or {}
+                ).get("next_graph_node"),
+            },
+            "build_result": {
+                "path": handoff.build_ref.path,
+                "artifact_hash": handoff.build_ref.artifact_hash,
+                "status": handoff.build.get("status"),
+                "claims_real_build_success": handoff.build.get(
+                    "claims_real_build_success"
+                ),
+                "verified_artifact": dict(build_artifact),
+            },
+            "runtime_admission": execution_identity["runtime_admission"],
+            "resume_decision": decision.to_dict(),
+            "runtime_execution_identity": execution_identity,
+            "runtime_execution_identity_hash": execution_identity_hash,
+            "manifest_required": False,
+            "external_action_gate": {
+                "status": (
+                    "admitted" if decision.allowed else "blocked"
+                ),
+                "required_permissions": list(
+                    runtime_admission.get("requested_side_effects") or ()
+                ),
+                "authorized_permissions": list(
+                    runtime_admission.get("authorized_side_effects") or ()
+                ),
+            },
+            "blockers": list(decision.blockers),
+        }
     accepted_output_binding = _accepted_runtime_output_binding(handoff)
     selected_runtime_output_root = runtime_output_root
     if recover_accepted_resume and accepted_output_binding is not None:
@@ -4564,6 +4778,443 @@ def _runtime_profile_preflight_record(
     }
 
 
+def _runtime_evidence_only_terminal_result(
+    *,
+    status: str,
+    failure_stage: str | None,
+    preflight: Mapping[str, Any] | None,
+    factory_invocation_count: int,
+    resume_report: Mapping[str, Any] | None = None,
+    runtime_evidence: Mapping[str, Any] | None = None,
+    runtime_summary: Mapping[str, Any] | None = None,
+    blockers: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    selected_preflight = dict(preflight or {})
+    selected_summary = dict(runtime_summary or {})
+    identity = selected_preflight.get("identity")
+    checkpoint = selected_preflight.get("checkpoint")
+    return {
+        "status": status,
+        "failure_stage": failure_stage,
+        "feature_id": (
+            identity.get("feature_id") if isinstance(identity, Mapping) else None
+        ),
+        "run_id": identity.get("run_id") if isinstance(identity, Mapping) else None,
+        "request_id": (
+            identity.get("request_id") if isinstance(identity, Mapping) else None
+        ),
+        "resume_id": (
+            (selected_preflight.get("runtime_execution_identity") or {}).get(
+                "resume_id"
+            )
+        ),
+        "checkpoint_id": (
+            checkpoint.get("checkpoint_id")
+            if isinstance(checkpoint, Mapping)
+            else None
+        ),
+        "runtime_execution_identity": selected_preflight.get(
+            "runtime_execution_identity"
+        ),
+        "runtime_execution_identity_hash": selected_preflight.get(
+            "runtime_execution_identity_hash"
+        ),
+        "runtime_preflight": selected_preflight or None,
+        "runtime_execution": {
+            "factory_invocation_count": factory_invocation_count,
+            "side_effects_may_have_started": factory_invocation_count > 0,
+            "verification_status": selected_summary.get("status"),
+            "acceptance_status": selected_summary.get("acceptance_status"),
+            "acceptance_verified": selected_summary.get("acceptance_verified"),
+            "claims_real_runtime_success": selected_summary.get(
+                "claims_real_runtime_success"
+            ),
+        },
+        "resume_report": None if resume_report is None else dict(resume_report),
+        "runtime_evidence": (
+            None if runtime_evidence is None else dict(runtime_evidence)
+        ),
+        "runtime_evidence_ready": bool(
+            runtime_evidence is not None
+            and runtime_evidence.get("artifact_ref") is not None
+            and (runtime_evidence.get("store_result") or {}).get("outcome")
+            == "committed"
+        ),
+        "blockers": list(blockers or ()),
+        "automatic_retry_count": 0,
+        "recovery_performed": False,
+        "presentation_written": False,
+    }
+
+
+def _validate_runtime_handoff_build_output(
+    handoff: _RuntimeContinuationHandoff,
+) -> None:
+    """Revalidate the exact Build output after the Runtime factory returns."""
+
+    artifacts = handoff.build.get("verified_artifacts") or []
+    if len(artifacts) != 1 or not isinstance(artifacts[0], Mapping):
+        raise LocalEntryError(
+            "Runtime continuation Build output binding is incomplete."
+        )
+    artifact = artifacts[0]
+    path = Path(str(artifact.get("resolved_path") or ""))
+    try:
+        stat = path.stat()
+        actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise LocalEntryError(
+            f"Runtime continuation Build output cannot be revalidated: {exc}"
+        ) from exc
+    if (
+        not path.is_file()
+        or actual_hash != artifact.get("sha256")
+        or stat.st_size != artifact.get("size_bytes")
+        or stat.st_mtime != float(artifact.get("mtime"))
+    ):
+        raise LocalEntryError(
+            "Runtime continuation verified Build output identity changed."
+        )
+
+
+def _execute_runtime_evidence_only_continuation(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    approved_by: str,
+    resume_id: str | None,
+    runtime_evidence_factory: Callable[
+        [str, dict[str, Any], dict[str, Any]], dict[str, Any]
+    ] | None,
+    injected_runtime_admission: Mapping[str, Any] | None,
+    expected_runtime_execution_identity_hash: str | None,
+) -> dict[str, Any]:
+    """Execute one admitted RuntimeEvidence-only continuation."""
+
+    try:
+        preflight = preflight_local_runtime(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            resume_id=resume_id,
+            approved_by=approved_by,
+            injected_runtime_admission=injected_runtime_admission,
+            runtime_evidence_only=True,
+        )
+    except LocalEntryError as exc:
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage="admission",
+            preflight=None,
+            factory_invocation_count=0,
+            blockers=[
+                {
+                    "stage": "runtime_evidence",
+                    "code": "RUNTIME_EVIDENCE_PREFLIGHT_BLOCKED",
+                    "message": str(exc),
+                }
+            ],
+        )
+    actual_identity_hash = str(preflight["runtime_execution_identity_hash"])
+    expected_identity_is_valid = bool(
+        isinstance(expected_runtime_execution_identity_hash, str)
+        and re.fullmatch(
+            r"sha256:[0-9a-f]{64}",
+            expected_runtime_execution_identity_hash,
+        )
+    )
+    if not expected_identity_is_valid or not hmac.compare_digest(
+        str(expected_runtime_execution_identity_hash),
+        actual_identity_hash,
+    ):
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage="authorization",
+            preflight=preflight,
+            factory_invocation_count=0,
+            blockers=[
+                {
+                    "stage": "runtime_evidence",
+                    "code": (
+                        "RUNTIME_EXECUTION_IDENTITY_MISMATCH"
+                        if expected_identity_is_valid
+                        else "RUNTIME_EXECUTION_IDENTITY_REQUIRED"
+                    ),
+                    "message": (
+                        "Runtime execution inputs changed after the reviewed preflight."
+                    ),
+                }
+            ],
+        )
+    if preflight["status"] != "READY_FOR_RUNTIME_EXECUTION":
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage="admission",
+            preflight=preflight,
+            factory_invocation_count=0,
+            blockers=list(preflight.get("blockers") or ()),
+        )
+    if runtime_evidence_factory is None:
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage="admission",
+            preflight=preflight,
+            factory_invocation_count=0,
+            blockers=[
+                {
+                    "stage": "runtime_evidence",
+                    "code": "RUNTIME_EVIDENCE_FACTORY_REQUIRED",
+                    "message": (
+                        "RuntimeEvidence-only continuation requires an injected "
+                        "Runtime factory."
+                    ),
+                }
+            ],
+        )
+
+    try:
+        handoff = _load_runtime_continuation_handoff(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            resume_id=resume_id,
+            require_manifest=False,
+            allow_blocked_resume=True,
+        )
+    except LocalEntryError as exc:
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage="admission",
+            preflight=preflight,
+            factory_invocation_count=0,
+            blockers=[
+                {
+                    "stage": "runtime_evidence",
+                    "code": "RUNTIME_HANDOFF_REVALIDATION_FAILED",
+                    "message": str(exc),
+                }
+            ],
+        )
+    if handoff.resume_readiness is None or not handoff.resume_readiness.allowed:
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage="admission",
+            preflight=preflight,
+            factory_invocation_count=0,
+            blockers=(
+                []
+                if handoff.resume_readiness is None
+                else list(handoff.resume_readiness.blockers)
+            ),
+        )
+    try:
+        payload = _verification_only_runtime_resume_payload(
+            handoff=handoff,
+            resume_id=str(resume_id),
+            approved_by=approved_by,
+            runtime_admission=preflight["runtime_admission"],
+            approved_at=datetime.now(timezone.utc).isoformat(),
+        )
+        checkpoint_store = WorkflowCheckpointStore(handoff.artifact_store)
+        decision, resume_write_result = checkpoint_store.resume_with_result(
+            handoff.checkpoint_ref,
+            payload,
+        )
+    except Exception as exc:
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage="resume_admission",
+            preflight=preflight,
+            factory_invocation_count=0,
+            blockers=[
+                {
+                    "stage": "runtime_evidence",
+                    "code": "RUNTIME_RESUME_ADMISSION_FAILED",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        )
+    resume_projection = {
+        "artifact_ref": (
+            None
+            if resume_write_result.artifact_ref is None
+            else {
+                "feature_id": resume_write_result.artifact_ref.feature_id,
+                "artifact_type": resume_write_result.artifact_ref.artifact_type,
+                "path": resume_write_result.artifact_ref.path,
+                "artifact_hash": resume_write_result.artifact_ref.artifact_hash,
+            }
+        ),
+        "store_result": resume_write_result.to_dict(),
+        "decision": decision.to_dict(),
+    }
+    if resume_write_result.outcome != "committed":
+        return _runtime_evidence_only_terminal_result(
+            status=(
+                "partial" if resume_write_result.outcome == "partial" else "blocked"
+            ),
+            failure_stage="resume_report_store",
+            preflight=preflight,
+            factory_invocation_count=0,
+            resume_report=resume_projection,
+            blockers=list(decision.blockers),
+        )
+    if not decision.allowed or resume_write_result.artifact_ref is None:
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage="resume_admission",
+            preflight=preflight,
+            factory_invocation_count=0,
+            resume_report=resume_projection,
+            blockers=list(decision.blockers),
+        )
+
+    try:
+        resumed_state = resumed_state_from_decision(
+            decision,
+            checkpoint_ref=handoff.checkpoint_ref,
+            resume_report_ref=resume_write_result.artifact_ref,
+        )
+    except Exception as exc:
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage="resume_admission",
+            preflight=preflight,
+            factory_invocation_count=0,
+            resume_report=resume_projection,
+            blockers=[
+                {
+                    "stage": "runtime_evidence",
+                    "code": "RUNTIME_RESUMED_STATE_RECONSTRUCTION_FAILED",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        )
+    caller_factory_invocations = 0
+    effect_wrapper_invocations = 0
+
+    def admitted_runtime_evidence_factory(
+        selected_feature_id: str,
+        build: dict[str, Any],
+        feature_spec: dict[str, Any],
+    ) -> dict[str, Any]:
+        nonlocal caller_factory_invocations
+        nonlocal effect_wrapper_invocations
+        if effect_wrapper_invocations != 0:
+            raise LocalEntryError(
+                "RuntimeEvidence effect wrapper was invoked more than once."
+            )
+        effect_wrapper_invocations = 1
+        try:
+            handoff.artifact_store.preflight_atomic_commit(
+                feature_id=feature_id,
+                artifact_types=("runtime_evidence",),
+            )
+        except Exception as exc:
+            raise _RuntimeEvidenceExecutionBoundaryError(
+                "store_preflight",
+                exc,
+            ) from exc
+        caller_factory_invocations = 1
+        try:
+            result = runtime_evidence_factory(
+                selected_feature_id,
+                build,
+                feature_spec,
+            )
+        except Exception as exc:
+            raise _RuntimeEvidenceExecutionBoundaryError(
+                "runtime_execution",
+                exc,
+            ) from exc
+        try:
+            _validate_runtime_handoff_build_output(handoff)
+        except Exception as exc:
+            raise _RuntimeEvidenceExecutionBoundaryError(
+                "post_runtime_validation",
+                exc,
+            ) from exc
+        return result
+
+    graph = build_graph(
+        handoff.artifact_store,
+        runtime_evidence_factory=admitted_runtime_evidence_factory,
+        runtime_evidence_write_results=True,
+        runtime_continuation_checkpoint_id=str(
+            handoff.checkpoint["checkpoint_id"]
+        ),
+        use_default_proposal_git_binding=False,
+        interrupt_after=["collect_runtime_evidence"],
+    )
+    try:
+        graph_result = graph.invoke(resumed_state)
+    except Exception as exc:
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage=(
+                "graph_admission"
+                if caller_factory_invocations == 0
+                else "post_runtime_validation"
+            ),
+            preflight=preflight,
+            factory_invocation_count=caller_factory_invocations,
+            resume_report=resume_projection,
+            blockers=[
+                {
+                    "stage": "runtime_evidence",
+                    "code": "RUNTIME_EVIDENCE_GRAPH_EXECUTION_FAILED",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        )
+
+    runtime_summary = dict(graph_result.get("runtime_summary") or {})
+    runtime_store_result = runtime_summary.get("runtime_evidence_store_result")
+    runtime_ref = None
+    if "runtime_evidence" in graph_result.get("artifacts", {}):
+        runtime_ref = {
+            "feature_id": feature_id,
+            "artifact_type": "runtime_evidence",
+            "path": graph_result["artifacts"]["runtime_evidence"],
+            "artifact_hash": graph_result["artifact_hashes"]["runtime_evidence"],
+        }
+    runtime_projection = (
+        None
+        if runtime_store_result is None and runtime_ref is None
+        else {
+            "artifact_ref": runtime_ref,
+            "store_result": runtime_store_result,
+            "verification_status": runtime_summary.get("status"),
+            "acceptance_status": runtime_summary.get("acceptance_status"),
+            "acceptance_verified": runtime_summary.get("acceptance_verified"),
+        }
+    )
+    failure_stage = runtime_summary.get("platform_failure_stage")
+    outer_status = "completed" if failure_stage is None else "blocked"
+    if (
+        isinstance(runtime_store_result, Mapping)
+        and runtime_store_result.get("outcome") == "partial"
+    ):
+        outer_status = "partial"
+    return _runtime_evidence_only_terminal_result(
+        status=outer_status,
+        failure_stage=failure_stage,
+        preflight=preflight,
+        factory_invocation_count=caller_factory_invocations,
+        resume_report=resume_projection,
+        runtime_evidence=runtime_projection,
+        runtime_summary=runtime_summary,
+        blockers=list(graph_result.get("blockers") or ()),
+    )
+
+
 def resume_local_runtime(
     *,
     run_root: str | Path,
@@ -4584,11 +5235,32 @@ def resume_local_runtime(
         Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None
     ) = None,
     injected_runtime_admission: Mapping[str, Any] | None = None,
+    runtime_evidence_only: bool = False,
+    expected_runtime_execution_identity_hash: str | None = None,
 ) -> dict[str, Any]:
     """Continue one validated Build handoff through the existing Runtime graph."""
 
     if not approved_by.strip():
         raise LocalEntryError("Runtime continuation requires approved_by.")
+    if runtime_evidence_only:
+        if recover_accepted_resume or retry_runtime_observation:
+            raise LocalEntryError(
+                "RuntimeEvidence-only continuation supports only an initial resume."
+            )
+        return _execute_runtime_evidence_only_continuation(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            approved_by=approved_by,
+            resume_id=resume_id,
+            runtime_evidence_factory=runtime_evidence_factory,
+            injected_runtime_admission=injected_runtime_admission,
+            expected_runtime_execution_identity_hash=(
+                expected_runtime_execution_identity_hash
+            ),
+        )
     if recover_accepted_resume and resume_id is None:
         raise LocalEntryError(
             "Accepted resume recovery requires the exact prior resume_id."
