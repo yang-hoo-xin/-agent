@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactWriteResult
 from src.mod_agent.build import build_fake_build_result
 from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
 from src.mod_agent.runtime import build_fake_runtime_evidence_payload
@@ -84,8 +84,9 @@ class StubNodeResult:
     """Result produced by a stub node execution."""
 
     state: ModAgentState
-    artifact_ref: ArtifactRef
+    artifact_ref: ArtifactRef | None
     trace_event: TraceEvent
+    artifact_write_result: ArtifactWriteResult | None = None
 
 
 class StubNodeRunner:
@@ -94,7 +95,14 @@ class StubNodeRunner:
     def __init__(self, artifact_store: ArtifactStore) -> None:
         self.artifact_store = artifact_store
 
-    def run(self, node_name: NodeName, state: ModAgentState) -> StubNodeResult:
+    def run(
+        self,
+        node_name: NodeName,
+        state: ModAgentState,
+        *,
+        use_store_result: bool = False,
+        additional_upstream_refs: tuple[ArtifactRef, ...] = (),
+    ) -> StubNodeResult:
         """Execute a stub node and return updated state plus trace."""
 
         if node_name not in NODE_STAGE_MAP:
@@ -104,27 +112,113 @@ class StubNodeRunner:
         artifact_type = NODE_ARTIFACT_MAP[node_name]
         feature_id = state.get("feature_id") or state["request_id"]
         event_id = f"evt_{uuid4().hex}"
-        payload = self._payload_for(
-            artifact_type=artifact_type,
-            node_name=node_name,
-            stage=stage,
-            user_request=state["user_request"],
-            state=state,
-        )
-        upstream_refs = self._upstream_refs_for(artifact_type, feature_id, state)
-        artifact_ref = self.artifact_store.write(
-            feature_id=feature_id,
-            artifact_type=artifact_type,
-            payload=payload,
-            status="blocked" if node_name == "blocked" else "stubbed",
-            trace_refs=[event_id],
-            upstream_refs=upstream_refs,
-        )
+        try:
+            payload = self._payload_for(
+                artifact_type=artifact_type,
+                node_name=node_name,
+                stage=stage,
+                user_request=state["user_request"],
+                state=state,
+            )
+            upstream_refs = self._upstream_refs_for(
+                artifact_type,
+                feature_id,
+                state,
+            )
+            for ref in additional_upstream_refs:
+                if ref not in upstream_refs:
+                    upstream_refs.append(ref)
+        except Exception as exc:
+            if not use_store_result:
+                raise
+            next_state = self._copy_state(state)
+            next_state["current_stage"] = stage
+            next_state["runtime_summary"].update(
+                {
+                    "platform_failure_stage": "blocked_report_execution",
+                    "blocked_report_store_result": None,
+                    "blocked_report_ready": False,
+                    "terminal_route": "blocked",
+                    "terminal_ready": False,
+                    "terminal_final_status": None,
+                    "terminal_claims_real_mod_success": False,
+                }
+            )
+            next_state["blockers"].append(
+                {
+                    "stage": "blocked",
+                    "code": "BLOCKED_REPORT_EXECUTION_FAILED",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            return StubNodeResult(
+                state=next_state,
+                artifact_ref=None,
+                trace_event=TraceEvent(
+                    event_id=event_id,
+                    run_id=state["run_id"],
+                    feature_id=feature_id,
+                    node_name=node_name,
+                    stage=stage,
+                    event_type="node_finished",
+                    status="blocked",
+                    artifact_refs=[],
+                    summary="Workflow terminal blocker report construction failed.",
+                ),
+            )
+        write_result = None
+        if use_store_result:
+            write_result = self.artifact_store.write_with_result(
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                payload=payload,
+                status="blocked" if node_name == "blocked" else "stubbed",
+                trace_refs=[],
+                upstream_refs=upstream_refs,
+            )
+            artifact_ref = write_result.artifact_ref
+        else:
+            artifact_ref = self.artifact_store.write(
+                feature_id=feature_id,
+                artifact_type=artifact_type,
+                payload=payload,
+                status="blocked" if node_name == "blocked" else "stubbed",
+                trace_refs=[event_id],
+                upstream_refs=upstream_refs,
+            )
         next_state = self._copy_state(state)
         next_state["feature_id"] = feature_id
         next_state["current_stage"] = stage
-        next_state["artifacts"][artifact_type] = artifact_ref.path
-        next_state["artifact_hashes"][artifact_type] = artifact_ref.artifact_hash
+        if artifact_ref is not None:
+            next_state["artifacts"][artifact_type] = artifact_ref.path
+            next_state["artifact_hashes"][artifact_type] = artifact_ref.artifact_hash
+        if write_result is not None:
+            next_state["runtime_summary"].update(
+                {
+                    "blocked_report_store_result": write_result.to_dict(),
+                    "blocked_report_ready": (
+                        write_result.outcome == "committed"
+                        and artifact_ref is not None
+                    ),
+                    "platform_failure_stage": (
+                        None
+                        if write_result.outcome == "committed"
+                        else "blocked_report_store"
+                    ),
+                    "terminal_route": "blocked",
+                    "terminal_ready": (
+                        write_result.outcome == "committed"
+                        and artifact_ref is not None
+                    ),
+                    "terminal_final_status": (
+                        "blocked"
+                        if write_result.outcome == "committed"
+                        and artifact_ref is not None
+                        else None
+                    ),
+                    "terminal_claims_real_mod_success": False,
+                }
+            )
 
         if node_name == "blocked" and not next_state["blockers"]:
             next_state["blockers"].append(
@@ -142,7 +236,7 @@ class StubNodeRunner:
             stage=stage,
             event_type="node_finished",
             status="blocked" if node_name == "blocked" else "stubbed",
-            artifact_refs=[artifact_ref.path],
+            artifact_refs=[] if artifact_ref is None else [artifact_ref.path],
             summary=(
                 "Workflow terminal blocker report persisted."
                 if node_name == "blocked"
@@ -153,6 +247,7 @@ class StubNodeRunner:
             state=next_state,
             artifact_ref=artifact_ref,
             trace_event=trace_event,
+            artifact_write_result=write_result,
         )
 
     def _upstream_refs_for(

@@ -99,7 +99,9 @@ class StateOwnershipPolicy:
         ),
         "review_summary": frozenset({"review_proposal"}),
         "build_summary": frozenset({"build"}),
-        "runtime_summary": frozenset({"collect_runtime_evidence"}),
+        "runtime_summary": frozenset(
+            {"collect_runtime_evidence", "evaluate", "done", "blocked"}
+        ),
         "trace_events": frozenset({"workflow_node", "transition_router"}),
         "retry_count": frozenset({"create_repair_plan", "transition_router"}),
     }

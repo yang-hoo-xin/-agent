@@ -103,6 +103,7 @@ from .transitions import (
 from .verification_only import (
     VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
     VerificationOnlyContinuationInput,
+    VerificationOnlyRuntimeTerminalInput,
     preflight_verification_only_continuation,
     validate_verification_only_build_result,
     verification_only_lineage_matches,
@@ -235,6 +236,8 @@ def build_graph(
     approved_feature_spec_revision_payload_hash: str | None = None,
     approved_feature_spec_revision_projection_hash: str | None = None,
     verification_only_continuation: VerificationOnlyContinuationInput | None = None,
+    runtime_terminal_continuation: VerificationOnlyRuntimeTerminalInput | None = None,
+    runtime_terminal_write_results: bool = False,
 ):
     """Build a compiled LangGraph graph with real planning/review routing.
 
@@ -270,6 +273,30 @@ def build_graph(
             "RuntimeEvidence Store results require an exact Runtime continuation "
             "and interrupt_after collect_runtime_evidence."
         )
+    if runtime_terminal_write_results != (runtime_terminal_continuation is not None):
+        raise ValueError(
+            "Runtime terminal Store results require one exact post-Runtime "
+            "continuation binding."
+        )
+    if runtime_terminal_continuation is not None:
+        if (
+            verification_only_continuation is not None
+            or runtime_continuation_checkpoint_id is not None
+            or edit_authority_request_ref is not None
+            or repair_planning_authority_request_ref is not None
+            or feature_spec_revision_projection is not None
+            or build_result_factory is not None
+            or runtime_evidence_factory is not None
+            or runtime_evidence_write_results
+            or allow_game_launch
+            or stop_after_evidence
+            or stop_after_build
+            or persist_build_runtime_handoff
+        ):
+            raise ValueError(
+                "Post-Runtime terminal continuation requires its own no-effect "
+                "Graph entry."
+            )
     if verification_only_continuation is not None:
         if (
             runtime_continuation_checkpoint_id is not None
@@ -579,11 +606,18 @@ def build_graph(
         "evaluate",
         _make_real_graph_node(
             "evaluate",
-            lambda state: _run_fake_evaluate(
+            lambda state: _run_terminal_node_with_boundary(
                 state,
-                artifact_store,
-                evaluation_context_factory,
-                require_external_evaluation,
+                lambda selected: _run_fake_evaluate(
+                    selected,
+                    artifact_store,
+                    evaluation_context_factory,
+                    require_external_evaluation,
+                    use_store_result=runtime_terminal_write_results,
+                ),
+                failure_stage="eval_report_execution",
+                blocker_code="EVAL_REPORT_EXECUTION_FAILED",
+                use_boundary=runtime_terminal_write_results,
             ),
         ),
     )
@@ -608,12 +642,42 @@ def build_graph(
         "done",
         _make_real_graph_node(
             "done",
-            lambda state: _run_workflow_summary(state, artifact_store),
+            lambda state: _run_terminal_node_with_boundary(
+                state,
+                lambda selected: _run_workflow_summary(
+                    selected,
+                    artifact_store,
+                    use_store_result=runtime_terminal_write_results,
+                ),
+                failure_stage="workflow_summary_execution",
+                blocker_code="WORKFLOW_SUMMARY_EXECUTION_FAILED",
+                use_boundary=runtime_terminal_write_results,
+            ),
         ),
     )
-    graph.add_node("blocked", _make_stub_graph_node("blocked", stub_runner))
+    graph.add_node(
+        "blocked",
+        _make_stub_graph_node(
+            "blocked",
+            stub_runner,
+            use_store_result=runtime_terminal_write_results,
+        ),
+    )
 
-    if verification_only_continuation is not None:
+    if runtime_terminal_continuation is not None:
+        graph.add_conditional_edges(
+            START,
+            lambda state: _route_runtime_terminal_continuation_entry(
+                state,
+                artifact_store,
+                runtime_terminal_continuation,
+            ),
+            {
+                "blocked": "blocked",
+                "continue": "evaluate",
+            },
+        )
+    elif verification_only_continuation is not None:
         graph.add_edge(START, "verification_only_admission")
     elif repair_planning_authority_request_ref is not None:
         graph.add_edge(START, "stagger_repair_planning_gate")
@@ -736,14 +800,19 @@ def build_graph(
         route_after_repair_plan,
         dict(registry["create_repair_plan"]),
     )
-    for node_name in [
+    graph.add_conditional_edges(
         "evaluate",
-    ]:
-        graph.add_conditional_edges(
-            node_name,
-            route_after_evaluate,
-            dict(registry[node_name]),
-        )
+        (
+            _route_after_terminal_evaluate
+            if runtime_terminal_write_results
+            else route_after_evaluate
+        ),
+        (
+            {"stop": END, "blocked": "blocked", "continue": "done"}
+            if runtime_terminal_write_results
+            else dict(registry["evaluate"])
+        ),
+    )
     graph.add_edge("done", END)
     graph.add_edge("blocked", END)
     return graph.compile(
@@ -790,7 +859,12 @@ def _make_real_graph_node(node_name: str, run: GraphNode) -> GraphNode:
     return _node
 
 
-def _make_stub_graph_node(node_name: str, runner: StubNodeRunner) -> GraphNode:
+def _make_stub_graph_node(
+    node_name: str,
+    runner: StubNodeRunner,
+    *,
+    use_store_result: bool = False,
+) -> GraphNode:
     def _node(state: ModAgentState) -> ModAgentState:
         started = _trace_event(
             state=state,
@@ -801,7 +875,22 @@ def _make_stub_graph_node(node_name: str, runner: StubNodeRunner) -> GraphNode:
             summary=f"{node_name} started.",
         )
         state_with_start = _copy_state_with_trace(state, started)
-        result = runner.run(node_name, state_with_start)
+        additional_upstreams: tuple[ArtifactRef, ...] = ()
+        if use_store_result and node_name == "blocked":
+            source_type = (
+                "eval_report"
+                if "eval_report" in state_with_start["artifacts"]
+                else "runtime_evidence"
+            )
+            additional_upstreams = (
+                _artifact_ref_from_state(state_with_start, source_type),
+            )
+        result = runner.run(
+            node_name,
+            state_with_start,
+            use_store_result=use_store_result,
+            additional_upstream_refs=additional_upstreams,
+        )
         finished_state = _copy_state_with_trace(
             result.state,
             result.trace_event.to_dict(),
@@ -809,6 +898,38 @@ def _make_stub_graph_node(node_name: str, runner: StubNodeRunner) -> GraphNode:
         return finished_state
 
     return _node
+
+
+def _run_terminal_node_with_boundary(
+    state: ModAgentState,
+    run: GraphNode,
+    *,
+    failure_stage: str,
+    blocker_code: str,
+    use_boundary: bool,
+) -> ModAgentState:
+    """Normalize pre-Store terminal node failures for the public result path."""
+
+    if not use_boundary:
+        return run(state)
+    try:
+        return run(state)
+    except Exception as exc:
+        next_state = _copy_state(state)
+        next_state["runtime_summary"].update(
+            {
+                "platform_failure_stage": failure_stage,
+                "terminal_ready": False,
+            }
+        )
+        next_state["blockers"].append(
+            {
+                "stage": "evaluation" if failure_stage.startswith("eval_") else "done",
+                "code": blocker_code,
+                "message": f"{type(exc).__name__}: {exc}",
+            }
+        )
+        return next_state
 
 
 def _run_plan_request(
@@ -2570,6 +2691,66 @@ def _route_runtime_continuation_entry(
     return "continue"
 
 
+def _route_runtime_terminal_continuation_entry(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    continuation: VerificationOnlyRuntimeTerminalInput,
+) -> str:
+    """Admit one exact committed RuntimeEvidence into terminal routing."""
+
+    if state.get("current_stage") != "runtime_evidence":
+        raise ValueError(
+            "Runtime terminal continuation must restore the RuntimeEvidence boundary."
+        )
+    if state.get("blockers"):
+        raise ValueError(
+            "Runtime terminal continuation state contains unresolved blockers."
+        )
+    exact_refs = {
+        "workflow_checkpoint": continuation.checkpoint_ref,
+        "resume_report": continuation.resume_report_ref,
+        "runtime_evidence": continuation.runtime_evidence_ref,
+    }
+    for artifact_type, expected_ref in exact_refs.items():
+        actual_ref = _artifact_ref_from_state(state, artifact_type)
+        if actual_ref != expected_ref:
+            raise ValueError(
+                f"Runtime terminal continuation state changed {artifact_type}."
+            )
+    decision, runtime_payload, terminal_refs = (
+        WorkflowCheckpointStore(
+            artifact_store
+        ).preflight_runtime_terminal_continuation(
+            continuation.checkpoint_ref,
+            resume_report_ref=continuation.resume_report_ref,
+            runtime_evidence_ref=continuation.runtime_evidence_ref,
+            resume_id=continuation.resume_id,
+            approved_by=continuation.approved_by,
+        )
+    )
+    if not decision.allowed or terminal_refs:
+        raise ValueError(
+            "Runtime terminal continuation admission changed before Graph routing."
+        )
+    expected_summary = _runtime_summary_from_payload(runtime_payload)
+    if state.get("runtime_summary") != expected_summary:
+        raise ValueError(
+            "Runtime terminal continuation summary does not match RuntimeEvidence."
+        )
+    return route_after_runtime_evidence(state)
+
+
+def _route_after_terminal_evaluate(state: ModAgentState) -> str:
+    """Stop a terminal continuation after any non-committed EvalReport result."""
+
+    if state["runtime_summary"].get("platform_failure_stage") in {
+        "eval_report_execution",
+        "eval_report_store",
+    }:
+        return "stop"
+    return route_after_evaluate(state)
+
+
 def _run_create_repair_plan(
     state: ModAgentState,
     artifact_store: ArtifactStore,
@@ -2879,29 +3060,7 @@ def _run_runtime_evidence(
         artifact_ref = artifact_store.write(**write_arguments)
     next_state = _copy_state(state)
     next_state["current_stage"] = "runtime_evidence"
-    next_state["runtime_summary"] = {
-        "status": payload["verification_status"],
-        "execution_mode": payload["execution_mode"],
-        "real_runtime_performed": payload["real_runtime_performed"],
-        "startup_loaded": payload["startup_loaded"],
-        "gameplay_behavior_verified": payload["gameplay_behavior_verified"],
-        "acceptance_status": payload["acceptance_status"],
-        "acceptance_verified": acceptance_verified,
-        "acceptance_contract": payload["acceptance_contract"],
-        "claims_real_runtime_success": payload["claims_real_runtime_success"],
-        "run_id": payload["run_id"],
-        "build_artifact_hash": payload["build_artifact_hash"],
-        "plugin_marker_binding": payload["plugin_marker_binding"],
-        "screenshot_refs": payload["screenshot_refs"],
-        "runtime_trust_binding": payload["runtime_trust_binding"],
-        "failure_ownership": payload["failure_ownership"],
-        "has_structured_diagnosis": isinstance(
-            payload.get("runtime_failure_diagnosis"),
-            dict,
-        ),
-        "plugin_deployment_binding": payload.get("plugin_deployment_binding"),
-        "non_goal_preservation": payload["non_goal_preservation"],
-    }
+    next_state["runtime_summary"] = _runtime_summary_from_payload(payload)
     if write_result is not None:
         next_state["runtime_summary"].update(
             {
@@ -2929,6 +3088,34 @@ def _run_runtime_evidence(
             }
         )
     return next_state
+
+
+def _runtime_summary_from_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Project durable RuntimeEvidence facts without ephemeral Store receipts."""
+
+    return {
+        "status": payload["verification_status"],
+        "execution_mode": payload["execution_mode"],
+        "real_runtime_performed": payload["real_runtime_performed"],
+        "startup_loaded": payload["startup_loaded"],
+        "gameplay_behavior_verified": payload["gameplay_behavior_verified"],
+        "acceptance_status": payload["acceptance_status"],
+        "acceptance_verified": bool(payload["acceptance_verified"]),
+        "acceptance_contract": payload["acceptance_contract"],
+        "claims_real_runtime_success": payload["claims_real_runtime_success"],
+        "run_id": payload["run_id"],
+        "build_artifact_hash": payload["build_artifact_hash"],
+        "plugin_marker_binding": payload["plugin_marker_binding"],
+        "screenshot_refs": payload["screenshot_refs"],
+        "runtime_trust_binding": payload["runtime_trust_binding"],
+        "failure_ownership": payload["failure_ownership"],
+        "has_structured_diagnosis": isinstance(
+            payload.get("runtime_failure_diagnosis"),
+            dict,
+        ),
+        "plugin_deployment_binding": payload.get("plugin_deployment_binding"),
+        "non_goal_preservation": payload["non_goal_preservation"],
+    }
 
 
 def _validate_runtime_evidence_result_identity(
@@ -2987,6 +3174,8 @@ def _run_fake_evaluate(
     artifact_store: ArtifactStore,
     evaluation_context_factory: EvaluationContextFactory | None = None,
     require_external_evaluation: bool = False,
+    *,
+    use_store_result: bool = False,
 ) -> ModAgentState:
     build = _read_artifact_data(state, artifact_store, "build_result")
     runtime = _read_artifact_data(state, artifact_store, "runtime_evidence")
@@ -3124,20 +3313,52 @@ def _run_fake_evaluate(
         **v1_boundary,
     }
     gate_blockers = list(evaluation_gate.get("blockers") or [])
-    artifact_ref = artifact_store.write(
-        feature_id=feature_id,
-        artifact_type="eval_report",
-        payload=payload,
-        status="blocked" if gate_failed else "success",
-        blockers=gate_blockers,
-        upstream_refs=[
+    write_arguments = {
+        "feature_id": feature_id,
+        "artifact_type": "eval_report",
+        "payload": payload,
+        "status": "blocked" if gate_failed else "success",
+        "blockers": gate_blockers,
+        "upstream_refs": [
             _artifact_ref_from_state(state, "build_result"),
             _artifact_ref_from_state(state, "runtime_evidence"),
         ],
-    )
+    }
+    write_result = None
+    if use_store_result:
+        write_result = artifact_store.write_with_result(**write_arguments)
+        artifact_ref = write_result.artifact_ref
+    else:
+        artifact_ref = artifact_store.write(**write_arguments)
     next_state = _copy_state(state)
     next_state["current_stage"] = "evaluation"
-    _record_artifact(next_state, "eval_report", artifact_ref)
+    if artifact_ref is not None:
+        _record_artifact(next_state, "eval_report", artifact_ref)
+    if write_result is not None:
+        eval_ready = (
+            write_result.outcome == "committed" and artifact_ref is not None
+        )
+        next_state["runtime_summary"].update(
+            {
+                "eval_report_store_result": write_result.to_dict(),
+                "eval_report_ready": eval_ready,
+                "platform_failure_stage": (
+                    None if eval_ready else "eval_report_store"
+                ),
+                "terminal_route": (
+                    "blocked" if gate_failed and eval_ready else "evaluate"
+                ),
+                "terminal_ready": False,
+            }
+        )
+        if not eval_ready:
+            next_state["blockers"].append(
+                {
+                    "stage": "evaluation",
+                    "code": "EVAL_REPORT_STORE_NOT_COMMITTED",
+                    "message": "EvalReport did not reach a committed Store outcome.",
+                }
+            )
     if gate_failed:
         next_state["blockers"].extend(
             {
@@ -3258,6 +3479,8 @@ def _run_isolated_apply(
 def _run_workflow_summary(
     state: ModAgentState,
     artifact_store: ArtifactStore,
+    *,
+    use_store_result: bool = False,
 ) -> ModAgentState:
     eval_report = _read_artifact_data(state, artifact_store, "eval_report")
     feature_id = state["feature_id"] or state["request_id"]
@@ -3278,6 +3501,13 @@ def _run_workflow_summary(
     verification_only = (
         state["build_summary"].get("input_execution_mode")
         == VERIFICATION_ONLY_INPUT_EXECUTION_MODE
+    )
+    durable_runtime_summary = (
+        _runtime_summary_from_payload(
+            _read_artifact_data(state, artifact_store, "runtime_evidence")
+        )
+        if use_store_result
+        else dict(state["runtime_summary"])
     )
     payload = {
         "node_name": "done",
@@ -3305,11 +3535,11 @@ def _run_workflow_summary(
             state["build_summary"].get("claims_real_build_success")
         ),
         "claims_real_runtime_success": bool(
-            state["runtime_summary"].get("claims_real_runtime_success")
+            durable_runtime_summary.get("claims_real_runtime_success")
         ),
         "artifact_refs": dict(state["artifacts"]),
         "build_summary": dict(state["build_summary"]),
-        "runtime_summary": dict(state["runtime_summary"]),
+        "runtime_summary": durable_runtime_summary,
         "eval_verdict": eval_report.get("verdict"),
         "v1_acceptance_status": eval_report.get("v1_acceptance_status"),
         "v1_acceptance_blockers": list(eval_report.get("v1_acceptance_blockers") or []),
@@ -3327,16 +3557,52 @@ def _run_workflow_summary(
             )
         ),
     }
-    artifact_ref = artifact_store.write(
-        feature_id=feature_id,
-        artifact_type="workflow_summary",
-        payload=payload,
-        status="success",
-        upstream_refs=[_artifact_ref_from_state(state, "eval_report")],
-    )
+    write_arguments = {
+        "feature_id": feature_id,
+        "artifact_type": "workflow_summary",
+        "payload": payload,
+        "status": "success",
+        "upstream_refs": [_artifact_ref_from_state(state, "eval_report")],
+    }
+    write_result = None
+    if use_store_result:
+        write_result = artifact_store.write_with_result(**write_arguments)
+        artifact_ref = write_result.artifact_ref
+    else:
+        artifact_ref = artifact_store.write(**write_arguments)
     next_state = _copy_state(state)
     next_state["current_stage"] = "done"
-    _record_artifact(next_state, "workflow_summary", artifact_ref)
+    if artifact_ref is not None:
+        _record_artifact(next_state, "workflow_summary", artifact_ref)
+    if write_result is not None:
+        summary_ready = (
+            write_result.outcome == "committed" and artifact_ref is not None
+        )
+        next_state["runtime_summary"].update(
+            {
+                "workflow_summary_store_result": write_result.to_dict(),
+                "workflow_summary_ready": summary_ready,
+                "platform_failure_stage": (
+                    None if summary_ready else "workflow_summary_store"
+                ),
+                "terminal_route": "done",
+                "terminal_ready": summary_ready,
+                "terminal_final_status": payload["final_status"],
+                "terminal_claims_real_mod_success": payload[
+                    "claims_real_mod_success"
+                ],
+            }
+        )
+        if not summary_ready:
+            next_state["blockers"].append(
+                {
+                    "stage": "done",
+                    "code": "WORKFLOW_SUMMARY_STORE_NOT_COMMITTED",
+                    "message": (
+                        "WorkflowSummary did not reach a committed Store outcome."
+                    ),
+                }
+            )
     return next_state
 
 

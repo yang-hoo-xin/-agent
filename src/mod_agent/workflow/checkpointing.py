@@ -20,6 +20,7 @@ from src.mod_agent.artifacts import (
 
 from .interrupts import ResumeDecision, ResumePayload, ResumeValidator
 from .state import ModAgentState
+from .verification_only import VERIFICATION_ONLY_INPUT_EXECUTION_MODE
 
 BUILD_CHECKPOINT_EXACT_REVISION_TYPES = frozenset(
     {"evidence_pack", "implementation_plan"}
@@ -595,6 +596,250 @@ class WorkflowCheckpointStore:
                 applied_updates=dict(report["applied_updates"]),
             ),
             report_ref,
+        )
+
+    def preflight_runtime_terminal_continuation(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_report_ref: ArtifactRef,
+        runtime_evidence_ref: ArtifactRef,
+        resume_id: str,
+        approved_by: str,
+    ) -> tuple[ResumeDecision, dict[str, Any], tuple[ArtifactRef, ...]]:
+        """Validate one exact post-Runtime terminal continuation without writes."""
+
+        checkpoint_envelope = self.artifact_store.read(checkpoint_ref)
+        checkpoint = checkpoint_envelope["data"]
+        blockers = self._checkpoint_lineage_blockers(
+            checkpoint_ref,
+            checkpoint_envelope,
+            allow_prior_runtime_state=True,
+            require_current_build_output=False,
+        )
+        checkpoint_freshness = self._checkpoint_freshness(
+            checkpoint_ref,
+            checkpoint_envelope,
+        )
+        if not checkpoint_freshness.is_fresh:
+            blockers.append(
+                {
+                    "code": "RUNTIME_TERMINAL_CHECKPOINT_STALE",
+                    "message": "Post-Runtime checkpoint inputs are stale.",
+                }
+            )
+
+        report_envelope = self.artifact_store.read(resume_report_ref)
+        report = report_envelope["data"]
+        report_upstreams = report_envelope.get("inputs", {}).get(
+            "upstream_artifacts",
+            [],
+        )
+        restored_state = (report.get("applied_updates") or {}).get(
+            "restored_state"
+        )
+        if (
+            resume_report_ref.feature_id != checkpoint_ref.feature_id
+            or report.get("checkpoint_id") != checkpoint.get("checkpoint_id")
+            or report.get("run_id") != checkpoint.get("run_id")
+            or report.get("resume_stage") != checkpoint.get("checkpoint_stage")
+            or report.get("resume_id") != resume_id
+            or report.get("approved_by") != approved_by
+            or report.get("decision") != "approve"
+            or report.get("status") != "accepted"
+            or report.get("allowed") is not True
+            or restored_state != checkpoint.get("state_snapshot")
+            or not isinstance(report_upstreams, list)
+            or len(report_upstreams) != 1
+            or report_upstreams[0].get("artifact_type")
+            != "workflow_checkpoint"
+            or report_upstreams[0].get("path") != checkpoint_ref.path
+            or report_upstreams[0].get("artifact_hash")
+            != checkpoint_ref.artifact_hash
+        ):
+            blockers.append(
+                {
+                    "code": "RUNTIME_TERMINAL_RESUME_REPORT_INVALID",
+                    "message": (
+                        "Accepted ResumeReport does not bind the exact Build "
+                        "checkpoint and approved resume identity."
+                    ),
+                }
+            )
+        report_freshness = self.artifact_store.check_freshness(
+            resume_report_ref
+        )
+        if not report_freshness.is_fresh:
+            blockers.append(
+                {
+                    "code": "RUNTIME_TERMINAL_RESUME_REPORT_STALE",
+                    "message": "Accepted ResumeReport inputs are stale.",
+                }
+            )
+
+        runtime_envelope = self.artifact_store.read(runtime_evidence_ref)
+        runtime = runtime_envelope["data"]
+        runtime_upstreams = runtime_envelope.get("inputs", {}).get(
+            "upstream_artifacts",
+            [],
+        )
+        snapshot = checkpoint.get("state_snapshot") or {}
+        snapshot_artifacts = snapshot.get("artifacts") or {}
+        snapshot_hashes = snapshot.get("artifact_hashes") or {}
+        runtime_upstreams_by_type = {
+            item.get("artifact_type"): item
+            for item in runtime_upstreams
+            if isinstance(item, dict)
+            and isinstance(item.get("artifact_type"), str)
+        }
+        expected_build_ref = {
+            "feature_id": checkpoint_ref.feature_id,
+            "artifact_type": "build_result",
+            "path": snapshot_artifacts.get("build_result"),
+            "artifact_hash": snapshot_hashes.get("build_result"),
+        }
+        if (
+            runtime_evidence_ref.feature_id != checkpoint_ref.feature_id
+            or runtime.get("feature_id") != checkpoint_ref.feature_id
+            or runtime.get("run_id") != checkpoint.get("run_id")
+            or runtime.get("input_execution_mode")
+            != VERIFICATION_ONLY_INPUT_EXECUTION_MODE
+            or runtime.get("build_artifact_ref") != expected_build_ref
+            or runtime.get("build_artifact_hash")
+            != snapshot_hashes.get("build_result")
+            or set(runtime_upstreams_by_type)
+            != {"build_result", "feature_spec"}
+            or runtime_upstreams_by_type["build_result"].get("path")
+            != snapshot_artifacts.get("build_result")
+            or runtime_upstreams_by_type["build_result"].get("artifact_hash")
+            != snapshot_hashes.get("build_result")
+            or runtime_upstreams_by_type["feature_spec"].get("path")
+            != snapshot_artifacts.get("feature_spec")
+            or runtime_upstreams_by_type["feature_spec"].get("artifact_hash")
+            != snapshot_hashes.get("feature_spec")
+        ):
+            blockers.append(
+                {
+                    "code": "RUNTIME_TERMINAL_EVIDENCE_LINEAGE_INVALID",
+                    "message": (
+                        "RuntimeEvidence does not bind the exact checkpoint "
+                        "FeatureSpec and BuildResult lineage."
+                    ),
+                }
+            )
+        runtime_freshness = self.artifact_store.check_freshness(
+            runtime_evidence_ref
+        )
+        if not runtime_freshness.is_fresh:
+            blockers.append(
+                {
+                    "code": "RUNTIME_TERMINAL_EVIDENCE_STALE",
+                    "message": "RuntimeEvidence inputs are stale.",
+                }
+            )
+
+        terminal_refs = self._runtime_terminal_artifact_refs(
+            runtime_evidence_ref
+        )
+        if terminal_refs:
+            blockers.append(
+                {
+                    "code": "RUNTIME_TERMINALIZATION_ALREADY_STARTED",
+                    "message": (
+                        "Terminal Artifacts already exist for the exact "
+                        "RuntimeEvidence."
+                    ),
+                }
+            )
+        if blockers:
+            return (
+                ResumeDecision(
+                    status="blocked",
+                    allowed=False,
+                    reason="Post-Runtime terminal continuation was blocked.",
+                    applied_updates={},
+                    blockers=tuple(blockers),
+                    stale_reasons=tuple(
+                        checkpoint_freshness.stale_reasons
+                        + report_freshness.stale_reasons
+                        + runtime_freshness.stale_reasons
+                    ),
+                ),
+                runtime,
+                terminal_refs,
+            )
+        return (
+            ResumeDecision(
+                status="accepted",
+                allowed=True,
+                reason=(
+                    "Exact committed RuntimeEvidence is ready for terminal "
+                    "Graph continuation."
+                ),
+                applied_updates=dict(report["applied_updates"]),
+            ),
+            runtime,
+            (),
+        )
+
+    def _runtime_terminal_artifact_refs(
+        self,
+        runtime_evidence_ref: ArtifactRef,
+    ) -> tuple[ArtifactRef, ...]:
+        """Return immutable terminal revisions rooted at RuntimeEvidence."""
+
+        feature_id = runtime_evidence_ref.feature_id
+        eval_refs: list[ArtifactRef] = []
+        terminal_refs: list[ArtifactRef] = []
+
+        def binds(
+            envelope: dict[str, Any],
+            upstream_ref: ArtifactRef,
+        ) -> bool:
+            return any(
+                isinstance(item, dict)
+                and item.get("artifact_type") == upstream_ref.artifact_type
+                and item.get("path") == upstream_ref.path
+                and item.get("artifact_hash") == upstream_ref.artifact_hash
+                for item in envelope.get("inputs", {}).get(
+                    "upstream_artifacts",
+                    [],
+                )
+            )
+
+        for ref in self.artifact_store.list_feature_artifact_revisions(
+            feature_id,
+            "eval_report",
+        ):
+            envelope = self.artifact_store.read(ref)
+            if binds(envelope, runtime_evidence_ref):
+                eval_refs.append(ref)
+                terminal_refs.append(ref)
+        for ref in self.artifact_store.list_feature_artifact_revisions(
+            feature_id,
+            "blocked_report",
+        ):
+            envelope = self.artifact_store.read(ref)
+            if binds(envelope, runtime_evidence_ref) or any(
+                binds(envelope, eval_ref) for eval_ref in eval_refs
+            ):
+                terminal_refs.append(ref)
+        for ref in self.artifact_store.list_feature_artifact_revisions(
+            feature_id,
+            "workflow_summary",
+        ):
+            envelope = self.artifact_store.read(ref)
+            if any(binds(envelope, eval_ref) for eval_ref in eval_refs):
+                terminal_refs.append(ref)
+        return tuple(
+            sorted(
+                terminal_refs,
+                key=lambda ref: (
+                    ref.artifact_type,
+                    ref.path,
+                    ref.artifact_hash,
+                ),
+            )
         )
 
     def preflight_runtime_observation_retry(
@@ -1337,6 +1582,7 @@ class WorkflowCheckpointStore:
         checkpoint_envelope: dict[str, Any],
         *,
         allow_prior_runtime_state: bool = False,
+        require_current_build_output: bool = True,
     ) -> list[dict[str, Any]]:
         checkpoint = checkpoint_envelope["data"]
         snapshot = checkpoint.get("state_snapshot")
@@ -1423,6 +1669,7 @@ class WorkflowCheckpointStore:
                 self._build_handoff_blockers(
                     checkpoint,
                     allow_prior_runtime_state=allow_prior_runtime_state,
+                    require_current_build_output=require_current_build_output,
                 )
             )
         return blockers
@@ -1432,6 +1679,7 @@ class WorkflowCheckpointStore:
         checkpoint: dict[str, Any],
         *,
         allow_prior_runtime_state: bool = False,
+        require_current_build_output: bool = True,
     ) -> list[dict[str, Any]]:
         snapshot = checkpoint["state_snapshot"]
         required = {"feature_spec", "build_result"}
@@ -1528,17 +1776,20 @@ class WorkflowCheckpointStore:
                     }
                 )
                 continue
-            path = Path(resolved_path)
-            if (
-                not path.is_file()
-                or hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash
-            ):
-                blockers.append(
-                    {
-                        "code": "BUILD_OUTPUT_BYTES_CHANGED",
-                        "message": f"Verified Build output changed: {resolved_path}",
-                    }
-                )
+            if require_current_build_output:
+                path = Path(resolved_path)
+                if (
+                    not path.is_file()
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash
+                ):
+                    blockers.append(
+                        {
+                            "code": "BUILD_OUTPUT_BYTES_CHANGED",
+                            "message": (
+                                f"Verified Build output changed: {resolved_path}"
+                            ),
+                        }
+                    )
 
         return blockers
 

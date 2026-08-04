@@ -57,6 +57,11 @@ def test_state_ownership_policy_allows_declared_writer() -> None:
     )
     assert StateOwnershipPolicy.can_write("artifacts", "artifact_producing_node") is True
     assert StateOwnershipPolicy.can_write("approvals", "interrupt_resume_handler") is True
+    for terminal_writer in ("evaluate", "done", "blocked"):
+        assert (
+            StateOwnershipPolicy.can_write("runtime_summary", terminal_writer)
+            is True
+        )
 
 
 def test_state_ownership_policy_rejects_unknown_field() -> None:

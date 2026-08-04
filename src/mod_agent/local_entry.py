@@ -73,13 +73,17 @@ from src.mod_agent.workflow import (
     ResumePayload,
     ResumeValidator,
     VerificationOnlyContinuationInput,
+    VerificationOnlyRuntimeTerminalInput,
     WorkflowCheckpointStore,
     build_graph,
     create_initial_state,
     preflight_verification_only_continuation,
     resumed_state_from_decision,
 )
-from src.mod_agent.workflow.graph import _RuntimeEvidenceExecutionBoundaryError
+from src.mod_agent.workflow.graph import (
+    _RuntimeEvidenceExecutionBoundaryError,
+    _runtime_summary_from_payload,
+)
 
 
 class LocalEntryError(RuntimeError):
@@ -643,6 +647,18 @@ class _RuntimeContinuationHandoff:
     prior_repair_plan_ref: ArtifactRef | None = None
     observation_retry_binding: Mapping[str, Any] | None = None
     resume_readiness: ResumeDecision | None = None
+
+
+@dataclass(frozen=True)
+class _RuntimeTerminalHandoff:
+    """Exact immutable inputs for one post-Runtime terminal continuation."""
+
+    build_handoff: _RuntimeContinuationHandoff
+    resume_report_ref: ArtifactRef
+    runtime_evidence_ref: ArtifactRef
+    runtime_evidence: dict[str, Any]
+    decision: ResumeDecision
+    existing_terminal_refs: tuple[ArtifactRef, ...]
 
 
 @dataclass(frozen=True)
@@ -3233,6 +3249,7 @@ def _load_runtime_continuation_handoff(
     retry_runtime_observation: bool = False,
     require_manifest: bool = True,
     allow_blocked_resume: bool = False,
+    require_current_build_output: bool = True,
 ) -> _RuntimeContinuationHandoff:
     if recover_accepted_resume and retry_runtime_observation:
         raise LocalEntryError(
@@ -3382,18 +3399,21 @@ def _load_runtime_continuation_handoff(
         raise LocalEntryError(
             "Runtime continuation Build output binding is incomplete."
         )
-    build_output = Path(resolved_path)
-    if not build_output.is_file():
-        raise LocalEntryError("Runtime continuation verified Build output is missing.")
-    stat = build_output.stat()
-    if (
-        hashlib.sha256(build_output.read_bytes()).hexdigest() != expected_hash
-        or stat.st_size != expected_size
-        or stat.st_mtime != float(expected_mtime)
-    ):
-        raise LocalEntryError(
-            "Runtime continuation verified Build output identity changed."
-        )
+    if require_current_build_output:
+        build_output = Path(resolved_path)
+        if not build_output.is_file():
+            raise LocalEntryError(
+                "Runtime continuation verified Build output is missing."
+            )
+        stat = build_output.stat()
+        if (
+            hashlib.sha256(build_output.read_bytes()).hexdigest() != expected_hash
+            or stat.st_size != expected_size
+            or stat.st_mtime != float(expected_mtime)
+        ):
+            raise LocalEntryError(
+                "Runtime continuation verified Build output identity changed."
+            )
 
     recovery_decision = None
     recovery_resume_report_ref = None
@@ -3993,6 +4013,266 @@ def _verification_only_runtime_execution_identity(
     return canonical_identity, "sha256:" + hashlib.sha256(serialized).hexdigest()
 
 
+def _artifact_logical_identity(ref: ArtifactRef) -> dict[str, str]:
+    return {
+        "artifact_type": ref.artifact_type,
+        "artifact_hash": ref.artifact_hash,
+        "feature_id": ref.feature_id,
+    }
+
+
+def _verification_only_runtime_terminal_identity(
+    *,
+    handoff: _RuntimeTerminalHandoff,
+    resume_id: str,
+    approved_by: str,
+) -> tuple[dict[str, Any], str]:
+    """Build the stable identity for one Store-only terminal action."""
+
+    checkpoint = handoff.build_handoff.checkpoint
+    identity = {
+        "schema_version": "verification_only_runtime_terminal_identity_v1",
+        "hash_domain": "mod_agent.verification_only_runtime_terminal_identity.v1",
+        "checkpoint": {
+            **_artifact_logical_identity(handoff.build_handoff.checkpoint_ref),
+            "checkpoint_id": checkpoint["checkpoint_id"],
+            "run_id": checkpoint["run_id"],
+            "request_id": checkpoint["request_id"],
+        },
+        "resume_report": _artifact_logical_identity(handoff.resume_report_ref),
+        "runtime_evidence": _artifact_logical_identity(
+            handoff.runtime_evidence_ref
+        ),
+        "resume_id": resume_id,
+        "approved_by": approved_by,
+        "terminal_result_scope": {
+            "allowed_artifact_types": [
+                "blocked_report",
+                "eval_report",
+                "workflow_summary",
+            ],
+            "automatic_retry_count": 0,
+            "recovery_allowed": False,
+        },
+    }
+    try:
+        serialized = json.dumps(
+            identity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise LocalEntryError(
+            "Runtime terminal identity contains a non-JSON value."
+        ) from exc
+    return (
+        json.loads(serialized.decode("utf-8")),
+        "sha256:" + hashlib.sha256(serialized).hexdigest(),
+    )
+
+
+def _exact_runtime_terminal_revision_ref(
+    store: ArtifactStore,
+    *,
+    feature_id: str,
+    artifact_type: str,
+    path: str | Path,
+    artifact_hash: str,
+) -> ArtifactRef:
+    """Resolve one supplied Store path to its exact immutable revision ref."""
+
+    resolved_path = Path(path).resolve()
+    try:
+        resolved_path.relative_to(store.root.resolve())
+    except ValueError as exc:
+        raise LocalEntryError(
+            f"Runtime terminal {artifact_type} is outside ArtifactStore root."
+        ) from exc
+    matches = [
+        ref
+        for ref in store.list_feature_artifact_revisions(
+            feature_id,
+            artifact_type,
+        )
+        if ref.artifact_hash == artifact_hash
+        and Path(ref.path).resolve() == resolved_path
+    ]
+    if len(matches) != 1:
+        raise LocalEntryError(
+            f"Runtime terminal {artifact_type} is not one exact immutable revision."
+        )
+    store.read(matches[0])
+    return matches[0]
+
+
+def _load_runtime_terminal_handoff(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    accepted_resume_report_path: str | Path,
+    accepted_resume_report_hash: str,
+    runtime_evidence_path: str | Path,
+    runtime_evidence_hash: str,
+    resume_id: str,
+    approved_by: str,
+) -> _RuntimeTerminalHandoff:
+    """Read and validate the exact immutable post-Runtime continuation inputs."""
+
+    build_handoff = _load_runtime_continuation_handoff(
+        run_root=run_root,
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        checkpoint_path=checkpoint_path,
+        checkpoint_hash=checkpoint_hash,
+        resume_id=resume_id,
+        require_manifest=False,
+        allow_blocked_resume=True,
+        require_current_build_output=False,
+    )
+    store = build_handoff.artifact_store
+    exact_checkpoint_ref = _exact_runtime_terminal_revision_ref(
+        store,
+        feature_id=feature_id,
+        artifact_type="workflow_checkpoint",
+        path=checkpoint_path,
+        artifact_hash=checkpoint_hash,
+    )
+    if exact_checkpoint_ref != build_handoff.checkpoint_ref:
+        raise LocalEntryError(
+            "Runtime terminal workflow_checkpoint identity changed during admission."
+        )
+    resume_report_ref = _exact_runtime_terminal_revision_ref(
+        store,
+        feature_id=feature_id,
+        artifact_type="resume_report",
+        path=accepted_resume_report_path,
+        artifact_hash=accepted_resume_report_hash,
+    )
+    runtime_evidence_ref = _exact_runtime_terminal_revision_ref(
+        store,
+        feature_id=feature_id,
+        artifact_type="runtime_evidence",
+        path=runtime_evidence_path,
+        artifact_hash=runtime_evidence_hash,
+    )
+    try:
+        decision, runtime_evidence, existing_terminal_refs = (
+            WorkflowCheckpointStore(
+                store
+            ).preflight_runtime_terminal_continuation(
+                build_handoff.checkpoint_ref,
+                resume_report_ref=resume_report_ref,
+                runtime_evidence_ref=runtime_evidence_ref,
+                resume_id=resume_id,
+                approved_by=approved_by,
+            )
+        )
+    except (OSError, ValueError) as exc:
+        raise LocalEntryError(
+            f"Runtime terminal continuation preflight failed: {exc}"
+        ) from exc
+    return _RuntimeTerminalHandoff(
+        build_handoff=build_handoff,
+        resume_report_ref=resume_report_ref,
+        runtime_evidence_ref=runtime_evidence_ref,
+        runtime_evidence=runtime_evidence,
+        decision=decision,
+        existing_terminal_refs=existing_terminal_refs,
+    )
+
+
+def _preflight_runtime_terminal_continuation(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    accepted_resume_report_path: str | Path,
+    accepted_resume_report_hash: str,
+    runtime_evidence_path: str | Path,
+    runtime_evidence_hash: str,
+    resume_id: str,
+    approved_by: str,
+) -> dict[str, Any]:
+    handoff = _load_runtime_terminal_handoff(
+        run_root=run_root,
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        checkpoint_path=checkpoint_path,
+        checkpoint_hash=checkpoint_hash,
+        accepted_resume_report_path=accepted_resume_report_path,
+        accepted_resume_report_hash=accepted_resume_report_hash,
+        runtime_evidence_path=runtime_evidence_path,
+        runtime_evidence_hash=runtime_evidence_hash,
+        resume_id=resume_id,
+        approved_by=approved_by,
+    )
+    identity, identity_hash = _verification_only_runtime_terminal_identity(
+        handoff=handoff,
+        resume_id=resume_id,
+        approved_by=approved_by,
+    )
+    return {
+        "status": (
+            "READY_FOR_RUNTIME_TERMINALIZATION"
+            if handoff.decision.allowed
+            else "BLOCKED"
+        ),
+        "command": "preflight-runtime-terminalization-only",
+        "writes_performed": False,
+        "graph_invoked": False,
+        "checkpoint_consumed": True,
+        "resume_report_created": False,
+        "runtime_evidence_created": False,
+        "runtime_factory_invoked": False,
+        "process_launched": False,
+        "dll_copied": False,
+        "manifest_required": False,
+        "identity": {
+            "run_id": handoff.build_handoff.checkpoint["run_id"],
+            "request_id": handoff.build_handoff.checkpoint["request_id"],
+            "feature_id": feature_id,
+        },
+        "checkpoint": {
+            "path": handoff.build_handoff.checkpoint_ref.path,
+            "artifact_hash": handoff.build_handoff.checkpoint_ref.artifact_hash,
+            "checkpoint_id": handoff.build_handoff.checkpoint["checkpoint_id"],
+        },
+        "accepted_resume_report": {
+            "path": handoff.resume_report_ref.path,
+            "artifact_hash": handoff.resume_report_ref.artifact_hash,
+        },
+        "runtime_evidence": {
+            "path": handoff.runtime_evidence_ref.path,
+            "artifact_hash": handoff.runtime_evidence_ref.artifact_hash,
+            "verification_status": handoff.runtime_evidence.get(
+                "verification_status"
+            ),
+            "acceptance_status": handoff.runtime_evidence.get(
+                "acceptance_status"
+            ),
+            "acceptance_verified": handoff.runtime_evidence.get(
+                "acceptance_verified"
+            ),
+        },
+        "runtime_terminal_execution_identity": identity,
+        "runtime_terminal_execution_identity_hash": identity_hash,
+        "terminal_result_scope": identity["terminal_result_scope"],
+        "existing_terminal_artifacts": [
+            _artifact_logical_identity(ref)
+            for ref in handoff.existing_terminal_refs
+        ],
+        "resume_decision": handoff.decision.to_dict(),
+        "blockers": list(handoff.decision.blockers),
+    }
+
+
 def _verification_only_runtime_resume_payload(
     *,
     handoff: _RuntimeContinuationHandoff,
@@ -4130,9 +4410,57 @@ def preflight_local_runtime(
     approved_by: str | None = None,
     injected_runtime_admission: Mapping[str, Any] | None = None,
     runtime_evidence_only: bool = False,
+    runtime_terminalization_only: bool = False,
+    accepted_resume_report_path: str | Path | None = None,
+    accepted_resume_report_hash: str | None = None,
+    runtime_evidence_path: str | Path | None = None,
+    runtime_evidence_hash: str | None = None,
 ) -> dict[str, Any]:
     """Read-validate one Runtime continuation without writing or entering graph."""
 
+    if runtime_terminalization_only:
+        if (
+            runtime_evidence_only
+            or recover_accepted_resume
+            or retry_runtime_observation
+            or injected_runtime_admission is not None
+            or runtime_output_root is not None
+            or runtime_plugin_destination is not None
+        ):
+            raise LocalEntryError(
+                "Runtime terminalization is a separate Store-only continuation."
+            )
+        if not isinstance(resume_id, str) or not resume_id:
+            raise LocalEntryError(
+                "Runtime terminalization requires the exact resume_id."
+            )
+        if not isinstance(approved_by, str) or not approved_by.strip():
+            raise LocalEntryError(
+                "Runtime terminalization requires exact approved_by."
+            )
+        if (
+            accepted_resume_report_path is None
+            or not isinstance(accepted_resume_report_hash, str)
+            or runtime_evidence_path is None
+            or not isinstance(runtime_evidence_hash, str)
+        ):
+            raise LocalEntryError(
+                "Runtime terminalization requires exact ResumeReport and "
+                "RuntimeEvidence refs."
+            )
+        return _preflight_runtime_terminal_continuation(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            accepted_resume_report_path=accepted_resume_report_path,
+            accepted_resume_report_hash=accepted_resume_report_hash,
+            runtime_evidence_path=runtime_evidence_path,
+            runtime_evidence_hash=runtime_evidence_hash,
+            resume_id=resume_id,
+            approved_by=approved_by,
+        )
     if runtime_evidence_only:
         if recover_accepted_resume or retry_runtime_observation:
             raise LocalEntryError(
@@ -5215,6 +5543,292 @@ def _execute_runtime_evidence_only_continuation(
     )
 
 
+def _runtime_terminal_artifact_projection(
+    state: Mapping[str, Any],
+    artifact_type: str,
+    store_result_key: str,
+) -> dict[str, Any] | None:
+    runtime_summary = state.get("runtime_summary") or {}
+    store_result = runtime_summary.get(store_result_key)
+    artifact_path = (state.get("artifacts") or {}).get(artifact_type)
+    artifact_hash = (state.get("artifact_hashes") or {}).get(artifact_type)
+    if store_result is None and artifact_path is None:
+        return None
+    return {
+        "artifact_ref": (
+            None
+            if artifact_path is None or artifact_hash is None
+            else {
+                "feature_id": state.get("feature_id") or state.get("request_id"),
+                "artifact_type": artifact_type,
+                "path": artifact_path,
+                "artifact_hash": artifact_hash,
+            }
+        ),
+        "store_result": store_result,
+    }
+
+
+def _runtime_terminal_public_result(
+    *,
+    status: str,
+    failure_stage: str | None,
+    preflight: Mapping[str, Any] | None,
+    state: Mapping[str, Any] | None = None,
+    blockers: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    selected_state = state or {}
+    runtime_summary = dict(selected_state.get("runtime_summary") or {})
+    return {
+        "status": status,
+        "failure_stage": failure_stage,
+        "operation": "runtime_terminalization_only",
+        "runtime_terminal_execution_identity": (
+            None
+            if preflight is None
+            else preflight.get("runtime_terminal_execution_identity")
+        ),
+        "runtime_terminal_execution_identity_hash": (
+            None
+            if preflight is None
+            else preflight.get("runtime_terminal_execution_identity_hash")
+        ),
+        "runtime_preflight": None if preflight is None else dict(preflight),
+        "inputs": (
+            None
+            if preflight is None
+            else {
+                "checkpoint": preflight.get("checkpoint"),
+                "accepted_resume_report": preflight.get(
+                    "accepted_resume_report"
+                ),
+                "runtime_evidence": preflight.get("runtime_evidence"),
+            }
+        ),
+        "blocked_report": _runtime_terminal_artifact_projection(
+            selected_state,
+            "blocked_report",
+            "blocked_report_store_result",
+        ),
+        "eval_report": _runtime_terminal_artifact_projection(
+            selected_state,
+            "eval_report",
+            "eval_report_store_result",
+        ),
+        "workflow_summary": _runtime_terminal_artifact_projection(
+            selected_state,
+            "workflow_summary",
+            "workflow_summary_store_result",
+        ),
+        "terminal_route": runtime_summary.get("terminal_route"),
+        "terminal_ready": runtime_summary.get("terminal_ready") is True,
+        "domain_result": {
+            "final_status": runtime_summary.get("terminal_final_status"),
+            "claims_real_mod_success": runtime_summary.get(
+                "terminal_claims_real_mod_success"
+            ),
+            "runtime_acceptance_status": runtime_summary.get(
+                "acceptance_status"
+            ),
+            "runtime_acceptance_verified": runtime_summary.get(
+                "acceptance_verified"
+            ),
+        },
+        "blockers": list(blockers or selected_state.get("blockers") or ()),
+        "automatic_retry_count": 0,
+        "recovery_performed": False,
+        "presentation_written": False,
+        "runtime_factory_invocation_count": 0,
+        "process_launched": False,
+        "game_directory_write_performed": False,
+    }
+
+
+def _execute_runtime_terminal_continuation(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    accepted_resume_report_path: str | Path,
+    accepted_resume_report_hash: str,
+    runtime_evidence_path: str | Path,
+    runtime_evidence_hash: str,
+    approved_by: str,
+    resume_id: str,
+    expected_runtime_terminal_identity_hash: str | None,
+) -> dict[str, Any]:
+    """Execute one Store-only terminal continuation through the StateGraph."""
+
+    try:
+        preflight = _preflight_runtime_terminal_continuation(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            accepted_resume_report_path=accepted_resume_report_path,
+            accepted_resume_report_hash=accepted_resume_report_hash,
+            runtime_evidence_path=runtime_evidence_path,
+            runtime_evidence_hash=runtime_evidence_hash,
+            resume_id=resume_id,
+            approved_by=approved_by,
+        )
+    except LocalEntryError as exc:
+        return _runtime_terminal_public_result(
+            status="blocked",
+            failure_stage="terminal_admission",
+            preflight=None,
+            blockers=[
+                {
+                    "stage": "runtime_terminalization",
+                    "code": "RUNTIME_TERMINAL_ADMISSION_FAILED",
+                    "message": str(exc),
+                }
+            ],
+        )
+    actual_identity_hash = str(
+        preflight["runtime_terminal_execution_identity_hash"]
+    )
+    expected_identity_is_valid = bool(
+        isinstance(expected_runtime_terminal_identity_hash, str)
+        and re.fullmatch(
+            r"sha256:[0-9a-f]{64}",
+            expected_runtime_terminal_identity_hash,
+        )
+    )
+    if not expected_identity_is_valid or not hmac.compare_digest(
+        str(expected_runtime_terminal_identity_hash),
+        actual_identity_hash,
+    ):
+        return _runtime_terminal_public_result(
+            status="blocked",
+            failure_stage="authorization",
+            preflight=preflight,
+            blockers=[
+                {
+                    "stage": "runtime_terminalization",
+                    "code": (
+                        "RUNTIME_TERMINAL_IDENTITY_MISMATCH"
+                        if expected_identity_is_valid
+                        else "RUNTIME_TERMINAL_IDENTITY_REQUIRED"
+                    ),
+                    "message": (
+                        "Runtime terminal inputs changed after reviewed preflight."
+                    ),
+                }
+            ],
+        )
+    if preflight["status"] != "READY_FOR_RUNTIME_TERMINALIZATION":
+        return _runtime_terminal_public_result(
+            status="blocked",
+            failure_stage="terminal_admission",
+            preflight=preflight,
+            blockers=list(preflight.get("blockers") or ()),
+        )
+
+    try:
+        handoff = _load_runtime_terminal_handoff(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            accepted_resume_report_path=accepted_resume_report_path,
+            accepted_resume_report_hash=accepted_resume_report_hash,
+            runtime_evidence_path=runtime_evidence_path,
+            runtime_evidence_hash=runtime_evidence_hash,
+            resume_id=resume_id,
+            approved_by=approved_by,
+        )
+        if not handoff.decision.allowed or handoff.existing_terminal_refs:
+            raise LocalEntryError(
+                "Runtime terminal admission changed before Graph entry."
+            )
+        state = resumed_state_from_decision(
+            handoff.decision,
+            checkpoint_ref=handoff.build_handoff.checkpoint_ref,
+            resume_report_ref=handoff.resume_report_ref,
+        )
+        state["artifacts"] = {
+            **dict(state["artifacts"]),
+            "runtime_evidence": handoff.runtime_evidence_ref.path,
+        }
+        state["artifact_hashes"] = {
+            **dict(state["artifact_hashes"]),
+            "runtime_evidence": handoff.runtime_evidence_ref.artifact_hash,
+        }
+        state["current_stage"] = "runtime_evidence"
+        state["next_stage"] = None
+        state["runtime_summary"] = _runtime_summary_from_payload(
+            handoff.runtime_evidence
+        )
+    except Exception as exc:
+        return _runtime_terminal_public_result(
+            status="blocked",
+            failure_stage="terminal_admission",
+            preflight=preflight,
+            blockers=[
+                {
+                    "stage": "runtime_terminalization",
+                    "code": "RUNTIME_TERMINAL_STATE_RECONSTRUCTION_FAILED",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        )
+
+    terminal_input = VerificationOnlyRuntimeTerminalInput(
+        checkpoint_ref=handoff.build_handoff.checkpoint_ref,
+        resume_report_ref=handoff.resume_report_ref,
+        runtime_evidence_ref=handoff.runtime_evidence_ref,
+        resume_id=resume_id,
+        approved_by=approved_by,
+    )
+    graph = build_graph(
+        handoff.build_handoff.artifact_store,
+        runtime_terminal_continuation=terminal_input,
+        runtime_terminal_write_results=True,
+        use_default_proposal_git_binding=False,
+    )
+    try:
+        graph_result = graph.invoke(state)
+    except Exception as exc:
+        return _runtime_terminal_public_result(
+            status="blocked",
+            failure_stage="graph_terminal_admission",
+            preflight=preflight,
+            state=state,
+            blockers=[
+                {
+                    "stage": "runtime_terminalization",
+                    "code": "RUNTIME_TERMINAL_GRAPH_ADMISSION_FAILED",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        )
+
+    runtime_summary = dict(graph_result.get("runtime_summary") or {})
+    failure_stage = runtime_summary.get("platform_failure_stage")
+    terminal_ready = runtime_summary.get("terminal_ready") is True
+    outer_status = "completed" if terminal_ready else "blocked"
+    for result_key in (
+        "eval_report_store_result",
+        "blocked_report_store_result",
+        "workflow_summary_store_result",
+    ):
+        result = runtime_summary.get(result_key)
+        if isinstance(result, Mapping) and result.get("outcome") == "partial":
+            outer_status = "partial"
+            break
+    return _runtime_terminal_public_result(
+        status=outer_status,
+        failure_stage=failure_stage,
+        preflight=preflight,
+        state=graph_result,
+    )
+
+
 def resume_local_runtime(
     *,
     run_root: str | Path,
@@ -5237,9 +5851,94 @@ def resume_local_runtime(
     injected_runtime_admission: Mapping[str, Any] | None = None,
     runtime_evidence_only: bool = False,
     expected_runtime_execution_identity_hash: str | None = None,
+    runtime_terminalization_only: bool = False,
+    accepted_resume_report_path: str | Path | None = None,
+    accepted_resume_report_hash: str | None = None,
+    runtime_evidence_path: str | Path | None = None,
+    runtime_evidence_hash: str | None = None,
+    expected_runtime_terminal_identity_hash: str | None = None,
 ) -> dict[str, Any]:
     """Continue one validated Build handoff through the existing Runtime graph."""
 
+    if runtime_terminalization_only:
+        authorization_blockers: list[dict[str, Any]] = []
+        if not approved_by.strip():
+            authorization_blockers.append(
+                {
+                    "stage": "runtime_terminalization",
+                    "code": "RUNTIME_TERMINAL_APPROVER_REQUIRED",
+                    "message": "Runtime terminalization requires exact approved_by.",
+                }
+            )
+        if (
+            runtime_evidence_only
+            or recover_accepted_resume
+            or retry_runtime_observation
+            or runtime_output_root is not None
+            or runtime_evidence_factory is not None
+            or injected_runtime_admission is not None
+            or allow_game_launch
+            or allow_game_directory_write
+            or runtime_plugin_destination is not None
+        ):
+            authorization_blockers.append(
+                {
+                    "stage": "runtime_terminalization",
+                    "code": "RUNTIME_TERMINAL_SIDE_EFFECT_SCOPE_INVALID",
+                    "message": (
+                        "Runtime terminalization permits only Store terminal writes."
+                    ),
+                }
+            )
+        if not isinstance(resume_id, str) or not resume_id:
+            authorization_blockers.append(
+                {
+                    "stage": "runtime_terminalization",
+                    "code": "RUNTIME_TERMINAL_RESUME_ID_REQUIRED",
+                    "message": (
+                        "Runtime terminalization requires the exact resume_id."
+                    ),
+                }
+            )
+        if (
+            accepted_resume_report_path is None
+            or not isinstance(accepted_resume_report_hash, str)
+            or runtime_evidence_path is None
+            or not isinstance(runtime_evidence_hash, str)
+        ):
+            authorization_blockers.append(
+                {
+                    "stage": "runtime_terminalization",
+                    "code": "RUNTIME_TERMINAL_EXACT_REFS_REQUIRED",
+                    "message": (
+                        "Runtime terminalization requires exact ResumeReport and "
+                        "RuntimeEvidence refs."
+                    ),
+                }
+            )
+        if authorization_blockers:
+            return _runtime_terminal_public_result(
+                status="blocked",
+                failure_stage="authorization",
+                preflight=None,
+                blockers=authorization_blockers,
+            )
+        return _execute_runtime_terminal_continuation(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            accepted_resume_report_path=accepted_resume_report_path,
+            accepted_resume_report_hash=accepted_resume_report_hash,
+            runtime_evidence_path=runtime_evidence_path,
+            runtime_evidence_hash=runtime_evidence_hash,
+            approved_by=approved_by,
+            resume_id=resume_id,
+            expected_runtime_terminal_identity_hash=(
+                expected_runtime_terminal_identity_hash
+            ),
+        )
     if not approved_by.strip():
         raise LocalEntryError("Runtime continuation requires approved_by.")
     if runtime_evidence_only:

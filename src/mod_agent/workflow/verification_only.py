@@ -31,6 +31,17 @@ class VerificationOnlyContinuationInput:
     evidence_pack_ref: ArtifactRef
 
 
+@dataclass(frozen=True)
+class VerificationOnlyRuntimeTerminalInput:
+    """Bind one committed RuntimeEvidence chain to terminal Graph routing."""
+
+    checkpoint_ref: ArtifactRef
+    resume_report_ref: ArtifactRef
+    runtime_evidence_ref: ArtifactRef
+    resume_id: str
+    approved_by: str
+
+
 def preflight_verification_only_continuation(
     artifact_store: ArtifactStore,
     continuation: VerificationOnlyContinuationInput,

@@ -27,6 +27,7 @@ from .state import (
 from .verification_only import (
     VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
     VerificationOnlyContinuationInput,
+    VerificationOnlyRuntimeTerminalInput,
     preflight_verification_only_continuation,
 )
 
@@ -59,6 +60,7 @@ __all__ = [
     "TraceEvent",
     "VERIFICATION_ONLY_INPUT_EXECUTION_MODE",
     "VerificationOnlyContinuationInput",
+    "VerificationOnlyRuntimeTerminalInput",
     "WorkflowCheckpoint",
     "WorkflowCheckpointStore",
     "build_graph",
