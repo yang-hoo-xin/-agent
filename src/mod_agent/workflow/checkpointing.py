@@ -11,7 +11,12 @@ from uuid import uuid4
 
 from langgraph.checkpoint.memory import MemorySaver
 
-from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactStoreError
+from src.mod_agent.artifacts import (
+    ArtifactRef,
+    ArtifactStore,
+    ArtifactStoreError,
+    ArtifactWriteResult,
+)
 
 from .interrupts import ResumeDecision, ResumePayload, ResumeValidator
 from .state import ModAgentState
@@ -203,6 +208,47 @@ class WorkflowCheckpointStore:
     ) -> ArtifactRef:
         """Persist a workflow_checkpoint artifact from current state."""
 
+        write_arguments = self._checkpoint_write_arguments(
+            state,
+            interrupt_reason=interrupt_reason,
+            resume_allowed_fields=resume_allowed_fields,
+            exact_revision_upstream_types=exact_revision_upstream_types,
+        )
+        return self.artifact_store.write(**write_arguments)
+
+    def create_checkpoint_with_result(
+        self,
+        state: ModAgentState,
+        *,
+        interrupt_reason: str,
+        resume_allowed_fields: tuple[str, ...],
+        exact_revision_upstream_types: frozenset[str] = frozenset(),
+    ) -> ArtifactWriteResult:
+        """Persist a checkpoint and return the Store-owned commit outcome."""
+
+        try:
+            write_arguments = self._checkpoint_write_arguments(
+                state,
+                interrupt_reason=interrupt_reason,
+                resume_allowed_fields=resume_allowed_fields,
+                exact_revision_upstream_types=exact_revision_upstream_types,
+            )
+        except Exception as exc:
+            raise ArtifactStoreError(
+                f"Workflow checkpoint prewrite validation failed: {exc}"
+            ) from exc
+        return self.artifact_store.write_with_result(**write_arguments)
+
+    def _checkpoint_write_arguments(
+        self,
+        state: ModAgentState,
+        *,
+        interrupt_reason: str,
+        resume_allowed_fields: tuple[str, ...],
+        exact_revision_upstream_types: frozenset[str],
+    ) -> dict[str, Any]:
+        """Build one checkpoint write without changing the write API contract."""
+
         feature_id = state["feature_id"] or state["request_id"]
         exact_revision_types = tuple(
             sorted(exact_revision_upstream_types)
@@ -254,14 +300,14 @@ class WorkflowCheckpointStore:
                         for blocker in prewrite_blockers
                     )
                 )
-        return self.artifact_store.write(
-            feature_id=feature_id,
-            artifact_type="workflow_checkpoint",
-            payload=checkpoint_payload,
-            status="success",
-            upstream_refs=self._artifact_refs_from_state(state),
-            exact_revision_upstream_types=set(exact_revision_types),
-        )
+        return {
+            "feature_id": feature_id,
+            "artifact_type": "workflow_checkpoint",
+            "payload": checkpoint_payload,
+            "status": "success",
+            "upstream_refs": self._artifact_refs_from_state(state),
+            "exact_revision_upstream_types": set(exact_revision_types),
+        }
 
     def resume(
         self,

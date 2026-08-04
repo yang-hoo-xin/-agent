@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import src.mod_agent.workflow.graph as workflow_graph_module
 
-from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactStoreError
+from src.mod_agent.artifacts import (
+    ArtifactRef,
+    ArtifactStore,
+    ArtifactStoreError,
+    ArtifactWriteResult,
+)
 from src.mod_agent.build import (
     BuildAdapter,
     BuildCommandResult,
@@ -32,6 +40,10 @@ from src.mod_agent.runtime import (
     build_supplied_runtime_evidence_payload,
 )
 from src.mod_agent.workflow.graph import _run_workflow_summary
+from src.mod_agent.local_entry import (
+    execute_verification_only_build_continuation,
+    preflight_verification_only_build_continuation,
+)
 
 
 FEATURE_ID = "feature_verification_only_001"
@@ -54,6 +66,555 @@ def test_preflight_is_deterministic_and_performs_no_write(tmp_path: Path) -> Non
     assert first["artifact_writes_performed"] is False
     assert first["build_invoked"] is False
     assert _store_snapshot(store.root) == before
+
+
+def test_public_build_preflight_never_probes_store_or_invokes_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    before = _store_snapshot(store.root)
+    calls = {"probe": 0}
+
+    def forbidden_probe(*_args, **_kwargs) -> None:
+        calls["probe"] += 1
+        raise AssertionError("No-write public preflight must not probe Store writes.")
+
+    monkeypatch.setattr(ArtifactStore, "preflight_atomic_commit", forbidden_probe)
+    first = preflight_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation)
+    )
+    second = preflight_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation)
+    )
+
+    assert first == second
+    assert first["status"] == "ready_for_build_authorization"
+    assert first["build_invoked"] is False
+    assert calls["probe"] == 0
+    assert _store_snapshot(store.root) == before
+
+
+def test_public_build_orders_graph_admission_probe_factory_and_returns_handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    original_probe = ArtifactStore.preflight_atomic_commit
+    events: list[str] = []
+
+    def recording_probe(selected: ArtifactStore, **kwargs) -> None:
+        events.append("store_preflight")
+        original_probe(selected, **kwargs)
+
+    base_factory = _real_build_factory(tmp_path)
+
+    def factory(feature_id: str, input_execution_mode: str | None) -> BuildResult:
+        events.append("caller_factory")
+        return base_factory(feature_id, input_execution_mode)
+
+    monkeypatch.setattr(ArtifactStore, "preflight_atomic_commit", recording_probe)
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=factory,
+        allow_build_execution=True,
+    )
+
+    assert events == ["store_preflight", "caller_factory"]
+    assert result["status"] == "completed"
+    assert result["failure_stage"] is None
+    assert result["handoff_ready"] is True
+    assert result["build_execution"]["factory_invocation_count"] == 1
+    assert result["build_result"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"]["resume_preflight"]["allowed"] is True
+
+    checkpoint_ref = ArtifactRef(**result["workflow_checkpoint"]["artifact_ref"])
+    checkpoint = store.read(checkpoint_ref)["data"]
+    checkpoint_build_summary = checkpoint["state_snapshot"]["build_summary"]
+    assert "build_result_store_result" not in checkpoint_build_summary
+    assert "workflow_checkpoint_store_result" not in checkpoint_build_summary
+
+
+def test_public_build_probe_failure_stops_before_caller_and_store_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    calls = {"factory": 0}
+
+    def failed_probe(*_args, **_kwargs) -> None:
+        raise ArtifactStoreError("probe failed")
+
+    def factory(_feature_id: str, _mode: str | None) -> BuildResult:
+        calls["factory"] += 1
+        raise AssertionError("Caller factory must not run after probe failure.")
+
+    monkeypatch.setattr(ArtifactStore, "preflight_atomic_commit", failed_probe)
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=factory,
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "store_preflight"
+    assert result["build_execution"]["factory_invocation_count"] == 0
+    assert result["build_execution"]["side_effects_may_have_started"] is False
+    assert result["build_result"] is None
+    assert result["workflow_checkpoint"] is None
+    assert calls["factory"] == 0
+    assert store.list_feature_artifact_revisions(FEATURE_ID, "build_result") == []
+
+
+def test_public_build_authorization_and_admission_fail_before_store_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    calls = {"probe": 0, "factory": 0}
+
+    def forbidden_probe(*_args, **_kwargs) -> None:
+        calls["probe"] += 1
+        raise AssertionError("Blocked execution must not probe Store writes.")
+
+    def forbidden_factory(_feature_id: str, _mode: str | None) -> BuildResult:
+        calls["factory"] += 1
+        raise AssertionError("Blocked execution must not invoke the factory.")
+
+    monkeypatch.setattr(ArtifactStore, "preflight_atomic_commit", forbidden_probe)
+    unauthorized = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=forbidden_factory,
+        allow_build_execution=False,
+    )
+    assert unauthorized["status"] == "blocked"
+    assert unauthorized["failure_stage"] == "authorization"
+
+    source_root = Path(
+        store.read(continuation.feature_spec_ref)["data"]["source_lineage"]["root"]
+    )
+    (source_root / "Plugin.cs").write_text("drifted", encoding="utf-8")
+    inadmissible = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=forbidden_factory,
+        allow_build_execution=True,
+    )
+    assert inadmissible["status"] == "blocked"
+    assert inadmissible["failure_stage"] == "admission"
+    assert calls == {"probe": 0, "factory": 0}
+
+
+def test_public_build_graph_admission_drift_stops_without_blocked_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    before = _store_snapshot(store.root)
+    original_preflight = workflow_graph_module.preflight_verification_only_continuation
+
+    def blocked_graph_preflight(*args, **kwargs):
+        report = original_preflight(*args, **kwargs)
+        return {
+            **report,
+            "status": "blocked",
+            "blockers": [
+                {
+                    "code": "VERIFICATION_INPUT_DRIFT",
+                    "message": "Input identity changed before Graph admission.",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        workflow_graph_module,
+        "preflight_verification_only_continuation",
+        blocked_graph_preflight,
+    )
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "admission"
+    assert result["build_execution"]["factory_invocation_count"] == 0
+    assert result["build_result"] is None
+    assert result["workflow_checkpoint"] is None
+    assert _store_snapshot(store.root) == before
+
+
+def test_public_build_factory_exception_reports_possible_side_effects_without_receipt(
+    tmp_path: Path,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+
+    def failed_factory(_feature_id: str, _mode: str | None) -> BuildResult:
+        raise OSError("runner failed")
+
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=failed_factory,
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "build_execution"
+    assert result["build_execution"]["factory_invocation_count"] == 1
+    assert result["build_execution"]["side_effects_may_have_started"] is True
+    assert result["build_result"] is None
+    assert result["workflow_checkpoint"] is None
+
+
+def test_public_build_post_build_drift_blocks_before_store_receipt(
+    tmp_path: Path,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    base_factory = _real_build_factory(tmp_path)
+    source_root = Path(
+        store.read(continuation.feature_spec_ref)["data"]["source_lineage"]["root"]
+    )
+
+    def drifting_factory(
+        feature_id: str,
+        input_execution_mode: str | None,
+    ) -> BuildResult:
+        result = base_factory(feature_id, input_execution_mode)
+        (source_root / "Plugin.cs").write_text("drifted", encoding="utf-8")
+        return result
+
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=drifting_factory,
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "post_build_validation"
+    assert result["build_execution"]["factory_invocation_count"] == 1
+    assert result["build_result"] is None
+    assert result["workflow_checkpoint"] is None
+
+
+def test_public_build_post_build_preflight_exception_is_validation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    before = _store_snapshot(store.root)
+    original_preflight = workflow_graph_module.preflight_verification_only_continuation
+    graph_preflight_calls = 0
+
+    def selected_graph_preflight(*args, **kwargs):
+        nonlocal graph_preflight_calls
+        graph_preflight_calls += 1
+        if graph_preflight_calls == 3:
+            raise OSError("post-Build source read failed")
+        return original_preflight(*args, **kwargs)
+
+    monkeypatch.setattr(
+        workflow_graph_module,
+        "preflight_verification_only_continuation",
+        selected_graph_preflight,
+    )
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+
+    assert graph_preflight_calls == 3
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "post_build_validation"
+    assert result["build_execution"]["factory_invocation_count"] == 1
+    assert result["build_execution"]["side_effects_may_have_started"] is True
+    assert result["build_result"] is None
+    assert result["workflow_checkpoint"] is None
+    assert _store_snapshot(store.root) == before
+
+
+@pytest.mark.parametrize(
+    ("store_outcome", "expected_status"),
+    (("blocked_before_commit", "blocked"), ("partial", "partial")),
+)
+def test_public_build_preserves_build_result_store_outcome_without_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    store_outcome: str,
+    expected_status: str,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    original_write = ArtifactStore.write_with_result
+
+    def selected_write(selected: ArtifactStore, **kwargs) -> ArtifactWriteResult:
+        if kwargs["artifact_type"] == "build_result":
+            return _store_failure_result(
+                selected,
+                artifact_type="build_result",
+                outcome=store_outcome,
+            )
+        return original_write(selected, **kwargs)
+
+    monkeypatch.setattr(ArtifactStore, "write_with_result", selected_write)
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == expected_status
+    assert result["failure_stage"] == "build_result_store"
+    assert result["build_result"]["artifact_ref"] is None
+    assert result["build_result"]["store_result"]["outcome"] == store_outcome
+    assert result["workflow_checkpoint"] is None
+    assert result["handoff_ready"] is False
+    assert result["automatic_retry_count"] == 0
+    assert result["recovery_performed"] is False
+
+
+def test_public_build_exposes_real_filesystem_partial_without_driver_reinterpretation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    original_write = ArtifactStore._write_text_atomic
+
+    def fail_build_latest(
+        selected: ArtifactStore,
+        path: Path,
+        content: str,
+        *,
+        capture_replace_error: bool = False,
+    ) -> None:
+        if path == selected._artifact_path(FEATURE_ID, "build_result"):
+            raise OSError("injected latest alias failure")
+        original_write(
+            selected,
+            path,
+            content,
+            capture_replace_error=capture_replace_error,
+        )
+
+    monkeypatch.setattr(ArtifactStore, "_write_text_atomic", fail_build_latest)
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+
+    store_result = result["build_result"]["store_result"]
+    assert result["status"] == "partial"
+    assert result["failure_stage"] == "build_result_store"
+    assert store_result["outcome"] == "partial"
+    assert store_result["commit_started"] is True
+    assert store_result["revision_state"] == "valid"
+    assert store_result["pending_marker_state"] == "present"
+    assert store_result["recovery_available"] is True
+    assert Path(store_result["revision_path"]).is_file()
+    assert Path(store_result["pending_marker_path"]).is_file()
+    assert result["workflow_checkpoint"] is None
+
+
+@pytest.mark.parametrize(
+    ("store_outcome", "expected_status"),
+    (("blocked_before_commit", "blocked"), ("partial", "partial")),
+)
+def test_public_build_preserves_checkpoint_store_outcome_after_build_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    store_outcome: str,
+    expected_status: str,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    original_write = ArtifactStore.write_with_result
+
+    def selected_write(selected: ArtifactStore, **kwargs) -> ArtifactWriteResult:
+        if kwargs["artifact_type"] == "workflow_checkpoint":
+            return _store_failure_result(
+                selected,
+                artifact_type="workflow_checkpoint",
+                outcome=store_outcome,
+            )
+        return original_write(selected, **kwargs)
+
+    monkeypatch.setattr(ArtifactStore, "write_with_result", selected_write)
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == expected_status
+    assert result["failure_stage"] == "checkpoint_store"
+    assert result["build_result"]["artifact_ref"] is not None
+    assert result["build_result"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"]["artifact_ref"] is None
+    assert result["workflow_checkpoint"]["store_result"]["outcome"] == store_outcome
+    assert result["handoff_ready"] is False
+
+
+def test_public_build_keeps_committed_failed_domain_result_separate_from_store(
+    tmp_path: Path,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_failed_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == "completed"
+    assert result["failure_stage"] is None
+    assert result["build_execution"]["domain_status"] == "failed"
+    assert result["build_result"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"] is None
+    assert result["handoff_ready"] is False
+
+
+def test_public_build_success_without_real_success_claim_is_not_handoff_ready(
+    tmp_path: Path,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+    base_factory = _real_build_factory(tmp_path)
+
+    def unclaimed_factory(
+        feature_id: str,
+        input_execution_mode: str | None,
+    ) -> BuildResult:
+        return dataclasses.replace(
+            base_factory(feature_id, input_execution_mode),
+            claims_real_build_success=False,
+        )
+
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=unclaimed_factory,
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "handoff_eligibility"
+    assert result["build_result"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"] is None
+
+
+def test_public_build_checkpoint_prewrite_failure_preserves_build_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+
+    def failed_checkpoint(*_args, **_kwargs) -> ArtifactWriteResult:
+        raise ArtifactStoreError("checkpoint prewrite failed")
+
+    monkeypatch.setattr(
+        WorkflowCheckpointStore,
+        "create_checkpoint_with_result",
+        failed_checkpoint,
+    )
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "checkpoint_prewrite"
+    assert result["build_result"]["artifact_ref"] is not None
+    assert result["build_result"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"] is None
+
+
+def test_public_build_normalizes_non_store_checkpoint_prewrite_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+
+    def invalid_checkpoint_payload(*_args, **_kwargs):
+        raise ValueError("checkpoint payload invalid")
+
+    monkeypatch.setattr(
+        WorkflowCheckpointStore,
+        "_checkpoint_write_arguments",
+        invalid_checkpoint_payload,
+    )
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "checkpoint_prewrite"
+    assert result["build_result"]["artifact_ref"] is not None
+    assert result["build_result"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"] is None
+
+
+def test_public_build_committed_checkpoint_with_blocked_resume_is_not_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+
+    def blocked_resume(*_args, **_kwargs):
+        return SimpleNamespace(
+            status="blocked",
+            allowed=False,
+            reason="checkpoint is not resumable",
+            blockers=({"code": "BLOCKED", "message": "blocked"},),
+        )
+
+    monkeypatch.setattr(WorkflowCheckpointStore, "preflight_resume", blocked_resume)
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "checkpoint_resume_preflight"
+    assert result["build_result"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"]["resume_preflight"]["allowed"] is False
+    assert result["handoff_ready"] is False
+
+
+def test_public_build_resume_preflight_exception_preserves_committed_receipts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, continuation = _verification_inputs(tmp_path)
+
+    def failed_resume_preflight(*_args, **_kwargs):
+        raise OSError("checkpoint read failed")
+
+    monkeypatch.setattr(
+        WorkflowCheckpointStore,
+        "preflight_resume",
+        failed_resume_preflight,
+    )
+    result = execute_verification_only_build_continuation(
+        **_public_build_arguments(store, continuation),
+        build_result_factory=_real_build_factory(tmp_path),
+        allow_build_execution=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["failure_stage"] == "checkpoint_resume_preflight"
+    assert result["build_result"]["artifact_ref"] is not None
+    assert result["build_result"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"]["artifact_ref"] is not None
+    assert result["workflow_checkpoint"]["store_result"]["outcome"] == "committed"
+    assert result["workflow_checkpoint"]["resume_preflight"] is None
+    assert result["handoff_ready"] is False
+    assert result["automatic_retry_count"] == 0
+    assert result["recovery_performed"] is False
+    assert {
+        blocker["code"] for blocker in result["blockers"]
+    } >= {"VERIFICATION_CHECKPOINT_RESUME_PREFLIGHT_FAILED"}
 
 
 def test_preflight_blocks_stale_feature_lineage(tmp_path: Path) -> None:
@@ -681,6 +1242,85 @@ def _real_build_factory(tmp_path: Path):
         )
 
     return factory
+
+
+def _failed_build_factory(tmp_path: Path):
+    build_root = tmp_path / "failed-build"
+    source_root = tmp_path / "source"
+
+    def factory(feature_id: str, input_execution_mode: str | None) -> BuildResult:
+        def runner(_: BuildProfile) -> BuildCommandResult:
+            shutil.copytree(source_root, build_root, dirs_exist_ok=True)
+            return BuildCommandResult(exit_code=1, stderr="Build failed")
+
+        return BuildAdapter().run_local(
+            feature_id=feature_id,
+            profile=BuildProfile(
+                profile_id="verification_only_failed_test",
+                build_system="dotnet",
+                working_directory=str(build_root),
+                command=("dotnet", "build"),
+                timeout_seconds=120,
+                expected_artifacts=("bin/BetterHitFeedback.dll",),
+            ),
+            command_runner=runner,
+            allow_execution=True,
+            input_execution_mode=input_execution_mode,
+        )
+
+    return factory
+
+
+def _public_build_arguments(
+    store: ArtifactStore,
+    continuation: VerificationOnlyContinuationInput,
+) -> dict[str, object]:
+    return {
+        "artifact_store_root": store.root,
+        "feature_id": FEATURE_ID,
+        "feature_spec_path": continuation.feature_spec_ref.path,
+        "feature_spec_hash": continuation.feature_spec_ref.artifact_hash,
+        "evidence_pack_path": continuation.evidence_pack_ref.path,
+        "evidence_pack_hash": continuation.evidence_pack_ref.artifact_hash,
+        "run_id": "verification_only_run_001",
+        "request_id": "verification_only_request_001",
+        "user_request": USER_REQUEST,
+        "target_domain": "gtfo",
+        "target_mod": TARGET_MOD,
+    }
+
+
+def _store_failure_result(
+    store: ArtifactStore,
+    *,
+    artifact_type: str,
+    outcome: str,
+) -> ArtifactWriteResult:
+    partial = outcome == "partial"
+    feature_root = store.root / "features" / FEATURE_ID
+    return ArtifactWriteResult(
+        outcome=outcome,  # type: ignore[arg-type]
+        feature_id=FEATURE_ID,
+        artifact_type=artifact_type,
+        artifact_hash="f" * 64,
+        artifact_ref=None,
+        revision_path=str(feature_root / "r" / artifact_type / ("f" * 32 + ".json")),
+        latest_alias_path=str(feature_root / f"{artifact_type}.json"),
+        pending_marker_path=str(
+            feature_root / "p" / artifact_type / ("f" * 32 + ".json")
+        ),
+        commit_started=partial,
+        revision_state="valid" if partial else "absent",
+        latest_alias_state="absent",
+        pending_marker_state="present" if partial else "absent",
+        failure_stage=(
+            "latest_alias_write" if partial else "admission_validation"
+        ),
+        failure_class="ArtifactStoreError",
+        failure_message="injected Store outcome",
+        recovery_available=partial,
+        recovery_authorized=False,
+    )
 
 
 def _initial_state():

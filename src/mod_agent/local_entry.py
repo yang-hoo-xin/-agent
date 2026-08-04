@@ -23,7 +23,12 @@ from langgraph.types import Command
 from src.core.settings import load_settings
 from src.libs.llm import LLMFactory, OllamaLLM, validate_loopback_http_base_url
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
-from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
+from src.mod_agent.build import (
+    BuildAdapter,
+    BuildCommandResult,
+    BuildProfile,
+    BuildResult,
+)
 from src.mod_agent.evidence import RgLiveEvidenceProvider
 from src.mod_agent.edit_authority_capabilities import (
     EditAuthorityCapabilityDeclaration,
@@ -64,9 +69,11 @@ from src.mod_agent.runtime.stagger_diagnosis import (
 from src.mod_agent.workflow import (
     ResumeDecision,
     ResumePayload,
+    VerificationOnlyContinuationInput,
     WorkflowCheckpointStore,
     build_graph,
     create_initial_state,
+    preflight_verification_only_continuation,
     resumed_state_from_decision,
 )
 
@@ -893,6 +900,384 @@ def _require_run_local_build_path(*, root: Path, path: Path, label: str) -> None
 def _join_build_phase_output(*phases: tuple[str, str]) -> str:
     selected = [f"[{label}]\n{output}" for label, output in phases if output]
     return "\n".join(selected)
+
+
+def _verification_only_build_admission(
+    *,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    feature_spec_path: str | Path,
+    feature_spec_hash: str,
+    evidence_pack_path: str | Path,
+    evidence_pack_hash: str,
+    run_id: str,
+    request_id: str,
+    user_request: str,
+    target_mod: str | None,
+) -> tuple[ArtifactStore, VerificationOnlyContinuationInput, dict[str, Any]]:
+    root_path = Path(artifact_store_root)
+    feature_path = Path(feature_spec_path)
+    evidence_path = Path(evidence_pack_path)
+    if not root_path.is_absolute():
+        raise LocalEntryError("artifact_store_root must be absolute.")
+    if not feature_path.is_absolute() or not evidence_path.is_absolute():
+        raise LocalEntryError(
+            "Verification-only Build Artifact paths must be absolute."
+        )
+    store = ArtifactStore(root_path)
+    continuation = VerificationOnlyContinuationInput(
+        feature_spec_ref=ArtifactRef(
+            feature_id=feature_id,
+            artifact_type="feature_spec",
+            path=str(feature_path.resolve()),
+            artifact_hash=feature_spec_hash,
+        ),
+        evidence_pack_ref=ArtifactRef(
+            feature_id=feature_id,
+            artifact_type="evidence_pack",
+            path=str(evidence_path.resolve()),
+            artifact_hash=evidence_pack_hash,
+        ),
+    )
+    preflight = preflight_verification_only_continuation(
+        store,
+        continuation,
+        run_id=run_id,
+        request_id=request_id,
+        user_request=user_request,
+        target_mod=target_mod,
+    )
+    return store, continuation, preflight
+
+
+def preflight_verification_only_build_continuation(
+    *,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    feature_spec_path: str | Path,
+    feature_spec_hash: str,
+    evidence_pack_path: str | Path,
+    evidence_pack_hash: str,
+    run_id: str,
+    request_id: str,
+    user_request: str,
+    target_domain: str | None,
+    target_mod: str | None,
+) -> dict[str, Any]:
+    """Read-validate a verification-only Build without probing Store writes."""
+
+    _, _, preflight = _verification_only_build_admission(
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        feature_spec_path=feature_spec_path,
+        feature_spec_hash=feature_spec_hash,
+        evidence_pack_path=evidence_pack_path,
+        evidence_pack_hash=evidence_pack_hash,
+        run_id=run_id,
+        request_id=request_id,
+        user_request=user_request,
+        target_mod=target_mod,
+    )
+    return {
+        "status": preflight["status"],
+        "command": "preflight-verification-only-build-continuation",
+        "feature_id": feature_id,
+        "run_id": run_id,
+        "request_id": request_id,
+        "target_domain": target_domain,
+        "target_mod": target_mod,
+        "verification_only_preflight": preflight,
+        "writes_performed": False,
+        "artifact_writes_performed": False,
+        "build_invoked": False,
+        "automatic_retry_count": 0,
+        "recovery_performed": False,
+    }
+
+
+def _verification_only_build_terminal_result(
+    *,
+    status: str,
+    failure_stage: str | None,
+    feature_id: str,
+    run_id: str,
+    request_id: str,
+    target_domain: str | None,
+    target_mod: str | None,
+    preflight: Mapping[str, Any],
+    factory_invocation_count: int,
+    build_summary: Mapping[str, Any] | None = None,
+    build_result: Mapping[str, Any] | None = None,
+    workflow_checkpoint: Mapping[str, Any] | None = None,
+    handoff_ready: bool = False,
+    blockers: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    summary = dict(build_summary or {})
+    return {
+        "status": status,
+        "failure_stage": failure_stage,
+        "feature_id": feature_id,
+        "run_id": run_id,
+        "request_id": request_id,
+        "target_domain": target_domain,
+        "target_mod": target_mod,
+        "verification_only_preflight": dict(preflight),
+        "build_execution": {
+            "factory_invocation_count": factory_invocation_count,
+            "side_effects_may_have_started": factory_invocation_count > 0,
+            "domain_status": summary.get("domain_status"),
+            "build_status": summary.get("build_status"),
+            "real_build_performed": summary.get("real_build_performed"),
+            "claims_real_build_success": summary.get(
+                "claims_real_build_success"
+            ),
+        },
+        "build_result": None if build_result is None else dict(build_result),
+        "workflow_checkpoint": (
+            None if workflow_checkpoint is None else dict(workflow_checkpoint)
+        ),
+        "handoff_ready": handoff_ready,
+        "blockers": list(blockers or ()),
+        "automatic_retry_count": 0,
+        "recovery_performed": False,
+    }
+
+
+def execute_verification_only_build_continuation(
+    *,
+    artifact_store_root: str | Path,
+    feature_id: str,
+    feature_spec_path: str | Path,
+    feature_spec_hash: str,
+    evidence_pack_path: str | Path,
+    evidence_pack_hash: str,
+    run_id: str,
+    request_id: str,
+    user_request: str,
+    target_domain: str | None,
+    target_mod: str | None,
+    build_result_factory: Callable[[str, str | None], BuildResult],
+    allow_build_execution: bool,
+) -> dict[str, Any]:
+    """Execute one admitted verification-only Build through the public graph."""
+
+    store, continuation, preflight = _verification_only_build_admission(
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        feature_spec_path=feature_spec_path,
+        feature_spec_hash=feature_spec_hash,
+        evidence_pack_path=evidence_pack_path,
+        evidence_pack_hash=evidence_pack_hash,
+        run_id=run_id,
+        request_id=request_id,
+        user_request=user_request,
+        target_mod=target_mod,
+    )
+    if not allow_build_execution:
+        return _verification_only_build_terminal_result(
+            status="blocked",
+            failure_stage="authorization",
+            feature_id=feature_id,
+            run_id=run_id,
+            request_id=request_id,
+            target_domain=target_domain,
+            target_mod=target_mod,
+            preflight=preflight,
+            factory_invocation_count=0,
+            blockers=[
+                {
+                    "stage": "build",
+                    "code": "VERIFICATION_BUILD_EXECUTION_NOT_AUTHORIZED",
+                    "message": "Verification-only Build execution is not authorized.",
+                }
+            ],
+        )
+    if preflight["status"] != "ready_for_build_authorization":
+        return _verification_only_build_terminal_result(
+            status="blocked",
+            failure_stage="admission",
+            feature_id=feature_id,
+            run_id=run_id,
+            request_id=request_id,
+            target_domain=target_domain,
+            target_mod=target_mod,
+            preflight=preflight,
+            factory_invocation_count=0,
+            blockers=list(preflight["blockers"]),
+        )
+
+    caller_factory_invocations = 0
+    effect_wrapper_invocations = 0
+    execution_failure_stage: str | None = None
+
+    def admitted_build_result_factory(
+        selected_feature_id: str,
+        input_execution_mode: str | None,
+    ) -> BuildResult:
+        nonlocal caller_factory_invocations
+        nonlocal effect_wrapper_invocations
+        nonlocal execution_failure_stage
+        if effect_wrapper_invocations != 0:
+            execution_failure_stage = "build_execution"
+            raise LocalEntryError(
+                "Verification-only Build effect wrapper was invoked more than once."
+            )
+        effect_wrapper_invocations = 1
+        try:
+            store.preflight_atomic_commit(
+                feature_id=feature_id,
+                artifact_types=("build_result", "workflow_checkpoint"),
+            )
+        except Exception:
+            execution_failure_stage = "store_preflight"
+            raise
+        caller_factory_invocations = 1
+        execution_failure_stage = "build_execution"
+        return build_result_factory(selected_feature_id, input_execution_mode)
+
+    graph = build_graph(
+        store,
+        build_result_factory=admitted_build_result_factory,
+        stop_after_build=True,
+        persist_build_runtime_handoff=True,
+        verification_only_continuation=continuation,
+    )
+    initial_state = create_initial_state(
+        run_id=run_id,
+        request_id=request_id,
+        user_request=user_request,
+        target_domain=target_domain,
+        target_mod=target_mod,
+    )
+    try:
+        graph_result = graph.invoke(initial_state)
+    except Exception as exc:
+        stage = execution_failure_stage or "admission"
+        return _verification_only_build_terminal_result(
+            status="blocked",
+            failure_stage=stage,
+            feature_id=feature_id,
+            run_id=run_id,
+            request_id=request_id,
+            target_domain=target_domain,
+            target_mod=target_mod,
+            preflight=preflight,
+            factory_invocation_count=caller_factory_invocations,
+            blockers=[
+                {
+                    "stage": "build",
+                    "code": "VERIFICATION_BUILD_PUBLIC_EXECUTION_FAILED",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        )
+
+    summary = dict(graph_result.get("build_summary") or {})
+    graph_blockers = list(graph_result.get("blockers") or ())
+    build_store_result = summary.get("build_result_store_result")
+    checkpoint_store_result = summary.get("workflow_checkpoint_store_result")
+    build_ref = None
+    if "build_result" in graph_result.get("artifacts", {}):
+        build_ref = {
+            "feature_id": feature_id,
+            "artifact_type": "build_result",
+            "path": graph_result["artifacts"]["build_result"],
+            "artifact_hash": graph_result["artifact_hashes"]["build_result"],
+        }
+    checkpoint_ref = None
+    checkpoint_resume = None
+    checkpoint_resume_error = None
+    if "workflow_checkpoint" in graph_result.get("artifacts", {}):
+        checkpoint_artifact_ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type="workflow_checkpoint",
+            path=graph_result["artifacts"]["workflow_checkpoint"],
+            artifact_hash=graph_result["artifact_hashes"]["workflow_checkpoint"],
+        )
+        checkpoint_ref = {
+            "feature_id": feature_id,
+            "artifact_type": "workflow_checkpoint",
+            "path": checkpoint_artifact_ref.path,
+            "artifact_hash": checkpoint_artifact_ref.artifact_hash,
+        }
+        try:
+            decision = WorkflowCheckpointStore(store).preflight_resume(
+                checkpoint_artifact_ref
+            )
+            checkpoint_resume = {
+                "status": decision.status,
+                "allowed": decision.allowed,
+                "reason": decision.reason,
+                "blockers": list(decision.blockers),
+            }
+        except Exception as exc:
+            checkpoint_resume_error = {
+                "stage": "build",
+                "code": "VERIFICATION_CHECKPOINT_RESUME_PREFLIGHT_FAILED",
+                "message": f"{type(exc).__name__}: {exc}",
+            }
+            graph_blockers.append(checkpoint_resume_error)
+
+    build_result_projection = None
+    if build_store_result is not None or build_ref is not None:
+        build_result_projection = {
+            "artifact_ref": build_ref,
+            "payload_status": summary.get("domain_status"),
+            "store_result": build_store_result,
+        }
+    checkpoint_projection = None
+    if checkpoint_store_result is not None or checkpoint_ref is not None:
+        checkpoint_projection = {
+            "artifact_ref": checkpoint_ref,
+            "store_result": checkpoint_store_result,
+            "resume_preflight": checkpoint_resume,
+        }
+
+    failure_stage = summary.get("platform_failure_stage")
+    outer_status = "blocked" if failure_stage is not None else "completed"
+    for store_result in (build_store_result, checkpoint_store_result):
+        if isinstance(store_result, Mapping) and store_result.get("outcome") == "partial":
+            outer_status = "partial"
+    if (
+        failure_stage is None
+        and summary.get("domain_status") == "success"
+        and summary.get("claims_real_build_success") is not True
+    ):
+        outer_status = "blocked"
+        failure_stage = "handoff_eligibility"
+    handoff_ready = bool(
+        checkpoint_ref is not None
+        and checkpoint_resume is not None
+        and checkpoint_resume["allowed"] is True
+        and outer_status == "completed"
+    )
+    if (
+        checkpoint_resume_error is not None
+        and checkpoint_ref is not None
+        and outer_status == "completed"
+    ):
+        outer_status = "blocked"
+        failure_stage = "checkpoint_resume_preflight"
+    elif checkpoint_ref is not None and not handoff_ready and outer_status == "completed":
+        outer_status = "blocked"
+        failure_stage = "checkpoint_resume_preflight"
+
+    return _verification_only_build_terminal_result(
+        status=outer_status,
+        failure_stage=failure_stage,
+        feature_id=feature_id,
+        run_id=run_id,
+        request_id=request_id,
+        target_domain=target_domain,
+        target_mod=target_mod,
+        preflight=preflight,
+        factory_invocation_count=caller_factory_invocations,
+        build_summary=summary,
+        build_result=build_result_projection,
+        workflow_checkpoint=checkpoint_projection,
+        handoff_ready=handoff_ready,
+        blockers=graph_blockers,
+    )
 
 
 def _remove_generated_build_directory(

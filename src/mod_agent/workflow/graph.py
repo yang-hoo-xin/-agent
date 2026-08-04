@@ -12,7 +12,7 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactStoreError
 from src.mod_agent.bindings import resolve_runtime_diagnosis_binding
 from src.mod_agent.build import BuildResult, build_fake_build_result
 from src.mod_agent.domain import (
@@ -608,7 +608,7 @@ def build_graph(
         graph.add_conditional_edges(
             "verification_only_admission",
             lambda state: "blocked" if state["blockers"] else "continue",
-            {"blocked": "blocked", "continue": "build"},
+            {"blocked": END, "continue": "build"},
         )
     registry = route_registry()
     graph.add_conditional_edges(
@@ -2130,6 +2130,7 @@ def _run_build(
                 "status": "blocked",
                 "input_execution_mode": VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
                 "preflight_hash": preflight["projection_hash"],
+                "platform_failure_stage": "admission",
             }
             preflight_blockers = list(preflight["blockers"])
             if (
@@ -2184,16 +2185,47 @@ def _run_build(
             input_execution_mode=input_execution_mode,
         )
     )
-    payload = result.to_artifact_payload()
-    if verification_only_continuation is not None:
-        post_build_preflight = preflight_verification_only_continuation(
-            artifact_store,
-            verification_only_continuation,
-            run_id=state["run_id"],
-            request_id=state["request_id"],
-            user_request=state["user_request"],
-            target_mod=state["target_mod"],
+    try:
+        payload = result.to_artifact_payload()
+        post_build_preflight = (
+            preflight_verification_only_continuation(
+                artifact_store,
+                verification_only_continuation,
+                run_id=state["run_id"],
+                request_id=state["request_id"],
+                user_request=state["user_request"],
+                target_mod=state["target_mod"],
+            )
+            if verification_only_continuation is not None
+            else None
         )
+        build_validation_blockers = (
+            validate_verification_only_build_result(payload, post_build_preflight)
+            if post_build_preflight is not None
+            else []
+        )
+    except Exception as exc:
+        if verification_only_continuation is None:
+            raise
+        next_state = _copy_state(state)
+        next_state["current_stage"] = "build"
+        next_state["build_summary"] = {
+            "status": "blocked",
+            "input_execution_mode": VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
+            "preflight_hash": preflight["projection_hash"],
+            "platform_failure_stage": "post_build_validation",
+        }
+        next_state["blockers"].append(
+            {
+                "stage": "build",
+                "code": "VERIFICATION_POST_BUILD_VALIDATION_FAILED",
+                "message": f"{type(exc).__name__}: {exc}",
+            }
+        )
+        return next_state
+    if verification_only_continuation is not None:
+        if post_build_preflight is None:
+            raise AssertionError("Verification post-Build preflight is missing.")
         if (
             post_build_preflight["status"]
             != "ready_for_build_authorization"
@@ -2209,6 +2241,7 @@ def _run_build(
                 "post_build_preflight_hash": post_build_preflight[
                     "projection_hash"
                 ],
+                "platform_failure_stage": "post_build_validation",
             }
             next_state["blockers"].append(
                 {
@@ -2220,10 +2253,6 @@ def _run_build(
                 }
             )
             return next_state
-        build_validation_blockers = validate_verification_only_build_result(
-            payload,
-            post_build_preflight,
-        )
         if build_validation_blockers:
             next_state = _copy_state(state)
             next_state["current_stage"] = "build"
@@ -2231,6 +2260,7 @@ def _run_build(
                 "status": "blocked",
                 "input_execution_mode": VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
                 "preflight_hash": preflight["projection_hash"],
+                "platform_failure_stage": "post_build_validation",
             }
             next_state["blockers"].extend(
                 {
@@ -2254,6 +2284,7 @@ def _run_build(
         next_state["build_summary"] = {
             "status": "blocked",
             "input_execution_mode": VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
+            "platform_failure_stage": "post_build_validation",
         }
         next_state["blockers"].append(
             {
@@ -2266,13 +2297,24 @@ def _run_build(
             }
         )
         return next_state
-    artifact_ref = artifact_store.write(
-        feature_id=feature_id,
-        artifact_type="build_result",
-        payload=payload,
-        status="failed" if payload["status"] == "failed" else "success",
-        upstream_refs=build_upstream_refs,
-    )
+    build_write_result = None
+    if verification_only_continuation is not None:
+        build_write_result = artifact_store.write_with_result(
+            feature_id=feature_id,
+            artifact_type="build_result",
+            payload=payload,
+            status="failed" if payload["status"] == "failed" else "success",
+            upstream_refs=build_upstream_refs,
+        )
+        artifact_ref = build_write_result.artifact_ref
+    else:
+        artifact_ref = artifact_store.write(
+            feature_id=feature_id,
+            artifact_type="build_result",
+            payload=payload,
+            status="failed" if payload["status"] == "failed" else "success",
+            upstream_refs=build_upstream_refs,
+        )
     next_state = _copy_state(state)
     next_state["current_stage"] = "build"
     next_state["build_summary"] = {
@@ -2285,24 +2327,118 @@ def _run_build(
         "claims_real_build_success": payload["claims_real_build_success"],
         "input_execution_mode": payload.get("input_execution_mode"),
     }
+    if verification_only_continuation is not None:
+        next_state["build_summary"]["domain_status"] = payload["status"]
+    if build_write_result is not None and (
+        build_write_result.outcome != "committed" or artifact_ref is None
+    ):
+        next_state["build_summary"].update(
+            {
+                "status": "blocked",
+                "platform_failure_stage": "build_result_store",
+                "build_result_store_result": build_write_result.to_dict(),
+                "workflow_checkpoint_store_result": None,
+            }
+        )
+        next_state["blockers"].append(
+            {
+                "stage": "build",
+                "code": "VERIFICATION_BUILD_RESULT_STORE_NOT_COMMITTED",
+                "message": (
+                    "Verification BuildResult did not reach a committed Store outcome."
+                ),
+            }
+        )
+        return next_state
+    if artifact_ref is None:
+        raise ArtifactStoreError("Committed BuildResult is missing artifact_ref.")
     _record_artifact(next_state, "build_result", artifact_ref)
+    checkpoint_write_result = None
     if (
         persist_build_runtime_handoff
         and payload["status"] == "success"
         and payload["claims_real_build_success"] is True
     ):
         next_state["next_stage"] = "runtime_evidence"
-        checkpoint_ref = WorkflowCheckpointStore(artifact_store).create_checkpoint(
-            next_state,
-            interrupt_reason=(
-                "Successful Build is ready for fresh-process Runtime continuation."
-            ),
-            resume_allowed_fields=(),
-            exact_revision_upstream_types=(
-                exact_revision_upstream_types
-            ),
-        )
+        checkpoint_store = WorkflowCheckpointStore(artifact_store)
+        if verification_only_continuation is not None:
+            try:
+                checkpoint_write_result = checkpoint_store.create_checkpoint_with_result(
+                    next_state,
+                    interrupt_reason=(
+                        "Successful Build is ready for fresh-process Runtime continuation."
+                    ),
+                    resume_allowed_fields=(),
+                    exact_revision_upstream_types=exact_revision_upstream_types,
+                )
+            except ArtifactStoreError as exc:
+                next_state["build_summary"].update(
+                    {
+                        "status": "blocked",
+                        "platform_failure_stage": "checkpoint_prewrite",
+                        "build_result_store_result": build_write_result.to_dict(),
+                        "workflow_checkpoint_store_result": None,
+                    }
+                )
+                next_state["blockers"].append(
+                    {
+                        "stage": "build",
+                        "code": "VERIFICATION_CHECKPOINT_PREWRITE_BLOCKED",
+                        "message": str(exc),
+                    }
+                )
+                return next_state
+            checkpoint_ref = checkpoint_write_result.artifact_ref
+            if (
+                checkpoint_write_result.outcome != "committed"
+                or checkpoint_ref is None
+            ):
+                next_state["build_summary"].update(
+                    {
+                        "status": "blocked",
+                        "platform_failure_stage": "checkpoint_store",
+                        "build_result_store_result": build_write_result.to_dict(),
+                        "workflow_checkpoint_store_result": (
+                            checkpoint_write_result.to_dict()
+                        ),
+                    }
+                )
+                next_state["blockers"].append(
+                    {
+                        "stage": "build",
+                        "code": "VERIFICATION_CHECKPOINT_STORE_NOT_COMMITTED",
+                        "message": (
+                            "Verification workflow checkpoint did not reach a "
+                            "committed Store outcome."
+                        ),
+                    }
+                )
+                return next_state
+        else:
+            checkpoint_ref = checkpoint_store.create_checkpoint(
+                next_state,
+                interrupt_reason=(
+                    "Successful Build is ready for fresh-process Runtime continuation."
+                ),
+                resume_allowed_fields=(),
+                exact_revision_upstream_types=exact_revision_upstream_types,
+            )
         _record_artifact(next_state, "workflow_checkpoint", checkpoint_ref)
+    if verification_only_continuation is not None:
+        next_state["build_summary"].update(
+            {
+                "build_result_store_result": build_write_result.to_dict(),
+                "workflow_checkpoint_store_result": (
+                    None
+                    if checkpoint_write_result is None
+                    else checkpoint_write_result.to_dict()
+                ),
+                "handoff_eligible": (
+                    payload["status"] == "success"
+                    and payload["claims_real_build_success"] is True
+                ),
+            }
+        )
     return next_state
 
 
@@ -2329,6 +2465,12 @@ def _run_verification_only_admission(
         "verification_only_preflight": preflight,
     }
     if preflight["status"] != "ready_for_build_authorization":
+        next_state["build_summary"] = {
+            "status": "blocked",
+            "input_execution_mode": VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
+            "preflight_hash": preflight["projection_hash"],
+            "platform_failure_stage": "admission",
+        }
         next_state["blockers"].extend(
             {
                 "stage": "evidence_retrieval",
