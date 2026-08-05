@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 
 from .artifacts.store import ArtifactStorePreflightError
@@ -678,6 +678,136 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_VERIFICATION_OPERATION_EXIT_CODES = {
+    "succeeded": 0,
+    "domain_blocked": 1,
+    "operator_input_required": 1,
+    "platform_blocked": 2,
+    "partial": 2,
+}
+
+_LEGACY_ADVISORY_READY_STATUSES = {
+    "READY_FOR_RUNTIME_PROFILE",
+    "READY_FOR_EXTERNAL_AUTHORIZATION",
+}
+
+
+def _verification_operation_exit_code(result: object) -> int:
+    """Map one public verification result to its declaration-owned exit."""
+
+    if not isinstance(result, Mapping):
+        return 2
+    operation_result = result.get("verification_operation_result")
+    if not isinstance(operation_result, Mapping):
+        return 2
+    disposition = operation_result.get("execution_disposition")
+    if not isinstance(disposition, str):
+        return 2
+    return _VERIFICATION_OPERATION_EXIT_CODES.get(disposition, 2)
+
+
+def _verification_preflight_exit_code(result: object) -> int:
+    """Map one execution-grade preflight result."""
+
+    if not isinstance(result, Mapping):
+        return 2
+    operation_result = result.get("verification_operation_preflight_result")
+    if not isinstance(operation_result, Mapping):
+        return 2
+    return 0 if operation_result.get("preflight_status") == "ready" else 2
+
+
+def _legacy_advisory_preflight_exit_code(result: object) -> int:
+    """Preserve the exact CLI-only legacy advisory mapping boundary."""
+
+    if not isinstance(result, Mapping):
+        return 2
+    if (
+        "verification_operation_preflight_result" in result
+        or "verification_operation_result" in result
+    ):
+        return 2
+    return 0 if result.get("status") in _LEGACY_ADVISORY_READY_STATUSES else 2
+
+
+def _run_preflight_runtime_command(args: argparse.Namespace) -> int:
+    """Prepare one legacy Runtime preflight call and present its public result."""
+
+    try:
+        result = preflight_local_runtime(
+            run_root=args.run_root,
+            artifact_store_root=args.artifact_store_root,
+            feature_id=args.feature_id,
+            checkpoint_path=args.checkpoint_path,
+            checkpoint_hash=args.checkpoint_hash,
+            resume_id=args.resume_id,
+            recover_accepted_resume=bool(args.recover_accepted_resume),
+            retry_runtime_observation=bool(args.retry_runtime_observation),
+            runtime_output_root=args.runtime_output_root,
+            settings_path=args.settings,
+            runtime_plugin_destination=args.runtime_plugin_destination,
+        )
+    except LocalEntryError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "BLOCKED",
+                    "command": "preflight-runtime",
+                    "reason": str(exc),
+                    "writes_performed": False,
+                    "graph_invoked": False,
+                    "checkpoint_consumed": False,
+                    "resume_report_created": False,
+                    "runtime_evidence_created": False,
+                    "process_launched": False,
+                    "dll_copied": False,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 2
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return _legacy_advisory_preflight_exit_code(result)
+
+
+def _run_resume_runtime_command(args: argparse.Namespace) -> int:
+    """Prepare one legacy Runtime execution call and present its public result."""
+
+    try:
+        result = resume_local_runtime(
+            run_root=args.run_root,
+            artifact_store_root=args.artifact_store_root,
+            feature_id=args.feature_id,
+            checkpoint_path=args.checkpoint_path,
+            checkpoint_hash=args.checkpoint_hash,
+            resume_id=args.resume_id,
+            recover_accepted_resume=bool(args.recover_accepted_resume),
+            retry_runtime_observation=bool(args.retry_runtime_observation),
+            runtime_output_root=args.runtime_output_root,
+            approved_by=args.approved_by,
+            settings_path=args.settings,
+            allow_game_launch=bool(args.allow_game_launch),
+            runtime_plugin_destination=args.runtime_plugin_destination,
+            allow_game_directory_write=bool(args.allow_game_directory_write),
+        )
+    except LocalEntryError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "BLOCKED",
+                    "command": "resume-runtime",
+                    "reason": str(exc),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 2
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return _verification_operation_exit_code(result)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the local controlled-development CLI."""
 
@@ -1248,90 +1378,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     if args.command == "preflight-runtime":
-        try:
-            result = preflight_local_runtime(
-                run_root=args.run_root,
-                artifact_store_root=args.artifact_store_root,
-                feature_id=args.feature_id,
-                checkpoint_path=args.checkpoint_path,
-                checkpoint_hash=args.checkpoint_hash,
-                resume_id=args.resume_id,
-                recover_accepted_resume=bool(args.recover_accepted_resume),
-                retry_runtime_observation=bool(
-                    args.retry_runtime_observation
-                ),
-                runtime_output_root=args.runtime_output_root,
-                settings_path=args.settings,
-                runtime_plugin_destination=args.runtime_plugin_destination,
-            )
-        except LocalEntryError as exc:
-            print(
-                json.dumps(
-                    {
-                        "status": "BLOCKED",
-                        "command": "preflight-runtime",
-                        "reason": str(exc),
-                        "writes_performed": False,
-                        "graph_invoked": False,
-                        "checkpoint_consumed": False,
-                        "resume_report_created": False,
-                        "runtime_evidence_created": False,
-                        "process_launched": False,
-                        "dll_copied": False,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
-            return 2
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
+        return _run_preflight_runtime_command(args)
 
     if args.command == "resume-runtime":
-        try:
-            result = resume_local_runtime(
-                run_root=args.run_root,
-                artifact_store_root=args.artifact_store_root,
-                feature_id=args.feature_id,
-                checkpoint_path=args.checkpoint_path,
-                checkpoint_hash=args.checkpoint_hash,
-                resume_id=args.resume_id,
-                recover_accepted_resume=bool(args.recover_accepted_resume),
-                retry_runtime_observation=bool(
-                    args.retry_runtime_observation
-                ),
-                runtime_output_root=args.runtime_output_root,
-                approved_by=args.approved_by,
-                settings_path=args.settings,
-                allow_game_launch=bool(args.allow_game_launch),
-                runtime_plugin_destination=args.runtime_plugin_destination,
-                allow_game_directory_write=bool(args.allow_game_directory_write),
-            )
-        except LocalEntryError as exc:
-            print(
-                json.dumps(
-                    {
-                        "status": "BLOCKED",
-                        "command": "resume-runtime",
-                        "reason": str(exc),
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
-            )
-            return 2
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return (
-            0
-            if (
-                result.get("current_stage") == "done"
-                and result.get("runtime_summary", {}).get(
-                    "claims_real_runtime_success"
-                )
-                is True
-            )
-            else 1
-        )
+        return _run_resume_runtime_command(args)
 
     parser.error(f"Unknown command: {args.command}")
     return 2

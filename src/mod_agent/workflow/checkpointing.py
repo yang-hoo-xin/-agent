@@ -17,6 +17,20 @@ from src.mod_agent.artifacts import (
     ArtifactStoreError,
     ArtifactWriteResult,
 )
+from src.mod_agent.verification_operations import (
+    AcceptedResumeRecoveryAttemptV1,
+    EvidenceConsolidationOperationV1,
+    InitialAttemptV1,
+    NewRuntimeResumeProtocolBindingV1,
+    ObservationRetryAttemptV1,
+    RuntimeTerminalizationOperationV1,
+    VerificationAttemptPolicy,
+    VerificationOperationDeclaration,
+    VerificationOperationEnvelope,
+    VerificationProtocolBinding,
+    resolve_verification_operation,
+    validate_verification_operation_envelope,
+)
 
 from .interrupts import ResumeDecision, ResumePayload, ResumeValidator
 from .state import ModAgentState
@@ -24,6 +38,20 @@ from .verification_only import VERIFICATION_ONLY_INPUT_EXECUTION_MODE
 
 BUILD_CHECKPOINT_EXACT_REVISION_TYPES = frozenset(
     {"evidence_pack", "implementation_plan"}
+)
+
+VerificationCheckpointAdmissionResult = (
+    None
+    | ResumeDecision
+    | tuple[ResumeDecision, ArtifactRef]
+    | tuple[ResumeDecision, dict[str, Any], tuple[ArtifactRef, ...]]
+    | tuple[
+        ResumeDecision,
+        ArtifactRef,
+        ArtifactRef,
+        ArtifactRef,
+        dict[str, Any],
+    ]
 )
 
 
@@ -412,7 +440,160 @@ class WorkflowCheckpointStore:
             exact_revision_types=exact_types,
         )
 
+    def preflight_verification_operation(
+        self,
+        envelope: VerificationOperationEnvelope,
+        declaration: VerificationOperationDeclaration | None = None,
+    ) -> VerificationCheckpointAdmissionResult:
+        """Admit one normalized operation's checkpoint protocol and attempt."""
+
+        validated = validate_verification_operation_envelope(envelope)
+        resolved = resolve_verification_operation(validated)
+        if declaration is not None and declaration != resolved:
+            raise ValueError(
+                "Verification operation declaration changed before checkpoint admission."
+            )
+
+        shape_id = resolved.shape_id
+        protocol = validated.protocol_binding
+        attempt = validated.attempt_policy
+        variant = validated.variant_payload
+
+        if shape_id == "verification_build_initial":
+            return None
+
+        if shape_id in {
+            "runtime_execution_initial_evidence_only",
+            "runtime_execution_initial_workflow",
+        }:
+            if (
+                type(protocol) is not NewRuntimeResumeProtocolBindingV1
+                or type(attempt) is not InitialAttemptV1
+            ):
+                raise ValueError(
+                    "Initial Runtime checkpoint protocol or attempt changed."
+                )
+            return self._preflight_resume_facts(
+                protocol.checkpoint_ref,
+                resume_id=protocol.resume_id,
+            )
+
+        if shape_id == "runtime_execution_observation_retry":
+            if (
+                type(protocol) is not VerificationProtocolBinding
+                or type(attempt) is not ObservationRetryAttemptV1
+            ):
+                raise ValueError(
+                    "Observation retry checkpoint protocol or attempt changed."
+                )
+            admitted = self._preflight_runtime_observation_retry_facts(
+                protocol.checkpoint_ref,
+                resume_id=protocol.resume_id,
+            )
+            (
+                _decision,
+                report_ref,
+                prior_runtime_ref,
+                repair_plan_ref,
+                retry_binding,
+            ) = admitted
+            report = self.artifact_store.read(report_ref)["data"]
+            remaining_before = retry_binding.get(
+                "retry_budget_remaining_before_attempt"
+            )
+            if (
+                report_ref != protocol.accepted_resume_report_ref
+                or report.get("approved_by") != protocol.approved_by
+                or prior_runtime_ref != attempt.prior_runtime_evidence_ref
+                or repair_plan_ref != attempt.repair_plan_ref
+                or retry_binding.get("retry_number") != attempt.retry_number
+                or retry_binding.get("retry_budget") != attempt.retry_budget
+                or type(remaining_before) is not int
+                or max(remaining_before - 1, 0)
+                != attempt.retry_budget_remaining
+            ):
+                raise ValueError(
+                    "Observation retry protocol or attempt does not match current facts."
+                )
+            return admitted
+
+        if shape_id == "runtime_execution_accepted_resume_recovery":
+            if (
+                type(protocol) is not VerificationProtocolBinding
+                or type(attempt) is not AcceptedResumeRecoveryAttemptV1
+            ):
+                raise ValueError(
+                    "Accepted-resume recovery protocol or attempt changed."
+                )
+            admitted = self._preflight_accepted_resume_recovery_facts(
+                protocol.checkpoint_ref,
+                resume_id=protocol.resume_id,
+            )
+            _decision, report_ref = admitted
+            report = self.artifact_store.read(report_ref)["data"]
+            if (
+                report_ref != protocol.accepted_resume_report_ref
+                or report_ref != attempt.accepted_resume_report_ref
+                or report.get("approved_by") != protocol.approved_by
+                or attempt.recovery_of_resume_id != protocol.resume_id
+            ):
+                raise ValueError(
+                    "Accepted-resume recovery protocol does not match current facts."
+                )
+            return admitted
+
+        if shape_id == "runtime_terminalization_initial":
+            if (
+                type(protocol) is not VerificationProtocolBinding
+                or type(attempt) is not InitialAttemptV1
+                or type(variant) is not RuntimeTerminalizationOperationV1
+            ):
+                raise ValueError(
+                    "Runtime terminalization protocol or attempt changed."
+                )
+            return self._preflight_runtime_terminal_continuation_facts(
+                protocol.checkpoint_ref,
+                resume_report_ref=protocol.accepted_resume_report_ref,
+                runtime_evidence_ref=variant.runtime_evidence_ref,
+                resume_id=protocol.resume_id,
+                approved_by=protocol.approved_by,
+            )
+
+        if shape_id == "runtime_evidence_consolidation_initial":
+            if (
+                type(protocol) is not VerificationProtocolBinding
+                or type(attempt) is not VerificationAttemptPolicy
+                or type(variant) is not EvidenceConsolidationOperationV1
+            ):
+                raise ValueError(
+                    "RuntimeEvidence consolidation protocol changed."
+                )
+            return self._preflight_runtime_evidence_consolidation_facts(
+                protocol.checkpoint_ref,
+                resume_report_ref=protocol.accepted_resume_report_ref,
+                prior_runtime_evidence_ref=variant.prior_runtime_evidence_ref,
+                resume_id=protocol.resume_id,
+                approved_by=protocol.approved_by,
+            )
+
+        raise ValueError(
+            "Verification operation has no checkpoint admission handler."
+        )
+
     def preflight_resume(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_id: str | None = None,
+    ) -> ResumeDecision:
+        """Compatibility wrapper for initial checkpoint admission."""
+
+        return self._preflight_resume_facts(
+            checkpoint_ref,
+            resume_id=resume_id,
+        )
+
+    def _preflight_resume_facts(
         self,
         checkpoint_ref: ArtifactRef,
         *,
@@ -483,6 +664,19 @@ class WorkflowCheckpointStore:
         )
 
     def preflight_accepted_resume_recovery(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_id: str,
+    ) -> tuple[ResumeDecision, ArtifactRef]:
+        """Compatibility wrapper for accepted-resume recovery admission."""
+
+        return self._preflight_accepted_resume_recovery_facts(
+            checkpoint_ref,
+            resume_id=resume_id,
+        )
+
+    def _preflight_accepted_resume_recovery_facts(
         self,
         checkpoint_ref: ArtifactRef,
         *,
@@ -599,6 +793,25 @@ class WorkflowCheckpointStore:
         )
 
     def preflight_runtime_terminal_continuation(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_report_ref: ArtifactRef,
+        runtime_evidence_ref: ArtifactRef,
+        resume_id: str,
+        approved_by: str,
+    ) -> tuple[ResumeDecision, dict[str, Any], tuple[ArtifactRef, ...]]:
+        """Compatibility wrapper for terminal checkpoint admission."""
+
+        return self._preflight_runtime_terminal_continuation_facts(
+            checkpoint_ref,
+            resume_report_ref=resume_report_ref,
+            runtime_evidence_ref=runtime_evidence_ref,
+            resume_id=resume_id,
+            approved_by=approved_by,
+        )
+
+    def _preflight_runtime_terminal_continuation_facts(
         self,
         checkpoint_ref: ArtifactRef,
         *,
@@ -783,6 +996,25 @@ class WorkflowCheckpointStore:
         )
 
     def preflight_runtime_evidence_consolidation(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_report_ref: ArtifactRef,
+        prior_runtime_evidence_ref: ArtifactRef,
+        resume_id: str,
+        approved_by: str,
+    ) -> tuple[ResumeDecision, dict[str, Any], tuple[ArtifactRef, ...]]:
+        """Compatibility wrapper for consolidation checkpoint admission."""
+
+        return self._preflight_runtime_evidence_consolidation_facts(
+            checkpoint_ref,
+            resume_report_ref=resume_report_ref,
+            prior_runtime_evidence_ref=prior_runtime_evidence_ref,
+            resume_id=resume_id,
+            approved_by=approved_by,
+        )
+
+    def _preflight_runtime_evidence_consolidation_facts(
         self,
         checkpoint_ref: ArtifactRef,
         *,
@@ -1034,6 +1266,25 @@ class WorkflowCheckpointStore:
         )
 
     def preflight_runtime_observation_retry(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_id: str,
+    ) -> tuple[
+        ResumeDecision,
+        ArtifactRef,
+        ArtifactRef,
+        ArtifactRef,
+        dict[str, Any],
+    ]:
+        """Compatibility wrapper for observation-retry checkpoint admission."""
+
+        return self._preflight_runtime_observation_retry_facts(
+            checkpoint_ref,
+            resume_id=resume_id,
+        )
+
+    def _preflight_runtime_observation_retry_facts(
         self,
         checkpoint_ref: ArtifactRef,
         *,

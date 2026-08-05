@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import json
 import hashlib
 import sys
+from argparse import Namespace
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,12 +16,15 @@ from unittest.mock import patch
 import pytest
 
 import src.mod_agent.edit_authority_capabilities as capabilities_module
+import src.mod_agent.cli as cli_module
+import src.mod_agent.local_entry as local_entry_module
 from src.mod_agent.artifacts import (
     ArtifactRef,
     ArtifactStore,
     ArtifactStoreError,
     StaleArtifactError,
 )
+from src.mod_agent.artifacts.store import ArtifactWriteResult
 from src.mod_agent.artifacts.registry import (
     ArtifactContract,
     ArtifactTypeRegistry,
@@ -47,6 +52,8 @@ from src.mod_agent.knowledge import (
 )
 from src.mod_agent.local_entry import (
     LocalEntryError,
+    VerificationOperationExecutionError,
+    VerificationOperationPresentationError,
     preflight_local_runtime,
     preflight_stagger_edit_authority_review,
     resume_stagger_edit_authority_review,
@@ -69,6 +76,17 @@ from src.mod_agent.runtime import (
 from src.mod_agent.runtime.stagger_edit_authority import (
     StaggerEditAuthorityApprovalError,
     materialize_stagger_edit_authority_approval,
+)
+from src.mod_agent.verification_operations import (
+    RUNTIME_EXECUTION_CONTRACT_VERSION,
+    RUNTIME_EXECUTION_KIND,
+    RUNTIME_WORKFLOW_COMPLETION,
+    InitialAttemptV1,
+    NewRuntimeResumeProtocolBindingV1,
+    RuntimeExecutionOperationV1,
+    VerificationCheckpointIdentityV1,
+    VerificationOperationSpec,
+    project_verification_operation,
 )
 from src.mod_agent.workflow import (
     ResumePayload,
@@ -2306,6 +2324,53 @@ def _state_artifact_ref(
     )
 
 
+def _runtime_workflow_graph_operation(
+    store: ArtifactStore,
+    *,
+    checkpoint_ref: ArtifactRef,
+    resume_report_ref: ArtifactRef,
+):
+    checkpoint = store.read(checkpoint_ref)["data"]
+    report = store.read(resume_report_ref)["data"]
+    runtime_admission = report["applied_updates"]["runtime_admission"]
+    return project_verification_operation(
+        VerificationOperationSpec(
+            operation_kind=RUNTIME_EXECUTION_KIND,
+            operation_contract_version=RUNTIME_EXECUTION_CONTRACT_VERSION,
+            attempt_policy=InitialAttemptV1(),
+            protocol_binding=NewRuntimeResumeProtocolBindingV1(
+                checkpoint_ref=checkpoint_ref,
+                resume_id=str(report["resume_id"]),
+                approved_by=str(report["approved_by"]),
+            ),
+            variant_payload=RuntimeExecutionOperationV1(
+                completion_scope=RUNTIME_WORKFLOW_COMPLETION,
+                runtime_action_scope=runtime_admission,
+            ),
+        ),
+        checkpoint_identity=VerificationCheckpointIdentityV1(
+            checkpoint_id=str(checkpoint["checkpoint_id"]),
+            run_id=str(checkpoint["run_id"]),
+            request_id=str(checkpoint["request_id"]),
+        ),
+    )
+
+
+def _fake_runtime_factory(
+    feature_id: str,
+    build: dict[str, object],
+    feature_spec: dict[str, object],
+) -> dict[str, object]:
+    return build_fake_runtime_evidence_payload(
+        feature_id=feature_id,
+        input_execution_mode=str(build.get("execution_mode")),
+        acceptance_criteria=tuple(feature_spec.get("acceptance_criteria") or ()),
+        runtime_verification_plan=tuple(
+            feature_spec.get("runtime_verification_plan") or ()
+        ),
+    )
+
+
 def _clone_as_latest_revision(
     store: ArtifactStore,
     ref: ArtifactRef,
@@ -3289,13 +3354,14 @@ def test_fresh_process_continues_build_handoff_without_repeating_upstream_stages
         resume_report_ref=resume_report_ref,
     )
 
-    def forbidden_build(_: str, __: str | None):
-        raise AssertionError("Build must not repeat during Runtime continuation.")
-
     fresh_graph = build_graph(
         fresh_store,
-        build_result_factory=forbidden_build,
-        runtime_continuation_checkpoint_id=checkpoint["checkpoint_id"],
+        runtime_evidence_factory=_fake_runtime_factory,
+        verification_operation=_runtime_workflow_graph_operation(
+            fresh_store,
+            checkpoint_ref=checkpoint_ref,
+            resume_report_ref=resume_report_ref,
+        ),
     )
     result = fresh_graph.invoke(resumed_state)
 
@@ -3322,6 +3388,7 @@ def test_fresh_process_continues_build_handoff_without_repeating_upstream_stages
 
 def test_supported_local_entry_resumes_build_handoff_without_model_or_gtfo(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store, build_result, checkpoint_ref = _successful_build_handoff(
         tmp_path,
@@ -3352,6 +3419,19 @@ def test_supported_local_entry_resumes_build_handoff_without_model_or_gtfo(
             ),
         )
 
+    executor_calls = []
+    original_executor = local_entry_module._execute_runtime_workflow_operation
+
+    def recording_executor(**kwargs):
+        executor_calls.append(dict(kwargs))
+        return original_executor(**kwargs)
+
+    monkeypatch.setattr(
+        local_entry_module,
+        "_execute_runtime_workflow_operation",
+        recording_executor,
+    )
+
     summary = resume_local_runtime(
         run_root=tmp_path,
         feature_id=str(build_result["feature_id"]),
@@ -3378,6 +3458,308 @@ def test_supported_local_entry_resumes_build_handoff_without_model_or_gtfo(
     assert summary["model_call_count"] == 0
     assert summary["upstream_stages_repeated"] is False
     assert (tmp_path / "runtime_resume_result.json").is_file()
+    assert len(executor_calls) == 1
+    assert executor_calls[0]["operation"].operation_kind == RUNTIME_EXECUTION_KIND
+    assert executor_calls[0]["operation"].variant_payload.completion_scope == (
+        RUNTIME_WORKFLOW_COMPLETION
+    )
+    assert set(executor_calls[0]).isdisjoint(
+        {
+            "attempt_policy",
+            "attempt_kind",
+            "runtime_evidence_only",
+            "runtime_terminalization_only",
+            "runtime_evidence_consolidation_only",
+        }
+    )
+
+
+def test_runtime_workflow_executor_has_one_typed_operation_authority() -> None:
+    executor = local_entry_module._execute_runtime_workflow_operation
+    parameters = inspect.signature(executor).parameters
+    source = inspect.getsource(executor)
+
+    assert parameters["operation"].default is inspect.Parameter.empty
+    assert "attempt_policy" not in parameters
+    assert "attempt_kind" not in source
+    assert '"_verification_operation"' not in source
+    assert "runtime_evidence_only" not in source
+    assert "runtime_terminalization_only" not in source
+    assert "runtime_evidence_consolidation_only" not in source
+
+
+def test_local_entry_result_adapters_delegate_disposition_to_declaration() -> None:
+    for helper in (
+        local_entry_module._build_verification_machine_result,
+        local_entry_module._runtime_execution_machine_result,
+        local_entry_module._terminalization_machine_result,
+        local_entry_module._consolidation_machine_result,
+    ):
+        source = inspect.getsource(helper)
+        assert "project_verification_operation_result(" in source
+        assert "execution_disposition" not in source
+
+
+def test_legacy_runtime_presentation_failure_preserves_machine_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    (tmp_path / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": checkpoint["run_id"],
+                "request_id": checkpoint["request_id"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def runtime_factory(
+        feature_id: str,
+        build: dict[str, object],
+        feature_spec: dict[str, object],
+    ) -> dict[str, object]:
+        return build_fake_runtime_evidence_payload(
+            feature_id=feature_id,
+            input_execution_mode=str(build.get("execution_mode")),
+            acceptance_criteria=tuple(feature_spec.get("acceptance_criteria") or ()),
+            runtime_verification_plan=tuple(
+                feature_spec.get("runtime_verification_plan") or ()
+            ),
+        )
+
+    projected = []
+    original_projector = local_entry_module.project_verification_operation_result
+
+    def recording_projector(**kwargs):
+        result = original_projector(**kwargs)
+        projected.append(result)
+        return result
+
+    original_write_text = Path.write_text
+
+    def fail_presentation(path: Path, *args, **kwargs):
+        if path.name == "runtime_resume_result.json":
+            raise OSError("presentation unavailable")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(
+        local_entry_module,
+        "project_verification_operation_result",
+        recording_projector,
+    )
+    monkeypatch.setattr(Path, "write_text", fail_presentation)
+
+    with pytest.raises(VerificationOperationPresentationError) as caught:
+        resume_local_runtime(
+            run_root=tmp_path,
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=checkpoint_ref.path,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+            settings_path=tmp_path / "unused-settings.yaml",
+            approved_by="human",
+            allow_game_launch=False,
+            runtime_plugin_destination=None,
+            allow_game_directory_write=False,
+            resume_id="resume_presentation_failure_001",
+            runtime_evidence_factory=runtime_factory,
+            injected_runtime_admission={
+                "status": "admitted",
+                "authorization_scope": "this_resume_only",
+                "requested_side_effects": ["runtime_execution"],
+                "authorized_side_effects": ["runtime_execution"],
+                "provider": "injected_test",
+            },
+        )
+
+    assert len(projected) == 1
+    assert caught.value.verification_operation_result is projected[0]
+    assert caught.value.audit_error["stage"] == "presentation"
+    assert caught.value.audit_error["sink"] == "runtime_resume_result.json"
+    assert not (tmp_path / "runtime_resume_result.json").exists()
+
+
+def test_legacy_runtime_execution_failure_preserves_projected_machine_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    (tmp_path / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": checkpoint["run_id"],
+                "request_id": checkpoint["request_id"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def failed_runtime_factory(*_args, **_kwargs):
+        raise OSError("runtime effect unavailable")
+
+    projected = []
+    original_projector = local_entry_module.project_verification_operation_result
+
+    def recording_projector(**kwargs):
+        result = original_projector(**kwargs)
+        projected.append(result)
+        return result
+
+    monkeypatch.setattr(
+        local_entry_module,
+        "project_verification_operation_result",
+        recording_projector,
+    )
+
+    with pytest.raises(VerificationOperationExecutionError) as caught:
+        resume_local_runtime(
+            run_root=tmp_path,
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=checkpoint_ref.path,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+            settings_path=tmp_path / "unused-settings.yaml",
+            approved_by="human",
+            allow_game_launch=False,
+            runtime_plugin_destination=None,
+            allow_game_directory_write=False,
+            resume_id="resume_failed_runtime_001",
+            runtime_evidence_factory=failed_runtime_factory,
+            injected_runtime_admission={
+                "status": "admitted",
+                "authorization_scope": "this_resume_only",
+                "requested_side_effects": ["runtime_execution"],
+                "authorized_side_effects": ["runtime_execution"],
+                "provider": "injected_test",
+            },
+        )
+
+    assert len(projected) == 1
+    machine_result = caught.value.verification_operation_result
+    assert machine_result is projected[0]
+    assert machine_result.platform_status == "blocked"
+    assert machine_result.failure_stage == "runtime_execution"
+    assert machine_result.execution_disposition == "platform_blocked"
+    output_by_role = {item.role: item.artifact_ref for item in machine_result.outputs}
+    receipt_by_role = {
+        item.role: item.artifact_write_result for item in machine_result.store_receipts
+    }
+    assert receipt_by_role["resume_report"].outcome == "committed"
+    assert output_by_role["resume_report"] == receipt_by_role["resume_report"].artifact_ref
+    assert not (tmp_path / "runtime_resume_result.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected_status"),
+    [("blocked_before_commit", "blocked"), ("partial", "partial")],
+)
+def test_initial_runtime_resume_store_noncommitted_stops_before_graph_and_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: str,
+    expected_status: str,
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    (tmp_path / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": checkpoint["run_id"],
+                "request_id": checkpoint["request_id"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    partial = outcome == "partial"
+    feature_root = store.root / "features" / str(build_result["feature_id"])
+    write_result = ArtifactWriteResult(
+        outcome=outcome,  # type: ignore[arg-type]
+        feature_id=str(build_result["feature_id"]),
+        artifact_type="resume_report",
+        artifact_hash="9" * 64,
+        artifact_ref=None,
+        revision_path=str(
+            feature_root / "r" / "resume_report" / ("9" * 32 + ".json")
+        ),
+        latest_alias_path=str(feature_root / "resume_report.json"),
+        pending_marker_path=str(
+            feature_root / "p" / "resume_report" / ("9" * 32 + ".json")
+        ),
+        commit_started=partial,
+        revision_state="valid" if partial else "absent",
+        latest_alias_state="absent",
+        pending_marker_state="present" if partial else "absent",
+        failure_stage="latest_alias_write" if partial else "admission_validation",
+        failure_class="ArtifactStoreError",
+        failure_message="injected ResumeReport Store failure",
+        recovery_available=partial,
+        recovery_authorized=False,
+    )
+
+    def resume_with_result(selected, ref, payload):
+        decision = selected.preflight_resume(ref, resume_id=payload.resume_id)
+        return decision, write_result
+
+    monkeypatch.setattr(
+        WorkflowCheckpointStore,
+        "resume_with_result",
+        resume_with_result,
+    )
+    monkeypatch.setattr(
+        local_entry_module,
+        "build_graph",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Graph must not run after a non-committed ResumeReport")
+        ),
+    )
+    factory_calls = 0
+
+    def runtime_factory(*_args, **_kwargs):
+        nonlocal factory_calls
+        factory_calls += 1
+        raise AssertionError("Runtime effect must not run")
+
+    with pytest.raises(VerificationOperationExecutionError) as caught:
+        resume_local_runtime(
+            run_root=tmp_path,
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=checkpoint_ref.path,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+            settings_path=tmp_path / "unused-settings.yaml",
+            approved_by="human",
+            allow_game_launch=False,
+            runtime_plugin_destination=None,
+            allow_game_directory_write=False,
+            resume_id=f"resume_store_{outcome}",
+            runtime_evidence_factory=runtime_factory,
+            injected_runtime_admission={
+                "status": "admitted",
+                "authorization_scope": "this_resume_only",
+                "requested_side_effects": ["runtime_execution"],
+                "authorized_side_effects": ["runtime_execution"],
+                "provider": "injected_test",
+            },
+        )
+
+    result = caught.value.verification_operation_result
+    assert result.platform_status == expected_status
+    assert result.failure_stage == "resume_report_store"
+    assert result.outputs == ()
+    assert len(result.store_receipts) == 1
+    assert result.store_receipts[0].role == "resume_report"
+    assert result.store_receipts[0].artifact_write_result == write_result
+    assert factory_calls == 0
 
 
 def _write_runtime_handoff_manifest(
@@ -3441,6 +3823,51 @@ def test_runtime_preflight_supports_default_run_root_artifact_store(
     assert result["artifact_store_root"] == str((tmp_path / "a").resolve())
     assert result["checkpoint"]["store_bound"] is True
     assert result["checkpoint"]["consumption_status"] == "unconsumed"
+    assert "verification_operation_preflight_result" not in result
+    assert "verification_operation_result" not in result
+    assert "approval_identity_hash" not in result
+    assert "approved_by" not in result
+    assert "resume_id" not in result
+    assert not (tmp_path / "runtime_resume_result.json").exists()
+
+
+def test_real_runtime_preflight_cli_presents_advisory_without_execute_verdict(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store, build_result, checkpoint_ref = _successful_build_handoff(
+        tmp_path,
+        artifact_directory="a",
+    )
+    checkpoint = store.read(checkpoint_ref)["data"]
+    _write_runtime_handoff_manifest(
+        tmp_path,
+        checkpoint=checkpoint,
+        checkpoint_ref=checkpoint_ref,
+    )
+
+    exit_code = cli_module._run_preflight_runtime_command(
+        Namespace(
+            run_root=str(tmp_path),
+            artifact_store_root=None,
+            feature_id=str(build_result["feature_id"]),
+            checkpoint_path=checkpoint_ref.path,
+            checkpoint_hash=checkpoint_ref.artifact_hash,
+            resume_id=None,
+            recover_accepted_resume=False,
+            retry_runtime_observation=False,
+            runtime_output_root=None,
+            settings=None,
+            runtime_plugin_destination=None,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == "READY_FOR_RUNTIME_PROFILE"
+    assert "verification_operation_preflight_result" not in payload
+    assert "verification_operation_result" not in payload
+    assert not (tmp_path / "runtime_resume_result.json").exists()
 
 
 def test_runtime_preflight_supports_explicit_shared_artifact_store_without_writes(
@@ -3829,7 +4256,11 @@ def _persist_observation_owned_runtime_failure(
     graph = build_graph(
         store,
         runtime_evidence_factory=observation_failure,
-        runtime_continuation_checkpoint_id=str(checkpoint["checkpoint_id"]),
+        verification_operation=_runtime_workflow_graph_operation(
+            store,
+            checkpoint_ref=checkpoint_ref,
+            resume_report_ref=report_ref,
+        ),
     )
     result = graph.invoke(resumed_state)
     assert result["current_stage"] == "blocked"
@@ -4028,6 +4459,10 @@ def test_initial_stagger_repair_preflight_requires_empty_separate_output_root(
     assert result["checkpoint_consumed"] is False
     assert result["process_launched"] is False
     assert result["dll_copied"] is False
+    assert "verification_operation_preflight_result" not in result
+    assert "verification_operation_result" not in result
+    assert "approval_identity_hash" not in result
+    assert "approved_by" not in result
     assert _tree_bytes(tmp_path) == before
 
 
@@ -4244,6 +4679,10 @@ def test_runtime_observation_retry_preflight_uses_empty_separate_output_root(
     assert result["writes_performed"] is False
     assert result["resume_report_created"] is False
     assert result["runtime_evidence_created"] is False
+    assert "verification_operation_preflight_result" not in result
+    assert "verification_operation_result" not in result
+    assert "approval_identity_hash" not in result
+    assert "approved_by" not in result
     assert _tree_bytes(tmp_path) == before
 
 
@@ -4371,6 +4810,14 @@ def test_runtime_observation_retry_executes_only_runtime_with_one_resume_report(
     assert summary["current_stage"] == "done"
     assert summary["runtime_observation_retry"] is True
     assert summary["upstream_stages_repeated"] is False
+    machine_result = summary["verification_operation_result"]
+    assert all(
+        item["role"] != "resume_report" for item in machine_result["outputs"]
+    )
+    assert all(
+        item["role"] != "resume_report"
+        for item in machine_result["store_receipts"]
+    )
     assert captured_retry_binding["retry_number"] == 1
     assert captured_operator_completion["directory"] == (
         output_root.resolve() / "operator_completion"
@@ -4442,6 +4889,10 @@ def test_runtime_recovery_preflight_reuses_report_without_writes(
     }
     assert result["writes_performed"] is False
     assert result["resume_report_created"] is False
+    assert "verification_operation_preflight_result" not in result
+    assert "verification_operation_result" not in result
+    assert "approval_identity_hash" not in result
+    assert "approved_by" not in result
     assert _tree_bytes(tmp_path) == before
 
 
@@ -4570,6 +5021,14 @@ def test_runtime_recovery_reuses_exact_admission_and_creates_no_second_report(
     assert summary["current_stage"] == "done"
     assert summary["accepted_resume_recovery"] is True
     assert summary["artifacts"]["resume_report"] == report_ref.path
+    machine_result = summary["verification_operation_result"]
+    assert all(
+        item["role"] != "resume_report" for item in machine_result["outputs"]
+    )
+    assert all(
+        item["role"] != "resume_report"
+        for item in machine_result["store_receipts"]
+    )
     assert len(
         store.list_feature_artifact_revisions(
             str(checkpoint["feature_id"]),
@@ -4604,7 +5063,12 @@ def test_accepted_resume_recovery_rejects_wrong_id_and_runtime_state(
     )
     graph = build_graph(
         store,
-        runtime_continuation_checkpoint_id=checkpoint["checkpoint_id"],
+        runtime_evidence_factory=_fake_runtime_factory,
+        verification_operation=_runtime_workflow_graph_operation(
+            store,
+            checkpoint_ref=checkpoint_ref,
+            resume_report_ref=report_ref,
+        ),
     )
     result = graph.invoke(resumed_state)
     assert result["current_stage"] == "done"

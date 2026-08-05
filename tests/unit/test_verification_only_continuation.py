@@ -33,7 +33,6 @@ from src.mod_agent.workflow import (
     ResumePayload,
     ResumeValidator,
     VerificationOnlyContinuationInput,
-    VerificationOnlyRuntimeTerminalInput,
     WorkflowCheckpointStore,
     build_graph,
     create_initial_state,
@@ -41,11 +40,27 @@ from src.mod_agent.workflow import (
     resumed_state_from_decision,
 )
 from src.mod_agent.verification_operations import (
+    RUNTIME_EXECUTION_CONTRACT_VERSION,
+    RUNTIME_EXECUTION_KIND,
+    RUNTIME_TERMINALIZATION_CONTRACT_VERSION,
+    RUNTIME_TERMINALIZATION_KIND,
+    VERIFICATION_BUILD_CONTRACT_VERSION,
+    VERIFICATION_BUILD_KIND,
+    BuildInvocationProtocolBindingV1,
     EVIDENCE_CONSOLIDATION_CONTRACT_VERSION,
     EVIDENCE_CONSOLIDATION_KIND,
     EvidenceConsolidationOperationV1,
+    EvidenceConsolidationResultV1,
     ImplementationEvidenceFileBinding,
+    InitialAttemptV1,
+    NewRuntimeResumeProtocolBindingV1,
+    RuntimeExecutionOperationV1,
+    RuntimeTerminalizationOperationV1,
     VerificationAttemptPolicy,
+    VerificationBuildOperationV1,
+    VerificationCheckpointIdentityV1,
+    VerificationOperationPreflightResultV1,
+    VerificationOperationResultV1,
     VerificationOperationSpec,
     VerificationProtocolBinding,
     project_verification_operation,
@@ -57,7 +72,6 @@ from src.mod_agent.runtime import (
     RuntimeEvidenceItem,
     build_fake_runtime_evidence_payload,
     build_real_runtime_evidence_payload,
-    build_supplied_runtime_evidence_payload,
 )
 from src.mod_agent.runtime_evidence_consolidation import (
     runtime_evidence_consolidation_child_refs,
@@ -83,6 +97,57 @@ RUNTIME_ADMISSION = {
     "authorized_side_effects": ["runtime_execution"],
     "provider": "injected_test",
 }
+
+
+def _build_verification_operation(
+    continuation: VerificationOnlyContinuationInput,
+):
+    return project_verification_operation(
+        VerificationOperationSpec(
+            operation_kind=VERIFICATION_BUILD_KIND,
+            operation_contract_version=VERIFICATION_BUILD_CONTRACT_VERSION,
+            attempt_policy=InitialAttemptV1(),
+            protocol_binding=BuildInvocationProtocolBindingV1(
+                run_id="verification_only_run_001",
+                request_id="verification_only_request_001",
+            ),
+            variant_payload=VerificationBuildOperationV1(
+                feature_spec_ref=continuation.feature_spec_ref,
+                evidence_pack_ref=continuation.evidence_pack_ref,
+                user_request=USER_REQUEST,
+                target_domain="gtfo",
+                target_mod=TARGET_MOD,
+            ),
+        )
+    )
+
+
+def _runtime_workflow_operation(
+    *,
+    checkpoint_ref: ArtifactRef,
+    checkpoint: dict[str, object],
+):
+    return project_verification_operation(
+        VerificationOperationSpec(
+            operation_kind=RUNTIME_EXECUTION_KIND,
+            operation_contract_version=RUNTIME_EXECUTION_CONTRACT_VERSION,
+            attempt_policy=InitialAttemptV1(),
+            protocol_binding=NewRuntimeResumeProtocolBindingV1(
+                checkpoint_ref=checkpoint_ref,
+                resume_id="verification_only_resume_001",
+                approved_by="human",
+            ),
+            variant_payload=RuntimeExecutionOperationV1(
+                completion_scope="runtime_workflow",
+                runtime_action_scope=RUNTIME_ADMISSION,
+            ),
+        ),
+        checkpoint_identity=VerificationCheckpointIdentityV1(
+            checkpoint_id=str(checkpoint["checkpoint_id"]),
+            run_id=str(checkpoint["run_id"]),
+            request_id=str(checkpoint["request_id"]),
+        ),
+    )
 
 
 def test_preflight_is_deterministic_and_performs_no_write(tmp_path: Path) -> None:
@@ -821,9 +886,7 @@ def test_graph_builds_from_exact_verification_lineage_and_stops(tmp_path: Path) 
     graph = build_graph(
         store,
         build_result_factory=_real_build_factory(tmp_path),
-        stop_after_build=True,
-        persist_build_runtime_handoff=True,
-        verification_only_continuation=continuation,
+        verification_operation=_build_verification_operation(continuation),
     )
 
     result = graph.invoke(_initial_state())
@@ -865,9 +928,7 @@ def test_graph_blocks_build_result_identity_drift_without_artifact_write(
     graph = build_graph(
         store,
         build_result_factory=wrong_factory,
-        stop_after_build=True,
-        persist_build_runtime_handoff=True,
-        verification_only_continuation=continuation,
+        verification_operation=_build_verification_operation(continuation),
     )
 
     result = graph.invoke(_initial_state())
@@ -899,9 +960,7 @@ def test_graph_blocks_source_drift_during_build_before_artifact_write(
     result = build_graph(
         store,
         build_result_factory=drifting_factory,
-        stop_after_build=True,
-        persist_build_runtime_handoff=True,
-        verification_only_continuation=continuation,
+        verification_operation=_build_verification_operation(continuation),
     ).invoke(_initial_state())
 
     assert result["build_summary"]["status"] == "blocked"
@@ -947,9 +1006,7 @@ def test_graph_blocks_build_that_did_not_consume_admitted_source(
     result = build_graph(
         store,
         build_result_factory=unbound_factory,
-        stop_after_build=True,
-        persist_build_runtime_handoff=True,
-        verification_only_continuation=continuation,
+        verification_operation=_build_verification_operation(continuation),
     ).invoke(_initial_state())
 
     assert result["build_summary"]["status"] == "blocked"
@@ -967,9 +1024,7 @@ def test_fresh_process_runtime_reuses_verification_build_without_mutation_chain(
     build_graph_instance = build_graph(
         store,
         build_result_factory=_real_build_factory(tmp_path),
-        stop_after_build=True,
-        persist_build_runtime_handoff=True,
-        verification_only_continuation=continuation,
+        verification_operation=_build_verification_operation(continuation),
     )
     build_state = build_graph_instance.invoke(_initial_state())
     checkpoint_ref = _state_ref(build_state, "workflow_checkpoint")
@@ -985,13 +1040,13 @@ def test_fresh_process_runtime_reuses_verification_build_without_mutation_chain(
         resume_report_ref=resume_ref,
     )
 
-    def forbidden_build(_: str, __: str | None) -> BuildResult:
-        raise AssertionError("Build must not repeat during Runtime continuation.")
-
     runtime_graph = build_graph(
         store,
-        build_result_factory=forbidden_build,
-        runtime_continuation_checkpoint_id=checkpoint["checkpoint_id"],
+        runtime_evidence_factory=_runtime_payload,
+        verification_operation=_runtime_workflow_operation(
+            checkpoint_ref=checkpoint_ref,
+            checkpoint=checkpoint,
+        ),
     )
     result = runtime_graph.invoke(resumed_state)
 
@@ -1015,9 +1070,7 @@ def test_inconclusive_verification_runtime_stops_without_repair_planner(
     build_state = build_graph(
         store,
         build_result_factory=_real_build_factory(tmp_path),
-        stop_after_build=True,
-        persist_build_runtime_handoff=True,
-        verification_only_continuation=continuation,
+        verification_operation=_build_verification_operation(continuation),
     ).invoke(_initial_state())
     checkpoint_ref = _state_ref(build_state, "workflow_checkpoint")
     checkpoint = store.read(checkpoint_ref)["data"]
@@ -1031,25 +1084,13 @@ def test_inconclusive_verification_runtime_stops_without_repair_planner(
         resume_report_ref=resume_ref,
     )
 
-    def runtime_factory(
-        feature_id: str,
-        _build: dict[str, object],
-        feature_spec: dict[str, object],
-    ) -> dict[str, object]:
-        return build_supplied_runtime_evidence_payload(
-            feature_id=feature_id,
-            raw_supplied_output="Observation did not close acceptance.",
-            verification_status="inconclusive",
-            acceptance_criteria=tuple(feature_spec["acceptance_criteria"]),
-            runtime_verification_plan=tuple(
-                feature_spec["runtime_verification_plan"]
-            ),
-        )
-
     result = build_graph(
         store,
-        runtime_evidence_factory=runtime_factory,
-        runtime_continuation_checkpoint_id=checkpoint["checkpoint_id"],
+        runtime_evidence_factory=_unverified_runtime_payload,
+        verification_operation=_runtime_workflow_operation(
+            checkpoint_ref=checkpoint_ref,
+            checkpoint=checkpoint,
+        ),
     ).invoke(resumed_state)
 
     assert result["current_stage"] == "blocked"
@@ -1064,9 +1105,7 @@ def test_eval_lineage_failure_never_claims_real_success(tmp_path: Path) -> None:
     build_state = build_graph(
         store,
         build_result_factory=_real_build_factory(tmp_path),
-        stop_after_build=True,
-        persist_build_runtime_handoff=True,
-        verification_only_continuation=continuation,
+        verification_operation=_build_verification_operation(continuation),
     ).invoke(_initial_state())
     checkpoint_ref = _state_ref(build_state, "workflow_checkpoint")
     checkpoint = store.read(checkpoint_ref)["data"]
@@ -1082,49 +1121,13 @@ def test_eval_lineage_failure_never_claims_real_success(tmp_path: Path) -> None:
     resumed_state["artifacts"]["dry_run_result"] = "not-used.json"
     resumed_state["artifact_hashes"]["dry_run_result"] = "0" * 64
 
-    def accepted_runtime_factory(
-        feature_id: str,
-        build: dict[str, object],
-        feature_spec: dict[str, object],
-    ) -> dict[str, object]:
-        criteria = tuple(str(item) for item in feature_spec["acceptance_criteria"])
-        return build_real_runtime_evidence_payload(
-            feature_id=feature_id,
-            input_execution_mode=str(build["input_execution_mode"]),
-            evidence_items=(
-                RuntimeEvidenceItem(
-                    item_type="runtime_log",
-                    source="runtime_probe",
-                    locator="runtime://verification-only-lineage-negative",
-                    supports_acceptance=criteria,
-                    confidence=1.0,
-                    raw_excerpt="Runtime behavior was observed.",
-                ),
-            ),
-            startup_loaded=True,
-            gameplay_behavior_verified=True,
-            verification_status="verified",
-            acceptance_criteria=criteria,
-            runtime_verification_plan=tuple(
-                str(item) for item in feature_spec["runtime_verification_plan"]
-            ),
-            plugin_marker_binding={
-                "marker_source": "runtime_probe",
-                "markers": [
-                    {
-                        "acceptance_criterion": criterion,
-                        "marker": f"MARKER_{index}",
-                        "observed": True,
-                    }
-                    for index, criterion in enumerate(criteria, start=1)
-                ],
-            },
-        )
-
     result = build_graph(
         store,
-        runtime_evidence_factory=accepted_runtime_factory,
-        runtime_continuation_checkpoint_id=checkpoint["checkpoint_id"],
+        runtime_evidence_factory=_verified_runtime_payload,
+        verification_operation=_runtime_workflow_operation(
+            checkpoint_ref=checkpoint_ref,
+            checkpoint=checkpoint,
+        ),
     ).invoke(resumed_state)
 
     evaluation = store.read(_state_ref(result, "eval_report"))["data"]
@@ -1147,19 +1150,22 @@ def test_verification_only_configuration_keeps_build_runtime_authority_separate(
     tmp_path: Path,
 ) -> None:
     store, continuation = _verification_inputs(tmp_path)
+    operation = _build_verification_operation(continuation)
 
-    with pytest.raises(ValueError, match="must stop after Build"):
+    with pytest.raises(ValueError, match="come from its declaration"):
         build_graph(
             store,
             build_result_factory=_real_build_factory(tmp_path),
-            verification_only_continuation=continuation,
+            verification_operation=operation,
+            stop_after_build=True,
         )
 
-    with pytest.raises(ValueError, match="interrupt_after collect_runtime_evidence"):
+    with pytest.raises(ValueError, match="come from its declaration"):
         build_graph(
             store,
-            runtime_evidence_write_results=True,
-            runtime_continuation_checkpoint_id="checkpoint_001",
+            build_result_factory=_real_build_factory(tmp_path),
+            verification_operation=operation,
+            interrupt_after=["collect_runtime_evidence"],
         )
 
 
@@ -1193,6 +1199,14 @@ def test_public_build_handoff_enters_manifest_free_runtime_preflight(
     assert first["runtime_execution_identity_hash"] == second[
         "runtime_execution_identity_hash"
     ]
+    structured = first["verification_operation_preflight_result"]
+    assert structured["preflight_status"] == "ready"
+    assert structured["identity_resolution_status"] == "identity_resolved"
+    assert structured["envelope"] is not None
+    assert (
+        structured["approval_identity_hash"]
+        == first["runtime_execution_identity_hash"]
+    )
     assert first["manifest_required"] is False
     assert first["writes_performed"] is False
     assert calls == {"probe": 0, "factory": 0}
@@ -1843,6 +1857,14 @@ def test_runtime_terminal_preflight_is_deterministic_and_zero_write(
     assert first["runtime_terminal_execution_identity_hash"].startswith(
         "sha256:"
     )
+    structured = first["verification_operation_preflight_result"]
+    assert structured["preflight_status"] == "ready"
+    assert structured["identity_resolution_status"] == "identity_resolved"
+    assert structured["envelope"] is not None
+    assert (
+        structured["approval_identity_hash"]
+        == first["runtime_terminal_execution_identity_hash"]
+    )
     assert _store_snapshot(store.root) == before
 
 
@@ -2031,6 +2053,18 @@ def test_runtime_terminal_eval_gate_commits_eval_then_exact_blocked_report(
     assert result["eval_report"]["store_result"]["outcome"] == "committed"
     assert result["blocked_report"]["store_result"]["outcome"] == "committed"
     assert result["workflow_summary"] is None
+    machine_result = result["verification_operation_result"]
+    outputs = {item["role"]: item["artifact_ref"] for item in machine_result["outputs"]}
+    receipts = {
+        item["role"]: item["artifact_write_result"]
+        for item in machine_result["store_receipts"]
+    }
+    assert set(outputs) == {"eval_report", "blocked_report"}
+    assert set(receipts) == set(outputs)
+    assert all(receipts[role]["outcome"] == "committed" for role in outputs)
+    assert all(
+        receipts[role]["artifact_ref"] == outputs[role] for role in outputs
+    )
     eval_ref = ArtifactRef(**result["eval_report"]["artifact_ref"])
     blocked_ref = ArtifactRef(**result["blocked_report"]["artifact_ref"])
     assert store.read(blocked_ref)["inputs"]["upstream_artifacts"] == [
@@ -2273,8 +2307,14 @@ def test_runtime_terminal_exact_revision_drift_is_zero_write(
         arguments["checkpoint_path"] = latest_checkpoint.path
     before = _store_snapshot(store.root)
 
-    with pytest.raises(LocalEntryError, match="exact immutable revision"):
-        preflight_local_runtime(**arguments)
+    result = preflight_local_runtime(**arguments)
+    structured = result["verification_operation_preflight_result"]
+    assert structured["preflight_status"] == "blocked"
+    assert structured["failure_stage"] == "admission"
+    assert any(
+        "exact immutable revision" in blocker["message"]
+        for blocker in structured["blockers"]
+    )
     assert _store_snapshot(store.root) == before
 
 
@@ -2455,14 +2495,29 @@ def test_runtime_terminal_direct_graph_wrong_state_is_zero_write(
     before = _store_snapshot(store.root)
     graph = build_graph(
         store,
-        runtime_terminal_continuation=VerificationOnlyRuntimeTerminalInput(
-            checkpoint_ref=handoff.build_handoff.checkpoint_ref,
-            resume_report_ref=handoff.resume_report_ref,
-            runtime_evidence_ref=handoff.runtime_evidence_ref,
-            resume_id="verification_only_runtime_resume_001",
-            approved_by="human",
+        verification_operation=project_verification_operation(
+            VerificationOperationSpec(
+                operation_kind=RUNTIME_TERMINALIZATION_KIND,
+                operation_contract_version=RUNTIME_TERMINALIZATION_CONTRACT_VERSION,
+                attempt_policy=InitialAttemptV1(),
+                protocol_binding=VerificationProtocolBinding(
+                    checkpoint_ref=handoff.build_handoff.checkpoint_ref,
+                    accepted_resume_report_ref=handoff.resume_report_ref,
+                    resume_id="verification_only_runtime_resume_001",
+                    approved_by="human",
+                ),
+                variant_payload=RuntimeTerminalizationOperationV1(
+                    runtime_evidence_ref=handoff.runtime_evidence_ref,
+                ),
+            ),
+            checkpoint_identity=VerificationCheckpointIdentityV1(
+                checkpoint_id=str(
+                    handoff.build_handoff.checkpoint["checkpoint_id"]
+                ),
+                run_id=str(handoff.build_handoff.checkpoint["run_id"]),
+                request_id=str(handoff.build_handoff.checkpoint["request_id"]),
+            ),
         ),
-        runtime_terminal_write_results=True,
         use_default_proposal_git_binding=False,
     )
 
@@ -2656,28 +2711,30 @@ def test_runtime_evidence_consolidation_public_path_commits_one_child(
     )
     first = preflight_local_runtime(**arguments)
     second = preflight_local_runtime(**arguments)
+    assert isinstance(first, VerificationOperationPreflightResultV1)
+    assert isinstance(second, VerificationOperationPreflightResultV1)
     assert first == second
-    assert first["status"] == "READY_FOR_RUNTIME_EVIDENCE_CONSOLIDATION"
+    assert first.preflight_status == "ready"
+    assert first.approval_identity_hash is not None
     before_counts = _artifact_counts(store)
 
     result = resume_local_runtime(
         **_runtime_consolidation_execute_arguments(
             arguments,
-            expected_hash=first[
-                "runtime_evidence_consolidation_identity_hash"
-            ],
+            expected_hash=first.approval_identity_hash,
         )
     )
 
-    assert result["status"] == "completed"
-    assert result["failure_stage"] is None
-    assert result["runtime_factory_invocation_count"] == 0
-    assert result["new_build_performed"] is False
-    assert result["new_runtime_performed"] is False
-    assert result["product_source_modified"] is False
-    runtime_projection = result["runtime_evidence"]
-    assert runtime_projection["store_result"]["outcome"] == "committed"
-    child_ref = ArtifactRef(**runtime_projection["artifact_ref"])
+    assert isinstance(result, VerificationOperationResultV1)
+    assert isinstance(result.variant_result, EvidenceConsolidationResultV1)
+    assert result.platform_status == "completed"
+    assert result.failure_stage is None
+    assert result.execution_disposition == "succeeded"
+    assert len(result.store_receipts) == 1
+    assert result.store_receipts[0].role == "runtime_evidence"
+    assert result.store_receipts[0].artifact_write_result.outcome == "committed"
+    child_ref = result.variant_result.runtime_evidence_ref
+    assert child_ref is not None
     envelope = store.read(child_ref)
     assert envelope["status"] == "blocked"
     assert [item["artifact_type"] for item in envelope["inputs"]["upstream_artifacts"]] == [
@@ -2721,9 +2778,9 @@ def test_runtime_evidence_consolidation_identity_excludes_run_root_and_binds_del
     alternate_root = tmp_path / "presentation-only-root"
     alternate_root.mkdir()
     second = preflight_local_runtime(**{**arguments, "run_root": alternate_root})
-    assert first["runtime_evidence_consolidation_identity_hash"] == second[
-        "runtime_evidence_consolidation_identity_hash"
-    ]
+    assert isinstance(first, VerificationOperationPreflightResultV1)
+    assert isinstance(second, VerificationOperationPreflightResultV1)
+    assert first.approval_identity_hash == second.approval_identity_hash
 
     changed_delta = copy.deepcopy(action["delta"])
     changed_delta["evidence_ids"] = [*changed_delta["evidence_ids"], "extra"]
@@ -2735,10 +2792,12 @@ def test_runtime_evidence_consolidation_identity_excludes_run_root_and_binds_del
             canonical_delta=changed_delta,
         ),
     )
-    with pytest.raises(ValueError, match="registered adapter"):
-        preflight_local_runtime(
-            **{**arguments, "verification_operation": changed_operation}
-        )
+    changed = preflight_local_runtime(
+        **{**arguments, "verification_operation": changed_operation}
+    )
+    assert isinstance(changed, VerificationOperationPreflightResultV1)
+    assert changed.preflight_status == "blocked"
+    assert changed.failure_stage == "admission"
 
 
 def test_typed_consolidation_identity_excludes_physical_file_locators(
@@ -2820,8 +2879,10 @@ def test_typed_consolidation_authority_drift_is_zero_write(
     else:
         arguments["runtime_evidence_only"] = True
     before = _store_snapshot(store.root)
-    with pytest.raises((LocalEntryError, ValueError)):
-        preflight_local_runtime(**arguments)
+    result = preflight_local_runtime(**arguments)
+    assert isinstance(result, VerificationOperationPreflightResultV1)
+    assert result.preflight_status == "blocked"
+    assert result.failure_stage == "authorization"
     assert _store_snapshot(store.root) == before
 
 
@@ -2911,6 +2972,8 @@ def test_runtime_evidence_consolidation_preserves_c5_store_outcome(
         action=action,
     )
     preflight = preflight_local_runtime(**arguments)
+    assert isinstance(preflight, VerificationOperationPreflightResultV1)
+    assert preflight.approval_identity_hash is not None
     monkeypatch.setattr(
         ArtifactStore,
         "write_with_result",
@@ -2923,15 +2986,18 @@ def test_runtime_evidence_consolidation_preserves_c5_store_outcome(
     result = resume_local_runtime(
         **_runtime_consolidation_execute_arguments(
             arguments,
-            expected_hash=preflight[
-                "runtime_evidence_consolidation_identity_hash"
-            ],
+            expected_hash=preflight.approval_identity_hash,
         )
     )
-    assert result["status"] == ("partial" if outcome == "partial" else "blocked")
-    assert result["failure_stage"] == "runtime_evidence_store"
-    assert result["runtime_evidence"]["artifact_ref"] is None
-    assert result["runtime_evidence"]["store_result"]["outcome"] == outcome
+    assert isinstance(result, VerificationOperationResultV1)
+    assert isinstance(result.variant_result, EvidenceConsolidationResultV1)
+    assert result.platform_status == (
+        "partial" if outcome == "partial" else "blocked"
+    )
+    assert result.failure_stage == "runtime_evidence_store"
+    assert result.variant_result.runtime_evidence_ref is None
+    assert len(result.store_receipts) == 1
+    assert result.store_receipts[0].artifact_write_result.outcome == outcome
 
 
 def test_runtime_evidence_consolidation_replay_and_file_drift_fail_closed(
@@ -2948,19 +3014,21 @@ def test_runtime_evidence_consolidation_replay_and_file_drift_fail_closed(
         action=action,
     )
     preflight = preflight_local_runtime(**arguments)
+    assert isinstance(preflight, VerificationOperationPreflightResultV1)
+    assert preflight.approval_identity_hash is not None
     first = resume_local_runtime(
         **_runtime_consolidation_execute_arguments(
             arguments,
-            expected_hash=preflight[
-                "runtime_evidence_consolidation_identity_hash"
-            ],
+            expected_hash=preflight.approval_identity_hash,
         )
     )
-    assert first["status"] == "completed"
+    assert isinstance(first, VerificationOperationResultV1)
+    assert first.platform_status == "completed"
     before = _store_snapshot(store.root)
     replay = preflight_local_runtime(**arguments)
-    assert replay["status"] == "BLOCKED"
-    assert replay["existing_child_refs"]
+    assert isinstance(replay, VerificationOperationPreflightResultV1)
+    assert replay.preflight_status == "blocked"
+    assert replay.blockers
     assert _store_snapshot(store.root) == before
 
     other_tmp = tmp_path / "drift"
@@ -2979,8 +3047,10 @@ def test_runtime_evidence_consolidation_replay_and_file_drift_fail_closed(
         "drift", encoding="utf-8"
     )
     before2 = _store_snapshot(store2.root)
-    with pytest.raises(ValueError, match="hash changed"):
-        preflight_local_runtime(**arguments2)
+    drifted = preflight_local_runtime(**arguments2)
+    assert isinstance(drifted, VerificationOperationPreflightResultV1)
+    assert drifted.preflight_status == "blocked"
+    assert drifted.failure_stage == "admission"
     assert _store_snapshot(store2.root) == before2
 
 
@@ -3071,9 +3141,7 @@ def test_runtime_evidence_consolidation_direct_graph_wrong_state_is_zero_write(
     graph = build_graph(
         store,
         verification_operation=handoff.operation,
-        runtime_evidence_write_results=True,
         use_default_proposal_git_binding=False,
-        interrupt_after=["collect_runtime_evidence"],
     )
     with pytest.raises(ValueError, match="RuntimeEvidence boundary"):
         graph.invoke(state)
@@ -3100,9 +3168,11 @@ def test_runtime_evidence_consolidation_expected_identity_drift_is_zero_write(
             expected_hash="sha256:" + "0" * 64,
         )
     )
-    assert result["status"] == "blocked"
-    assert result["failure_stage"] == "authorization"
-    assert result["runtime_evidence"] is None
+    assert isinstance(result, VerificationOperationResultV1)
+    assert result.platform_status == "blocked"
+    assert result.failure_stage == "authorization"
+    assert result.outputs == ()
+    assert result.store_receipts == ()
     assert _store_snapshot(store.root) == before
 
 
@@ -3123,17 +3193,17 @@ def test_runtime_evidence_consolidation_uses_durable_build_identity_after_cleanu
         action=action,
     )
     preflight = preflight_local_runtime(**arguments)
+    assert isinstance(preflight, VerificationOperationPreflightResultV1)
+    assert preflight.approval_identity_hash is not None
     result = resume_local_runtime(
         **_runtime_consolidation_execute_arguments(
             arguments,
-            expected_hash=preflight[
-                "runtime_evidence_consolidation_identity_hash"
-            ],
+            expected_hash=preflight.approval_identity_hash,
         )
     )
-    assert result["status"] == "completed"
-    assert result["new_build_performed"] is False
-    assert result["new_runtime_performed"] is False
+    assert isinstance(result, VerificationOperationResultV1)
+    assert result.platform_status == "completed"
+    assert result.execution_disposition == "succeeded"
 
 
 def test_runtime_evidence_consolidation_direct_store_cannot_bypass_lineage(
@@ -3627,18 +3697,21 @@ def test_runtime_evidence_consolidation_committed_receipt_is_terminal_truth(
         action=action,
     )
     preflight = preflight_local_runtime(**arguments)
+    assert isinstance(preflight, VerificationOperationPreflightResultV1)
+    assert preflight.approval_identity_hash is not None
     result = resume_local_runtime(
         **_runtime_consolidation_execute_arguments(
             arguments,
-            expected_hash=preflight[
-                "runtime_evidence_consolidation_identity_hash"
-            ],
+            expected_hash=preflight.approval_identity_hash,
         )
     )
-    assert result["status"] == "completed"
-    assert result["failure_stage"] is None
-    assert result["runtime_evidence"]["artifact_ref"] is not None
-    assert result["runtime_evidence"]["store_result"]["outcome"] == "committed"
+    assert isinstance(result, VerificationOperationResultV1)
+    assert isinstance(result.variant_result, EvidenceConsolidationResultV1)
+    assert result.platform_status == "completed"
+    assert result.failure_stage is None
+    assert result.variant_result.runtime_evidence_ref is not None
+    assert len(result.store_receipts) == 1
+    assert result.store_receipts[0].artifact_write_result.outcome == "committed"
 
 
 def _runtime_terminal_preflight_arguments(
@@ -4028,6 +4101,7 @@ def _initial_state():
         run_id="verification_only_run_001",
         request_id="verification_only_request_001",
         user_request=USER_REQUEST,
+        target_domain="gtfo",
         target_mod=TARGET_MOD,
     )
 
@@ -4401,11 +4475,6 @@ def _runtime_consolidation_preflight_arguments(
     return {
         "run_root": runtime_root,
         "artifact_store_root": store.root,
-        "feature_id": FEATURE_ID,
-        "checkpoint_path": checkpoint_ref["path"],
-        "checkpoint_hash": checkpoint_ref["artifact_hash"],
-        "resume_id": "verification_only_runtime_resume_001",
-        "approved_by": "human",
         "verification_operation": operation,
     }
 
@@ -4432,15 +4501,17 @@ def _runtime_consolidation_execute_arguments(
 def _runtime_consolidation_loader_arguments(
     arguments: Mapping[str, Any],
 ) -> dict[str, Any]:
+    operation = project_verification_operation(
+        arguments["verification_operation"]
+    )
+    protocol = operation.protocol_binding
     return {
         "run_root": arguments["run_root"],
         "artifact_store_root": arguments["artifact_store_root"],
-        "feature_id": arguments["feature_id"],
-        "checkpoint_path": arguments["checkpoint_path"],
-        "checkpoint_hash": arguments["checkpoint_hash"],
-        "operation": project_verification_operation(
-            arguments["verification_operation"]
-        ),
+        "feature_id": protocol.checkpoint_ref.feature_id,
+        "checkpoint_path": protocol.checkpoint_ref.path,
+        "checkpoint_hash": protocol.checkpoint_ref.artifact_hash,
+        "operation": operation,
     }
 
 

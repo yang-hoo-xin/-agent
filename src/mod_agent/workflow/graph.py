@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -79,8 +80,17 @@ from src.mod_agent.runtime.stagger_planner_admission import (
     materialize_stagger_planning_approval,
 )
 from src.mod_agent.verification_operations import (
-    EVIDENCE_CONSOLIDATION_KIND,
+    BuildInvocationProtocolBindingV1,
+    EVIDENCE_CONSOLIDATION_COMPLETION,
+    RUNTIME_EVIDENCE_ONLY_COMPLETION,
+    RUNTIME_WORKFLOW_COMPLETION,
+    EvidenceConsolidationOperationV1,
+    NewRuntimeResumeProtocolBindingV1,
+    RuntimeTerminalizationOperationV1,
+    VerificationBuildOperationV1,
     VerificationOperationEnvelope,
+    VerificationOperationDeclaration,
+    VerificationProtocolBinding,
     resolve_verification_operation,
     validate_verification_operation_envelope,
 )
@@ -201,6 +211,134 @@ _DEFERRED_CORRELATION_HYPOTHESIS_IDS = frozenset(
     }
 )
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _verification_build_continuation(
+    operation: VerificationOperationEnvelope,
+) -> VerificationOnlyContinuationInput:
+    declaration = resolve_verification_operation(
+        validate_verification_operation_envelope(operation)
+    )
+    variant = operation.variant_payload
+    if (
+        declaration.graph_handler != "verification_build"
+        or not isinstance(variant, VerificationBuildOperationV1)
+    ):
+        raise ValueError("Verification operation is not a Build operation.")
+    return VerificationOnlyContinuationInput(
+        feature_spec_ref=variant.feature_spec_ref,
+        evidence_pack_ref=variant.evidence_pack_ref,
+    )
+
+
+def _verification_runtime_checkpoint_id(
+    operation: VerificationOperationEnvelope,
+) -> str:
+    declaration = resolve_verification_operation(
+        validate_verification_operation_envelope(operation)
+    )
+    if declaration.graph_handler != "runtime_execution":
+        raise ValueError("Verification operation is not a Runtime execution.")
+    checkpoint = operation.approval_identity.get("checkpoint")
+    if not isinstance(checkpoint, Mapping):
+        raise ValueError("Runtime execution identity lacks checkpoint facts.")
+    checkpoint_id = checkpoint.get("checkpoint_id")
+    if not isinstance(checkpoint_id, str) or not checkpoint_id:
+        raise ValueError("Runtime execution checkpoint_id is invalid.")
+    return checkpoint_id
+
+
+def _verification_runtime_terminal_input(
+    operation: VerificationOperationEnvelope,
+) -> VerificationOnlyRuntimeTerminalInput:
+    declaration = resolve_verification_operation(
+        validate_verification_operation_envelope(operation)
+    )
+    variant = operation.variant_payload
+    protocol = operation.protocol_binding
+    if (
+        declaration.graph_handler != "runtime_terminalization"
+        or not isinstance(variant, RuntimeTerminalizationOperationV1)
+        or not isinstance(protocol, VerificationProtocolBinding)
+    ):
+        raise ValueError("Verification operation is not a Runtime terminalization.")
+    return VerificationOnlyRuntimeTerminalInput(
+        checkpoint_ref=protocol.checkpoint_ref,
+        resume_report_ref=protocol.accepted_resume_report_ref,
+        runtime_evidence_ref=variant.runtime_evidence_ref,
+        resume_id=protocol.resume_id,
+        approved_by=protocol.approved_by,
+    )
+
+
+def _verification_operation_writes(
+    declaration: VerificationOperationDeclaration | None,
+    artifact_type: str,
+) -> bool:
+    return declaration is not None and artifact_type in declaration.output_artifact_types
+
+
+@dataclass(frozen=True)
+class _VerificationGraphControls:
+    handler: str | None
+    runtime_evidence_store_results: bool
+    terminal_store_results: bool
+    stop_after_build: bool
+    persist_build_handoff: bool
+    stop_after_runtime_evidence: bool
+
+
+def _verification_graph_controls(
+    declaration: VerificationOperationDeclaration | None,
+) -> _VerificationGraphControls:
+    return _VerificationGraphControls(
+        handler=None if declaration is None else declaration.graph_handler,
+        runtime_evidence_store_results=_verification_operation_writes(
+            declaration,
+            "runtime_evidence",
+        ),
+        terminal_store_results=any(
+            _verification_operation_writes(declaration, artifact_type)
+            for artifact_type in (
+                "eval_report",
+                "blocked_report",
+                "workflow_summary",
+            )
+        ),
+        stop_after_build=(
+            declaration is not None
+            and declaration.graph_handler == "verification_build"
+        ),
+        persist_build_handoff=(
+            declaration is not None
+            and declaration.graph_handler == "verification_build"
+        ),
+        stop_after_runtime_evidence=(
+            declaration is not None
+            and declaration.completion_scope
+            in {
+                RUNTIME_EVIDENCE_ONLY_COMPLETION,
+                EVIDENCE_CONSOLIDATION_COMPLETION,
+            }
+        ),
+    )
+
+
+def _route_after_typed_runtime_evidence(state: ModAgentState) -> str:
+    """Stop platform failures before product repair routing consumes no Artifact."""
+
+    runtime_summary = state.get("runtime_summary") or {}
+    if (
+        runtime_summary.get("platform_failure_stage") is not None
+        or (
+            state.get("blockers")
+            and "runtime_evidence" not in (state.get("artifacts") or {})
+        )
+    ):
+        return "stop"
+    return route_after_runtime_evidence(state)
+
+
 def build_graph(
     artifact_store: ArtifactStore,
     *,
@@ -216,7 +354,6 @@ def build_graph(
     domain_review_policy: DomainReviewPolicy | None = None,
     build_result_factory: BuildResultFactory | None = None,
     runtime_evidence_factory: RuntimeEvidenceFactory | None = None,
-    runtime_evidence_write_results: bool = False,
     allow_game_launch: bool = False,
     proposal_git_binding_factory: ProposalGitBindingFactory | None = None,
     use_default_proposal_git_binding: bool = True,
@@ -231,7 +368,6 @@ def build_graph(
     stop_after_build: bool = False,
     persist_build_runtime_handoff: bool = False,
     build_checkpoint_exact_revision_upstream_types: frozenset[str] = frozenset(),
-    runtime_continuation_checkpoint_id: str | None = None,
     edit_authority_request_ref: ArtifactRef | None = None,
     repair_planning_authority_request_ref: ArtifactRef | None = None,
     evaluation_context_factory: EvaluationContextFactory | None = None,
@@ -244,10 +380,7 @@ def build_graph(
     feature_spec_revision_projection: Mapping[str, Any] | None = None,
     approved_feature_spec_revision_payload_hash: str | None = None,
     approved_feature_spec_revision_projection_hash: str | None = None,
-    verification_only_continuation: VerificationOnlyContinuationInput | None = None,
     verification_operation: VerificationOperationEnvelope | None = None,
-    runtime_terminal_continuation: VerificationOnlyRuntimeTerminalInput | None = None,
-    runtime_terminal_write_results: bool = False,
 ):
     """Build a compiled LangGraph graph with real planning/review routing.
 
@@ -264,102 +397,80 @@ def build_graph(
         raise ValueError(
             "Human approval interrupts require a LangGraph checkpointer."
         )
-    if (
-        runtime_continuation_checkpoint_id is not None
-        and (
+    validated_verification_operation = (
+        None
+        if verification_operation is None
+        else validate_verification_operation_envelope(verification_operation)
+    )
+    operation_declaration = (
+        None
+        if validated_verification_operation is None
+        else resolve_verification_operation(validated_verification_operation)
+    )
+    operation_controls = _verification_graph_controls(operation_declaration)
+    operation_handler = operation_controls.handler
+    if operation_declaration is not None:
+        if (
             edit_authority_request_ref is not None
             or repair_planning_authority_request_ref is not None
-        )
-    ):
-        raise ValueError(
-            "Runtime continuation and authority approval cannot share "
-            "one graph entry."
-        )
-    if runtime_evidence_write_results and (
-        (
-            runtime_continuation_checkpoint_id is None
-            and verification_operation is None
-        )
-        or "collect_runtime_evidence" not in set(interrupt_after or ())
-    ):
-        raise ValueError(
-            "RuntimeEvidence Store results require an exact Runtime continuation "
-            "and interrupt_after collect_runtime_evidence."
-        )
-    if runtime_terminal_write_results != (runtime_terminal_continuation is not None):
-        raise ValueError(
-            "Runtime terminal Store results require one exact post-Runtime "
-            "continuation binding."
-        )
-    if runtime_terminal_continuation is not None:
-        if (
-            verification_only_continuation is not None
-            or verification_operation is not None
-            or runtime_continuation_checkpoint_id is not None
-            or edit_authority_request_ref is not None
-            or repair_planning_authority_request_ref is not None
             or feature_spec_revision_projection is not None
-            or build_result_factory is not None
-            or runtime_evidence_factory is not None
-            or runtime_evidence_write_results
-            or allow_game_launch
-            or stop_after_evidence
+        ):
+            raise ValueError(
+                "Verification operation and another controlled Graph entry "
+                "cannot share one invocation."
+            )
+        if (
+            stop_after_evidence
             or stop_after_build
             or persist_build_runtime_handoff
-        ):
-            raise ValueError(
-                "Post-Runtime terminal continuation requires its own no-effect "
-                "Graph entry."
-            )
-    if verification_operation is not None:
-        declaration = resolve_verification_operation(
-            validate_verification_operation_envelope(verification_operation)
-        )
-        if declaration.operation_kind != EVIDENCE_CONSOLIDATION_KIND:
-            raise ValueError("Verification operation Graph route is unsupported.")
-        if (
-            verification_only_continuation is not None
-            or runtime_terminal_continuation is not None
-            or runtime_continuation_checkpoint_id is not None
-            or edit_authority_request_ref is not None
-            or repair_planning_authority_request_ref is not None
-            or feature_spec_revision_projection is not None
-            or build_result_factory is not None
-            or runtime_evidence_factory is not None
+            or build_checkpoint_exact_revision_upstream_types
             or allow_game_launch
-            or stop_after_evidence
-            or stop_after_build
-            or persist_build_runtime_handoff
-            or not runtime_evidence_write_results
+            or interrupt_before
+            or interrupt_after
         ):
             raise ValueError(
-                "RuntimeEvidence consolidation requires its own no-effect Graph entry."
+                "Verification operation routing, side-effect scope, stopping, "
+                "checkpointing, and interrupts come from its declaration, not "
+                "generic Graph controls."
             )
-    if verification_only_continuation is not None:
-        if (
-            runtime_continuation_checkpoint_id is not None
-            or edit_authority_request_ref is not None
-            or repair_planning_authority_request_ref is not None
-            or feature_spec_revision_projection is not None
-        ):
-            raise ValueError(
-                "Verification-only Build admission requires its own graph entry."
-            )
-        if not stop_after_build or not persist_build_runtime_handoff:
-            raise ValueError(
-                "Verification-only Build admission must stop after Build and "
-                "persist a separately authorized Runtime handoff."
-            )
-        if build_result_factory is None:
-            raise ValueError(
-                "Verification-only Build admission requires an explicit "
-                "build_result_factory."
-            )
-        if build_checkpoint_exact_revision_upstream_types:
-            raise ValueError(
-                "Verification-only Build admission uses fresh FeatureSpec and "
-                "EvidencePack lineage, not mutation exact-revision roles."
-            )
+        if operation_handler == "verification_build":
+            if build_result_factory is None:
+                raise ValueError(
+                    "Verification Build requires an explicit build_result_factory."
+                )
+            if runtime_evidence_factory is not None:
+                raise ValueError(
+                    "Verification Build cannot receive Runtime effect adapters."
+                )
+            if build_checkpoint_exact_revision_upstream_types:
+                raise ValueError(
+                    "Verification Build uses its declared fresh FeatureSpec and "
+                    "EvidencePack lineage, not mutation exact-revision roles."
+                )
+        elif operation_handler == "runtime_execution":
+            if build_result_factory is not None:
+                raise ValueError(
+                    "Runtime execution cannot receive a Build effect adapter."
+                )
+            if runtime_evidence_factory is None:
+                raise ValueError(
+                    "Runtime execution requires an explicit runtime_evidence_factory."
+                )
+        elif operation_handler in {
+            "runtime_terminalization",
+            "runtime_evidence_consolidation",
+        }:
+            if (
+                build_result_factory is not None
+                or runtime_evidence_factory is not None
+                or persist_build_runtime_handoff
+            ):
+                raise ValueError(
+                    "Store-only verification operations cannot receive effect "
+                    "adapters or Build handoff configuration."
+                )
+        else:
+            raise ValueError("Verification operation Graph handler is unsupported.")
     revision_configuration = (
         feature_spec_revision_projection,
         approved_feature_spec_revision_payload_hash,
@@ -446,11 +557,24 @@ def build_graph(
             "be supplied."
         )
 
+    verification_build_continuation = (
+        _verification_build_continuation(validated_verification_operation)
+        if operation_handler == "verification_build"
+        and validated_verification_operation is not None
+        else None
+    )
+    effective_interrupt_after = list(interrupt_after or ())
+    if (
+        operation_controls.stop_after_runtime_evidence
+        and "collect_runtime_evidence" not in effective_interrupt_after
+    ):
+        effective_interrupt_after.append("collect_runtime_evidence")
+
     stub_runner = StubNodeRunner(artifact_store)
     effective_domain_registry = domain_adapter_registry or _default_domain_adapter_registry()
     effective_runtime_evidence_factory = (
         None
-        if verification_operation is not None
+        if operation_handler == "runtime_evidence_consolidation"
         else (
             runtime_evidence_factory
             or _runtime_evidence_factory_from_settings(
@@ -464,7 +588,7 @@ def build_graph(
         effective_proposal_git_binding_factory = _default_proposal_git_binding_factory
     graph = StateGraph(ModAgentState)
 
-    if verification_only_continuation is not None:
+    if verification_build_continuation is not None:
         graph.add_node(
             "verification_only_admission",
             _make_real_graph_node(
@@ -472,7 +596,7 @@ def build_graph(
                 lambda state: _run_verification_only_admission(
                     state,
                     artifact_store,
-                    verification_only_continuation,
+                    validated_verification_operation,
                 ),
             ),
         )
@@ -624,8 +748,11 @@ def build_graph(
                 state,
                 artifact_store,
                 build_result_factory,
-                verification_only_continuation=verification_only_continuation,
-                persist_build_runtime_handoff=persist_build_runtime_handoff,
+                verification_operation=validated_verification_operation,
+                persist_build_runtime_handoff=(
+                    persist_build_runtime_handoff
+                    or operation_controls.persist_build_handoff
+                ),
                 exact_revision_upstream_types=(
                     build_checkpoint_exact_revision_upstream_types
                 ),
@@ -640,8 +767,8 @@ def build_graph(
                 state,
                 artifact_store,
                 effective_runtime_evidence_factory,
-                use_store_result=runtime_evidence_write_results,
-                verification_operation=verification_operation,
+                use_store_result=operation_controls.runtime_evidence_store_results,
+                verification_operation=validated_verification_operation,
             ),
         ),
     )
@@ -656,11 +783,11 @@ def build_graph(
                     artifact_store,
                     evaluation_context_factory,
                     require_external_evaluation,
-                    use_store_result=runtime_terminal_write_results,
+                    use_store_result=operation_controls.terminal_store_results,
                 ),
                 failure_stage="eval_report_execution",
                 blocker_code="EVAL_REPORT_EXECUTION_FAILED",
-                use_boundary=runtime_terminal_write_results,
+                use_boundary=operation_controls.terminal_store_results,
             ),
         ),
     )
@@ -690,11 +817,11 @@ def build_graph(
                 lambda selected: _run_workflow_summary(
                     selected,
                     artifact_store,
-                    use_store_result=runtime_terminal_write_results,
+                    use_store_result=operation_controls.terminal_store_results,
                 ),
                 failure_stage="workflow_summary_execution",
                 blocker_code="WORKFLOW_SUMMARY_EXECUTION_FAILED",
-                use_boundary=runtime_terminal_write_results,
+                use_boundary=operation_controls.terminal_store_results,
             ),
         ),
     )
@@ -703,54 +830,63 @@ def build_graph(
         _make_stub_graph_node(
             "blocked",
             stub_runner,
-            use_store_result=runtime_terminal_write_results,
+            use_store_result=operation_controls.terminal_store_results,
         ),
     )
 
-    if runtime_terminal_continuation is not None:
+    if (
+        operation_handler == "runtime_terminalization"
+        and validated_verification_operation is not None
+    ):
         graph.add_conditional_edges(
             START,
             lambda state: _route_runtime_terminal_continuation_entry(
                 state,
                 artifact_store,
-                runtime_terminal_continuation,
+                _verification_runtime_terminal_input(
+                    validated_verification_operation
+                ),
             ),
             {
                 "blocked": "blocked",
                 "continue": "evaluate",
             },
         )
-    elif verification_operation is not None:
+    elif (
+        operation_handler == "runtime_evidence_consolidation"
+        and validated_verification_operation is not None
+    ):
         graph.add_conditional_edges(
             START,
             lambda state: _route_runtime_evidence_consolidation_entry(
                 state,
                 artifact_store,
-                verification_operation,
+                validated_verification_operation,
             ),
             {"continue": "collect_runtime_evidence"},
         )
-    elif verification_only_continuation is not None:
+    elif operation_handler == "verification_build":
         graph.add_edge(START, "verification_only_admission")
-    elif repair_planning_authority_request_ref is not None:
-        graph.add_edge(START, "stagger_repair_planning_gate")
-    elif edit_authority_request_ref is not None:
-        graph.add_edge(START, "stagger_edit_authority_gate")
-    elif runtime_continuation_checkpoint_id is None:
-        graph.add_edge(START, "plan_request")
-    else:
+    elif (
+        operation_handler == "runtime_execution"
+        and validated_verification_operation is not None
+    ):
         graph.add_conditional_edges(
             START,
             lambda state: _route_runtime_continuation_entry(
                 state,
                 artifact_store,
-                checkpoint_id=runtime_continuation_checkpoint_id,
+                validated_verification_operation,
             ),
-            {
-                "continue": "collect_runtime_evidence",
-            },
+            {"continue": "collect_runtime_evidence"},
         )
-    if verification_only_continuation is not None:
+    elif repair_planning_authority_request_ref is not None:
+        graph.add_edge(START, "stagger_repair_planning_gate")
+    elif edit_authority_request_ref is not None:
+        graph.add_edge(START, "stagger_edit_authority_gate")
+    else:
+        graph.add_edge(START, "plan_request")
+    if operation_handler == "verification_build":
         graph.add_conditional_edges(
             "verification_only_admission",
             lambda state: "blocked" if state["blockers"] else "continue",
@@ -826,7 +962,7 @@ def build_graph(
             route_after_isolated_apply,
             dict(registry["isolated_apply"]),
         )
-    if stop_after_build:
+    if stop_after_build or operation_controls.stop_after_build:
         graph.add_conditional_edges(
             "build",
             route_after_build,
@@ -838,11 +974,22 @@ def build_graph(
             route_after_build,
             dict(registry["build"]),
         )
-    graph.add_conditional_edges(
-        "collect_runtime_evidence",
-        route_after_runtime_evidence,
-        dict(registry["collect_runtime_evidence"]),
-    )
+    if operation_controls.stop_after_runtime_evidence:
+        graph.add_edge("collect_runtime_evidence", END)
+    elif operation_handler == "runtime_execution":
+        runtime_routes = dict(registry["collect_runtime_evidence"])
+        runtime_routes["stop"] = END
+        graph.add_conditional_edges(
+            "collect_runtime_evidence",
+            _route_after_typed_runtime_evidence,
+            runtime_routes,
+        )
+    else:
+        graph.add_conditional_edges(
+            "collect_runtime_evidence",
+            route_after_runtime_evidence,
+            dict(registry["collect_runtime_evidence"]),
+        )
     graph.add_conditional_edges(
         "resolve_runtime_binding",
         route_after_binding_resolution,
@@ -857,12 +1004,12 @@ def build_graph(
         "evaluate",
         (
             _route_after_terminal_evaluate
-            if runtime_terminal_write_results
+            if operation_controls.terminal_store_results
             else route_after_evaluate
         ),
         (
             {"stop": END, "blocked": "blocked", "continue": "done"}
-            if runtime_terminal_write_results
+            if operation_controls.terminal_store_results
             else dict(registry["evaluate"])
         ),
     )
@@ -871,7 +1018,7 @@ def build_graph(
     return graph.compile(
         checkpointer=checkpointer,
         interrupt_before=interrupt_before,
-        interrupt_after=interrupt_after,
+        interrupt_after=effective_interrupt_after,
     )
 
 
@@ -2309,22 +2456,27 @@ def _run_build(
     artifact_store: ArtifactStore,
     build_result_factory: BuildResultFactory | None,
     *,
-    verification_only_continuation: VerificationOnlyContinuationInput | None = None,
+    verification_operation: VerificationOperationEnvelope | None = None,
     persist_build_runtime_handoff: bool = False,
     exact_revision_upstream_types: frozenset[str] = frozenset(),
 ) -> ModAgentState:
     feature_id = state["feature_id"] or state["request_id"]
-    if verification_only_continuation is not None:
+    build_continuation = (
+        None
+        if verification_operation is None
+        else _verification_build_continuation(verification_operation)
+    )
+    if build_continuation is not None:
         preflight = preflight_verification_only_continuation(
             artifact_store,
-            verification_only_continuation,
+            build_continuation,
             run_id=state["run_id"],
             request_id=state["request_id"],
             user_request=state["user_request"],
             target_mod=state["target_mod"],
         )
         if (
-            state.get("feature_id") != verification_only_continuation.feature_spec_ref.feature_id
+            state.get("feature_id") != build_continuation.feature_spec_ref.feature_id
             or preflight["status"] != "ready_for_build_authorization"
         ):
             next_state = _copy_state(state)
@@ -2338,7 +2490,7 @@ def _run_build(
             preflight_blockers = list(preflight["blockers"])
             if (
                 state.get("feature_id")
-                != verification_only_continuation.feature_spec_ref.feature_id
+                != build_continuation.feature_spec_ref.feature_id
             ):
                 preflight_blockers.append(
                     {
@@ -2357,8 +2509,8 @@ def _run_build(
             return next_state
         input_execution_mode = VERIFICATION_ONLY_INPUT_EXECUTION_MODE
         build_upstream_refs = [
-            verification_only_continuation.feature_spec_ref,
-            verification_only_continuation.evidence_pack_ref,
+            build_continuation.feature_spec_ref,
+            build_continuation.evidence_pack_ref,
         ]
     else:
         dry_run = _read_artifact_data(state, artifact_store, "dry_run_result")
@@ -2393,13 +2545,13 @@ def _run_build(
         post_build_preflight = (
             preflight_verification_only_continuation(
                 artifact_store,
-                verification_only_continuation,
+                build_continuation,
                 run_id=state["run_id"],
                 request_id=state["request_id"],
                 user_request=state["user_request"],
                 target_mod=state["target_mod"],
             )
-            if verification_only_continuation is not None
+            if build_continuation is not None
             else None
         )
         build_validation_blockers = (
@@ -2408,7 +2560,7 @@ def _run_build(
             else []
         )
     except Exception as exc:
-        if verification_only_continuation is None:
+        if build_continuation is None:
             raise
         next_state = _copy_state(state)
         next_state["current_stage"] = "build"
@@ -2426,7 +2578,7 @@ def _run_build(
             }
         )
         return next_state
-    if verification_only_continuation is not None:
+    if build_continuation is not None:
         if post_build_preflight is None:
             raise AssertionError("Verification post-Build preflight is missing.")
         if (
@@ -2477,7 +2629,7 @@ def _run_build(
         payload["verification_only_lineage"] = verification_only_lineage_payload(
             post_build_preflight
         )
-    if verification_only_continuation is not None and (
+    if build_continuation is not None and (
         payload.get("feature_id") != feature_id
         or payload.get("input_execution_mode")
         != VERIFICATION_ONLY_INPUT_EXECUTION_MODE
@@ -2501,7 +2653,7 @@ def _run_build(
         )
         return next_state
     build_write_result = None
-    if verification_only_continuation is not None:
+    if build_continuation is not None:
         build_write_result = artifact_store.write_with_result(
             feature_id=feature_id,
             artifact_type="build_result",
@@ -2530,7 +2682,7 @@ def _run_build(
         "claims_real_build_success": payload["claims_real_build_success"],
         "input_execution_mode": payload.get("input_execution_mode"),
     }
-    if verification_only_continuation is not None:
+    if build_continuation is not None:
         next_state["build_summary"]["domain_status"] = payload["status"]
     if build_write_result is not None and (
         build_write_result.outcome != "committed" or artifact_ref is None
@@ -2564,7 +2716,7 @@ def _run_build(
     ):
         next_state["next_stage"] = "runtime_evidence"
         checkpoint_store = WorkflowCheckpointStore(artifact_store)
-        if verification_only_continuation is not None:
+        if build_continuation is not None:
             try:
                 checkpoint_write_result = checkpoint_store.create_checkpoint_with_result(
                     next_state,
@@ -2627,7 +2779,7 @@ def _run_build(
                 exact_revision_upstream_types=exact_revision_upstream_types,
             )
         _record_artifact(next_state, "workflow_checkpoint", checkpoint_ref)
-    if verification_only_continuation is not None:
+    if build_continuation is not None:
         next_state["build_summary"].update(
             {
                 "build_result_store_result": build_write_result.to_dict(),
@@ -2648,10 +2800,21 @@ def _run_build(
 def _run_verification_only_admission(
     state: ModAgentState,
     artifact_store: ArtifactStore,
-    continuation: VerificationOnlyContinuationInput,
+    operation: VerificationOperationEnvelope,
 ) -> ModAgentState:
     """Hydrate one exact no-mutation lineage after a no-write preflight."""
 
+    envelope = validate_verification_operation_envelope(operation)
+    declaration = resolve_verification_operation(envelope)
+    variant = envelope.variant_payload
+    protocol = envelope.protocol_binding
+    if (
+        declaration.graph_handler != "verification_build"
+        or not isinstance(variant, VerificationBuildOperationV1)
+        or not isinstance(protocol, BuildInvocationProtocolBindingV1)
+    ):
+        raise ValueError("Verification Build operation shape changed.")
+    continuation = _verification_build_continuation(envelope)
     preflight = preflight_verification_only_continuation(
         artifact_store,
         continuation,
@@ -2667,6 +2830,35 @@ def _run_verification_only_admission(
         "can_generate_patch": False,
         "verification_only_preflight": preflight,
     }
+    operation_mismatches = []
+    if state.get("run_id") != protocol.run_id:
+        operation_mismatches.append("run_id")
+    if state.get("request_id") != protocol.request_id:
+        operation_mismatches.append("request_id")
+    if state.get("user_request") != variant.user_request:
+        operation_mismatches.append("user_request")
+    if state.get("target_domain") != variant.target_domain:
+        operation_mismatches.append("target_domain")
+    if state.get("target_mod") != variant.target_mod:
+        operation_mismatches.append("target_mod")
+    if operation_mismatches:
+        next_state["build_summary"] = {
+            "status": "blocked",
+            "input_execution_mode": VERIFICATION_ONLY_INPUT_EXECUTION_MODE,
+            "preflight_hash": preflight["projection_hash"],
+            "platform_failure_stage": "admission",
+        }
+        next_state["blockers"].append(
+            {
+                "stage": "evidence_retrieval",
+                "code": "VERIFICATION_OPERATION_STATE_MISMATCH",
+                "message": (
+                    "Verification Build Graph state changed approved fields: "
+                    + ", ".join(operation_mismatches)
+                ),
+            }
+        )
+        return next_state
     if preflight["status"] != "ready_for_build_authorization":
         next_state["build_summary"] = {
             "status": "blocked",
@@ -2693,11 +2885,21 @@ def _run_verification_only_admission(
 def _route_runtime_continuation_entry(
     state: ModAgentState,
     artifact_store: ArtifactStore,
-    *,
-    checkpoint_id: str,
+    operation: VerificationOperationEnvelope,
 ) -> str:
     """Admit only a validated Build checkpoint into the existing Runtime node."""
 
+    envelope = validate_verification_operation_envelope(operation)
+    declaration = resolve_verification_operation(envelope)
+    if declaration.graph_handler != "runtime_execution":
+        raise ValueError("Verification operation is not a Runtime execution.")
+    checkpoint_id = _verification_runtime_checkpoint_id(envelope)
+    protocol = envelope.protocol_binding
+    if not isinstance(
+        protocol,
+        (NewRuntimeResumeProtocolBindingV1, VerificationProtocolBinding),
+    ):
+        raise ValueError("Runtime execution protocol binding changed.")
     if state.get("current_stage") != "build":
         raise ValueError("Runtime continuation state must restore the Build boundary.")
     if state.get("next_stage") != "runtime_evidence":
@@ -2720,6 +2922,17 @@ def _route_runtime_continuation_entry(
             )
     checkpoint_ref = _artifact_ref_from_state(state, "workflow_checkpoint")
     report_ref = _artifact_ref_from_state(state, "resume_report")
+    if checkpoint_ref != protocol.checkpoint_ref:
+        raise ValueError(
+            "Runtime continuation state changed the approved checkpoint ref."
+        )
+    if (
+        isinstance(protocol, VerificationProtocolBinding)
+        and report_ref != protocol.accepted_resume_report_ref
+    ):
+        raise ValueError(
+            "Runtime continuation state changed the accepted ResumeReport ref."
+        )
     checkpoint = artifact_store.read_for_stage(
         checkpoint_ref,
         consumer_stage="resume",
@@ -2734,6 +2947,8 @@ def _route_runtime_continuation_entry(
         or report.get("checkpoint_id") != checkpoint_id
         or report.get("run_id") != state.get("run_id")
         or report.get("resume_stage") != "build"
+        or report.get("resume_id") != protocol.resume_id
+        or report.get("approved_by") != protocol.approved_by
         or report.get("decision") != "approve"
         or report.get("allowed") is not True
     ):
@@ -3058,6 +3273,23 @@ def _run_runtime_evidence(
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
     feature_id = state["feature_id"] or state["request_id"]
     build_artifact_ref = _artifact_ref_from_state(state, "build_result")
+    operation_declaration = (
+        None
+        if verification_operation is None
+        else resolve_verification_operation(
+            validate_verification_operation_envelope(verification_operation)
+        )
+    )
+    is_consolidation = (
+        operation_declaration is not None
+        and operation_declaration.graph_handler
+        == "runtime_evidence_consolidation"
+    )
+    requires_verification_only_input = (
+        operation_declaration is not None
+        and operation_declaration.completion_scope
+        != RUNTIME_WORKFLOW_COMPLETION
+    )
     try:
         payload = (
             project_consolidated_runtime_evidence(
@@ -3066,7 +3298,7 @@ def _run_runtime_evidence(
                 ),
                 artifact_store,
             )
-            if verification_operation is not None
+            if is_consolidation
             else (
                 runtime_evidence_factory(feature_id, build, feature_spec)
                 if runtime_evidence_factory is not None
@@ -3091,7 +3323,7 @@ def _run_runtime_evidence(
         else:
             failure_stage = (
                 "graph_consolidation_admission"
-                if verification_operation is not None
+                if is_consolidation
                 else "runtime_execution"
             )
             failure_class = type(exc).__name__
@@ -3134,6 +3366,9 @@ def _run_runtime_evidence(
                 payload,
                 build=build,
                 build_artifact_ref=build_artifact_ref,
+                requires_verification_only_input=(
+                    requires_verification_only_input
+                ),
             )
         acceptance_verified = bool(payload["acceptance_verified"])
     except Exception as exc:
@@ -3141,7 +3376,7 @@ def _run_runtime_evidence(
             raise
         validation_stage = (
             "graph_consolidation_admission"
-            if verification_operation is not None
+            if is_consolidation
             else "post_runtime_validation"
         )
         next_state = _copy_state(state)
@@ -3159,7 +3394,7 @@ def _run_runtime_evidence(
                 "stage": "runtime_evidence",
                 "code": (
                     "RUNTIME_EVIDENCE_CONSOLIDATION_VALIDATION_FAILED"
-                    if verification_operation is not None
+                    if is_consolidation
                     else "RUNTIME_EVIDENCE_POST_VALIDATION_FAILED"
                 ),
                 "message": f"{type(exc).__name__}: {exc}",
@@ -3172,8 +3407,12 @@ def _run_runtime_evidence(
     ]
     exact_revision_upstream_types: set[str] | None = None
     semantic_intent = None
-    if verification_operation is not None:
+    if is_consolidation:
+        if verification_operation is None:
+            raise AssertionError("Consolidation operation is missing.")
         operation = verification_operation.variant_payload
+        if not isinstance(operation, EvidenceConsolidationOperationV1):
+            raise AssertionError("Consolidation variant type changed.")
         upstream_refs.extend(
             [
                 operation.prior_runtime_evidence_ref,
@@ -3208,7 +3447,7 @@ def _run_runtime_evidence(
         "payload": payload,
         "status": (
             "blocked"
-            if verification_operation is not None
+            if is_consolidation
             else ("success" if acceptance_verified else "blocked")
         ),
         "upstream_refs": upstream_refs,
@@ -3222,7 +3461,7 @@ def _run_runtime_evidence(
     else:
         artifact_ref = artifact_store.write(**write_arguments)
     next_state = _copy_state(state)
-    if verification_operation is not None:
+    if is_consolidation:
         next_state["artifacts"].pop("runtime_evidence", None)
         next_state["artifact_hashes"].pop("runtime_evidence", None)
     next_state["current_stage"] = "runtime_evidence"
@@ -3291,6 +3530,7 @@ def _validate_runtime_evidence_result_identity(
     *,
     build: Mapping[str, Any],
     build_artifact_ref: ArtifactRef,
+    requires_verification_only_input: bool,
 ) -> None:
     """Validate exact post-effect RuntimeEvidence identity before Store write."""
 
@@ -3303,7 +3543,10 @@ def _validate_runtime_evidence_result_identity(
     }
     expected_input_mode = build.get("input_execution_mode")
     mismatches = []
-    if expected_input_mode != VERIFICATION_ONLY_INPUT_EXECUTION_MODE:
+    if (
+        requires_verification_only_input
+        and expected_input_mode != VERIFICATION_ONLY_INPUT_EXECUTION_MODE
+    ):
         mismatches.append("verification_only_input_execution_mode")
     if payload.get("feature_id") != feature_id:
         mismatches.append("feature_id")
@@ -3314,7 +3557,8 @@ def _validate_runtime_evidence_result_identity(
     if payload.get("build_artifact_hash") != build_artifact_ref.artifact_hash:
         mismatches.append("build_artifact_hash")
     if (
-        expected_input_mode is not None
+        requires_verification_only_input
+        and expected_input_mode is not None
         and payload.get("input_execution_mode") != expected_input_mode
     ):
         mismatches.append("input_execution_mode")

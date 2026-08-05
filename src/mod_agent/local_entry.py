@@ -13,7 +13,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +25,7 @@ from langgraph.types import Command
 from src.core.settings import load_settings
 from src.libs.llm import LLMFactory, OllamaLLM, validate_loopback_http_base_url
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.artifacts.store import ArtifactWriteResult
 from src.mod_agent.build import (
     BuildAdapter,
     BuildCommandResult,
@@ -95,10 +96,41 @@ from src.mod_agent.runtime_evidence_consolidation import (
     runtime_evidence_consolidation_child_refs,
 )
 from src.mod_agent.verification_operations import (
+    EVIDENCE_CONSOLIDATION_CONTRACT_VERSION,
     EVIDENCE_CONSOLIDATION_KIND,
+    PREFLIGHT_RESULT_CONTRACT_VERSION,
+    RUNTIME_EVIDENCE_ONLY_COMPLETION,
+    RUNTIME_EXECUTION_CONTRACT_VERSION,
+    RUNTIME_EXECUTION_KIND,
+    RUNTIME_TERMINALIZATION_CONTRACT_VERSION,
+    RUNTIME_TERMINALIZATION_KIND,
+    RUNTIME_WORKFLOW_COMPLETION,
+    VERIFICATION_BUILD_CONTRACT_VERSION,
+    VERIFICATION_BUILD_KIND,
+    AcceptedResumeRecoveryAttemptV1,
+    BuildInvocationProtocolBindingV1,
+    BuildVerificationResultV1,
+    EvidenceConsolidationResultV1,
+    InitialAttemptV1,
+    NewRuntimeResumeProtocolBindingV1,
+    ObservationRetryAttemptV1,
+    RuntimeExecutionOperationV1,
+    RuntimeExecutionResultV1,
+    RuntimeTerminalizationOperationV1,
+    RuntimeTerminalizationResultV1,
+    VerificationBuildOperationV1,
+    VerificationCheckpointIdentityV1,
+    VerificationOperationBlockerV1,
     VerificationOperationEnvelope,
+    VerificationOperationPreflightResultV1,
+    VerificationOperationResultV1,
     VerificationOperationSpec,
+    VerificationOperationStoreReceiptV1,
+    VerificationProtocolBinding,
+    artifact_ref_to_dict,
+    project_rejected_verification_operation_result,
     project_verification_operation,
+    project_verification_operation_result,
     resolve_verification_operation,
     validate_verification_operation_envelope,
 )
@@ -106,6 +138,179 @@ from src.mod_agent.verification_operations import (
 
 class LocalEntryError(RuntimeError):
     """Raised when the local real-slice entry cannot start truthfully."""
+
+
+class VerificationOperationExecutionError(LocalEntryError):
+    """Legacy compatibility error carrying the authoritative machine result."""
+
+    def __init__(
+        self,
+        message: str,
+        verification_operation_result: VerificationOperationResultV1,
+    ) -> None:
+        super().__init__(message)
+        self.verification_operation_result = verification_operation_result
+
+
+class VerificationOperationPresentationError(LocalEntryError):
+    """Presentation failure that does not replace the machine result."""
+
+    def __init__(
+        self,
+        message: str,
+        verification_operation_result: VerificationOperationResultV1,
+        *,
+        audit_error: Mapping[str, Any],
+    ) -> None:
+        super().__init__(message)
+        self.verification_operation_result = verification_operation_result
+        self.audit_error = dict(audit_error)
+
+
+def _verification_blockers(
+    blockers: list[dict[str, Any]] | tuple[Mapping[str, Any], ...],
+    *,
+    default_stage: str,
+) -> tuple[VerificationOperationBlockerV1, ...]:
+    projected: list[VerificationOperationBlockerV1] = []
+    for item in blockers:
+        stage = str(item.get("stage") or default_stage)
+        code = str(item.get("code") or "VERIFICATION_OPERATION_BLOCKED")
+        message = str(item.get("message") or "Verification operation was blocked.")
+        projected.append(
+            VerificationOperationBlockerV1(
+                stage=stage,
+                code=code,
+                message=message,
+            )
+        )
+    if not projected:
+        projected.append(
+            VerificationOperationBlockerV1(
+                stage=default_stage,
+                code="VERIFICATION_OPERATION_BLOCKED",
+                message="Verification operation was blocked.",
+            )
+        )
+    return tuple(projected)
+
+
+def _artifact_ref_from_projection(value: object) -> ArtifactRef | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping) or set(value) != {
+        "feature_id",
+        "artifact_type",
+        "path",
+        "artifact_hash",
+    }:
+        raise LocalEntryError("Verification ArtifactRef projection fields changed.")
+    values = {
+        field: value[field]
+        for field in ("feature_id", "artifact_type", "path", "artifact_hash")
+    }
+    if any(type(item) is not str or not item for item in values.values()):
+        raise LocalEntryError("Verification ArtifactRef projection is invalid.")
+    return ArtifactRef(**values)
+
+
+def _verification_store_receipts(
+    projections: tuple[tuple[str, object], ...],
+) -> tuple[VerificationOperationStoreReceiptV1, ...]:
+    receipts: list[VerificationOperationStoreReceiptV1] = []
+    for role, projection in projections:
+        if projection is None:
+            continue
+        if isinstance(projection, ArtifactWriteResult):
+            result = projection
+        elif isinstance(projection, Mapping):
+            result = ArtifactWriteResult.from_dict(projection)
+        else:
+            raise LocalEntryError(
+                "Verification Store receipt is not an ArtifactWriteResult projection."
+            )
+        receipts.append(
+            VerificationOperationStoreReceiptV1(
+                role=role,
+                artifact_write_result=result,
+            )
+        )
+    return tuple(receipts)
+
+
+def _verification_preflight_result(
+    *,
+    envelope: VerificationOperationEnvelope | None,
+    operation_kind: str | None,
+    operation_contract_version: str | None,
+    status: str,
+    failure_stage: str | None = None,
+    identity_resolution_status: str = "identity_resolved",
+    blockers: tuple[VerificationOperationBlockerV1, ...] = (),
+    audit_snapshot: Mapping[str, Any] | None = None,
+) -> VerificationOperationPreflightResultV1:
+    return VerificationOperationPreflightResultV1(
+        result_contract_version=PREFLIGHT_RESULT_CONTRACT_VERSION,
+        preflight_status=status,
+        identity_resolution_status=identity_resolution_status,
+        operation_kind=operation_kind,
+        operation_contract_version=operation_contract_version,
+        envelope=envelope,
+        approval_identity_hash=(
+            None if envelope is None else envelope.approval_identity_hash
+        ),
+        failure_stage=failure_stage,
+        blockers=blockers,
+        audit_snapshot=dict(audit_snapshot or {}),
+    )
+
+
+def _rejected_verification_result(
+    *,
+    operation_kind: str | None,
+    operation_contract_version: str | None,
+    approval_identity_hash: str | None,
+    identity_resolution_status: str,
+    failure_stage: str,
+    blockers: tuple[VerificationOperationBlockerV1, ...],
+    audit_snapshot: Mapping[str, Any] | None = None,
+) -> VerificationOperationResultV1:
+    return project_rejected_verification_operation_result(
+        operation_kind=operation_kind,
+        operation_contract_version=operation_contract_version,
+        approval_identity_hash=approval_identity_hash,
+        identity_resolution_status=identity_resolution_status,
+        failure_stage=failure_stage,
+        blockers=blockers,
+        audit_snapshot=audit_snapshot,
+    )
+
+
+def _rejected_execution_result_from_preflight(
+    preflight: VerificationOperationPreflightResultV1,
+) -> VerificationOperationResultV1:
+    """Preserve an unresolved preflight's exact identity resolution facts."""
+
+    if (
+        preflight.preflight_status != "blocked"
+        or preflight.envelope is not None
+        or preflight.approval_identity_hash is not None
+        or preflight.identity_resolution_status
+        not in {"unresolved", "declaration_resolved"}
+        or preflight.failure_stage not in {"authorization", "admission"}
+    ):
+        raise LocalEntryError(
+            "Runtime preflight rejection cannot be projected without changing facts."
+        )
+    return _rejected_verification_result(
+        operation_kind=preflight.operation_kind,
+        operation_contract_version=preflight.operation_contract_version,
+        approval_identity_hash=None,
+        identity_resolution_status=preflight.identity_resolution_status,
+        failure_stage=preflight.failure_stage,
+        blockers=preflight.blockers,
+        audit_snapshot=preflight.audit_snapshot,
+    )
 
 
 SOURCE_DISCLOSURE_DATA_CLASSES = (
@@ -657,8 +862,9 @@ class _RuntimeContinuationHandoff:
     feature_spec: dict[str, Any]
     build_ref: ArtifactRef
     build: dict[str, Any]
-    accepted_resume_recovery: bool = False
-    runtime_observation_retry: bool = False
+    attempt_policy: InitialAttemptV1 | ObservationRetryAttemptV1 | AcceptedResumeRecoveryAttemptV1 = field(
+        default_factory=InitialAttemptV1
+    )
     recovery_decision: ResumeDecision | None = None
     recovery_resume_report_ref: ArtifactRef | None = None
     prior_runtime_evidence_ref: ArtifactRef | None = None
@@ -1008,40 +1214,203 @@ def _verification_only_build_admission(
 def preflight_verification_only_build_continuation(
     *,
     artifact_store_root: str | Path,
-    feature_id: str,
-    feature_spec_path: str | Path,
-    feature_spec_hash: str,
-    evidence_pack_path: str | Path,
-    evidence_pack_hash: str,
-    run_id: str,
-    request_id: str,
-    user_request: str,
-    target_domain: str | None,
-    target_mod: str | None,
-) -> dict[str, Any]:
+    verification_operation: VerificationOperationSpec | None = None,
+    feature_id: str | None = None,
+    feature_spec_path: str | Path | None = None,
+    feature_spec_hash: str | None = None,
+    evidence_pack_path: str | Path | None = None,
+    evidence_pack_hash: str | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    user_request: str | None = None,
+    target_domain: str | None = None,
+    target_mod: str | None = None,
+) -> dict[str, Any] | VerificationOperationPreflightResultV1:
     """Read-validate a verification-only Build without probing Store writes."""
 
-    _, _, preflight = _verification_only_build_admission(
-        artifact_store_root=artifact_store_root,
-        feature_id=feature_id,
-        feature_spec_path=feature_spec_path,
-        feature_spec_hash=feature_spec_hash,
-        evidence_pack_path=evidence_pack_path,
-        evidence_pack_hash=evidence_pack_hash,
-        run_id=run_id,
-        request_id=request_id,
-        user_request=user_request,
-        target_mod=target_mod,
+    legacy_values = (
+        feature_id,
+        feature_spec_path,
+        feature_spec_hash,
+        evidence_pack_path,
+        evidence_pack_hash,
+        run_id,
+        request_id,
+        user_request,
+        target_domain,
+        target_mod,
     )
+    typed_call = verification_operation is not None
+    if typed_call and any(value is not None for value in legacy_values):
+        return _verification_preflight_result(
+            envelope=None,
+            operation_kind=None,
+            operation_contract_version=None,
+            status="blocked",
+            failure_stage="authorization",
+            identity_resolution_status="unresolved",
+            blockers=_verification_blockers(
+                [
+                    {
+                        "stage": "authorization",
+                        "code": "VERIFICATION_OPERATION_LEGACY_MIXED",
+                        "message": "Typed Build operation cannot mix legacy identity inputs.",
+                    }
+                ],
+                default_stage="authorization",
+            ),
+        )
+    if not typed_call:
+        required = {
+            "feature_id": feature_id,
+            "feature_spec_path": feature_spec_path,
+            "feature_spec_hash": feature_spec_hash,
+            "evidence_pack_path": evidence_pack_path,
+            "evidence_pack_hash": evidence_pack_hash,
+            "run_id": run_id,
+            "request_id": request_id,
+            "user_request": user_request,
+            "target_domain": target_domain,
+        }
+        if any(value is None for value in required.values()):
+            raise TypeError("Legacy verification Build inputs are incomplete.")
+        verification_operation = VerificationOperationSpec(
+            operation_kind=VERIFICATION_BUILD_KIND,
+            operation_contract_version=VERIFICATION_BUILD_CONTRACT_VERSION,
+            attempt_policy=InitialAttemptV1(),
+            protocol_binding=BuildInvocationProtocolBindingV1(
+                run_id=str(run_id),
+                request_id=str(request_id),
+            ),
+            variant_payload=VerificationBuildOperationV1(
+                feature_spec_ref=ArtifactRef(
+                    feature_id=str(feature_id),
+                    artifact_type="feature_spec",
+                    path=str(Path(feature_spec_path).resolve()),
+                    artifact_hash=str(feature_spec_hash),
+                ),
+                evidence_pack_ref=ArtifactRef(
+                    feature_id=str(feature_id),
+                    artifact_type="evidence_pack",
+                    path=str(Path(evidence_pack_path).resolve()),
+                    artifact_hash=str(evidence_pack_hash),
+                ),
+                user_request=str(user_request),
+                target_domain=str(target_domain),
+                target_mod=target_mod,
+            ),
+        )
+    try:
+        declaration = resolve_verification_operation(verification_operation)
+    except (TypeError, ValueError) as exc:
+        if not typed_call:
+            raise LocalEntryError(str(exc)) from exc
+        return _verification_preflight_result(
+            envelope=None,
+            operation_kind=None,
+            operation_contract_version=None,
+            status="blocked",
+            failure_stage="authorization",
+            identity_resolution_status="unresolved",
+            blockers=_verification_blockers(
+                [
+                    {
+                        "stage": "authorization",
+                        "code": "VERIFICATION_OPERATION_UNSUPPORTED",
+                        "message": str(exc),
+                    }
+                ],
+                default_stage="authorization",
+            ),
+        )
+    if declaration.operation_kind != VERIFICATION_BUILD_KIND:
+        blocker = _verification_blockers(
+            [
+                {
+                    "stage": "authorization",
+                    "code": "VERIFICATION_BUILD_OPERATION_REQUIRED",
+                    "message": "Build public entry requires verification_build.",
+                }
+            ],
+            default_stage="authorization",
+        )
+        if typed_call:
+            return _verification_preflight_result(
+                envelope=None,
+                operation_kind=None,
+                operation_contract_version=None,
+                status="blocked",
+                failure_stage="authorization",
+                identity_resolution_status="unresolved",
+                blockers=blocker,
+            )
+        raise LocalEntryError(blocker[0].message)
+    variant = verification_operation.variant_payload
+    protocol = verification_operation.protocol_binding
+    try:
+        _, _, preflight = _verification_only_build_admission(
+        artifact_store_root=artifact_store_root,
+            feature_id=variant.feature_spec_ref.feature_id,
+            feature_spec_path=variant.feature_spec_ref.path,
+            feature_spec_hash=variant.feature_spec_ref.artifact_hash,
+            evidence_pack_path=variant.evidence_pack_ref.path,
+            evidence_pack_hash=variant.evidence_pack_ref.artifact_hash,
+            run_id=protocol.run_id,
+            request_id=protocol.request_id,
+            user_request=variant.user_request,
+            target_mod=variant.target_mod,
+        )
+        envelope = project_verification_operation(verification_operation)
+    except (LocalEntryError, OSError, TypeError, ValueError) as exc:
+        if not typed_call:
+            raise
+        return _verification_preflight_result(
+            envelope=None,
+            operation_kind=declaration.operation_kind,
+            operation_contract_version=declaration.operation_contract_version,
+            status="blocked",
+            failure_stage="admission",
+            identity_resolution_status="declaration_resolved",
+            blockers=_verification_blockers(
+                [
+                    {
+                        "stage": "admission",
+                        "code": "VERIFICATION_BUILD_ADMISSION_FAILED",
+                        "message": f"{type(exc).__name__}: {exc}",
+                    }
+                ],
+                default_stage="admission",
+            ),
+        )
+    ready = preflight["status"] == "ready_for_build_authorization"
+    machine_result = _verification_preflight_result(
+        envelope=envelope,
+        operation_kind=envelope.operation_kind,
+        operation_contract_version=envelope.operation_contract_version,
+        status="ready" if ready else "blocked",
+        failure_stage=None if ready else "admission",
+        blockers=(
+            ()
+            if ready
+            else _verification_blockers(
+                list(preflight.get("blockers") or ()),
+                default_stage="admission",
+            )
+        ),
+        audit_snapshot={"legacy_compatibility": not typed_call},
+    )
+    if typed_call:
+        return machine_result
     return {
         "status": preflight["status"],
         "command": "preflight-verification-only-build-continuation",
-        "feature_id": feature_id,
-        "run_id": run_id,
-        "request_id": request_id,
-        "target_domain": target_domain,
-        "target_mod": target_mod,
+        "feature_id": variant.feature_spec_ref.feature_id,
+        "run_id": protocol.run_id,
+        "request_id": protocol.request_id,
+        "target_domain": variant.target_domain,
+        "target_mod": variant.target_mod,
         "verification_only_preflight": preflight,
+        "verification_operation_preflight_result": machine_result.to_dict(),
         "writes_performed": False,
         "artifact_writes_performed": False,
         "build_invoked": False,
@@ -1098,38 +1467,296 @@ def _verification_only_build_terminal_result(
     }
 
 
+def _build_verification_machine_result(
+    *,
+    envelope: VerificationOperationEnvelope,
+    public_result: Mapping[str, Any],
+) -> VerificationOperationResultV1:
+    build_projection = public_result.get("build_result")
+    checkpoint_projection = public_result.get("workflow_checkpoint")
+    build_ref = _artifact_ref_from_projection(
+        build_projection.get("artifact_ref")
+        if isinstance(build_projection, Mapping)
+        else None
+    )
+    checkpoint_ref = _artifact_ref_from_projection(
+        checkpoint_projection.get("artifact_ref")
+        if isinstance(checkpoint_projection, Mapping)
+        else None
+    )
+    build_execution = public_result.get("build_execution")
+    domain_status_value = (
+        build_execution.get("domain_status")
+        if isinstance(build_execution, Mapping)
+        else None
+    )
+    domain_status = (
+        "succeeded"
+        if domain_status_value == "success"
+        else "failed"
+        if domain_status_value == "failed"
+        else "unknown"
+    )
+    claims_success = bool(
+        isinstance(build_execution, Mapping)
+        and build_execution.get("claims_real_build_success") is True
+        and build_ref is not None
+    )
+    handoff_ready = public_result.get("handoff_ready") is True
+    variant = BuildVerificationResultV1(
+        domain_build_status=domain_status,
+        claims_real_build_success=claims_success,
+        build_result_ref=build_ref,
+        workflow_checkpoint_ref=checkpoint_ref,
+        handoff_ready=handoff_ready,
+    )
+    platform_status = _exact_verification_platform_status(public_result)
+    receipts = _verification_store_receipts(
+        (
+            (
+                "build_result",
+                build_projection.get("store_result")
+                if isinstance(build_projection, Mapping)
+                else None,
+            ),
+            (
+                "workflow_checkpoint",
+                checkpoint_projection.get("store_result")
+                if isinstance(checkpoint_projection, Mapping)
+                else None,
+            ),
+        )
+    )
+    blockers = _verification_blockers(
+        list(public_result.get("blockers") or ()),
+        default_stage=str(public_result.get("failure_stage") or "admission"),
+    ) if platform_status == "blocked" else tuple(
+        _verification_blockers(
+            list(public_result.get("blockers") or ()),
+            default_stage=str(public_result.get("failure_stage") or "admission"),
+        )
+    ) if public_result.get("blockers") else ()
+    return project_verification_operation_result(
+        envelope=envelope,
+        platform_status=platform_status,
+        failure_stage=public_result.get("failure_stage"),
+        side_effects_may_have_started=bool(
+            isinstance(build_execution, Mapping)
+            and build_execution.get("side_effects_may_have_started") is True
+        ),
+        store_receipts=receipts,
+        blockers=blockers,
+        variant_result=variant,
+        audit_snapshot={
+            "compatibility_mode": "typed_current",
+        },
+    )
+
+
+def _finalize_build_public_result(
+    *,
+    envelope: VerificationOperationEnvelope,
+    public_result: dict[str, Any],
+    typed_call: bool,
+) -> dict[str, Any] | VerificationOperationResultV1:
+    machine_result = _build_verification_machine_result(
+        envelope=envelope,
+        public_result=public_result,
+    )
+    if typed_call:
+        return machine_result
+    public_result["verification_operation_result"] = machine_result.to_dict()
+    return public_result
+
+
 def execute_verification_only_build_continuation(
     *,
     artifact_store_root: str | Path,
-    feature_id: str,
-    feature_spec_path: str | Path,
-    feature_spec_hash: str,
-    evidence_pack_path: str | Path,
-    evidence_pack_hash: str,
-    run_id: str,
-    request_id: str,
-    user_request: str,
-    target_domain: str | None,
-    target_mod: str | None,
+    verification_operation: VerificationOperationEnvelope | None = None,
+    expected_approval_identity_hash: str | None = None,
+    feature_id: str | None = None,
+    feature_spec_path: str | Path | None = None,
+    feature_spec_hash: str | None = None,
+    evidence_pack_path: str | Path | None = None,
+    evidence_pack_hash: str | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    user_request: str | None = None,
+    target_domain: str | None = None,
+    target_mod: str | None = None,
     build_result_factory: Callable[[str, str | None], BuildResult],
     allow_build_execution: bool,
-) -> dict[str, Any]:
+) -> dict[str, Any] | VerificationOperationResultV1:
     """Execute one admitted verification-only Build through the public graph."""
 
+    if not callable(build_result_factory):
+        raise TypeError("build_result_factory must be callable.")
+    legacy_values = (
+        feature_id,
+        feature_spec_path,
+        feature_spec_hash,
+        evidence_pack_path,
+        evidence_pack_hash,
+        run_id,
+        request_id,
+        user_request,
+        target_domain,
+        target_mod,
+    )
+    typed_call = verification_operation is not None
+    if typed_call and any(value is not None for value in legacy_values):
+        return _rejected_verification_result(
+            operation_kind=None,
+            operation_contract_version=None,
+            approval_identity_hash=None,
+            identity_resolution_status="unresolved",
+            failure_stage="authorization",
+            blockers=_verification_blockers(
+                [
+                    {
+                        "stage": "authorization",
+                        "code": "VERIFICATION_OPERATION_LEGACY_MIXED",
+                        "message": "Typed Build operation cannot mix legacy identity inputs.",
+                    }
+                ],
+                default_stage="authorization",
+            ),
+        )
+    if not typed_call:
+        required = {
+            "feature_id": feature_id,
+            "feature_spec_path": feature_spec_path,
+            "feature_spec_hash": feature_spec_hash,
+            "evidence_pack_path": evidence_pack_path,
+            "evidence_pack_hash": evidence_pack_hash,
+            "run_id": run_id,
+            "request_id": request_id,
+            "user_request": user_request,
+            "target_domain": target_domain,
+        }
+        if any(value is None for value in required.values()):
+            raise TypeError("Legacy verification Build inputs are incomplete.")
+        spec = VerificationOperationSpec(
+            operation_kind=VERIFICATION_BUILD_KIND,
+            operation_contract_version=VERIFICATION_BUILD_CONTRACT_VERSION,
+            attempt_policy=InitialAttemptV1(),
+            protocol_binding=BuildInvocationProtocolBindingV1(
+                run_id=str(run_id),
+                request_id=str(request_id),
+            ),
+            variant_payload=VerificationBuildOperationV1(
+                feature_spec_ref=ArtifactRef(
+                    feature_id=str(feature_id),
+                    artifact_type="feature_spec",
+                    path=str(Path(feature_spec_path).resolve()),
+                    artifact_hash=str(feature_spec_hash),
+                ),
+                evidence_pack_ref=ArtifactRef(
+                    feature_id=str(feature_id),
+                    artifact_type="evidence_pack",
+                    path=str(Path(evidence_pack_path).resolve()),
+                    artifact_hash=str(evidence_pack_hash),
+                ),
+                user_request=str(user_request),
+                target_domain=str(target_domain),
+                target_mod=target_mod,
+            ),
+        )
+        verification_operation = project_verification_operation(spec)
+    try:
+        envelope = validate_verification_operation_envelope(
+            verification_operation
+        )
+        declaration = resolve_verification_operation(envelope)
+    except (TypeError, ValueError) as exc:
+        if not typed_call:
+            raise LocalEntryError(str(exc)) from exc
+        return _rejected_verification_result(
+            operation_kind=None,
+            operation_contract_version=None,
+            approval_identity_hash=None,
+            identity_resolution_status="unresolved",
+            failure_stage="authorization",
+            blockers=_verification_blockers(
+                [
+                    {
+                        "stage": "authorization",
+                        "code": "VERIFICATION_OPERATION_UNSUPPORTED",
+                        "message": str(exc),
+                    }
+                ],
+                default_stage="authorization",
+            ),
+        )
+    if declaration.operation_kind != VERIFICATION_BUILD_KIND:
+        return _rejected_verification_result(
+            operation_kind=None,
+            operation_contract_version=None,
+            approval_identity_hash=None,
+            identity_resolution_status="unresolved",
+            failure_stage="authorization",
+            blockers=_verification_blockers(
+                [
+                    {
+                        "stage": "authorization",
+                        "code": "VERIFICATION_BUILD_OPERATION_REQUIRED",
+                        "message": "Build public entry requires verification_build.",
+                    }
+                ],
+                default_stage="authorization",
+            ),
+        )
+    if typed_call and (
+        not isinstance(expected_approval_identity_hash, str)
+        or not hmac.compare_digest(
+            expected_approval_identity_hash,
+            envelope.approval_identity_hash,
+        )
+    ):
+        public_result = _verification_only_build_terminal_result(
+            status="blocked",
+            failure_stage="authorization",
+            feature_id=envelope.variant_payload.feature_spec_ref.feature_id,
+            run_id=envelope.protocol_binding.run_id,
+            request_id=envelope.protocol_binding.request_id,
+            target_domain=envelope.variant_payload.target_domain,
+            target_mod=envelope.variant_payload.target_mod,
+            preflight={},
+            factory_invocation_count=0,
+            blockers=[
+                {
+                    "stage": "authorization",
+                    "code": "VERIFICATION_OPERATION_APPROVAL_HASH_MISMATCH",
+                    "message": "Expected Build approval identity hash changed.",
+                }
+            ],
+        )
+        return _finalize_build_public_result(
+            envelope=envelope,
+            public_result=public_result,
+            typed_call=True,
+        )
+    variant = envelope.variant_payload
+    protocol = envelope.protocol_binding
     store, continuation, preflight = _verification_only_build_admission(
         artifact_store_root=artifact_store_root,
-        feature_id=feature_id,
-        feature_spec_path=feature_spec_path,
-        feature_spec_hash=feature_spec_hash,
-        evidence_pack_path=evidence_pack_path,
-        evidence_pack_hash=evidence_pack_hash,
-        run_id=run_id,
-        request_id=request_id,
-        user_request=user_request,
-        target_mod=target_mod,
+        feature_id=variant.feature_spec_ref.feature_id,
+        feature_spec_path=variant.feature_spec_ref.path,
+        feature_spec_hash=variant.feature_spec_ref.artifact_hash,
+        evidence_pack_path=variant.evidence_pack_ref.path,
+        evidence_pack_hash=variant.evidence_pack_ref.artifact_hash,
+        run_id=protocol.run_id,
+        request_id=protocol.request_id,
+        user_request=variant.user_request,
+        target_mod=variant.target_mod,
     )
+    feature_id = variant.feature_spec_ref.feature_id
+    run_id = protocol.run_id
+    request_id = protocol.request_id
+    target_domain = variant.target_domain
+    target_mod = variant.target_mod
     if not allow_build_execution:
-        return _verification_only_build_terminal_result(
+        public_result = _verification_only_build_terminal_result(
             status="blocked",
             failure_stage="authorization",
             feature_id=feature_id,
@@ -1147,8 +1774,13 @@ def execute_verification_only_build_continuation(
                 }
             ],
         )
+        return _finalize_build_public_result(
+            envelope=envelope,
+            public_result=public_result,
+            typed_call=typed_call,
+        )
     if preflight["status"] != "ready_for_build_authorization":
-        return _verification_only_build_terminal_result(
+        public_result = _verification_only_build_terminal_result(
             status="blocked",
             failure_stage="admission",
             feature_id=feature_id,
@@ -1159,6 +1791,11 @@ def execute_verification_only_build_continuation(
             preflight=preflight,
             factory_invocation_count=0,
             blockers=list(preflight["blockers"]),
+        )
+        return _finalize_build_public_result(
+            envelope=envelope,
+            public_result=public_result,
+            typed_call=typed_call,
         )
 
     caller_factory_invocations = 0
@@ -1193,9 +1830,7 @@ def execute_verification_only_build_continuation(
     graph = build_graph(
         store,
         build_result_factory=admitted_build_result_factory,
-        stop_after_build=True,
-        persist_build_runtime_handoff=True,
-        verification_only_continuation=continuation,
+        verification_operation=envelope,
     )
     initial_state = create_initial_state(
         run_id=run_id,
@@ -1208,7 +1843,7 @@ def execute_verification_only_build_continuation(
         graph_result = graph.invoke(initial_state)
     except Exception as exc:
         stage = execution_failure_stage or "admission"
-        return _verification_only_build_terminal_result(
+        public_result = _verification_only_build_terminal_result(
             status="blocked",
             failure_stage=stage,
             feature_id=feature_id,
@@ -1225,6 +1860,11 @@ def execute_verification_only_build_continuation(
                     "message": f"{type(exc).__name__}: {exc}",
                 }
             ],
+        )
+        return _finalize_build_public_result(
+            envelope=envelope,
+            public_result=public_result,
+            typed_call=typed_call,
         )
 
     summary = dict(graph_result.get("build_summary") or {})
@@ -1317,7 +1957,7 @@ def execute_verification_only_build_continuation(
         outer_status = "blocked"
         failure_stage = "checkpoint_resume_preflight"
 
-    return _verification_only_build_terminal_result(
+    public_result = _verification_only_build_terminal_result(
         status=outer_status,
         failure_stage=failure_stage,
         feature_id=feature_id,
@@ -1332,6 +1972,11 @@ def execute_verification_only_build_continuation(
         workflow_checkpoint=checkpoint_projection,
         handoff_ready=handoff_ready,
         blockers=graph_blockers,
+    )
+    return _finalize_build_public_result(
+        envelope=envelope,
+        public_result=public_result,
+        typed_call=typed_call,
     )
 
 
@@ -3279,17 +3924,17 @@ def _load_runtime_continuation_handoff(
     checkpoint_path: str | Path,
     checkpoint_hash: str,
     resume_id: str | None = None,
-    recover_accepted_resume: bool = False,
-    retry_runtime_observation: bool = False,
+    attempt_policy: InitialAttemptV1 | ObservationRetryAttemptV1 | AcceptedResumeRecoveryAttemptV1 | None = None,
     require_manifest: bool = True,
     allow_blocked_resume: bool = False,
     require_current_build_output: bool = True,
 ) -> _RuntimeContinuationHandoff:
-    if recover_accepted_resume and retry_runtime_observation:
-        raise LocalEntryError(
-            "Accepted resume recovery and Runtime observation retry are "
-            "mutually exclusive."
-        )
+    attempt = InitialAttemptV1() if attempt_policy is None else attempt_policy
+    if not isinstance(
+        attempt,
+        (InitialAttemptV1, ObservationRetryAttemptV1, AcceptedResumeRecoveryAttemptV1),
+    ):
+        raise LocalEntryError("Runtime continuation attempt policy is not registered.")
     root = Path(run_root).resolve()
     if not root.is_dir():
         raise LocalEntryError("Runtime continuation run_root does not exist.")
@@ -3456,7 +4101,7 @@ def _load_runtime_continuation_handoff(
     observation_retry_binding = None
     try:
         checkpoint_store = WorkflowCheckpointStore(artifact_store)
-        if retry_runtime_observation:
+        if isinstance(attempt, ObservationRetryAttemptV1):
             if resume_id is None:
                 raise LocalEntryError(
                     "Runtime observation retry requires the exact --resume-id."
@@ -3472,7 +4117,7 @@ def _load_runtime_continuation_handoff(
                 resume_id=resume_id,
             )
             readiness = recovery_decision
-        elif recover_accepted_resume:
+        elif isinstance(attempt, AcceptedResumeRecoveryAttemptV1):
             if resume_id is None:
                 raise LocalEntryError(
                     "Accepted resume recovery requires the exact --resume-id."
@@ -3505,7 +4150,7 @@ def _load_runtime_continuation_handoff(
             + ", ".join(blocker_codes)
         )
     if (
-        retry_runtime_observation
+        isinstance(attempt, ObservationRetryAttemptV1)
         and prior_runtime_evidence_ref is not None
         and observation_retry_binding is not None
     ):
@@ -3535,8 +4180,7 @@ def _load_runtime_continuation_handoff(
         feature_spec=feature_spec,
         build_ref=build_ref,
         build=build,
-        accepted_resume_recovery=recover_accepted_resume,
-        runtime_observation_retry=retry_runtime_observation,
+        attempt_policy=attempt,
         recovery_decision=recovery_decision,
         recovery_resume_report_ref=recovery_resume_report_ref,
         prior_runtime_evidence_ref=prior_runtime_evidence_ref,
@@ -4664,7 +5308,7 @@ def _runtime_observation_retry_restoration_report(
     }
 
 
-def preflight_local_runtime(
+def _preflight_runtime_operation_compatibility(
     *,
     run_root: str | Path,
     feature_id: str,
@@ -4672,98 +5316,51 @@ def preflight_local_runtime(
     checkpoint_hash: str,
     artifact_store_root: str | Path | None = None,
     resume_id: str | None = None,
-    recover_accepted_resume: bool = False,
-    retry_runtime_observation: bool = False,
+    attempt_policy: InitialAttemptV1 | ObservationRetryAttemptV1 | AcceptedResumeRecoveryAttemptV1 | None = None,
     runtime_output_root: str | Path | None = None,
     settings_path: str | Path | None = None,
     runtime_plugin_destination: str | Path | None = None,
     approved_by: str | None = None,
     injected_runtime_admission: Mapping[str, Any] | None = None,
-    runtime_evidence_only: bool = False,
-    runtime_terminalization_only: bool = False,
-    verification_operation: VerificationOperationSpec | None = None,
-    accepted_resume_report_path: str | Path | None = None,
-    accepted_resume_report_hash: str | None = None,
-    runtime_evidence_path: str | Path | None = None,
-    runtime_evidence_hash: str | None = None,
+    completion_scope: str = RUNTIME_WORKFLOW_COMPLETION,
+    advisory_attempt_mode: str | None = None,
 ) -> dict[str, Any]:
     """Read-validate one Runtime continuation without writing or entering graph."""
 
-    if verification_operation is not None:
-        if (
-            runtime_evidence_only
-            or runtime_terminalization_only
-            or recover_accepted_resume
-            or retry_runtime_observation
-            or injected_runtime_admission is not None
-            or runtime_output_root is not None
-            or runtime_plugin_destination is not None
-            or settings_path is not None
-        ):
-            raise LocalEntryError(
-                "Typed verification operation cannot mix with legacy Runtime scope."
-            )
-        protocol = verification_operation.protocol_binding
-        if resume_id not in {None, protocol.resume_id} or approved_by not in {
-            None,
-            protocol.approved_by,
-        }:
-            raise LocalEntryError(
-                "Typed verification operation protocol identity changed."
-            )
-        return _preflight_runtime_evidence_consolidation(
-            verification_operation=verification_operation,
-            run_root=run_root,
-            artifact_store_root=artifact_store_root,
-            feature_id=feature_id,
-            checkpoint_path=checkpoint_path,
-            checkpoint_hash=checkpoint_hash,
+    if advisory_attempt_mode not in {
+        None,
+        "initial",
+        "observation_retry",
+        "accepted_resume_recovery",
+    }:
+        raise LocalEntryError("Runtime advisory attempt mode is not registered.")
+    if advisory_attempt_mode is not None and attempt_policy is not None:
+        raise LocalEntryError(
+            "Runtime advisory preflight cannot accept an execution attempt binding."
         )
-    if runtime_terminalization_only:
-        if (
-            runtime_evidence_only
-            or recover_accepted_resume
-            or retry_runtime_observation
-            or injected_runtime_admission is not None
-            or runtime_output_root is not None
-            or runtime_plugin_destination is not None
-        ):
-            raise LocalEntryError(
-                "Runtime terminalization is a separate Store-only continuation."
-            )
-        if not isinstance(resume_id, str) or not resume_id:
-            raise LocalEntryError(
-                "Runtime terminalization requires the exact resume_id."
-            )
-        if not isinstance(approved_by, str) or not approved_by.strip():
-            raise LocalEntryError(
-                "Runtime terminalization requires exact approved_by."
-            )
-        if (
-            accepted_resume_report_path is None
-            or not isinstance(accepted_resume_report_hash, str)
-            or runtime_evidence_path is None
-            or not isinstance(runtime_evidence_hash, str)
-        ):
-            raise LocalEntryError(
-                "Runtime terminalization requires exact ResumeReport and "
-                "RuntimeEvidence refs."
-            )
-        return _preflight_runtime_terminal_continuation(
-            run_root=run_root,
-            artifact_store_root=artifact_store_root,
-            feature_id=feature_id,
-            checkpoint_path=checkpoint_path,
-            checkpoint_hash=checkpoint_hash,
-            accepted_resume_report_path=accepted_resume_report_path,
-            accepted_resume_report_hash=accepted_resume_report_hash,
-            runtime_evidence_path=runtime_evidence_path,
-            runtime_evidence_hash=runtime_evidence_hash,
-            resume_id=resume_id,
-            approved_by=approved_by,
-        )
-    if runtime_evidence_only:
-        if recover_accepted_resume or retry_runtime_observation:
+    attempt = InitialAttemptV1() if attempt_policy is None else attempt_policy
+    if not isinstance(
+        attempt,
+        (InitialAttemptV1, ObservationRetryAttemptV1, AcceptedResumeRecoveryAttemptV1),
+    ):
+        raise LocalEntryError("Runtime continuation attempt policy is not registered.")
+    is_retry = (
+        advisory_attempt_mode == "observation_retry"
+        if advisory_attempt_mode is not None
+        else isinstance(attempt, ObservationRetryAttemptV1)
+    )
+    is_recovery = (
+        advisory_attempt_mode == "accepted_resume_recovery"
+        if advisory_attempt_mode is not None
+        else isinstance(attempt, AcceptedResumeRecoveryAttemptV1)
+    )
+    if completion_scope not in {
+        RUNTIME_EVIDENCE_ONLY_COMPLETION,
+        RUNTIME_WORKFLOW_COMPLETION,
+    }:
+        raise LocalEntryError("Runtime execution completion scope is not registered.")
+    if completion_scope == RUNTIME_EVIDENCE_ONLY_COMPLETION:
+        if not isinstance(attempt, InitialAttemptV1):
             raise LocalEntryError(
                 "RuntimeEvidence-only continuation supports only an initial resume."
             )
@@ -4779,7 +5376,7 @@ def preflight_local_runtime(
             raise LocalEntryError(
                 "RuntimeEvidence-only continuation requires injected Runtime admission."
             )
-    if retry_runtime_observation and runtime_output_root is None:
+    if is_retry and runtime_output_root is None:
         raise LocalEntryError(
             "Runtime observation retry requires runtime_output_root."
         )
@@ -4787,7 +5384,7 @@ def preflight_local_runtime(
         raise LocalEntryError(
             "Stagger Runtime output root must be absolute."
         )
-    if retry_runtime_observation and (
+    if is_retry and (
         settings_path is None or runtime_plugin_destination is None
     ):
         raise LocalEntryError(
@@ -4801,15 +5398,55 @@ def preflight_local_runtime(
         checkpoint_path=checkpoint_path,
         checkpoint_hash=checkpoint_hash,
         resume_id=resume_id,
-        recover_accepted_resume=recover_accepted_resume,
-        retry_runtime_observation=retry_runtime_observation,
-        require_manifest=not runtime_evidence_only,
-        allow_blocked_resume=runtime_evidence_only,
+        attempt_policy=attempt,
+        require_manifest=completion_scope != RUNTIME_EVIDENCE_ONLY_COMPLETION,
+        allow_blocked_resume=(
+            completion_scope == RUNTIME_EVIDENCE_ONLY_COMPLETION
+            or is_retry
+            or is_recovery
+        ),
     )
-    if runtime_evidence_only:
-        runtime_admission = _runtime_resume_admission_snapshot(
-            injected_runtime_admission
-        )
+    if advisory_attempt_mode is not None and (is_retry or is_recovery):
+        checkpoint_store = WorkflowCheckpointStore(handoff.artifact_store)
+        if not isinstance(resume_id, str) or not resume_id:
+            raise LocalEntryError(
+                "Runtime retry or recovery advisory requires the exact resume_id."
+            )
+        if is_retry:
+            (
+                recovery_decision,
+                recovery_report_ref,
+                prior_runtime_ref,
+                prior_repair_plan_ref,
+                observation_retry_binding,
+            ) = checkpoint_store.preflight_runtime_observation_retry(
+                handoff.checkpoint_ref,
+                resume_id=resume_id,
+            )
+            handoff = replace(
+                handoff,
+                recovery_decision=recovery_decision,
+                recovery_resume_report_ref=recovery_report_ref,
+                prior_runtime_evidence_ref=prior_runtime_ref,
+                prior_repair_plan_ref=prior_repair_plan_ref,
+                observation_retry_binding=observation_retry_binding,
+                resume_readiness=recovery_decision,
+            )
+        else:
+            recovery_decision, recovery_report_ref = (
+                checkpoint_store.preflight_accepted_resume_recovery(
+                    handoff.checkpoint_ref,
+                    resume_id=resume_id,
+                )
+            )
+            handoff = replace(
+                handoff,
+                recovery_decision=recovery_decision,
+                recovery_resume_report_ref=recovery_report_ref,
+                resume_readiness=recovery_decision,
+            )
+    if completion_scope == RUNTIME_EVIDENCE_ONLY_COMPLETION:
+        runtime_admission = dict(injected_runtime_admission)
         resume_payload = _verification_only_runtime_resume_payload(
             handoff=handoff,
             resume_id=resume_id,
@@ -4922,7 +5559,7 @@ def preflight_local_runtime(
         }
     accepted_output_binding = _accepted_runtime_output_binding(handoff)
     selected_runtime_output_root = runtime_output_root
-    if recover_accepted_resume and accepted_output_binding is not None:
+    if is_recovery and accepted_output_binding is not None:
         bound_output_root = accepted_output_binding.get("runtime_output_root")
         if not isinstance(bound_output_root, str) or not bound_output_root:
             raise LocalEntryError(
@@ -4940,7 +5577,7 @@ def preflight_local_runtime(
         selected_runtime_output_root = bound_output_root
     retry_restoration = (
         _runtime_observation_retry_restoration_report(handoff)
-        if retry_runtime_observation
+        if is_retry
         else None
     )
     build_artifact = handoff.build["verified_artifacts"][0]
@@ -4975,7 +5612,7 @@ def preflight_local_runtime(
                         "retry_acceptance_criteria", ()
                     )
                 )
-                if retry_runtime_observation
+                if is_retry
                 and "retry_acceptance_criteria"
                 in (handoff.observation_retry_binding or {})
                 else None
@@ -5002,7 +5639,7 @@ def preflight_local_runtime(
                             "retry_modes", ()
                         )
                     )
-                    if retry_runtime_observation
+                    if is_retry
                     and "retry_modes" in (handoff.observation_retry_binding or {})
                     else None
                 ),
@@ -5019,7 +5656,7 @@ def preflight_local_runtime(
                     ),
                 )
             )
-        if retry_runtime_observation:
+        if is_retry:
             if runtime_output_report is None:
                 raise LocalEntryError(
                     "Runtime observation retry output binding is missing."
@@ -5029,8 +5666,7 @@ def preflight_local_runtime(
             )
             runtime_profile["prior_restoration"] = retry_restoration
         if (
-            handoff.accepted_resume_recovery
-            or handoff.runtime_observation_retry
+            (is_retry or is_recovery)
         ):
             acceptance_criteria = handoff.feature_spec.get("acceptance_criteria")
             exact_acceptance_criteria = (
@@ -5085,8 +5721,8 @@ def preflight_local_runtime(
     )
     if (
         repair_attempt_projection is not None
-        and not recover_accepted_resume
-        and not retry_runtime_observation
+        and not is_retry
+        and not is_recovery
         and runtime_output_report is None
     ):
         raise LocalEntryError(
@@ -5120,10 +5756,10 @@ def preflight_local_runtime(
             "freshness_status": "fresh",
             "consumption_status": (
                 "runtime_observation_retry"
-                if handoff.runtime_observation_retry
+                if is_retry
                 else (
                     "accepted_resume_recovery"
-                    if handoff.accepted_resume_recovery
+                    if is_recovery
                     else "unconsumed"
                 )
             ),
@@ -5170,7 +5806,11 @@ def preflight_local_runtime(
                 ),
                 "new_resume_report_would_be_created": False,
             }
-            if handoff.accepted_resume_recovery
+            if isinstance(
+                attempt,
+                AcceptedResumeRecoveryAttemptV1,
+            )
+            or is_recovery
             else {"enabled": False}
         ),
         "runtime_observation_retry": (
@@ -5182,7 +5822,7 @@ def preflight_local_runtime(
                 ),
                 "prior_restoration": retry_restoration,
             }
-            if handoff.runtime_observation_retry
+            if is_retry
             else {"enabled": False}
         ),
         "runtime_output": (
@@ -5195,6 +5835,633 @@ def preflight_local_runtime(
         ),
         "external_action_gate": external_action_gate,
     }
+
+
+def _runtime_operation_checkpoint_identity(
+    *,
+    artifact_store_root: str | Path,
+    checkpoint_ref: ArtifactRef,
+) -> VerificationCheckpointIdentityV1:
+    store = ArtifactStore(Path(artifact_store_root).resolve())
+    checkpoint = store.read(checkpoint_ref)["data"]
+    if not isinstance(checkpoint, Mapping):
+        raise LocalEntryError("Verification checkpoint payload is invalid.")
+    try:
+        return VerificationCheckpointIdentityV1(
+            checkpoint_id=str(checkpoint["checkpoint_id"]),
+            run_id=str(checkpoint["run_id"]),
+            request_id=str(checkpoint["request_id"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise LocalEntryError(
+            "Verification checkpoint identity is unavailable."
+        ) from exc
+
+
+def _resolve_legacy_runtime_attempt_policy(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    resume_id: str | None,
+    approved_by: str | None,
+    retry_runtime_observation: bool,
+    recover_accepted_resume: bool,
+) -> InitialAttemptV1 | ObservationRetryAttemptV1 | AcceptedResumeRecoveryAttemptV1:
+    """Normalize legacy selectors once into an exact registered attempt."""
+
+    if retry_runtime_observation and recover_accepted_resume:
+        raise LocalEntryError("Runtime retry and recovery selectors cannot be mixed.")
+    if not retry_runtime_observation and not recover_accepted_resume:
+        return InitialAttemptV1()
+    if not isinstance(resume_id, str) or not resume_id:
+        raise LocalEntryError("Runtime retry or recovery requires the exact resume_id.")
+    if not isinstance(approved_by, str) or not approved_by.strip():
+        raise LocalEntryError("Runtime retry or recovery requires approved_by.")
+    root = Path(run_root).resolve()
+    store_root = (
+        Path(artifact_store_root).resolve()
+        if artifact_store_root is not None
+        else (root / "a").resolve()
+    )
+    checkpoint_ref = ArtifactRef(
+        feature_id=feature_id,
+        artifact_type="workflow_checkpoint",
+        path=str(Path(checkpoint_path).resolve()),
+        artifact_hash=checkpoint_hash,
+    )
+    checkpoint_store = WorkflowCheckpointStore(ArtifactStore(store_root))
+    try:
+        if retry_runtime_observation:
+            (
+                decision,
+                _report_ref,
+                prior_runtime_ref,
+                repair_plan_ref,
+                retry_binding,
+            ) = checkpoint_store.preflight_runtime_observation_retry(
+                checkpoint_ref,
+                resume_id=resume_id,
+            )
+            remaining_before = retry_binding.get(
+                "retry_budget_remaining_before_attempt"
+            )
+            if (
+                not decision.allowed
+                or type(remaining_before) is not int
+                or type(retry_binding.get("retry_number")) is not int
+                or type(retry_binding.get("retry_budget")) is not int
+            ):
+                raise LocalEntryError(
+                    "Runtime observation retry attempt binding is incomplete."
+                )
+            return ObservationRetryAttemptV1(
+                prior_runtime_evidence_ref=prior_runtime_ref,
+                repair_plan_ref=repair_plan_ref,
+                retry_number=retry_binding["retry_number"],
+                retry_budget=retry_binding["retry_budget"],
+                retry_budget_remaining=max(remaining_before - 1, 0),
+                current_attempt_approved_by=approved_by,
+            )
+        decision, report_ref = checkpoint_store.preflight_accepted_resume_recovery(
+            checkpoint_ref,
+            resume_id=resume_id,
+        )
+        if not decision.allowed:
+            raise LocalEntryError("Accepted resume recovery is not allowed.")
+        return AcceptedResumeRecoveryAttemptV1(
+            accepted_resume_report_ref=report_ref,
+            recovery_of_resume_id=resume_id,
+            current_attempt_approved_by=approved_by,
+        )
+    except (OSError, TypeError, ValueError) as exc:
+        raise LocalEntryError(
+            f"Legacy Runtime attempt normalization failed: {exc}"
+        ) from exc
+
+
+def _typed_runtime_preflight(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path,
+    spec: VerificationOperationSpec,
+) -> tuple[VerificationOperationPreflightResultV1, dict[str, Any] | None]:
+    try:
+        declaration = resolve_verification_operation(spec)
+    except (TypeError, ValueError) as exc:
+        return (
+            _verification_preflight_result(
+                envelope=None,
+                operation_kind=None,
+                operation_contract_version=None,
+                status="blocked",
+                failure_stage="authorization",
+                identity_resolution_status="unresolved",
+                blockers=_verification_blockers(
+                    [
+                        {
+                            "stage": "authorization",
+                            "code": "VERIFICATION_OPERATION_UNSUPPORTED",
+                            "message": str(exc),
+                        }
+                    ],
+                    default_stage="authorization",
+                ),
+            ),
+            None,
+        )
+    if declaration.operation_kind == VERIFICATION_BUILD_KIND:
+        return (
+            _verification_preflight_result(
+                envelope=None,
+                operation_kind=None,
+                operation_contract_version=None,
+                status="blocked",
+                failure_stage="authorization",
+                identity_resolution_status="unresolved",
+                blockers=_verification_blockers(
+                    [
+                        {
+                            "stage": "authorization",
+                            "code": "RUNTIME_OPERATION_REQUIRED",
+                            "message": "Runtime public entry does not accept Build operations.",
+                        }
+                    ],
+                    default_stage="authorization",
+                ),
+            ),
+            None,
+        )
+    protocol = spec.protocol_binding
+    try:
+        checkpoint_identity = (
+            None
+            if not declaration.requires_checkpoint_identity
+            else _runtime_operation_checkpoint_identity(
+                artifact_store_root=artifact_store_root,
+                checkpoint_ref=protocol.checkpoint_ref,
+            )
+        )
+        envelope = project_verification_operation(
+            spec,
+            checkpoint_identity=checkpoint_identity,
+        )
+    except (LocalEntryError, OSError, TypeError, ValueError) as exc:
+        return (
+            _verification_preflight_result(
+                envelope=None,
+                operation_kind=declaration.operation_kind,
+                operation_contract_version=declaration.operation_contract_version,
+                status="blocked",
+                failure_stage="admission",
+                identity_resolution_status="declaration_resolved",
+                blockers=_verification_blockers(
+                    [
+                        {
+                            "stage": "admission",
+                            "code": "VERIFICATION_OPERATION_IDENTITY_UNAVAILABLE",
+                            "message": f"{type(exc).__name__}: {exc}",
+                        }
+                    ],
+                    default_stage="admission",
+                ),
+            ),
+            None,
+        )
+    legacy_projection: dict[str, Any]
+    try:
+        if declaration.operation_kind == EVIDENCE_CONSOLIDATION_KIND:
+            legacy_projection = _preflight_runtime_evidence_consolidation(
+                verification_operation=spec,
+                run_root=run_root,
+                artifact_store_root=artifact_store_root,
+                feature_id=protocol.checkpoint_ref.feature_id,
+                checkpoint_path=protocol.checkpoint_ref.path,
+                checkpoint_hash=protocol.checkpoint_ref.artifact_hash,
+            )
+            ready = legacy_projection["status"] == (
+                "READY_FOR_RUNTIME_EVIDENCE_CONSOLIDATION"
+            )
+        elif declaration.operation_kind == RUNTIME_TERMINALIZATION_KIND:
+            variant = spec.variant_payload
+            legacy_projection = _preflight_runtime_terminal_continuation(
+                run_root=run_root,
+                artifact_store_root=artifact_store_root,
+                feature_id=protocol.checkpoint_ref.feature_id,
+                checkpoint_path=protocol.checkpoint_ref.path,
+                checkpoint_hash=protocol.checkpoint_ref.artifact_hash,
+                accepted_resume_report_path=(
+                    protocol.accepted_resume_report_ref.path
+                ),
+                accepted_resume_report_hash=(
+                    protocol.accepted_resume_report_ref.artifact_hash
+                ),
+                runtime_evidence_path=variant.runtime_evidence_ref.path,
+                runtime_evidence_hash=variant.runtime_evidence_ref.artifact_hash,
+                resume_id=protocol.resume_id,
+                approved_by=protocol.approved_by,
+            )
+            ready = legacy_projection["status"] == (
+                "READY_FOR_RUNTIME_TERMINALIZATION"
+            )
+        elif declaration.shape_id == "runtime_execution_initial_evidence_only":
+            legacy_projection = _preflight_runtime_operation_compatibility(
+                run_root=run_root,
+                artifact_store_root=artifact_store_root,
+                feature_id=protocol.checkpoint_ref.feature_id,
+                checkpoint_path=protocol.checkpoint_ref.path,
+                checkpoint_hash=protocol.checkpoint_ref.artifact_hash,
+                resume_id=protocol.resume_id,
+                approved_by=protocol.approved_by,
+                injected_runtime_admission=spec.variant_payload.runtime_action_scope,
+                completion_scope=RUNTIME_EVIDENCE_ONLY_COMPLETION,
+            )
+            ready = legacy_projection["status"] == "READY_FOR_RUNTIME_EXECUTION"
+        else:
+            handoff = _load_runtime_continuation_handoff(
+                run_root=run_root,
+                artifact_store_root=artifact_store_root,
+                feature_id=protocol.checkpoint_ref.feature_id,
+                checkpoint_path=protocol.checkpoint_ref.path,
+                checkpoint_hash=protocol.checkpoint_ref.artifact_hash,
+                resume_id=protocol.resume_id,
+                attempt_policy=spec.attempt_policy,
+                require_manifest=True,
+            )
+            ready = bool(
+                handoff.resume_readiness is not None
+                and handoff.resume_readiness.allowed
+            )
+            legacy_projection = {
+                "status": "READY_FOR_RUNTIME_EXECUTION" if ready else "BLOCKED",
+                "writes_performed": False,
+                "graph_invoked": False,
+                "identity": {
+                    "run_id": handoff.checkpoint["run_id"],
+                    "request_id": handoff.checkpoint["request_id"],
+                    "feature_id": handoff.checkpoint["feature_id"],
+                },
+                "checkpoint": _artifact_ref_projection(handoff.checkpoint_ref),
+                "resume_decision": (
+                    None
+                    if handoff.resume_readiness is None
+                    else handoff.resume_readiness.to_dict()
+                ),
+                "blockers": (
+                    []
+                    if handoff.resume_readiness is None
+                    else list(handoff.resume_readiness.blockers)
+                ),
+            }
+    except (LocalEntryError, OSError, TypeError, ValueError) as exc:
+        return (
+            _verification_preflight_result(
+                envelope=envelope,
+                operation_kind=envelope.operation_kind,
+                operation_contract_version=envelope.operation_contract_version,
+                status="blocked",
+                failure_stage="admission",
+                blockers=_verification_blockers(
+                    [
+                        {
+                            "stage": "admission",
+                            "code": "VERIFICATION_RUNTIME_ADMISSION_FAILED",
+                            "message": f"{type(exc).__name__}: {exc}",
+                        }
+                    ],
+                    default_stage="admission",
+                ),
+            ),
+            None,
+        )
+    machine_result = _verification_preflight_result(
+        envelope=envelope,
+        operation_kind=envelope.operation_kind,
+        operation_contract_version=envelope.operation_contract_version,
+        status="ready" if ready else "blocked",
+        failure_stage=None if ready else "admission",
+        blockers=(
+            ()
+            if ready
+            else _verification_blockers(
+                list(legacy_projection.get("blockers") or ()),
+                default_stage="admission",
+            )
+        ),
+        audit_snapshot={"writes_performed": False},
+    )
+    return machine_result, legacy_projection
+
+
+def _legacy_runtime_evidence_only_spec(
+    *,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    resume_id: str,
+    approved_by: str,
+    injected_runtime_admission: Mapping[str, Any] | None,
+) -> VerificationOperationSpec:
+    """Normalize the exact legacy C6.2 selector into the typed contract."""
+
+    try:
+        return VerificationOperationSpec(
+            operation_kind=RUNTIME_EXECUTION_KIND,
+            operation_contract_version=RUNTIME_EXECUTION_CONTRACT_VERSION,
+            attempt_policy=InitialAttemptV1(),
+            protocol_binding=NewRuntimeResumeProtocolBindingV1(
+                checkpoint_ref=ArtifactRef(
+                    feature_id=feature_id,
+                    artifact_type="workflow_checkpoint",
+                    path=str(Path(checkpoint_path).resolve()),
+                    artifact_hash=checkpoint_hash,
+                ),
+                resume_id=resume_id,
+                approved_by=approved_by,
+            ),
+            variant_payload=RuntimeExecutionOperationV1(
+                completion_scope=RUNTIME_EVIDENCE_ONLY_COMPLETION,
+                runtime_action_scope=_runtime_resume_admission_snapshot(
+                    injected_runtime_admission
+                ),
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        raise LocalEntryError(
+            "Runtime execution identity contains a non-JSON value."
+        ) from exc
+
+
+def _legacy_runtime_terminalization_spec(
+    *,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    accepted_resume_report_path: str | Path,
+    accepted_resume_report_hash: str,
+    runtime_evidence_path: str | Path,
+    runtime_evidence_hash: str,
+    resume_id: str,
+    approved_by: str,
+) -> VerificationOperationSpec:
+    """Normalize the exact legacy C6.3 selector into the typed contract."""
+
+    return VerificationOperationSpec(
+        operation_kind=RUNTIME_TERMINALIZATION_KIND,
+        operation_contract_version=RUNTIME_TERMINALIZATION_CONTRACT_VERSION,
+        attempt_policy=InitialAttemptV1(),
+        protocol_binding=VerificationProtocolBinding(
+            checkpoint_ref=ArtifactRef(
+                feature_id=feature_id,
+                artifact_type="workflow_checkpoint",
+                path=str(Path(checkpoint_path).resolve()),
+                artifact_hash=checkpoint_hash,
+            ),
+            accepted_resume_report_ref=ArtifactRef(
+                feature_id=feature_id,
+                artifact_type="resume_report",
+                path=str(Path(accepted_resume_report_path).resolve()),
+                artifact_hash=accepted_resume_report_hash,
+            ),
+            resume_id=resume_id,
+            approved_by=approved_by,
+        ),
+        variant_payload=RuntimeTerminalizationOperationV1(
+            runtime_evidence_ref=ArtifactRef(
+                feature_id=feature_id,
+                artifact_type="runtime_evidence",
+                path=str(Path(runtime_evidence_path).resolve()),
+                artifact_hash=runtime_evidence_hash,
+            )
+        ),
+    )
+
+
+def preflight_local_runtime(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None = None,
+    verification_operation: VerificationOperationSpec | None = None,
+    feature_id: str | None = None,
+    checkpoint_path: str | Path | None = None,
+    checkpoint_hash: str | None = None,
+    resume_id: str | None = None,
+    recover_accepted_resume: bool = False,
+    retry_runtime_observation: bool = False,
+    runtime_output_root: str | Path | None = None,
+    settings_path: str | Path | None = None,
+    runtime_plugin_destination: str | Path | None = None,
+    approved_by: str | None = None,
+    injected_runtime_admission: Mapping[str, Any] | None = None,
+    runtime_evidence_only: bool = False,
+    runtime_terminalization_only: bool = False,
+    accepted_resume_report_path: str | Path | None = None,
+    accepted_resume_report_hash: str | None = None,
+    runtime_evidence_path: str | Path | None = None,
+    runtime_evidence_hash: str | None = None,
+) -> dict[str, Any] | VerificationOperationPreflightResultV1:
+    """Normalize legacy selectors once or preflight one typed Runtime operation."""
+
+    typed_call = verification_operation is not None
+    legacy_identity_values = (
+        feature_id,
+        checkpoint_path,
+        checkpoint_hash,
+        resume_id,
+        approved_by,
+        injected_runtime_admission,
+        accepted_resume_report_path,
+        accepted_resume_report_hash,
+        runtime_evidence_path,
+        runtime_evidence_hash,
+    )
+    legacy_scope_selected = any(
+        (
+            recover_accepted_resume,
+            retry_runtime_observation,
+            runtime_evidence_only,
+            runtime_terminalization_only,
+            runtime_output_root is not None,
+            settings_path is not None,
+            runtime_plugin_destination is not None,
+        )
+    )
+    if typed_call:
+        if artifact_store_root is None:
+            return _verification_preflight_result(
+                envelope=None,
+                operation_kind=None,
+                operation_contract_version=None,
+                status="blocked",
+                failure_stage="authorization",
+                identity_resolution_status="unresolved",
+                blockers=_verification_blockers(
+                    [
+                        {
+                            "stage": "authorization",
+                            "code": "VERIFICATION_STORE_ROOT_REQUIRED",
+                            "message": "Typed Runtime operation requires artifact_store_root.",
+                        }
+                    ],
+                    default_stage="authorization",
+                ),
+            )
+        if legacy_scope_selected or any(
+            value is not None for value in legacy_identity_values
+        ):
+            return _verification_preflight_result(
+                envelope=None,
+                operation_kind=None,
+                operation_contract_version=None,
+                status="blocked",
+                failure_stage="authorization",
+                identity_resolution_status="unresolved",
+                blockers=_verification_blockers(
+                    [
+                        {
+                            "stage": "authorization",
+                            "code": "VERIFICATION_OPERATION_LEGACY_MIXED",
+                            "message": "Typed Runtime operation cannot mix legacy selectors.",
+                        }
+                    ],
+                    default_stage="authorization",
+                ),
+            )
+        result, _ = _typed_runtime_preflight(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            spec=verification_operation,
+        )
+        return result
+    if feature_id is None or checkpoint_path is None or checkpoint_hash is None:
+        raise TypeError("Legacy Runtime identity inputs are incomplete.")
+    if runtime_terminalization_only:
+        if (
+            runtime_evidence_only
+            or recover_accepted_resume
+            or retry_runtime_observation
+            or runtime_output_root is not None
+            or settings_path is not None
+            or runtime_plugin_destination is not None
+            or injected_runtime_admission is not None
+            or accepted_resume_report_path is None
+            or accepted_resume_report_hash is None
+            or runtime_evidence_path is None
+            or runtime_evidence_hash is None
+            or resume_id is None
+            or approved_by is None
+        ):
+            raise LocalEntryError(
+                "Runtime Store-only continuation inputs are incomplete or mixed."
+            )
+        exact_spec = _legacy_runtime_terminalization_spec(
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            accepted_resume_report_path=accepted_resume_report_path,
+            accepted_resume_report_hash=accepted_resume_report_hash,
+            runtime_evidence_path=runtime_evidence_path,
+            runtime_evidence_hash=runtime_evidence_hash,
+            resume_id=resume_id,
+            approved_by=approved_by,
+        )
+        machine_result, legacy_result = _typed_runtime_preflight(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            spec=exact_spec,
+        )
+        if legacy_result is None:
+            legacy_result = {
+                "status": "BLOCKED",
+                "command": "preflight-runtime-terminalization",
+                "writes_performed": False,
+                "graph_invoked": False,
+                "checkpoint_consumed": False,
+                "blockers": [item.to_dict() for item in machine_result.blockers],
+            }
+        legacy_result["verification_operation_preflight_result"] = (
+            machine_result.to_dict()
+        )
+    elif runtime_evidence_only:
+        if (
+            recover_accepted_resume
+            or retry_runtime_observation
+            or runtime_output_root is not None
+            or settings_path is not None
+            or runtime_plugin_destination is not None
+            or accepted_resume_report_path is not None
+            or accepted_resume_report_hash is not None
+            or runtime_evidence_path is not None
+            or runtime_evidence_hash is not None
+            or resume_id is None
+            or approved_by is None
+            or artifact_store_root is None
+        ):
+            raise LocalEntryError(
+                "RuntimeEvidence-only preflight inputs are incomplete or mixed."
+            )
+        exact_spec = _legacy_runtime_evidence_only_spec(
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            resume_id=resume_id,
+            approved_by=approved_by,
+            injected_runtime_admission=injected_runtime_admission,
+        )
+        machine_result, legacy_result = _typed_runtime_preflight(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            spec=exact_spec,
+        )
+        if legacy_result is None:
+            legacy_result = {
+                "status": "BLOCKED",
+                "command": "preflight-runtime-evidence-only",
+                "writes_performed": False,
+                "graph_invoked": False,
+                "checkpoint_consumed": False,
+                "resume_report_created": False,
+                "runtime_evidence_created": False,
+                "process_launched": False,
+                "dll_copied": False,
+                "blockers": [item.to_dict() for item in machine_result.blockers],
+            }
+        legacy_result["verification_operation_preflight_result"] = (
+            machine_result.to_dict()
+        )
+    else:
+        if retry_runtime_observation and recover_accepted_resume:
+            raise LocalEntryError(
+                "Runtime retry and recovery selectors cannot be mixed."
+            )
+        advisory_attempt_mode = (
+            "observation_retry"
+            if retry_runtime_observation
+            else "accepted_resume_recovery"
+            if recover_accepted_resume
+            else "initial"
+        )
+        legacy_result = _preflight_runtime_operation_compatibility(
+            run_root=run_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            artifact_store_root=artifact_store_root,
+            resume_id=resume_id,
+            attempt_policy=None,
+            runtime_output_root=runtime_output_root,
+            settings_path=settings_path,
+            runtime_plugin_destination=runtime_plugin_destination,
+            approved_by=approved_by,
+            injected_runtime_admission=injected_runtime_admission,
+            completion_scope=RUNTIME_WORKFLOW_COMPLETION,
+            advisory_attempt_mode=advisory_attempt_mode,
+        )
+    # Identity-incomplete default/retry/recovery mappings remain advisory and
+    # deliberately omit VerificationOperationPreflightResultV1.
+    return legacy_result
 
 
 def _runtime_profile_preflight_record(
@@ -5520,34 +6787,16 @@ def _execute_runtime_evidence_only_continuation(
     ] | None,
     injected_runtime_admission: Mapping[str, Any] | None,
     expected_runtime_execution_identity_hash: str | None,
+    operation: VerificationOperationEnvelope,
+    preflight: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Execute one admitted RuntimeEvidence-only continuation."""
 
-    try:
-        preflight = preflight_local_runtime(
-            run_root=run_root,
-            artifact_store_root=artifact_store_root,
-            feature_id=feature_id,
-            checkpoint_path=checkpoint_path,
-            checkpoint_hash=checkpoint_hash,
-            resume_id=resume_id,
-            approved_by=approved_by,
-            injected_runtime_admission=injected_runtime_admission,
-            runtime_evidence_only=True,
-        )
-    except LocalEntryError as exc:
-        return _runtime_evidence_only_terminal_result(
-            status="blocked",
-            failure_stage="admission",
-            preflight=None,
-            factory_invocation_count=0,
-            blockers=[
-                {
-                    "stage": "runtime_evidence",
-                    "code": "RUNTIME_EVIDENCE_PREFLIGHT_BLOCKED",
-                    "message": str(exc),
-                }
-            ],
+    operation = validate_verification_operation_envelope(operation)
+    declaration = resolve_verification_operation(operation)
+    if declaration.shape_id != "runtime_execution_initial_evidence_only":
+        raise LocalEntryError(
+            "RuntimeEvidence-only executor received the wrong operation."
         )
     actual_identity_hash = str(preflight["runtime_execution_identity_hash"])
     expected_identity_is_valid = bool(
@@ -5642,6 +6891,20 @@ def _execute_runtime_evidence_only_continuation(
                 if handoff.resume_readiness is None
                 else list(handoff.resume_readiness.blockers)
             ),
+        )
+    if operation.approval_identity_hash != actual_identity_hash:
+        return _runtime_evidence_only_terminal_result(
+            status="blocked",
+            failure_stage="authorization",
+            preflight=preflight,
+            factory_invocation_count=0,
+            blockers=[
+                {
+                    "stage": "runtime_evidence",
+                    "code": "RUNTIME_EXECUTION_TYPED_IDENTITY_MISMATCH",
+                    "message": "Typed Runtime execution identity changed.",
+                }
+            ],
         )
     try:
         payload = _verification_only_runtime_resume_payload(
@@ -5775,12 +7038,8 @@ def _execute_runtime_evidence_only_continuation(
     graph = build_graph(
         handoff.artifact_store,
         runtime_evidence_factory=admitted_runtime_evidence_factory,
-        runtime_evidence_write_results=True,
-        runtime_continuation_checkpoint_id=str(
-            handoff.checkpoint["checkpoint_id"]
-        ),
+        verification_operation=operation,
         use_default_proposal_git_binding=False,
-        interrupt_after=["collect_runtime_evidence"],
     )
     try:
         graph_result = graph.invoke(resumed_state)
@@ -5916,15 +7175,13 @@ def _execute_runtime_evidence_consolidation(
     try:
         validated_operation = validate_verification_operation_envelope(operation)
         protocol = validated_operation.protocol_binding
-        preflight = preflight_local_runtime(
+        preflight = _preflight_runtime_evidence_consolidation(
+            verification_operation=validated_operation.to_spec(),
             run_root=run_root,
             artifact_store_root=artifact_store_root,
             feature_id=feature_id,
             checkpoint_path=checkpoint_path,
             checkpoint_hash=checkpoint_hash,
-            resume_id=protocol.resume_id,
-            approved_by=protocol.approved_by,
-            verification_operation=validated_operation.to_spec(),
         )
     except (LocalEntryError, OSError, ValueError) as exc:
         return _runtime_evidence_consolidation_public_result(
@@ -6009,9 +7266,7 @@ def _execute_runtime_evidence_consolidation(
         graph = build_graph(
             handoff.build_handoff.artifact_store,
             verification_operation=handoff.operation,
-            runtime_evidence_write_results=True,
             use_default_proposal_git_binding=False,
-            interrupt_after=["collect_runtime_evidence"],
         )
         graph_result = graph.invoke(state)
     except Exception as exc:
@@ -6181,8 +7436,13 @@ def _execute_runtime_terminal_continuation(
     approved_by: str,
     resume_id: str,
     expected_runtime_terminal_identity_hash: str | None,
+    operation: VerificationOperationEnvelope,
 ) -> dict[str, Any]:
     """Execute one Store-only terminal continuation through the StateGraph."""
+
+    operation = validate_verification_operation_envelope(operation)
+    if resolve_verification_operation(operation).operation_kind != RUNTIME_TERMINALIZATION_KIND:
+        raise LocalEntryError("Runtime terminal executor received the wrong operation.")
 
     try:
         preflight = _preflight_runtime_terminal_continuation(
@@ -6300,18 +7560,22 @@ def _execute_runtime_terminal_continuation(
                 }
             ],
         )
-
-    terminal_input = VerificationOnlyRuntimeTerminalInput(
-        checkpoint_ref=handoff.build_handoff.checkpoint_ref,
-        resume_report_ref=handoff.resume_report_ref,
-        runtime_evidence_ref=handoff.runtime_evidence_ref,
-        resume_id=resume_id,
-        approved_by=approved_by,
-    )
+    if operation.approval_identity_hash != actual_identity_hash:
+        return _runtime_terminal_public_result(
+            status="blocked",
+            failure_stage="authorization",
+            preflight=preflight,
+            blockers=[
+                {
+                    "stage": "runtime_terminalization",
+                    "code": "RUNTIME_TERMINAL_TYPED_IDENTITY_MISMATCH",
+                    "message": "Typed Runtime terminal identity changed.",
+                }
+            ],
+        )
     graph = build_graph(
         handoff.build_handoff.artifact_store,
-        runtime_terminal_continuation=terminal_input,
-        runtime_terminal_write_results=True,
+        verification_operation=operation,
         use_default_proposal_git_binding=False,
     )
     try:
@@ -6352,7 +7616,146 @@ def _execute_runtime_terminal_continuation(
     )
 
 
-def resume_local_runtime(
+def _normalize_legacy_runtime_workflow_operation(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None,
+    feature_id: str,
+    checkpoint_path: str | Path,
+    checkpoint_hash: str,
+    settings_path: str | Path | None,
+    approved_by: str,
+    allow_game_launch: bool,
+    runtime_plugin_destination: str | Path | None,
+    allow_game_directory_write: bool,
+    resume_id: str | None,
+    runtime_output_root: str | Path | None,
+    injected_runtime_admission: Mapping[str, Any] | None,
+    attempt_policy: InitialAttemptV1 | ObservationRetryAttemptV1 | AcceptedResumeRecoveryAttemptV1,
+) -> VerificationOperationEnvelope:
+    """Normalize one legacy execute call before any Runtime side effect."""
+
+    selected_resume_id = resume_id or f"resume_{uuid4().hex}"
+    handoff = _load_runtime_continuation_handoff(
+        run_root=run_root,
+        artifact_store_root=artifact_store_root,
+        feature_id=feature_id,
+        checkpoint_path=checkpoint_path,
+        checkpoint_hash=checkpoint_hash,
+        resume_id=selected_resume_id,
+        attempt_policy=attempt_policy,
+    )
+    checkpoint_ref = handoff.checkpoint_ref
+    checkpoint = handoff.checkpoint
+    accepted_output_binding = _accepted_runtime_output_binding(handoff)
+    if not isinstance(attempt_policy, InitialAttemptV1):
+        decision = handoff.recovery_decision
+        if decision is None:
+            raise LocalEntryError(
+                "Accepted Runtime attempt is missing its exact ResumeReport decision."
+            )
+        runtime_admission = decision.applied_updates.get("runtime_admission")
+        if not isinstance(runtime_admission, Mapping):
+            raise LocalEntryError(
+                "Accepted Runtime attempt is missing its exact Runtime admission."
+            )
+        runtime_admission = dict(runtime_admission)
+    elif injected_runtime_admission is not None:
+        runtime_admission = dict(injected_runtime_admission)
+    else:
+        settings = load_settings(settings_path)
+        acceptance_criteria = handoff.feature_spec.get("acceptance_criteria")
+        exact_acceptance_criteria = (
+            tuple(acceptance_criteria)
+            if isinstance(acceptance_criteria, list)
+            and all(isinstance(item, str) and bool(item) for item in acceptance_criteria)
+            else ()
+        )
+        runtime_admission = _runtime_admission_record(
+            settings,
+            run_gtfo_runtime=True,
+            allow_game_launch=allow_game_launch,
+            runtime_plugin_destination=runtime_plugin_destination,
+            allow_game_directory_write=allow_game_directory_write,
+            acceptance_criteria=exact_acceptance_criteria,
+        )
+        if accepted_output_binding is not None:
+            runtime_admission["runtime_output_binding"] = dict(
+                accepted_output_binding
+            )
+        elif runtime_output_root is not None:
+            retry_binding = handoff.observation_retry_binding or {}
+            output_report = _runtime_observation_retry_output_report(
+                source_run_root=handoff.run_root,
+                runtime_output_root=runtime_output_root,
+                feature_id=feature_id,
+                stagger_enabled=(
+                    runtime_admission.get("stagger_acceptance") is not None
+                ),
+                stagger_modes=(
+                    tuple(str(item) for item in retry_binding.get("retry_modes", ()))
+                    if "retry_modes" in retry_binding
+                    else None
+                ),
+            )
+            runtime_admission["runtime_output_binding"] = (
+                _runtime_output_admission_binding(output_report)
+            )
+
+    if isinstance(attempt_policy, ObservationRetryAttemptV1):
+        report_ref = handoff.recovery_resume_report_ref
+        if report_ref is None:
+            raise LocalEntryError(
+                "Runtime observation retry is missing its accepted ResumeReport."
+            )
+        report = handoff.artifact_store.read(report_ref)["data"]
+        protocol_binding: VerificationProtocolBinding | NewRuntimeResumeProtocolBindingV1 = (
+            VerificationProtocolBinding(
+                checkpoint_ref=checkpoint_ref,
+                accepted_resume_report_ref=report_ref,
+                resume_id=selected_resume_id,
+                approved_by=str(report["approved_by"]),
+            )
+        )
+    elif isinstance(attempt_policy, AcceptedResumeRecoveryAttemptV1):
+        report_ref = handoff.recovery_resume_report_ref
+        if report_ref is None:
+            raise LocalEntryError(
+                "Accepted resume recovery is missing its ResumeReport."
+            )
+        report = handoff.artifact_store.read(report_ref)["data"]
+        protocol_binding = VerificationProtocolBinding(
+            checkpoint_ref=checkpoint_ref,
+            accepted_resume_report_ref=report_ref,
+            resume_id=selected_resume_id,
+            approved_by=str(report["approved_by"]),
+        )
+    else:
+        protocol_binding = NewRuntimeResumeProtocolBindingV1(
+            checkpoint_ref=checkpoint_ref,
+            resume_id=selected_resume_id,
+            approved_by=approved_by,
+        )
+    return project_verification_operation(
+        VerificationOperationSpec(
+            operation_kind=RUNTIME_EXECUTION_KIND,
+            operation_contract_version=RUNTIME_EXECUTION_CONTRACT_VERSION,
+            attempt_policy=attempt_policy,
+            protocol_binding=protocol_binding,
+            variant_payload=RuntimeExecutionOperationV1(
+                completion_scope=RUNTIME_WORKFLOW_COMPLETION,
+                runtime_action_scope=runtime_admission,
+            ),
+        ),
+        checkpoint_identity=VerificationCheckpointIdentityV1(
+            checkpoint_id=str(checkpoint["checkpoint_id"]),
+            run_id=str(checkpoint["run_id"]),
+            request_id=str(checkpoint["request_id"]),
+        ),
+    )
+
+
+def _execute_runtime_workflow_operation(
     *,
     run_root: str | Path,
     artifact_store_root: str | Path | None = None,
@@ -6365,215 +7768,56 @@ def resume_local_runtime(
     runtime_plugin_destination: str | Path | None,
     allow_game_directory_write: bool,
     resume_id: str | None = None,
-    recover_accepted_resume: bool = False,
-    retry_runtime_observation: bool = False,
     runtime_output_root: str | Path | None = None,
     runtime_evidence_factory: (
         Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None
     ) = None,
     injected_runtime_admission: Mapping[str, Any] | None = None,
-    runtime_evidence_only: bool = False,
-    expected_runtime_execution_identity_hash: str | None = None,
-    runtime_terminalization_only: bool = False,
-    verification_operation: VerificationOperationEnvelope | None = None,
-    expected_approval_identity_hash: str | None = None,
-    accepted_resume_report_path: str | Path | None = None,
-    accepted_resume_report_hash: str | None = None,
-    runtime_evidence_path: str | Path | None = None,
-    runtime_evidence_hash: str | None = None,
-    expected_runtime_terminal_identity_hash: str | None = None,
+    operation: VerificationOperationEnvelope,
 ) -> dict[str, Any]:
-    """Continue one validated Build handoff through the existing Runtime graph."""
+    """Execute one already-normalized Runtime workflow operation."""
 
-    if verification_operation is not None:
-        authorization_blockers: list[dict[str, Any]] = []
-        try:
-            operation = validate_verification_operation_envelope(
-                verification_operation
-            )
-        except ValueError as exc:
-            operation = None
-            authorization_blockers.append(
-                {
-                    "stage": "verification_operation",
-                    "code": "VERIFICATION_OPERATION_INVALID",
-                    "message": str(exc),
-                }
-            )
-        if not approved_by.strip():
-            authorization_blockers.append(
-                {
-                    "stage": "verification_operation",
-                    "code": "VERIFICATION_OPERATION_APPROVER_REQUIRED",
-                    "message": "Verification operation requires exact approved_by.",
-                }
-            )
-        if operation is not None and (
-            approved_by != operation.protocol_binding.approved_by
-            or resume_id not in {None, operation.protocol_binding.resume_id}
-        ):
-            authorization_blockers.append(
-                {
-                    "stage": "verification_operation",
-                    "code": "VERIFICATION_OPERATION_PROTOCOL_MISMATCH",
-                    "message": "Verification operation protocol identity changed.",
-                }
-            )
-        if (
-            runtime_evidence_only
-            or runtime_terminalization_only
-            or recover_accepted_resume
-            or retry_runtime_observation
-            or runtime_output_root is not None
-            or runtime_evidence_factory is not None
-            or injected_runtime_admission is not None
-            or allow_game_launch
-            or allow_game_directory_write
-            or runtime_plugin_destination is not None
-            or settings_path is not None
-            or accepted_resume_report_path is not None
-            or accepted_resume_report_hash is not None
-            or runtime_evidence_path is not None
-            or runtime_evidence_hash is not None
-        ):
-            authorization_blockers.append(
-                {
-                    "stage": "verification_operation",
-                    "code": "VERIFICATION_OPERATION_SCOPE_INVALID",
-                    "message": "Typed operation cannot mix with legacy Runtime scope.",
-                }
-            )
-        if authorization_blockers:
-            return _runtime_evidence_consolidation_public_result(
-                status="blocked",
-                failure_stage="authorization",
-                preflight=None,
-                blockers=authorization_blockers,
-            )
-        return _execute_runtime_evidence_consolidation(
-            run_root=run_root,
-            artifact_store_root=artifact_store_root,
-            feature_id=feature_id,
-            checkpoint_path=checkpoint_path,
-            checkpoint_hash=checkpoint_hash,
-            operation=operation,
-            expected_identity_hash=expected_approval_identity_hash,
-        )
-    if runtime_terminalization_only:
-        authorization_blockers: list[dict[str, Any]] = []
-        if not approved_by.strip():
-            authorization_blockers.append(
-                {
-                    "stage": "runtime_terminalization",
-                    "code": "RUNTIME_TERMINAL_APPROVER_REQUIRED",
-                    "message": "Runtime terminalization requires exact approved_by.",
-                }
-            )
-        if (
-            runtime_evidence_only
-            or verification_operation is not None
-            or recover_accepted_resume
-            or retry_runtime_observation
-            or runtime_output_root is not None
-            or runtime_evidence_factory is not None
-            or injected_runtime_admission is not None
-            or allow_game_launch
-            or allow_game_directory_write
-            or runtime_plugin_destination is not None
-        ):
-            authorization_blockers.append(
-                {
-                    "stage": "runtime_terminalization",
-                    "code": "RUNTIME_TERMINAL_SIDE_EFFECT_SCOPE_INVALID",
-                    "message": (
-                        "Runtime terminalization permits only Store terminal writes."
-                    ),
-                }
-            )
-        if not isinstance(resume_id, str) or not resume_id:
-            authorization_blockers.append(
-                {
-                    "stage": "runtime_terminalization",
-                    "code": "RUNTIME_TERMINAL_RESUME_ID_REQUIRED",
-                    "message": (
-                        "Runtime terminalization requires the exact resume_id."
-                    ),
-                }
-            )
-        if (
-            accepted_resume_report_path is None
-            or not isinstance(accepted_resume_report_hash, str)
-            or runtime_evidence_path is None
-            or not isinstance(runtime_evidence_hash, str)
-        ):
-            authorization_blockers.append(
-                {
-                    "stage": "runtime_terminalization",
-                    "code": "RUNTIME_TERMINAL_EXACT_REFS_REQUIRED",
-                    "message": (
-                        "Runtime terminalization requires exact ResumeReport and "
-                        "RuntimeEvidence refs."
-                    ),
-                }
-            )
-        if authorization_blockers:
-            return _runtime_terminal_public_result(
-                status="blocked",
-                failure_stage="authorization",
-                preflight=None,
-                blockers=authorization_blockers,
-            )
-        return _execute_runtime_terminal_continuation(
-            run_root=run_root,
-            artifact_store_root=artifact_store_root,
-            feature_id=feature_id,
-            checkpoint_path=checkpoint_path,
-            checkpoint_hash=checkpoint_hash,
-            accepted_resume_report_path=accepted_resume_report_path,
-            accepted_resume_report_hash=accepted_resume_report_hash,
-            runtime_evidence_path=runtime_evidence_path,
-            runtime_evidence_hash=runtime_evidence_hash,
-            approved_by=approved_by,
-            resume_id=resume_id,
-            expected_runtime_terminal_identity_hash=(
-                expected_runtime_terminal_identity_hash
-            ),
-        )
-    if not approved_by.strip():
-        raise LocalEntryError("Runtime continuation requires approved_by.")
-    if runtime_evidence_only:
-        if recover_accepted_resume or retry_runtime_observation:
-            raise LocalEntryError(
-                "RuntimeEvidence-only continuation supports only an initial resume."
-            )
-        return _execute_runtime_evidence_only_continuation(
-            run_root=run_root,
-            artifact_store_root=artifact_store_root,
-            feature_id=feature_id,
-            checkpoint_path=checkpoint_path,
-            checkpoint_hash=checkpoint_hash,
-            approved_by=approved_by,
-            resume_id=resume_id,
-            runtime_evidence_factory=runtime_evidence_factory,
-            injected_runtime_admission=injected_runtime_admission,
-            expected_runtime_execution_identity_hash=(
-                expected_runtime_execution_identity_hash
-            ),
-        )
-    if recover_accepted_resume and resume_id is None:
+    approved_operation = validate_verification_operation_envelope(operation)
+    declaration = resolve_verification_operation(approved_operation)
+    if (
+        declaration.operation_kind != RUNTIME_EXECUTION_KIND
+        or declaration.completion_scope != RUNTIME_WORKFLOW_COMPLETION
+    ):
         raise LocalEntryError(
-            "Accepted resume recovery requires the exact prior resume_id."
+            "Runtime workflow executor received the wrong operation."
         )
-    if retry_runtime_observation and resume_id is None:
-        raise LocalEntryError(
-            "Runtime observation retry requires the exact prior resume_id."
+    attempt = approved_operation.attempt_policy
+    protocol = approved_operation.protocol_binding
+    if not isinstance(
+        attempt,
+        (InitialAttemptV1, ObservationRetryAttemptV1, AcceptedResumeRecoveryAttemptV1),
+    ):
+        raise LocalEntryError("Runtime workflow attempt policy is not registered.")
+    is_retry = isinstance(attempt, ObservationRetryAttemptV1)
+    is_recovery = isinstance(attempt, AcceptedResumeRecoveryAttemptV1)
+    if not isinstance(
+        protocol,
+        (NewRuntimeResumeProtocolBindingV1, VerificationProtocolBinding),
+    ):
+        raise LocalEntryError("Runtime workflow protocol binding is invalid.")
+    if (
+        protocol.checkpoint_ref.feature_id != feature_id
+        or protocol.checkpoint_ref.path != str(Path(checkpoint_path).resolve())
+        or protocol.checkpoint_ref.artifact_hash != checkpoint_hash
+    ):
+        raise LocalEntryError("Runtime workflow checkpoint identity changed.")
+    if approved_by != (
+        attempt.current_attempt_approved_by
+        if isinstance(
+            attempt,
+            (ObservationRetryAttemptV1, AcceptedResumeRecoveryAttemptV1),
         )
-    if recover_accepted_resume and retry_runtime_observation:
-        raise LocalEntryError(
-            "Accepted resume recovery and Runtime observation retry are "
-            "mutually exclusive."
-        )
-    if retry_runtime_observation and runtime_output_root is None:
+        else protocol.approved_by
+    ):
+        raise LocalEntryError("Runtime workflow approver identity changed.")
+    if resume_id is not None and resume_id != protocol.resume_id:
+        raise LocalEntryError("Runtime workflow resume identity changed.")
+    if is_retry and runtime_output_root is None:
         raise LocalEntryError(
             "Runtime observation retry requires runtime_output_root."
         )
@@ -6582,12 +7826,12 @@ def resume_local_runtime(
             "Stagger Runtime output root must be absolute."
         )
     if (
-        recover_accepted_resume or retry_runtime_observation
+        not isinstance(attempt, InitialAttemptV1)
     ) and injected_runtime_admission is not None:
         raise LocalEntryError(
             "Accepted ResumeReport reuse does not accept injected Runtime admission."
         )
-    selected_resume_id = resume_id or f"resume_{uuid4().hex}"
+    selected_resume_id = protocol.resume_id
     handoff = _load_runtime_continuation_handoff(
         run_root=run_root,
         artifact_store_root=artifact_store_root,
@@ -6595,12 +7839,11 @@ def resume_local_runtime(
         checkpoint_path=checkpoint_path,
         checkpoint_hash=checkpoint_hash,
         resume_id=selected_resume_id,
-        recover_accepted_resume=recover_accepted_resume,
-        retry_runtime_observation=retry_runtime_observation,
+        attempt_policy=attempt,
     )
     accepted_output_binding = _accepted_runtime_output_binding(handoff)
     selected_runtime_output_root = runtime_output_root
-    if recover_accepted_resume and accepted_output_binding is not None:
+    if is_recovery and accepted_output_binding is not None:
         bound_output_root = accepted_output_binding.get("runtime_output_root")
         if not isinstance(bound_output_root, str) or not bound_output_root:
             raise LocalEntryError(
@@ -6670,7 +7913,7 @@ def resume_local_runtime(
                         "retry_acceptance_criteria", ()
                     )
                 )
-                if retry_runtime_observation
+                if is_retry
                 and "retry_acceptance_criteria"
                 in (handoff.observation_retry_binding or {})
                 else None
@@ -6682,8 +7925,7 @@ def resume_local_runtime(
         )
         if (
             repair_attempt_projection is not None
-            and not recover_accepted_resume
-            and not retry_runtime_observation
+            and isinstance(attempt, InitialAttemptV1)
             and selected_runtime_output_root is None
         ):
             raise LocalEntryError(
@@ -6730,7 +7972,7 @@ def resume_local_runtime(
                             "retry_modes", ()
                         )
                     )
-                    if retry_runtime_observation
+                    if is_retry
                     and "retry_modes" in (handoff.observation_retry_binding or {})
                     else None
                 ),
@@ -6744,7 +7986,7 @@ def resume_local_runtime(
                     runtime_admission.get("stagger_acceptance") is not None
                 ),
             )
-        if retry_runtime_observation:
+        if is_retry:
             if runtime_output_report is None:
                 raise LocalEntryError(
                     "Runtime observation retry output binding is missing."
@@ -6756,7 +7998,7 @@ def resume_local_runtime(
             )
         elif (
             runtime_output_report is not None
-            and not retry_runtime_observation
+            and not is_retry
         ):
             runtime_admission["runtime_output_binding"] = (
                 _runtime_output_admission_binding(runtime_output_report)
@@ -6801,7 +8043,7 @@ def resume_local_runtime(
                     **dict(handoff.observation_retry_binding or {}),
                     "runtime_output_root": str(root),
                 }
-                if retry_runtime_observation
+                if is_retry
                 else None
             ),
             operator_completion_directory=(
@@ -6818,7 +8060,7 @@ def resume_local_runtime(
                     repair_attempt_projection,
                     runtime_observation_retry=(
                         handoff.observation_retry_binding
-                        if retry_runtime_observation
+                        if is_retry
                         else None
                     ),
                 )
@@ -6826,6 +8068,121 @@ def resume_local_runtime(
         )
 
     admission_snapshot = _runtime_resume_admission_snapshot(runtime_admission)
+    approved_action_scope = dict(
+        approved_operation.variant_payload.runtime_action_scope
+    )
+    revalidated_action_scope = (
+        admission_snapshot
+        if not isinstance(attempt, InitialAttemptV1)
+        else runtime_admission
+    )
+    if approved_action_scope != revalidated_action_scope:
+        raise LocalEntryError(
+            "Runtime workflow action scope changed during execution admission."
+        )
+    checkpoint_identity = VerificationCheckpointIdentityV1(
+        checkpoint_id=str(checkpoint["checkpoint_id"]),
+        run_id=str(checkpoint["run_id"]),
+        request_id=str(checkpoint["request_id"]),
+    )
+    if is_retry:
+        retry_binding = handoff.observation_retry_binding
+        report_ref = handoff.recovery_resume_report_ref
+        prior_runtime_ref = handoff.prior_runtime_evidence_ref
+        repair_plan_ref = handoff.prior_repair_plan_ref
+        if (
+            not isinstance(retry_binding, Mapping)
+            or report_ref is None
+            or prior_runtime_ref is None
+            or repair_plan_ref is None
+        ):
+            raise LocalEntryError("Runtime observation retry typed binding is incomplete.")
+        report = artifact_store.read(report_ref)["data"]
+        remaining_before = retry_binding.get(
+            "retry_budget_remaining_before_attempt"
+        )
+        if type(remaining_before) is not int:
+            raise LocalEntryError("Runtime observation retry budget is incomplete.")
+        operation_spec = VerificationOperationSpec(
+            operation_kind=RUNTIME_EXECUTION_KIND,
+            operation_contract_version=RUNTIME_EXECUTION_CONTRACT_VERSION,
+            attempt_policy=ObservationRetryAttemptV1(
+                prior_runtime_evidence_ref=prior_runtime_ref,
+                repair_plan_ref=repair_plan_ref,
+                retry_number=int(retry_binding["retry_number"]),
+                retry_budget=int(retry_binding["retry_budget"]),
+                retry_budget_remaining=max(remaining_before - 1, 0),
+                current_attempt_approved_by=approved_by,
+            ),
+            protocol_binding=VerificationProtocolBinding(
+                checkpoint_ref=checkpoint_ref,
+                accepted_resume_report_ref=report_ref,
+                resume_id=selected_resume_id,
+                approved_by=str(report["approved_by"]),
+            ),
+            variant_payload=RuntimeExecutionOperationV1(
+                completion_scope=RUNTIME_WORKFLOW_COMPLETION,
+                runtime_action_scope=approved_action_scope,
+            ),
+        )
+    elif is_recovery:
+        report_ref = handoff.recovery_resume_report_ref
+        if report_ref is None:
+            raise LocalEntryError("Accepted resume recovery typed binding is incomplete.")
+        report = artifact_store.read(report_ref)["data"]
+        operation_spec = VerificationOperationSpec(
+            operation_kind=RUNTIME_EXECUTION_KIND,
+            operation_contract_version=RUNTIME_EXECUTION_CONTRACT_VERSION,
+            attempt_policy=AcceptedResumeRecoveryAttemptV1(
+                accepted_resume_report_ref=report_ref,
+                recovery_of_resume_id=selected_resume_id,
+                current_attempt_approved_by=approved_by,
+            ),
+            protocol_binding=VerificationProtocolBinding(
+                checkpoint_ref=checkpoint_ref,
+                accepted_resume_report_ref=report_ref,
+                resume_id=selected_resume_id,
+                approved_by=str(report["approved_by"]),
+            ),
+            variant_payload=RuntimeExecutionOperationV1(
+                completion_scope=RUNTIME_WORKFLOW_COMPLETION,
+                runtime_action_scope=approved_action_scope,
+            ),
+        )
+    else:
+        operation_spec = VerificationOperationSpec(
+            operation_kind=RUNTIME_EXECUTION_KIND,
+            operation_contract_version=RUNTIME_EXECUTION_CONTRACT_VERSION,
+            attempt_policy=InitialAttemptV1(),
+            protocol_binding=NewRuntimeResumeProtocolBindingV1(
+                checkpoint_ref=checkpoint_ref,
+                resume_id=selected_resume_id,
+                approved_by=approved_by,
+            ),
+            variant_payload=RuntimeExecutionOperationV1(
+                completion_scope=RUNTIME_WORKFLOW_COMPLETION,
+                runtime_action_scope=approved_action_scope,
+            ),
+        )
+    runtime_operation = project_verification_operation(
+        operation_spec,
+        checkpoint_identity=checkpoint_identity,
+    )
+    if (
+        approved_operation.operation_kind != runtime_operation.operation_kind
+        or approved_operation.operation_contract_version
+        != runtime_operation.operation_contract_version
+        or approved_operation.approval_identity
+        != runtime_operation.approval_identity
+        or not hmac.compare_digest(
+            approved_operation.approval_identity_hash,
+            runtime_operation.approval_identity_hash,
+        )
+    ):
+        raise LocalEntryError(
+            "Runtime workflow operation changed during execution admission."
+        )
+    runtime_operation = approved_operation
     payload = ResumePayload(
         resume_id=selected_resume_id,
         run_id=str(checkpoint["run_id"]),
@@ -6840,7 +8197,38 @@ def resume_local_runtime(
         runtime_admission=admission_snapshot,
     )
     checkpoint_store = WorkflowCheckpointStore(artifact_store)
-    if recover_accepted_resume or retry_runtime_observation:
+    resume_projection: dict[str, Any] | None = None
+
+    def stop_before_runtime_graph(
+        *,
+        status: str,
+        failure_stage: str,
+        blockers: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "status": status,
+            "failure_stage": failure_stage,
+            "operator_input_required": False,
+            "side_effects_may_have_started": False,
+            "run_id": checkpoint["run_id"],
+            "request_id": checkpoint["request_id"],
+            "feature_id": checkpoint["feature_id"],
+            "resume_id": payload.resume_id,
+            "accepted_resume_recovery": is_recovery,
+            "runtime_observation_retry": is_retry,
+            "checkpoint_id": checkpoint["checkpoint_id"],
+            "current_stage": "build",
+            "artifacts": {},
+            "artifact_hashes": {},
+            "runtime_summary": {
+                "platform_failure_stage": failure_stage,
+                "side_effects_may_have_started": False,
+            },
+            "resume_report": resume_projection,
+            "blockers": blockers,
+        }
+
+    if not isinstance(attempt, InitialAttemptV1):
         decision = handoff.recovery_decision
         resume_report_ref = handoff.recovery_resume_report_ref
         if decision is None or resume_report_ref is None:
@@ -6854,7 +8242,70 @@ def resume_local_runtime(
                 "original admission."
             )
     else:
-        decision, resume_report_ref = checkpoint_store.resume(checkpoint_ref, payload)
+        try:
+            decision, resume_write_result = checkpoint_store.resume_with_result(
+                checkpoint_ref,
+                payload,
+            )
+        except Exception as exc:
+            return stop_before_runtime_graph(
+                status="blocked",
+                failure_stage="resume_admission",
+                blockers=[
+                    {
+                        "stage": "resume_admission",
+                        "code": "RUNTIME_RESUME_ADMISSION_FAILED",
+                        "message": f"{type(exc).__name__}: {exc}",
+                    }
+                ],
+            )
+        resume_projection = {
+            "artifact_ref": (
+                None
+                if resume_write_result.artifact_ref is None
+                else _artifact_ref_projection(resume_write_result.artifact_ref)
+            ),
+            "store_result": resume_write_result.to_dict(),
+            "decision": decision.to_dict(),
+        }
+        if resume_write_result.outcome != "committed":
+            return stop_before_runtime_graph(
+                status=(
+                    "partial"
+                    if resume_write_result.outcome == "partial"
+                    else "blocked"
+                ),
+                failure_stage="resume_report_store",
+                blockers=(
+                    list(decision.blockers)
+                    or [
+                        {
+                            "stage": "resume_report_store",
+                            "code": "RUNTIME_RESUME_REPORT_STORE_INCOMPLETE",
+                            "message": (
+                                "ResumeReport Store outcome was "
+                                f"{resume_write_result.outcome}."
+                            ),
+                        }
+                    ]
+                ),
+            )
+        resume_report_ref = resume_write_result.artifact_ref
+        if not decision.allowed or resume_report_ref is None:
+            return stop_before_runtime_graph(
+                status="blocked",
+                failure_stage="resume_admission",
+                blockers=(
+                    list(decision.blockers)
+                    or [
+                        {
+                            "stage": "resume_admission",
+                            "code": "RUNTIME_RESUME_DECISION_BLOCKED",
+                            "message": "ResumeReport was committed but resume was blocked.",
+                        }
+                    ]
+                ),
+            )
     if not decision.allowed:
         blocker_codes = [
             str(blocker.get("code"))
@@ -6864,15 +8315,28 @@ def resume_local_runtime(
         raise LocalEntryError(
             "Runtime continuation resume was blocked: " + ", ".join(blocker_codes)
         )
-    resumed_state = resumed_state_from_decision(
-        decision,
-        checkpoint_ref=checkpoint_ref,
-        resume_report_ref=resume_report_ref,
-    )
+    try:
+        resumed_state = resumed_state_from_decision(
+            decision,
+            checkpoint_ref=checkpoint_ref,
+            resume_report_ref=resume_report_ref,
+        )
+    except Exception as exc:
+        return stop_before_runtime_graph(
+            status="blocked",
+            failure_stage="resume_admission",
+            blockers=[
+                {
+                    "stage": "resume_admission",
+                    "code": "RUNTIME_RESUMED_STATE_RECONSTRUCTION_FAILED",
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            ],
+        )
     graph = build_graph(
         artifact_store,
         runtime_evidence_factory=graph_runtime_factory,
-        runtime_continuation_checkpoint_id=str(checkpoint["checkpoint_id"]),
+        verification_operation=runtime_operation,
         use_default_proposal_git_binding=False,
     )
     try:
@@ -6882,25 +8346,51 @@ def resume_local_runtime(
             f"Runtime continuation graph failed: {type(exc).__name__}: {exc}"
         ) from exc
 
+    runtime_summary = dict(result["runtime_summary"])
+    platform_failure_stage = runtime_summary.get("platform_failure_stage")
+    runtime_store_result = runtime_summary.get("runtime_evidence_store_result")
+    runtime_store_outcome = (
+        runtime_store_result.get("outcome")
+        if isinstance(runtime_store_result, Mapping)
+        else None
+    )
+    platform_status = (
+        "partial"
+        if runtime_store_outcome == "partial"
+        else "blocked"
+        if platform_failure_stage is not None
+        else "completed"
+    )
+    runtime_summary["side_effects_may_have_started"] = (
+        platform_failure_stage != "store_preflight"
+    )
     summary = {
+        "status": platform_status,
+        "failure_stage": platform_failure_stage,
+        "operator_input_required": False,
+        "side_effects_may_have_started": runtime_summary[
+            "side_effects_may_have_started"
+        ],
         "run_id": result["run_id"],
         "request_id": result["request_id"],
         "feature_id": result["feature_id"],
         "resume_id": payload.resume_id,
-        "accepted_resume_recovery": recover_accepted_resume,
-        "runtime_observation_retry": retry_runtime_observation,
+        "accepted_resume_recovery": is_recovery,
+        "runtime_observation_retry": is_retry,
         "runtime_observation_retry_binding": (
             {
                 **dict(handoff.observation_retry_binding or {}),
                 "runtime_output_root": str(root),
             }
-            if retry_runtime_observation
+            if is_retry
             else None
         ),
         "checkpoint_id": checkpoint["checkpoint_id"],
         "current_stage": result["current_stage"],
         "artifacts": result["artifacts"],
-        "runtime_summary": result["runtime_summary"],
+        "artifact_hashes": result["artifact_hashes"],
+        "runtime_summary": runtime_summary,
+        "resume_report": resume_projection,
         "runtime_admission": runtime_admission,
         "deployment_backup": (
             backup_report if injected_runtime_admission is None else None
@@ -6914,12 +8404,938 @@ def resume_local_runtime(
         "model_call_count": 0,
         "upstream_stages_repeated": False,
     }
-    result_path = root / "runtime_resume_result.json"
-    result_path.write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
     return summary
+
+
+def _operation_result_refs_from_artifacts(
+    public_result: Mapping[str, Any],
+    *,
+    feature_id: str,
+) -> dict[str, ArtifactRef]:
+    refs: dict[str, ArtifactRef] = {}
+    artifacts = public_result.get("artifacts")
+    hashes = public_result.get("artifact_hashes")
+    if not isinstance(artifacts, Mapping) or not isinstance(hashes, Mapping):
+        return refs
+    for artifact_type, path in artifacts.items():
+        artifact_hash = hashes.get(artifact_type)
+        if isinstance(path, str) and isinstance(artifact_hash, str):
+            refs[str(artifact_type)] = ArtifactRef(
+                feature_id=feature_id,
+                artifact_type=str(artifact_type),
+                path=path,
+                artifact_hash=artifact_hash,
+            )
+    return refs
+
+
+def _exact_verification_platform_status(
+    public_result: Mapping[str, Any],
+) -> str:
+    status = public_result.get("status")
+    if status not in {"completed", "blocked", "partial"}:
+        raise LocalEntryError(
+            "Verification execution did not provide an exact platform status."
+        )
+    return str(status)
+
+
+def _runtime_execution_machine_result(
+    *,
+    envelope: VerificationOperationEnvelope,
+    public_result: Mapping[str, Any],
+) -> VerificationOperationResultV1:
+    feature_id = envelope.protocol_binding.checkpoint_ref.feature_id
+    artifact_refs = _operation_result_refs_from_artifacts(
+        public_result,
+        feature_id=feature_id,
+    )
+    resume_projection = public_result.get("resume_report")
+    runtime_projection = public_result.get("runtime_evidence")
+    resume_ref = _artifact_ref_from_projection(
+        resume_projection.get("artifact_ref")
+        if isinstance(resume_projection, Mapping)
+        else None
+    ) or artifact_refs.get("resume_report")
+    if not isinstance(envelope.attempt_policy, InitialAttemptV1):
+        # Accepted retry/recovery reports are protocol inputs, not outputs of
+        # the current attempt.
+        resume_ref = None
+    runtime_ref = _artifact_ref_from_projection(
+        runtime_projection.get("artifact_ref")
+        if isinstance(runtime_projection, Mapping)
+        else None
+    ) or artifact_refs.get("runtime_evidence")
+    terminal_refs = tuple(
+        artifact_refs[item]
+        for item in ("blocked_report", "eval_report", "workflow_summary")
+        if item in artifact_refs
+    )
+    runtime_execution = public_result.get("runtime_execution")
+    runtime_summary = public_result.get("runtime_summary")
+    source_summary = (
+        runtime_execution
+        if isinstance(runtime_execution, Mapping)
+        else runtime_summary
+        if isinstance(runtime_summary, Mapping)
+        else {}
+    )
+    raw_domain_status = (
+        source_summary.get("acceptance_status")
+        or source_summary.get("status")
+    )
+    domain_status = (
+        str(raw_domain_status)
+        if raw_domain_status in {"accepted", "blocked", "inconclusive"}
+        else "unknown"
+    )
+    completion_scope = envelope.variant_payload.completion_scope
+    platform_status = _exact_verification_platform_status(public_result)
+    failure_stage = public_result.get("failure_stage")
+    operator_input_required = public_result.get("operator_input_required") is True
+    variant = RuntimeExecutionResultV1(
+        completion_scope=completion_scope,
+        domain_runtime_status=domain_status,
+        resume_report_ref=resume_ref,
+        runtime_evidence_ref=runtime_ref,
+        terminal_refs=terminal_refs,
+        operator_input_required=operator_input_required,
+    )
+    declaration = resolve_verification_operation(envelope)
+    runtime_summary_mapping = (
+        runtime_summary if isinstance(runtime_summary, Mapping) else {}
+    )
+    receipts = _verification_store_receipts(
+        tuple(
+            (
+                role,
+                (
+                    resume_projection.get("store_result")
+                    if role == "resume_report" and isinstance(resume_projection, Mapping)
+                    else runtime_projection.get("store_result")
+                    if role == "runtime_evidence" and isinstance(runtime_projection, Mapping)
+                    else runtime_summary_mapping.get(f"{role}_store_result")
+                ),
+            )
+            for role, _artifact_type in declaration.output_artifact_roles
+        )
+    )
+    blocker_items = list(public_result.get("blockers") or ())
+    blockers = (
+        _verification_blockers(
+            blocker_items,
+            default_stage=str(failure_stage or "admission"),
+        )
+        if platform_status == "blocked" or blocker_items
+        else ()
+    )
+    return project_verification_operation_result(
+        envelope=envelope,
+        platform_status=platform_status,
+        failure_stage=failure_stage,
+        side_effects_may_have_started=bool(
+            source_summary.get("side_effects_may_have_started") is True
+            or source_summary.get("factory_invocation_count", 0)
+        ),
+        store_receipts=receipts,
+        blockers=blockers,
+        variant_result=variant,
+        audit_snapshot={"compatibility_mode": "typed_current"},
+    )
+
+
+def _terminalization_machine_result(
+    *,
+    envelope: VerificationOperationEnvelope,
+    public_result: Mapping[str, Any],
+) -> VerificationOperationResultV1:
+    projections = {
+        role: public_result.get(role)
+        for role in ("blocked_report", "eval_report", "workflow_summary")
+    }
+    refs = {
+        role: _artifact_ref_from_projection(
+            value.get("artifact_ref") if isinstance(value, Mapping) else None
+        )
+        for role, value in projections.items()
+    }
+    runtime_summary = public_result.get("runtime_summary")
+    acceptance_value = (
+        runtime_summary.get("acceptance_status")
+        if isinstance(runtime_summary, Mapping)
+        else None
+    )
+    domain_status = (
+        str(acceptance_value)
+        if acceptance_value in {"accepted", "blocked", "inconclusive"}
+        else "unknown"
+    )
+    variant = RuntimeTerminalizationResultV1(
+        domain_acceptance_status=domain_status,
+        runtime_evidence_ref=envelope.variant_payload.runtime_evidence_ref,
+        eval_report_ref=refs["eval_report"],
+        blocked_report_ref=refs["blocked_report"],
+        workflow_summary_ref=refs["workflow_summary"],
+    )
+    platform_status = _exact_verification_platform_status(public_result)
+    receipts = _verification_store_receipts(
+        tuple(
+            (
+                role,
+                value.get("store_result") if isinstance(value, Mapping) else None,
+            )
+            for role, value in projections.items()
+        )
+    )
+    blocker_items = list(public_result.get("blockers") or ())
+    blockers = (
+        _verification_blockers(
+            blocker_items,
+            default_stage=str(public_result.get("failure_stage") or "terminal_admission"),
+        )
+        if platform_status == "blocked" or blocker_items
+        else ()
+    )
+    return project_verification_operation_result(
+        envelope=envelope,
+        platform_status=platform_status,
+        failure_stage=public_result.get("failure_stage"),
+        side_effects_may_have_started=False,
+        store_receipts=receipts,
+        blockers=blockers,
+        variant_result=variant,
+        audit_snapshot={"compatibility_mode": "typed_current"},
+    )
+
+
+def _consolidation_machine_result(
+    *,
+    envelope: VerificationOperationEnvelope,
+    public_result: Mapping[str, Any],
+) -> VerificationOperationResultV1:
+    runtime_projection = public_result.get("runtime_evidence")
+    runtime_ref = _artifact_ref_from_projection(
+        runtime_projection.get("artifact_ref")
+        if isinstance(runtime_projection, Mapping)
+        else None
+    )
+    preflight = public_result.get("runtime_evidence_consolidation_preflight")
+    intent = (
+        preflight.get("artifact_write_intent")
+        if isinstance(preflight, Mapping)
+        else None
+    )
+    derived_payload_hash = public_result.get(
+        "derived_runtime_evidence_payload_hash"
+    )
+    semantic_binding_key = (
+        intent.get("semantic_binding_key")
+        if isinstance(intent, Mapping)
+        else None
+    )
+    semantic_binding_version = (
+        intent.get("semantic_binding_version")
+        if isinstance(intent, Mapping)
+        else None
+    )
+    if not all(
+        type(value) is str and value
+        for value in (
+            derived_payload_hash,
+            semantic_binding_key,
+            semantic_binding_version,
+        )
+    ):
+        if runtime_ref is not None or (
+            isinstance(runtime_projection, Mapping)
+            and runtime_projection.get("store_result") is not None
+        ):
+            raise LocalEntryError(
+                "Committed consolidation result is missing trusted machine facts."
+            )
+        return _rejected_verification_result(
+            operation_kind=envelope.operation_kind,
+            operation_contract_version=envelope.operation_contract_version,
+            approval_identity_hash=envelope.approval_identity_hash,
+            identity_resolution_status="approved_identity_only",
+            failure_stage="admission",
+            blockers=_verification_blockers(
+                [
+                    {
+                        "stage": "admission",
+                        "code": "VERIFICATION_OPERATION_IDENTITY_UNAVAILABLE",
+                        "message": (
+                            "Consolidation result lacks trusted payload or semantic "
+                            "binding facts."
+                        ),
+                    }
+                ],
+                default_stage="admission",
+            ),
+        )
+    variant = EvidenceConsolidationResultV1(
+        prior_runtime_evidence_ref=(
+            envelope.variant_payload.prior_runtime_evidence_ref
+        ),
+        runtime_evidence_ref=runtime_ref,
+        derived_payload_hash=derived_payload_hash,
+        semantic_binding_key=semantic_binding_key,
+        semantic_binding_version=semantic_binding_version,
+    )
+    platform_status = _exact_verification_platform_status(public_result)
+    receipt = (
+        runtime_projection.get("store_result")
+        if isinstance(runtime_projection, Mapping)
+        else None
+    )
+    blocker_items = list(public_result.get("blockers") or ())
+    return project_verification_operation_result(
+        envelope=envelope,
+        platform_status=platform_status,
+        failure_stage=public_result.get("failure_stage"),
+        side_effects_may_have_started=False,
+        store_receipts=_verification_store_receipts(
+            (("runtime_evidence", receipt),)
+        ),
+        blockers=(
+            _verification_blockers(
+                blocker_items,
+                default_stage=str(
+                    public_result.get("failure_stage") or "consolidation_admission"
+                ),
+            )
+            if platform_status == "blocked" or blocker_items
+            else ()
+        ),
+        variant_result=variant,
+        audit_snapshot={"compatibility_mode": "typed_current"},
+    )
+
+
+def _runtime_machine_result(
+    *,
+    envelope: VerificationOperationEnvelope,
+    public_result: Mapping[str, Any],
+) -> VerificationOperationResultV1:
+    declaration = resolve_verification_operation(envelope)
+    if declaration.operation_kind == RUNTIME_EXECUTION_KIND:
+        return _runtime_execution_machine_result(
+            envelope=envelope,
+            public_result=public_result,
+        )
+    if declaration.operation_kind == RUNTIME_TERMINALIZATION_KIND:
+        return _terminalization_machine_result(
+            envelope=envelope,
+            public_result=public_result,
+        )
+    if declaration.operation_kind == EVIDENCE_CONSOLIDATION_KIND:
+        return _consolidation_machine_result(
+            envelope=envelope,
+            public_result=public_result,
+        )
+    raise LocalEntryError("Runtime public result received a Build operation.")
+
+
+def _finalize_runtime_public_result(
+    *,
+    envelope: VerificationOperationEnvelope,
+    public_result: dict[str, Any],
+    typed_call: bool,
+) -> dict[str, Any] | VerificationOperationResultV1:
+    machine_result = _runtime_machine_result(
+        envelope=envelope,
+        public_result=public_result,
+    )
+    if typed_call:
+        return machine_result
+    public_result["verification_operation_result"] = machine_result.to_dict()
+    return public_result
+
+
+def _present_legacy_runtime_workflow_result(
+    *,
+    envelope: VerificationOperationEnvelope,
+    public_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Fix the machine result before writing the optional legacy JSON sink."""
+
+    machine_result = _runtime_machine_result(
+        envelope=envelope,
+        public_result=public_result,
+    )
+    public_result["verification_operation_result"] = machine_result.to_dict()
+    if machine_result.platform_status != "completed":
+        raise VerificationOperationExecutionError(
+            "Legacy Runtime execution did not complete.",
+            machine_result,
+        )
+    output_root = public_result.get("runtime_output_root")
+    if not isinstance(output_root, str) or not output_root:
+        raise VerificationOperationPresentationError(
+            "Runtime Presentation root is unavailable.",
+            machine_result,
+            audit_error={
+                "stage": "presentation",
+                "sink": "runtime_resume_result.json",
+                "error_type": "RuntimePresentationRootUnavailable",
+            },
+        )
+    result_path = Path(output_root) / "runtime_resume_result.json"
+    try:
+        result_path.write_text(
+            json.dumps(public_result, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise VerificationOperationPresentationError(
+            f"Runtime Presentation failed: {type(exc).__name__}: {exc}",
+            machine_result,
+            audit_error={
+                "stage": "presentation",
+                "sink": "runtime_resume_result.json",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            },
+        ) from exc
+    return public_result
+
+
+def resume_local_runtime(
+    *,
+    run_root: str | Path,
+    artifact_store_root: str | Path | None = None,
+    verification_operation: VerificationOperationEnvelope | None = None,
+    expected_approval_identity_hash: str | None = None,
+    feature_id: str | None = None,
+    checkpoint_path: str | Path | None = None,
+    checkpoint_hash: str | None = None,
+    settings_path: str | Path | None = None,
+    approved_by: str | None = None,
+    allow_game_launch: bool = False,
+    runtime_plugin_destination: str | Path | None = None,
+    allow_game_directory_write: bool = False,
+    resume_id: str | None = None,
+    recover_accepted_resume: bool = False,
+    retry_runtime_observation: bool = False,
+    runtime_output_root: str | Path | None = None,
+    runtime_evidence_factory: (
+        Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None
+    ) = None,
+    injected_runtime_admission: Mapping[str, Any] | None = None,
+    runtime_evidence_only: bool = False,
+    expected_runtime_execution_identity_hash: str | None = None,
+    runtime_terminalization_only: bool = False,
+    accepted_resume_report_path: str | Path | None = None,
+    accepted_resume_report_hash: str | None = None,
+    runtime_evidence_path: str | Path | None = None,
+    runtime_evidence_hash: str | None = None,
+    expected_runtime_terminal_identity_hash: str | None = None,
+) -> dict[str, Any] | VerificationOperationResultV1:
+    """Normalize legacy Runtime selectors or execute one typed operation."""
+
+    if runtime_evidence_factory is not None and not callable(runtime_evidence_factory):
+        raise TypeError("runtime_evidence_factory must be callable.")
+    typed_call = verification_operation is not None
+    legacy_identity_values = (
+        feature_id,
+        checkpoint_path,
+        checkpoint_hash,
+        approved_by,
+        resume_id,
+        injected_runtime_admission,
+        expected_runtime_execution_identity_hash,
+        expected_runtime_terminal_identity_hash,
+        accepted_resume_report_path,
+        accepted_resume_report_hash,
+        runtime_evidence_path,
+        runtime_evidence_hash,
+    )
+    if typed_call and (
+        any(value is not None for value in legacy_identity_values)
+        or recover_accepted_resume
+        or retry_runtime_observation
+        or runtime_evidence_only
+        or runtime_terminalization_only
+    ):
+        return _rejected_verification_result(
+            operation_kind=None,
+            operation_contract_version=None,
+            approval_identity_hash=None,
+            identity_resolution_status="unresolved",
+            failure_stage="authorization",
+            blockers=_verification_blockers(
+                [
+                    {
+                        "stage": "authorization",
+                        "code": "VERIFICATION_OPERATION_LEGACY_MIXED",
+                        "message": "Typed Runtime operation cannot mix legacy selectors.",
+                    }
+                ],
+                default_stage="authorization",
+            ),
+        )
+    if typed_call:
+        try:
+            envelope = validate_verification_operation_envelope(
+                verification_operation
+            )
+            declaration = resolve_verification_operation(envelope)
+        except (TypeError, ValueError) as exc:
+            return _rejected_verification_result(
+                operation_kind=None,
+                operation_contract_version=None,
+                approval_identity_hash=None,
+                identity_resolution_status="unresolved",
+                failure_stage="authorization",
+                blockers=_verification_blockers(
+                    [
+                        {
+                            "stage": "authorization",
+                            "code": "VERIFICATION_OPERATION_UNSUPPORTED",
+                            "message": str(exc),
+                        }
+                    ],
+                    default_stage="authorization",
+                ),
+            )
+        if declaration.operation_kind == VERIFICATION_BUILD_KIND:
+            return _rejected_verification_result(
+                operation_kind=None,
+                operation_contract_version=None,
+                approval_identity_hash=None,
+                identity_resolution_status="unresolved",
+                failure_stage="authorization",
+                blockers=_verification_blockers(
+                    [
+                        {
+                            "stage": "authorization",
+                            "code": "RUNTIME_OPERATION_REQUIRED",
+                            "message": "Runtime public entry does not accept Build operations.",
+                        }
+                    ],
+                    default_stage="authorization",
+                ),
+            )
+        expected_valid = isinstance(expected_approval_identity_hash, str)
+        if not expected_valid or not hmac.compare_digest(
+            str(expected_approval_identity_hash),
+            envelope.approval_identity_hash,
+        ):
+            return _rejected_verification_result(
+                operation_kind=envelope.operation_kind,
+                operation_contract_version=envelope.operation_contract_version,
+                approval_identity_hash=None,
+                identity_resolution_status="declaration_resolved",
+                failure_stage="authorization",
+                blockers=_verification_blockers(
+                    [
+                        {
+                            "stage": "authorization",
+                            "code": "VERIFICATION_OPERATION_APPROVAL_HASH_MISMATCH",
+                            "message": "Expected Runtime approval identity hash changed.",
+                        }
+                    ],
+                    default_stage="authorization",
+                ),
+            )
+        if artifact_store_root is None:
+            return _rejected_verification_result(
+                operation_kind=envelope.operation_kind,
+                operation_contract_version=envelope.operation_contract_version,
+                approval_identity_hash=envelope.approval_identity_hash,
+                identity_resolution_status="approved_identity_only",
+                failure_stage="admission",
+                blockers=_verification_blockers(
+                    [
+                        {
+                            "stage": "admission",
+                            "code": "VERIFICATION_STORE_ROOT_REQUIRED",
+                            "message": "Typed Runtime operation requires artifact_store_root.",
+                        }
+                    ],
+                    default_stage="admission",
+                ),
+            )
+        preflight_result, preflight_projection = _typed_runtime_preflight(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            spec=envelope.to_spec(),
+        )
+        if preflight_result.preflight_status != "ready":
+            if preflight_result.identity_resolution_status == "declaration_resolved":
+                return _rejected_verification_result(
+                    operation_kind=envelope.operation_kind,
+                    operation_contract_version=envelope.operation_contract_version,
+                    approval_identity_hash=envelope.approval_identity_hash,
+                    identity_resolution_status="approved_identity_only",
+                    failure_stage="admission",
+                    blockers=preflight_result.blockers,
+                )
+            public_result = {
+                "status": "blocked",
+                "failure_stage": "admission",
+                "blockers": [item.to_dict() for item in preflight_result.blockers],
+            }
+            return _finalize_runtime_public_result(
+                envelope=envelope,
+                public_result=public_result,
+                typed_call=True,
+            )
+        protocol = envelope.protocol_binding
+        variant = envelope.variant_payload
+        if declaration.operation_kind == EVIDENCE_CONSOLIDATION_KIND:
+            public_result = _execute_runtime_evidence_consolidation(
+                run_root=run_root,
+                artifact_store_root=artifact_store_root,
+                feature_id=protocol.checkpoint_ref.feature_id,
+                checkpoint_path=protocol.checkpoint_ref.path,
+                checkpoint_hash=protocol.checkpoint_ref.artifact_hash,
+                operation=envelope,
+                expected_identity_hash=envelope.approval_identity_hash,
+            )
+        elif declaration.operation_kind == RUNTIME_TERMINALIZATION_KIND:
+            public_result = _execute_runtime_terminal_continuation(
+                run_root=run_root,
+                artifact_store_root=artifact_store_root,
+                feature_id=protocol.checkpoint_ref.feature_id,
+                checkpoint_path=protocol.checkpoint_ref.path,
+                checkpoint_hash=protocol.checkpoint_ref.artifact_hash,
+                accepted_resume_report_path=protocol.accepted_resume_report_ref.path,
+                accepted_resume_report_hash=protocol.accepted_resume_report_ref.artifact_hash,
+                runtime_evidence_path=variant.runtime_evidence_ref.path,
+                runtime_evidence_hash=variant.runtime_evidence_ref.artifact_hash,
+                approved_by=protocol.approved_by,
+                resume_id=protocol.resume_id,
+                expected_runtime_terminal_identity_hash=envelope.approval_identity_hash,
+                operation=envelope,
+            )
+        elif declaration.shape_id == "runtime_execution_initial_evidence_only":
+            if preflight_projection is None:
+                return _rejected_verification_result(
+                    operation_kind=envelope.operation_kind,
+                    operation_contract_version=envelope.operation_contract_version,
+                    approval_identity_hash=envelope.approval_identity_hash,
+                    identity_resolution_status="approved_identity_only",
+                    failure_stage="admission",
+                    blockers=_verification_blockers(
+                        [
+                            {
+                                "stage": "admission",
+                                "code": "VERIFICATION_RUNTIME_ADMISSION_UNAVAILABLE",
+                                "message": "Runtime preflight projection is unavailable.",
+                            }
+                        ],
+                        default_stage="admission",
+                    ),
+                )
+            public_result = _execute_runtime_evidence_only_continuation(
+                run_root=run_root,
+                artifact_store_root=artifact_store_root,
+                feature_id=protocol.checkpoint_ref.feature_id,
+                checkpoint_path=protocol.checkpoint_ref.path,
+                checkpoint_hash=protocol.checkpoint_ref.artifact_hash,
+                approved_by=protocol.approved_by,
+                resume_id=protocol.resume_id,
+                runtime_evidence_factory=runtime_evidence_factory,
+                injected_runtime_admission=variant.runtime_action_scope,
+                expected_runtime_execution_identity_hash=envelope.approval_identity_hash,
+                operation=envelope,
+                preflight=preflight_projection,
+            )
+        else:
+            attempt = envelope.attempt_policy
+            current_approver = (
+                attempt.current_attempt_approved_by
+                if isinstance(
+                    attempt,
+                    (ObservationRetryAttemptV1, AcceptedResumeRecoveryAttemptV1),
+                )
+                else protocol.approved_by
+            )
+            public_result = _execute_runtime_workflow_operation(
+                run_root=run_root,
+                artifact_store_root=artifact_store_root,
+                feature_id=protocol.checkpoint_ref.feature_id,
+                checkpoint_path=protocol.checkpoint_ref.path,
+                checkpoint_hash=protocol.checkpoint_ref.artifact_hash,
+                settings_path=settings_path,
+                approved_by=current_approver,
+                allow_game_launch=allow_game_launch,
+                runtime_plugin_destination=runtime_plugin_destination,
+                allow_game_directory_write=allow_game_directory_write,
+                resume_id=protocol.resume_id,
+                runtime_output_root=runtime_output_root,
+                runtime_evidence_factory=runtime_evidence_factory,
+                injected_runtime_admission=(
+                    variant.runtime_action_scope
+                    if isinstance(attempt, InitialAttemptV1)
+                    else None
+                ),
+                operation=envelope,
+            )
+        return _finalize_runtime_public_result(
+            envelope=envelope,
+            public_result=public_result,
+            typed_call=True,
+        )
+
+    if feature_id is None or checkpoint_path is None or checkpoint_hash is None:
+        raise TypeError("Legacy Runtime identity inputs are incomplete.")
+    if approved_by is None:
+        raise TypeError("Legacy Runtime approved_by is required.")
+    normalized_operation: VerificationOperationEnvelope | None = None
+    if runtime_terminalization_only:
+        if (
+            artifact_store_root is None
+            or accepted_resume_report_path is None
+            or accepted_resume_report_hash is None
+            or runtime_evidence_path is None
+            or runtime_evidence_hash is None
+            or resume_id is None
+        ):
+            raise LocalEntryError(
+                "Runtime terminalization legacy inputs are incomplete."
+            )
+        terminal_spec = VerificationOperationSpec(
+            operation_kind=RUNTIME_TERMINALIZATION_KIND,
+            operation_contract_version=RUNTIME_TERMINALIZATION_CONTRACT_VERSION,
+            attempt_policy=InitialAttemptV1(),
+            protocol_binding=VerificationProtocolBinding(
+                checkpoint_ref=ArtifactRef(
+                    feature_id=feature_id,
+                    artifact_type="workflow_checkpoint",
+                    path=str(Path(checkpoint_path).resolve()),
+                    artifact_hash=checkpoint_hash,
+                ),
+                accepted_resume_report_ref=ArtifactRef(
+                    feature_id=feature_id,
+                    artifact_type="resume_report",
+                    path=str(Path(accepted_resume_report_path).resolve()),
+                    artifact_hash=accepted_resume_report_hash,
+                ),
+                resume_id=resume_id,
+                approved_by=approved_by,
+            ),
+            variant_payload=RuntimeTerminalizationOperationV1(
+                runtime_evidence_ref=ArtifactRef(
+                    feature_id=feature_id,
+                    artifact_type="runtime_evidence",
+                    path=str(Path(runtime_evidence_path).resolve()),
+                    artifact_hash=runtime_evidence_hash,
+                )
+            ),
+        )
+        terminal_preflight, _terminal_projection = _typed_runtime_preflight(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            spec=terminal_spec,
+        )
+        if terminal_preflight.preflight_status != "ready":
+            if terminal_preflight.envelope is None:
+                machine_result = _rejected_execution_result_from_preflight(
+                    terminal_preflight
+                )
+            else:
+                machine_result = _finalize_runtime_public_result(
+                    envelope=terminal_preflight.envelope,
+                    public_result={
+                        "status": "blocked",
+                        "failure_stage": terminal_preflight.failure_stage,
+                        "blockers": [
+                            item.to_dict() for item in terminal_preflight.blockers
+                        ],
+                    },
+                    typed_call=True,
+                )
+            return {
+                "status": "blocked",
+                "failure_stage": terminal_preflight.failure_stage,
+                "blockers": [item.to_dict() for item in terminal_preflight.blockers],
+                "verification_operation_result": machine_result.to_dict(),
+            }
+        normalized_operation = terminal_preflight.envelope
+        if (
+            allow_game_launch
+            or allow_game_directory_write
+            or runtime_plugin_destination is not None
+            or runtime_evidence_factory is not None
+            or injected_runtime_admission is not None
+            or runtime_output_root is not None
+        ):
+            legacy_result = _runtime_terminal_public_result(
+                status="blocked",
+                failure_stage="authorization",
+                preflight=_terminal_projection,
+                blockers=[
+                    {
+                        "stage": "runtime_terminalization",
+                        "code": "RUNTIME_TERMINAL_SIDE_EFFECT_SCOPE_INVALID",
+                        "message": (
+                            "Runtime terminalization is a Store-only continuation."
+                        ),
+                    }
+                ],
+            )
+        else:
+            legacy_result = _execute_runtime_terminal_continuation(
+                run_root=run_root,
+                artifact_store_root=artifact_store_root,
+                feature_id=feature_id,
+                checkpoint_path=checkpoint_path,
+                checkpoint_hash=checkpoint_hash,
+                accepted_resume_report_path=accepted_resume_report_path,
+                accepted_resume_report_hash=accepted_resume_report_hash,
+                runtime_evidence_path=runtime_evidence_path,
+                runtime_evidence_hash=runtime_evidence_hash,
+                approved_by=approved_by,
+                resume_id=resume_id,
+                expected_runtime_terminal_identity_hash=(
+                    expected_runtime_terminal_identity_hash
+                ),
+                operation=normalized_operation,
+            )
+    elif runtime_evidence_only:
+        if recover_accepted_resume or retry_runtime_observation:
+            raise LocalEntryError(
+                "RuntimeEvidence-only continuation supports only an initial resume."
+            )
+        if artifact_store_root is None or resume_id is None:
+            raise LocalEntryError(
+                "RuntimeEvidence-only legacy inputs are incomplete."
+            )
+        evidence_spec = VerificationOperationSpec(
+            operation_kind=RUNTIME_EXECUTION_KIND,
+            operation_contract_version=RUNTIME_EXECUTION_CONTRACT_VERSION,
+            attempt_policy=InitialAttemptV1(),
+            protocol_binding=NewRuntimeResumeProtocolBindingV1(
+                checkpoint_ref=ArtifactRef(
+                    feature_id=feature_id,
+                    artifact_type="workflow_checkpoint",
+                    path=str(Path(checkpoint_path).resolve()),
+                    artifact_hash=checkpoint_hash,
+                ),
+                resume_id=resume_id,
+                approved_by=approved_by,
+            ),
+            variant_payload=RuntimeExecutionOperationV1(
+                completion_scope=RUNTIME_EVIDENCE_ONLY_COMPLETION,
+                runtime_action_scope=_runtime_resume_admission_snapshot(
+                    injected_runtime_admission
+                ),
+            ),
+        )
+        evidence_preflight, evidence_projection = _typed_runtime_preflight(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            spec=evidence_spec,
+        )
+        if (
+            evidence_preflight.preflight_status != "ready"
+            or evidence_projection is None
+        ):
+            if evidence_preflight.envelope is not None:
+                public_result = {
+                    "status": "blocked",
+                    "failure_stage": evidence_preflight.failure_stage,
+                    "blockers": [
+                        item.to_dict() for item in evidence_preflight.blockers
+                    ],
+                }
+                machine_result = _finalize_runtime_public_result(
+                    envelope=evidence_preflight.envelope,
+                    public_result=public_result,
+                    typed_call=True,
+                )
+            else:
+                machine_result = _rejected_execution_result_from_preflight(
+                    evidence_preflight
+                )
+            return {
+                "status": "blocked",
+                "failure_stage": evidence_preflight.failure_stage,
+                "blockers": [item.to_dict() for item in evidence_preflight.blockers],
+                "verification_operation_result": machine_result.to_dict(),
+            }
+        normalized_operation = evidence_preflight.envelope
+        legacy_result = _execute_runtime_evidence_only_continuation(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            approved_by=approved_by,
+            resume_id=resume_id,
+            runtime_evidence_factory=runtime_evidence_factory,
+            injected_runtime_admission=injected_runtime_admission,
+            expected_runtime_execution_identity_hash=(
+                expected_runtime_execution_identity_hash
+            ),
+            operation=normalized_operation,
+            preflight=evidence_projection,
+        )
+    else:
+        attempt_policy = _resolve_legacy_runtime_attempt_policy(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            resume_id=resume_id,
+            approved_by=approved_by,
+            retry_runtime_observation=retry_runtime_observation,
+            recover_accepted_resume=recover_accepted_resume,
+        )
+        normalized_operation = _normalize_legacy_runtime_workflow_operation(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            settings_path=settings_path,
+            approved_by=approved_by,
+            allow_game_launch=allow_game_launch,
+            runtime_plugin_destination=runtime_plugin_destination,
+            allow_game_directory_write=allow_game_directory_write,
+            resume_id=resume_id,
+            runtime_output_root=runtime_output_root,
+            injected_runtime_admission=injected_runtime_admission,
+            attempt_policy=attempt_policy,
+        )
+        legacy_result = _execute_runtime_workflow_operation(
+            run_root=run_root,
+            artifact_store_root=artifact_store_root,
+            feature_id=feature_id,
+            checkpoint_path=checkpoint_path,
+            checkpoint_hash=checkpoint_hash,
+            settings_path=settings_path,
+            approved_by=approved_by,
+            allow_game_launch=allow_game_launch,
+            runtime_plugin_destination=runtime_plugin_destination,
+            allow_game_directory_write=allow_game_directory_write,
+            resume_id=resume_id,
+            runtime_output_root=runtime_output_root,
+            runtime_evidence_factory=runtime_evidence_factory,
+            injected_runtime_admission=injected_runtime_admission,
+            operation=normalized_operation,
+        )
+    if normalized_operation is None:
+        raise LocalEntryError("Legacy Runtime operation was not normalized.")
+    normalized_declaration = resolve_verification_operation(normalized_operation)
+    if (
+        normalized_declaration.operation_kind == RUNTIME_EXECUTION_KIND
+        and normalized_declaration.completion_scope
+        == RUNTIME_WORKFLOW_COMPLETION
+    ):
+        return _present_legacy_runtime_workflow_result(
+            envelope=normalized_operation,
+            public_result=legacy_result,
+        )
+    return _finalize_runtime_public_result(
+        envelope=normalized_operation,
+        public_result=legacy_result,
+        typed_call=False,
+    )
 
 
 def _source_snapshot(root: Path) -> list[dict[str, Any]]:

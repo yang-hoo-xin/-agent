@@ -163,6 +163,195 @@ class ArtifactWriteResult:
     recovery_available: bool
     recovery_authorized: bool = False
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ArtifactWriteResult":
+        """Parse the exact public projection without weakening Store semantics."""
+
+        expected_fields = {
+            "outcome",
+            "feature_id",
+            "artifact_type",
+            "artifact_hash",
+            "artifact_ref",
+            "revision_path",
+            "latest_alias_path",
+            "pending_marker_path",
+            "commit_started",
+            "revision_state",
+            "latest_alias_state",
+            "pending_marker_state",
+            "failure_stage",
+            "failure_class",
+            "failure_message",
+            "recovery_available",
+            "recovery_authorized",
+        }
+        if set(value) != expected_fields:
+            raise ArtifactStoreError("ArtifactWriteResult fields changed.")
+
+        def require_string(field: str) -> str:
+            item = value[field]
+            if type(item) is not str or not item:
+                raise ArtifactStoreError(
+                    f"ArtifactWriteResult {field} must be a non-empty string."
+                )
+            return item
+
+        def optional_string(field: str) -> str | None:
+            item = value[field]
+            if item is not None and (type(item) is not str or not item):
+                raise ArtifactStoreError(
+                    f"ArtifactWriteResult {field} must be a non-empty string or null."
+                )
+            return item
+
+        outcome = value["outcome"]
+        if outcome not in {"committed", "blocked_before_commit", "partial"}:
+            raise ArtifactStoreError("ArtifactWriteResult outcome is not registered.")
+        revision_state = value["revision_state"]
+        if revision_state not in {
+            "unavailable",
+            "absent",
+            "valid",
+            "invalid",
+            "unknown",
+        }:
+            raise ArtifactStoreError(
+                "ArtifactWriteResult revision_state is not registered."
+            )
+        latest_alias_state = value["latest_alias_state"]
+        if latest_alias_state not in {
+            "unavailable",
+            "absent",
+            "matches_identity",
+            "different_identity",
+            "invalid",
+            "unknown",
+        }:
+            raise ArtifactStoreError(
+                "ArtifactWriteResult latest_alias_state is not registered."
+            )
+        pending_marker_state = value["pending_marker_state"]
+        if pending_marker_state not in {
+            "unavailable",
+            "absent",
+            "present",
+            "invalid",
+            "unknown",
+        }:
+            raise ArtifactStoreError(
+                "ArtifactWriteResult pending_marker_state is not registered."
+            )
+        failure_stage = value["failure_stage"]
+        if failure_stage not in {
+            None,
+            "admission_validation",
+            "pending_marker_write",
+            "immutable_revision_write",
+            "latest_alias_write",
+            "commit_verification",
+            "pending_marker_cleanup",
+        }:
+            raise ArtifactStoreError(
+                "ArtifactWriteResult failure_stage is not registered."
+            )
+        for field in ("commit_started", "recovery_available", "recovery_authorized"):
+            if type(value[field]) is not bool:
+                raise ArtifactStoreError(f"ArtifactWriteResult {field} must be bool.")
+
+        artifact_ref_value = value["artifact_ref"]
+        artifact_ref: ArtifactRef | None = None
+        if artifact_ref_value is not None:
+            if not isinstance(artifact_ref_value, Mapping) or set(artifact_ref_value) != {
+                "feature_id",
+                "artifact_type",
+                "path",
+                "artifact_hash",
+            }:
+                raise ArtifactStoreError(
+                    "ArtifactWriteResult artifact_ref fields changed."
+                )
+            ref_values = {
+                field: artifact_ref_value[field]
+                for field in ("feature_id", "artifact_type", "path", "artifact_hash")
+            }
+            if any(type(item) is not str or not item for item in ref_values.values()):
+                raise ArtifactStoreError("ArtifactWriteResult artifact_ref is invalid.")
+            artifact_ref = ArtifactRef(**ref_values)
+
+        result = cls(
+            outcome=outcome,
+            feature_id=require_string("feature_id"),
+            artifact_type=require_string("artifact_type"),
+            artifact_hash=optional_string("artifact_hash"),
+            artifact_ref=artifact_ref,
+            revision_path=optional_string("revision_path"),
+            latest_alias_path=optional_string("latest_alias_path"),
+            pending_marker_path=optional_string("pending_marker_path"),
+            commit_started=value["commit_started"],
+            revision_state=revision_state,
+            latest_alias_state=latest_alias_state,
+            pending_marker_state=pending_marker_state,
+            failure_stage=failure_stage,
+            failure_class=optional_string("failure_class"),
+            failure_message=optional_string("failure_message"),
+            recovery_available=value["recovery_available"],
+            recovery_authorized=value["recovery_authorized"],
+        )
+        if artifact_ref is not None and (
+            artifact_ref.feature_id != result.feature_id
+            or artifact_ref.artifact_type != result.artifact_type
+            or artifact_ref.artifact_hash != result.artifact_hash
+            or artifact_ref.path != result.revision_path
+        ):
+            raise ArtifactStoreError(
+                "ArtifactWriteResult artifact_ref disagrees with its Store identity."
+            )
+        if result.outcome == "committed":
+            if (
+                result.artifact_ref is None
+                or result.artifact_hash is None
+                or result.revision_state != "valid"
+                or result.latest_alias_state != "matches_identity"
+                or result.pending_marker_state != "absent"
+                or result.failure_stage is not None
+                or result.failure_class is not None
+                or result.failure_message is not None
+                or result.recovery_available
+                or result.recovery_authorized
+            ):
+                raise ArtifactStoreError(
+                    "Committed ArtifactWriteResult has inconsistent Store facts."
+                )
+        else:
+            if (
+                result.artifact_ref is not None
+                or result.failure_stage is None
+                or result.failure_class is None
+                or result.failure_message is None
+                or result.recovery_authorized
+            ):
+                raise ArtifactStoreError(
+                    "Non-committed ArtifactWriteResult has inconsistent Store facts."
+                )
+            if result.outcome == "blocked_before_commit" and (
+                result.commit_started or result.recovery_available
+            ):
+                raise ArtifactStoreError(
+                    "Blocked-before-commit ArtifactWriteResult entered commit or recovery."
+                )
+            if result.recovery_available and (
+                result.outcome != "partial"
+                or result.pending_marker_state != "present"
+                or result.revision_state != "valid"
+            ):
+                raise ArtifactStoreError(
+                    "Recoverable ArtifactWriteResult lacks partial pending revision facts."
+                )
+        if result.to_dict() != dict(value):
+            raise ArtifactStoreError("ArtifactWriteResult projection changed during parsing.")
+        return result
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-safe projection without changing Artifact identity."""
 
