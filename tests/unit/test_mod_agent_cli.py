@@ -9,6 +9,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import src.mod_agent.local_entry as local_entry_module
+
 from src.libs.llm import (
     AgentToolCall,
     AgentTurnProviderError,
@@ -16,8 +18,18 @@ from src.libs.llm import (
     AgentUsage,
 )
 from src.mod_agent import __version__
-from src.mod_agent.artifacts.store import ArtifactStorePreflightError
-from src.mod_agent.cli import main, plan_request
+from src.mod_agent.artifacts import ArtifactRef
+from src.mod_agent.artifacts.store import (
+    ArtifactStorePreflightError,
+    ArtifactWriteResult,
+)
+from src.mod_agent.cli import _edit_authority_review_exit_code, main, plan_request
+from src.mod_agent.edit_authority_capabilities import (
+    EDIT_AUTHORITY_CAPABILITIES,
+    EditAuthorityStoreStepV1,
+    project_edit_authority_review_result,
+    resolve_edit_authority_capability,
+)
 from src.mod_agent.evidence.discovery_tools import LocalAssemblyEvidenceToolExecutor
 from src.mod_agent.intelligent_evidence_only import (
     IntelligentEvidenceEntryError,
@@ -26,6 +38,120 @@ from src.mod_agent.intelligent_evidence_only import (
     run_intelligent_evidence_only,
 )
 from src.mod_agent.local_entry import LocalEntryError
+
+
+def _successful_edit_authority_cli_result(
+    *,
+    schema_version: str,
+    projection_kind: str | None,
+    feature_id: str = "feature_001",
+    request_hash: str = "sha256:" + ("a" * 64),
+) -> dict[str, object]:
+    capability = resolve_edit_authority_capability(
+        schema_version=schema_version,
+        projection_kind=projection_kind,
+    )
+    steps: list[EditAuthorityStoreStepV1] = []
+    for role in capability.review_write_artifact_types:
+        artifact_hash = role.ljust(64, "0")[:64]
+        ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type=role,
+            path=f"C:/store/{role}/{artifact_hash[:32]}.json",
+            artifact_hash=artifact_hash,
+        )
+        steps.append(
+            EditAuthorityStoreStepV1(
+                role=role,
+                store_result=ArtifactWriteResult(
+                    outcome="committed",
+                    feature_id=feature_id,
+                    artifact_type=role,
+                    artifact_hash=artifact_hash,
+                    artifact_ref=ref,
+                    revision_path=ref.path,
+                    latest_alias_path=f"C:/store/{role}.json",
+                    pending_marker_path=f"C:/store/pending/{artifact_hash}.json",
+                    commit_started=True,
+                    revision_state="valid",
+                    latest_alias_state="matches_identity",
+                    pending_marker_state="absent",
+                    failure_stage=None,
+                    failure_class=None,
+                    failure_message=None,
+                    recovery_available=False,
+                    recovery_authorized=False,
+                ),
+            )
+        )
+    machine_result = project_edit_authority_review_result(
+        capability=capability,
+        feature_id=feature_id,
+        approval_identity_hash=request_hash,
+        store_steps=tuple(steps),
+        payload_decision="approve",
+        resume_decision_status="accepted",
+        resume_decision_allowed=True,
+    )
+    return {
+        "status": capability.public_success_status,
+        "feature_id": feature_id,
+        "request_hash": request_hash,
+        "edit_authority_review_result": machine_result.to_dict(),
+    }
+
+
+def _nonapproved_edit_authority_cli_result(scenario: str) -> dict[str, object]:
+    feature_id = "feature_001"
+    request_hash = "sha256:" + ("a" * 64)
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    successful = _successful_edit_authority_cli_result(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    successful_projection = successful["edit_authority_review_result"]
+    assert isinstance(successful_projection, dict)
+    protocol_steps = tuple(
+        EditAuthorityStoreStepV1.from_dict(item)
+        for item in successful_projection["store_steps"][:2]
+    )
+    if scenario == "rejected":
+        kwargs = {
+            "payload_decision": "reject",
+            "resume_decision_status": "accepted",
+            "resume_decision_allowed": True,
+            "execution_failure_stage": None,
+        }
+    elif scenario == "blocked":
+        kwargs = {
+            "payload_decision": "approve",
+            "resume_decision_status": "blocked",
+            "resume_decision_allowed": False,
+            "execution_failure_stage": None,
+        }
+    else:
+        kwargs = {
+            "payload_decision": "approve",
+            "resume_decision_status": "accepted",
+            "resume_decision_allowed": True,
+            "execution_failure_stage": "store_preflight",
+        }
+    machine_result = project_edit_authority_review_result(
+        capability=capability,
+        feature_id=feature_id,
+        approval_identity_hash=request_hash,
+        store_steps=protocol_steps,
+        **kwargs,
+    )
+    return {
+        "status": "BLOCKED",
+        "feature_id": feature_id,
+        "request_hash": request_hash,
+        "edit_authority_review_result": machine_result.to_dict(),
+    }
 
 
 def test_mod_agent_package_imports() -> None:
@@ -1410,6 +1536,9 @@ def test_cli_resume_runtime_passes_fresh_authority_and_handoff_identity(
         return {
             "current_stage": "done",
             "runtime_summary": {"claims_real_runtime_success": True},
+            "verification_operation_result": {
+                "execution_disposition": "succeeded"
+            },
         }
 
     monkeypatch.setattr("src.mod_agent.cli.resume_local_runtime", resume)
@@ -2054,11 +2183,12 @@ def test_cli_stagger_diagnostic_plan_authorization_returns_success(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def resume_review(**kwargs):
-        return {
-            "status": "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED",
-            "current_stage": "implementation_plan",
-            "repair_planner_invoked": False,
-        }
+        return _successful_edit_authority_cli_result(
+            schema_version=(
+                "stagger_hud_parent_diagnostic_execution_authority_request_v2"
+            ),
+            projection_kind=None,
+        )
 
     monkeypatch.setattr(
         "src.mod_agent.cli.resume_stagger_edit_authority_review",
@@ -2092,6 +2222,157 @@ def test_cli_stagger_diagnostic_plan_authorization_returns_success(
     assert payload["status"] == (
         "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED"
     )
+
+
+def test_cli_bounded_edit_authority_success_uses_structured_result(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        "src.mod_agent.cli.resume_stagger_edit_authority_review",
+        lambda **_kwargs: _successful_edit_authority_cli_result(
+            schema_version="stagger_edit_authority_request_v1",
+            projection_kind="bounded_observation_only_plan_materialization",
+        ),
+    )
+
+    exit_code = main(
+        [
+            "resume-stagger-edit-authority-review",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--request-path",
+            "request.json",
+            "--request-artifact-hash",
+            "b" * 64,
+            "--authority-request-hash",
+            "sha256:" + ("a" * 64),
+            "--resume-id",
+            "resume_001",
+            "--decision",
+            "approve",
+            "--approved-by",
+            "user",
+            "--approved-at",
+            "2026-07-30T12:00:00+08:00",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == "STAGGER_BOUNDED_OBSERVATION_PLAN_AUTHORIZED"
+
+
+@pytest.mark.parametrize("capability", EDIT_AUTHORITY_CAPABILITIES)
+def test_cli_edit_authority_calls_real_public_structured_result_path(
+    capability,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    feature_id = "feature_001"
+    request_hash = "sha256:" + ("a" * 64)
+    public_result = _successful_edit_authority_cli_result(
+        schema_version=capability.schema_version,
+        projection_kind=capability.projection_kind,
+        feature_id=feature_id,
+        request_hash=request_hash,
+    )
+
+    class ReadOnlyAuditStore:
+        def list_feature_artifact_revisions(
+            self,
+            _feature_id: str,
+            _artifact_type: str,
+        ) -> list[ArtifactRef]:
+            return []
+
+    admission = local_entry_module._EditAuthorityReviewAdmission(
+        store=ReadOnlyAuditStore(),
+        request_ref=ArtifactRef(
+            feature_id=feature_id,
+            artifact_type="edit_authority_request",
+            path=str(tmp_path / "request.json"),
+            artifact_hash="b" * 64,
+        ),
+        request={},
+        request_envelope={},
+        run_id="run_cli_public_edit_authority",
+        capability=capability,
+        identity_sections={
+            "identity_mode": "versioned_v1",
+            "identity_schema_version": "edit_authority_approval_identity_v1",
+            "approval_identity": {"schema_version": "test_identity_v1"},
+            "execution_contract_summary": {
+                "capability_id": capability.capability_id,
+            },
+        },
+    )
+
+    class CompletedGraph:
+        def invoke(self, *_args, **_kwargs):
+            return {
+                "edit_authority_review_result": public_result[
+                    "edit_authority_review_result"
+                ],
+                "current_stage": capability.terminal_stage,
+                "artifacts": {},
+                "artifact_hashes": {},
+                "blockers": [],
+            }
+
+    monkeypatch.setattr(
+        local_entry_module,
+        "_admit_stagger_edit_authority_review",
+        lambda **_kwargs: admission,
+    )
+    monkeypatch.setattr(
+        local_entry_module,
+        "_invoke_stagger_edit_authority_interrupt",
+        lambda **_kwargs: (CompletedGraph(), ["request.json"], {}, {}),
+    )
+
+    exit_code = main(
+        [
+            "resume-stagger-edit-authority-review",
+            "--artifact-store-root",
+            str(tmp_path / "artifacts"),
+            "--feature-id",
+            feature_id,
+            "--request-path",
+            str(tmp_path / "request.json"),
+            "--request-artifact-hash",
+            "b" * 64,
+            "--authority-request-hash",
+            request_hash,
+            "--resume-id",
+            "resume_cli_public_edit_authority",
+            "--decision",
+            "approve",
+            "--approved-by",
+            "user",
+            "--approved-at",
+            "2026-08-06T13:00:00+08:00",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == capability.public_success_status
+    assert payload["edit_authority_review_result"] == public_result[
+        "edit_authority_review_result"
+    ]
+
+
+@pytest.mark.parametrize("scenario", ("rejected", "blocked", "partial"))
+def test_cli_edit_authority_nonapproved_results_fail_closed(
+    scenario: str,
+) -> None:
+    assert _edit_authority_review_exit_code(
+        _nonapproved_edit_authority_cli_result(scenario)
+    ) == 2
 
 
 def test_cli_stagger_diagnostic_exact_diff_passes_exact_roles(
@@ -2168,11 +2449,10 @@ def test_cli_stagger_edit_authority_review_delegates_to_graph_entry(
 
     def resume_review(**kwargs):
         captured.update(kwargs)
-        return {
-            "status": "EXACT_EDIT_AUTHORITY_RESOLVED",
-            "current_stage": "binding_resolution",
-            "repair_planner_invoked": False,
-        }
+        return _successful_edit_authority_cli_result(
+            schema_version="stagger_edit_authority_request_v1",
+            projection_kind=None,
+        )
 
     monkeypatch.setattr(
         "src.mod_agent.cli.resume_stagger_edit_authority_review",

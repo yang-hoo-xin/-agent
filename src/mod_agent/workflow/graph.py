@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from collections.abc import Callable, Mapping
@@ -26,10 +27,13 @@ from src.mod_agent.domain import (
 )
 from src.mod_agent.evaluation import build_transition_eval_gate_report
 from src.mod_agent.edit_authority_capabilities import (
+    EditAuthorityCapabilityDeclaration,
+    EditAuthorityStoreStepV1,
     InvalidEditAuthorityApprovalIdentityError,
     UnsupportedEditAuthorityCapabilityError,
     bind_edit_authority_exact_input_upstreams,
     edit_authority_identity_sections,
+    project_edit_authority_review_result,
     resolve_edit_authority_request_capability,
     validate_edit_authority_exact_input_admission,
     validate_edit_authority_request_identity,
@@ -74,6 +78,8 @@ from src.mod_agent.runtime_evidence_consolidation import (
     project_operation_payload as project_consolidated_runtime_evidence,
 )
 from src.mod_agent.runtime.stagger_edit_authority import (
+    StaggerEditAuthorityApprovalError,
+    StaggerEditAuthorityMaterializationError,
     materialize_stagger_edit_authority_approval,
 )
 from src.mod_agent.runtime.stagger_planner_admission import (
@@ -1678,6 +1684,72 @@ def _validate_graph_edit_authority_exact_inputs(
         raise ValueError(str(exc)) from exc
 
 
+def _finish_stagger_edit_authority_gate(
+    state: ModAgentState,
+    *,
+    capability: EditAuthorityCapabilityDeclaration,
+    feature_id: str,
+    approval_identity_hash: str,
+    store_steps: tuple[EditAuthorityStoreStepV1, ...],
+    payload_decision: str | None,
+    resume_decision_status: str | None,
+    resume_decision_allowed: bool | None,
+    execution_failure_stage: str | None = None,
+    platform_blockers: tuple[dict[str, Any], ...] = (),
+) -> ModAgentState:
+    """Project the sole machine result, then derive legacy Graph state."""
+
+    machine_result = project_edit_authority_review_result(
+        capability=capability,
+        feature_id=feature_id,
+        approval_identity_hash=approval_identity_hash,
+        store_steps=store_steps,
+        payload_decision=payload_decision,
+        resume_decision_status=resume_decision_status,
+        resume_decision_allowed=resume_decision_allowed,
+        execution_failure_stage=execution_failure_stage,
+        platform_blockers=platform_blockers,
+    )
+    next_state = _copy_state(state)
+    next_state["edit_authority_review_result"] = machine_result.to_dict()
+    for ref in (
+        *machine_result.protocol_outputs,
+        *machine_result.materialization_outputs,
+    ):
+        _record_artifact(next_state, ref.artifact_type, ref)
+
+    if (
+        machine_result.platform_status == "completed"
+        and machine_result.review_outcome == "approved"
+        and machine_result.materialization_status == "completed"
+    ):
+        next_state["current_stage"] = capability.terminal_stage
+        next_state["approvals"] = {
+            **dict(next_state["approvals"]),
+            "edit_authority": True,
+        }
+        return next_state
+
+    next_state["current_stage"] = "blocked"
+    details = (
+        machine_result.platform_blockers
+        or machine_result.review_reasons
+        or (
+            {
+                "stage": machine_result.failure_stage
+                or "edit_authority_approval",
+                "code": "EDIT_AUTHORITY_REVIEW_NOT_COMPLETED",
+                "message": (
+                    "Edit Authority review stopped before a complete approved "
+                    "materialization."
+                ),
+            },
+        )
+    )
+    next_state["blockers"].extend(copy.deepcopy(list(details)))
+    return next_state
+
+
 def _run_stagger_edit_authority_gate(
     state: ModAgentState,
     artifact_store: ArtifactStore,
@@ -1794,40 +1866,111 @@ def _run_stagger_edit_authority_gate(
     resume_value = interrupt(interrupt_request.to_dict())
 
     checkpoint_store = WorkflowCheckpointStore(artifact_store)
-    checkpoint_ref = checkpoint_store.create_checkpoint(
-        gate_state,
-        interrupt_reason=interrupt_request.reason,
-        resume_allowed_fields=("approvals.edit_authority",),
-    )
-    checkpoint = artifact_store.read(checkpoint_ref)["data"]
-    payload = _resume_payload_from_dynamic_value(
-        resume_value,
-        state=gate_state,
-        checkpoint=checkpoint,
-    )
-    decision, report_ref = checkpoint_store.resume(
-        checkpoint_ref,
-        payload,
-    )
-    next_state = _copy_state(gate_state)
-    _record_artifact(next_state, "workflow_checkpoint", checkpoint_ref)
-    _record_artifact(next_state, "resume_report", report_ref)
-    if not decision.allowed or payload.decision != "approve":
-        next_state["current_stage"] = "blocked"
-        next_state["blockers"].extend(
-            decision.blockers
-            or (
-                {
-                    "stage": "edit_authority_approval",
-                    "code": "EDIT_AUTHORITY_REJECTED",
-                    "message": (
-                        "Human review did not approve the exact "
-                        "EditAuthorityRequest."
-                    ),
-                },
-            )
+    store_steps: list[EditAuthorityStoreStepV1] = []
+    try:
+        checkpoint_result = checkpoint_store.create_checkpoint_with_result(
+            gate_state,
+            interrupt_reason=interrupt_request.reason,
+            resume_allowed_fields=("approvals.edit_authority",),
         )
-        return next_state
+    except Exception as exc:
+        return _finish_stagger_edit_authority_gate(
+            gate_state,
+            capability=capability,
+            feature_id=feature_id,
+            approval_identity_hash=str(request["request_hash"]),
+            store_steps=(),
+            payload_decision=None,
+            resume_decision_status=None,
+            resume_decision_allowed=None,
+            execution_failure_stage="checkpoint_construction",
+            platform_blockers=(
+                {
+                    "stage": "checkpoint_construction",
+                    "code": "EDIT_AUTHORITY_CHECKPOINT_CONSTRUCTION_FAILED",
+                    "message": str(exc),
+                },
+            ),
+        )
+    store_steps.append(
+        EditAuthorityStoreStepV1(
+            role="workflow_checkpoint",
+            store_result=checkpoint_result,
+        )
+    )
+    checkpoint_ref = checkpoint_result.artifact_ref
+    if checkpoint_result.outcome != "committed" or checkpoint_ref is None:
+        return _finish_stagger_edit_authority_gate(
+            gate_state,
+            capability=capability,
+            feature_id=feature_id,
+            approval_identity_hash=str(request["request_hash"]),
+            store_steps=tuple(store_steps),
+            payload_decision=None,
+            resume_decision_status=None,
+            resume_decision_allowed=None,
+        )
+    try:
+        checkpoint = artifact_store.read(checkpoint_ref)["data"]
+        payload = _resume_payload_from_dynamic_value(
+            resume_value,
+            state=gate_state,
+            checkpoint=checkpoint,
+        )
+        decision, report_result = checkpoint_store.resume_with_result(
+            checkpoint_ref,
+            payload,
+        )
+    except Exception as exc:
+        return _finish_stagger_edit_authority_gate(
+            gate_state,
+            capability=capability,
+            feature_id=feature_id,
+            approval_identity_hash=str(request["request_hash"]),
+            store_steps=tuple(store_steps),
+            payload_decision=None,
+            resume_decision_status=None,
+            resume_decision_allowed=None,
+            execution_failure_stage="resume_validation",
+            platform_blockers=(
+                {
+                    "stage": "resume_validation",
+                    "code": "EDIT_AUTHORITY_RESUME_VALIDATION_FAILED",
+                    "message": str(exc),
+                },
+            ),
+        )
+    store_steps.append(
+        EditAuthorityStoreStepV1(
+            role="resume_report",
+            store_result=report_result,
+        )
+    )
+    report_ref = report_result.artifact_ref
+    if report_result.outcome != "committed" or report_ref is None:
+        return _finish_stagger_edit_authority_gate(
+            gate_state,
+            capability=capability,
+            feature_id=feature_id,
+            approval_identity_hash=str(request["request_hash"]),
+            store_steps=tuple(store_steps),
+            payload_decision=payload.decision,
+            resume_decision_status=decision.status,
+            resume_decision_allowed=decision.allowed,
+            platform_blockers=tuple(decision.blockers),
+        )
+    if not decision.allowed or payload.decision != "approve":
+        return _finish_stagger_edit_authority_gate(
+            gate_state,
+            capability=capability,
+            feature_id=feature_id,
+            approval_identity_hash=str(request["request_hash"]),
+            store_steps=tuple(store_steps),
+            payload_decision=payload.decision,
+            resume_decision_status=decision.status,
+            resume_decision_allowed=decision.allowed,
+            platform_blockers=tuple(decision.blockers),
+        )
 
     try:
         materialized = materialize_stagger_edit_authority_approval(
@@ -1838,45 +1981,65 @@ def _run_stagger_edit_authority_gate(
             resume_report_path=report_ref.path,
             resume_report_hash=report_ref.artifact_hash,
         )
-        if (
-            materialized.get("status")
-            != capability.materializer_success_status
+        materialization_steps = materialized.get("store_steps")
+        if not isinstance(materialization_steps, tuple) or any(
+            not isinstance(step, EditAuthorityStoreStepV1)
+            for step in materialization_steps
         ):
-            raise ValueError(
-                "Edit Authority materializer result does not match the "
-                "capability declaration."
+            raise StaggerEditAuthorityApprovalError(
+                "Edit Authority materializer omitted typed Store results."
             )
-    except (OSError, RuntimeError, ValueError) as exc:
-        next_state["current_stage"] = "blocked"
-        next_state["blockers"].append(
-            {
-                "stage": "edit_authority_approval",
-                "code": "EDIT_AUTHORITY_APPROVED_NOT_MATERIALIZED",
-                "message": str(exc),
-            }
-        )
-        return next_state
-
-    for artifact_type, field_name in (
-        capability.materialized_artifact_fields
-    ):
-        revision = materialized[field_name]
-        _record_artifact(
-            next_state,
-            artifact_type,
-            ArtifactRef(
-                feature_id=feature_id,
-                artifact_type=artifact_type,
-                path=str(revision["path"]),
-                artifact_hash=str(revision["artifact_hash"]),
+        store_steps.extend(materialization_steps)
+    except StaggerEditAuthorityMaterializationError as exc:
+        store_steps.extend(exc.store_steps)
+        return _finish_stagger_edit_authority_gate(
+            gate_state,
+            capability=capability,
+            feature_id=feature_id,
+            approval_identity_hash=str(request["request_hash"]),
+            store_steps=tuple(store_steps),
+            payload_decision=payload.decision,
+            resume_decision_status=decision.status,
+            resume_decision_allowed=decision.allowed,
+            execution_failure_stage=exc.failure_stage,
+            platform_blockers=(
+                {
+                    "stage": exc.failure_stage,
+                    "code": "EDIT_AUTHORITY_MATERIALIZATION_FAILED",
+                    "message": str(exc),
+                },
             ),
         )
-    next_state["current_stage"] = capability.terminal_stage
-    next_state["approvals"] = {
-        **dict(next_state["approvals"]),
-        "edit_authority": True,
-    }
-    return next_state
+    except (OSError, RuntimeError, ValueError) as exc:
+        return _finish_stagger_edit_authority_gate(
+            gate_state,
+            capability=capability,
+            feature_id=feature_id,
+            approval_identity_hash=str(request["request_hash"]),
+            store_steps=tuple(store_steps),
+            payload_decision=payload.decision,
+            resume_decision_status=decision.status,
+            resume_decision_allowed=decision.allowed,
+            execution_failure_stage="materialization_validation",
+            platform_blockers=(
+                {
+                    "stage": "materialization_validation",
+                    "code": "EDIT_AUTHORITY_MATERIALIZATION_VALIDATION_FAILED",
+                    "message": str(exc),
+                },
+            ),
+        )
+
+    return _finish_stagger_edit_authority_gate(
+        gate_state,
+        capability=capability,
+        feature_id=feature_id,
+        approval_identity_hash=str(request["request_hash"]),
+        store_steps=tuple(store_steps),
+        payload_decision=payload.decision,
+        resume_decision_status=decision.status,
+        resume_decision_allowed=decision.allowed,
+    )
 
 
 def _materialize_feature_spec_revision(
@@ -4332,6 +4495,9 @@ def _copy_state(state: ModAgentState) -> ModAgentState:
         review_summary=dict(state["review_summary"]),
         build_summary=dict(state["build_summary"]),
         runtime_summary=dict(state["runtime_summary"]),
+        edit_authority_review_result=copy.deepcopy(
+            state.get("edit_authority_review_result")
+        ),
         trace_events=list(state["trace_events"]),
         retry_count=state["retry_count"],
     )

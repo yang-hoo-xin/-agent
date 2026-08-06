@@ -9,7 +9,7 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from ..artifacts import ArtifactRef, ArtifactStore
+from ..artifacts import ArtifactRef, ArtifactStore, ArtifactWriteResult
 from ..bindings.runtime_resolution import resolve_runtime_diagnosis_binding
 from ..edit_authority_capabilities import (
     EXISTING_BINDING_AUTHORITY_CONTRACT as _EXISTING_BINDING_AUTHORITY_CONTRACT,
@@ -25,6 +25,7 @@ from ..edit_authority_capabilities import (
     STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1 as _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V1,
     STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2 as _STAGGER_OBSERVATION_AUTHORITY_CONTRACT_V2,
     EditAuthorityCapabilityDeclaration,
+    EditAuthorityStoreStepV1,
     UnsupportedEditAuthorityCapabilityError,
     attach_edit_authority_approval_identity,
     bind_edit_authority_exact_input_upstreams,
@@ -122,6 +123,57 @@ class StaggerEditAuthorityApprovalError(
     StaggerEditAuthorityPreflightError
 ):
     """Raised before or during exact approved authority persistence."""
+
+
+class StaggerEditAuthorityMaterializationError(
+    StaggerEditAuthorityApprovalError
+):
+    """Preserve an exact committed prefix across a materialization failure."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_stage: str,
+        store_steps: tuple[EditAuthorityStoreStepV1, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.failure_stage = failure_stage
+        self.store_steps = store_steps
+
+
+def _materialization_write(
+    store: ArtifactStore,
+    *,
+    role: str,
+    write_arguments: dict[str, Any],
+) -> tuple[EditAuthorityStoreStepV1, ArtifactRef | None]:
+    result = store.write_with_result(**write_arguments)
+    step = EditAuthorityStoreStepV1(role=role, store_result=result)
+    return step, result.artifact_ref
+
+
+def _incomplete_materialization_result(
+    *,
+    store_steps: list[EditAuthorityStoreStepV1],
+) -> dict[str, Any]:
+    return {
+        "status": "EDIT_AUTHORITY_MATERIALIZATION_INCOMPLETE",
+        "store_steps": tuple(store_steps),
+    }
+
+
+def _raise_materialization_failure(
+    exc: Exception,
+    *,
+    failure_stage: str,
+    store_steps: list[EditAuthorityStoreStepV1],
+) -> None:
+    raise StaggerEditAuthorityMaterializationError(
+        str(exc),
+        failure_stage=failure_stage,
+        store_steps=tuple(store_steps),
+    ) from exc
 
 
 def preflight_stagger_edit_authority(
@@ -1752,150 +1804,205 @@ def _apply_approved_stagger_edit_authority(
         request_payload=request_payload,
     )
 
-    store.preflight_atomic_commit(
-        feature_id=feature_id,
-        artifact_types=(
-            "edit_authority_approval",
-            "evidence_pack",
-            "implementation_plan",
-            "binding_resolution",
-        ),
-    )
-    approval_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="edit_authority_approval",
-        payload=approval_payload,
-        status="success",
-        upstream_refs=[
-            request_ref,
-            resume_report_ref,
-        ],
-        exact_revision_upstream_types={
-            "edit_authority_request",
-            "resume_report",
-        },
-    )
-
-    evidence_payload = _build_evidence_pack_revision(
-        old_evidence=old_evidence,
-        evidence_id=evidence_id,
-        approval_ref=approval_ref,
-        runtime_evidence_ref=refs["runtime_evidence"],
-        source_identity=source_identity,
-        target_symbol=target_symbol,
-    )
-    evidence_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="evidence_pack",
-        payload=evidence_payload,
-        status=str(old_evidence_envelope["status"]),
-        upstream_refs=[
-            refs["feature_spec"],
-            refs["runtime_evidence"],
-            approval_ref,
-            old_evidence_ref,
-        ],
-        exact_revision_upstream_types={
-            "runtime_evidence",
-            "edit_authority_approval",
-            "evidence_pack",
-        },
-    )
-
-    plan_payload = _build_implementation_plan_revision(
-        old_plan=old_plan,
-        binding_id=binding_id,
-        change_id=change_id,
-        evidence_id=evidence_id,
-        evidence_ref=evidence_ref,
-        approval_ref=approval_ref,
-        proposal=proposal,
-        source_identity=source_identity,
-    )
-    plan_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="implementation_plan",
-        payload=plan_payload,
-        status="success",
-        upstream_refs=[
-            refs["feature_spec"],
-            evidence_ref,
-            approval_ref,
-            refs["implementation_plan"],
-        ],
-        exact_revision_upstream_types={
-            "edit_authority_approval",
-            "implementation_plan",
-        },
-    )
-
-    runtime_evidence = _artifact_data(envelopes["runtime_evidence"])
-    diagnosis = _approved_bound_diagnosis(
-        feature_id=feature_id,
-        runtime_evidence=runtime_evidence,
-        proposal=proposal,
-    )
-    resolution = resolve_runtime_diagnosis_binding(
-        diagnosis=diagnosis,
-        feature_id=feature_id,
-        run_id=run_id,
-        runtime_evidence_revision=_revision(refs["runtime_evidence"]),
-        implementation_plan_revision=_revision(plan_ref),
-        patch_proposal_revision=_revision(refs["patch_proposal"]),
-        implementation_plan=plan_payload,
-        allowed_edit_binding_ids={binding_id},
-    ).to_artifact_payload()
-    if (
-        resolution.get("result_type") != "resolved_repair_target"
-        or not isinstance(resolution.get("resolved_repair_target"), dict)
-        or resolution["resolved_repair_target"].get("binding_id")
-        != binding_id
-        or resolution.get("blockers")
-    ):
-        raise StaggerEditAuthorityApprovalError(
-            "The approved authority did not resolve to exactly one target."
+    store_steps: list[EditAuthorityStoreStepV1] = []
+    try:
+        store.preflight_atomic_commit(
+            feature_id=feature_id,
+            artifact_types=(
+                "edit_authority_approval",
+                "evidence_pack",
+                "implementation_plan",
+                "binding_resolution",
+            ),
         )
-    resolution["authority_source"] = "edit_authority_approval"
-    resolution["authority_contract_version"] = (
-        capability.authority_contract_version
-    )
-    resolution["edit_authority_approval_revision"] = _revision(
-        approval_ref
-    )
-    resolution["edit_authority_request_revision"] = _revision(
-        request_ref
-    )
-    resolution["evidence_pack_revision"] = _revision(evidence_ref)
-    resolution["approved_runtime_failure_ownership"] = copy.deepcopy(
-        proposal["ownership_review"][
-            "replayed_runtime_failure_ownership"
-        ]
-    )
-    resolution["repair_planner_allowed"] = False
-    resolution["source_patch_allowed"] = False
-    resolution_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="binding_resolution",
-        payload=resolution,
-        status="success",
-        upstream_refs=[
-            refs["runtime_evidence"],
-            plan_ref,
-            refs["patch_proposal"],
-            request_ref,
-            approval_ref,
-            evidence_ref,
-        ],
-        exact_revision_upstream_types={
-            "runtime_evidence",
-            "patch_proposal",
-            "edit_authority_request",
-            "edit_authority_approval",
-            "evidence_pack",
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="store_preflight",
+            store_steps=store_steps,
+        )
+    approval_step, approval_ref = _materialization_write(
+        store,
+        role="edit_authority_approval",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "edit_authority_approval",
+            "payload": approval_payload,
+            "status": "success",
+            "upstream_refs": [request_ref, resume_report_ref],
+            "exact_revision_upstream_types": {
+                "edit_authority_request",
+                "resume_report",
+            },
         },
     )
+    store_steps.append(approval_step)
+    if approval_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
+
+    try:
+        evidence_payload = _build_evidence_pack_revision(
+            old_evidence=old_evidence,
+            evidence_id=evidence_id,
+            approval_ref=approval_ref,
+            runtime_evidence_ref=refs["runtime_evidence"],
+            source_identity=source_identity,
+            target_symbol=target_symbol,
+        )
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="materialization_validation",
+            store_steps=store_steps,
+        )
+    evidence_step, evidence_ref = _materialization_write(
+        store,
+        role="evidence_pack",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "evidence_pack",
+            "payload": evidence_payload,
+            "status": str(old_evidence_envelope["status"]),
+            "upstream_refs": [
+                refs["feature_spec"],
+                refs["runtime_evidence"],
+                approval_ref,
+                old_evidence_ref,
+            ],
+            "exact_revision_upstream_types": {
+                "runtime_evidence",
+                "edit_authority_approval",
+                "evidence_pack",
+            },
+        },
+    )
+    store_steps.append(evidence_step)
+    if evidence_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
+
+    try:
+        plan_payload = _build_implementation_plan_revision(
+            old_plan=old_plan,
+            binding_id=binding_id,
+            change_id=change_id,
+            evidence_id=evidence_id,
+            evidence_ref=evidence_ref,
+            approval_ref=approval_ref,
+            proposal=proposal,
+            source_identity=source_identity,
+        )
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="materialization_validation",
+            store_steps=store_steps,
+        )
+    plan_step, plan_ref = _materialization_write(
+        store,
+        role="implementation_plan",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "implementation_plan",
+            "payload": plan_payload,
+            "status": "success",
+            "upstream_refs": [
+                refs["feature_spec"],
+                evidence_ref,
+                approval_ref,
+                refs["implementation_plan"],
+            ],
+            "exact_revision_upstream_types": {
+                "edit_authority_approval",
+                "implementation_plan",
+            },
+        },
+    )
+    store_steps.append(plan_step)
+    if plan_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
+
+    try:
+        runtime_evidence = _artifact_data(envelopes["runtime_evidence"])
+        diagnosis = _approved_bound_diagnosis(
+            feature_id=feature_id,
+            runtime_evidence=runtime_evidence,
+            proposal=proposal,
+        )
+        resolution = resolve_runtime_diagnosis_binding(
+            diagnosis=diagnosis,
+            feature_id=feature_id,
+            run_id=run_id,
+            runtime_evidence_revision=_revision(refs["runtime_evidence"]),
+            implementation_plan_revision=_revision(plan_ref),
+            patch_proposal_revision=_revision(refs["patch_proposal"]),
+            implementation_plan=plan_payload,
+            allowed_edit_binding_ids={binding_id},
+        ).to_artifact_payload()
+        if (
+            resolution.get("result_type") != "resolved_repair_target"
+            or not isinstance(resolution.get("resolved_repair_target"), dict)
+            or resolution["resolved_repair_target"].get("binding_id")
+            != binding_id
+            or resolution.get("blockers")
+        ):
+            raise StaggerEditAuthorityApprovalError(
+                "The approved authority did not resolve to exactly one target."
+            )
+        resolution["authority_source"] = "edit_authority_approval"
+        resolution["authority_contract_version"] = (
+            capability.authority_contract_version
+        )
+        resolution["edit_authority_approval_revision"] = _revision(
+            approval_ref
+        )
+        resolution["edit_authority_request_revision"] = _revision(
+            request_ref
+        )
+        resolution["evidence_pack_revision"] = _revision(evidence_ref)
+        resolution["approved_runtime_failure_ownership"] = copy.deepcopy(
+            proposal["ownership_review"][
+                "replayed_runtime_failure_ownership"
+            ]
+        )
+        resolution["repair_planner_allowed"] = False
+        resolution["source_patch_allowed"] = False
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="materialization_validation",
+            store_steps=store_steps,
+        )
+    resolution_step, resolution_ref = _materialization_write(
+        store,
+        role="binding_resolution",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "binding_resolution",
+            "payload": resolution,
+            "status": "success",
+            "upstream_refs": [
+                refs["runtime_evidence"],
+                plan_ref,
+                refs["patch_proposal"],
+                request_ref,
+                approval_ref,
+                evidence_ref,
+            ],
+            "exact_revision_upstream_types": {
+                "runtime_evidence",
+                "patch_proposal",
+                "edit_authority_request",
+                "edit_authority_approval",
+                "evidence_pack",
+            },
+        },
+    )
+    store_steps.append(resolution_step)
+    if resolution_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
     return {
         "status": "EXACT_EDIT_AUTHORITY_RESOLVED",
+        "store_steps": tuple(store_steps),
         "command": "langgraph-edit-authority-approval",
         "approval_hash": approval_hash,
         "approved_by": actor,
@@ -2067,6 +2174,28 @@ def _apply_approved_stagger_bounded_observation_authority(
         raise StaggerEditAuthorityApprovalError(
             "Bounded observation EvidenceItem is invalid or already exists."
         )
+    plan_payload = copy.deepcopy(plan_template)
+    binding_registry = plan_payload.get("binding_registry")
+    bindings = (
+        binding_registry.get("edit_bindings")
+        if isinstance(binding_registry, dict)
+        else None
+    )
+    proposed_changes = plan_payload.get("proposed_changes")
+    if (
+        not isinstance(bindings, list)
+        or len(bindings) != 1
+        or not isinstance(bindings[0], dict)
+        or not isinstance(bindings[0].get("binding_id"), str)
+        or not isinstance(proposed_changes, list)
+        or len(proposed_changes) != 1
+        or not isinstance(proposed_changes[0], dict)
+        or not isinstance(proposed_changes[0].get("change_id"), str)
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "Bounded observation Plan must contain one exact binding and change."
+        )
+    binding = bindings[0]
 
     approval_payload = _build_approval_payload(
         feature_id=feature_id,
@@ -2080,104 +2209,141 @@ def _apply_approved_stagger_bounded_observation_authority(
         capability=capability,
         request_payload=request_payload,
     )
-    store.preflight_atomic_commit(
-        feature_id=feature_id,
-        artifact_types=(
-            "edit_authority_approval",
-            "evidence_pack",
-            "implementation_plan",
-        ),
-    )
-    approval_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="edit_authority_approval",
-        payload=approval_payload,
-        status="success",
-        upstream_refs=[request_ref, resume_report_ref],
-        exact_revision_upstream_types={
-            "edit_authority_request",
-            "resume_report",
-        },
-    )
-
-    bounded_item = copy.deepcopy(evidence_item)
-    bounded_item["authority"] = "human_exact_edit_authority"
-    bounded_item["edit_authority_approval_ref"] = _revision(approval_ref)
-    bounded_item["runtime_evidence_ref"] = _revision(
-        refs["runtime_evidence"]
-    )
-    evidence_payload = copy.deepcopy(old_evidence)
-    evidence_payload["items"].append(bounded_item)
-    evidence_payload["message"] = (
-        "The fresh EvidencePack now includes one exact bounded C6/C7 "
-        "observation-only target-source scope."
-    )
-    trace_refs = [
-        str(item)
-        for item in evidence_payload.get("trace_refs", ())
-        if isinstance(item, str)
-    ]
-    for ref_path in (approval_ref.path, refs["runtime_evidence"].path):
-        if ref_path not in trace_refs:
-            trace_refs.append(ref_path)
-    evidence_payload["trace_refs"] = trace_refs
-    evidence_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="evidence_pack",
-        payload=evidence_payload,
-        status=str(old_evidence_envelope["status"]),
-        upstream_refs=[
-            refs["feature_spec"],
-            refs["runtime_evidence"],
-            approval_ref,
-            refs["evidence_pack"],
-        ],
-        exact_revision_upstream_types={
-            "runtime_evidence",
-            "edit_authority_approval",
-            "evidence_pack",
-        },
-    )
-
-    plan_payload = copy.deepcopy(plan_template)
-    bindings = plan_payload["binding_registry"]["edit_bindings"]
-    if len(bindings) != 1:
-        raise StaggerEditAuthorityApprovalError(
-            "Bounded observation Plan must contain one exact binding."
+    store_steps: list[EditAuthorityStoreStepV1] = []
+    try:
+        store.preflight_atomic_commit(
+            feature_id=feature_id,
+            artifact_types=(
+                "edit_authority_approval",
+                "evidence_pack",
+                "implementation_plan",
+            ),
         )
-    binding = bindings[0]
-    binding["authority"] = "human_exact_edit_authority"
-    binding["edit_authority_approval_ref"] = _revision(approval_ref)
-    binding["evidence_pack_ref"] = _revision(evidence_ref)
-    binding["repair_planner_allowed"] = False
-    binding["source_patch_allowed"] = False
-    plan_payload["materialization_context"] = {
-        "projection_kind": _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND,
-        "reviewed_no_write_projection": copy.deepcopy(reviewed),
-        "edit_authority_request_revision": _revision(request_ref),
-        "edit_authority_approval_revision": _revision(approval_ref),
-        "evidence_pack_revision": _revision(evidence_ref),
-        "runtime_evidence_revision": _revision(refs["runtime_evidence"]),
-        "historical_identifier_baseline": copy.deepcopy(historical),
-        "repair_planner_allowed": False,
-        "source_patch_allowed": False,
-    }
-    plan_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="implementation_plan",
-        payload=plan_payload,
-        status="success",
-        upstream_refs=[
-            refs["feature_spec"],
-            evidence_ref,
-            approval_ref,
-        ],
-        exact_revision_upstream_types={
-            "edit_authority_approval",
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="store_preflight",
+            store_steps=store_steps,
+        )
+    approval_step, approval_ref = _materialization_write(
+        store,
+        role="edit_authority_approval",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "edit_authority_approval",
+            "payload": approval_payload,
+            "status": "success",
+            "upstream_refs": [request_ref, resume_report_ref],
+            "exact_revision_upstream_types": {
+                "edit_authority_request",
+                "resume_report",
+            },
         },
     )
+    store_steps.append(approval_step)
+    if approval_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
+
+    try:
+        bounded_item = copy.deepcopy(evidence_item)
+        bounded_item["authority"] = "human_exact_edit_authority"
+        bounded_item["edit_authority_approval_ref"] = _revision(approval_ref)
+        bounded_item["runtime_evidence_ref"] = _revision(
+            refs["runtime_evidence"]
+        )
+        evidence_payload = copy.deepcopy(old_evidence)
+        evidence_payload["items"].append(bounded_item)
+        evidence_payload["message"] = (
+            "The fresh EvidencePack now includes one exact bounded C6/C7 "
+            "observation-only target-source scope."
+        )
+        trace_refs = [
+            str(item)
+            for item in evidence_payload.get("trace_refs", ())
+            if isinstance(item, str)
+        ]
+        for ref_path in (approval_ref.path, refs["runtime_evidence"].path):
+            if ref_path not in trace_refs:
+                trace_refs.append(ref_path)
+        evidence_payload["trace_refs"] = trace_refs
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="materialization_validation",
+            store_steps=store_steps,
+        )
+    evidence_step, evidence_ref = _materialization_write(
+        store,
+        role="evidence_pack",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "evidence_pack",
+            "payload": evidence_payload,
+            "status": str(old_evidence_envelope["status"]),
+            "upstream_refs": [
+                refs["feature_spec"],
+                refs["runtime_evidence"],
+                approval_ref,
+                refs["evidence_pack"],
+            ],
+            "exact_revision_upstream_types": {
+                "runtime_evidence",
+                "edit_authority_approval",
+                "evidence_pack",
+            },
+        },
+    )
+    store_steps.append(evidence_step)
+    if evidence_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
+
+    try:
+        binding["authority"] = "human_exact_edit_authority"
+        binding["edit_authority_approval_ref"] = _revision(approval_ref)
+        binding["evidence_pack_ref"] = _revision(evidence_ref)
+        binding["repair_planner_allowed"] = False
+        binding["source_patch_allowed"] = False
+        plan_payload["materialization_context"] = {
+            "projection_kind": _STAGGER_BOUNDED_OBSERVATION_PROJECTION_KIND,
+            "reviewed_no_write_projection": copy.deepcopy(reviewed),
+            "edit_authority_request_revision": _revision(request_ref),
+            "edit_authority_approval_revision": _revision(approval_ref),
+            "evidence_pack_revision": _revision(evidence_ref),
+            "runtime_evidence_revision": _revision(refs["runtime_evidence"]),
+            "historical_identifier_baseline": copy.deepcopy(historical),
+            "repair_planner_allowed": False,
+            "source_patch_allowed": False,
+        }
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="materialization_validation",
+            store_steps=store_steps,
+        )
+    plan_step, plan_ref = _materialization_write(
+        store,
+        role="implementation_plan",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "implementation_plan",
+            "payload": plan_payload,
+            "status": "success",
+            "upstream_refs": [
+                refs["feature_spec"],
+                evidence_ref,
+                approval_ref,
+            ],
+            "exact_revision_upstream_types": {
+                "edit_authority_approval",
+            },
+        },
+    )
+    store_steps.append(plan_step)
+    if plan_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
     return {
         "status": "BOUNDED_OBSERVATION_PLAN_AUTHORIZED",
+        "store_steps": tuple(store_steps),
         "command": "langgraph-edit-authority-approval",
         "approval_hash": approval_hash,
         "approved_by": approved_by,
@@ -2476,11 +2642,6 @@ def materialize_stagger_edit_authority_approval(
         raise StaggerEditAuthorityApprovalError(
             "Edit Authority materializer kind is not supported."
         )
-    if result.get("status") != capability.materializer_success_status:
-        raise StaggerEditAuthorityApprovalError(
-            "Edit Authority materializer status does not match the "
-            "capability declaration."
-        )
     return result
 
 
@@ -2658,72 +2819,102 @@ def _apply_approved_existing_binding_reauthorization(
         capability=capability,
         request_payload=request_payload,
     )
-    store.preflight_atomic_commit(
-        feature_id=feature_id,
-        artifact_types=(
-            "edit_authority_approval",
-            "binding_resolution",
-        ),
-    )
-    approval_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="edit_authority_approval",
-        payload=approval_payload,
-        status="success",
-        upstream_refs=[request_ref, resume_report_ref],
-        exact_revision_upstream_types={
-            "edit_authority_request",
-            "resume_report",
+    store_steps: list[EditAuthorityStoreStepV1] = []
+    try:
+        store.preflight_atomic_commit(
+            feature_id=feature_id,
+            artifact_types=(
+                "edit_authority_approval",
+                "binding_resolution",
+            ),
+        )
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="store_preflight",
+            store_steps=store_steps,
+        )
+    approval_step, approval_ref = _materialization_write(
+        store,
+        role="edit_authority_approval",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "edit_authority_approval",
+            "payload": approval_payload,
+            "status": "success",
+            "upstream_refs": [request_ref, resume_report_ref],
+            "exact_revision_upstream_types": {
+                "edit_authority_request",
+                "resume_report",
+            },
         },
     )
-    resolution = copy.deepcopy(existing_resolution)
-    resolution["authority_source"] = "edit_authority_approval"
-    resolution["authority_contract_version"] = (
-        capability.authority_contract_version
-    )
-    resolution["edit_authority_request_revision"] = _revision(
-        request_ref
-    )
-    resolution["edit_authority_approval_revision"] = _revision(
-        approval_ref
-    )
-    resolution["previous_binding_resolution_revision"] = _revision(
-        refs["existing_binding_resolution"]
-    )
-    resolution["predecessor_implementation_plan_revision"] = _revision(
-        refs["predecessor_implementation_plan"]
-    )
-    resolution["repair_planner_allowed"] = False
-    resolution["source_patch_allowed"] = False
-    resolution_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="binding_resolution",
-        payload=resolution,
-        status="success",
-        upstream_refs=[
-            refs["feature_spec"],
-            refs["runtime_evidence"],
-            refs["predecessor_implementation_plan"],
-            refs["patch_proposal"],
-            refs["current_implementation_plan"],
-            refs["existing_binding_resolution"],
-            request_ref,
-            approval_ref,
-            evidence_ref,
-        ],
-        exact_revision_upstream_types={
-            "feature_spec",
-            "runtime_evidence",
-            "implementation_plan",
-            "patch_proposal",
-            "binding_resolution",
-            "edit_authority_request",
-            "edit_authority_approval",
-            "evidence_pack",
+    store_steps.append(approval_step)
+    if approval_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
+    try:
+        resolution = copy.deepcopy(existing_resolution)
+        resolution["authority_source"] = "edit_authority_approval"
+        resolution["authority_contract_version"] = (
+            capability.authority_contract_version
+        )
+        resolution["edit_authority_request_revision"] = _revision(
+            request_ref
+        )
+        resolution["edit_authority_approval_revision"] = _revision(
+            approval_ref
+        )
+        resolution["previous_binding_resolution_revision"] = _revision(
+            refs["existing_binding_resolution"]
+        )
+        resolution["predecessor_implementation_plan_revision"] = _revision(
+            refs["predecessor_implementation_plan"]
+        )
+        resolution["repair_planner_allowed"] = False
+        resolution["source_patch_allowed"] = False
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="materialization_validation",
+            store_steps=store_steps,
+        )
+    resolution_step, resolution_ref = _materialization_write(
+        store,
+        role="binding_resolution",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "binding_resolution",
+            "payload": resolution,
+            "status": "success",
+            "upstream_refs": [
+                refs["feature_spec"],
+                refs["runtime_evidence"],
+                refs["predecessor_implementation_plan"],
+                refs["patch_proposal"],
+                refs["current_implementation_plan"],
+                refs["existing_binding_resolution"],
+                request_ref,
+                approval_ref,
+                evidence_ref,
+            ],
+            "exact_revision_upstream_types": {
+                "feature_spec",
+                "runtime_evidence",
+                "implementation_plan",
+                "patch_proposal",
+                "binding_resolution",
+                "edit_authority_request",
+                "edit_authority_approval",
+                "evidence_pack",
+            },
         },
     )
+    store_steps.append(resolution_step)
+    if resolution_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
     return {
         "status": "EXISTING_EDIT_AUTHORITY_REAUTHORIZED",
+        "store_steps": tuple(store_steps),
         "command": "langgraph-edit-authority-approval",
         "approval_hash": approval_hash,
         "approved_by": actor,
@@ -2933,6 +3124,16 @@ def _apply_approved_stagger_hud_parent_observation_authority(
     )
     old_evidence_envelope = store.read(refs["evidence_pack"])
     old_evidence = _artifact_data(old_evidence_envelope)
+    bindings = proposal.get("diagnostic_bindings")
+    if not isinstance(bindings, list) or any(
+        not isinstance(item, dict)
+        or not isinstance(item.get("binding_id"), str)
+        or not isinstance(item.get("change_id"), str)
+        for item in bindings
+    ):
+        raise StaggerEditAuthorityApprovalError(
+            "Stagger observation diagnostic bindings are invalid."
+        )
     approval_payload = _build_approval_payload(
         feature_id=feature_id,
         run_id=run_id,
@@ -2945,85 +3146,128 @@ def _apply_approved_stagger_hud_parent_observation_authority(
         capability=capability,
         request_payload=request_payload,
     )
-    store.preflight_atomic_commit(
-        feature_id=feature_id,
-        artifact_types=(
-            "edit_authority_approval",
-            "evidence_pack",
-            "implementation_plan",
-        ),
-    )
-    approval_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="edit_authority_approval",
-        payload=approval_payload,
-        status="success",
-        upstream_refs=[request_ref, resume_report_ref],
-        exact_revision_upstream_types={
-            "edit_authority_request",
-            "resume_report",
-        },
-    )
-    evidence_payload = _build_stagger_observation_evidence_pack_revision(
-        old_evidence=old_evidence,
-        proposal=proposal,
-        approval_ref=approval_ref,
-        runtime_evidence_ref=refs["runtime_evidence"],
-    )
-    evidence_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="evidence_pack",
-        payload=evidence_payload,
-        status=str(old_evidence_envelope["status"]),
-        upstream_refs=[
-            refs["feature_spec"],
-            refs["runtime_evidence"],
-            approval_ref,
-            refs["evidence_pack"],
-        ],
-        exact_revision_upstream_types={
-            "runtime_evidence",
-            "edit_authority_approval",
-            "evidence_pack",
-        },
-    )
-    plan_payload = (
-        _build_stagger_diagnostic_only_plan_revision(
-            old_plan=old_plan,
-            proposal=proposal,
-            evidence_ref=evidence_ref,
-            approval_ref=approval_ref,
+    store_steps: list[EditAuthorityStoreStepV1] = []
+    try:
+        store.preflight_atomic_commit(
+            feature_id=feature_id,
+            artifact_types=(
+                "edit_authority_approval",
+                "evidence_pack",
+                "implementation_plan",
+            ),
         )
-        if diagnostic_variant
-        else _build_stagger_observation_plan_revision(
-            old_plan=old_plan,
-            proposal=proposal,
-            evidence_ref=evidence_ref,
-            approval_ref=approval_ref,
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="store_preflight",
+            store_steps=store_steps,
         )
-    )
-    plan_ref = store.write(
-        feature_id=feature_id,
-        artifact_type="implementation_plan",
-        payload=plan_payload,
-        status="success",
-        upstream_refs=[
-            refs["feature_spec"],
-            evidence_ref,
-            approval_ref,
-            refs["current_implementation_plan"],
-            refs["runtime_evidence"],
-        ],
-        exact_revision_upstream_types={
-            "evidence_pack",
-            "edit_authority_approval",
-            "implementation_plan",
-            "runtime_evidence",
+    approval_step, approval_ref = _materialization_write(
+        store,
+        role="edit_authority_approval",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "edit_authority_approval",
+            "payload": approval_payload,
+            "status": "success",
+            "upstream_refs": [request_ref, resume_report_ref],
+            "exact_revision_upstream_types": {
+                "edit_authority_request",
+                "resume_report",
+            },
         },
     )
-    bindings = proposal["diagnostic_bindings"]
+    store_steps.append(approval_step)
+    if approval_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
+    try:
+        evidence_payload = _build_stagger_observation_evidence_pack_revision(
+            old_evidence=old_evidence,
+            proposal=proposal,
+            approval_ref=approval_ref,
+            runtime_evidence_ref=refs["runtime_evidence"],
+        )
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="materialization_validation",
+            store_steps=store_steps,
+        )
+    evidence_step, evidence_ref = _materialization_write(
+        store,
+        role="evidence_pack",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "evidence_pack",
+            "payload": evidence_payload,
+            "status": str(old_evidence_envelope["status"]),
+            "upstream_refs": [
+                refs["feature_spec"],
+                refs["runtime_evidence"],
+                approval_ref,
+                refs["evidence_pack"],
+            ],
+            "exact_revision_upstream_types": {
+                "runtime_evidence",
+                "edit_authority_approval",
+                "evidence_pack",
+            },
+        },
+    )
+    store_steps.append(evidence_step)
+    if evidence_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
+    try:
+        plan_payload = (
+            _build_stagger_diagnostic_only_plan_revision(
+                old_plan=old_plan,
+                proposal=proposal,
+                evidence_ref=evidence_ref,
+                approval_ref=approval_ref,
+            )
+            if diagnostic_variant
+            else _build_stagger_observation_plan_revision(
+                old_plan=old_plan,
+                proposal=proposal,
+                evidence_ref=evidence_ref,
+                approval_ref=approval_ref,
+            )
+        )
+    except Exception as exc:
+        _raise_materialization_failure(
+            exc,
+            failure_stage="materialization_validation",
+            store_steps=store_steps,
+        )
+    plan_step, plan_ref = _materialization_write(
+        store,
+        role="implementation_plan",
+        write_arguments={
+            "feature_id": feature_id,
+            "artifact_type": "implementation_plan",
+            "payload": plan_payload,
+            "status": "success",
+            "upstream_refs": [
+                refs["feature_spec"],
+                evidence_ref,
+                approval_ref,
+                refs["current_implementation_plan"],
+                refs["runtime_evidence"],
+            ],
+            "exact_revision_upstream_types": {
+                "evidence_pack",
+                "edit_authority_approval",
+                "implementation_plan",
+                "runtime_evidence",
+            },
+        },
+    )
+    store_steps.append(plan_step)
+    if plan_ref is None:
+        return _incomplete_materialization_result(store_steps=store_steps)
     return {
         "status": capability.materializer_success_status,
+        "store_steps": tuple(store_steps),
         "command": "langgraph-edit-authority-approval",
         "approval_hash": approval_hash,
         "approved_by": actor,

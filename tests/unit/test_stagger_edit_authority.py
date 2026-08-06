@@ -21,7 +21,7 @@ from src.mod_agent.runtime import (
     preflight_stagger_edit_authority,
     preflight_stagger_hud_parent_observation_authority,
 )
-from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactWriteResult
 from src.mod_agent.artifacts.registry import (
     ArtifactContract,
     ArtifactRegistryError,
@@ -35,6 +35,7 @@ from src.mod_agent.runtime import (
     stagger_edit_authority as edit_authority_module,
 )
 from src.mod_agent.runtime.stagger_edit_authority import (
+    StaggerEditAuthorityMaterializationError,
     materialize_stagger_edit_authority_approval,
 )
 from src.mod_agent.runtime.stagger_diagnosis import (
@@ -231,6 +232,28 @@ class _RoleAwareArtifactStore:
             }
         )
         return ref
+
+    def write_with_result(self, **kwargs) -> ArtifactWriteResult:
+        ref = self.write(**kwargs)
+        return ArtifactWriteResult(
+            outcome="committed",
+            feature_id=ref.feature_id,
+            artifact_type=ref.artifact_type,
+            artifact_hash=ref.artifact_hash,
+            artifact_ref=ref,
+            revision_path=ref.path,
+            latest_alias_path=str(self.root / f"{ref.artifact_type}.json"),
+            pending_marker_path=str(self.root / "pending" / f"{ref.artifact_hash}.json"),
+            commit_started=True,
+            revision_state="valid",
+            latest_alias_state="matches_identity",
+            pending_marker_state="absent",
+            failure_stage=None,
+            failure_class=None,
+            failure_message=None,
+            recovery_available=False,
+            recovery_authorized=False,
+        )
 
 
 def _source_root(tmp_path: Path) -> Path:
@@ -1646,6 +1669,73 @@ class _WritableArtifactStore(_ReadOnlyArtifactStore):
         }
         return ref
 
+    def write_with_result(self, **kwargs) -> ArtifactWriteResult:
+        ref = self.write(**kwargs)
+        return ArtifactWriteResult(
+            outcome="committed",
+            feature_id=ref.feature_id,
+            artifact_type=ref.artifact_type,
+            artifact_hash=ref.artifact_hash,
+            artifact_ref=ref,
+            revision_path=ref.path,
+            latest_alias_path=str(self.root / f"{ref.artifact_type}.json"),
+            pending_marker_path=str(self.root / "pending" / f"{ref.artifact_hash}.json"),
+            commit_started=True,
+            revision_state="valid",
+            latest_alias_state="matches_identity",
+            pending_marker_state="absent",
+            failure_stage=None,
+            failure_class=None,
+            failure_message=None,
+            recovery_available=False,
+            recovery_authorized=False,
+        )
+
+
+class _FailingWritableArtifactStore(_WritableArtifactStore):
+    failure_role: str = ""
+    failure_outcome: str = "blocked_before_commit"
+
+    def write_with_result(self, **kwargs) -> ArtifactWriteResult:
+        artifact_type = str(kwargs["artifact_type"])
+        if artifact_type != self.__class__.failure_role:
+            return super().write_with_result(**kwargs)
+        partial = self.__class__.failure_outcome == "partial"
+        artifact_hash = artifact_type.ljust(64, "f")[:64]
+        return ArtifactWriteResult.from_dict(
+            {
+                "outcome": self.__class__.failure_outcome,
+                "feature_id": str(kwargs["feature_id"]),
+                "artifact_type": artifact_type,
+                "artifact_hash": artifact_hash if partial else None,
+                "artifact_ref": None,
+                "revision_path": (
+                    str(self.root / artifact_type / f"{artifact_hash[:32]}.json")
+                    if partial
+                    else None
+                ),
+                "latest_alias_path": (
+                    str(self.root / f"{artifact_type}.json") if partial else None
+                ),
+                "pending_marker_path": (
+                    str(self.root / "pending" / f"{artifact_hash}.json")
+                    if partial
+                    else None
+                ),
+                "commit_started": partial,
+                "revision_state": "valid" if partial else "unavailable",
+                "latest_alias_state": "absent" if partial else "unavailable",
+                "pending_marker_state": "present" if partial else "unavailable",
+                "failure_stage": (
+                    "latest_alias_write" if partial else "admission_validation"
+                ),
+                "failure_class": "ArtifactStoreError",
+                "failure_message": "injected materialization Store failure",
+                "recovery_available": partial,
+                "recovery_authorized": False,
+            }
+        )
+
 
 def test_request_writes_only_non_authoritative_request(
     tmp_path: Path,
@@ -1896,9 +1986,21 @@ def test_request_creation_preserves_preflight_no_source_write(
     ]
 
 
+@pytest.mark.parametrize(
+    "scenario",
+    (
+        "success",
+        "evidence_payload_validation",
+        "edit_authority_approval_store_partial",
+        "evidence_pack_store_blocked",
+        "implementation_plan_store_partial",
+        "binding_resolution_store_blocked",
+    ),
+)
 def test_graph_resume_materialization_keeps_approval_permission_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
 ) -> None:
     args = _preflight_args(tmp_path)
     _WritableArtifactStore.envelopes = _envelopes()
@@ -1907,10 +2009,28 @@ def test_graph_resume_materialization_keeps_approval_permission_only(
     _WritableArtifactStore.freshness_types = []
     _WritableArtifactStore.writes = []
     _WritableArtifactStore.preflight_types = ()
+    store_class = (
+        _FailingWritableArtifactStore
+        if scenario.endswith(("_store_blocked", "_store_partial"))
+        else _WritableArtifactStore
+    )
+    store_class.envelopes = _envelopes()
+    store_class.stale_types = set()
+    store_class.read_types = []
+    store_class.freshness_types = []
+    store_class.writes = []
+    store_class.preflight_types = ()
+    if store_class is _FailingWritableArtifactStore:
+        store_class.failure_role = scenario.removesuffix("_store_blocked").removesuffix(
+            "_store_partial"
+        )
+        store_class.failure_outcome = (
+            "partial" if scenario.endswith("_store_partial") else "blocked_before_commit"
+        )
     monkeypatch.setattr(
         edit_authority_module,
         "ArtifactStore",
-        _WritableArtifactStore,
+        store_class,
     )
     request_result = create_stagger_edit_authority_request(**args)
     request_revision = request_result[
@@ -1928,7 +2048,7 @@ def test_graph_resume_materialization_keeps_approval_permission_only(
         path=str(tmp_path / "checkpoint.json"),
         artifact_hash="6" * 64,
     )
-    _WritableArtifactStore.envelopes["workflow_checkpoint"] = {
+    store_class.envelopes["workflow_checkpoint"] = {
         "data": {
             "checkpoint_stage": "edit_authority_approval",
             "run_id": RUN_ID,
@@ -1959,7 +2079,7 @@ def test_graph_resume_materialization_keeps_approval_permission_only(
         path=str(tmp_path / "resume-report.json"),
         artifact_hash="7" * 64,
     )
-    _WritableArtifactStore.envelopes["resume_report"] = {
+    store_class.envelopes["resume_report"] = {
         "data": {
             "resume_id": "resume_edit_authority_001",
             "status": "accepted",
@@ -1982,6 +2102,38 @@ def test_graph_resume_materialization_keeps_approval_permission_only(
         },
     }
 
+    if scenario == "evidence_payload_validation":
+        def fail_evidence_payload(**_kwargs):
+            raise ValueError("injected EvidencePack payload failure")
+
+        monkeypatch.setattr(
+            edit_authority_module,
+            "_build_evidence_pack_revision",
+            fail_evidence_payload,
+        )
+        with pytest.raises(
+            StaggerEditAuthorityMaterializationError,
+            match="injected EvidencePack payload failure",
+        ) as caught:
+            materialize_stagger_edit_authority_approval(
+                artifact_store_root=args["artifact_store_root"],
+                feature_id=FEATURE_ID,
+                edit_authority_request_path=request_ref.path,
+                edit_authority_request_hash=request_ref.artifact_hash,
+                resume_report_path=report_ref.path,
+                resume_report_hash=report_ref.artifact_hash,
+            )
+        assert caught.value.failure_stage == "materialization_validation"
+        assert tuple(step.role for step in caught.value.store_steps) == (
+            "edit_authority_approval",
+        )
+        assert caught.value.store_steps[0].store_result.outcome == "committed"
+        assert [item["artifact_type"] for item in store_class.writes] == [
+            "edit_authority_request",
+            "edit_authority_approval",
+        ]
+        return
+
     result = materialize_stagger_edit_authority_approval(
         artifact_store_root=args["artifact_store_root"],
         feature_id=FEATURE_ID,
@@ -1991,6 +2143,28 @@ def test_graph_resume_materialization_keeps_approval_permission_only(
         resume_report_hash=report_ref.artifact_hash,
     )
 
+    if scenario.endswith(("_store_blocked", "_store_partial")):
+        failure_role = store_class.failure_role
+        expected_roles = (
+            "edit_authority_approval",
+            "evidence_pack",
+            "implementation_plan",
+            "binding_resolution",
+        )
+        failed_index = expected_roles.index(failure_role)
+        assert result["status"] == "EDIT_AUTHORITY_MATERIALIZATION_INCOMPLETE"
+        assert tuple(step.role for step in result["store_steps"]) == (
+            expected_roles[: failed_index + 1]
+        )
+        assert result["store_steps"][-1].store_result.outcome == (
+            store_class.failure_outcome
+        )
+        assert [item["artifact_type"] for item in store_class.writes] == [
+            "edit_authority_request",
+            *expected_roles[:failed_index],
+        ]
+        return
+
     assert result["status"] == "EXACT_EDIT_AUTHORITY_RESOLVED"
     assert result["written_artifact_types"] == [
         "edit_authority_approval",
@@ -1998,7 +2172,7 @@ def test_graph_resume_materialization_keeps_approval_permission_only(
         "implementation_plan",
         "binding_resolution",
     ]
-    approval = _WritableArtifactStore.writes[1]["payload"]
+    approval = store_class.writes[1]["payload"]
     assert approval["authority_source"] == "edit_authority_request"
     assert approval["request_hash"] == request_result["request_hash"]
     assert approval["repair_planner_allowed"] is False

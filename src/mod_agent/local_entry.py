@@ -35,6 +35,7 @@ from src.mod_agent.build import (
 from src.mod_agent.evidence import RgLiveEvidenceProvider
 from src.mod_agent.edit_authority_capabilities import (
     EditAuthorityCapabilityDeclaration,
+    EditAuthorityReviewResultV1,
     InvalidEditAuthorityApprovalIdentityError,
     UnsupportedEditAuthorityCapabilityError,
     bind_edit_authority_exact_input_upstreams,
@@ -138,6 +139,23 @@ from src.mod_agent.verification_operations import (
 
 class LocalEntryError(RuntimeError):
     """Raised when the local real-slice entry cannot start truthfully."""
+
+
+class EditAuthorityPresentationError(LocalEntryError):
+    """Carry frozen Edit Authority machine truth across presentation failure."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        edit_authority_review_result: EditAuthorityReviewResultV1,
+        presentation_error: Mapping[str, str],
+        audit_error: Mapping[str, str] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.edit_authority_review_result = edit_authority_review_result
+        self.presentation_error = dict(presentation_error)
+        self.audit_error = dict(audit_error) if audit_error is not None else None
 
 
 class VerificationOperationExecutionError(LocalEntryError):
@@ -782,30 +800,49 @@ def resume_stagger_edit_authority_review(
             "Edit Authority graph exceeded its stop-before-RepairPlanner "
             "boundary."
         )
-    expected_artifact_types = {
-        artifact_type
-        for artifact_type, _ in (
-            admission.capability.materialized_artifact_fields
+    machine_projection = result.get("edit_authority_review_result")
+    if not isinstance(machine_projection, Mapping):
+        raise LocalEntryError(
+            "Edit Authority graph omitted its structured machine result."
         )
-    }
-    capability_succeeded = (
-        result.get("current_stage") == admission.capability.terminal_stage
-        and expected_artifact_types.issubset(artifact_types)
-        and (
-            "binding_resolution" in expected_artifact_types
-            or "binding_resolution" not in artifact_types
+    try:
+        machine_result = EditAuthorityReviewResultV1.from_dict(
+            machine_projection,
+            capability=admission.capability,
+            feature_id=feature_id,
+            approval_identity_hash=authority_request_hash,
         )
-    )
-    after_counts = {
-        artifact_type: len(
-            admission.store.list_feature_artifact_revisions(
-                feature_id,
-                artifact_type,
+    except ValueError as exc:
+        raise LocalEntryError(
+            f"Edit Authority graph result is invalid: {exc}"
+        ) from exc
+    try:
+        after_counts = {
+            artifact_type: len(
+                admission.store.list_feature_artifact_revisions(
+                    feature_id,
+                    artifact_type,
+                )
             )
-        )
-        for artifact_type in write_types
-    }
-    writes_performed = after_counts != before_counts
+            for artifact_type in write_types
+        }
+    except Exception as exc:
+        error_projection = {
+            "error_class": type(exc).__name__,
+            "error_message": str(exc),
+        }
+        raise EditAuthorityPresentationError(
+            "Edit Authority audit projection failed after machine result.",
+            edit_authority_review_result=machine_result,
+            presentation_error=error_projection,
+            audit_error=error_projection,
+        ) from exc
+    writes_performed = machine_result.artifact_store_commit_started
+    capability_succeeded = (
+        machine_result.platform_status == "completed"
+        and machine_result.review_outcome == "approved"
+        and machine_result.materialization_status == "completed"
+    )
     return {
         "status": (
             admission.capability.public_success_status
@@ -830,11 +867,14 @@ def resume_stagger_edit_authority_review(
         "execution_contract_summary": admission.identity_sections[
             "execution_contract_summary"
         ],
+        "edit_authority_review_result": machine_result.to_dict(),
         "audit_snapshot": {
             "artifact_revision_counts_before": before_counts,
             "artifact_revision_counts_after": after_counts,
             "writes_performed": writes_performed,
-            "artifact_writes_performed": writes_performed,
+            "artifact_writes_performed": (
+                machine_result.artifact_store_writes_committed
+            ),
         },
         "current_stage": result.get("current_stage"),
         "artifacts": dict(result.get("artifacts") or {}),

@@ -35,6 +35,36 @@ TerminalStage: TypeAlias = Literal[
     "implementation_plan",
 ]
 CompatibilityMode: TypeAlias = Literal["preserve_historical_identity"]
+EditAuthorityPlatformStatus: TypeAlias = Literal[
+    "completed",
+    "blocked",
+    "partial",
+]
+EditAuthorityReviewOutcome: TypeAlias = Literal[
+    "not_recorded",
+    "approved",
+    "rejected",
+]
+EditAuthorityMaterializationStatus: TypeAlias = Literal[
+    "not_started",
+    "not_applicable",
+    "completed",
+    "incomplete",
+]
+EditAuthorityFailureStage: TypeAlias = Literal[
+    "graph_interrupt",
+    "checkpoint_construction",
+    "checkpoint_store",
+    "resume_validation",
+    "resume_report_store",
+    "store_preflight",
+    "materialization_validation",
+    "edit_authority_approval_store",
+    "evidence_pack_store",
+    "implementation_plan_store",
+    "binding_resolution_store",
+    "internal_execution",
+]
 RequiredFreshness: TypeAlias = Literal[
     "latest_and_fresh",
     "registered_exact_and_fresh",
@@ -340,6 +370,640 @@ class EditAuthorityCapabilityDeclaration:
     approval_input_bindings: tuple[ApprovalInputBinding, ...]
     materialization_commit_budget: int
     automatic_retry_budget: int
+
+
+@dataclass(frozen=True)
+class EditAuthorityStoreStepV1:
+    """One declaration-ordered Store fact in an Edit Authority attempt."""
+
+    role: str
+    store_result: Any
+
+    def __post_init__(self) -> None:
+        from src.mod_agent.artifacts.store import ArtifactWriteResult
+
+        if not isinstance(self.store_result, ArtifactWriteResult):
+            raise ValueError("Edit Authority store_result must be typed Store truth.")
+        if self.role != self.store_result.artifact_type:
+            raise ValueError("Edit Authority Store step role/type changed.")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "store_result": self.store_result.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "EditAuthorityStoreStepV1":
+        from src.mod_agent.artifacts.store import ArtifactWriteResult
+
+        if set(value) != {"role", "store_result"}:
+            raise ValueError("Edit Authority Store step fields changed.")
+        role = value.get("role")
+        store_result = value.get("store_result")
+        if type(role) is not str or not role or not isinstance(store_result, Mapping):
+            raise ValueError("Edit Authority Store step projection is invalid.")
+        return cls(
+            role=role,
+            store_result=ArtifactWriteResult.from_dict(store_result),
+        )
+
+
+@dataclass(frozen=True)
+class EditAuthorityReviewResultV1:
+    """Authoritative ordered result for one Edit Authority review attempt."""
+
+    result_contract_version: str
+    capability_id: str
+    capability_contract_version: str
+    approval_identity_hash: str
+    platform_status: EditAuthorityPlatformStatus
+    review_outcome: EditAuthorityReviewOutcome
+    materialization_status: EditAuthorityMaterializationStatus
+    failure_stage: EditAuthorityFailureStage | None
+    store_steps: tuple[EditAuthorityStoreStepV1, ...]
+    protocol_outputs: tuple[Any, ...]
+    materialization_outputs: tuple[Any, ...]
+    platform_blockers: tuple[dict[str, Any], ...]
+    review_reasons: tuple[dict[str, Any], ...]
+    artifact_store_commit_started: bool
+    artifact_store_writes_committed: bool
+    recovery_available: bool
+    recovery_authorized: bool
+    retry_count: int
+    source_modified: bool
+    build_performed: bool
+    process_launched: bool
+    product_runtime_performed: bool
+    audit_snapshot: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        from src.mod_agent.artifacts import ArtifactRef
+
+        if self.result_contract_version != "edit_authority_review_result_v1":
+            raise ValueError("Edit Authority result contract version changed.")
+        if not self.capability_id or not self.capability_contract_version:
+            raise ValueError("Edit Authority result capability identity is incomplete.")
+        if not self.approval_identity_hash:
+            raise ValueError("Edit Authority result approval identity is incomplete.")
+        if self.platform_status not in {"completed", "blocked", "partial"}:
+            raise ValueError("Edit Authority platform status is not registered.")
+        if self.review_outcome not in {"not_recorded", "approved", "rejected"}:
+            raise ValueError("Edit Authority review outcome is not registered.")
+        if self.materialization_status not in {
+            "not_started",
+            "not_applicable",
+            "completed",
+            "incomplete",
+        }:
+            raise ValueError("Edit Authority materialization status is not registered.")
+        if self.failure_stage not in {
+            None,
+            "graph_interrupt",
+            "checkpoint_construction",
+            "checkpoint_store",
+            "resume_validation",
+            "resume_report_store",
+            "store_preflight",
+            "materialization_validation",
+            "edit_authority_approval_store",
+            "evidence_pack_store",
+            "implementation_plan_store",
+            "binding_resolution_store",
+            "internal_execution",
+        }:
+            raise ValueError("Edit Authority failure stage is not registered.")
+        if any(not isinstance(step, EditAuthorityStoreStepV1) for step in self.store_steps):
+            raise ValueError("Edit Authority result contains an untyped Store step.")
+        if any(not isinstance(ref, ArtifactRef) for ref in (*self.protocol_outputs, *self.materialization_outputs)):
+            raise ValueError("Edit Authority result contains an invalid Artifact ref.")
+        if self.recovery_authorized or self.retry_count != 0:
+            raise ValueError("Edit Authority result cannot authorize recovery or retry.")
+        if any(
+            (
+                self.source_modified,
+                self.build_performed,
+                self.process_launched,
+                self.product_runtime_performed,
+            )
+        ):
+            raise ValueError("Edit Authority result exceeded its side-effect boundary.")
+
+    @staticmethod
+    def _ref_dict(ref: Any) -> dict[str, str]:
+        return {
+            "feature_id": ref.feature_id,
+            "artifact_type": ref.artifact_type,
+            "path": ref.path,
+            "artifact_hash": ref.artifact_hash,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "result_contract_version": self.result_contract_version,
+            "capability_id": self.capability_id,
+            "capability_contract_version": self.capability_contract_version,
+            "approval_identity_hash": self.approval_identity_hash,
+            "platform_status": self.platform_status,
+            "review_outcome": self.review_outcome,
+            "materialization_status": self.materialization_status,
+            "failure_stage": self.failure_stage,
+            "store_steps": [step.to_dict() for step in self.store_steps],
+            "protocol_outputs": [self._ref_dict(ref) for ref in self.protocol_outputs],
+            "materialization_outputs": [
+                self._ref_dict(ref) for ref in self.materialization_outputs
+            ],
+            "platform_blockers": copy.deepcopy(list(self.platform_blockers)),
+            "review_reasons": copy.deepcopy(list(self.review_reasons)),
+            "artifact_store_commit_started": self.artifact_store_commit_started,
+            "artifact_store_writes_committed": self.artifact_store_writes_committed,
+            "recovery_available": self.recovery_available,
+            "recovery_authorized": self.recovery_authorized,
+            "retry_count": self.retry_count,
+            "source_modified": self.source_modified,
+            "build_performed": self.build_performed,
+            "process_launched": self.process_launched,
+            "product_runtime_performed": self.product_runtime_performed,
+            "audit_snapshot": copy.deepcopy(self.audit_snapshot),
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+        *,
+        capability: EditAuthorityCapabilityDeclaration,
+        feature_id: str,
+        approval_identity_hash: str,
+    ) -> "EditAuthorityReviewResultV1":
+        from src.mod_agent.artifacts import ArtifactRef
+
+        expected_fields = {
+            "result_contract_version",
+            "capability_id",
+            "capability_contract_version",
+            "approval_identity_hash",
+            "platform_status",
+            "review_outcome",
+            "materialization_status",
+            "failure_stage",
+            "store_steps",
+            "protocol_outputs",
+            "materialization_outputs",
+            "platform_blockers",
+            "review_reasons",
+            "artifact_store_commit_started",
+            "artifact_store_writes_committed",
+            "recovery_available",
+            "recovery_authorized",
+            "retry_count",
+            "source_modified",
+            "build_performed",
+            "process_launched",
+            "product_runtime_performed",
+            "audit_snapshot",
+        }
+        if set(value) != expected_fields:
+            raise ValueError("Edit Authority result fields changed.")
+
+        def parse_refs(field: str) -> tuple[ArtifactRef, ...]:
+            items = value[field]
+            if not isinstance(items, list):
+                raise ValueError(f"Edit Authority {field} must be a list.")
+            refs: list[ArtifactRef] = []
+            for item in items:
+                if not isinstance(item, Mapping) or set(item) != {
+                    "feature_id",
+                    "artifact_type",
+                    "path",
+                    "artifact_hash",
+                }:
+                    raise ValueError(f"Edit Authority {field} entry is invalid.")
+                values = {
+                    key: item[key]
+                    for key in (
+                        "feature_id",
+                        "artifact_type",
+                        "path",
+                        "artifact_hash",
+                    )
+                }
+                if any(type(item_value) is not str or not item_value for item_value in values.values()):
+                    raise ValueError(f"Edit Authority {field} entry is invalid.")
+                refs.append(ArtifactRef(**values))
+            return tuple(refs)
+
+        store_step_values = value["store_steps"]
+        if not isinstance(store_step_values, list):
+            raise ValueError("Edit Authority store_steps must be a list.")
+        store_steps = tuple(
+            EditAuthorityStoreStepV1.from_dict(item)
+            for item in store_step_values
+            if isinstance(item, Mapping)
+        )
+        if len(store_steps) != len(store_step_values):
+            raise ValueError("Edit Authority store_steps entry is invalid.")
+        blockers = value["platform_blockers"]
+        reasons = value["review_reasons"]
+        audit_snapshot = value["audit_snapshot"]
+        if (
+            not isinstance(blockers, list)
+            or any(not isinstance(item, Mapping) for item in blockers)
+            or not isinstance(reasons, list)
+            or any(not isinstance(item, Mapping) for item in reasons)
+            or not isinstance(audit_snapshot, Mapping)
+        ):
+            raise ValueError("Edit Authority result detail projection is invalid.")
+        for field in (
+            "artifact_store_commit_started",
+            "artifact_store_writes_committed",
+            "recovery_available",
+            "recovery_authorized",
+            "source_modified",
+            "build_performed",
+            "process_launched",
+            "product_runtime_performed",
+        ):
+            if type(value[field]) is not bool:
+                raise ValueError(f"Edit Authority result {field} must be bool.")
+        if type(value["retry_count"]) is not int:
+            raise ValueError("Edit Authority result retry_count must be int.")
+
+        result = cls(
+            result_contract_version=value["result_contract_version"],
+            capability_id=value["capability_id"],
+            capability_contract_version=value["capability_contract_version"],
+            approval_identity_hash=value["approval_identity_hash"],
+            platform_status=value["platform_status"],
+            review_outcome=value["review_outcome"],
+            materialization_status=value["materialization_status"],
+            failure_stage=value["failure_stage"],
+            store_steps=store_steps,
+            protocol_outputs=parse_refs("protocol_outputs"),
+            materialization_outputs=parse_refs("materialization_outputs"),
+            platform_blockers=tuple(copy.deepcopy(dict(item)) for item in blockers),
+            review_reasons=tuple(copy.deepcopy(dict(item)) for item in reasons),
+            artifact_store_commit_started=value["artifact_store_commit_started"],
+            artifact_store_writes_committed=value["artifact_store_writes_committed"],
+            recovery_available=value["recovery_available"],
+            recovery_authorized=value["recovery_authorized"],
+            retry_count=value["retry_count"],
+            source_modified=value["source_modified"],
+            build_performed=value["build_performed"],
+            process_launched=value["process_launched"],
+            product_runtime_performed=value["product_runtime_performed"],
+            audit_snapshot=copy.deepcopy(dict(audit_snapshot)),
+        )
+        if (
+            result.capability_id != capability.capability_id
+            or result.capability_contract_version
+            != capability.capability_contract_version
+            or result.approval_identity_hash != approval_identity_hash
+        ):
+            raise ValueError("Edit Authority result identity changed.")
+
+        if result.review_outcome == "approved":
+            payload_decision = "approve"
+            resume_decision_status = "accepted"
+            resume_decision_allowed = True
+        elif result.review_outcome == "rejected":
+            payload_decision = "reject"
+            resume_decision_status = "accepted"
+            resume_decision_allowed = True
+        elif (
+            result.failure_stage == "resume_validation"
+            and any(step.role == "resume_report" for step in result.store_steps)
+        ):
+            payload_decision = None
+            resume_decision_status = "blocked"
+            resume_decision_allowed = False
+        else:
+            payload_decision = None
+            resume_decision_status = None
+            resume_decision_allowed = None
+
+        store_failure_stages = set(_EDIT_AUTHORITY_STORE_FAILURE_STAGE_BY_ROLE.values())
+        execution_failure_stage = (
+            None
+            if result.failure_stage in store_failure_stages
+            or (
+                result.failure_stage == "resume_validation"
+                and resume_decision_allowed is False
+            )
+            else result.failure_stage
+        )
+        expected = project_edit_authority_review_result(
+            capability=capability,
+            feature_id=feature_id,
+            approval_identity_hash=approval_identity_hash,
+            store_steps=result.store_steps,
+            payload_decision=payload_decision,
+            resume_decision_status=resume_decision_status,
+            resume_decision_allowed=resume_decision_allowed,
+            execution_failure_stage=execution_failure_stage,
+            platform_blockers=result.platform_blockers,
+            audit_snapshot=result.audit_snapshot,
+        )
+        if expected.to_dict() != result.to_dict() or result.to_dict() != dict(value):
+            raise ValueError("Edit Authority result changed during strict parsing.")
+        return result
+
+
+_EDIT_AUTHORITY_STORE_FAILURE_STAGE_BY_ROLE: dict[str, EditAuthorityFailureStage] = {
+    "workflow_checkpoint": "checkpoint_store",
+    "resume_report": "resume_report_store",
+    "edit_authority_approval": "edit_authority_approval_store",
+    "evidence_pack": "evidence_pack_store",
+    "implementation_plan": "implementation_plan_store",
+    "binding_resolution": "binding_resolution_store",
+}
+
+
+def project_edit_authority_review_result(
+    *,
+    capability: EditAuthorityCapabilityDeclaration,
+    feature_id: str,
+    approval_identity_hash: str,
+    store_steps: tuple[EditAuthorityStoreStepV1, ...],
+    payload_decision: str | None,
+    resume_decision_status: str | None,
+    resume_decision_allowed: bool | None,
+    execution_failure_stage: EditAuthorityFailureStage | None = None,
+    platform_blockers: tuple[dict[str, Any], ...] = (),
+    audit_snapshot: Mapping[str, Any] | None = None,
+) -> EditAuthorityReviewResultV1:
+    """Project one complete chain without reading Store or filesystem state."""
+
+    from src.mod_agent.artifacts.store import ArtifactWriteResult
+
+    if not approval_identity_hash:
+        raise ValueError("Edit Authority approval identity hash is missing.")
+    if payload_decision not in {None, "approve", "reject"}:
+        raise ValueError("Edit Authority payload decision is not registered.")
+    if resume_decision_status not in {None, "accepted", "blocked"}:
+        raise ValueError("Edit Authority ResumeDecision status is not registered.")
+    if resume_decision_allowed is not None and type(resume_decision_allowed) is not bool:
+        raise ValueError("Edit Authority ResumeDecision allowed fact is invalid.")
+    if execution_failure_stage in set(
+        _EDIT_AUTHORITY_STORE_FAILURE_STAGE_BY_ROLE.values()
+    ):
+        raise ValueError(
+            "Edit Authority Store failure stage must be derived from a real "
+            "noncommitted Store step."
+        )
+    if (
+        (resume_decision_status == "accepted" and resume_decision_allowed is not True)
+        or (resume_decision_status == "blocked" and resume_decision_allowed is not False)
+        or (resume_decision_status is None and resume_decision_allowed is not None)
+    ):
+        raise ValueError("Edit Authority ResumeDecision facts disagree.")
+
+    expected_roles = capability.review_write_artifact_types
+    actual_roles = tuple(step.role for step in store_steps)
+    if actual_roles != expected_roles[: len(actual_roles)]:
+        raise ValueError("Edit Authority Store steps are not a declaration prefix.")
+    if len(actual_roles) != len(set(actual_roles)):
+        raise ValueError("Edit Authority Store steps contain a duplicate role.")
+    for step in store_steps:
+        if step.store_result.feature_id != feature_id:
+            raise ValueError("Edit Authority Store step feature identity changed.")
+        if (
+            ArtifactWriteResult.from_dict(step.store_result.to_dict())
+            != step.store_result
+        ):
+            raise ValueError("Edit Authority Store step changed during strict parsing.")
+    noncommitted = [
+        index
+        for index, step in enumerate(store_steps)
+        if step.store_result.outcome != "committed"
+    ]
+    if noncommitted and (
+        len(noncommitted) != 1 or noncommitted[0] != len(store_steps) - 1
+    ):
+        raise ValueError("Edit Authority continued after a noncommitted Store step.")
+
+    report_step = next(
+        (step for step in store_steps if step.role == "resume_report"),
+        None,
+    )
+    report_committed = bool(
+        report_step is not None
+        and report_step.store_result.outcome == "committed"
+    )
+    if report_committed and (
+        payload_decision is None
+        or resume_decision_status is None
+        or resume_decision_allowed is None
+    ):
+        raise ValueError("Committed ResumeReport lacks exact decision facts.")
+    review_outcome: EditAuthorityReviewOutcome = "not_recorded"
+    if (
+        report_committed
+        and resume_decision_status == "accepted"
+        and resume_decision_allowed is True
+    ):
+        if payload_decision == "approve":
+            review_outcome = "approved"
+        elif payload_decision == "reject":
+            review_outcome = "rejected"
+
+    materialization_steps = tuple(
+        step
+        for step in store_steps
+        if step.role not in _PROTOCOL_WRITE_TYPES
+    )
+    if review_outcome in {"not_recorded", "rejected"} and materialization_steps:
+        raise ValueError(
+            "Edit Authority materialization continued without an approved review."
+        )
+    if review_outcome == "rejected" and (
+        execution_failure_stage is not None or platform_blockers
+    ):
+        raise ValueError(
+            "Rejected Edit Authority review cannot carry a platform failure."
+        )
+
+    materialization_roles = expected_roles[2:]
+    committed_roles = {
+        step.role
+        for step in store_steps
+        if step.store_result.outcome == "committed"
+    }
+    all_materialization_roles_committed = all(
+        role in committed_roles for role in materialization_roles
+    )
+    if (
+        review_outcome == "approved"
+        and all_materialization_roles_committed
+        and not noncommitted
+        and execution_failure_stage is not None
+    ):
+        raise ValueError(
+            "Completed Edit Authority writes cannot be downgraded by a later failure."
+        )
+    if noncommitted:
+        if execution_failure_stage is not None:
+            raise ValueError(
+                "A noncommitted Store step cannot carry a second execution "
+                "failure stage."
+            )
+    else:
+        allowed_execution_failure_stages: set[EditAuthorityFailureStage | None]
+        if review_outcome == "rejected" or all_materialization_roles_committed:
+            allowed_execution_failure_stages = {None}
+        elif review_outcome == "not_recorded" and not store_steps:
+            allowed_execution_failure_stages = {
+                "graph_interrupt",
+                "checkpoint_construction",
+                "internal_execution",
+            }
+        elif review_outcome == "not_recorded" and actual_roles == (
+            "workflow_checkpoint",
+        ):
+            allowed_execution_failure_stages = {
+                "resume_validation",
+                "internal_execution",
+            }
+        elif (
+            review_outcome == "not_recorded"
+            and actual_roles == _PROTOCOL_WRITE_TYPES
+            and resume_decision_status == "blocked"
+            and resume_decision_allowed is False
+        ):
+            allowed_execution_failure_stages = {None}
+        elif review_outcome == "approved" and not materialization_steps:
+            allowed_execution_failure_stages = {
+                "store_preflight",
+                "materialization_validation",
+                "internal_execution",
+            }
+        elif review_outcome == "approved" and materialization_steps:
+            allowed_execution_failure_stages = {
+                "materialization_validation",
+                "internal_execution",
+            }
+        else:
+            allowed_execution_failure_stages = set()
+
+        if execution_failure_stage not in allowed_execution_failure_stages:
+            if (
+                review_outcome == "approved"
+                and not all_materialization_roles_committed
+                and execution_failure_stage is None
+            ):
+                raise ValueError(
+                    "Incomplete Edit Authority writes require an exact failure stage."
+                )
+            raise ValueError(
+                "Edit Authority execution failure stage does not match the "
+                "actual Store prefix and review phase."
+            )
+
+    materialization_status: EditAuthorityMaterializationStatus
+    if review_outcome == "not_recorded":
+        materialization_status = "not_started"
+    elif review_outcome == "rejected":
+        materialization_status = "not_applicable"
+    else:
+        materialization_status = (
+            "completed"
+            if all_materialization_roles_committed
+            and execution_failure_stage is None
+            and not noncommitted
+            else "incomplete"
+        )
+
+    failure_stage = execution_failure_stage
+    if noncommitted:
+        failure_stage = _EDIT_AUTHORITY_STORE_FAILURE_STAGE_BY_ROLE[
+            store_steps[noncommitted[0]].role
+        ]
+    elif (
+        report_committed
+        and review_outcome == "not_recorded"
+        and resume_decision_allowed is False
+    ):
+        failure_stage = "resume_validation"
+
+    if failure_stage is None and (
+        review_outcome == "rejected"
+        or materialization_status == "completed"
+    ):
+        platform_status: EditAuthorityPlatformStatus = "completed"
+    elif (
+        failure_stage == "resume_validation"
+        and report_committed
+        and review_outcome == "not_recorded"
+    ):
+        platform_status = "blocked"
+    elif any(
+        step.store_result.outcome == "partial" for step in store_steps
+    ):
+        platform_status = "partial"
+    elif any(
+        step.store_result.outcome == "committed" for step in store_steps
+    ):
+        platform_status = "partial"
+    else:
+        platform_status = "blocked"
+
+    committed_outputs = tuple(
+        step.store_result.artifact_ref
+        for step in store_steps
+        if step.store_result.outcome == "committed"
+        and step.store_result.artifact_ref is not None
+    )
+    protocol_outputs = tuple(
+        ref
+        for ref in committed_outputs
+        if ref.artifact_type in _PROTOCOL_WRITE_TYPES
+    )
+    materialization_outputs = tuple(
+        ref
+        for ref in committed_outputs
+        if ref.artifact_type not in _PROTOCOL_WRITE_TYPES
+    )
+    review_reasons: tuple[dict[str, Any], ...] = ()
+    if review_outcome == "rejected":
+        review_reasons = (
+            {
+                "stage": "edit_authority_approval",
+                "code": "EDIT_AUTHORITY_REJECTED",
+                "message": "Human review rejected the exact EditAuthorityRequest.",
+            },
+        )
+
+    return EditAuthorityReviewResultV1(
+        result_contract_version="edit_authority_review_result_v1",
+        capability_id=capability.capability_id,
+        capability_contract_version=capability.capability_contract_version,
+        approval_identity_hash=approval_identity_hash,
+        platform_status=platform_status,
+        review_outcome=review_outcome,
+        materialization_status=materialization_status,
+        failure_stage=failure_stage,
+        store_steps=store_steps,
+        protocol_outputs=protocol_outputs,
+        materialization_outputs=materialization_outputs,
+        platform_blockers=tuple(copy.deepcopy(platform_blockers)),
+        review_reasons=review_reasons,
+        artifact_store_commit_started=any(
+            step.store_result.commit_started for step in store_steps
+        ),
+        artifact_store_writes_committed=any(
+            step.store_result.outcome == "committed" for step in store_steps
+        ),
+        recovery_available=any(
+            step.store_result.recovery_available for step in store_steps
+        ),
+        recovery_authorized=False,
+        retry_count=0,
+        source_modified=False,
+        build_performed=False,
+        process_launched=False,
+        product_runtime_performed=False,
+        audit_snapshot=copy.deepcopy(dict(audit_snapshot or {})),
+    )
 
 
 ApprovalIdentityBuilder: TypeAlias = Callable[
@@ -766,6 +1430,33 @@ def resolve_edit_authority_request_capability(
                 "technical proposal schema."
             )
     return declaration
+
+
+def parse_current_edit_authority_review_result(
+    value: Mapping[str, Any],
+    *,
+    feature_id: str,
+    approval_identity_hash: str,
+) -> EditAuthorityReviewResultV1:
+    """Strictly parse one current result through the declaration owner."""
+
+    capability_id = value.get("capability_id")
+    capability_contract_version = value.get("capability_contract_version")
+    if type(capability_id) is not str or type(capability_contract_version) is not str:
+        raise ValueError("Edit Authority result capability identity is invalid.")
+    record = _CURRENT_CAPABILITY_RECORDS_BY_ID.get(capability_id)
+    if (
+        record is None
+        or record.declaration.capability_contract_version
+        != capability_contract_version
+    ):
+        raise ValueError("Edit Authority result capability is not current.")
+    return EditAuthorityReviewResultV1.from_dict(
+        value,
+        capability=record.declaration,
+        feature_id=feature_id,
+        approval_identity_hash=approval_identity_hash,
+    )
 
 
 def _resolve_legacy_v0_request_capability(

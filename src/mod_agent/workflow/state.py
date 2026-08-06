@@ -71,6 +71,7 @@ class ModAgentState(TypedDict):
     review_summary: dict[str, Any]
     build_summary: dict[str, Any]
     runtime_summary: dict[str, Any]
+    edit_authority_review_result: dict[str, Any] | None
     trace_events: list[dict[str, Any]]
     retry_count: int
 
@@ -101,6 +102,9 @@ class StateOwnershipPolicy:
         "build_summary": frozenset({"build"}),
         "runtime_summary": frozenset(
             {"collect_runtime_evidence", "evaluate", "done", "blocked"}
+        ),
+        "edit_authority_review_result": frozenset(
+            {"stagger_edit_authority_gate"}
         ),
         "trace_events": frozenset({"workflow_node", "transition_router"}),
         "retry_count": frozenset({"create_repair_plan", "transition_router"}),
@@ -153,6 +157,7 @@ def create_initial_state(
         review_summary={},
         build_summary={},
         runtime_summary={},
+        edit_authority_review_result=None,
         trace_events=[],
         retry_count=0,
     )

@@ -35,7 +35,10 @@ from src.mod_agent.domain import DomainAdapterRegistry, build_gtfo_profile
 from src.mod_agent.evidence import EvidencePack, FakeDenseRetrievalProvider
 from src.mod_agent.execution import ExactDiffApprovalRejectedError
 from src.mod_agent.edit_authority_capabilities import (
+    EditAuthorityReviewResultV1,
+    EditAuthorityStoreStepV1,
     attach_edit_authority_approval_identity,
+    project_edit_authority_review_result,
     resolve_edit_authority_capability,
 )
 from src.mod_agent.knowledge import (
@@ -51,6 +54,7 @@ from src.mod_agent.knowledge import (
     SourceRegistry,
 )
 from src.mod_agent.local_entry import (
+    EditAuthorityPresentationError,
     LocalEntryError,
     VerificationOperationExecutionError,
     VerificationOperationPresentationError,
@@ -75,6 +79,7 @@ from src.mod_agent.runtime import (
 )
 from src.mod_agent.runtime.stagger_edit_authority import (
     StaggerEditAuthorityApprovalError,
+    StaggerEditAuthorityMaterializationError,
     materialize_stagger_edit_authority_approval,
 )
 from src.mod_agent.verification_operations import (
@@ -89,6 +94,7 @@ from src.mod_agent.verification_operations import (
     project_verification_operation,
 )
 from src.mod_agent.workflow import (
+    ResumeDecision,
     ResumePayload,
     ResumeValidator,
     WorkflowCheckpointStore,
@@ -103,6 +109,93 @@ from src.mod_agent.workflow.graph import (
 )
 
 
+def _committed_edit_authority_steps(
+    *,
+    feature_id: str,
+    root: Path,
+    artifact_types: tuple[str, ...],
+) -> tuple[EditAuthorityStoreStepV1, ...]:
+    steps: list[EditAuthorityStoreStepV1] = []
+    for artifact_type in artifact_types:
+        artifact_hash = artifact_type.ljust(64, "0")[:64]
+        ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            path=str(root / f"{artifact_type}.json"),
+            artifact_hash=artifact_hash,
+        )
+        steps.append(
+            EditAuthorityStoreStepV1(
+                role=artifact_type,
+                store_result=ArtifactWriteResult(
+                    outcome="committed",
+                    feature_id=feature_id,
+                    artifact_type=artifact_type,
+                    artifact_hash=artifact_hash,
+                    artifact_ref=ref,
+                    revision_path=ref.path,
+                    latest_alias_path=str(root / f"latest-{artifact_type}.json"),
+                    pending_marker_path=str(
+                        root / "pending" / f"{artifact_hash}.json"
+                    ),
+                    commit_started=True,
+                    revision_state="valid",
+                    latest_alias_state="matches_identity",
+                    pending_marker_state="absent",
+                    failure_stage=None,
+                    failure_class=None,
+                    failure_message=None,
+                    recovery_available=False,
+                    recovery_authorized=False,
+                ),
+            )
+        )
+    return tuple(steps)
+
+
+def _noncommitted_artifact_write_result(
+    *,
+    feature_id: str,
+    artifact_type: str,
+    outcome: str,
+) -> ArtifactWriteResult:
+    partial = outcome == "partial"
+    artifact_hash = artifact_type.ljust(64, "f")[:64] if partial else None
+    return ArtifactWriteResult.from_dict(
+        {
+            "outcome": outcome,
+            "feature_id": feature_id,
+            "artifact_type": artifact_type,
+            "artifact_hash": artifact_hash,
+            "artifact_ref": None,
+            "revision_path": (
+                f"C:/store/{artifact_type}/{artifact_hash[:32]}.json"
+                if partial and artifact_hash is not None
+                else None
+            ),
+            "latest_alias_path": (
+                f"C:/store/{artifact_type}.json" if partial else None
+            ),
+            "pending_marker_path": (
+                f"C:/store/pending/{artifact_hash}.json"
+                if partial and artifact_hash is not None
+                else None
+            ),
+            "commit_started": partial,
+            "revision_state": "valid" if partial else "unavailable",
+            "latest_alias_state": "absent" if partial else "unavailable",
+            "pending_marker_state": "present" if partial else "unavailable",
+            "failure_stage": (
+                "latest_alias_write" if partial else "admission_validation"
+            ),
+            "failure_class": "ArtifactStoreError",
+            "failure_message": "injected protocol Store failure",
+            "recovery_available": partial,
+            "recovery_authorized": False,
+        }
+    )
+
+
 def test_external_evaluation_requirement_requires_factory(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="evaluation_context_factory"):
         build_graph(
@@ -111,11 +204,26 @@ def test_external_evaluation_requirement_requires_factory(tmp_path: Path) -> Non
         )
 
 
-@pytest.mark.parametrize("materialization_fails", [False, True])
+@pytest.mark.parametrize(
+    "scenario",
+    (
+        "success",
+        "materialization_validation",
+        "store_preflight",
+        "evidence_payload_validation",
+        "resume_validation",
+        "resume_exception",
+        "reject",
+        "checkpoint_store_blocked",
+        "checkpoint_store_partial",
+        "resume_report_store_blocked",
+        "resume_report_store_partial",
+    ),
+)
 def test_stagger_edit_authority_approval_runs_only_through_graph_interrupt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    materialization_fails: bool,
+    scenario: str,
 ) -> None:
     from langgraph.types import Command
 
@@ -197,10 +305,37 @@ def test_stagger_edit_authority_approval_runs_only_through_graph_interrupt(
 
     def materialize(**kwargs):
         captured.update(kwargs)
-        if materialization_fails:
+        if scenario == "materialization_validation":
             raise RuntimeError("projection stopped after approval")
+        if scenario == "store_preflight":
+            raise StaggerEditAuthorityMaterializationError(
+                "Store probe stopped before EditAuthorityApproval",
+                failure_stage="store_preflight",
+            )
+        if scenario == "evidence_payload_validation":
+            approval_step = _committed_edit_authority_steps(
+                feature_id="feature_edit_authority",
+                root=tmp_path,
+                artifact_types=("edit_authority_approval",),
+            )
+            raise StaggerEditAuthorityMaterializationError(
+                "EvidencePack payload validation failed",
+                failure_stage="materialization_validation",
+                store_steps=approval_step,
+            )
+        store_steps = _committed_edit_authority_steps(
+            feature_id="feature_edit_authority",
+            root=tmp_path,
+            artifact_types=(
+                "edit_authority_approval",
+                "evidence_pack",
+                "implementation_plan",
+                "binding_resolution",
+            ),
+        )
         return {
             "status": "EXACT_EDIT_AUTHORITY_RESOLVED",
+            "store_steps": store_steps,
             **{
                 field_name: {
                     "feature_id": "feature_edit_authority",
@@ -227,6 +362,54 @@ def test_stagger_edit_authority_approval_runs_only_through_graph_interrupt(
         "materialize_stagger_edit_authority_approval",
         materialize,
     )
+    if scenario in {"checkpoint_store_blocked", "checkpoint_store_partial"}:
+        monkeypatch.setattr(
+            WorkflowCheckpointStore,
+            "create_checkpoint_with_result",
+            lambda _self, *_args, **_kwargs: _noncommitted_artifact_write_result(
+                feature_id="feature_edit_authority",
+                artifact_type="workflow_checkpoint",
+                outcome=(
+                    "partial"
+                    if scenario == "checkpoint_store_partial"
+                    else "blocked_before_commit"
+                ),
+            ),
+        )
+    elif scenario in {
+        "resume_report_store_blocked",
+        "resume_report_store_partial",
+    }:
+        monkeypatch.setattr(
+            WorkflowCheckpointStore,
+            "resume_with_result",
+            lambda _self, *_args, **_kwargs: (
+                ResumeDecision(
+                    status="accepted",
+                    allowed=True,
+                    reason="Resume payload accepted.",
+                    applied_updates={"approvals.edit_authority": True},
+                ),
+                _noncommitted_artifact_write_result(
+                    feature_id="feature_edit_authority",
+                    artifact_type="resume_report",
+                    outcome=(
+                        "partial"
+                        if scenario == "resume_report_store_partial"
+                        else "blocked_before_commit"
+                    ),
+                ),
+            ),
+        )
+    elif scenario == "resume_exception":
+        def fail_resume(*_args, **_kwargs):
+            raise ValueError("injected resume payload construction failure")
+
+        monkeypatch.setattr(
+            WorkflowCheckpointStore,
+            "resume_with_result",
+            fail_resume,
+        )
     graph = build_graph(
         store,
         edit_authority_request_ref=request_ref,
@@ -236,7 +419,7 @@ def test_stagger_edit_authority_approval_runs_only_through_graph_interrupt(
         "configurable": {
             "thread_id": (
                 "stagger_edit_authority_graph_failed"
-                if materialization_fails
+                if scenario != "success"
                 else "stagger_edit_authority_graph_001"
             )
         }
@@ -265,8 +448,10 @@ def test_stagger_edit_authority_approval_runs_only_through_graph_interrupt(
                 "resume_id": "resume_edit_authority_001",
                 "run_id": "run_edit_authority",
                 "stage": "edit_authority_approval",
-                "decision": "approve",
-                "approved_by": "user",
+                "decision": "reject" if scenario == "reject" else "approve",
+                "approved_by": (
+                    "" if scenario == "resume_validation" else "user"
+                ),
                 "approved_at": "2026-07-30T12:00:00+08:00",
                 "artifact_refs": request["artifact_refs"],
                 "authority_request_hash": request_hash,
@@ -275,24 +460,122 @@ def test_stagger_edit_authority_approval_runs_only_through_graph_interrupt(
         config,
     )
 
-    assert captured["edit_authority_request_path"] == request_ref.path
-    assert captured["edit_authority_request_hash"] == (
-        request_ref.artifact_hash
-    )
-    assert "resume_report" in result["artifacts"]
-    if materialization_fails:
+    if scenario in {"checkpoint_store_blocked", "checkpoint_store_partial"}:
+        assert "workflow_checkpoint" not in result["artifacts"]
+        assert "resume_report" not in result["artifacts"]
+        assert captured == {}
+        machine_result = result["edit_authority_review_result"]
+        assert machine_result["platform_status"] == (
+            "partial" if scenario == "checkpoint_store_partial" else "blocked"
+        )
+        assert machine_result["failure_stage"] == "checkpoint_store"
+        assert machine_result["store_steps"][0]["store_result"]["outcome"] == (
+            "partial"
+            if scenario == "checkpoint_store_partial"
+            else "blocked_before_commit"
+        )
+    elif scenario in {
+        "resume_report_store_blocked",
+        "resume_report_store_partial",
+    }:
+        assert "workflow_checkpoint" in result["artifacts"]
+        assert "resume_report" not in result["artifacts"]
+        assert captured == {}
+        machine_result = result["edit_authority_review_result"]
+        assert machine_result["platform_status"] == "partial"
+        assert machine_result["failure_stage"] == "resume_report_store"
+        assert machine_result["store_steps"][-1]["store_result"]["outcome"] == (
+            "partial"
+            if scenario == "resume_report_store_partial"
+            else "blocked_before_commit"
+        )
+    elif scenario == "resume_exception":
+        assert "workflow_checkpoint" in result["artifacts"]
+        assert "resume_report" not in result["artifacts"]
+        assert captured == {}
+        machine_result = result["edit_authority_review_result"]
+        assert machine_result["platform_status"] == "partial"
+        assert machine_result["review_outcome"] == "not_recorded"
+        assert machine_result["failure_stage"] == "resume_validation"
+        assert len(machine_result["store_steps"]) == 1
+    elif scenario == "resume_validation":
+        assert "resume_report" in result["artifacts"]
+        assert captured == {}
+        machine_result = result["edit_authority_review_result"]
+        assert machine_result["platform_status"] == "blocked"
+        assert machine_result["review_outcome"] == "not_recorded"
+        assert machine_result["materialization_status"] == "not_started"
+        assert machine_result["failure_stage"] == "resume_validation"
+        assert len(machine_result["protocol_outputs"]) == 2
+        assert machine_result["materialization_outputs"] == []
+    elif scenario == "reject":
+        assert "resume_report" in result["artifacts"]
+        assert captured == {}
+        machine_result = result["edit_authority_review_result"]
+        assert machine_result["platform_status"] == "completed"
+        assert machine_result["review_outcome"] == "rejected"
+        assert machine_result["materialization_status"] == "not_applicable"
+        assert machine_result["failure_stage"] is None
+        assert len(machine_result["protocol_outputs"]) == 2
+        assert machine_result["materialization_outputs"] == []
+    else:
+        assert "resume_report" in result["artifacts"]
+        assert captured["edit_authority_request_path"] == request_ref.path
+        assert captured["edit_authority_request_hash"] == (
+            request_ref.artifact_hash
+        )
+    if scenario in {
+        "materialization_validation",
+        "evidence_payload_validation",
+        "store_preflight",
+    }:
         assert result["current_stage"] == "blocked"
         assert "binding_resolution" not in result["artifacts"]
         assert result["approvals"].get("edit_authority") is not True
-        assert any(
-            blocker["code"]
-            == "EDIT_AUTHORITY_APPROVED_NOT_MATERIALIZED"
-            for blocker in result["blockers"]
+        expected_code = (
+            "EDIT_AUTHORITY_MATERIALIZATION_VALIDATION_FAILED"
+            if scenario == "materialization_validation"
+            else "EDIT_AUTHORITY_MATERIALIZATION_FAILED"
         )
-    else:
+        assert any(blocker["code"] == expected_code for blocker in result["blockers"])
+        assert result["edit_authority_review_result"]["platform_status"] == (
+            "partial"
+        )
+        assert result["edit_authority_review_result"]["failure_stage"] == (
+            "materialization_validation"
+            if scenario == "evidence_payload_validation"
+            else scenario
+        )
+        assert result["edit_authority_review_result"]["review_outcome"] == (
+            "approved"
+        )
+        assert result["edit_authority_review_result"]["materialization_status"] == (
+            "incomplete"
+        )
+        assert len(result["edit_authority_review_result"]["protocol_outputs"]) == 2
+        assert result["edit_authority_review_result"]["materialization_outputs"] == (
+            []
+            if scenario != "evidence_payload_validation"
+            else [
+                result["edit_authority_review_result"]["store_steps"][2][
+                    "store_result"
+                ]["artifact_ref"]
+            ]
+        )
+    elif scenario == "success":
         assert result["current_stage"] == "binding_resolution"
         assert result["approvals"]["edit_authority"] is True
         assert "binding_resolution" in result["artifacts"]
+    checkpoint_path = result["artifacts"].get("workflow_checkpoint")
+    if checkpoint_path is not None:
+        checkpoint_ref = ArtifactRef(
+            feature_id="feature_edit_authority",
+            artifact_type="workflow_checkpoint",
+            path=checkpoint_path,
+            artifact_hash=result["artifact_hashes"]["workflow_checkpoint"],
+        )
+        checkpoint = store.read(checkpoint_ref)["data"]
+        assert "edit_authority_review_result" not in checkpoint["state_snapshot"]
 
 
 def test_existing_binding_reauthorization_exposes_narrow_graph_actions(
@@ -720,6 +1003,11 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
                 "implementation_plan",
             ]
         )
+        store_steps = _committed_edit_authority_steps(
+            feature_id="feature_observation_authority",
+            root=tmp_path,
+            artifact_types=tuple(materializer_output_types),
+        )
         return {
             "status": (
                 "BOUNDED_OBSERVATION_PLAN_AUTHORIZED"
@@ -727,6 +1015,7 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
                 == "bounded_observation_only_plan_materialization"
                 else "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED"
             ),
+            "store_steps": store_steps,
             **{
                 field_name: {
                     "feature_id": "feature_observation_authority",
@@ -1954,6 +2243,16 @@ def test_stagger_edit_authority_local_entry_carries_decision_through_graph(
     )
 
     def materialize(**_kwargs):
+        store_steps = _committed_edit_authority_steps(
+            feature_id="feature_edit_authority_entry",
+            root=tmp_path,
+            artifact_types=(
+                "edit_authority_approval",
+                "evidence_pack",
+                "implementation_plan",
+                "binding_resolution",
+            ),
+        )
         revisions = {
             field_name: {
                 "feature_id": "feature_edit_authority_entry",
@@ -1975,6 +2274,7 @@ def test_stagger_edit_authority_local_entry_carries_decision_through_graph(
         }
         return {
             "status": "EXACT_EDIT_AUTHORITY_RESOLVED",
+            "store_steps": store_steps,
             **revisions,
         }
 
@@ -1987,7 +2287,6 @@ def test_stagger_edit_authority_local_entry_carries_decision_through_graph(
         "materialize_stagger_edit_authority_approval",
         materialize,
     )
-
     preflight = preflight_stagger_edit_authority_review(
         artifact_store_root=tmp_path / "artifacts",
         feature_id=feature_id,
@@ -2025,6 +2324,105 @@ def test_stagger_edit_authority_local_entry_carries_decision_through_graph(
     assert result["audit_snapshot"]["artifact_revision_counts_before"] != (
         result["audit_snapshot"]["artifact_revision_counts_after"]
     )
+
+
+def test_edit_authority_presentation_failure_preserves_completed_machine_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    feature_id = "feature_edit_authority_presentation"
+    request_hash = "sha256:" + ("a" * 64)
+    machine_result = project_edit_authority_review_result(
+        capability=capability,
+        feature_id=feature_id,
+        approval_identity_hash=request_hash,
+        store_steps=_committed_edit_authority_steps(
+            feature_id=feature_id,
+            root=tmp_path,
+            artifact_types=capability.review_write_artifact_types,
+        ),
+        payload_decision="approve",
+        resume_decision_status="accepted",
+        resume_decision_allowed=True,
+    )
+
+    class AuditFailingStore:
+        calls = 0
+
+        def list_feature_artifact_revisions(
+            self,
+            _feature_id: str,
+            _artifact_type: str,
+        ) -> list[ArtifactRef]:
+            self.calls += 1
+            if self.calls > len(capability.review_write_artifact_types):
+                raise OSError("audit snapshot unavailable")
+            return []
+
+    store = AuditFailingStore()
+    admission = local_entry_module._EditAuthorityReviewAdmission(
+        store=store,
+        request_ref=ArtifactRef(
+            feature_id=feature_id,
+            artifact_type="edit_authority_request",
+            path=str(tmp_path / "request.json"),
+            artifact_hash="b" * 64,
+        ),
+        request={},
+        request_envelope={},
+        run_id="run_edit_authority_presentation",
+        capability=capability,
+        identity_sections={},
+    )
+
+    class CompletedGraph:
+        def invoke(self, *_args, **_kwargs):
+            return {
+                "edit_authority_review_result": machine_result.to_dict(),
+                "artifacts": {},
+                "artifact_hashes": {},
+                "blockers": [],
+                "current_stage": "binding_resolution",
+            }
+
+    monkeypatch.setattr(
+        local_entry_module,
+        "_admit_stagger_edit_authority_review",
+        lambda **_kwargs: admission,
+    )
+    monkeypatch.setattr(
+        local_entry_module,
+        "_invoke_stagger_edit_authority_interrupt",
+        lambda **_kwargs: (CompletedGraph(), ["request.json"], {}, {}),
+    )
+
+    with pytest.raises(EditAuthorityPresentationError) as caught:
+        resume_stagger_edit_authority_review(
+            artifact_store_root=tmp_path / "artifacts",
+            feature_id=feature_id,
+            edit_authority_request_path=tmp_path / "request.json",
+            edit_authority_request_hash="b" * 64,
+            authority_request_hash=request_hash,
+            resume_id="resume_edit_authority_presentation",
+            decision="approve",
+            approved_by="user",
+            approved_at="2026-08-06T13:00:00+08:00",
+        )
+
+    assert isinstance(
+        caught.value.edit_authority_review_result,
+        EditAuthorityReviewResultV1,
+    )
+    assert caught.value.edit_authority_review_result == machine_result
+    assert caught.value.presentation_error == {
+        "error_class": "OSError",
+        "error_message": "audit snapshot unavailable",
+    }
+    assert machine_result.platform_status == "completed"
 
 
 def test_explicit_domain_policy_rejects_simultaneous_registry(

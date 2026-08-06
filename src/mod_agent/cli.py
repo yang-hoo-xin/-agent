@@ -9,6 +9,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 
 from .artifacts.store import ArtifactStorePreflightError
+from .edit_authority_capabilities import (
+    parse_current_edit_authority_review_result,
+)
 from .evidence import R8EvidenceError, R8ILInspectionError
 from .evidence_only import EvidenceOnlyError, run_gtfo_r8_evidence_only
 from .intelligent_evidence_only import (
@@ -730,6 +733,39 @@ def _legacy_advisory_preflight_exit_code(result: object) -> int:
     return 0 if result.get("status") in _LEGACY_ADVISORY_READY_STATUSES else 2
 
 
+def _edit_authority_review_exit_code(result: object) -> int:
+    """Project the declaration-owned Edit Authority result to CLI exit status."""
+
+    if not isinstance(result, Mapping):
+        return 2
+    projection = result.get("edit_authority_review_result")
+    feature_id = result.get("feature_id")
+    approval_identity_hash = result.get("request_hash")
+    if (
+        not isinstance(projection, Mapping)
+        or type(feature_id) is not str
+        or not feature_id
+        or type(approval_identity_hash) is not str
+        or not approval_identity_hash
+    ):
+        return 2
+    try:
+        machine_result = parse_current_edit_authority_review_result(
+            projection,
+            feature_id=feature_id,
+            approval_identity_hash=approval_identity_hash,
+        )
+    except ValueError:
+        return 2
+    return (
+        0
+        if machine_result.platform_status == "completed"
+        and machine_result.review_outcome == "approved"
+        and machine_result.materialization_status == "completed"
+        else 2
+    )
+
+
 def _run_preflight_runtime_command(args: argparse.Namespace) -> int:
     """Prepare one legacy Runtime preflight call and present its public result."""
 
@@ -1366,16 +1402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return (
-            0
-            if result["status"]
-            in {
-                "EXACT_EDIT_AUTHORITY_RESOLVED",
-                "STAGGER_HUD_PARENT_OBSERVATION_PLAN_AUTHORIZED",
-                "STAGGER_HUD_PARENT_DIAGNOSTIC_PLAN_AUTHORIZED",
-            }
-            else 2
-        )
+        return _edit_authority_review_exit_code(result)
 
     if args.command == "preflight-runtime":
         return _run_preflight_runtime_command(args)

@@ -8,12 +8,17 @@ from dataclasses import replace
 import pytest
 
 import src.mod_agent.edit_authority_capabilities as capabilities_module
+from src.mod_agent.artifacts import ArtifactRef
+from src.mod_agent.artifacts.store import ArtifactWriteResult
 from src.mod_agent.edit_authority_capabilities import (
     EDIT_AUTHORITY_CAPABILITIES,
+    EditAuthorityReviewResultV1,
+    EditAuthorityStoreStepV1,
     UnsupportedEditAuthorityCapabilityError,
     attach_edit_authority_approval_identity,
     edit_authority_identity_sections,
     require_edit_authority_public_operation,
+    project_edit_authority_review_result,
     resolve_edit_authority_capability,
     resolve_edit_authority_request_capability,
     validate_edit_authority_approval_contract,
@@ -22,6 +27,98 @@ from src.mod_agent.edit_authority_capabilities import (
 
 
 _PROTOCOL_WRITES = ("workflow_checkpoint", "resume_report")
+
+
+def _store_step(
+    role: str,
+    *,
+    outcome: str = "committed",
+) -> EditAuthorityStoreStepV1:
+    feature_id = "feature_review_result"
+    if outcome == "committed":
+        artifact_hash = role.ljust(64, "0")[:64]
+        ref = ArtifactRef(
+            feature_id=feature_id,
+            artifact_type=role,
+            path=f"C:/store/{role}/{artifact_hash[:32]}.json",
+            artifact_hash=artifact_hash,
+        )
+        result = ArtifactWriteResult.from_dict(
+            {
+                "outcome": "committed",
+                "feature_id": feature_id,
+                "artifact_type": role,
+                "artifact_hash": artifact_hash,
+                "artifact_ref": {
+                    "feature_id": ref.feature_id,
+                    "artifact_type": ref.artifact_type,
+                    "path": ref.path,
+                    "artifact_hash": ref.artifact_hash,
+                },
+                "revision_path": ref.path,
+                "latest_alias_path": f"C:/store/{role}.json",
+                "pending_marker_path": f"C:/store/pending/{artifact_hash}.json",
+                "commit_started": True,
+                "revision_state": "valid",
+                "latest_alias_state": "matches_identity",
+                "pending_marker_state": "absent",
+                "failure_stage": None,
+                "failure_class": None,
+                "failure_message": None,
+                "recovery_available": False,
+                "recovery_authorized": False,
+            }
+        )
+    elif outcome == "blocked_before_commit":
+        result = ArtifactWriteResult.from_dict(
+            {
+                "outcome": "blocked_before_commit",
+                "feature_id": feature_id,
+                "artifact_type": role,
+                "artifact_hash": None,
+                "artifact_ref": None,
+                "revision_path": None,
+                "latest_alias_path": None,
+                "pending_marker_path": None,
+                "commit_started": False,
+                "revision_state": "unavailable",
+                "latest_alias_state": "unavailable",
+                "pending_marker_state": "unavailable",
+                "failure_stage": "admission_validation",
+                "failure_class": "ArtifactStoreError",
+                "failure_message": "injected Store admission failure",
+                "recovery_available": False,
+                "recovery_authorized": False,
+            }
+        )
+    elif outcome == "partial":
+        artifact_hash = role.ljust(64, "f")[:64]
+        result = ArtifactWriteResult.from_dict(
+            {
+                "outcome": "partial",
+                "feature_id": feature_id,
+                "artifact_type": role,
+                "artifact_hash": artifact_hash,
+                "artifact_ref": None,
+                "revision_path": f"C:/store/{role}/{artifact_hash[:32]}.json",
+                "latest_alias_path": f"C:/store/{role}.json",
+                "pending_marker_path": (
+                    f"C:/store/pending/{artifact_hash}.json"
+                ),
+                "commit_started": True,
+                "revision_state": "valid",
+                "latest_alias_state": "absent",
+                "pending_marker_state": "present",
+                "failure_stage": "latest_alias_write",
+                "failure_class": "ArtifactStoreError",
+                "failure_message": "injected partial Store commit",
+                "recovery_available": True,
+                "recovery_authorized": False,
+            }
+        )
+    else:
+        raise ValueError(f"Unsupported test outcome: {outcome}")
+    return EditAuthorityStoreStepV1(role=role, store_result=result)
 
 
 def _replace_current_record(
@@ -959,3 +1056,559 @@ def test_public_operation_is_enforced_by_the_capability_owner() -> None:
     )
     require_edit_authority_public_operation(declaration, "preflight")
     require_edit_authority_public_operation(declaration, "resume")
+
+
+@pytest.mark.parametrize("capability", EDIT_AUTHORITY_CAPABILITIES)
+def test_edit_authority_review_result_projects_each_declaration_order(
+    capability,
+) -> None:
+    steps = tuple(
+        _store_step(role)
+        for role in capability.review_write_artifact_types
+    )
+    result = project_edit_authority_review_result(
+        capability=capability,
+        feature_id="feature_review_result",
+        approval_identity_hash="sha256:" + ("a" * 64),
+        store_steps=steps,
+        payload_decision="approve",
+        resume_decision_status="accepted",
+        resume_decision_allowed=True,
+    )
+
+    assert tuple(step.role for step in result.store_steps) == (
+        capability.review_write_artifact_types
+    )
+    assert result.platform_status == "completed"
+    assert result.review_outcome == "approved"
+    assert result.materialization_status == "completed"
+    assert result.failure_stage is None
+    assert tuple(ref.artifact_type for ref in result.protocol_outputs) == (
+        _PROTOCOL_WRITES
+    )
+    assert tuple(
+        ref.artifact_type for ref in result.materialization_outputs
+    ) == capability.review_write_artifact_types[2:]
+    assert EditAuthorityReviewResultV1.from_dict(
+        result.to_dict(),
+        capability=capability,
+        feature_id="feature_review_result",
+        approval_identity_hash="sha256:" + ("a" * 64),
+    ) == result
+
+
+def test_committed_structured_blocked_resume_is_not_partial_or_rejection() -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    result = project_edit_authority_review_result(
+        capability=capability,
+        feature_id="feature_review_result",
+        approval_identity_hash="sha256:" + ("b" * 64),
+        store_steps=tuple(_store_step(role) for role in _PROTOCOL_WRITES),
+        payload_decision="approve",
+        resume_decision_status="blocked",
+        resume_decision_allowed=False,
+    )
+
+    assert result.platform_status == "blocked"
+    assert result.review_outcome == "not_recorded"
+    assert result.materialization_status == "not_started"
+    assert result.failure_stage == "resume_validation"
+    assert len(result.protocol_outputs) == 2
+    assert result.materialization_outputs == ()
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    ("store_preflight", "materialization_validation"),
+)
+def test_approved_pre_materialization_failure_preserves_protocol_prefix(
+    failure_stage: str,
+) -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    result = project_edit_authority_review_result(
+        capability=capability,
+        feature_id="feature_review_result",
+        approval_identity_hash="sha256:" + ("c" * 64),
+        store_steps=tuple(_store_step(role) for role in _PROTOCOL_WRITES),
+        payload_decision="approve",
+        resume_decision_status="accepted",
+        resume_decision_allowed=True,
+        execution_failure_stage=failure_stage,
+    )
+
+    assert result.platform_status == "partial"
+    assert result.review_outcome == "approved"
+    assert result.materialization_status == "incomplete"
+    assert result.failure_stage == failure_stage
+    assert tuple(ref.artifact_type for ref in result.protocol_outputs) == (
+        _PROTOCOL_WRITES
+    )
+    assert result.materialization_outputs == ()
+
+
+@pytest.mark.parametrize("capability", EDIT_AUTHORITY_CAPABILITIES)
+def test_edit_authority_result_stops_at_first_noncommitted_store_role(
+    capability,
+) -> None:
+    roles = capability.review_write_artifact_types
+    steps = tuple(_store_step(role) for role in roles[:2]) + (
+        _store_step(roles[2], outcome="blocked_before_commit"),
+    )
+    result = project_edit_authority_review_result(
+        capability=capability,
+        feature_id="feature_review_result",
+        approval_identity_hash="sha256:" + ("d" * 64),
+        store_steps=steps,
+        payload_decision="approve",
+        resume_decision_status="accepted",
+        resume_decision_allowed=True,
+    )
+
+    assert result.platform_status == "partial"
+    assert result.review_outcome == "approved"
+    assert result.materialization_status == "incomplete"
+    assert result.failure_stage == "edit_authority_approval_store"
+    assert tuple(ref.artifact_type for ref in result.protocol_outputs) == (
+        _PROTOCOL_WRITES
+    )
+    assert result.materialization_outputs == ()
+
+
+_STORE_FAILURE_STAGE_BY_ROLE = {
+    "workflow_checkpoint": "checkpoint_store",
+    "resume_report": "resume_report_store",
+    "edit_authority_approval": "edit_authority_approval_store",
+    "evidence_pack": "evidence_pack_store",
+    "implementation_plan": "implementation_plan_store",
+    "binding_resolution": "binding_resolution_store",
+}
+
+
+@pytest.mark.parametrize("capability", EDIT_AUTHORITY_CAPABILITIES)
+@pytest.mark.parametrize("outcome", ("blocked_before_commit", "partial"))
+def test_every_edit_authority_store_position_stops_with_exact_receipt(
+    capability,
+    outcome: str,
+) -> None:
+    roles = capability.review_write_artifact_types
+    for failed_index, failed_role in enumerate(roles):
+        steps = tuple(_store_step(role) for role in roles[:failed_index]) + (
+            _store_step(failed_role, outcome=outcome),
+        )
+        has_committed_report = failed_index > roles.index("resume_report")
+        result = project_edit_authority_review_result(
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash="sha256:" + ("e" * 64),
+            store_steps=steps,
+            payload_decision="approve" if has_committed_report else None,
+            resume_decision_status=(
+                "accepted" if has_committed_report else None
+            ),
+            resume_decision_allowed=(True if has_committed_report else None),
+        )
+
+        assert result.store_steps[-1].role == failed_role
+        assert result.store_steps[-1].store_result.outcome == outcome
+        assert result.failure_stage == _STORE_FAILURE_STAGE_BY_ROLE[failed_role]
+        assert result.platform_status == (
+            "blocked"
+            if failed_index == 0 and outcome == "blocked_before_commit"
+            else "partial"
+        )
+        assert result.review_outcome == (
+            "approved" if has_committed_report else "not_recorded"
+        )
+        assert tuple(ref.artifact_type for ref in result.protocol_outputs) == (
+            tuple(
+                role
+                for role in roles[:failed_index]
+                if role in _PROTOCOL_WRITES
+            )
+        )
+        assert tuple(
+            ref.artifact_type for ref in result.materialization_outputs
+        ) == tuple(
+            role
+            for role in roles[:failed_index]
+            if role not in _PROTOCOL_WRITES
+        )
+
+
+@pytest.mark.parametrize(
+    "steps",
+    (
+        (
+            _store_step("workflow_checkpoint"),
+            _store_step("edit_authority_approval"),
+        ),
+        (
+            _store_step("workflow_checkpoint"),
+            _store_step("resume_report"),
+            _store_step("resume_report"),
+        ),
+        (
+            _store_step("workflow_checkpoint", outcome="partial"),
+            _store_step("resume_report"),
+        ),
+    ),
+)
+def test_edit_authority_projector_rejects_skip_duplicate_and_post_failure_steps(
+    steps: tuple[EditAuthorityStoreStepV1, ...],
+) -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    with pytest.raises(ValueError):
+        project_edit_authority_review_result(
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash="sha256:" + ("f" * 64),
+            store_steps=steps,
+            payload_decision=None,
+            resume_decision_status=None,
+            resume_decision_allowed=None,
+        )
+
+
+def test_edit_authority_projector_rejects_role_type_and_feature_drift() -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    checkpoint_step = _store_step("workflow_checkpoint")
+    with pytest.raises(ValueError, match="role/type changed"):
+        EditAuthorityStoreStepV1(
+            role="resume_report",
+            store_result=checkpoint_step.store_result,
+        )
+    drifted_step = EditAuthorityStoreStepV1(
+        role="workflow_checkpoint",
+        store_result=replace(
+            checkpoint_step.store_result,
+            feature_id="different_feature",
+        ),
+    )
+    with pytest.raises(ValueError, match="feature identity changed"):
+        project_edit_authority_review_result(
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash="sha256:" + ("1" * 64),
+            store_steps=(drifted_step,),
+            payload_decision=None,
+            resume_decision_status=None,
+            resume_decision_allowed=None,
+        )
+
+
+def test_edit_authority_audit_snapshot_does_not_change_machine_outcome() -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    common = {
+        "capability": capability,
+        "feature_id": "feature_review_result",
+        "approval_identity_hash": "sha256:" + ("2" * 64),
+        "store_steps": tuple(
+            _store_step(role)
+            for role in capability.review_write_artifact_types
+        ),
+        "payload_decision": "approve",
+        "resume_decision_status": "accepted",
+        "resume_decision_allowed": True,
+    }
+    first = project_edit_authority_review_result(
+        **common,
+        audit_snapshot={"revision_total": 1, "presentation": "first"},
+    )
+    second = project_edit_authority_review_result(
+        **common,
+        audit_snapshot={"revision_total": 99, "presentation": "second"},
+    )
+
+    assert (
+        first.platform_status,
+        first.review_outcome,
+        first.materialization_status,
+        first.failure_stage,
+        first.store_steps,
+        first.protocol_outputs,
+        first.materialization_outputs,
+    ) == (
+        second.platform_status,
+        second.review_outcome,
+        second.materialization_status,
+        second.failure_stage,
+        second.store_steps,
+        second.protocol_outputs,
+        second.materialization_outputs,
+    )
+    assert first.audit_snapshot != second.audit_snapshot
+
+
+def test_edit_authority_projector_rejects_inapplicable_or_unexplained_steps() -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    all_steps = tuple(
+        _store_step(role) for role in capability.review_write_artifact_types
+    )
+    protocol_steps = all_steps[:2]
+    approval_prefix = all_steps[:3]
+    common = {
+        "capability": capability,
+        "feature_id": "feature_review_result",
+        "approval_identity_hash": "sha256:" + ("3" * 64),
+    }
+
+    with pytest.raises(ValueError, match="without an approved review"):
+        project_edit_authority_review_result(
+            **common,
+            store_steps=all_steps,
+            payload_decision="reject",
+            resume_decision_status="accepted",
+            resume_decision_allowed=True,
+        )
+    with pytest.raises(ValueError, match="without an approved review"):
+        project_edit_authority_review_result(
+            **common,
+            store_steps=all_steps,
+            payload_decision="approve",
+            resume_decision_status="blocked",
+            resume_decision_allowed=False,
+        )
+    with pytest.raises(ValueError, match="cannot be downgraded"):
+        project_edit_authority_review_result(
+            **common,
+            store_steps=all_steps,
+            payload_decision="approve",
+            resume_decision_status="accepted",
+            resume_decision_allowed=True,
+            execution_failure_stage="internal_execution",
+        )
+    with pytest.raises(ValueError, match="require an exact failure stage"):
+        project_edit_authority_review_result(
+            **common,
+            store_steps=approval_prefix,
+            payload_decision="approve",
+            resume_decision_status="accepted",
+            resume_decision_allowed=True,
+        )
+    with pytest.raises(ValueError, match="cannot carry a platform failure"):
+        project_edit_authority_review_result(
+            **common,
+            store_steps=protocol_steps,
+            payload_decision="reject",
+            resume_decision_status="accepted",
+            resume_decision_allowed=True,
+            platform_blockers=(
+                {
+                    "stage": "edit_authority_approval",
+                    "code": "INVALID_REJECTION_BLOCKER",
+                    "message": "rejection is not a platform failure",
+                },
+            ),
+        )
+
+
+def test_edit_authority_strict_parser_rejects_rejection_with_materialization() -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    rejected = project_edit_authority_review_result(
+        capability=capability,
+        feature_id="feature_review_result",
+        approval_identity_hash="sha256:" + ("4" * 64),
+        store_steps=tuple(_store_step(role) for role in _PROTOCOL_WRITES),
+        payload_decision="reject",
+        resume_decision_status="accepted",
+        resume_decision_allowed=True,
+    ).to_dict()
+    materialization_step = _store_step("edit_authority_approval")
+    rejected["store_steps"].append(materialization_step.to_dict())
+    rejected["materialization_outputs"].append(
+        EditAuthorityReviewResultV1._ref_dict(
+            materialization_step.store_result.artifact_ref
+        )
+    )
+
+    with pytest.raises(ValueError, match="without an approved review"):
+        EditAuthorityReviewResultV1.from_dict(
+            rejected,
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash="sha256:" + ("4" * 64),
+        )
+
+
+@pytest.mark.parametrize(
+    "store_failure_stage",
+    (
+        "checkpoint_store",
+        "resume_report_store",
+        "edit_authority_approval_store",
+        "evidence_pack_store",
+        "implementation_plan_store",
+        "binding_resolution_store",
+    ),
+)
+def test_edit_authority_projector_rejects_caller_supplied_store_failure_stage(
+    store_failure_stage: str,
+) -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+
+    with pytest.raises(ValueError, match="must be derived from a real"):
+        project_edit_authority_review_result(
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash="sha256:" + ("5" * 64),
+            store_steps=tuple(
+                _store_step(role)
+                for role in capability.review_write_artifact_types[:3]
+            ),
+            payload_decision="approve",
+            resume_decision_status="accepted",
+            resume_decision_allowed=True,
+            execution_failure_stage=store_failure_stage,
+        )
+
+
+def test_edit_authority_strict_parser_rejects_fabricated_store_failure_stage() -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    approval_identity_hash = "sha256:" + ("6" * 64)
+    partial = project_edit_authority_review_result(
+        capability=capability,
+        feature_id="feature_review_result",
+        approval_identity_hash=approval_identity_hash,
+        store_steps=tuple(
+            _store_step(role)
+            for role in capability.review_write_artifact_types[:3]
+        ),
+        payload_decision="approve",
+        resume_decision_status="accepted",
+        resume_decision_allowed=True,
+        execution_failure_stage="materialization_validation",
+    ).to_dict()
+    partial["failure_stage"] = "evidence_pack_store"
+
+    with pytest.raises(ValueError, match="require an exact failure stage"):
+        EditAuthorityReviewResultV1.from_dict(
+            partial,
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash=approval_identity_hash,
+        )
+
+
+@pytest.mark.parametrize(
+    (
+        "prefix_length",
+        "payload_decision",
+        "resume_decision_status",
+        "resume_decision_allowed",
+        "failure_stage",
+    ),
+    (
+        (0, None, None, None, None),
+        (0, None, None, None, "resume_validation"),
+        (1, None, None, None, "graph_interrupt"),
+        (1, None, None, None, "store_preflight"),
+        (2, "approve", "accepted", True, "checkpoint_construction"),
+        (2, "approve", "accepted", True, "resume_validation"),
+        (3, "approve", "accepted", True, "checkpoint_construction"),
+        (3, "approve", "accepted", True, "store_preflight"),
+    ),
+)
+def test_edit_authority_projector_rejects_failure_stage_outside_actual_phase(
+    prefix_length: int,
+    payload_decision: str | None,
+    resume_decision_status: str | None,
+    resume_decision_allowed: bool | None,
+    failure_stage: str | None,
+) -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+
+    with pytest.raises(ValueError, match="actual Store prefix|exact failure stage"):
+        project_edit_authority_review_result(
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash="sha256:" + ("7" * 64),
+            store_steps=tuple(
+                _store_step(role)
+                for role in capability.review_write_artifact_types[:prefix_length]
+            ),
+            payload_decision=payload_decision,
+            resume_decision_status=resume_decision_status,
+            resume_decision_allowed=resume_decision_allowed,
+            execution_failure_stage=failure_stage,
+        )
+
+
+def test_edit_authority_projector_rejects_two_failure_facts() -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+
+    with pytest.raises(ValueError, match="cannot carry a second"):
+        project_edit_authority_review_result(
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash="sha256:" + ("8" * 64),
+            store_steps=(
+                _store_step("workflow_checkpoint", outcome="blocked_before_commit"),
+            ),
+            payload_decision=None,
+            resume_decision_status=None,
+            resume_decision_allowed=None,
+            execution_failure_stage="internal_execution",
+        )
+
+
+def test_edit_authority_strict_parser_rejects_failure_stage_phase_mismatch() -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    approval_identity_hash = "sha256:" + ("9" * 64)
+    partial = project_edit_authority_review_result(
+        capability=capability,
+        feature_id="feature_review_result",
+        approval_identity_hash=approval_identity_hash,
+        store_steps=tuple(
+            _store_step(role)
+            for role in capability.review_write_artifact_types[:3]
+        ),
+        payload_decision="approve",
+        resume_decision_status="accepted",
+        resume_decision_allowed=True,
+        execution_failure_stage="materialization_validation",
+    ).to_dict()
+    partial["failure_stage"] = "store_preflight"
+
+    with pytest.raises(ValueError, match="actual Store prefix"):
+        EditAuthorityReviewResultV1.from_dict(
+            partial,
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash=approval_identity_hash,
+        )
