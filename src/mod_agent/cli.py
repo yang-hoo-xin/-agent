@@ -19,6 +19,7 @@ from .intelligent_evidence_only import (
     run_intelligent_evidence_only,
 )
 from .local_entry import (
+    EditAuthorityPresentationError,
     LocalEntryError,
     preflight_local_runtime,
     preflight_stagger_edit_authority_review,
@@ -1380,6 +1381,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 approved_by=args.approved_by,
                 approved_at=args.approved_at,
             )
+        except EditAuthorityPresentationError as exc:
+            print(
+                json.dumps(
+                    {
+                        "result_type": "edit_authority_presentation_error_v1",
+                        "status": "PRESENTATION_FAILED",
+                        "command": "resume-stagger-edit-authority-review",
+                        "reason": str(exc),
+                        "edit_authority_review_result": (
+                            exc.edit_authority_review_result.to_dict()
+                        ),
+                        "presentation_error": exc.presentation_error,
+                        "audit_error": exc.audit_error,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
         except (LocalEntryError, OSError, RuntimeError, ValueError) as exc:
             print(
                 json.dumps(

@@ -1612,3 +1612,66 @@ def test_edit_authority_strict_parser_rejects_failure_stage_phase_mismatch() -> 
             feature_id="feature_review_result",
             approval_identity_hash=approval_identity_hash,
         )
+
+
+def test_edit_authority_projector_rejects_completed_with_platform_blockers() -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+
+    with pytest.raises(ValueError, match="cannot carry platform blockers"):
+        project_edit_authority_review_result(
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash="sha256:" + ("a" * 64),
+            store_steps=tuple(
+                _store_step(role)
+                for role in capability.review_write_artifact_types
+            ),
+            payload_decision="approve",
+            resume_decision_status="accepted",
+            resume_decision_allowed=True,
+            platform_blockers=(
+                {
+                    "stage": "presentation",
+                    "code": "INVALID_POST_COMPLETION_BLOCKER",
+                    "message": "Presentation is not a platform blocker.",
+                },
+            ),
+        )
+
+
+def test_edit_authority_strict_parser_rejects_completed_with_platform_blockers() -> None:
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    approval_identity_hash = "sha256:" + ("b" * 64)
+    completed = project_edit_authority_review_result(
+        capability=capability,
+        feature_id="feature_review_result",
+        approval_identity_hash=approval_identity_hash,
+        store_steps=tuple(
+            _store_step(role)
+            for role in capability.review_write_artifact_types
+        ),
+        payload_decision="approve",
+        resume_decision_status="accepted",
+        resume_decision_allowed=True,
+    ).to_dict()
+    completed["platform_blockers"] = [
+        {
+            "stage": "presentation",
+            "code": "INVALID_POST_COMPLETION_BLOCKER",
+            "message": "Presentation is not a platform blocker.",
+        }
+    ]
+
+    with pytest.raises(ValueError, match="cannot carry platform blockers"):
+        EditAuthorityReviewResultV1.from_dict(
+            completed,
+            capability=capability,
+            feature_id="feature_review_result",
+            approval_identity_hash=approval_identity_hash,
+        )

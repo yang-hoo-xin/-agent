@@ -947,6 +947,11 @@ def project_edit_authority_review_result(
     else:
         platform_status = "blocked"
 
+    if platform_status == "completed" and platform_blockers:
+        raise ValueError(
+            "Completed Edit Authority result cannot carry platform blockers."
+        )
+
     committed_outputs = tuple(
         step.store_result.artifact_ref
         for step in store_steps

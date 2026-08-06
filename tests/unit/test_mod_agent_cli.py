@@ -2366,6 +2366,189 @@ def test_cli_edit_authority_calls_real_public_structured_result_path(
     ]
 
 
+def test_cli_edit_authority_presentation_failure_preserves_machine_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    feature_id = "feature_001"
+    request_hash = "sha256:" + ("a" * 64)
+    capability = resolve_edit_authority_capability(
+        schema_version="stagger_edit_authority_request_v1",
+        projection_kind=None,
+    )
+    public_result = _successful_edit_authority_cli_result(
+        schema_version=capability.schema_version,
+        projection_kind=capability.projection_kind,
+        feature_id=feature_id,
+        request_hash=request_hash,
+    )
+
+    class AuditFailureStore:
+        calls = 0
+
+        def list_feature_artifact_revisions(
+            self,
+            _feature_id: str,
+            _artifact_type: str,
+        ) -> list[ArtifactRef]:
+            self.calls += 1
+            if self.calls > len(capability.review_write_artifact_types):
+                raise OSError("injected post-result audit failure")
+            return []
+
+    admission = local_entry_module._EditAuthorityReviewAdmission(
+        store=AuditFailureStore(),
+        request_ref=ArtifactRef(
+            feature_id=feature_id,
+            artifact_type="edit_authority_request",
+            path=str(tmp_path / "request.json"),
+            artifact_hash="b" * 64,
+        ),
+        request={},
+        request_envelope={},
+        run_id="run_cli_presentation_failure",
+        capability=capability,
+        identity_sections={
+            "identity_mode": "versioned_v1",
+            "identity_schema_version": "edit_authority_approval_identity_v1",
+            "approval_identity": {"schema_version": "test_identity_v1"},
+            "execution_contract_summary": {
+                "capability_id": capability.capability_id,
+            },
+        },
+    )
+
+    class CompletedGraph:
+        def invoke(self, *_args, **_kwargs):
+            return {
+                "edit_authority_review_result": public_result[
+                    "edit_authority_review_result"
+                ],
+                "current_stage": capability.terminal_stage,
+                "artifacts": {},
+                "artifact_hashes": {},
+                "blockers": [],
+            }
+
+    monkeypatch.setattr(
+        local_entry_module,
+        "_admit_stagger_edit_authority_review",
+        lambda **_kwargs: admission,
+    )
+    monkeypatch.setattr(
+        local_entry_module,
+        "_invoke_stagger_edit_authority_interrupt",
+        lambda **_kwargs: (CompletedGraph(), ["request.json"], {}, {}),
+    )
+
+    exit_code = main(
+        [
+            "resume-stagger-edit-authority-review",
+            "--artifact-store-root",
+            str(tmp_path / "artifacts"),
+            "--feature-id",
+            feature_id,
+            "--request-path",
+            str(tmp_path / "request.json"),
+            "--request-artifact-hash",
+            "b" * 64,
+            "--authority-request-hash",
+            request_hash,
+            "--resume-id",
+            "resume_cli_presentation_failure",
+            "--decision",
+            "approve",
+            "--approved-by",
+            "user",
+            "--approved-at",
+            "2026-08-06T13:00:00+08:00",
+        ]
+    )
+
+    raw_output = capsys.readouterr().out
+    payload = json.loads(raw_output)
+    assert exit_code == 2
+    assert set(payload) == {
+        "result_type",
+        "status",
+        "command",
+        "reason",
+        "edit_authority_review_result",
+        "presentation_error",
+        "audit_error",
+    }
+    assert payload["result_type"] == "edit_authority_presentation_error_v1"
+    assert payload["status"] == "PRESENTATION_FAILED"
+    assert payload["command"] == "resume-stagger-edit-authority-review"
+    assert payload["reason"] == (
+        "Edit Authority audit projection failed after machine result."
+    )
+    assert payload["edit_authority_review_result"] == public_result[
+        "edit_authority_review_result"
+    ]
+    assert (
+        payload["edit_authority_review_result"]["platform_status"]
+        == "completed"
+    )
+    assert payload["presentation_error"] == {
+        "error_class": "OSError",
+        "error_message": "injected post-result audit failure",
+    }
+    assert payload["audit_error"] == payload["presentation_error"]
+    assert "BLOCKED" not in raw_output
+
+
+def test_cli_edit_authority_generic_local_entry_error_shape_is_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_review(**_kwargs):
+        raise LocalEntryError("injected generic edit authority failure")
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli.resume_stagger_edit_authority_review",
+        fail_review,
+    )
+    exit_code = main(
+        [
+            "resume-stagger-edit-authority-review",
+            "--artifact-store-root",
+            "shared-store",
+            "--feature-id",
+            "feature_001",
+            "--request-path",
+            "request.json",
+            "--request-artifact-hash",
+            "b" * 64,
+            "--authority-request-hash",
+            "sha256:" + ("a" * 64),
+            "--resume-id",
+            "resume_generic_error",
+            "--decision",
+            "approve",
+            "--approved-by",
+            "user",
+            "--approved-at",
+            "2026-08-06T13:00:00+08:00",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload == {
+        "status": "BLOCKED",
+        "command": "resume-stagger-edit-authority-review",
+        "reason": "injected generic edit authority failure",
+        "artifact_store_inspection_required": True,
+        "repair_planner_invoked": False,
+        "source_patch_allowed": False,
+        "source_modified": False,
+        "build_performed": False,
+        "process_launched": False,
+    }
+
+
 @pytest.mark.parametrize("scenario", ("rejected", "blocked", "partial"))
 def test_cli_edit_authority_nonapproved_results_fail_closed(
     scenario: str,
