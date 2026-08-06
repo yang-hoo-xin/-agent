@@ -58,6 +58,7 @@ from src.mod_agent.verification_operations import (
     VerificationOperationSpec,
     VerificationOperationStoreReceiptV1,
     VerificationProtocolBinding,
+    _ordered_store_attempt_roles,
     project_attempt_result,
     project_verification_operation,
     project_verification_operation_result,
@@ -392,6 +393,91 @@ def test_declaration_table_has_four_kinds_and_seven_exact_shapes() -> None:
         "blocked_report_execution",
         "blocked_report_store",
     )
+
+
+def test_declarations_own_exact_store_attempt_chains() -> None:
+    declarations = verification_operation_declarations()
+
+    assert [item.store_attempt_chains for item in declarations] == [
+        (
+            ("build_result",),
+            ("build_result", "workflow_checkpoint"),
+        ),
+        (("resume_report", "runtime_evidence"),),
+        (
+            ("resume_report", "runtime_evidence", "blocked_report"),
+            (
+                "resume_report",
+                "runtime_evidence",
+                "eval_report",
+                "blocked_report",
+            ),
+            (
+                "resume_report",
+                "runtime_evidence",
+                "eval_report",
+                "workflow_summary",
+            ),
+        ),
+        (
+            ("runtime_evidence", "blocked_report"),
+            ("runtime_evidence", "eval_report", "blocked_report"),
+            ("runtime_evidence", "eval_report", "workflow_summary"),
+        ),
+        (
+            ("runtime_evidence", "blocked_report"),
+            ("runtime_evidence", "eval_report", "blocked_report"),
+            ("runtime_evidence", "eval_report", "workflow_summary"),
+        ),
+        (
+            ("blocked_report",),
+            ("eval_report", "blocked_report"),
+            ("eval_report", "workflow_summary"),
+        ),
+        (("runtime_evidence",),),
+    ]
+    with pytest.raises(ValueError, match="chains are required"):
+        replace(declarations[0], store_attempt_chains=())
+    with pytest.raises(ValueError, match="chain is empty"):
+        replace(declarations[0], store_attempt_chains=((),))
+    with pytest.raises(ValueError, match="repeats a role"):
+        replace(
+            declarations[0],
+            store_attempt_chains=(("build_result", "build_result"),),
+        )
+    with pytest.raises(ValueError, match="unknown role"):
+        replace(declarations[0], store_attempt_chains=(("resume_report",),))
+
+
+def test_ordered_store_attempt_roles_accepts_shared_prefix_once() -> None:
+    declaration = verification_operation_declarations()[5]
+
+    assert _ordered_store_attempt_roles(declaration, ("eval_report",)) == (
+        "eval_report",
+    )
+
+
+def test_ordered_store_attempt_roles_rejects_impossible_role_set() -> None:
+    declaration = verification_operation_declarations()[5]
+
+    with pytest.raises(ValueError, match="declared Store attempt prefix"):
+        _ordered_store_attempt_roles(declaration, ("workflow_summary",))
+
+
+def test_ordered_store_attempt_roles_rejects_distinct_projected_orders() -> None:
+    declaration = replace(
+        verification_operation_declarations()[5],
+        store_attempt_chains=(
+            ("eval_report", "blocked_report"),
+            ("blocked_report", "eval_report"),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="output order is ambiguous"):
+        _ordered_store_attempt_roles(
+            declaration,
+            ("eval_report", "blocked_report"),
+        )
 
 
 @pytest.mark.parametrize(
@@ -825,7 +911,7 @@ def test_completed_c6_2_requires_runtime_outputs_and_committed_receipts() -> Non
         role="runtime_evidence",
         artifact_write_result=_failed_write_result("runtime_evidence"),
     )
-    with pytest.raises(ValueError, match="receipt ref disagrees with outputs"):
+    with pytest.raises(ValueError, match="matching committed Store receipt"):
         project_verification_operation_result(
             envelope=envelope,
             platform_status="completed",
@@ -840,6 +926,153 @@ def test_completed_c6_2_requires_runtime_outputs_and_committed_receipts() -> Non
             ),
             blockers=(),
             variant_result=complete_variant,
+            audit_snapshot={},
+        )
+
+
+def test_completed_c6_2_rejects_reversed_committed_receipts() -> None:
+    envelope = project_verification_operation(
+        _initial_runtime_spec(RUNTIME_EVIDENCE_ONLY_COMPLETION),
+        checkpoint_identity=CHECKPOINT_IDENTITY,
+    )
+    resume_ref = _ref("resume_report", "6")
+    runtime_ref = _ref("runtime_evidence", "7")
+    variant = RuntimeExecutionResultV1(
+        completion_scope=RUNTIME_EVIDENCE_ONLY_COMPLETION,
+        domain_runtime_status="accepted",
+        resume_report_ref=resume_ref,
+        runtime_evidence_ref=runtime_ref,
+        terminal_refs=(),
+        operator_input_required=False,
+    )
+
+    with pytest.raises(ValueError, match="receipt order disagrees"):
+        _completed_result(
+            envelope=envelope,
+            variant=variant,
+            role_refs=(
+                ("runtime_evidence", runtime_ref),
+                ("resume_report", resume_ref),
+            ),
+        )
+
+
+def test_terminal_eval_then_blocked_receipts_are_ordered() -> None:
+    envelope = project_verification_operation(
+        _terminal_spec(), checkpoint_identity=CHECKPOINT_IDENTITY
+    )
+    runtime_ref = _ref("runtime_evidence", "7")
+    eval_ref = _ref("eval_report", "8")
+    blocked_ref = _ref("blocked_report", "9")
+    variant = RuntimeTerminalizationResultV1(
+        domain_acceptance_status="blocked",
+        runtime_evidence_ref=runtime_ref,
+        eval_report_ref=eval_ref,
+        blocked_report_ref=blocked_ref,
+        workflow_summary_ref=None,
+    )
+
+    result = _completed_result(
+        envelope=envelope,
+        variant=variant,
+        role_refs=(("eval_report", eval_ref), ("blocked_report", blocked_ref)),
+    )
+    assert tuple(item.role for item in result.outputs) == (
+        "eval_report",
+        "blocked_report",
+    )
+    assert tuple(item.role for item in result.store_receipts) == (
+        "eval_report",
+        "blocked_report",
+    )
+    with pytest.raises(ValueError, match="receipt order disagrees"):
+        _completed_result(
+            envelope=envelope,
+            variant=variant,
+            role_refs=(
+                ("blocked_report", blocked_ref),
+                ("eval_report", eval_ref),
+            ),
+        )
+
+
+def test_noncommitted_store_receipt_must_be_last_and_next_in_chain() -> None:
+    envelope = project_verification_operation(
+        _initial_runtime_spec(RUNTIME_EVIDENCE_ONLY_COMPLETION),
+        checkpoint_identity=CHECKPOINT_IDENTITY,
+    )
+    resume_ref = _ref("resume_report", "6")
+    runtime_failure = VerificationOperationStoreReceiptV1(
+        role="runtime_evidence",
+        artifact_write_result=_failed_write_result(
+            "runtime_evidence", outcome="partial"
+        ),
+    )
+    variant = RuntimeExecutionResultV1(
+        completion_scope=RUNTIME_EVIDENCE_ONLY_COMPLETION,
+        domain_runtime_status="unknown",
+        resume_report_ref=resume_ref,
+        runtime_evidence_ref=None,
+        terminal_refs=(),
+        operator_input_required=False,
+    )
+    committed_resume = VerificationOperationStoreReceiptV1(
+        role="resume_report",
+        artifact_write_result=_committed_write_result(resume_ref),
+    )
+    blocker = VerificationOperationBlockerV1(
+        stage="runtime_evidence_store",
+        code="runtime_evidence_store_failed",
+        message="RuntimeEvidence Store write did not commit.",
+    )
+
+    accepted = project_verification_operation_result(
+        envelope=envelope,
+        platform_status="partial",
+        failure_stage="runtime_evidence_store",
+        side_effects_may_have_started=True,
+        store_receipts=(committed_resume, runtime_failure),
+        blockers=(blocker,),
+        variant_result=variant,
+        audit_snapshot={},
+    )
+    assert tuple(item.role for item in accepted.outputs) == ("resume_report",)
+    with pytest.raises(ValueError, match="only one final non-committed"):
+        project_verification_operation_result(
+            envelope=envelope,
+            platform_status="partial",
+            failure_stage="runtime_evidence_store",
+            side_effects_may_have_started=True,
+            store_receipts=(runtime_failure, committed_resume),
+            blockers=(blocker,),
+            variant_result=variant,
+            audit_snapshot={},
+        )
+
+    serialized_failure = ArtifactWriteResult.from_dict(
+        runtime_failure.artifact_write_result.to_dict()
+    )
+    serialized_resume = ArtifactWriteResult.from_dict(
+        committed_resume.artifact_write_result.to_dict()
+    )
+    with pytest.raises(ValueError, match="only one final non-committed"):
+        project_verification_operation_result(
+            envelope=envelope,
+            platform_status="partial",
+            failure_stage="runtime_evidence_store",
+            side_effects_may_have_started=True,
+            store_receipts=(
+                VerificationOperationStoreReceiptV1(
+                    role="runtime_evidence",
+                    artifact_write_result=serialized_failure,
+                ),
+                VerificationOperationStoreReceiptV1(
+                    role="resume_report",
+                    artifact_write_result=serialized_resume,
+                ),
+            ),
+            blockers=(blocker,),
+            variant_result=variant,
             audit_snapshot={},
         )
 

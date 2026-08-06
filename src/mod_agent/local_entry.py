@@ -128,6 +128,7 @@ from src.mod_agent.verification_operations import (
     VerificationOperationSpec,
     VerificationOperationStoreReceiptV1,
     VerificationProtocolBinding,
+    _ordered_store_attempt_roles,
     artifact_ref_to_dict,
     project_rejected_verification_operation_result,
     project_verification_operation,
@@ -1875,7 +1876,7 @@ def execute_verification_only_build_continuation(
     initial_state = create_initial_state(
         run_id=run_id,
         request_id=request_id,
-        user_request=user_request,
+        user_request=variant.user_request,
         target_domain=target_domain,
         target_mod=target_mod,
     )
@@ -8545,20 +8546,28 @@ def _runtime_execution_machine_result(
     runtime_summary_mapping = (
         runtime_summary if isinstance(runtime_summary, Mapping) else {}
     )
+    receipt_projections: dict[str, object] = {}
+    if isinstance(resume_projection, Mapping) and resume_projection.get(
+        "store_result"
+    ) is not None:
+        receipt_projections["resume_report"] = resume_projection["store_result"]
+    runtime_store_result = (
+        runtime_projection.get("store_result")
+        if isinstance(runtime_projection, Mapping)
+        else None
+    ) or runtime_summary_mapping.get("runtime_evidence_store_result")
+    if runtime_store_result is not None:
+        receipt_projections["runtime_evidence"] = runtime_store_result
+    for role in ("blocked_report", "eval_report", "workflow_summary"):
+        projection = runtime_summary_mapping.get(f"{role}_store_result")
+        if projection is not None:
+            receipt_projections[role] = projection
+    ordered_receipt_roles = _ordered_store_attempt_roles(
+        declaration,
+        tuple(receipt_projections),
+    )
     receipts = _verification_store_receipts(
-        tuple(
-            (
-                role,
-                (
-                    resume_projection.get("store_result")
-                    if role == "resume_report" and isinstance(resume_projection, Mapping)
-                    else runtime_projection.get("store_result")
-                    if role == "runtime_evidence" and isinstance(runtime_projection, Mapping)
-                    else runtime_summary_mapping.get(f"{role}_store_result")
-                ),
-            )
-            for role, _artifact_type in declaration.output_artifact_roles
-        )
+        tuple((role, receipt_projections[role]) for role in ordered_receipt_roles)
     )
     blocker_items = list(public_result.get("blockers") or ())
     blockers = (
@@ -8618,14 +8627,18 @@ def _terminalization_machine_result(
         workflow_summary_ref=refs["workflow_summary"],
     )
     platform_status = _exact_verification_platform_status(public_result)
+    declaration = resolve_verification_operation(envelope)
+    receipt_projections = {
+        role: value["store_result"]
+        for role, value in projections.items()
+        if isinstance(value, Mapping) and value.get("store_result") is not None
+    }
+    ordered_receipt_roles = _ordered_store_attempt_roles(
+        declaration,
+        tuple(receipt_projections),
+    )
     receipts = _verification_store_receipts(
-        tuple(
-            (
-                role,
-                value.get("store_result") if isinstance(value, Mapping) else None,
-            )
-            for role, value in projections.items()
-        )
+        tuple((role, receipt_projections[role]) for role in ordered_receipt_roles)
     )
     blocker_items = list(public_result.get("blockers") or ())
     blockers = (

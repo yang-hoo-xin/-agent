@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from threading import Barrier, Event, Thread, local
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Mapping
 
 import pytest
 import src.mod_agent.artifacts.store as artifact_store_module
@@ -49,13 +49,18 @@ from src.mod_agent.verification_operations import (
     BuildInvocationProtocolBindingV1,
     EVIDENCE_CONSOLIDATION_CONTRACT_VERSION,
     EVIDENCE_CONSOLIDATION_KIND,
+    AcceptedResumeRecoveryAttemptV1,
+    BuildVerificationResultV1,
     EvidenceConsolidationOperationV1,
     EvidenceConsolidationResultV1,
     ImplementationEvidenceFileBinding,
     InitialAttemptV1,
     NewRuntimeResumeProtocolBindingV1,
+    ObservationRetryAttemptV1,
     RuntimeExecutionOperationV1,
+    RuntimeExecutionResultV1,
     RuntimeTerminalizationOperationV1,
+    RuntimeTerminalizationResultV1,
     VerificationAttemptPolicy,
     VerificationBuildOperationV1,
     VerificationCheckpointIdentityV1,
@@ -64,6 +69,7 @@ from src.mod_agent.verification_operations import (
     VerificationOperationSpec,
     VerificationProtocolBinding,
     project_verification_operation,
+    resolve_verification_operation,
 )
 from src.mod_agent.workflow.verification_only import (
     verification_only_lineage_payload,
@@ -4555,3 +4561,627 @@ def _sha256(path: Path) -> str:
 def _store_snapshot(root: Path) -> tuple[int, int]:
     files = [path for path in root.rglob("*") if path.is_file()]
     return len(files), sum(path.stat().st_size for path in files)
+
+
+def _p1_checkpoint(
+    store: ArtifactStore,
+    build_result: Mapping[str, Any],
+) -> tuple[ArtifactRef, dict[str, Any]]:
+    projection = build_result["workflow_checkpoint"]
+    assert isinstance(projection, Mapping)
+    checkpoint_ref = ArtifactRef(**projection["artifact_ref"])
+    return checkpoint_ref, store.read(checkpoint_ref)["data"]
+
+
+def _p1_runtime_spec(
+    *,
+    checkpoint_ref: ArtifactRef,
+    attempt_policy: Any,
+    protocol_binding: Any,
+    completion_scope: str,
+    runtime_action_scope: Mapping[str, Any] = RUNTIME_ADMISSION,
+) -> VerificationOperationSpec:
+    return VerificationOperationSpec(
+        operation_kind=RUNTIME_EXECUTION_KIND,
+        operation_contract_version=RUNTIME_EXECUTION_CONTRACT_VERSION,
+        attempt_policy=attempt_policy,
+        protocol_binding=protocol_binding,
+        variant_payload=RuntimeExecutionOperationV1(
+            completion_scope=completion_scope,
+            runtime_action_scope=dict(runtime_action_scope),
+        ),
+    )
+
+
+def _p1_initial_runtime_spec(
+    store: ArtifactStore,
+    build_result: Mapping[str, Any],
+    *,
+    completion_scope: str,
+    resume_id: str,
+    runtime_action_scope: Mapping[str, Any] = RUNTIME_ADMISSION,
+) -> VerificationOperationSpec:
+    checkpoint_ref, _checkpoint = _p1_checkpoint(store, build_result)
+    return _p1_runtime_spec(
+        checkpoint_ref=checkpoint_ref,
+        attempt_policy=InitialAttemptV1(),
+        protocol_binding=NewRuntimeResumeProtocolBindingV1(
+            checkpoint_ref=checkpoint_ref,
+            resume_id=resume_id,
+            approved_by="human",
+        ),
+        completion_scope=completion_scope,
+        runtime_action_scope=runtime_action_scope,
+    )
+
+
+def _p1_write_runtime_manifest(
+    run_root: Path,
+    *,
+    checkpoint_ref: ArtifactRef,
+    checkpoint: Mapping[str, Any],
+) -> None:
+    snapshot = checkpoint["state_snapshot"]
+    artifacts = snapshot["artifacts"]
+    artifact_hashes = snapshot["artifact_hashes"]
+    (run_root / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "run_id": checkpoint["run_id"],
+                "request_id": checkpoint["request_id"],
+                "workflow_checkpoint_ref": checkpoint_ref.path,
+                "workflow_checkpoint_hash": checkpoint_ref.artifact_hash,
+                "build_result_ref": artifacts["build_result"],
+                "build_result_hash": artifact_hashes["build_result"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _p1_adapter_runtime_admission(run_root: Path) -> dict[str, Any]:
+    destination = run_root / "plugins" / "BetterHitFeedback.dll"
+    return {
+        "requested_side_effects": ["runtime_execution"],
+        "authorized_side_effects": ["runtime_execution"],
+        "evidence_source": "injected_test",
+        "plugin_deployment": {
+            "destination_path": str(destination),
+            "destination_existed_at_admission": False,
+            "destination_sha256_at_admission": None,
+            "allow_game_directory_write": False,
+        },
+        "stagger_acceptance": None,
+    }
+
+
+def _p1_prepare_public_shape(
+    shape_id: str,
+    tmp_path: Path,
+) -> tuple[
+    ArtifactStore,
+    Path,
+    VerificationOperationSpec,
+    Any,
+]:
+    row_root = tmp_path / shape_id
+    row_root.mkdir()
+    if shape_id == "verification_build_initial":
+        store, continuation = _verification_inputs(row_root)
+        return store, row_root, _build_verification_operation(continuation).to_spec(), None
+
+    if shape_id == "runtime_evidence_consolidation_initial":
+        store, build_result, runtime_result, runtime_root, action = (
+            _c4_public_runtime_evidence_handoff(row_root)
+        )
+        arguments = _runtime_consolidation_preflight_arguments(
+            store,
+            build_result,
+            runtime_result,
+            runtime_root=runtime_root,
+            action=action,
+        )
+        return store, runtime_root, arguments["verification_operation"], None
+
+    if shape_id == "runtime_terminalization_initial":
+        store, build_result, runtime_result, runtime_root = (
+            _public_runtime_evidence_handoff(
+                row_root,
+                runtime_factory=_verified_runtime_payload,
+            )
+        )
+        checkpoint_ref, _checkpoint = _p1_checkpoint(store, build_result)
+        report_ref = ArtifactRef(**runtime_result["resume_report"]["artifact_ref"])
+        runtime_ref = ArtifactRef(**runtime_result["runtime_evidence"]["artifact_ref"])
+        spec = VerificationOperationSpec(
+            operation_kind=RUNTIME_TERMINALIZATION_KIND,
+            operation_contract_version=RUNTIME_TERMINALIZATION_CONTRACT_VERSION,
+            attempt_policy=InitialAttemptV1(),
+            protocol_binding=VerificationProtocolBinding(
+                checkpoint_ref=checkpoint_ref,
+                accepted_resume_report_ref=report_ref,
+                resume_id="verification_only_runtime_resume_001",
+                approved_by="human",
+            ),
+            variant_payload=RuntimeTerminalizationOperationV1(
+                runtime_evidence_ref=runtime_ref,
+            ),
+        )
+        return store, runtime_root, spec, None
+
+    if shape_id == "runtime_execution_observation_retry":
+        from tests.unit.test_workflow_graph import (
+            _persist_observation_owned_runtime_failure,
+            _successful_build_handoff,
+        )
+
+        store, _build_result, checkpoint_ref = _successful_build_handoff(
+            row_root,
+        )
+        checkpoint = store.read(checkpoint_ref)["data"]
+        runtime_root = row_root / "runtime-target"
+        runtime_root.mkdir()
+        _p1_write_runtime_manifest(
+            runtime_root,
+            checkpoint_ref=checkpoint_ref,
+            checkpoint=checkpoint,
+        )
+        action_scope = local_entry_module._runtime_resume_admission_snapshot(
+            _p1_adapter_runtime_admission(runtime_root)
+        )
+        report_ref, prior_runtime_ref, repair_ref = (
+            _persist_observation_owned_runtime_failure(
+                store,
+                checkpoint_ref,
+                resume_id="p1_retry_resume",
+                runtime_admission=action_scope,
+            )
+        )
+        _, bound_report, bound_runtime, bound_repair, retry_binding = (
+            WorkflowCheckpointStore(store).preflight_runtime_observation_retry(
+                checkpoint_ref,
+                resume_id="p1_retry_resume",
+            )
+        )
+        assert (bound_report, bound_runtime, bound_repair) == (
+            report_ref,
+            prior_runtime_ref,
+            repair_ref,
+        )
+        remaining_before = retry_binding["retry_budget_remaining_before_attempt"]
+        spec = _p1_runtime_spec(
+            checkpoint_ref=checkpoint_ref,
+            attempt_policy=ObservationRetryAttemptV1(
+                prior_runtime_evidence_ref=prior_runtime_ref,
+                repair_plan_ref=repair_ref,
+                retry_number=retry_binding["retry_number"],
+                retry_budget=retry_binding["retry_budget"],
+                retry_budget_remaining=max(remaining_before - 1, 0),
+                current_attempt_approved_by="human",
+            ),
+            protocol_binding=VerificationProtocolBinding(
+                checkpoint_ref=checkpoint_ref,
+                accepted_resume_report_ref=report_ref,
+                resume_id="p1_retry_resume",
+                approved_by="human",
+            ),
+            completion_scope="runtime_workflow",
+            runtime_action_scope=action_scope,
+        )
+        return store, runtime_root, spec, _verified_runtime_payload
+
+    store, build_result = _public_build_handoff(row_root)
+    runtime_root = row_root / "runtime-target"
+    runtime_root.mkdir()
+    checkpoint_ref, checkpoint = _p1_checkpoint(store, build_result)
+    if shape_id == "runtime_execution_initial_evidence_only":
+        return (
+            store,
+            runtime_root,
+            _p1_initial_runtime_spec(
+                store,
+                build_result,
+                completion_scope="runtime_evidence_only",
+                resume_id="p1_evidence_only_resume",
+            ),
+            _verified_runtime_payload,
+        )
+    _p1_write_runtime_manifest(
+        runtime_root,
+        checkpoint_ref=checkpoint_ref,
+        checkpoint=checkpoint,
+    )
+    if shape_id == "runtime_execution_initial_workflow":
+        return (
+            store,
+            runtime_root,
+            _p1_initial_runtime_spec(
+                store,
+                build_result,
+                completion_scope="runtime_workflow",
+                resume_id="p1_default_resume",
+            ),
+            _verified_runtime_payload,
+        )
+    if shape_id == "runtime_execution_accepted_resume_recovery":
+        resume_id = "p1_recovery_resume"
+        initial_spec = _p1_initial_runtime_spec(
+            store,
+            build_result,
+            completion_scope="runtime_workflow",
+            resume_id=resume_id,
+            runtime_action_scope=_p1_adapter_runtime_admission(runtime_root),
+        )
+        initial_preflight = preflight_local_runtime(
+            run_root=runtime_root,
+            artifact_store_root=store.root,
+            verification_operation=initial_spec,
+        )
+        assert isinstance(initial_preflight, VerificationOperationPreflightResultV1)
+        assert initial_preflight.envelope is not None
+        assert initial_preflight.approval_identity_hash is not None
+
+        def fail_after_resume_report(*_args, **_kwargs):
+            raise OSError("P1 recovery seed Runtime execution failed.")
+
+        initial_result = resume_local_runtime(
+            run_root=runtime_root,
+            artifact_store_root=store.root,
+            verification_operation=initial_preflight.envelope,
+            expected_approval_identity_hash=(
+                initial_preflight.approval_identity_hash
+            ),
+            runtime_evidence_factory=fail_after_resume_report,
+        )
+        assert isinstance(initial_result, VerificationOperationResultV1)
+        assert initial_result.platform_status == "blocked"
+        assert initial_result.failure_stage == "runtime_execution"
+        assert tuple(item.role for item in initial_result.outputs) == (
+            "resume_report",
+        )
+        assert tuple(item.role for item in initial_result.store_receipts) == (
+            "resume_report",
+        )
+        report_ref = initial_result.outputs[0].artifact_ref
+        assert initial_result.store_receipts[0].artifact_write_result.outcome == (
+            "committed"
+        )
+        assert (
+            initial_result.store_receipts[0].artifact_write_result.artifact_ref
+            == report_ref
+        )
+        assert store.list_feature_artifact_revisions(
+            FEATURE_ID,
+            "runtime_evidence",
+        ) == []
+        action_scope = store.read(report_ref)["data"]["applied_updates"][
+            "runtime_admission"
+        ]
+        spec = _p1_runtime_spec(
+            checkpoint_ref=checkpoint_ref,
+            attempt_policy=AcceptedResumeRecoveryAttemptV1(
+                accepted_resume_report_ref=report_ref,
+                recovery_of_resume_id=resume_id,
+                current_attempt_approved_by="human",
+            ),
+            protocol_binding=VerificationProtocolBinding(
+                checkpoint_ref=checkpoint_ref,
+                accepted_resume_report_ref=report_ref,
+                resume_id=resume_id,
+                approved_by="human",
+            ),
+            completion_scope="runtime_workflow",
+            runtime_action_scope=action_scope,
+        )
+        return store, runtime_root, spec, _verified_runtime_payload
+    raise AssertionError(f"Unhandled P1 public matrix shape: {shape_id}")
+
+
+@pytest.mark.parametrize(
+    (
+        "shape_id",
+        "operation_kind",
+        "operation_version",
+        "attempt_type",
+        "protocol_type",
+        "variant_type",
+        "result_variant_type",
+        "completion_scope",
+        "expected_graph_handler",
+        "expected_roles",
+        "expected_factory_calls",
+        "expected_resume_report_delta",
+    ),
+    (
+        (
+            "verification_build_initial",
+            VERIFICATION_BUILD_KIND,
+            VERIFICATION_BUILD_CONTRACT_VERSION,
+            InitialAttemptV1,
+            BuildInvocationProtocolBindingV1,
+            VerificationBuildOperationV1,
+            BuildVerificationResultV1,
+            "build_handoff",
+            "verification_build",
+            ("build_result", "workflow_checkpoint"),
+            1,
+            0,
+        ),
+        (
+            "runtime_execution_initial_evidence_only",
+            RUNTIME_EXECUTION_KIND,
+            RUNTIME_EXECUTION_CONTRACT_VERSION,
+            InitialAttemptV1,
+            NewRuntimeResumeProtocolBindingV1,
+            RuntimeExecutionOperationV1,
+            RuntimeExecutionResultV1,
+            "runtime_evidence_only",
+            "runtime_execution",
+            ("resume_report", "runtime_evidence"),
+            1,
+            1,
+        ),
+        (
+            "runtime_execution_initial_workflow",
+            RUNTIME_EXECUTION_KIND,
+            RUNTIME_EXECUTION_CONTRACT_VERSION,
+            InitialAttemptV1,
+            NewRuntimeResumeProtocolBindingV1,
+            RuntimeExecutionOperationV1,
+            RuntimeExecutionResultV1,
+            "runtime_workflow",
+            "runtime_execution",
+            ("resume_report", "runtime_evidence", "eval_report", "workflow_summary"),
+            1,
+            1,
+        ),
+        (
+            "runtime_execution_observation_retry",
+            RUNTIME_EXECUTION_KIND,
+            RUNTIME_EXECUTION_CONTRACT_VERSION,
+            ObservationRetryAttemptV1,
+            VerificationProtocolBinding,
+            RuntimeExecutionOperationV1,
+            RuntimeExecutionResultV1,
+            "runtime_workflow",
+            "runtime_execution",
+            ("runtime_evidence", "eval_report", "workflow_summary"),
+            1,
+            0,
+        ),
+        (
+            "runtime_execution_accepted_resume_recovery",
+            RUNTIME_EXECUTION_KIND,
+            RUNTIME_EXECUTION_CONTRACT_VERSION,
+            AcceptedResumeRecoveryAttemptV1,
+            VerificationProtocolBinding,
+            RuntimeExecutionOperationV1,
+            RuntimeExecutionResultV1,
+            "runtime_workflow",
+            "runtime_execution",
+            ("runtime_evidence", "eval_report", "workflow_summary"),
+            1,
+            0,
+        ),
+        (
+            "runtime_terminalization_initial",
+            RUNTIME_TERMINALIZATION_KIND,
+            RUNTIME_TERMINALIZATION_CONTRACT_VERSION,
+            InitialAttemptV1,
+            VerificationProtocolBinding,
+            RuntimeTerminalizationOperationV1,
+            RuntimeTerminalizationResultV1,
+            "terminal",
+            "runtime_terminalization",
+            ("eval_report", "workflow_summary"),
+            0,
+            0,
+        ),
+        (
+            "runtime_evidence_consolidation_initial",
+            EVIDENCE_CONSOLIDATION_KIND,
+            EVIDENCE_CONSOLIDATION_CONTRACT_VERSION,
+            VerificationAttemptPolicy,
+            VerificationProtocolBinding,
+            EvidenceConsolidationOperationV1,
+            EvidenceConsolidationResultV1,
+            "runtime_evidence_consolidation",
+            "runtime_evidence_consolidation",
+            ("runtime_evidence",),
+            0,
+            0,
+        ),
+    ),
+)
+def test_seven_shape_public_operation_matrix_uses_exact_typed_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    shape_id: str,
+    operation_kind: str,
+    operation_version: str,
+    attempt_type: type,
+    protocol_type: type,
+    variant_type: type,
+    result_variant_type: type,
+    completion_scope: str,
+    expected_graph_handler: str,
+    expected_roles: tuple[str, ...],
+    expected_factory_calls: int,
+    expected_resume_report_delta: int,
+) -> None:
+    store, run_root, spec, runtime_factory = _p1_prepare_public_shape(
+        shape_id,
+        tmp_path,
+    )
+    resume_reports_before = len(
+        store.list_feature_artifact_revisions(FEATURE_ID, "resume_report")
+    )
+    graph_operations: list[Any] = []
+    store_roles: list[str] = []
+    effect_calls = 0
+    initial_state_calls: list[dict[str, Any]] = []
+    original_build_graph = local_entry_module.build_graph
+    original_create_initial_state = local_entry_module.create_initial_state
+    original_write_with_result = ArtifactStore.write_with_result
+
+    def recording_build_graph(*args, **kwargs):
+        graph_operations.append(kwargs.get("verification_operation"))
+        return original_build_graph(*args, **kwargs)
+
+    def recording_write_with_result(selected: ArtifactStore, *args, **kwargs):
+        write_result = original_write_with_result(selected, *args, **kwargs)
+        store_roles.append(write_result.artifact_type)
+        return write_result
+
+    def recording_create_initial_state(*args, **kwargs):
+        initial_state_calls.append(dict(kwargs))
+        return original_create_initial_state(*args, **kwargs)
+
+    monkeypatch.setattr(local_entry_module, "build_graph", recording_build_graph)
+    monkeypatch.setattr(
+        local_entry_module,
+        "create_initial_state",
+        recording_create_initial_state,
+    )
+    monkeypatch.setattr(ArtifactStore, "write_with_result", recording_write_with_result)
+
+    if shape_id == "verification_build_initial":
+        preflight = preflight_verification_only_build_continuation(
+            artifact_store_root=store.root,
+            verification_operation=spec,
+        )
+        assert isinstance(preflight, VerificationOperationPreflightResultV1)
+        assert preflight.envelope is not None
+        assert preflight.approval_identity_hash is not None
+        base_factory = _real_build_factory(run_root)
+
+        def build_factory(feature_id: str, input_execution_mode: str | None):
+            nonlocal effect_calls
+            effect_calls += 1
+            return base_factory(feature_id, input_execution_mode)
+
+        result = execute_verification_only_build_continuation(
+            artifact_store_root=store.root,
+            verification_operation=preflight.envelope,
+            expected_approval_identity_hash=preflight.approval_identity_hash,
+            build_result_factory=build_factory,
+            allow_build_execution=True,
+        )
+    else:
+        preflight = preflight_local_runtime(
+            run_root=run_root,
+            artifact_store_root=store.root,
+            verification_operation=spec,
+        )
+        assert isinstance(preflight, VerificationOperationPreflightResultV1)
+        assert preflight.envelope is not None
+        assert preflight.approval_identity_hash is not None
+        selected_factory = runtime_factory
+        if expected_factory_calls:
+
+            def counting_runtime_factory(feature_id, build, feature_spec):
+                nonlocal effect_calls
+                effect_calls += 1
+                return selected_factory(feature_id, build, feature_spec)
+
+        else:
+            counting_runtime_factory = None
+        runtime_output_root = None
+        if isinstance(
+            preflight.envelope.attempt_policy,
+            (ObservationRetryAttemptV1, AcceptedResumeRecoveryAttemptV1),
+        ):
+            destination = run_root / "plugins" / "BetterHitFeedback.dll"
+            destination.parent.mkdir()
+            adapter_admission = _p1_adapter_runtime_admission(run_root)
+            monkeypatch.setattr(local_entry_module, "load_settings", lambda _: SimpleNamespace())
+            monkeypatch.setattr(
+                local_entry_module,
+                "_runtime_admission_record",
+                lambda *_, **__: adapter_admission,
+            )
+            monkeypatch.setattr(
+                local_entry_module,
+                "_runtime_profile_preflight_record",
+                lambda *_, **__: {
+                    "plugin_deployment": {"destination_path": str(destination)}
+                },
+            )
+            monkeypatch.setattr(
+                local_entry_module,
+                "_stagger_repair_attempt_projection",
+                lambda *_: None,
+            )
+            monkeypatch.setattr(
+                local_entry_module,
+                "_make_deploying_runtime_evidence_factory",
+                lambda **_: counting_runtime_factory,
+            )
+            if isinstance(
+                preflight.envelope.attempt_policy,
+                ObservationRetryAttemptV1,
+            ):
+                runtime_output_root = run_root.parent / "attempt-output"
+                runtime_output_root.mkdir()
+        result = resume_local_runtime(
+            run_root=run_root,
+            artifact_store_root=store.root,
+            verification_operation=preflight.envelope,
+            expected_approval_identity_hash=preflight.approval_identity_hash,
+            runtime_evidence_factory=counting_runtime_factory,
+            runtime_output_root=runtime_output_root,
+            settings_path=run_root / "runtime.yaml",
+        )
+
+    assert isinstance(result, VerificationOperationResultV1)
+    assert preflight.preflight_status == "ready"
+    assert preflight.identity_resolution_status == "identity_resolved"
+    assert (
+        preflight.approval_identity_hash
+        == preflight.envelope.approval_identity_hash
+        == result.approval_identity_hash
+    )
+    assert len(graph_operations) == 1
+    assert graph_operations[0] == preflight.envelope
+    declaration = resolve_verification_operation(preflight.envelope)
+    assert declaration.shape_id == shape_id
+    assert declaration.completion_scope == completion_scope
+    assert declaration.graph_handler == expected_graph_handler
+    assert preflight.envelope.operation_kind == operation_kind
+    assert preflight.envelope.operation_contract_version == operation_version
+    assert type(preflight.envelope.attempt_policy) is attempt_type
+    assert type(preflight.envelope.protocol_binding) is protocol_type
+    assert type(preflight.envelope.variant_payload) is variant_type
+    assert type(result.variant_result) is result_variant_type
+    assert result.platform_status == "completed"
+    assert result.execution_disposition == "succeeded"
+    assert result.failure_stage is None
+    output_roles = tuple(item.role for item in result.outputs)
+    receipt_roles = tuple(item.role for item in result.store_receipts)
+    assert output_roles == expected_roles
+    assert receipt_roles == expected_roles
+    assert tuple(store_roles) == expected_roles
+    assert all(
+        receipt.artifact_write_result.outcome == "committed"
+        and receipt.artifact_write_result.artifact_ref == output.artifact_ref
+        for output, receipt in zip(result.outputs, result.store_receipts)
+    )
+    assert effect_calls == expected_factory_calls
+    assert len(
+        store.list_feature_artifact_revisions(FEATURE_ID, "resume_report")
+    ) == resume_reports_before + expected_resume_report_delta
+    if shape_id == "verification_build_initial":
+        protocol = preflight.envelope.protocol_binding
+        variant = preflight.envelope.variant_payload
+        assert initial_state_calls == [
+            {
+                "run_id": protocol.run_id,
+                "request_id": protocol.request_id,
+                "user_request": variant.user_request,
+                "target_domain": variant.target_domain,
+                "target_mod": variant.target_mod,
+            }
+        ]
+    else:
+        assert initial_state_calls == []
+    assert not (run_root / "runtime_resume_result.json").exists()

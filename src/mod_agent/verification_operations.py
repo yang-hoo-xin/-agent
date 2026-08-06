@@ -811,6 +811,7 @@ class VerificationOperationDeclaration:
     graph_handler: str
     side_effect_class: str
     output_artifact_roles: tuple[tuple[str, str], ...]
+    store_attempt_chains: tuple[tuple[str, ...], ...]
     result_variant_type: type
     result_contract: str
     result_projector: ResultProjector
@@ -818,6 +819,20 @@ class VerificationOperationDeclaration:
     compatibility_mode: str
     deprecated: bool
     requires_checkpoint_identity: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.store_attempt_chains, tuple) or not self.store_attempt_chains:
+            raise ValueError("Verification operation Store attempt chains are required.")
+        allowed_roles = {role for role, _artifact_type in self.output_artifact_roles}
+        for chain in self.store_attempt_chains:
+            if not isinstance(chain, tuple) or not chain:
+                raise ValueError("Verification operation Store attempt chain is empty.")
+            if len(set(chain)) != len(chain):
+                raise ValueError("Verification operation Store attempt chain repeats a role.")
+            if any(role not in allowed_roles for role in chain):
+                raise ValueError(
+                    "Verification operation Store attempt chain uses an unknown role."
+                )
 
     @property
     def output_artifact_types(self) -> tuple[str, ...]:
@@ -1249,6 +1264,10 @@ _DECLARATIONS: tuple[VerificationOperationDeclaration, ...] = (
             ("build_result", "build_result"),
             ("workflow_checkpoint", "workflow_checkpoint"),
         ),
+        store_attempt_chains=(
+            ("build_result",),
+            ("build_result", "workflow_checkpoint"),
+        ),
         result_variant_type=BuildVerificationResultV1,
         result_contract=RESULT_CONTRACT_VERSION,
         result_projector=_build_result_disposition,
@@ -1274,6 +1293,7 @@ _DECLARATIONS: tuple[VerificationOperationDeclaration, ...] = (
             ("resume_report", "resume_report"),
             ("runtime_evidence", "runtime_evidence"),
         ),
+        store_attempt_chains=(("resume_report", "runtime_evidence"),),
         result_variant_type=RuntimeExecutionResultV1,
         result_contract=RESULT_CONTRACT_VERSION,
         result_projector=_runtime_result_disposition,
@@ -1302,6 +1322,21 @@ _DECLARATIONS: tuple[VerificationOperationDeclaration, ...] = (
             ("eval_report", "eval_report"),
             ("workflow_summary", "workflow_summary"),
         ),
+        store_attempt_chains=(
+            ("resume_report", "runtime_evidence", "blocked_report"),
+            (
+                "resume_report",
+                "runtime_evidence",
+                "eval_report",
+                "blocked_report",
+            ),
+            (
+                "resume_report",
+                "runtime_evidence",
+                "eval_report",
+                "workflow_summary",
+            ),
+        ),
         result_variant_type=RuntimeExecutionResultV1,
         result_contract=RESULT_CONTRACT_VERSION,
         result_projector=_runtime_result_disposition,
@@ -1328,6 +1363,11 @@ _DECLARATIONS: tuple[VerificationOperationDeclaration, ...] = (
             ("blocked_report", "blocked_report"),
             ("eval_report", "eval_report"),
             ("workflow_summary", "workflow_summary"),
+        ),
+        store_attempt_chains=(
+            ("runtime_evidence", "blocked_report"),
+            ("runtime_evidence", "eval_report", "blocked_report"),
+            ("runtime_evidence", "eval_report", "workflow_summary"),
         ),
         result_variant_type=RuntimeExecutionResultV1,
         result_contract=RESULT_CONTRACT_VERSION,
@@ -1356,6 +1396,11 @@ _DECLARATIONS: tuple[VerificationOperationDeclaration, ...] = (
             ("eval_report", "eval_report"),
             ("workflow_summary", "workflow_summary"),
         ),
+        store_attempt_chains=(
+            ("runtime_evidence", "blocked_report"),
+            ("runtime_evidence", "eval_report", "blocked_report"),
+            ("runtime_evidence", "eval_report", "workflow_summary"),
+        ),
         result_variant_type=RuntimeExecutionResultV1,
         result_contract=RESULT_CONTRACT_VERSION,
         result_projector=_runtime_result_disposition,
@@ -1382,6 +1427,11 @@ _DECLARATIONS: tuple[VerificationOperationDeclaration, ...] = (
             ("eval_report", "eval_report"),
             ("workflow_summary", "workflow_summary"),
         ),
+        store_attempt_chains=(
+            ("blocked_report",),
+            ("eval_report", "blocked_report"),
+            ("eval_report", "workflow_summary"),
+        ),
         result_variant_type=RuntimeTerminalizationResultV1,
         result_contract=RESULT_CONTRACT_VERSION,
         result_projector=_store_action_result_disposition,
@@ -1404,6 +1454,7 @@ _DECLARATIONS: tuple[VerificationOperationDeclaration, ...] = (
         graph_handler="runtime_evidence_consolidation",
         side_effect_class="one_runtime_evidence_artifact_write",
         output_artifact_roles=(("runtime_evidence", "runtime_evidence"),),
+        store_attempt_chains=(("runtime_evidence",),),
         result_variant_type=EvidenceConsolidationResultV1,
         result_contract=RESULT_CONTRACT_VERSION,
         result_projector=_store_action_result_disposition,
@@ -1770,6 +1821,27 @@ def _result_declaration(result: VerificationOperationResultV1) -> VerificationOp
     return matches[0]
 
 
+def _ordered_store_attempt_roles(
+    declaration: VerificationOperationDeclaration,
+    present_roles: tuple[str, ...],
+) -> tuple[str, ...]:
+    if len(set(present_roles)) != len(present_roles):
+        raise ValueError("Verification result Store roles contain duplicates.")
+    present_role_set = set(present_roles)
+    projected_prefixes = {
+        chain[: len(present_roles)]
+        for chain in declaration.store_attempt_chains
+        if set(chain[: len(present_roles)]) == present_role_set
+    }
+    if not projected_prefixes:
+        raise ValueError(
+            "Verification result outputs do not form a declared Store attempt prefix."
+        )
+    if len(projected_prefixes) != 1:
+        raise ValueError("Verification result output order is ambiguous.")
+    return next(iter(projected_prefixes))
+
+
 def _project_variant_output_refs(
     variant: VerificationResultVariant,
     attempt_result: VerificationAttemptResultV1,
@@ -1799,10 +1871,13 @@ def _project_variant_output_refs(
         }
     elif isinstance(variant, EvidenceConsolidationResultV1):
         refs = {"runtime_evidence": variant.runtime_evidence_ref}
+    output_roles = _ordered_store_attempt_roles(
+        declaration,
+        tuple(role for role, ref in refs.items() if ref is not None),
+    )
     return tuple(
         VerificationOperationOutputV1(role=role, artifact_ref=refs[role])
-        for role, _artifact_type in declaration.output_artifact_roles
-        if refs.get(role) is not None
+        for role in output_roles
     )
 
 
@@ -1989,8 +2064,38 @@ def _validate_operation_result(result: VerificationOperationResultV1) -> None:
         role not in allowed_roles for role in receipt_roles
     ):
         raise ValueError("Verification result Store receipt roles changed.")
+    output_roles = tuple(item.role for item in result.outputs)
+    noncommitted_indexes = tuple(
+        index
+        for index, receipt in enumerate(result.store_receipts)
+        if receipt.artifact_write_result.outcome != "committed"
+    )
+    if len(noncommitted_indexes) > 1 or (
+        noncommitted_indexes
+        and noncommitted_indexes[0] != len(result.store_receipts) - 1
+    ):
+        raise ValueError(
+            "Verification result may contain only one final non-committed Store receipt."
+        )
+    committed_receipts = (
+        result.store_receipts[:-1]
+        if noncommitted_indexes
+        else result.store_receipts
+    )
+    committed_receipt_roles = tuple(item.role for item in committed_receipts)
+    if committed_receipt_roles != output_roles:
+        raise ValueError(
+            "Verification result matching committed Store receipt order disagrees "
+            "with outputs."
+        )
+    if not any(
+        chain[: len(receipt_roles)] == receipt_roles
+        for chain in declaration.store_attempt_chains
+    ):
+        raise ValueError(
+            "Verification result Store receipts do not follow a declared attempt chain."
+        )
     output_by_role = {item.role: item.artifact_ref for item in result.outputs}
-    receipt_by_role = {item.role: item for item in result.store_receipts}
     for receipt in result.store_receipts:
         from src.mod_agent.artifacts.store import ArtifactStoreError, ArtifactWriteResult
 
@@ -2013,19 +2118,18 @@ def _validate_operation_result(result: VerificationOperationResultV1) -> None:
                 )
         elif output_ref is not None:
             raise ValueError("Verification Store receipt ref disagrees with outputs.")
-    for role, output_ref in output_by_role.items():
-        receipt = receipt_by_role.get(role)
+    for output, receipt in zip(result.outputs, committed_receipts):
         if (
-            receipt is None
+            receipt.role != output.role
             or receipt.artifact_write_result.outcome != "committed"
-            or receipt.artifact_write_result.artifact_ref != output_ref
+            or receipt.artifact_write_result.artifact_ref != output.artifact_ref
         ):
             raise ValueError(
                 "Verification output lacks its matching committed Store receipt."
             )
     if result.platform_status == "completed":
         required_roles = _required_completed_output_roles(result)
-        if set(output_by_role) != set(required_roles):
+        if output_roles != required_roles:
             raise ValueError(
                 "Completed verification result lacks its exact committed output chain."
             )
