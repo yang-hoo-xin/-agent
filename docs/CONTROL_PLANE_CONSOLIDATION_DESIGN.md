@@ -3374,9 +3374,22 @@ overall_completion_gates:
 
 #### 15.11.2 P2.2 `run_local_request()` authority migration inventory与合同blocker
 
-> **状态**：`contract_blocked_by_existing_typed_build_semantic_mismatch`。
-> **时间盒**：`started_at=2026-08-07T11:42:18.9161797+08:00`，
-> `hard_stop=2026-08-07T13:42:18.9161797+08:00`。审核时间计入两小时；本节未授权代码或测试修改。
+> **状态**：`architecture_boundary_reselection_required`；`implementation_authorization=not_granted`。
+> **当前合同时间盒**：`started_at=2026-08-07T12:11:55.6636360+08:00`，
+> `hard_stop=2026-08-07T14:11:55.6636360+08:00`。审核时间计入两小时；本节未授权代码或测试修改。
+> 先前`2026-08-07T11:42:18.9161797+08:00` inventory已证明现有verification-only Build语义不匹配；
+> 本轮在治理迁移commit `d37de0d82f2bdac263cdd9849e371b9d9aa6f58e`之后只继续合同设计，不沿用旧文档副本作为权威。
+> **独立合同审核**：基于文档SHA256
+> `272C744B6579F1D3E354713EFDBF542C6D48A3DDB78152227F305CF3F5AC952A`的结论为
+> `contract_verdict=changes_required`、`blocker_verdict=confirmed`、
+> `implementation_authorization=not_granted`。审核认可一次mutation Build边界、三action拆分和
+> declaration-owned dispatcher主线，但要求先由用户明确批准same-invocation structural protocol或接受显式
+> continuation approver造成的公共兼容变化；审核页与推进页都不得代替用户选择。
+> **用户决定**：用户已明确批准按真实transition分层的structural protocol；不批准给全部continuation统一新增
+> `approved_by`，也不允许用`source_disclosure_approval_id`、OS用户、checkpoint owner或固定字符串代填。
+> 该决定只闭合authorization semantics；它不等于选择A的durable multi-operation边界。最新独立审核要求暂停
+> §15.11.2.8–.11的局部修补，先按§15.11.2.13重选A/B架构边界；未完成用户选择与新合同独立`approved`前仍不授权
+> 代码、测试、Store或index修改。
 
 ##### 15.11.2.1 真实active调用链
 
@@ -3411,21 +3424,620 @@ overall_completion_gates:
   Build成功→可选Runtime/evaluation。仅以`interrupt_before=["build"]`切开前置Graph并调用现有public pair，
   仍会改变上述lineage、failure routing和后续产品行为。
 
-##### 15.11.2.3 目标、停止边界与未决合同决定
+##### 15.11.2.3 已由真实lineage闭合的一次mutation Build表示边界
 
-- 唯一目标结构仍是：产品前置阶段准备exact mutation-Build参数 → typed public preflight → typed public
-  execute → 消费`VerificationOperationResultV1` → legacy/product Presentation；兼容层不得再直接判Store
-  commit或Build terminal verdict。
-- 但实现该结构至少需要让typed operation表达exact dry-run/apply/approved-action inputs、mutation
-  `input_execution_mode`及Build后的repair/Runtime continuation。这会改变operation variant/public schema、
-  Approval Identity、Graph routing或Artifact lineage，均被本工作包停止门明确禁止。
-- 当前`allowed_production_files=[]`、`allowed_test_files=[]`、`implementation_authorization=not_granted`。
-  不得以新wrapper、伪造verification-only EvidencePack、丢弃apply upstream、修改Graph result或CLI本地
-  重解释来绕过。
-- `unresolved_contract_decisions`：是否另行审核一个exact mutation-Build typed variant/continuation；其
-  Approval projection如何绑定dry-run、isolated apply、Plan/Proposal/approved diff；Build后的repair与Runtime
-  lifecycle由哪个既有public continuation接续。该决定会扩大既定公共合同，必须由独立合同工作包处理。
-- 在上述决定获用户与独立审核批准前，P2.2停在contract blocker；P2.3、P2.4、P3、P4均不得启动。
+1. `ArtifactStore`当前mutation `build_result`写入合同只接受`dry_run_result`和可选
+   `isolated_apply_result`，且拒绝verification-only lineage。`run_local_request()`正常写路径实际执行
+   isolated apply，因此本入口的一次mutation Build exact inputs应为按角色固定顺序的
+   `(dry_run_result_ref, isolated_apply_result_ref)`，两者都必须是同feature的exact immutable revision。
+2. Approval/Action Identity不重复列举Plan、Proposal、Review或approved diff。唯一semantic resolver必须从
+   两个immediate refs递归验证当前已有链：
+   `isolated_apply_result -> (patch_proposal, proposal_review, dry_run_result)`、
+   `dry_run_result -> (patch_proposal, proposal_review)`、
+   `proposal_review -> patch_proposal`、
+   `patch_proposal -> (implementation_plan, evidence_pack)`、
+   `implementation_plan -> (feature_spec, evidence_pack)`。同一角色出现多个nearest revision、任何path/hash/
+   feature/type漂移、dry-run与apply diff hash不一致、`exact_diff_approved != true`、
+   `actual_write_performed != true`或`real_patch_applied != true`均在Build effect前fail-closed。
+3. 一次mutation Build的versioned action projection只需绑定：两个immediate logical Artifact identities、
+   run/request/feature、稳定Build profile语义（profile id、build system、命令argv、timeout、expected artifact
+   relative roles）、`input_execution_mode=isolated_apply`、一次caller Build factory invocation、无自动retry/
+   recovery。absolute workspace、stdout/stderr path、Store locator、timestamp和执行后Build observation不进入
+   Approval Identity；它们由Execution Contract在Graph/effect前重验。
+4. BuildResult继续按当前Store合同以上述两个immediate refs作为ordered durable upstream；不得改成
+   FeatureSpec/EvidencePack upstream，也不得把transitive lineage提升成第二套直接upstream owner。
+5. BuildResult Store必须使用C5 `write_with_result`并原样进入declaration-owned structured result：
+   blocked-before-commit→blocked，partial→partial，committed domain failure→completed/domain-blocked，committed
+   success→completed/succeeded。不得从revision totals、latest alias、文件存在或Build stdout重造Store truth。
+6. 上述边界足以定义一个append-only、非verification-only的一次mutation Build action；它不得修改既有
+   `verification_build_v1` identity/hash bytes、不得伪造verification-only EvidencePack，也不得放宽Graph或
+   Store admission。此处只记录可表示边界，尚未授权新增operation kind/version或代码实现。
+
+##### 15.11.2.4 仍未闭合的post-Build lifecycle与结果表示
+
+1. compile-only success可由committed BuildResult结束。现有`WorkflowCheckpointStore`已经以真实mutation
+   `dry_run_result + isolated_apply_result -> build_result`验证Build-stage ancestry、persisted exact diff、
+   successful real Build与physical output bytes，因此successful mutation Build的checkpoint/lineage机制无需新
+   Runtime controller或新Artifact类型，也不需要重放evidence/proposal/apply。但当前`run-request`/`run_local_request`
+   没有`approved_by`或`resume_id`输入，而现有typed Runtime public contract要求两者；所以“该入口无损采用现有
+   typed Runtime/terminalization”仍是public compatibility decision，不能把checkpoint机制支持误写成入口采用已验收。
+2. Build failure不能由现有typed family无损接续。当前产品Graph把failed mutation Build路由到
+   `create_repair_plan -> generate_patch_proposal -> review_proposal -> dry_run_apply -> isolated_apply -> build`，
+   `RepairPlanner`默认`retry_budget=2`。这会产生新的Proposal/Dry-run/Apply/Build revisions，并要求每次新的
+   exact diff approval。
+3. 当前typed operation attempt facts明确`automatic_retry_count=0`；
+   `VerificationOperationResultV1`/`VerificationOperationDeclaration.store_attempt_chains`又以唯一role tuple表达
+   一次有序Store chain，不能诚实表示同一outer action内重复的Build/repair Store attempts。当前repair节点还
+   使用兼容`ArtifactStore.write()`，没有可由public result保留的C5 blocked/partial receipt。把整个repair loop
+   隐式塞入一次mutation Build会同时改变attempt、receipt、result和failure matrix，并使`run_local_request()`
+   继续拥有外围terminal解释。
+4. 仅迁移初次Build同样不构成P2.2完成：Build failure仍由旧direct Graph/summary解释，CLI仍可能据
+   `current_stage`或`claims_real_build_success`判终态；这违反“structured result是唯一machine truth”的退出门。
+5. 当前没有一个既有public typed repair-preparation continuation能接收failed BuildResult、保留原Graph state、
+   完成新的exact approval/apply并在下一次Build前停下。成功Build的Runtime continuation不能用于failed Build，
+   post-Build `workflow_checkpoint`也不能证明pre-Build repair state。
+
+因此本轮不在以下互斥语义之间替用户或实施者隐式选择：
+
+- 为同一typed family另行设计bounded mutation repair continuation，并为最多两个已批准repair attempts定义
+  attempt-scoped ordered C5 receipts与declaration-owned next-operation projection；
+- 把完整post-apply product lifecycle升级为一个新typed operation，并同步迁移repair链全部Store结果；
+- 改变legacy行为，在首次Build failure后不再进入repair而直接返回domain-blocked。
+
+第三项会破坏当前产品行为，不在现有授权内；第二项会把P2.2从Build authority adoption扩大成完整产品
+workflow迁移；第一项是最小保持行为方向，但仍需一份独立合同明确repair operation exact inputs、每次diff
+Approval边界、Graph state handoff、attempt-scoped receipt schema和最终result aggregation。未闭合前不得用
+local wrapper、caller提供的state snapshot、私有dict或Presentation summary充当过渡authority。
+
+##### 15.11.2.5 当前checkpoint与停止门
+
+- `allowed_production_files=[]`、`allowed_test_files=[]`、`implementation_authorization=not_granted`；本轮
+  production/test/Store/index change均必须为none。
+- `resolved_contract_facts`：一次mutation Build的exact immediate inputs、transitive lineage验证边界、
+  BuildResult upstream、physical-locator排除、C5 BuildResult三态，以及successful mutation Build的现有
+  checkpoint/lineage机制支持均如§15.11.2.3/.4。
+- `unresolved_contract_decisions=["P2.2 execution boundary: durable multi-operation continuation (A) or
+  same-invocation Public Product Executor over the existing StateGraph (B)"]`。用户已经授权的transition级真实
+  authorization semantics仍有效，但§15.11.2.8–.11只作为A方案的未批准设计记录；当前状态由§15.11.2.13覆盖为
+  `architecture_boundary_reselection_required`。普通descendant scan、latest/revision totals、进程内set、caller state或
+  Presentation均不构成任一方案的替代实现。
+- 在独立审核确认该blocker并由用户授权下一份有界repair-continuation合同决定前，P2.2保持open；P2.3、P2.4、
+  P3、P4均不得启动。不得为赶时间新增operation、Graph node、Artifact/Approval类型或修改
+  `run_local_request()`。
+
+##### 15.11.2.6 下一份有界repair-continuation合同的最小分解与新增兼容阻断
+
+为避免一个operation平铺重复role，保持行为的最小结构必须把一次repair cycle拆成三个独立typed action；
+每个action各自拥有Envelope、Approval/Action Identity、Store chain和冻结result：
+
+1. `mutation_build_v1`：只消费本次exact DryRun/IsolatedApply refs，one-shot调用Build effect，写一个BuildResult；
+   success按requested completion scope结束或建立Build handoff，failure只产生failed-Build handoff，不在同一
+   operation内执行repair。
+2. `mutation_repair_preparation_v1`：从exact failed-Build handoff恢复既有state，仅执行
+   `create_repair_plan -> generate_patch_proposal -> review_proposal -> dry_run_apply`，不执行isolated apply、Build、
+   Runtime或terminal；在新的DryRunResult committed后停止。该action不能预先包含尚未生成的diff approval hash。
+3. `mutation_repair_apply_v1`：只在operator看到新DryRun并提供exact diff hash后形成Action Identity；消费该
+   DryRun及其exact Proposal/Review lineage，重验workspace bytes和Binding，执行一次isolated apply并写一个
+   IsolatedApplyResult。committed result再投影下一个`mutation_build_v1`输入。
+
+`verification_operations.py`中的declaration-owned typed dispatcher应是唯一跨action route owner：
+
+- Build blocked/partial→停止并保留本attempt真实C5 result；
+- Build committed failed且budget剩余→只投影failed-Build repair handoff；
+- repair preparation blocked/partial→停止；committed DryRun→等待exact diff approval；
+- apply blocked/partial→停止；committed Apply→投影下一次Build；
+- Build committed success且compile-only→完成；requested Runtime→投影Runtime continuation；
+- budget exhausted→domain-blocked，不再投影repair。
+
+`run_local_request()`只能把当前typed result交回dispatcher并调用其返回的public operation；不得读取
+`current_stage`、Build/Runtime claims、revision totals、latest alias、stdout或Presentation字段决定next route/
+terminal。outer aggregation只能保存按attempt顺序排列的冻结typed results及dispatcher projection，不重算
+ArtifactWriteResult、Approval hash、platform status或execution disposition。每个repair attempt拥有独立role
+chain，因此不修改既有`store_attempt_chains`的唯一role语义。
+
+该最小分解仍有一个无法从现有public inputs诚实构造的protocol fact：
+
+- failed-Build handoff若复用`WorkflowCheckpoint`，必须使用新的versioned repair binding（BuildResult必须failed、
+  `claims_real_build_success=false`、`next_graph_node=create_repair_plan`、exact mutation ancestry、attempt number与
+  budget、prior action hash），不能沿用只接受successful Build且固定`collect_runtime_evidence`的Runtime binding；
+- durable consumption/replay若复用现有`ResumeReport`，就必须有真实`approved_by`。`run-request`目前没有该输入，
+  `confirm_isolated_write`/`allow_build`是permission facts而不是actor identity；固定`local_cli_invoker`、复用
+  `source_disclosure_approval_id`、checkpoint owner或自动字符串都会虚构审批身份；
+- successful Build进入现有typed Runtime也有同一个缺口：CLI/public entry没有现有
+  `NewRuntimeResumeProtocolBindingV1`要求的`approved_by`/`resume_id`。自动生成resume id可以作为一次调用的
+  protocol nonce，但不能自动生成approver。
+
+用户已经固定：不能把全部transition压成一个Resume模式；same-invocation successful Build→Runtime与failed
+Build→repair preparation使用各自versioned structural protocol，不声称human Resume；repair apply在新DryRun形成后
+绑定operator返回的exact diff；cross-invocation/manual resume继续使用现有human `ResumeReport/approved_by`。
+用户同时拒绝给全部continuation强制新增`approved_by`，也拒绝默认、固定、读取OS用户、复用source-disclosure
+approval或checkpoint owner填充approver。该决定状态为`resolved_by_user`，不能在实施中退回统一approver方案。
+
+该决定会扩展typed protocol/result contract并需要durable consumption表达，但不授权代码。若现有Artifact/
+ResumeReport不能无损表达，则必须先审核versioned ResumeReport protocol union或新protocol Artifact必要性，不能把
+checkpoint descendant scan或进程内私有set冒充durable exactly-once事实。
+
+基于该用户决定，下一版可实施合同还必须同时固定以下边界，不能留到编码阶段决定：
+
+- initial/pre-Build product Graph只执行到`isolated_apply`完成，并在Build effect前交棒给
+  `mutation_build_v1`；旧Graph不得先执行Build再包装typed result。
+- `mutation_repair_preparation_v1`从exact failed-Build handoff进入`create_repair_plan`，在DryRun committed后
+  interrupt；isolated apply、Build、Runtime调用都必须为0。
+- `mutation_repair_apply_v1`只执行一次isolated apply并停止；下一个Build只能由dispatcher投影新的
+  `mutation_build_v1`输入。
+- ordered Store chains至少分别表达`BuildResult(+nullable handoff)`、
+  `RepairPlan -> PatchProposal -> ProposalReview -> DryRunResult`和`IsolatedApplyResult`；每一步
+  blocked-before-commit/partial/committed、写间异常、first-failure-stop及已committed prefix都由唯一
+  declaration result owner解释。
+- dispatcher只接受/返回versioned typed facts，不返回callable/private dict，也不读取可变Store、Graph或
+  Presentation observation。attempt/budget/remaining/prior action/requested completion scope必须参与相应typed
+  contract和checkpoint重验。
+
+##### 15.11.2.7 用户已批准的transition级authorization semantics
+
+该决定已由用户明确批准，状态为`resolved_by_user`，不能在实施中重新合并成一个Resume模式：
+
+| transition | authorization事实 | 明确禁止 |
+| --- | --- | --- |
+| successful mutation Build→same-invocation Runtime workflow | 原`run-request`同一次调用已经验证的exact `runtime_admission`与run-scoped permissions；不声明Human Resume | 不生成/填写`approved_by`；不复用source-disclosure approval、OS用户、checkpoint owner或固定字符串 |
+| failed mutation Build→repair preparation | exact failed-Build handoff、同一次调用的repair budget/attempt事实和原write/build permissions；不声明Human Resume | 不把failed Build伪装成successful Runtime handoff；不虚构approver |
+| committed repair DryRun→repair apply | operator在看到该exact DryRun后返回的exact diff hash、既有`confirm_isolated_write` permission与exact DryRun/Proposal/Review lineage | 不提前把未来diff放进preparation identity；不混入Runtime approver |
+| cross-invocation/manual resume | 现有Human `ResumeReport`、真实`approved_by`和existing exact resume validation | 不降级成structural permission；不改变历史Human Resume语义 |
+
+`approved_by`不是repair apply Action Identity输入。若未来要为same-invocation exact-diff approval增加actor provenance，
+必须另行审核公共输入和durable provenance；本包不能把当前不存在的actor identity写入payload。
+
+##### 15.11.2.8 `resume_report` versioned protocol union与durable consumption/replay
+
+只读inventory证明现有`WorkflowCheckpointStore._durable_consumption_state()`只把committed且`allowed=true`的
+`resume_report`作为durable consumption；`ResumeValidator`又对Human `decision=approve`强制真实
+`approved_by`。因此structural continuation不能复用现有Human payload，也不能仅靠进程内
+`_consumed_checkpoint_ids`/`_seen_resume_ids`、descendant scan或latest/revision totals。最小合同复用是保留
+`resume_report` Artifact type，并把当前新写升级为append-only versioned protocol union；不新增Artifact type：
+
+1. payload新增exact `resume_protocol`对象，唯一discriminator为`protocol_kind + protocol_contract_version +
+   semantic_binding`。`semantic_binding`固定为exact string object
+   `{key: "resume_protocol", version: "1"}`。当前新写只允许：
+   - `human_resume_v1`：保留现有Human Resume字段与`ResumeValidator`语义，`approve`仍要求真实
+     `approved_by`/`approved_at`；
+   - `same_invocation_structural_v1`：只允许§15.11.2.7登记的structural transition，不调用Human
+     `ResumeValidator`，不具有Human approval语义。
+   历史无`resume_protocol`的Human report保持read-only兼容并继续计入已消费checkpoint；未知kind/version、
+   额外字段或跨variant字段混用全部fail-closed。未来Human新写与structural新写都必须经同一protocol owner，
+   不再存在一个不参加durable conflict的current write旁路。
+2. `same_invocation_structural_v1`的top-level兼容字段固定为：`resume_id=continuation_id`、exact
+   `checkpoint_id/run_id/resume_stage`、`decision=continue`、`status=accepted`、`allowed=true`、固定structural
+   reason、`applied_updates.restored_state`逐字等于checkpoint snapshot、`stale_reasons=[]`、`blockers=[]`、
+   `approved_by=""`、`approved_at=""`、`authority_request_hash=null`。任何非空approver字段、Human decision或
+   caller提供的restored state均拒绝。
+3. `resume_protocol`的structural `transition_kind` exact literals只允许：
+   `prebuild_to_mutation_build`、`successful_build_to_runtime`、
+   `failed_build_to_repair_preparation`、`dry_run_to_repair_apply`、
+   `repair_apply_to_mutation_build`。其余exact字段为：
+   `protocol_kind=same_invocation_structural_v1`、`protocol_contract_version="1"`、`transition_kind`、
+   `continuation_id`、checkpoint logical identity（feature/type/full hash与checkpoint id，不含physical locator）、
+   source operation kind/version/approval identity hash、next operation kind/version、attempt number、repair budget
+   total/remaining、requested completion scope、`runtime_admission`的canonical hash或null、exact diff hash或null，
+   以及`semantic_binding={key: "resume_protocol", version: "1"}`。字段只按transition适用；不适用字段必须为null，
+   不能省略后由caller补义。
+4. 各transition nullability固定：
+   - `prebuild_to_mutation_build`：source operation kind/version/hash为null，runtime admission hash与exact diff hash
+     为null，next=`mutation_build/1`；
+   - `successful_build_to_runtime`：source operation三字段非空，runtime admission hash非空，exact diff hash为null，
+     next=`runtime_execution/2`；
+   - `failed_build_to_repair_preparation`：source operation三字段非空，runtime admission hash与exact diff hash为null，
+     next=`mutation_repair_preparation/1`；
+   - `dry_run_to_repair_apply`：source operation三字段非空，exact diff hash非空，runtime admission hash为null，
+     next=`mutation_repair_apply/1`；
+   - `repair_apply_to_mutation_build`：source operation三字段非空，runtime admission hash与exact diff hash为null，
+     next=`mutation_build/1`。
+5. `continuation_id`由中立Action Identity primitive对checkpoint logical identity/id、source action identity nullable
+   triple、transition kind、next operation kind/version、attempt facts、requested completion scope、适用的canonical
+   runtime admission hash和适用的exact diff hash执行domain-separated canonical hash；hash domain固定为
+   `mod_agent.structural_continuation.v1`。上述任何字段变化必须改变id；absolute locator、workspace、stdout/stderr、
+   timestamp、Presentation和Store totals不进入该hash。
+6. 一个纯deterministic `resume_protocol` owner负责：读取exact immutable checkpoint、验证binding/state/
+   lineage/freshness/attempt/next route；投影Human或structural expected payload；投影neutral
+   `ArtifactWriteIntent`。Registry只验证union discriminator与trusted handler可解析，不能复制route、approver、
+   attempt或hash规则；Graph/public可提前/TOCTOU重验但只能委托同一owner。
+7. 只有committed且`allowed=true`的Human report（包括validator接受的`approve`或`reject`decision）与structural
+   accepted report是consuming report。它们共享同一neutral Store consumption conflict key：exact checkpoint
+   logical identity与`checkpoint_id`，不含transition kind、operation kind或approver。一个checkpoint只允许一个
+   committed consuming report；不同Human/structural payload、action hash或next route也竞争同一key。key经现有
+   `mod_agent.artifact_semantic_commit_conflict.v1`hash，Store使用existing exclusive semantic pending protocol把
+   “检查既有consumer/安装reservation”置于同一临界区；Store不识别Runtime、repair或diff语义。
+8. Human validation blocked、`allowed=false`的report是non-consuming audit report。它仍经union owner和strict
+   payload reproject，但使用只绑定checkpoint、attempted resume id/decision和canonical validation-result hash的
+   `non_consuming_audit` conflict key；它不占用consumption key、不进入已消费扫描。先写blocked audit后仍允许一个
+   accepted consumer；accepted consumer已存在时，DOUBLE_RESUME仍可写一个allowed=false audit report；audit与
+   accepted并发不允许产生第二个accepted consumer。
+9. Store pending前由trusted owner重投影expected report并逐字比较payload、exact checkpoint upstream、
+   protocol refs、conflict key和expected Artifact hash。`write()`与`write_with_result()`都不能绕过；direct Store
+   missing/tampered intent、第二consumer、pending conflict或unknown union version均首个下游effect前拒绝。
+10. consumption/C5结果固定：
+   - reservation安装前validation或full-key collision→`blocked_before_commit/commit_started=false/
+     admission_validation`，checkpoint未消费；
+   - 其他attempt已经committed该checkpoint的report→`blocked_before_commit/false/admission_validation`；
+   - 其他attempt持有相同reservation或本attempt安装reservation后未committed→`partial`，并保留Store原始
+     `commit_started`/pending/revision事实；checkpoint不得进入Graph/effect；
+   - report committed且readback identity一致→checkpoint已durably consumed，才可进入Graph/effect；
+   - 任一report blocked/partial都不自动retry/recover，不调用`recover_pending_writes`。`recovery_authorized=false`；
+     crash/pending残留只能由以后单独授权的C5 recovery处理，当前public调用持续返回partial并停止。
+   structural report receipt进入ephemeral operation result，不进入后续产品Artifact payload/hash；report本身作为
+   protocol Artifact保留exact checkpoint upstream。
+11. accepted structural report committed后，该checkpoint已被durably consumed；随后即使进程在首个业务Store前、
+    effect期间、业务Artifact提交后或typed result返回前硬退出，也不得再次消费checkpoint或重入effect。下一次同一
+    action的preflight必须由`resume_protocol` owner用exact checkpoint logical identity、`continuation_id`、source action
+    identity、next operation identity及attempt facts识别`consumed_without_returned_result`，返回
+    `preflight_status=blocked`、`identity_resolution_status=identity_resolved`和exact blocker
+    `STRUCTURAL_ACTION_ALREADY_CONSUMED_WITHOUT_TERMINAL_RESULT`；只可返回从同一exact inputs逐字重构并通过trusted
+    projector验证的原Envelope/hash，不得生成漂移的新identity或把该状态当作ready。
+12. 若caller仍用原先已验证的Envelope/hash调用execute，execute必须在Graph/Store/effect前返回同一operation
+    `VerificationOperationResultV1`：`platform_status=partial`、
+    `failure_stage=interrupted_after_protocol_consumption`、`side_effects_may_have_started=true`、
+    `automatic_retry_count=0`、`recovery_performed=false`、`recovery_authorized=false`。此前committed structural report
+    作为variant的`consumed_protocol_ref`保留，但不列入本次`outputs`/`store_receipts`；先前调用的C5 receipt不可从ref、
+    pending、revision、latest或Store totals重建。即使发现一个或多个descendant Artifact，也只能作为
+    `observed_committed_artifact_refs`审计事实，当前v1结果不得据此重建`succeeded`或补造receipt；零个、一个或多个
+    descendant均保持上述partial并拒绝自动retry/recover。若以后要无损恢复completed，必须另审durable result receipt/
+    completion protocol，不能在P2.2实现中增加普通descendant/latest扫描。
+13. `interrupted_after_protocol_consumption`加入三个mutation declaration及structural Runtime v2的exact
+    `failure_stages`；它只由上述跨调用durable consumption事实投影，当前调用可捕获异常不能伪造。该状态不会创建
+    第二份consuming report，也不会调用dispatcher的下一operation。
+
+所有Human-only consumer/recovery都必须先解析protocol discriminator：historical无discriminator与
+`human_resume_v1`进入Human路径；`same_invocation_structural_v1`不得被
+`preflight_accepted_resume_recovery`、Runtime observation retry/recovery、terminal Human admission、Edit Authority或
+repair-planning Human review误认。durable consumed scan只把validated consuming Human/structural variants计入；
+unknown/tampered report既不能授权也不能占用checkpoint。
+
+上述union会改变未来Human `resume_report`新写bytes/hash，但不改历史bytes、不重解释历史report，也不改变现有
+Human public decision语义。它属于P2.2实施前必须单独核准的Artifact protocol evolution；若独立审核否决该union，
+P2.2保持blocked，不能在实施中改成新Artifact或无durable consumption的私有状态。
+
+##### 15.11.2.9 exact Graph handoff、typed operation与Store chain
+
+本包在现有`VerificationOperationSpec/Envelope/Declaration/Result` family中append-only登记三个operation kind，
+不修改既有七shape identity bytes：
+
+1. `mutation_build` contract version `1`：variant只含ordered exact
+   `(dry_run_result_ref, isolated_apply_result_ref)`、stable Build profile、`input_execution_mode=isolated_apply`与
+   requested completion scope（`compile_only|runtime_workflow`）。initial与repair后的shape都必须使用§15.11.2.8
+   structural protocol，并在Build Graph/effect前先committed一个`resume_report`消费各自的exact checkpoint handoff；
+   run/request invocation facts只进入pre-Build checkpoint及Action Identity，不构成无durable consumption的旁路协议。
+   operation只调用Build factory一次，只写一个BuildResult；success+runtime scope或failed+budget remaining再写一个
+   versioned WorkflowCheckpoint，compile success或budget exhausted不写handoff。
+2. `mutation_repair_preparation` contract version `1`：只接受exact failed-Build checkpoint structural protocol，
+   START admission重建checkpoint snapshot并逐字验证failed Build、mutation ancestry、attempt/budget/prior action；
+   Graph只走`create_repair_plan -> generate_patch_proposal -> review_proposal -> dry_run_apply`，DryRun committed后
+   写一个DryRun handoff WorkflowCheckpoint并END。isolated apply、Build、Runtime、evaluation/terminal调用均为0。
+3. `mutation_repair_apply` contract version `1`：只接受exact DryRun handoff structural protocol、operator返回的exact
+   decision（`approve|reject`）和current isolated-workspace execution constraints。`approve`要求operator value逐字等于
+   expected diff hash；`reject`只接受现有exact token `REJECTED_BY_USER`。Action Identity绑定decision、DryRun logical
+   identity与exact diff hash，不把Runtime approver或事后事实混入。approve Graph只执行一次`isolated_apply`，committed
+   success后写next-Build handoff WorkflowCheckpoint并END；reject仍以structural report消费DryRun checkpoint，但
+   isolated-apply effect调用为0，并写一份committed blocked IsolatedApplyResult：`execution_mode=rejected`、
+   `actual_write_performed=false`、`real_patch_applied=false`、`exact_diff_approved=false`，随后以
+   `completed/domain_blocked/next_operation.route=none`停止。Build、Runtime、evaluation/terminal调用均为0。除exact
+   reject token以外的hash mismatch属于preflight authorization/admission blocked：structural report、业务Store、effect均为0，
+   DryRun checkpoint保持未消费，outer adapter不得把`operator_input_required`私自改写为`domain_blocked`。
+
+initial产品Graph边界固定为：`run_local_request()`继续调用现有产品Graph完成自然语言/evidence/implementation/
+proposal/review/dry-run/first isolated-apply；Graph在Build node/effect前不返回可执行Build state，而是先用
+`WorkflowCheckpointStore.create_checkpoint_with_result()`写一份`mutation_prebuild_build_handoff_v1`
+WorkflowCheckpoint，再以该exact checkpoint ref和C5 receipt结束pre-Build阶段。checkpoint的`state_snapshot`由Graph
+在first isolated-apply committed后从当前`ModAgentState`构造，是后续Build所需run/request/feature/user/target、Artifact
+refs/hashes、attempt、approval、blocker、summary及trace的唯一durable state owner。memory checkpointer、interrupt state、
+caller mapping和run-local文件只作进程内定位/审计，不能直接传给typed executor或覆盖checkpoint snapshot。
+
+checkpoint write `blocked_before_commit|partial`时pre-Build Graph按真实C5结果停止，Build factory/effect与后续operation
+调用均为0；committed后outer adapter只能把exact checkpoint ref交给
+`preflight_mutation_build_continuation`。preflight从Store读取checkpoint及ordered DryRun/Apply refs，投影
+`prebuild_to_mutation_build` structural protocol；execute先committed consuming `resume_report`，再从checkpoint snapshot
+恢复clean state并在任何Build effect前重验全部字段/lineage。typed与legacy mutation Build都经同一outer normalizer进入
+该路径；旧Graph不得先Build再包装typed result，也不得从interrupt state跳过checkpoint/report。
+
+pre-Build Graph在checkpoint产生前因Evidence/Proposal/Review/DryRun/first Apply domain blocker或可捕获平台失败停止时，
+当前调用尚未形成`VerificationOperationResultV1`。该阶段的唯一machine truth是existing Graph返回的exact
+`ModAgentState`及其conditional-edge终态，`run_local_request()`只能把它放入
+`run_local_machine_result={schema_version:"run_local_machine_result_v1",source:"prebuild_graph",
+prebuild_graph_state:<exact Graph state>,verification_operation_result:null}`，不得读取`current_stage`、claims、summary、
+revision totals或stdout重新计算status。CLI对`source=prebuild_graph`只保留既有Graph调用是否正常返回与既有pre-Build
+终态投影；一旦checkpoint committed并进入typed operation，result形状必须切换为`source="verification_operation"`、
+`prebuild_graph_state=null`、`verification_operation_result=<exact VerificationOperationResultV1>`，其后所有路由/退出码
+只读该typed result与declaration-owned `next_operation`。两个source互斥，不能同时非空或同时为空；pre-Build state在
+切换后只可进入ordered audit history，不再拥有当前machine truth。
+
+WorkflowCheckpoint仍是唯一state handoff Artifact，但`resume_binding`增加append-only exact discriminator
+`binding_kind + binding_contract_version`，只允许：
+
+- `mutation_build_runtime_handoff_v1`：successful real Build、exact mutation ancestry/verified output、
+  `next_graph_node=collect_runtime_evidence`、run-scoped runtime admission hash；
+- `mutation_build_repair_handoff_v1`：failed Build、`claims_real_build_success=false`、
+  `next_graph_node=create_repair_plan`、attempt/budget/prior action；
+- `mutation_repair_dry_run_handoff_v1`：exact RepairPlan/Proposal/Review/DryRun chain、expected diff hash、
+  `next_graph_node=isolated_apply`；
+- `mutation_repair_apply_handoff_v1`：exact Proposal/Review/DryRun/Apply chain、approved diff hash、
+  `next_graph_node=build`。
+- `mutation_prebuild_build_handoff_v1`：first isolated-apply committed、ordered DryRun/Apply refs、完整pre-Build
+  `state_snapshot`、initial `MutationAttemptV1`和requested completion scope，`next_graph_node=build`。
+
+每个binding必须逐字绑定run/request/feature、source operation approval hash、next operation kind/version、attempt facts、
+requested completion scope和适用exact refs/hashes；unknown/extra binding、stage/node不匹配、latest alias、state/artifact
+drift均在structural report或下一个effect前拒绝。failed handoff不能通过现有successful Runtime blocker，successful
+handoff也不能进入repair。
+
+declaration-owned `store_attempt_chains`完整登记：
+
+| shape | exact legal chains |
+| --- | --- |
+| initial mutation Build | `(resume_report, build_result)`；`(resume_report, build_result, workflow_checkpoint)` |
+| repair-followup mutation Build | `(resume_report, build_result)`；`(resume_report, build_result, workflow_checkpoint)` |
+| repair preparation | `(resume_report, repair_plan)`（committed RepairPlan domain blocker）；`(resume_report, repair_plan, patch_proposal, proposal_review)`（committed review domain blocker）；`(resume_report, repair_plan, patch_proposal, proposal_review, dry_run_result)`（committed DryRun但不具备apply handoff）；同一最长chain再追加`workflow_checkpoint`（exact diff handoff ready） |
+| repair apply | `(resume_report, isolated_apply_result)`；同一prefix再追加`workflow_checkpoint` |
+| structural same-invocation Runtime workflow | 沿现有Runtime terminal三条chain，但首项必须是structural `resume_report`，不得虚构Human report receipt |
+
+`output_artifact_roles`只做role→ArtifactType allowlist，合法顺序/branch仍只由declaration record拥有。每个节点必须使用
+`write_with_result`并把Store-owned typed `ArtifactWriteResult`保留到Graph ephemeral state；adapter/Graph/local entry不得
+从ref、filesystem或totals重造receipt。一个noncommitted Store result必须是最后一次调用，随后所有Store/effect为0。
+
+##### 15.11.2.10 attempt、dispatcher、result与failure matrix
+
+新增exact `MutationAttemptV1`并由三operation共享；字段为：`build_attempt_number`、`repair_attempt_number`、
+`repair_budget_total=2`、`repair_budget_remaining`、`prior_action_identity_hash`、`automatic_retry_count=0`、
+`recovery_allowed=false`。约束为：initial Build=`build_attempt_number=1/repair_attempt_number=0/remaining=2/
+prior=null`；第N次repair preparation/apply和其后Build使用`repair_attempt_number=N`、
+`build_attempt_number=N+1`、`remaining=2-N`、exact non-null prior action hash，N只允许1或2。attempt fields与requested
+completion scope进入Action Identity、checkpoint binding和dispatcher projection；任一漂移首个Store/effect前拒绝。
+budget exhausted时不得创建`mutation_build_repair_handoff_v1`或投影repair operation。
+
+每个mutation result variant都包含一个declaration-owned `next_operation` typed projection，exact schema为：
+`projection_contract_version`、`route`（`none|invoke_operation|await_exact_diff_approval`）、source operation kind/version/
+approval hash、next operation kind/version或null、exact checkpoint ref或null、next attempt facts或null、requested
+completion scope、exact DryRun ref/expected diff hash或null。字段按route固定nullability；不允许`terminal_disposition`、
+callable、private dict、Graph state、latest ref、Store totals或Presentation observation。`await_exact_diff_approval`
+只显示DryRun/diff事实，不能提前构造repair-apply Envelope/hash；operator返回hash后由public preflight重新读Store并
+形成exact Envelope。
+
+`VerificationOperationResultV1.execution_disposition`继续使用已经提交并由strict parser闭合的exact值域
+`succeeded|domain_blocked|platform_blocked|partial|operator_input_required`，P2.2不得append新literal。当前operation
+的required Store chain全部committed且没有domain/platform blocker时固定为`succeeded`；该值只证明当前action完成，
+不声明整个产品workflow完成。后续生命周期只由variant中的`next_operation.route`表达：存在exact下一operation时仍为
+`succeeded + invoke_operation`，等待diff时为`operator_input_required + await_exact_diff_approval`，最终完成才是
+`succeeded + none`；`domain_blocked`只与`route=none`组合，`platform_blocked|partial`也不得携带可执行next route。
+run_local adapter只能把result交给一个中立public dispatcher，或把最终result投影成legacy/CLI Presentation；不能维护
+operation-kind→public-function的`if/elif`/第二注册表，也不能修改status/disposition/refs/receipts或读取`current_stage`、
+claims、runtime summary、revision totals、latest alias、stdout、Presentation选择route。dispatcher不携callable；
+registration/resolution仍由operation declaration owner拥有，public dispatcher通过registered handler key解析，
+`verification_operations.py`不反向导入`local_entry.py`。
+
+所有operation统一first-failure-stop矩阵：
+
+| facts | platform/result | Store/side-effect边界 |
+| --- | --- | --- |
+| declaration/identity/input/lineage/freshness/expected-hash/Graph START drift | `blocked/authorization|admission` | receipts=0；本operation effect=0；Store增量0 |
+| structural report `blocked_before_commit` | `blocked/*_protocol_store` | 保留该C5 receipt；其后Graph/effect/Store=0 |
+| structural report `partial` | `partial/*_protocol_store` | 保留该C5 receipt；其后Graph/effect/Store=0；retry/recovery=0 |
+| report committed后，下一node execution/prewrite validation异常 | `partial/exact node execution stage` | 保留committed protocol ref/receipt和既有committed prefix；未调用Store无receipt；后续=0 |
+| 任一业务Store `blocked_before_commit`且此前无committed prefix | `blocked/exact role_store` | 保留真实最后receipt；后续=0 |
+| 任一业务Store noncommitted且已有committed prefix，或最后receipt本身partial | `partial/exact role_store` | 保留全部ordered prefix；后续=0；不自动恢复 |
+| declaration登记的domain-terminal短链全部committed | `completed/domain_blocked` | 短链必须逐项匹配一条exact legal chain，`next_operation.route=none`；不得按更长chain prefix投影partial或继续 |
+| 全部当前branch required roles committed | `completed` | outputs逐项同role/ref匹配committed receipts；dispatcher从declaration+variant投影next route |
+
+合法role tuple本身不决定terminal语义；declaration必须同时登记并由result projector验证以下exact
+`store_chain_predicates`。adapter与测试不得按tuple复制第二张predicate表：
+
+| operation/committed chain | exact payload/status predicate | 唯一result/next route |
+| --- | --- | --- |
+| mutation Build `(resume_report, build_result)` compile branch | BuildResult envelope `status=success`、payload `status=success`、`real_build_performed=true`、`claims_real_build_success=true`，requested completion=`compile_only` | `completed/succeeded/route=none` |
+| mutation Build `(resume_report, build_result, workflow_checkpoint)` Runtime branch | 同一successful Build facts、requested completion=`runtime_workflow`，checkpoint binding=`mutation_build_runtime_handoff_v1`且exact runtime admission/attempt/source action一致 | `completed/succeeded/route=invoke_operation(runtime_execution/2)` |
+| mutation Build `(resume_report, build_result)` exhausted branch | BuildResult committed但payload `status!=success`或`claims_real_build_success=false`，且`repair_budget_remaining=0`；不得存在repair checkpoint | `completed/domain_blocked/route=none` |
+| mutation Build `(resume_report, build_result, workflow_checkpoint)` repair branch | 同一failed Build facts、`repair_budget_remaining>0`，checkpoint binding=`mutation_build_repair_handoff_v1`且exact attempt/prior action一致 | `completed/succeeded/route=invoke_operation(mutation_repair_preparation/1)` |
+| repair preparation `(resume_report, repair_plan)` | RepairPlan envelope `status=blocked`，且payload `retry_exhausted=true`、`blockers`非空或`allowed_next_stage!="generate_patch_proposal"` | `completed/domain_blocked/route=none` |
+| repair preparation through committed `proposal_review` | ProposalReview envelope `status=blocked`且payload `allowed_next_stage!="dry_run_apply"` | `completed/domain_blocked/route=none`；本operation不在内部重入repair loop |
+| repair preparation through committed `dry_run_result` without checkpoint | DryRunResult envelope不是`status=success`，或payload不同时满足`execution_mode="dry_run"`、`actual_write_performed=false`、`real_patch_applied=false`、`approved_by_review=true`、non-empty exact `diff_hash` | `completed/domain_blocked/route=none` |
+| repair preparation through committed `dry_run_result, workflow_checkpoint` | DryRunResult满足上述全部handoff-ready facts，checkpoint binding=`mutation_repair_dry_run_handoff_v1`且exact diff/attempt/source action一致 | `completed/operator_input_required/route=await_exact_diff_approval` |
+| repair apply `(resume_report, isolated_apply_result)` reject branch | variant decision=`reject`，IsolatedApplyResult envelope `status=blocked`且payload `execution_mode="rejected"`、`actual_write_performed=false`、`real_patch_applied=false`、`exact_diff_approved=false` | `completed/domain_blocked/route=none`，isolated-apply effect=0 |
+| repair apply `(resume_report, isolated_apply_result)` failed branch | variant decision=`approve`，IsolatedApplyResult envelope `status=blocked|failed`且payload没有同时满足successful apply facts | `completed/domain_blocked/route=none` |
+| repair apply `(resume_report, isolated_apply_result, workflow_checkpoint)` | variant decision=`approve`，IsolatedApplyResult envelope `status=success`且payload `execution_mode="isolated_apply"`、`actual_write_performed=true`、`real_patch_applied=true`、`approved_by_review=true`、`approved_by_user=true`、`exact_diff_approved=true`，`approved_diff_hash`与DryRun `diff_hash`逐字相同；checkpoint binding=`mutation_repair_apply_handoff_v1` | `completed/succeeded/route=invoke_operation(mutation_build/1)` |
+
+successful Build要求handoff、handoff-ready DryRun或successful Apply缺少required checkpoint时，即使前一业务Artifact已
+committed也必须为`partial/checkpoint_construction|workflow_checkpoint_store`并保留真实committed prefix；不得把它们
+解释为合法短链。RepairPlan允许继续却无Proposal、ProposalReview允许dry-run却无DryRun、failed mutation Build仍有
+budget却无repair handoff，同样只能由与当前phase相符的非Store failure或真实noncommitted Store receipt解释partial，
+不能产生`failure_stage=null`的completed。projector/from_dict共同重放predicate与chain，不接受caller提供的route/
+disposition覆盖derived truth。
+
+Build factory或isolated-apply effect开始后异常必须标记`side_effects_may_have_started=true`；repair preparation纯Store/
+model或deterministic node按实际effect边界报告，不能用Store commit反推外部effect。BuildResult committed但checkpoint
+blocked/partial为`partial`并保留BuildResult；DryRun committed但handoff checkpoint失败为`partial`，不能假装等待
+operator；Apply committed但next-Build checkpoint失败为`partial`，不能直接Build。任何post-commit Presentation/
+audit错误不得降级已冻结machine result。
+
+最低合同/实施验收除原§15.11.2.4外必须包括：先committed allowed=false Human blocked report后仍能写一份合法
+allowed consumer；accepted consumer后DOUBLE_RESUME仍写non-consuming blocked audit；Human allowed consumer与structural
+allowed consumer并发最多一份committed consumer；structural reservation collision/pending/crash三态；historical无
+discriminator Human read-only兼容；Edit Authority、repair-planning、C6 Runtime/retry/recovery/terminal的Human-only reader
+全部拒绝structural report；continuation id对completion scope/runtime admission/diff/source/route/attempt任一漂移变化；
+initial Graph Build factory=0、pre-Build checkpoint snapshot逐字恢复且caller/interrupt state tamper无效；checkpoint形成前
+domain blocked只返回`source=prebuild_graph`，checkpoint后只返回`source=verification_operation`；approve/reject两个exact
+diff分支及reject apply effect=0；三operation每条短链的payload/status predicate与required handoff缺失partial门；每个role
+的blocked-before-commit/partial与写间异常；attempt 1/2、budget exhausted、prior hash和dispatcher drift首写前拒绝；
+consuming report committed后在effect前/effect中/Artifact committed后硬退出，下一调用均fail-closed partial、report ref
+保留、receipt不重造、side_effects_may_have_started=true、recovery=false；successful mutation Build→structural Runtime完整
+公共链；cross-invocation Human Resume保持；run_local只调用中立public dispatcher且CLI只消费当前structured machine
+result。任何需要新Artifact type、第二dispatcher/result owner、Graph/Store绕过或修改P2.3-P4的发现都必须停止并重新审核。
+
+##### 15.11.2.11 identity、declaration owner与公共入口
+
+中立canonical JSON/domain-separated SHA256仍只由`action_identity.py`拥有。各semantic owner只声明exact projection；
+不得各自实现JSON排序/hash。append-only records固定如下：
+
+| shape | identity schema/hash domain | exact approval projection |
+| --- | --- | --- |
+| initial/followup `mutation_build` v1 | `mutation_build_identity_v1` / `mod_agent.mutation_build.v1` | run/request/feature；ordered DryRun/Apply logical identities；Build profile stable fields；isolated-apply mode；requested completion；exact `MutationAttemptV1`；structural checkpoint identity/continuation id/source action nullable facts；one Build effect与allowed outputs。initial必须绑定`mutation_prebuild_build_handoff_v1`，followup必须绑定`mutation_repair_apply_handoff_v1` |
+| `mutation_repair_preparation` v1 | `mutation_repair_preparation_identity_v1` / `mod_agent.mutation_repair_preparation.v1` | failed checkpoint logical identity、structural continuation id/source action hash、exact attempt/budget/completion scope、bounded node/action scope、allowed output roles；不含尚未生成的Proposal/DryRun/diff |
+| `mutation_repair_apply` v1 | `mutation_repair_apply_identity_v1` / `mod_agent.mutation_repair_apply.v1` | DryRun checkpoint logical identity、structural continuation id、exact DryRun/Proposal/Review logical identities、operator返回的exact diff hash、exact attempt/budget/completion scope、one isolated-apply effect与allowed outputs；不含Runtime approver |
+| structural same-invocation `runtime_execution` | existing operation kind + append-only contract version `2`；`runtime_execution_identity_v2` / `mod_agent.runtime_execution.v2` | successful mutation Build checkpoint logical identity、structural continuation id/source Build action hash、exact attempt/completion scope、canonical original run-scoped runtime admission/permissions、runtime action scope；不含`approved_by`、Human resume id或physical locator |
+
+现有`runtime_execution` contract version `1`、七shape identity/hash bytes和Human `NewRuntimeResumeProtocolBindingV1`保持
+不变；cross-invocation/manual继续解析v1。v2不得fallback到v1 projector，unknown version fail-closed。v2
+`RuntimeExecutionResultV1.resume_report_ref`保存structural report ref，declaration chains与现有initial Runtime workflow
+相同role顺序；其payload union discriminator证明它不是Human approval。
+
+owner固定为：
+
+- `verification_operations.py`：operation declaration、identity projector registration、attempt/result/next-operation
+  projector和合法Store chains唯一owner；
+- 新纯模块`resume_protocol.py`：Human/structural ResumeReport union、continuation id、checkpoint consumption semantic
+  projection唯一owner；不依赖Graph/local entry/Presentation，且只通过中立read context访问Store；
+- 新纯模块`mutation_continuation.py`：三个mutation action的transitive lineage、checkpoint binding、spec inputs和
+  post-effect payload validation唯一owner；不写Store、不启Graph、不解释C5 result；
+- `artifact_semantics.py`：只登记`resume_report + resume_protocol + 1`trusted handler并生成neutral
+  `ArtifactWriteIntent`；Store继续只消费intent/conflict key，不理解operation/repair/Runtime/diff；
+- `workflow/checkpointing.py`：state snapshot、versioned checkpoint binding和protocol read/consume orchestration；业务
+  invariant委托上述pure owner；
+- `workflow/graph.py`：node顺序、START/interrupt/TOCTOU、Graph-before-effect；节点业务/identity/result规则均委托；
+- `local_entry.py`与CLI：legacy输入准备、调用public pair、逐字执行`next_operation`、最终Presentation；无route/
+  disposition/receipt/hash authority。
+
+公共entry固定为三个exact pair，不建立含nullable factory集合的单体executor：
+
+- `preflight_mutation_build_continuation` / `execute_mutation_build_continuation`；
+- `preflight_mutation_repair_preparation` / `execute_mutation_repair_preparation`；
+- `preflight_mutation_repair_apply` / `execute_mutation_repair_apply`。
+
+preflight只接收exact Spec及只读execution constraints，返回现有`VerificationOperationPreflightResultV1`；execute只接收
+validated Envelope、`expected_approval_identity_hash`与该variant登记的effect adapter，重跑同一preflight并在任何
+ResumeReport/Graph/Store/effect前逐字比较。typed operation与legacy mutation参数混用零写入拒绝。structural Runtime
+继续使用现有Runtime public entry，但只通过new contract-v2 Spec/Envelope进入；public normalizer不得把v2改写成Human
+v1。三个pair内部可以委托private handler，但不能彼此接收不适用factory或字段。
+
+P2.2最终不新增第二套typed-operation verdict schema。checkpoint形成前的pre-Build阶段按§15.11.2.9的互斥
+`run_local_machine_result.source=prebuild_graph`保留existing Graph machine truth；checkpoint committed并开始typed action
+后，每次action只产生一个authoritative `VerificationOperationResultV1`，`next_operation`属于exact mutation variant
+result。`run_local_request()`可以把此前pre-Build state与冻结operation results作为ordered audit history附在legacy
+mapping中，但current machine truth只能是互斥source指定的一个对象；CLI在`verification_operation`阶段只读取该result
+的`execution_disposition`。history不能参与route、terminal或receipt校验。
+
+declaration `failure_stages`逐shape固定，不允许adapter改名或按异常类名选择：
+
+- mutation Build：`authorization -> admission -> resume_protocol_store -> graph_admission ->
+  store_preflight -> build_execution -> post_build_validation -> build_result_store -> checkpoint_construction ->
+  workflow_checkpoint_store -> interrupted_after_protocol_consumption -> internal_execution`；
+- repair preparation：`authorization -> admission -> resume_protocol_store -> graph_admission ->
+  repair_plan_execution -> repair_plan_store -> patch_proposal_execution -> patch_proposal_store ->
+  proposal_review_execution -> proposal_review_store -> dry_run_execution -> dry_run_result_store ->
+  checkpoint_construction -> workflow_checkpoint_store -> interrupted_after_protocol_consumption -> internal_execution`；
+- repair apply：`authorization -> admission -> resume_protocol_store -> graph_admission -> store_preflight ->
+  isolated_apply_execution -> post_apply_validation -> isolated_apply_result_store -> checkpoint_construction ->
+  workflow_checkpoint_store -> interrupted_after_protocol_consumption -> internal_execution`；
+- structural Runtime v2沿用现有Runtime-workflow stage tuple，`resume_report_store`明确表示structural protocol report
+  Store结果，并登记`interrupted_after_protocol_consumption`；caller effect异常仍只能是`runtime_execution`，不能通过
+  异常类名选择其他平台stage。
+
+所有Store-owned stage只能由该role真实`write_with_result`返回的noncommitted receipt派生；无对应Store调用时不能由
+`execution_failure_stage`伪造。无noncommitted receipt的execution stage必须与当前committed prefix所处phase一致；
+全部legal chain committed后不能再由`internal_execution`或Presentation降级。strict serialized result继续委托同一
+declaration projector重放phase/chain规则。
+
+##### 15.11.2.12 当前合同状态、实施拆包与独立审核门
+
+`user_authorization_semantics=resolved_by_user`，但A方案的protocol/operation边界没有获得实施授权。独立审核确认
+当前P2.2“Build adapter adoption”与`run_local_request()`真实same-invocation完整生命周期边界不匹配，继续逐字段修补
+会把入口迁移扩大成新的durable execution平台。因此当前精确状态为
+`architecture_boundary_reselection_required`、`implementation_authorization=not_granted`；§15.11.2.8–.11保留为A方案
+的未批准设计记录，不是rejected最终结论，也不是P2.2a–d实施合同。当前只允许§15.11.2.13的只读A/B比较；不得继续
+给A追加字段、修改代码/测试/Store/index或启动P2.2a–d/P2.3–P4。
+
+以下原拆包仅说明A方案的成本，不构成当前实施顺序或授权：
+
+1. P2.2a：ResumeReport protocol union、trusted semantic intent、shared checkpoint conflict/C5三态与历史Human
+   compatibility；不接Graph/effect。
+2. P2.2b：mutation declarations/identity/attempt/result/dispatcher及versioned checkpoint binding；先用pure/Store
+   tests证明，无active entry adoption。
+3. P2.2c：三个Graph/public pairs与node `write_with_result`迁移，真实temporary Store failure matrix；不改
+   run_local/CLI。
+4. P2.2d：`run_local_request()`/`run-request`pre-Build interrupt、public pair adoption、structural Runtime v2与final
+   machine-result Presentation；删除旧Build/repair/runtime route/terminal authority并做真实公共集成。
+
+任一子包发现union无法保持Human历史兼容、需要新Artifact type、需要Store识别operation、需要第五个result owner或
+必须改变P2.3–P4，立即停止并回合同审核；不得在同一子包顺带决定。只有P2.2a–d均独立验收/提交、active entry静态
+inventory证明旧authority退出、成功/failed/repair-budget/Runtime公共矩阵通过后，P2.2与Build production adoption才
+可标记complete。当前文档修改、审核时间仍计入`hard_stop=2026-08-07T14:11:55.6636360+08:00`；到点未approved则
+只保存合同checkpoint，不写代码、不做WIP commit。
+
+##### 15.11.2.13 architecture boundary reselection：A/B只读比较checkpoint
+
+本节只比较边界，不批准A或B实施。比较基线为HEAD
+`d37de0d82f2bdac263cdd9849e371b9d9aa6f58e`的真实源码；production/test/Store/index change均为none。
+
+| 维度 | A：multi-operation durable continuation | B：same-invocation Public Product Executor + existing StateGraph |
+| --- | --- | --- |
+| 解决的问题 | 把Build、repair preparation、repair apply、后续Build和Runtime拆成可跨调用、可durable消费的独立action | 让当前active `run_local_request()`退出shadow control plane，同时保持本次调用内现有Proposal/Repair/Build/Runtime/Eval生命周期 |
+| 核心route owner | 新declaration dispatcher跨三个mutation public pair和Runtime v2选择下一action | 现有`build_graph()` conditional edges继续拥有same-invocation route；Public Product Executor只调用一次Graph并消费Graph产出的冻结product result |
+| Approval表示 | 每个action各自Envelope/Action Identity；structural continuation另需protocol consumption identity | 整个workflow不建立总Approval Identity；已经有canonical identity的sub-action继续引用原owner；exact diff hash、Build/Runtime bool/scope permission等只有binding事实而没有canonical Approval Identity的输入不得冒充identity，product result只引用其经验证事实 |
+| durable新增 | `resume_report` union、consumption conflict、crash/replay、四类checkpoint binding、structural Runtime v2 | 不新增structural ResumeReport、跨进程exactly-once或自动crash recovery；actual Human/cross-invocation interrupt继续使用现有Human ResumeReport |
+| public/schema新增 | 三个public pair、三个operation declaration、Runtime v2、attempt/dispatcher/next-operation/result variants | 一个Public Product Executor public pair及一个strict `ProductExecutionResultV1`；不增加mutation action kind，不改变既有七shape identity/hash |
+| Graph改动 | initial pre-Build切断；repair preparation/apply/build拆Graph边界并增加START/STOP/checkpoint消费 | 保留现有nodes/conditional edges/repair budget；仅为product-executor mode把每个durable node的C5 receipt存入ephemeral state并在terminal投影结果 |
+| Store/Artifact | 复用Artifact类型仍需`resume_report` semantic binding、shared conflict及新checkpoint binding | Artifact类型/lineage保持；节点继续写既有Artifact，只把兼容`write()`调用迁到`write_with_result()`并first-failure-stop |
+| hard exit | 必须定义consumed report后无result的跨调用悬挂态与replay拒绝 | 不声称跨进程恢复；进程硬退出可能没有任何structured result返回，durable Artifact仅作审计/以后显式流程输入，不自动重入、不重建C5 receipt，也不伪造“已持久化的失败result” |
+| 行为兼容风险 | 切断现有same-invocation Graph，repair/Runtime每次重建state与handoff，新增协议/identity兼容面 | 保留现有Graph route和最多两次repair；主要风险是C5 first-failure-stop使过去隐式继续的Store失败明确停止，以及legacy result/CLI投影漂移 |
+| 预计有界包 | 至少原P2.2a–d四包，且先承担protocol union/crash/replay平台能力 | 三包：B1 product result/Graph C5 facts；B2 Public Product Executor与真实failure matrix；B3 run_local/CLI adoption及旧authority退出 |
+
+真实symbol inventory与修改面：
+
+- A至少触及/新增`verification_operations.py` declarations/dispatcher、`resume_protocol.py`、
+  `mutation_continuation.py`、`artifact_semantics.py` trusted binding、`workflow/checkpointing.py` union/consumption、
+  `workflow/graph.py` split boundaries、`local_entry.py`三个public pair和adapter、`cli.py` Presentation，以及Registry/
+  Store semantic-intent相邻测试；它交付的是新的durable execution平台能力，不只是入口adapter。
+- B保留`workflow/graph.py::build_graph`及现有`route_after_*` conditional edges。当前 `_run_build`、
+  `_run_runtime_evidence`、`_run_fake_evaluate`、`_run_workflow_summary`和blocked terminal只有在verification-operation
+  controls启用时才走`write_with_result`/`use_store_result`；普通`run_local_request()`未传`verification_operation`，
+  因此这些节点当前仍走兼容`write()`。B必须建立一个typed product-executor Graph mode统一启用其已有C5路径；该mode
+  的exact carrier/owner由B实施合同固定，不能成为新的bool/string route authority。
+- 普通run-local active route中仍直接调用`ArtifactStore.write()`且没有可复用C5 branch的节点包括
+  `_run_plan_request`、`_run_planning_brief`、`_run_draft_feature_spec`、`_run_retrieve_evidence`、
+  `_run_create_implementation_plan`、`_run_generate_patch_proposal`、`_run_review_proposal`（含critic/review）、
+  `_run_dry_run_apply`、`_run_create_repair_plan`、`_run_isolated_apply`、`_run_resolve_runtime_binding`。它们全部属于B的
+  active C5 adoption范围；每个节点只保存Store返回的typed `ArtifactWriteResult`，不得由ref、state、totals或文件存在
+  重建。`_materialize_feature_spec_revision`只在`feature_spec_revision_projection`非空的条件路径调用，当前
+  `run_local_request()`没有提供该输入，所以不属于P2.2 active route；B不得宣称它已迁移，若Public Product Executor
+  以后接收该条件输入必须另行登记并纳入C5范围。
+- B新增一个中立Public Product Executor（exact module/symbol留待B实施合同inventory后固定）作为
+  `run_local_request()`唯一调用目标：准备validated Graph inputs/effect adapters→invoke existing StateGraph once→由一个
+  declaration-owned product projector产出`ProductExecutionResultV1`。该result覆盖从request planning、planning brief、
+  FeatureSpec、EvidencePack、ImplementationPlan开始的全部active Store attempts，并按Graph实际attempt顺序保存冻结的
+  Proposal/review/dry-run/apply/Build、适用BindingResolution、Runtime/Eval及BlockedReport/WorkflowSummary sub-results与
+  C5 receipts；重复repair role按attempt/phase嵌套记录，不压成一条flat `store_attempt_chains`，也不重算Store/Build/
+  Runtime/domain truth。exact schema留给B实施前合同，但任何reachable node的Store failure都不能从result覆盖面省略。
+- B的`run_local_request()`只保留workspace/model/effect参数准备、调用executor、legacy Presentation；必须删除其
+  `graph.invoke`、`final_build_succeeded`、`current_stage`/Build或Runtime claims及summary判终态。`cli.py`的`run-request`
+  必须删除当前`current_stage==done`、`claims_real_runtime_success`、`claims_real_build_success`退出码判断，改为只读取
+  strict product result的declaration-owned disposition。Graph外不得存在第二route/status/receipt owner。
+
+B的失败与组合边界：
+
+1. same-invocation Graph route保持当前语义：failed Build可进入`create_repair_plan`，repair budget仍由
+   `RepairPlanner(retry_budget=2)`与Graph state约束，successful Build按已有conditional edge进入Runtime/Eval；Public
+   Product Executor不维护第二张route表。
+2. 每个Store调用一旦返回`blocked_before_commit|partial`，Graph在下一node/effect前停止并把exact receipt及此前
+   committed attempt prefix交给product projector；不得继续后续repair/Build/Runtime，也不得伪造未调用receipt。
+3. Build/isolated-apply/Runtime effect异常按实际调用点记录`side_effects_may_have_started`；product result聚合冻结
+   facts，不用Artifact commit反推effect是否发生。
+4. actual dynamic Human review、manual/cross-invocation Runtime Resume继续走现有Human ResumeReport；same-invocation
+   ordinary route不写或伪造ResumeReport。进程硬退出可能没有structured result返回；B不承诺exactly-once、自动retry/
+   recovery、恢复上次ephemeral receipt或事后伪造machine result。
+5. 整个workflow不生成总Approval hash。已有canonical identity的sub-action继续由原owner构造/验证，product projector
+   只引用其hash/ref/result；exact diff hash与Build/Runtime permission等existing binding事实由B实施合同固定可信输入与
+   validation owner，但不得被包装成不存在的canonical Approval Identity，也不能合并成workflow总hash。
+
+结论与唯一待用户决定的问题：对于当前目标“迁移active主产品入口且保持same-invocation行为”，B需要的机制和修改面
+明显小于A，并直接针对`run_local_request()`与CLI的shadow route/result owner；A提供的跨进程、逐attempt durable
+continuation/exactly-once能力不是当前入口迁移已经证明必须具备的产品能力。因此推荐把P2.2边界改为B，并把A保留为
+未启动的conditional durable-continuation设计记录。唯一公共决定是：**本阶段选择B完成same-invocation active-entry
+migration，还是用户明确要求同时建设A的跨进程durable continuation平台能力？** 在用户选择且新的B或A实施合同获得
+独立`approved`前，`implementation_authorization=not_granted`，P2.2a–d/P2.3–P4全部停止。
 
 分层规则：
 
