@@ -3374,7 +3374,7 @@ overall_completion_gates:
 
 #### 15.11.2 P2.2 `run_local_request()` authority migration inventory与合同blocker
 
-> **状态**：`architecture_boundary_reselection_required`；`implementation_authorization=not_granted`。
+> **状态**：`architecture_boundary_selected_option_b`；`implementation_authorization=not_granted`。
 > **当前合同时间盒**：`started_at=2026-08-07T12:11:55.6636360+08:00`，
 > `hard_stop=2026-08-07T14:11:55.6636360+08:00`。审核时间计入两小时；本节未授权代码或测试修改。
 > 先前`2026-08-07T11:42:18.9161797+08:00` inventory已证明现有verification-only Build语义不匹配；
@@ -3390,6 +3390,9 @@ overall_completion_gates:
 > 该决定只闭合authorization semantics；它不等于选择A的durable multi-operation边界。最新独立审核要求暂停
 > §15.11.2.8–.11的局部修补，先按§15.11.2.13重选A/B架构边界；未完成用户选择与新合同独立`approved`前仍不授权
 > 代码、测试、Store或index修改。
+> **架构边界决定**：用户于2026-08-07明确选择§15.11.2.13的B，即same-invocation Public Product Executor over
+> the existing StateGraph。该决定排除本阶段建设A的跨进程durable continuation平台，但不批准B实施；B的精确
+> implementation contract仍须另行形成并通过独立审核。
 
 ##### 15.11.2.1 真实active调用链
 
@@ -3496,14 +3499,12 @@ local wrapper、caller提供的state snapshot、私有dict或Presentation summar
 - `resolved_contract_facts`：一次mutation Build的exact immediate inputs、transitive lineage验证边界、
   BuildResult upstream、physical-locator排除、C5 BuildResult三态，以及successful mutation Build的现有
   checkpoint/lineage机制支持均如§15.11.2.3/.4。
-- `unresolved_contract_decisions=["P2.2 execution boundary: durable multi-operation continuation (A) or
-  same-invocation Public Product Executor over the existing StateGraph (B)"]`。用户已经授权的transition级真实
-  authorization semantics仍有效，但§15.11.2.8–.11只作为A方案的未批准设计记录；当前状态由§15.11.2.13覆盖为
-  `architecture_boundary_reselection_required`。普通descendant scan、latest/revision totals、进程内set、caller state或
-  Presentation均不构成任一方案的替代实现。
-- 在独立审核确认该blocker并由用户授权下一份有界repair-continuation合同决定前，P2.2保持open；P2.3、P2.4、
-  P3、P4均不得启动。不得为赶时间新增operation、Graph node、Artifact/Approval类型或修改
-  `run_local_request()`。
+- `unresolved_contract_decisions=[]`仅表示A/B架构边界已经由用户选择B；用户已经授权的transition级真实
+  authorization semantics仍有效，但§15.11.2.8–.11只作为A方案的未批准设计记录。当前状态由§15.11.2.13覆盖为
+  `architecture_boundary_selected_option_b`。普通descendant scan、latest/revision totals、进程内set、caller state或
+  Presentation均不能替代B要求的Graph-owned route、Store-owned C5 facts或strict product result。
+- P2.2保持open且实施暂停，直到B的精确implementation contract形成并获得独立`approved`；P2.3、P2.4、P3、P4
+  均不得启动。不得为赶时间新增operation、Graph node、Artifact/Approval类型或修改`run_local_request()`。
 
 ##### 15.11.2.6 下一份有界repair-continuation合同的最小分解与新增兼容阻断
 
@@ -3943,12 +3944,13 @@ declaration projector重放phase/chain规则。
 
 ##### 15.11.2.12 当前合同状态、实施拆包与独立审核门
 
-`user_authorization_semantics=resolved_by_user`，但A方案的protocol/operation边界没有获得实施授权。独立审核确认
+`user_authorization_semantics=resolved_by_user`，A方案的protocol/operation边界没有获得实施授权。独立审核确认
 当前P2.2“Build adapter adoption”与`run_local_request()`真实same-invocation完整生命周期边界不匹配，继续逐字段修补
-会把入口迁移扩大成新的durable execution平台。因此当前精确状态为
-`architecture_boundary_reselection_required`、`implementation_authorization=not_granted`；§15.11.2.8–.11保留为A方案
-的未批准设计记录，不是rejected最终结论，也不是P2.2a–d实施合同。当前只允许§15.11.2.13的只读A/B比较；不得继续
-给A追加字段、修改代码/测试/Store/index或启动P2.2a–d/P2.3–P4。
+会把入口迁移扩大成新的durable execution平台。用户已经选择B，因此当前精确状态为
+`architecture_boundary_selected_option_b`、`b_implementation_contract=not_started`、
+`implementation_authorization=not_granted`；§15.11.2.8–.11保留为A方案的未批准设计记录，不是rejected最终结论，
+也不是P2.2a–d实施合同。当前只允许形成并独立审核B的精确implementation contract；不得继续给A追加字段、修改
+代码/测试/Store/index或启动P2.2a–d/P2.3–P4。
 
 以下原拆包仅说明A方案的成本，不构成当前实施顺序或授权：
 
@@ -4032,12 +4034,58 @@ B的失败与组合边界：
    只引用其hash/ref/result；exact diff hash与Build/Runtime permission等existing binding事实由B实施合同固定可信输入与
    validation owner，但不得被包装成不存在的canonical Approval Identity，也不能合并成workflow总hash。
 
-结论与唯一待用户决定的问题：对于当前目标“迁移active主产品入口且保持same-invocation行为”，B需要的机制和修改面
+结论：对于当前目标“迁移active主产品入口且保持same-invocation行为”，B需要的机制和修改面
 明显小于A，并直接针对`run_local_request()`与CLI的shadow route/result owner；A提供的跨进程、逐attempt durable
 continuation/exactly-once能力不是当前入口迁移已经证明必须具备的产品能力。因此推荐把P2.2边界改为B，并把A保留为
-未启动的conditional durable-continuation设计记录。唯一公共决定是：**本阶段选择B完成same-invocation active-entry
-migration，还是用户明确要求同时建设A的跨进程durable continuation平台能力？** 在用户选择且新的B或A实施合同获得
+未启动的conditional durable-continuation设计记录。用户已明确选择B完成same-invocation active-entry migration；
+本阶段不建设A的跨进程durable continuation平台。该选择不等于B实施授权：在新的B精确implementation contract获得
 独立`approved`前，`implementation_authorization=not_granted`，P2.2a–d/P2.3–P4全部停止。
+
+用户架构选择checkpoint固定为：
+
+```yaml
+architecture_boundary_verdict: option_b
+user_architecture_selection: option_b
+product_requirement:
+  - 移除run_local_request与CLI对Graph route、Store outcome和terminal disposition的shadow authority
+  - 保持existing StateGraph拥有same-invocation Proposal/Repair/Build/Runtime/Eval lifecycle
+non_requirement:
+  - 本阶段不要求跨进程structural continuation、exactly-once、自动crash recovery或C5 receipt重建
+existing_owner_mapping:
+  graph: same-invocation lifecycle route与conditional edges
+  store: 每次Artifact write的C5 outcome
+  checkpoint: 既有显式Human/cross-invocation handoff，不扩成ordinary same-invocation协议
+  approval: 既有sub-action canonical identity与经验证permission/binding facts各自保留原owner
+  run_local_request: validated inputs/effect adapters准备与legacy Presentation
+authority_to_remove:
+  - run_local_request的graph.invoke与current_stage/Build/Runtime claims终态解释
+  - CLI基于current_stage或Build/Runtime claims决定exit code
+authority_to_preserve:
+  - existing StateGraph nodes、conditional edges、repair budget及domain route semantics
+  - Store-owned ArtifactWriteResult三态
+  - 既有sub-action identity、Artifact lineage和Human Resume语义
+minimum_public_contract:
+  - 一个Public Product Executor public pair
+  - 一个typed product-executor Graph mode；exact carrier与owner由B implementation contract固定
+  - 一个strict ProductExecutionResultV1，覆盖全部active reachable Store attempts并按phase/attempt嵌套
+  - noncommitted Store result后的first-failure-stop与Graph外零第二route/status/receipt owner
+durability_decision:
+  selected: same_invocation_only
+  rationale: 当前active-entry migration没有证明跨进程逐attempt continuation是必要产品能力
+compatibility_boundary:
+  - 保持现有same-invocation Graph lifecycle、最多两次repair、历史Artifact与Human Resume可读/可用
+  - hard exit可能不返回structured result；不自动重入、不恢复、不重建receipt
+estimated_change_surface:
+  architecture_packages:
+    - B1 product result与active Graph C5 facts
+    - B2 Public Product Executor与真实failure matrix
+    - B3 run_local/CLI adoption及旧authority退出
+  exact_files_schemas_tests: 由B implementation contract在源码inventory后固定
+rejected_alternative:
+  option_a: 本阶段不选择；其durable consumption/crash/replay平台能力超出当前已证明需求
+unresolved_contract_decisions: []
+implementation_authorization: not_granted
+```
 
 分层规则：
 
