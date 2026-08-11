@@ -1364,7 +1364,7 @@ def test_cli_run_request_blocks_before_target_access_without_source_disclosure(
     assert "--allow-source-disclosure" in payload["reason"]
 
 
-def test_cli_run_request_passes_local_ollama_boundary_unchanged(
+def test_cli_run_request_passes_local_ollama_boundary_but_rejects_legacy_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1401,7 +1401,7 @@ def test_cli_run_request_passes_local_ollama_boundary_unchanged(
         ]
     )
 
-    assert exit_code == 1
+    assert exit_code == 2
     json.loads(capsys.readouterr().out)
     assert captured["local_ollama"] is True
     assert captured["ollama_base_url"] == "http://127.0.0.1:11434"
@@ -1416,7 +1416,7 @@ def test_cli_run_request_passes_local_ollama_boundary_unchanged(
     assert callable(captured["diff_approval_reader"])
 
 
-def test_cli_run_request_passes_runtime_admission_and_requires_runtime_success(
+def test_cli_run_request_passes_runtime_admission_but_rejects_legacy_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1449,7 +1449,7 @@ def test_cli_run_request_passes_runtime_admission_and_requires_runtime_success(
         ]
     )
 
-    assert exit_code == 0
+    assert exit_code == 2
     json.loads(capsys.readouterr().out)
     assert captured["run_gtfo_runtime"] is True
     assert captured["allow_game_launch"] is True
@@ -1459,7 +1459,7 @@ def test_cli_run_request_passes_runtime_admission_and_requires_runtime_success(
     assert captured["allow_game_directory_write"] is True
 
 
-def test_cli_runtime_request_does_not_exit_success_on_build_only(
+def test_cli_runtime_request_rejects_build_only_legacy_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1489,11 +1489,11 @@ def test_cli_runtime_request_does_not_exit_success_on_build_only(
         ]
     )
 
-    assert exit_code == 1
+    assert exit_code == 2
     json.loads(capsys.readouterr().out)
 
 
-def test_cli_does_not_treat_non_real_success_status_as_success(
+def test_cli_does_not_treat_legacy_status_as_machine_truth(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1519,10 +1519,117 @@ def test_cli_does_not_treat_non_real_success_status_as_success(
         ]
     )
 
-    assert exit_code == 1
+    assert exit_code == 2
     assert json.loads(capsys.readouterr().out)["build_summary"][
         "claims_real_build_success"
     ] is False
+
+
+def test_cli_run_request_uses_real_public_product_executor_and_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "Example"
+    bepinex = tmp_path / "BepInEx"
+    target.mkdir()
+    bepinex.mkdir()
+    (target / "Example.csproj").write_text(
+        "<Project><PropertyGroup>"
+        "<AssemblyName>Example</AssemblyName>"
+        f"<BepInExDir>{bepinex}</BepInExDir>"
+        "</PropertyGroup></Project>",
+        encoding="utf-8",
+    )
+    (target / "Plugin.cs").write_text(
+        "public sealed class Plugin {}\n", encoding="utf-8"
+    )
+    (target / "nuget.config").write_text("<configuration />", encoding="utf-8")
+
+    digest = "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
+    identity = {
+        "name": "qwen3:4b-instruct",
+        "model": "qwen3:4b-instruct",
+        "digest": digest,
+        "modified_at": "2026-07-16T14:06:42.9800065+08:00",
+        "size": 2497293803,
+        "details": {
+            "context_length": 262144,
+            "parameter_size": "4.0B",
+            "quantization_level": "Q4_K_M",
+        },
+        "capabilities": ["completion", "tools"],
+        "base_url": "http://127.0.0.1:11434",
+    }
+    monkeypatch.setattr(
+        local_entry_module,
+        "_read_ollama_model_identity",
+        lambda *_: identity,
+    )
+    monkeypatch.setattr(
+        local_entry_module,
+        "_read_ollama_server_version",
+        lambda *_: "0.32.1",
+    )
+    monkeypatch.setattr(
+        local_entry_module.LLMFactory,
+        "create",
+        staticmethod(
+            lambda settings, **kwargs: local_entry_module.OllamaLLM(
+                settings, **kwargs
+            )
+        ),
+    )
+
+    def build(profile):
+        artifact = profile.working_directory / "bin" / "Debug" / "Example.dll"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_bytes(b"baseline")
+        return local_entry_module.NuGetIsolatedBuildExecution(
+            restore_exit_code=0,
+            build_exit_code=0,
+            restore_stdout="restore ok",
+            restore_stderr="",
+            build_stdout="build ok",
+            build_stderr="",
+            duration_ms=2,
+        )
+
+    monkeypatch.setattr(local_entry_module, "_run_nuget_isolated_build", build)
+
+    exit_code = main(
+        [
+            "run-request",
+            "test",
+            "--target-project",
+            str(target),
+            "--workspace-root",
+            str(tmp_path / "runs"),
+            "--settings",
+            "config/settings.yaml",
+            "--local-ollama",
+            "--ollama-model",
+            "qwen3:4b-instruct",
+            "--ollama-context-window",
+            "32768",
+            "--confirm-isolated-write",
+            "--allow-build",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    machine = payload["product_execution_result"]
+    assert exit_code == 1
+    assert machine["execution_disposition"] == "domain_blocked"
+    assert machine["terminal_node"] == "blocked"
+    assert [item["artifact_role"] for item in machine["store_attempts"]] == [
+        "request_planning_report",
+        "blocked_report",
+    ]
+    assert all(
+        item["store_result"]["outcome"] == "committed"
+        for item in machine["store_attempts"]
+    )
 
 
 def test_cli_resume_runtime_passes_fresh_authority_and_handoff_identity(

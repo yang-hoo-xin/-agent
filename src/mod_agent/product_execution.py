@@ -1,0 +1,1760 @@
+"""Typed contracts and deterministic result projection for product execution."""
+
+from __future__ import annotations
+
+import json
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal, Mapping
+
+from src.mod_agent.action_identity import canonical_action_json, hash_canonical_value
+from src.mod_agent.artifacts import ArtifactRef, ArtifactWriteResult
+
+
+PRODUCT_EXECUTION_CONTRACT_VERSION = "1"
+PRODUCT_EXECUTION_REQUEST_CONTRACT_VERSION = "1"
+PRODUCT_EXECUTION_BINDING_CONTRACT_VERSION = "1"
+
+ProductCompletionScope = Literal["compile_only", "runtime_workflow"]
+ProductExecutionPhase = Literal[
+    "planning",
+    "evidence",
+    "proposal",
+    "application",
+    "build",
+    "repair",
+    "runtime",
+    "evaluation",
+    "terminal",
+]
+ProductExecutionDisposition = Literal[
+    "succeeded", "domain_blocked", "platform_blocked", "partial"
+]
+
+_BINDING_VERSIONS = {
+    "source_revision_binding": "source_revision_binding_v1",
+    "source_disclosure": "source_disclosure_v1",
+    "model_admission": "model_admission_v1",
+    "runtime_admission": "runtime_admission_v1",
+}
+_BINDING_ORDER = tuple(_BINDING_VERSIONS)
+_PHASES = {
+    "planning",
+    "evidence",
+    "proposal",
+    "application",
+    "build",
+    "repair",
+    "runtime",
+    "evaluation",
+    "terminal",
+}
+_VALIDATION_KINDS = (
+    "output_readback",
+    "canonical_source",
+    "compiled_artifact",
+    "source_change",
+    "completion_classification",
+)
+_VALIDATION_STATUSES = {"not_applicable", "passed", "failed"}
+
+
+class ProductExecutionContractError(ValueError):
+    """Raised when public product execution facts violate the frozen contract."""
+
+    def __init__(self, reason: str, *, side_effects_may_have_started: bool) -> None:
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError("ProductExecutionContractError reason must be non-empty.")
+        if type(side_effects_may_have_started) is not bool:
+            raise ValueError(
+                "ProductExecutionContractError side_effects_may_have_started must be bool."
+            )
+        super().__init__(reason)
+        self.reason = reason
+        self.side_effects_may_have_started = side_effects_may_have_started
+
+
+def _require_exact_fields(value: Mapping[str, Any], fields: tuple[str, ...], name: str) -> None:
+    if not isinstance(value, Mapping) or tuple(value) != fields:
+        raise ProductExecutionContractError(
+            f"{name} fields changed.", side_effects_may_have_started=False
+        )
+
+
+def _require_non_empty(value: Any, name: str) -> str:
+    if type(value) is not str or not value.strip():
+        raise ProductExecutionContractError(
+            f"{name} must be a non-empty string.",
+            side_effects_may_have_started=False,
+        )
+    return value
+
+
+def _require_exact_int(value: Any, name: str, *, minimum: int = 0) -> int:
+    if type(value) is not int or value < minimum:
+        raise ProductExecutionContractError(
+            f"{name} must be an exact integer >= {minimum}.",
+            side_effects_may_have_started=False,
+        )
+    return value
+
+
+def _require_sha256(value: Any, name: str) -> str:
+    selected = _require_non_empty(value, name)
+    body = selected[7:] if selected.startswith("sha256:") else selected
+    if len(body) != 64 or any(ch not in "0123456789abcdef" for ch in body):
+        raise ProductExecutionContractError(
+            f"{name} must be a lowercase SHA256 value.",
+            side_effects_may_have_started=False,
+        )
+    return selected
+
+
+def _validate_json(value: Any, name: str) -> Any:
+    def visit(item: Any) -> None:
+        if item is None or isinstance(item, (str, bool)):
+            return
+        if type(item) is int:
+            return
+        if type(item) is float and math.isfinite(item):
+            return
+        if type(item) is list:
+            for child in item:
+                visit(child)
+            return
+        if type(item) is dict and all(type(key) is str for key in item):
+            for child in item.values():
+                visit(child)
+            return
+        raise ProductExecutionContractError(
+            f"{name} contains a non-canonical JSON value.",
+            side_effects_may_have_started=False,
+        )
+
+    visit(value)
+    canonical_action_json(value)
+    return json.loads(canonical_action_json(value).decode("utf-8"))
+
+
+def _ref_to_dict(ref: ArtifactRef | None) -> dict[str, str] | None:
+    if ref is None:
+        return None
+    return {
+        "feature_id": ref.feature_id,
+        "artifact_type": ref.artifact_type,
+        "path": ref.path,
+        "artifact_hash": ref.artifact_hash,
+    }
+
+
+def _ref_from_dict(value: Any, name: str) -> ArtifactRef | None:
+    if value is None:
+        return None
+    _require_exact_fields(
+        value,
+        ("feature_id", "artifact_type", "path", "artifact_hash"),
+        name,
+    )
+    return ArtifactRef(
+        feature_id=_require_non_empty(value["feature_id"], f"{name}.feature_id"),
+        artifact_type=_require_non_empty(
+            value["artifact_type"], f"{name}.artifact_type"
+        ),
+        path=_require_non_empty(value["path"], f"{name}.path"),
+        artifact_hash=_require_non_empty(
+            value["artifact_hash"], f"{name}.artifact_hash"
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class ProductExecutionInputBindingV1:
+    contract_version: Literal["1"]
+    binding_kind: str
+    binding_contract_version: str
+    canonical_payload: Any
+    canonical_payload_sha256: str
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1":
+            raise ProductExecutionContractError(
+                "Product execution input binding version is unsupported.",
+                side_effects_may_have_started=False,
+            )
+        expected_version = _BINDING_VERSIONS.get(self.binding_kind)
+        if expected_version is None or self.binding_contract_version != expected_version:
+            raise ProductExecutionContractError(
+                "Product execution input binding kind/version is unsupported.",
+                side_effects_may_have_started=False,
+            )
+        canonical = _validate_json(self.canonical_payload, "canonical_payload")
+        if self.binding_kind != "source_revision_binding" and type(canonical) is not dict:
+            raise ProductExecutionContractError(
+                f"{self.binding_kind} payload must be an object.",
+                side_effects_may_have_started=False,
+            )
+        if self.binding_kind == "source_revision_binding" and canonical is not None and type(canonical) is not dict:
+            raise ProductExecutionContractError(
+                "source_revision_binding payload must be an object or null.",
+                side_effects_may_have_started=False,
+            )
+        if self.canonical_payload_sha256 != hash_canonical_value(canonical):
+            raise ProductExecutionContractError(
+                "Product execution input binding payload hash changed.",
+                side_effects_may_have_started=False,
+            )
+
+    @classmethod
+    def create(cls, binding_kind: str, payload: Any) -> "ProductExecutionInputBindingV1":
+        canonical = _validate_json(payload, "canonical_payload")
+        version = _BINDING_VERSIONS.get(binding_kind)
+        if version is None:
+            raise ProductExecutionContractError(
+                "Product execution input binding kind is unsupported.",
+                side_effects_may_have_started=False,
+            )
+        return cls(
+            contract_version="1",
+            binding_kind=binding_kind,
+            binding_contract_version=version,
+            canonical_payload=canonical,
+            canonical_payload_sha256=hash_canonical_value(canonical),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "binding_kind": self.binding_kind,
+            "binding_contract_version": self.binding_contract_version,
+            "canonical_payload": self.canonical_payload,
+            "canonical_payload_sha256": self.canonical_payload_sha256,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductExecutionInputBindingV1":
+        _require_exact_fields(
+            value,
+            (
+                "contract_version",
+                "binding_kind",
+                "binding_contract_version",
+                "canonical_payload",
+                "canonical_payload_sha256",
+            ),
+            "ProductExecutionInputBindingV1",
+        )
+        return cls(**dict(value))
+
+
+@dataclass(frozen=True)
+class ProductExecutionRequestV1:
+    contract_version: Literal["1"]
+    run_id: str
+    request_id: str
+    user_request: str
+    target_domain: str
+    target_mod: str
+    requested_completion_scope: ProductCompletionScope
+    repair_budget: Literal[2]
+    isolated_workspace_root: str
+    isolated_target_root: str
+    source_root: str
+    artifact_store_root: str
+    source_snapshot_sha256: str
+    isolated_source_snapshot_sha256: str
+    input_bindings: tuple[ProductExecutionInputBindingV1, ...]
+    completion_classification: tuple[tuple[str, bool], ...]
+    confirmed_isolated_write: Literal[True]
+    allow_build: Literal[True]
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1":
+            raise ProductExecutionContractError(
+                "Product execution request version is unsupported.",
+                side_effects_may_have_started=False,
+            )
+        for field in ("run_id", "request_id", "user_request", "target_domain", "target_mod"):
+            _require_non_empty(getattr(self, field), field)
+        if self.requested_completion_scope not in {"compile_only", "runtime_workflow"}:
+            raise ProductExecutionContractError(
+                "Product completion scope is unsupported.",
+                side_effects_may_have_started=False,
+            )
+        if type(self.repair_budget) is not int or self.repair_budget != 2:
+            raise ProductExecutionContractError(
+                "Product repair_budget must be exact int 2.",
+                side_effects_may_have_started=False,
+            )
+        for field in (
+            "isolated_workspace_root",
+            "isolated_target_root",
+            "source_root",
+            "artifact_store_root",
+        ):
+            selected = _require_non_empty(getattr(self, field), field)
+            path = Path(selected)
+            if not path.is_absolute() or str(path.resolve()) != selected:
+                raise ProductExecutionContractError(
+                    f"{field} must be a normalized absolute path.",
+                    side_effects_may_have_started=False,
+                )
+        _require_sha256(self.source_snapshot_sha256, "source_snapshot_sha256")
+        _require_sha256(
+            self.isolated_source_snapshot_sha256,
+            "isolated_source_snapshot_sha256",
+        )
+        if type(self.input_bindings) is not tuple or tuple(
+            item.binding_kind for item in self.input_bindings
+        ) != _BINDING_ORDER:
+            raise ProductExecutionContractError(
+                "Product input bindings must contain the exact ordered binding kinds.",
+                side_effects_may_have_started=False,
+            )
+        if any(not isinstance(item, ProductExecutionInputBindingV1) for item in self.input_bindings):
+            raise ProductExecutionContractError(
+                "Product input bindings must use ProductExecutionInputBindingV1.",
+                side_effects_may_have_started=False,
+            )
+        if type(self.completion_classification) is not tuple:
+            raise ProductExecutionContractError(
+                "completion_classification must be a tuple.",
+                side_effects_may_have_started=False,
+            )
+        keys: list[str] = []
+        for item in self.completion_classification:
+            if type(item) is not tuple or len(item) != 2:
+                raise ProductExecutionContractError(
+                    "completion_classification entries must be exact pairs.",
+                    side_effects_may_have_started=False,
+                )
+            key, flag = item
+            keys.append(_require_non_empty(key, "completion_classification key"))
+            if type(flag) is not bool:
+                raise ProductExecutionContractError(
+                    "completion_classification values must be bool.",
+                    side_effects_may_have_started=False,
+                )
+        if keys != sorted(keys, key=lambda item: item.encode("utf-8")) or len(keys) != len(set(keys)):
+            raise ProductExecutionContractError(
+                "completion_classification must use unique UTF-8 sorted keys.",
+                side_effects_may_have_started=False,
+            )
+        if self.confirmed_isolated_write is not True or self.allow_build is not True:
+            raise ProductExecutionContractError(
+                "Product execution requires isolated-write and Build authorization.",
+                side_effects_may_have_started=False,
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "run_id": self.run_id,
+            "request_id": self.request_id,
+            "user_request": self.user_request,
+            "target_domain": self.target_domain,
+            "target_mod": self.target_mod,
+            "requested_completion_scope": self.requested_completion_scope,
+            "repair_budget": self.repair_budget,
+            "isolated_workspace_root": self.isolated_workspace_root,
+            "isolated_target_root": self.isolated_target_root,
+            "source_root": self.source_root,
+            "artifact_store_root": self.artifact_store_root,
+            "source_snapshot_sha256": self.source_snapshot_sha256,
+            "isolated_source_snapshot_sha256": self.isolated_source_snapshot_sha256,
+            "input_bindings": [item.to_dict() for item in self.input_bindings],
+            "completion_classification": [list(item) for item in self.completion_classification],
+            "confirmed_isolated_write": self.confirmed_isolated_write,
+            "allow_build": self.allow_build,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductExecutionRequestV1":
+        fields = (
+            "contract_version",
+            "run_id",
+            "request_id",
+            "user_request",
+            "target_domain",
+            "target_mod",
+            "requested_completion_scope",
+            "repair_budget",
+            "isolated_workspace_root",
+            "isolated_target_root",
+            "source_root",
+            "artifact_store_root",
+            "source_snapshot_sha256",
+            "isolated_source_snapshot_sha256",
+            "input_bindings",
+            "completion_classification",
+            "confirmed_isolated_write",
+            "allow_build",
+        )
+        _require_exact_fields(value, fields, "ProductExecutionRequestV1")
+        if type(value["input_bindings"]) is not list or type(value["completion_classification"]) is not list:
+            raise ProductExecutionContractError(
+                "Product request tuple fields must serialize as arrays.",
+                side_effects_may_have_started=False,
+            )
+        selected = dict(value)
+        selected["input_bindings"] = tuple(
+            ProductExecutionInputBindingV1.from_dict(item)
+            for item in value["input_bindings"]
+        )
+        selected["completion_classification"] = tuple(
+            tuple(item) if type(item) is list and len(item) == 2 else ()
+            for item in value["completion_classification"]
+        )
+        return cls(**selected)
+
+
+@dataclass(frozen=True)
+class ProductExecutionGraphModeV1:
+    contract_version: Literal["1"]
+    request: ProductExecutionRequestV1
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1" or not isinstance(
+            self.request, ProductExecutionRequestV1
+        ):
+            raise ProductExecutionContractError(
+                "Product execution Graph mode is invalid.",
+                side_effects_may_have_started=False,
+            )
+
+
+@dataclass(frozen=True)
+class ProductExecutionBlockerV1:
+    contract_version: Literal["1"]
+    owner: Literal["domain", "platform"]
+    stage: str
+    code: str
+    message: str
+    source_node: str
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1" or self.owner not in {"domain", "platform"}:
+            raise ProductExecutionContractError(
+                "Product blocker contract is invalid.",
+                side_effects_may_have_started=False,
+            )
+        for field in ("stage", "code", "message", "source_node"):
+            _require_non_empty(getattr(self, field), f"blocker.{field}")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "owner": self.owner,
+            "stage": self.stage,
+            "code": self.code,
+            "message": self.message,
+            "source_node": self.source_node,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductExecutionBlockerV1":
+        _require_exact_fields(
+            value,
+            ("contract_version", "owner", "stage", "code", "message", "source_node"),
+            "ProductExecutionBlockerV1",
+        )
+        return cls(**dict(value))
+
+
+@dataclass(frozen=True)
+class ProductExecutionStoreAttemptV1:
+    contract_version: Literal["1"]
+    sequence: int
+    phase: ProductExecutionPhase
+    repair_attempt: int
+    node_name: str
+    artifact_role: str
+    store_result: ArtifactWriteResult
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1" or self.phase not in _PHASES:
+            raise ProductExecutionContractError(
+                "Product Store attempt contract is invalid.",
+                side_effects_may_have_started=True,
+            )
+        _require_exact_int(self.sequence, "store attempt sequence")
+        attempt = _require_exact_int(self.repair_attempt, "repair attempt")
+        if attempt > 2:
+            raise ProductExecutionContractError(
+                "repair attempt exceeds 2.", side_effects_may_have_started=True
+            )
+        _require_non_empty(self.node_name, "store attempt node_name")
+        _require_non_empty(self.artifact_role, "store attempt artifact_role")
+        if not isinstance(self.store_result, ArtifactWriteResult):
+            raise ProductExecutionContractError(
+                "store_result must be Store-owned ArtifactWriteResult.",
+                side_effects_may_have_started=True,
+            )
+        if self.store_result.artifact_type != self.artifact_role:
+            raise ProductExecutionContractError(
+                "Store result artifact type disagrees with its product role.",
+                side_effects_may_have_started=True,
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "sequence": self.sequence,
+            "phase": self.phase,
+            "repair_attempt": self.repair_attempt,
+            "node_name": self.node_name,
+            "artifact_role": self.artifact_role,
+            "store_result": self.store_result.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductExecutionStoreAttemptV1":
+        _require_exact_fields(
+            value,
+            (
+                "contract_version",
+                "sequence",
+                "phase",
+                "repair_attempt",
+                "node_name",
+                "artifact_role",
+                "store_result",
+            ),
+            "ProductExecutionStoreAttemptV1",
+        )
+        selected = dict(value)
+        if not isinstance(selected["store_result"], Mapping):
+            raise ProductExecutionContractError(
+                "store_result must be an object.",
+                side_effects_may_have_started=True,
+            )
+        selected["store_result"] = ArtifactWriteResult.from_dict(
+            selected["store_result"]
+        )
+        return cls(**selected)
+
+
+@dataclass(frozen=True)
+class ProductExecutionOutputV1:
+    contract_version: Literal["1"]
+    sequence: int
+    phase: ProductExecutionPhase
+    repair_attempt: int
+    node_name: str
+    artifact_role: str
+    artifact_ref: ArtifactRef
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1" or self.phase not in _PHASES:
+            raise ProductExecutionContractError(
+                "Product output contract is invalid.",
+                side_effects_may_have_started=True,
+            )
+        _require_exact_int(self.sequence, "output sequence")
+        if _require_exact_int(self.repair_attempt, "output repair attempt") > 2:
+            raise ProductExecutionContractError(
+                "output repair attempt exceeds 2.",
+                side_effects_may_have_started=True,
+            )
+        _require_non_empty(self.node_name, "output node_name")
+        _require_non_empty(self.artifact_role, "output artifact_role")
+        if not isinstance(self.artifact_ref, ArtifactRef) or self.artifact_ref.artifact_type != self.artifact_role:
+            raise ProductExecutionContractError(
+                "Product output ArtifactRef is invalid.",
+                side_effects_may_have_started=True,
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "sequence": self.sequence,
+            "phase": self.phase,
+            "repair_attempt": self.repair_attempt,
+            "node_name": self.node_name,
+            "artifact_role": self.artifact_role,
+            "artifact_ref": _ref_to_dict(self.artifact_ref),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductExecutionOutputV1":
+        _require_exact_fields(
+            value,
+            (
+                "contract_version",
+                "sequence",
+                "phase",
+                "repair_attempt",
+                "node_name",
+                "artifact_role",
+                "artifact_ref",
+            ),
+            "ProductExecutionOutputV1",
+        )
+        selected = dict(value)
+        selected["artifact_ref"] = _ref_from_dict(
+            selected["artifact_ref"], "output.artifact_ref"
+        )
+        return cls(**selected)
+
+
+@dataclass(frozen=True)
+class ProductExecutionEffectEventV1:
+    contract_version: Literal["1"]
+    sequence: int
+    phase: ProductExecutionPhase
+    repair_attempt: int
+    effect_role: Literal[
+        "evidence_retrieval",
+        "patch_generation",
+        "dry_run",
+        "isolated_apply",
+        "build",
+        "runtime",
+    ]
+    event_status: Literal["started", "completed", "failed"]
+    failure_class: str | None
+    failure_message: str | None
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1" or self.phase not in _PHASES:
+            raise ProductExecutionContractError(
+                "Product effect event contract is invalid.",
+                side_effects_may_have_started=True,
+            )
+        _require_exact_int(self.sequence, "effect sequence")
+        if _require_exact_int(self.repair_attempt, "effect repair attempt") > 2:
+            raise ProductExecutionContractError(
+                "effect repair attempt exceeds 2.",
+                side_effects_may_have_started=True,
+            )
+        if self.effect_role not in {
+            "evidence_retrieval",
+            "patch_generation",
+            "dry_run",
+            "isolated_apply",
+            "build",
+            "runtime",
+        } or self.event_status not in {"started", "completed", "failed"}:
+            raise ProductExecutionContractError(
+                "Product effect role/status is unsupported.",
+                side_effects_may_have_started=True,
+            )
+        if self.event_status == "failed":
+            _require_non_empty(self.failure_class, "effect failure_class")
+            _require_non_empty(self.failure_message, "effect failure_message")
+        elif self.failure_class is not None or self.failure_message is not None:
+            raise ProductExecutionContractError(
+                "Successful effect events cannot carry failure facts.",
+                side_effects_may_have_started=True,
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "sequence": self.sequence,
+            "phase": self.phase,
+            "repair_attempt": self.repair_attempt,
+            "effect_role": self.effect_role,
+            "event_status": self.event_status,
+            "failure_class": self.failure_class,
+            "failure_message": self.failure_message,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductExecutionEffectEventV1":
+        _require_exact_fields(
+            value,
+            (
+                "contract_version",
+                "sequence",
+                "phase",
+                "repair_attempt",
+                "effect_role",
+                "event_status",
+                "failure_class",
+                "failure_message",
+            ),
+            "ProductExecutionEffectEventV1",
+        )
+        return cls(**dict(value))
+
+
+@dataclass(frozen=True)
+class ProductExecutionValidationDetailV1:
+    contract_version: Literal["1"]
+    detail_kind: str
+    payload: Any
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1" or self.detail_kind not in _VALIDATION_KINDS:
+            raise ProductExecutionContractError(
+                "Product validation detail is invalid.",
+                side_effects_may_have_started=True,
+            )
+        _validate_json(self.payload, "validation detail payload")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "detail_kind": self.detail_kind,
+            "payload": self.payload,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductExecutionValidationDetailV1":
+        _require_exact_fields(
+            value,
+            ("contract_version", "detail_kind", "payload"),
+            "ProductExecutionValidationDetailV1",
+        )
+        return cls(**dict(value))
+
+
+@dataclass(frozen=True)
+class ProductExecutionValidationFactsV1:
+    contract_version: Literal["1"]
+    output_readback_status: str
+    canonical_source_status: str
+    compiled_artifact_status: str
+    source_change_status: str
+    completion_classification_status: str
+    failure_class: str | None
+    failure_message: str | None
+    details: tuple[ProductExecutionValidationDetailV1, ...]
+
+    def __post_init__(self) -> None:
+        statuses = (
+            self.output_readback_status,
+            self.canonical_source_status,
+            self.compiled_artifact_status,
+            self.source_change_status,
+            self.completion_classification_status,
+        )
+        if self.contract_version != "1" or any(item not in _VALIDATION_STATUSES for item in statuses):
+            raise ProductExecutionContractError(
+                "Product validation status is invalid.",
+                side_effects_may_have_started=True,
+            )
+        if type(self.details) is not tuple or tuple(item.detail_kind for item in self.details) != _VALIDATION_KINDS:
+            raise ProductExecutionContractError(
+                "Product validation details changed order or shape.",
+                side_effects_may_have_started=True,
+            )
+        failed = "failed" in statuses
+        if failed:
+            _require_non_empty(self.failure_class, "validation failure_class")
+            _require_non_empty(self.failure_message, "validation failure_message")
+        elif self.failure_class is not None or self.failure_message is not None:
+            raise ProductExecutionContractError(
+                "Passing validation facts cannot carry failure fields.",
+                side_effects_may_have_started=True,
+            )
+        for status, detail in zip(statuses, self.details, strict=True):
+            if status == "not_applicable" and detail.payload is not None:
+                raise ProductExecutionContractError(
+                    "Not-applicable validation detail must be null.",
+                    side_effects_may_have_started=True,
+                )
+            if status == "passed" and detail.payload is None:
+                raise ProductExecutionContractError(
+                    "Passing validation detail must preserve its payload.",
+                    side_effects_may_have_started=True,
+                )
+
+    @property
+    def failed(self) -> bool:
+        return "failed" in (
+            self.output_readback_status,
+            self.canonical_source_status,
+            self.compiled_artifact_status,
+            self.source_change_status,
+            self.completion_classification_status,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "output_readback_status": self.output_readback_status,
+            "canonical_source_status": self.canonical_source_status,
+            "compiled_artifact_status": self.compiled_artifact_status,
+            "source_change_status": self.source_change_status,
+            "completion_classification_status": self.completion_classification_status,
+            "failure_class": self.failure_class,
+            "failure_message": self.failure_message,
+            "details": [item.to_dict() for item in self.details],
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductExecutionValidationFactsV1":
+        _require_exact_fields(
+            value,
+            (
+                "contract_version",
+                "output_readback_status",
+                "canonical_source_status",
+                "compiled_artifact_status",
+                "source_change_status",
+                "completion_classification_status",
+                "failure_class",
+                "failure_message",
+                "details",
+            ),
+            "ProductExecutionValidationFactsV1",
+        )
+        if type(value["details"]) is not list:
+            raise ProductExecutionContractError(
+                "Product validation details must serialize as an array.",
+                side_effects_may_have_started=True,
+            )
+        selected = dict(value)
+        selected["details"] = tuple(
+            ProductExecutionValidationDetailV1.from_dict(item)
+            for item in value["details"]
+        )
+        return cls(**selected)
+
+
+def empty_product_validation_facts() -> ProductExecutionValidationFactsV1:
+    return ProductExecutionValidationFactsV1(
+        contract_version="1",
+        output_readback_status="not_applicable",
+        canonical_source_status="not_applicable",
+        compiled_artifact_status="not_applicable",
+        source_change_status="not_applicable",
+        completion_classification_status="not_applicable",
+        failure_class=None,
+        failure_message=None,
+        details=tuple(
+            ProductExecutionValidationDetailV1(
+                contract_version="1", detail_kind=kind, payload=None
+            )
+            for kind in _VALIDATION_KINDS
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class ProductBuildCompletionV1:
+    contract_version: Literal["1"]
+    build_result_ref: ArtifactRef | None
+    workflow_checkpoint_ref: ArtifactRef | None
+    build_status: Literal["not_reached", "unavailable", "success", "failed", "blocked"]
+    claims_real_build_success: bool | None
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1" or self.build_status not in {
+            "not_reached", "unavailable", "success", "failed", "blocked"
+        }:
+            raise ProductExecutionContractError(
+                "Product Build completion is invalid.",
+                side_effects_may_have_started=True,
+            )
+        if self.build_status == "not_reached" and (
+            self.build_result_ref is not None
+            or self.workflow_checkpoint_ref is not None
+            or self.claims_real_build_success is not None
+        ):
+            raise ProductExecutionContractError(
+                "not_reached Build completion carries Build facts.",
+                side_effects_may_have_started=True,
+            )
+        if self.build_status == "unavailable" and (
+            self.build_result_ref is None or self.claims_real_build_success is not None
+        ):
+            raise ProductExecutionContractError(
+                "unavailable Build completion is inconsistent.",
+                side_effects_may_have_started=True,
+            )
+        if self.build_status in {"success", "failed", "blocked"}:
+            if self.build_result_ref is None or type(self.claims_real_build_success) is not bool:
+                raise ProductExecutionContractError(
+                    "Reached Build completion lacks exact Build facts.",
+                    side_effects_may_have_started=True,
+                )
+            if (self.build_status == "success") is not self.claims_real_build_success:
+                raise ProductExecutionContractError(
+                    "Build status and real-success claim disagree.",
+                    side_effects_may_have_started=True,
+                )
+            if self.build_status != "success" and self.workflow_checkpoint_ref is not None:
+                raise ProductExecutionContractError(
+                    "Non-successful Build completion cannot carry a handoff checkpoint.",
+                    side_effects_may_have_started=True,
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "build_result_ref": _ref_to_dict(self.build_result_ref),
+            "workflow_checkpoint_ref": _ref_to_dict(self.workflow_checkpoint_ref),
+            "build_status": self.build_status,
+            "claims_real_build_success": self.claims_real_build_success,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductBuildCompletionV1":
+        _require_exact_fields(
+            value,
+            (
+                "contract_version",
+                "build_result_ref",
+                "workflow_checkpoint_ref",
+                "build_status",
+                "claims_real_build_success",
+            ),
+            "ProductBuildCompletionV1",
+        )
+        selected = dict(value)
+        selected["build_result_ref"] = _ref_from_dict(
+            selected["build_result_ref"], "build_result_ref"
+        )
+        selected["workflow_checkpoint_ref"] = _ref_from_dict(
+            selected["workflow_checkpoint_ref"], "workflow_checkpoint_ref"
+        )
+        return cls(**selected)
+
+
+@dataclass(frozen=True)
+class ProductRuntimeCompletionV1:
+    contract_version: Literal["1"]
+    build_result_ref: ArtifactRef | None
+    runtime_evidence_ref: ArtifactRef | None
+    eval_report_ref: ArtifactRef | None
+    workflow_summary_ref: ArtifactRef | None
+    blocked_report_ref: ArtifactRef | None
+    build_status: Literal["not_reached", "unavailable", "success", "failed", "blocked"]
+    runtime_status: Literal["not_reached", "unavailable", "accepted", "not_accepted", "blocked"]
+    eval_verdict: Literal["not_reached", "unavailable", "accepted", "blocked", "inconclusive"]
+    final_status: Literal["not_reached", "unavailable", "accepted", "blocked", "inconclusive"]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "build_result_ref": _ref_to_dict(self.build_result_ref),
+            "runtime_evidence_ref": _ref_to_dict(self.runtime_evidence_ref),
+            "eval_report_ref": _ref_to_dict(self.eval_report_ref),
+            "workflow_summary_ref": _ref_to_dict(self.workflow_summary_ref),
+            "blocked_report_ref": _ref_to_dict(self.blocked_report_ref),
+            "build_status": self.build_status,
+            "runtime_status": self.runtime_status,
+            "eval_verdict": self.eval_verdict,
+            "final_status": self.final_status,
+        }
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1":
+            raise ProductExecutionContractError(
+                "Product Runtime completion version is unsupported.",
+                side_effects_may_have_started=True,
+            )
+        if self.build_status not in {"not_reached", "unavailable", "success", "failed", "blocked"}:
+            raise ProductExecutionContractError("Runtime completion Build status is invalid.", side_effects_may_have_started=True)
+        if self.runtime_status not in {"not_reached", "unavailable", "accepted", "not_accepted", "blocked"}:
+            raise ProductExecutionContractError("Runtime status is invalid.", side_effects_may_have_started=True)
+        if self.eval_verdict not in {"not_reached", "unavailable", "accepted", "blocked", "inconclusive"}:
+            raise ProductExecutionContractError("Eval verdict is invalid.", side_effects_may_have_started=True)
+        if self.final_status not in {"not_reached", "unavailable", "accepted", "blocked", "inconclusive"}:
+            raise ProductExecutionContractError("Final Runtime status is invalid.", side_effects_may_have_started=True)
+        if (self.build_result_ref is None) is not (self.build_status == "not_reached"):
+            if not (self.build_result_ref is not None and self.build_status == "unavailable"):
+                raise ProductExecutionContractError(
+                    "Runtime completion Build ref/status disagree.",
+                    side_effects_may_have_started=True,
+                )
+        if (self.runtime_evidence_ref is None) is not (self.runtime_status == "not_reached"):
+            if not (self.runtime_evidence_ref is not None and self.runtime_status == "unavailable"):
+                raise ProductExecutionContractError(
+                    "RuntimeEvidence ref/status disagree.",
+                    side_effects_may_have_started=True,
+                )
+        if (self.eval_report_ref is None) is not (self.eval_verdict == "not_reached"):
+            if not (self.eval_report_ref is not None and self.eval_verdict == "unavailable"):
+                raise ProductExecutionContractError(
+                    "EvalReport ref/verdict disagree.",
+                    side_effects_may_have_started=True,
+                )
+        if self.runtime_evidence_ref is not None and self.build_status != "success":
+            raise ProductExecutionContractError(
+                "RuntimeEvidence requires a successful Build.",
+                side_effects_may_have_started=True,
+            )
+        if self.eval_report_ref is not None and self.runtime_status != "accepted":
+            raise ProductExecutionContractError(
+                "EvalReport requires accepted RuntimeEvidence.",
+                side_effects_may_have_started=True,
+            )
+        if self.final_status == "not_reached":
+            if self.workflow_summary_ref is not None or self.blocked_report_ref is not None:
+                raise ProductExecutionContractError(
+                    "not_reached terminal status carries a terminal ref.",
+                    side_effects_may_have_started=True,
+                )
+        elif self.final_status == "unavailable":
+            if self.workflow_summary_ref is None or self.blocked_report_ref is not None:
+                raise ProductExecutionContractError(
+                    "unavailable terminal status lacks its WorkflowSummary ref.",
+                    side_effects_may_have_started=True,
+                )
+        elif self.final_status == "blocked":
+            if self.blocked_report_ref is None or self.workflow_summary_ref is not None:
+                raise ProductExecutionContractError(
+                    "Blocked terminal status requires only a BlockedReport ref.",
+                    side_effects_may_have_started=True,
+                )
+        elif self.workflow_summary_ref is None or self.blocked_report_ref is not None:
+            raise ProductExecutionContractError(
+                "Accepted/inconclusive terminal status requires only WorkflowSummary.",
+                side_effects_may_have_started=True,
+            )
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductRuntimeCompletionV1":
+        fields = (
+            "contract_version",
+            "build_result_ref",
+            "runtime_evidence_ref",
+            "eval_report_ref",
+            "workflow_summary_ref",
+            "blocked_report_ref",
+            "build_status",
+            "runtime_status",
+            "eval_verdict",
+            "final_status",
+        )
+        _require_exact_fields(value, fields, "ProductRuntimeCompletionV1")
+        selected = dict(value)
+        for field in fields[1:6]:
+            selected[field] = _ref_from_dict(selected[field], field)
+        return cls(**selected)
+
+
+@dataclass(frozen=True)
+class ProductExecutionLifecycleGrammarV1:
+    contract_version: Literal["1"]
+    initial_prefix: tuple[str, ...]
+    allowed_successors: tuple[tuple[str, tuple[str, ...]], ...]
+    repair_transition_sources: tuple[str, ...]
+    max_repair_attempt: Literal[2]
+    terminal_nodes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1" or self.max_repair_attempt != 2:
+            raise ProductExecutionContractError(
+                "Product lifecycle grammar version or repair budget changed.",
+                side_effects_may_have_started=False,
+            )
+        if not self.initial_prefix or not self.allowed_successors or not self.terminal_nodes:
+            raise ProductExecutionContractError(
+                "Product lifecycle grammar cannot be empty.",
+                side_effects_may_have_started=False,
+            )
+        successor_nodes = [node for node, _ in self.allowed_successors]
+        if len(successor_nodes) != len(set(successor_nodes)) or any(
+            type(node) is not str or not node or not successors
+            for node, successors in self.allowed_successors
+        ):
+            raise ProductExecutionContractError(
+                "Product lifecycle successor grammar is invalid.",
+                side_effects_may_have_started=False,
+            )
+
+
+@dataclass(frozen=True)
+class ProductExecutionDeclarationV1:
+    contract_version: Literal["1"]
+    node_store_roles: tuple[tuple[str, str], ...]
+    node_phases: tuple[tuple[str, str], ...]
+    lifecycle_grammar: ProductExecutionLifecycleGrammarV1
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1":
+            raise ProductExecutionContractError(
+                "Product execution declaration version is unsupported.",
+                side_effects_may_have_started=False,
+            )
+        nodes = {node for node, _ in self.node_phases}
+        if len(nodes) != len(self.node_phases):
+            raise ProductExecutionContractError(
+                "Product declaration repeats a node phase.",
+                side_effects_may_have_started=False,
+            )
+        if any(phase not in _PHASES for _, phase in self.node_phases):
+            raise ProductExecutionContractError(
+                "Product declaration contains an unsupported phase.",
+                side_effects_may_have_started=False,
+            )
+        role_pairs = set(self.node_store_roles)
+        if len(role_pairs) != len(self.node_store_roles) or any(
+            node not in nodes or type(role) is not str or not role
+            for node, role in self.node_store_roles
+        ):
+            raise ProductExecutionContractError(
+                "Product declaration node/role registry is invalid.",
+                side_effects_may_have_started=False,
+            )
+        grammar_nodes = set(self.lifecycle_grammar.initial_prefix)
+        grammar_nodes.update(node for node, _ in self.lifecycle_grammar.allowed_successors)
+        grammar_nodes.update(
+            successor
+            for _, successors in self.lifecycle_grammar.allowed_successors
+            for successor in successors
+        )
+        grammar_nodes.update(self.lifecycle_grammar.terminal_nodes)
+        if not grammar_nodes.issubset(nodes):
+            raise ProductExecutionContractError(
+                "Product lifecycle grammar references an undeclared node.",
+                side_effects_may_have_started=False,
+            )
+
+    @property
+    def role_by_node(self) -> dict[str, tuple[str, ...]]:
+        result: dict[str, list[str]] = {}
+        for node, role in self.node_store_roles:
+            result.setdefault(node, []).append(role)
+        return {node: tuple(roles) for node, roles in result.items()}
+
+    @property
+    def phase_by_node(self) -> dict[str, str]:
+        return dict(self.node_phases)
+
+
+PRODUCT_EXECUTION_DECLARATION = ProductExecutionDeclarationV1(
+    contract_version="1",
+    node_store_roles=(
+        ("plan_request", "request_planning_report"),
+        ("planning_brief", "mod_planning_brief"),
+        ("draft_feature_spec", "feature_spec"),
+        ("retrieve_evidence", "evidence_pack"),
+        ("create_implementation_plan", "implementation_plan"),
+        ("generate_patch_proposal", "patch_proposal"),
+        ("review_proposal", "critic_assessment"),
+        ("review_proposal", "proposal_review"),
+        ("dry_run_apply", "dry_run_result"),
+        ("isolated_apply", "isolated_apply_result"),
+        ("build", "build_result"),
+        ("build", "workflow_checkpoint"),
+        ("create_repair_plan", "repair_plan"),
+        ("resolve_runtime_binding", "binding_resolution"),
+        ("collect_runtime_evidence", "runtime_evidence"),
+        ("evaluate", "eval_report"),
+        ("done", "workflow_summary"),
+        ("blocked", "blocked_report"),
+    ),
+    node_phases=(
+        ("plan_request", "planning"),
+        ("planning_brief", "planning"),
+        ("draft_feature_spec", "planning"),
+        ("retrieve_evidence", "evidence"),
+        ("create_implementation_plan", "planning"),
+        ("generate_patch_proposal", "proposal"),
+        ("review_proposal", "proposal"),
+        ("dry_run_apply", "application"),
+        ("isolated_apply", "application"),
+        ("build", "build"),
+        ("create_repair_plan", "repair"),
+        ("resolve_runtime_binding", "repair"),
+        ("collect_runtime_evidence", "runtime"),
+        ("evaluate", "evaluation"),
+        ("done", "terminal"),
+        ("blocked", "terminal"),
+    ),
+    lifecycle_grammar=ProductExecutionLifecycleGrammarV1(
+        contract_version="1",
+        initial_prefix=(
+            "plan_request",
+            "planning_brief",
+            "draft_feature_spec",
+            "retrieve_evidence",
+            "create_implementation_plan",
+            "generate_patch_proposal",
+            "review_proposal",
+        ),
+        allowed_successors=(
+            ("generate_patch_proposal", ("review_proposal",)),
+            ("review_proposal", ("dry_run_apply", "create_repair_plan", "blocked")),
+            ("dry_run_apply", ("isolated_apply", "blocked")),
+            ("isolated_apply", ("build", "blocked")),
+            ("build", ("collect_runtime_evidence", "create_repair_plan", "blocked")),
+            ("collect_runtime_evidence", ("evaluate", "resolve_runtime_binding", "create_repair_plan", "blocked")),
+            ("resolve_runtime_binding", ("create_repair_plan", "blocked")),
+            ("create_repair_plan", ("generate_patch_proposal", "blocked")),
+            ("evaluate", ("done", "blocked")),
+        ),
+        repair_transition_sources=(
+            "review_proposal", "build", "collect_runtime_evidence", "resolve_runtime_binding"
+        ),
+        max_repair_attempt=2,
+        terminal_nodes=("build", "done", "blocked"),
+    ),
+)
+
+
+def _validate_store_trace(
+    attempts: tuple[ProductExecutionStoreAttemptV1, ...],
+    outputs: tuple[ProductExecutionOutputV1, ...],
+) -> None:
+    declaration = PRODUCT_EXECUTION_DECLARATION
+    roles = declaration.role_by_node
+    phases = declaration.phase_by_node
+    if tuple(item.sequence for item in attempts) != tuple(range(len(attempts))):
+        raise ProductExecutionContractError(
+            "Product Store attempt sequence changed.",
+            side_effects_may_have_started=True,
+        )
+    committed = tuple(item for item in attempts if item.store_result.outcome == "committed")
+    noncommitted = tuple(item for item in attempts if item.store_result.outcome != "committed")
+    if len(noncommitted) > 1 or (noncommitted and attempts[-1] is not noncommitted[0]):
+        raise ProductExecutionContractError(
+            "A noncommitted Store attempt must be the unique final attempt.",
+            side_effects_may_have_started=True,
+        )
+    if len(outputs) != len(committed):
+        raise ProductExecutionContractError(
+            "Each committed Store attempt must have one product output.",
+            side_effects_may_have_started=True,
+        )
+    for attempt, output in zip(committed, outputs, strict=True):
+        ref = attempt.store_result.artifact_ref
+        if ref is None or (
+            output.sequence,
+            output.phase,
+            output.repair_attempt,
+            output.node_name,
+            output.artifact_role,
+            output.artifact_ref,
+        ) != (
+            attempt.sequence,
+            attempt.phase,
+            attempt.repair_attempt,
+            attempt.node_name,
+            attempt.artifact_role,
+            ref,
+        ):
+            raise ProductExecutionContractError(
+                "Product output disagrees with its committed Store attempt.",
+                side_effects_may_have_started=True,
+            )
+    for attempt in attempts:
+        if attempt.node_name not in roles or attempt.artifact_role not in roles[attempt.node_name]:
+            raise ProductExecutionContractError(
+                "Product Store node/role is not declared.",
+                side_effects_may_have_started=True,
+            )
+        if phases.get(attempt.node_name) != attempt.phase:
+            raise ProductExecutionContractError(
+                "Product Store node/phase is not declared.",
+                side_effects_may_have_started=True,
+            )
+    # Store-role order within a node is exact, including critic before review and
+    # BuildResult before WorkflowCheckpoint.
+    for index, item in enumerate(attempts):
+        if index and attempts[index - 1].node_name == item.node_name:
+            declared = roles[item.node_name]
+            previous = attempts[index - 1].artifact_role
+            if declared.index(item.artifact_role) <= declared.index(previous):
+                raise ProductExecutionContractError(
+                    "Product Store roles changed order within one Graph node.",
+                    side_effects_may_have_started=True,
+                )
+
+
+def _validate_effect_trace(events: tuple[ProductExecutionEffectEventV1, ...]) -> None:
+    if tuple(item.sequence for item in events) != tuple(range(len(events))):
+        raise ProductExecutionContractError(
+            "Product effect sequence changed.", side_effects_may_have_started=True
+        )
+    pending: tuple[str, str, int] | None = None
+    for event in events:
+        key = (event.effect_role, event.phase, event.repair_attempt)
+        if event.event_status == "started":
+            if pending is not None:
+                raise ProductExecutionContractError(
+                    "Product effects cannot overlap.", side_effects_may_have_started=True
+                )
+            pending = key
+        elif pending != key:
+            raise ProductExecutionContractError(
+                "Product effect terminal event lacks its exact start.",
+                side_effects_may_have_started=True,
+            )
+        else:
+            pending = None
+    if pending is not None:
+        raise ProductExecutionContractError(
+            "Product result cannot freeze an unterminated effect.",
+            side_effects_may_have_started=True,
+        )
+
+
+def _validate_lifecycle(attempts: tuple[ProductExecutionStoreAttemptV1, ...]) -> None:
+    if not attempts:
+        return
+    nodes: list[tuple[str, int]] = []
+    for item in attempts:
+        key = (item.node_name, item.repair_attempt)
+        if not nodes or nodes[-1] != key:
+            nodes.append(key)
+    grammar = PRODUCT_EXECUTION_DECLARATION.lifecycle_grammar
+    initial = grammar.initial_prefix
+    observed_initial_nodes = [node for node, attempt in nodes if attempt == 0]
+    observed_without_terminal = list(observed_initial_nodes)
+    if observed_without_terminal and observed_without_terminal[-1] == "blocked":
+        observed_without_terminal.pop()
+    initial_count = min(len(observed_without_terminal), len(initial))
+    if tuple(observed_without_terminal[:initial_count]) != initial[:initial_count]:
+        raise ProductExecutionContractError(
+            "Product lifecycle changed its initial ordered prefix.",
+            side_effects_may_have_started=True,
+        )
+    if len(observed_without_terminal) < len(initial):
+        if any(node != "blocked" for node in observed_initial_nodes[initial_count:]):
+            raise ProductExecutionContractError(
+                "Product lifecycle skipped an initial node.",
+                side_effects_may_have_started=True,
+            )
+        return
+    if any(attempt > 0 and node in initial[:5] for node, attempt in nodes):
+        raise ProductExecutionContractError(
+            "Planning/evidence nodes cannot repeat during repair.",
+            side_effects_may_have_started=True,
+        )
+    allowed = dict(grammar.allowed_successors)
+    for index, ((node, attempt), (next_node, next_attempt)) in enumerate(
+        zip(nodes, nodes[1:])
+    ):
+        if index < len(initial) - 1:
+            continue
+        if next_node == "blocked":
+            if index + 1 != len(nodes) - 1 or next_attempt != attempt:
+                raise ProductExecutionContractError(
+                    "Product blocked terminal changed attempt or has a successor.",
+                    side_effects_may_have_started=True,
+                )
+            continue
+        if next_node not in allowed.get(node, ()):
+            raise ProductExecutionContractError(
+                f"Product lifecycle transition {node}->{next_node} is not declared.",
+                side_effects_may_have_started=True,
+            )
+        if next_node == "create_repair_plan":
+            if node not in grammar.repair_transition_sources or next_attempt != attempt + 1:
+                raise ProductExecutionContractError(
+                    "RepairPlan transition changed its source or attempt number.",
+                    side_effects_may_have_started=True,
+                )
+        elif next_attempt != attempt:
+            raise ProductExecutionContractError(
+                "Product lifecycle changed attempt outside RepairPlan.",
+                side_effects_may_have_started=True,
+            )
+    # A Build must be preceded in the same attempt by exact dry-run and isolated apply.
+    for index, (node, attempt) in enumerate(nodes):
+        if node == "build":
+            prior = [name for name, selected_attempt in nodes[:index] if selected_attempt == attempt]
+            if len(prior) < 2 or prior[-2:] != ["dry_run_apply", "isolated_apply"]:
+                raise ProductExecutionContractError(
+                    "Product Build skipped exact dry-run or isolated apply.",
+                    side_effects_may_have_started=True,
+                )
+    seen_attempts = sorted({attempt for _, attempt in nodes})
+    if (
+        seen_attempts
+        and (
+            seen_attempts != list(range(max(seen_attempts) + 1))
+            or max(seen_attempts) > grammar.max_repair_attempt
+        )
+    ):
+        raise ProductExecutionContractError(
+            "Product repair attempts must be contiguous and within budget.",
+            side_effects_may_have_started=True,
+        )
+    for attempt in seen_attempts[1:]:
+        previous = ("create_repair_plan", attempt)
+        if previous not in nodes:
+            raise ProductExecutionContractError(
+                "A repair attempt lacks its committed RepairPlan transition.",
+                side_effects_may_have_started=True,
+            )
+
+
+@dataclass(frozen=True)
+class _ProductExecutionResultIdentityV1:
+    run_id: str
+    request_id: str
+    requested_completion_scope: ProductCompletionScope
+
+
+@dataclass(frozen=True)
+class ProductExecutionFactsV1:
+    request: ProductExecutionRequestV1 | _ProductExecutionResultIdentityV1
+    feature_id: str | None
+    terminal_node: str | None
+    store_attempts: tuple[ProductExecutionStoreAttemptV1, ...]
+    outputs: tuple[ProductExecutionOutputV1, ...]
+    effect_events: tuple[ProductExecutionEffectEventV1, ...]
+    validation_facts: ProductExecutionValidationFactsV1
+    blockers: tuple[ProductExecutionBlockerV1, ...]
+    variant_result: ProductBuildCompletionV1 | ProductRuntimeCompletionV1
+    failure_stage: str | None
+
+
+def _validate_product_execution_result_facts(
+    facts: ProductExecutionFactsV1,
+) -> None:
+    _validate_store_trace(facts.store_attempts, facts.outputs)
+    _validate_effect_trace(facts.effect_events)
+    _validate_lifecycle(facts.store_attempts)
+    if facts.feature_id is not None:
+        _require_non_empty(facts.feature_id, "feature_id")
+    if facts.terminal_node not in {None, "build", "done", "blocked"}:
+        raise ProductExecutionContractError(
+            "Product terminal node is unsupported.",
+            side_effects_may_have_started=True,
+        )
+    if facts.request.requested_completion_scope == "compile_only" and not isinstance(
+        facts.variant_result, ProductBuildCompletionV1
+    ):
+        raise ProductExecutionContractError(
+            "Compile product result requires ProductBuildCompletionV1.",
+            side_effects_may_have_started=True,
+        )
+    if facts.request.requested_completion_scope == "runtime_workflow" and not isinstance(
+        facts.variant_result, ProductRuntimeCompletionV1
+    ):
+        raise ProductExecutionContractError(
+            "Runtime product result requires ProductRuntimeCompletionV1.",
+            side_effects_may_have_started=True,
+        )
+    allowed_stages = {"graph_start", "post_execution_validation"}
+    allowed_stages.update(f"{node}_execution" for node, _ in PRODUCT_EXECUTION_DECLARATION.node_phases)
+    allowed_stages.update(f"{role}_store" for _, role in PRODUCT_EXECUTION_DECLARATION.node_store_roles)
+    if facts.failure_stage is not None and facts.failure_stage not in allowed_stages:
+        raise ProductExecutionContractError(
+            "Product failure stage is not declared.",
+            side_effects_may_have_started=True,
+        )
+
+
+def validate_product_execution_facts(facts: ProductExecutionFactsV1) -> None:
+    if not isinstance(facts, ProductExecutionFactsV1):
+        raise ProductExecutionContractError(
+            "Product execution facts are invalid.",
+            side_effects_may_have_started=True,
+        )
+    if not isinstance(facts.request, ProductExecutionRequestV1):
+        raise ProductExecutionContractError(
+            "Live product facts require an exact ProductExecutionRequestV1.",
+            side_effects_may_have_started=True,
+        )
+    _validate_product_execution_result_facts(facts)
+
+
+@dataclass(frozen=True)
+class ProductExecutionResultV1:
+    contract_version: Literal["1"]
+    run_id: str
+    request_id: str
+    feature_id: str | None
+    requested_completion_scope: ProductCompletionScope
+    platform_status: Literal["completed", "blocked", "partial"]
+    execution_disposition: ProductExecutionDisposition
+    failure_stage: str | None
+    side_effects_may_have_started: bool
+    terminal_node: Literal["build", "done", "blocked"] | None
+    store_attempts: tuple[ProductExecutionStoreAttemptV1, ...]
+    outputs: tuple[ProductExecutionOutputV1, ...]
+    effect_events: tuple[ProductExecutionEffectEventV1, ...]
+    validation_facts: ProductExecutionValidationFactsV1
+    blockers: tuple[ProductExecutionBlockerV1, ...]
+    variant_result: ProductBuildCompletionV1 | ProductRuntimeCompletionV1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "run_id": self.run_id,
+            "request_id": self.request_id,
+            "feature_id": self.feature_id,
+            "requested_completion_scope": self.requested_completion_scope,
+            "platform_status": self.platform_status,
+            "execution_disposition": self.execution_disposition,
+            "failure_stage": self.failure_stage,
+            "side_effects_may_have_started": self.side_effects_may_have_started,
+            "terminal_node": self.terminal_node,
+            "store_attempts": [item.to_dict() for item in self.store_attempts],
+            "outputs": [item.to_dict() for item in self.outputs],
+            "effect_events": [item.to_dict() for item in self.effect_events],
+            "validation_facts": self.validation_facts.to_dict(),
+            "blockers": [item.to_dict() for item in self.blockers],
+            "variant_result": self.variant_result.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ProductExecutionResultV1":
+        fields = (
+            "contract_version",
+            "run_id",
+            "request_id",
+            "feature_id",
+            "requested_completion_scope",
+            "platform_status",
+            "execution_disposition",
+            "failure_stage",
+            "side_effects_may_have_started",
+            "terminal_node",
+            "store_attempts",
+            "outputs",
+            "effect_events",
+            "validation_facts",
+            "blockers",
+            "variant_result",
+        )
+        _require_exact_fields(value, fields, "ProductExecutionResultV1")
+        if value["contract_version"] != "1":
+            raise ProductExecutionContractError(
+                "Product execution result version is unsupported.",
+                side_effects_may_have_started=True,
+            )
+        _require_non_empty(value["run_id"], "run_id")
+        _require_non_empty(value["request_id"], "request_id")
+        if value["feature_id"] is not None:
+            _require_non_empty(value["feature_id"], "feature_id")
+        if value["requested_completion_scope"] not in {
+            "compile_only",
+            "runtime_workflow",
+        }:
+            raise ProductExecutionContractError(
+                "Product result completion scope is unsupported.",
+                side_effects_may_have_started=True,
+            )
+        if type(value["side_effects_may_have_started"]) is not bool:
+            raise ProductExecutionContractError(
+                "Product result side-effect fact must be bool.",
+                side_effects_may_have_started=True,
+            )
+        for field in ("store_attempts", "outputs", "effect_events", "blockers"):
+            if type(value[field]) is not list:
+                raise ProductExecutionContractError(
+                    f"{field} must serialize as an array.",
+                    side_effects_may_have_started=True,
+                )
+        scope = value["requested_completion_scope"]
+        variant = (
+            ProductBuildCompletionV1.from_dict(value["variant_result"])
+            if scope == "compile_only"
+            else ProductRuntimeCompletionV1.from_dict(value["variant_result"])
+        )
+        parsed = cls(
+            contract_version=value["contract_version"],
+            run_id=value["run_id"],
+            request_id=value["request_id"],
+            feature_id=value["feature_id"],
+            requested_completion_scope=scope,
+            platform_status=value["platform_status"],
+            execution_disposition=value["execution_disposition"],
+            failure_stage=value["failure_stage"],
+            side_effects_may_have_started=value["side_effects_may_have_started"],
+            terminal_node=value["terminal_node"],
+            store_attempts=tuple(ProductExecutionStoreAttemptV1.from_dict(item) for item in value["store_attempts"]),
+            outputs=tuple(ProductExecutionOutputV1.from_dict(item) for item in value["outputs"]),
+            effect_events=tuple(ProductExecutionEffectEventV1.from_dict(item) for item in value["effect_events"]),
+            validation_facts=ProductExecutionValidationFactsV1.from_dict(value["validation_facts"]),
+            blockers=tuple(ProductExecutionBlockerV1.from_dict(item) for item in value["blockers"]),
+            variant_result=variant,
+        )
+        request = _ProductExecutionResultIdentityV1(
+            run_id=parsed.run_id,
+            request_id=parsed.request_id,
+            requested_completion_scope=parsed.requested_completion_scope,
+        )
+        facts = ProductExecutionFactsV1(
+            request=request,
+            feature_id=parsed.feature_id,
+            terminal_node=parsed.terminal_node,
+            store_attempts=parsed.store_attempts,
+            outputs=parsed.outputs,
+            effect_events=parsed.effect_events,
+            validation_facts=parsed.validation_facts,
+            blockers=parsed.blockers,
+            variant_result=parsed.variant_result,
+            failure_stage=parsed.failure_stage,
+        )
+        projected = project_product_execution_result(facts, validate_request=False)
+        if projected.to_dict() != parsed.to_dict():
+            raise ProductExecutionContractError(
+                "Product execution result changed during strict replay.",
+                side_effects_may_have_started=parsed.side_effects_may_have_started,
+            )
+        return parsed
+
+
+def project_product_execution_result(
+    facts: ProductExecutionFactsV1,
+    *,
+    validate_request: bool = True,
+) -> ProductExecutionResultV1:
+    if validate_request:
+        validate_product_execution_facts(facts)
+    else:
+        _validate_product_execution_result_facts(facts)
+    effects_started = any(item.event_status == "started" for item in facts.effect_events)
+    last = facts.store_attempts[-1].store_result if facts.store_attempts else None
+    domain_blockers = tuple(item for item in facts.blockers if item.owner == "domain")
+    platform_blockers = tuple(item for item in facts.blockers if item.owner == "platform")
+    failure_stage = facts.failure_stage
+    if last is not None and last.outcome != "committed":
+        failure_stage = f"{facts.store_attempts[-1].artifact_role}_store"
+        is_partial = bool(facts.outputs) or effects_started or last.outcome == "partial"
+        platform_status = "partial" if is_partial else "blocked"
+        disposition: ProductExecutionDisposition = (
+            "partial" if is_partial else "platform_blocked"
+        )
+    elif failure_stage is not None:
+        is_partial = bool(facts.outputs) or effects_started
+        platform_status = "partial" if is_partial else "blocked"
+        disposition = "partial" if is_partial else "platform_blocked"
+    elif facts.validation_facts.failed:
+        failure_stage = "post_execution_validation"
+        platform_status = "partial"
+        disposition = "partial"
+    elif facts.terminal_node == "blocked":
+        if not facts.outputs or facts.outputs[-1].artifact_role != "blocked_report":
+            raise ProductExecutionContractError(
+                "Domain-blocked product result lacks committed BlockedReport.",
+                side_effects_may_have_started=effects_started,
+            )
+        platform_status = "completed"
+        disposition = "domain_blocked"
+    elif facts.terminal_node in {"build", "done"}:
+        if facts.terminal_node == "build":
+            if (
+                facts.request.requested_completion_scope != "compile_only"
+                or not isinstance(facts.variant_result, ProductBuildCompletionV1)
+                or facts.variant_result.build_status != "success"
+                or facts.variant_result.claims_real_build_success is not True
+                or facts.variant_result.build_result_ref is None
+                or facts.variant_result.workflow_checkpoint_ref is None
+            ):
+                raise ProductExecutionContractError(
+                    "Compile product success lacks the exact Build/checkpoint chain.",
+                    side_effects_may_have_started=effects_started,
+                )
+        if facts.terminal_node == "done":
+            variant = facts.variant_result
+            if (
+                facts.request.requested_completion_scope != "runtime_workflow"
+                or not isinstance(variant, ProductRuntimeCompletionV1)
+                or variant.build_status != "success"
+                or variant.runtime_status != "accepted"
+                or variant.eval_verdict != "accepted"
+                or variant.final_status != "accepted"
+                or any(
+                    ref is None
+                    for ref in (
+                        variant.build_result_ref,
+                        variant.runtime_evidence_ref,
+                        variant.eval_report_ref,
+                        variant.workflow_summary_ref,
+                    )
+                )
+                or variant.blocked_report_ref is not None
+            ):
+                raise ProductExecutionContractError(
+                    "Runtime product success lacks the exact accepted terminal chain.",
+                    side_effects_may_have_started=effects_started,
+                )
+        platform_status = "completed"
+        disposition = "succeeded"
+    else:
+        raise ProductExecutionContractError(
+            "Product execution lacks a legal terminal or platform failure.",
+            side_effects_may_have_started=effects_started,
+        )
+    if platform_status == "completed":
+        failure_stage = None
+        if facts.feature_id is None:
+            raise ProductExecutionContractError(
+                "Completed product result requires an exact feature_id.",
+                side_effects_may_have_started=effects_started,
+            )
+        if platform_blockers:
+            raise ProductExecutionContractError(
+                "Completed product result cannot carry platform blockers.",
+                side_effects_may_have_started=effects_started,
+            )
+        if disposition == "succeeded" and facts.blockers:
+            raise ProductExecutionContractError(
+                "Succeeded product result cannot carry blockers.",
+                side_effects_may_have_started=effects_started,
+            )
+        if disposition == "domain_blocked" and not domain_blockers:
+            raise ProductExecutionContractError(
+                "Domain-blocked product result requires a domain blocker.",
+                side_effects_may_have_started=effects_started,
+            )
+    elif not platform_blockers:
+        raise ProductExecutionContractError(
+            "Platform-blocked or partial product result requires a platform blocker.",
+            side_effects_may_have_started=effects_started,
+        )
+    return ProductExecutionResultV1(
+        contract_version="1",
+        run_id=facts.request.run_id,
+        request_id=facts.request.request_id,
+        feature_id=facts.feature_id,
+        requested_completion_scope=facts.request.requested_completion_scope,
+        platform_status=platform_status,
+        execution_disposition=disposition,
+        failure_stage=failure_stage,
+        side_effects_may_have_started=effects_started,
+        terminal_node=facts.terminal_node,
+        store_attempts=facts.store_attempts,
+        outputs=facts.outputs,
+        effect_events=facts.effect_events,
+        validation_facts=facts.validation_facts,
+        blockers=facts.blockers,
+        variant_result=facts.variant_result,
+    )
+
+
+@dataclass(frozen=True)
+class ProductExecutionPreflightResultV1:
+    contract_version: Literal["1"]
+    preflight_status: Literal["ready", "blocked"]
+    request: ProductExecutionRequestV1
+    failure_stage: Literal["authorization", "admission", "execution_constraint"] | None
+    blockers: tuple[ProductExecutionBlockerV1, ...]
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1" or not isinstance(
+            self.request, ProductExecutionRequestV1
+        ):
+            raise ProductExecutionContractError(
+                "Product preflight contract is invalid.",
+                side_effects_may_have_started=False,
+            )
+        if self.preflight_status == "ready":
+            if self.failure_stage is not None or self.blockers:
+                raise ProductExecutionContractError(
+                    "Ready product preflight cannot carry failure facts.",
+                    side_effects_may_have_started=False,
+                )
+        elif self.preflight_status == "blocked":
+            if self.failure_stage not in {"authorization", "admission", "execution_constraint"} or not self.blockers:
+                raise ProductExecutionContractError(
+                    "Blocked product preflight lacks exact failure facts.",
+                    side_effects_may_have_started=False,
+                )
+        else:
+            raise ProductExecutionContractError(
+                "Product preflight status is unsupported.",
+                side_effects_may_have_started=False,
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "preflight_status": self.preflight_status,
+            "request": self.request.to_dict(),
+            "failure_stage": self.failure_stage,
+            "blockers": [item.to_dict() for item in self.blockers],
+        }

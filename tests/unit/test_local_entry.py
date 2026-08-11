@@ -1,4 +1,6 @@
+import ast
 import hashlib
+import inspect
 import json
 import shutil
 import subprocess
@@ -34,7 +36,6 @@ from src.mod_agent.local_entry import (
     _resolve_project_path_property,
     _runtime_admission_record,
     _runtime_continuation_backup_report,
-    _runtime_graph_options,
     _runtime_observation_retry_output_report,
     _runtime_profile_preflight_record,
     _runtime_verification_chain,
@@ -51,6 +52,28 @@ from src.mod_agent.local_entry import (
 )
 
 _OLLAMA_DIGEST = "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
+
+
+def test_run_local_request_has_no_direct_graph_control_plane() -> None:
+    function = ast.parse(inspect.getsource(run_local_request)).body[0]
+    calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)]
+
+    direct_names = {
+        node.func.id
+        for node in calls
+        if isinstance(node.func, ast.Name)
+    }
+    attribute_calls = {
+        node.func.attr
+        for node in calls
+        if isinstance(node.func, ast.Attribute)
+    }
+
+    assert "preflight_product_execution" in direct_names
+    assert "execute_product_execution" in direct_names
+    assert "build_graph" not in direct_names
+    assert "create_initial_state" not in direct_names
+    assert "invoke" not in attribute_calls
 
 
 def _runtime_settings(
@@ -93,7 +116,7 @@ def _runtime_destination(tmp_path: Path) -> Path:
     return destination
 
 
-def test_runtime_admission_and_graph_options_select_one_same_run_chain(
+def test_runtime_admission_selects_one_same_run_chain(
     tmp_path: Path,
 ) -> None:
     settings = _runtime_settings(tmp_path)
@@ -105,12 +128,6 @@ def test_runtime_admission_and_graph_options_select_one_same_run_chain(
         runtime_plugin_destination=_runtime_destination(tmp_path),
         allow_game_directory_write=True,
     )
-    options = _runtime_graph_options(
-        settings,
-        run_gtfo_runtime=True,
-        allow_game_launch=True,
-    )
-
     assert admission["requested"] is True
     assert admission["evidence_source"] == "gtfo_real_runtime_automation"
     assert admission["capability_scope"] == "runtime_harness_preflight"
@@ -127,11 +144,6 @@ def test_runtime_admission_and_graph_options_select_one_same_run_chain(
         "destination_existed_at_admission": False,
         "destination_sha256_at_admission": None,
     }
-    assert options == {
-        "settings": settings,
-        "allow_game_launch": True,
-        "stop_after_build": False,
-    }
 
 
 def test_compile_only_admission_keeps_runtime_out_of_graph(
@@ -146,21 +158,10 @@ def test_compile_only_admission_keeps_runtime_out_of_graph(
         runtime_plugin_destination=None,
         allow_game_directory_write=False,
     )
-    options = _runtime_graph_options(
-        settings,
-        run_gtfo_runtime=False,
-        allow_game_launch=False,
-    )
-
     assert admission["requested"] is False
     assert admission["allow_game_launch"] is False
     assert admission["capability_report"] is None
     assert admission["plugin_deployment"]["requested"] is False
-    assert options == {
-        "settings": None,
-        "allow_game_launch": False,
-        "stop_after_build": True,
-    }
 
 
 def test_runtime_admission_rejects_unbound_launch_authorization(

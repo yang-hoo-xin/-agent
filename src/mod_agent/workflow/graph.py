@@ -77,6 +77,10 @@ from src.mod_agent.runtime.evidence import bind_runtime_evidence_context
 from src.mod_agent.runtime_evidence_consolidation import (
     project_operation_payload as project_consolidated_runtime_evidence,
 )
+from src.mod_agent.product_execution import (
+    ProductExecutionContractError,
+    ProductExecutionGraphModeV1,
+)
 from src.mod_agent.runtime.stagger_edit_authority import (
     StaggerEditAuthorityApprovalError,
     StaggerEditAuthorityMaterializationError,
@@ -345,6 +349,34 @@ def _route_after_typed_runtime_evidence(state: ModAgentState) -> str:
     return route_after_runtime_evidence(state)
 
 
+def _validate_product_graph_start(
+    state: ModAgentState,
+    mode: ProductExecutionGraphModeV1,
+) -> str:
+    """Reject typed product request drift before the first node can act."""
+
+    request = mode.request
+    expected = {
+        "run_id": request.run_id,
+        "request_id": request.request_id,
+        "user_request": request.user_request,
+        "target_domain": request.target_domain,
+        "target_mod": request.target_mod,
+    }
+    observed = {field: state.get(field) for field in expected}
+    if observed != expected:
+        raise ProductExecutionContractError(
+            "Product Graph initial state changed after preflight.",
+            side_effects_may_have_started=False,
+        )
+    if state.get("approvals") != {"confirmed_write": True}:
+        raise ProductExecutionContractError(
+            "Product Graph isolated-write authority changed after preflight.",
+            side_effects_may_have_started=False,
+        )
+    return "continue"
+
+
 def build_graph(
     artifact_store: ArtifactStore,
     *,
@@ -387,6 +419,7 @@ def build_graph(
     approved_feature_spec_revision_payload_hash: str | None = None,
     approved_feature_spec_revision_projection_hash: str | None = None,
     verification_operation: VerificationOperationEnvelope | None = None,
+    product_execution_mode: ProductExecutionGraphModeV1 | None = None,
 ):
     """Build a compiled LangGraph graph with real planning/review routing.
 
@@ -408,6 +441,67 @@ def build_graph(
         if verification_operation is None
         else validate_verification_operation_envelope(verification_operation)
     )
+    validated_product_execution_mode = product_execution_mode
+    if validated_product_execution_mode is not None and not isinstance(
+        validated_product_execution_mode, ProductExecutionGraphModeV1
+    ):
+        raise ProductExecutionContractError(
+            "product_execution_mode must be ProductExecutionGraphModeV1.",
+            side_effects_may_have_started=False,
+        )
+    if (
+        validated_product_execution_mode is not None
+        and validated_verification_operation is not None
+    ):
+        raise ProductExecutionContractError(
+            "Product and verification operation modes cannot share one Graph.",
+            side_effects_may_have_started=False,
+        )
+    if validated_product_execution_mode is not None:
+        if (
+            stop_after_evidence
+            or stop_after_build
+            or persist_build_runtime_handoff
+            or build_checkpoint_exact_revision_upstream_types
+            or enable_dynamic_review_interrupt
+            or edit_authority_request_ref is not None
+            or repair_planning_authority_request_ref is not None
+            or feature_spec_revision_projection is not None
+            or approved_feature_spec_revision_payload_hash is not None
+            or approved_feature_spec_revision_projection_hash is not None
+            or interrupt_before
+            or interrupt_after
+        ):
+            raise ProductExecutionContractError(
+                "Product Graph routing comes from its typed request, not legacy "
+                "stopping, authority, revision, or interrupt controls.",
+                side_effects_may_have_started=False,
+            )
+        if build_result_factory is None:
+            raise ProductExecutionContractError(
+                "Product execution requires an explicit Build adapter.",
+                side_effects_may_have_started=False,
+            )
+        if evidence_pack_factory is None or patch_change_factory is None:
+            raise ProductExecutionContractError(
+                "Product execution requires explicit Evidence and Patch adapters.",
+                side_effects_may_have_started=False,
+            )
+        if dry_run_factory is None or isolated_apply_factory is None:
+            raise ProductExecutionContractError(
+                "Product execution requires exact Dry-run and Isolated Apply adapters.",
+                side_effects_may_have_started=False,
+            )
+        request_scope = (
+            validated_product_execution_mode.request.requested_completion_scope
+        )
+        if (runtime_evidence_factory is None) is not (request_scope == "compile_only"):
+            raise ProductExecutionContractError(
+                "Product Runtime adapter topology disagrees with completion scope.",
+                side_effects_may_have_started=False,
+            )
+        stop_after_build = request_scope == "compile_only"
+        persist_build_runtime_handoff = request_scope == "compile_only"
     operation_declaration = (
         None
         if validated_verification_operation is None
@@ -801,7 +895,11 @@ def build_graph(
         "create_repair_plan",
         _make_real_graph_node(
             "create_repair_plan",
-            lambda state: _run_create_repair_plan(state, artifact_store),
+            lambda state: _run_create_repair_plan(
+                state,
+                artifact_store,
+                product_execution_mode=validated_product_execution_mode,
+            ),
         ),
     )
     graph.add_node(
@@ -886,6 +984,15 @@ def build_graph(
             ),
             {"continue": "collect_runtime_evidence"},
         )
+    elif validated_product_execution_mode is not None:
+        graph.add_conditional_edges(
+            START,
+            lambda state: _validate_product_graph_start(
+                state,
+                validated_product_execution_mode,
+            ),
+            {"continue": "plan_request"},
+        )
     elif repair_planning_authority_request_ref is not None:
         graph.add_edge(START, "stagger_repair_planning_gate")
     elif edit_authority_request_ref is not None:
@@ -968,7 +1075,21 @@ def build_graph(
             route_after_isolated_apply,
             dict(registry["isolated_apply"]),
         )
-    if stop_after_build or operation_controls.stop_after_build:
+    if (
+        validated_product_execution_mode is not None
+        and validated_product_execution_mode.request.requested_completion_scope
+        == "compile_only"
+    ):
+        graph.add_conditional_edges(
+            "build",
+            route_after_build,
+            {
+                "blocked": END,
+                "continue": END,
+                "repair": registry["build"]["repair"],
+            },
+        )
+    elif stop_after_build or operation_controls.stop_after_build:
         graph.add_conditional_edges(
             "build",
             route_after_build,
@@ -1050,7 +1171,11 @@ def _make_real_graph_node(node_name: str, run: GraphNode) -> GraphNode:
             summary=f"{node_name} started.",
         )
         state_with_start = _copy_state_with_trace(state, started)
-        result = run(state_with_start)
+        try:
+            result = run(state_with_start)
+        except Exception as exc:
+            setattr(exc, "_mod_agent_graph_node", node_name)
+            raise
         finished = _trace_event(
             state=result,
             node_name=node_name,
@@ -1091,12 +1216,16 @@ def _make_stub_graph_node(
             additional_upstreams = (
                 _artifact_ref_from_state(state_with_start, source_type),
             )
-        result = runner.run(
-            node_name,
-            state_with_start,
-            use_store_result=use_store_result,
-            additional_upstream_refs=additional_upstreams,
-        )
+        try:
+            result = runner.run(
+                node_name,
+                state_with_start,
+                use_store_result=use_store_result,
+                additional_upstream_refs=additional_upstreams,
+            )
+        except Exception as exc:
+            setattr(exc, "_mod_agent_graph_node", node_name)
+            raise
         finished_state = _copy_state_with_trace(
             result.state,
             result.trace_event.to_dict(),
@@ -3233,6 +3362,8 @@ def _route_after_terminal_evaluate(state: ModAgentState) -> str:
 def _run_create_repair_plan(
     state: ModAgentState,
     artifact_store: ArtifactStore,
+    *,
+    product_execution_mode: ProductExecutionGraphModeV1 | None = None,
 ) -> ModAgentState:
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
     proposal_ref = _artifact_ref_from_state(state, "patch_proposal")
@@ -3337,7 +3468,11 @@ def _run_create_repair_plan(
         payload=plan.to_artifact_payload(),
         status="blocked" if plan.blockers else "success",
         upstream_refs=upstream_refs,
-        exact_revision_upstream_types={"patch_proposal"},
+        exact_revision_upstream_types=(
+            {ref.artifact_type for ref in upstream_refs}
+            if product_execution_mode is not None
+            else {"patch_proposal"}
+        ),
     )
     next_state = _copy_state(state)
     next_state["current_stage"] = "repair_plan"

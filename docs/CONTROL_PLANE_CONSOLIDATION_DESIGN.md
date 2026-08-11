@@ -4453,8 +4453,50 @@ model admission或runtime admission payload schema；如导入方向要求迁移
 需要第八个生产文件、第六个测试文件、公共schema变化、额外active Store path或任何A方案durable能力，立即停止并回合同
 审核。P2.2在最终独立实施验收与commit checkpoint前保持open；P2.3、P2.4、P3、P4保持not_started/stopped。
 
+###### 15.11.2.14.7 Option B 实施与待独立验收checkpoint
+
+本次连续实施从`2026-08-11T12:34:03.6370388+08:00`开始，base HEAD为
+`da57921b4eda16d2f40a23e3e6572db04acd295b`。实现严格落在批准范围的九个实际变更文件中：
+`src/mod_agent/product_execution.py`、`src/mod_agent/product_executor.py`、`src/mod_agent/workflow/graph.py`、
+`src/mod_agent/local_entry.py`、`src/mod_agent/cli.py`、`tests/unit/test_product_execution.py`、
+`tests/unit/test_local_entry.py`、`tests/unit/test_mod_agent_cli.py`与`tests/unit/test_mod_delivery_e2e.py`；
+批准范围内的`workflow/state.py`、`workflow/nodes.py`与`test_workflow_graph.py`无需修改。未修改ArtifactStore、Registry、
+checkpointing、verification operations、Artifact/Approval schema、历史driver或Authority文档。
+
+三个实施checkpoint的真实结果如下：
+
+1. I：`ProductExecutionGraphModeV1`成为普通product Graph的唯一typed carrier；同一次Graph调用使用
+   `_ProductStoreRecorder`把active兼容`write()`与`write_with_result()`统一委托真实`ArtifactStore.write_with_result()`，逐次保留
+   Store-owned `ArtifactWriteResult`、phase、repair attempt与ordered output。首个noncommitted立即停止，未从ref、latest、totals、
+   path、文件存在或Graph summary重造receipt。existing conditional edges继续选择planning/Build/repair/Runtime/Eval/terminal
+   实时route；compile-only failed Build仍进入原`create_repair_plan`，repair生成的exact immutable upstream保持freshness。
+2. II：`ProductExecutionDeclarationV1`、lifecycle grammar、supporting wrappers、strict parser与
+   `project_product_execution_result()`在`product_execution.py`形成唯一machine result owner；public
+   `preflight_product_execution()`/`execute_product_execution()`在`product_executor.py`完成零副作用preflight、Graph START
+   TOCTOU、一次Graph调用、fixed output validation与结果冻结。binding wrapper不解释被委托payload schema；active entry先调用并
+   只保留机械迁移后的原source/disclosure/model/runtime owner，fixed resolver只验证owner-produced record的wrapper、scope与adapter
+   topology；runtime scope还要求owner-bound effect adapter在preflight与effect前用同一raw run-scoped inputs重放原runtime owner，
+   compile-only只验证owner record的no-runtime scope而不伪造settings。well-formed binding语义漂移返回零副作用structured blocked preflight。
+   domain blocked与Store failure不会被completion classification覆盖；committed domain-blocked output readback失败仍优先形成
+   `partial/post_execution_validation`并保留全部Store facts。Graph node wrapper提供exact异常归属；strict replay
+   拒绝terminal、receipt order与failure-stage漂移。exact-diff reject保持source bytes不变、isolated-apply effect未开始，同时提交
+   rejected IsolatedApplyResult与BlockedReport。
+3. III：`run_local_request()`不再调用`build_graph`、`create_initial_state`或`graph.invoke`，只准备workspace、owner-produced
+   bindings与effect adapters，调用public product preflight/execute并从冻结结果投影legacy Presentation；`_runtime_graph_options`
+   与本地Graph/terminal解释退出。CLI只经`ProductExecutionResultV1.from_dict()`读取`execution_disposition`决定exit，缺失/非法
+   structured result fail-closed；Presentation失败携带同一冻结machine result。
+
+批准范围focused命令为：
+
+`python -m pytest tests/unit/test_product_execution.py tests/unit/test_workflow_graph.py tests/unit/test_local_entry.py tests/unit/test_mod_agent_cli.py tests/unit/test_mod_delivery_e2e.py -q`
+
+当前同一working identity结果为`269 passed`；`python -m py_compile`覆盖五个实际生产实现文件，`git diff --check`通过。
+测试只使用temporary filesystem ArtifactStore与确定性fake effect adapters；未执行产品Build、Runtime、GTFO、游戏目录写入或正式
+产品Store副作用。`test_mod_delivery_e2e.py`只把早已由HEAD生产`FeatureSpec` owner固定的六项runtime plan同步到旧三项测试常量，
+不改变生产语义。当前状态仅为`implemented_pending_independent_verification`；独立实施后验收批准前不得提交实现，也不得进入P2.3–P4。
+
 ```yaml
-option_b_implementation_contract: independently_approved_pending_implementation
+option_b_implementation_contract: implemented_pending_independent_verification
 contract_verdict: approved
 approved_contract_document_sha256: 3E954A76DF8141347960DE1888C92BE3947C93113C0586330B9E213EC82C105A
 architecture_boundary_verdict: option_b
@@ -4474,6 +4516,8 @@ implementation_checkpoints:
   - III_run_local_request_and_CLI_authority_removal
 unresolved_contract_decisions: []
 implementation_authorization: granted_within_§15.11.2.14_exact_scope
+implementation_base_head: da57921b4eda16d2f40a23e3e6572db04acd295b
+post_implementation_verdict: pending_independent_verification
 P2_3_P2_4_P3_P4: stopped
 ```
 

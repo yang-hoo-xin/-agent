@@ -53,6 +53,29 @@ from src.mod_agent.evidence.dotnet_metadata import (
 from src.mod_agent.execution import ExactDiffApprovalRejectedError, ExactTextPatchApplier
 from src.mod_agent.planning.request_planner import requested_scope_text
 from src.mod_agent.proposal import LLMExactPatchGenerator
+from src.mod_agent.product_execution import (
+    ProductExecutionContractError,
+    ProductExecutionInputBindingV1,
+    ProductExecutionRequestV1,
+)
+from src.mod_agent.product_executor import (
+    SOURCE_DISCLOSURE_DATA_CLASSES,
+    LocalEntryError,
+    ProductExecutionAdaptersV1,
+    ProductExecutionPresentationError,
+    _bind_owner_validated_runtime_evidence_factory,
+    _external_model_admission_record,
+    _local_model_admission_record,
+    _local_no_external_disclosure_record,
+    _runtime_admission_record,
+    _sanitized_endpoint_url,
+    _source_disclosure_record,
+    _verify_source_revision_binding,
+    execute_product_execution,
+    preflight_product_execution,
+    source_snapshot as _product_source_snapshot,
+    source_snapshot_sha256 as _product_source_snapshot_sha256,
+)
 from src.mod_agent.runtime import (
     GTFORuntimeAutomationError,
     bind_plugin_deployment_to_runtime_payload,
@@ -136,10 +159,6 @@ from src.mod_agent.verification_operations import (
     resolve_verification_operation,
     validate_verification_operation_envelope,
 )
-
-
-class LocalEntryError(RuntimeError):
-    """Raised when the local real-slice entry cannot start truthfully."""
 
 
 class EditAuthorityPresentationError(LocalEntryError):
@@ -332,13 +351,6 @@ def _rejected_execution_result_from_preflight(
     )
 
 
-SOURCE_DISCLOSURE_DATA_CLASSES = (
-    "natural_language_request",
-    "retrieved_local_source_excerpts",
-    "run_local_api_member_metadata_facts",
-    "binding_registry",
-    "side_effect_boundaries",
-)
 LOCAL_DIAGNOSTIC_CONTENT_MAX_BYTES = 262_144
 LOCAL_DIAGNOSTIC_CONTENT_FILENAME = "patch_generation_failure_message_content.txt"
 EXACT_DIFF_REJECTION_TOKEN = "REJECTED_BY_USER"
@@ -2441,170 +2453,6 @@ def _verify_final_compiled_artifact_if_built(
     return verifier(final_artifact, "final")
 
 
-def _runtime_admission_record(
-    settings: Any,
-    *,
-    run_gtfo_runtime: bool,
-    allow_game_launch: bool,
-    runtime_plugin_destination: str | Path | None,
-    allow_game_directory_write: bool,
-    acceptance_criteria: tuple[str, ...] = (),
-) -> dict[str, Any]:
-    """Bind one run's requested Runtime boundary before any mutable action."""
-
-    runtime = getattr(settings, "runtime", None)
-    gtfo = getattr(runtime, "gtfo", None)
-    settings_enabled = bool(gtfo is not None and getattr(gtfo, "enabled", False))
-    if allow_game_launch and not run_gtfo_runtime:
-        raise LocalEntryError(
-            "--allow-game-launch requires --run-gtfo-runtime for the same run."
-        )
-    if (
-        runtime_plugin_destination is not None or allow_game_directory_write
-    ) and not run_gtfo_runtime:
-        raise LocalEntryError(
-            "Runtime plugin deployment requires --run-gtfo-runtime for the same run."
-        )
-    if not run_gtfo_runtime:
-        return {
-            "requested": False,
-            "evidence_source": None,
-            "allow_game_launch": False,
-            "authorization_scope": None,
-            "settings_enabled": settings_enabled,
-            "profile": None,
-            "capability_report": None,
-            "plugin_deployment": {
-                "requested": False,
-                "destination_path": None,
-                "allow_game_directory_write": False,
-                "restore_after_runtime": False,
-                "performed_by_run_request": False,
-                "verified_deployed_artifact_hash": False,
-            },
-        }
-    if not settings_enabled:
-        raise LocalEntryError(
-            "--run-gtfo-runtime requires runtime.gtfo.enabled=true in the selected "
-            "settings file."
-        )
-    if runtime_plugin_destination is None:
-        raise LocalEntryError(
-            "--run-gtfo-runtime requires --runtime-plugin-destination so the "
-            "physical DLL loaded by GTFO can be bound to this run's Build."
-        )
-    if not allow_game_directory_write:
-        raise LocalEntryError(
-            "--run-gtfo-runtime requires --allow-game-directory-write for "
-            "run-scoped plugin deployment and restoration."
-        )
-    try:
-        profile = profile_from_settings(settings)
-        capability_report = build_gtfo_runtime_capability_report(
-            profile,
-            allow_game_launch=allow_game_launch,
-            acceptance_criteria=acceptance_criteria,
-        )
-    except GTFORuntimeAutomationError as exc:
-        raise LocalEntryError(f"GTFO Runtime admission failed: {exc}") from exc
-    if capability_report["status"] != "ready":
-        raise LocalEntryError(
-            "GTFO Runtime admission blocked: "
-            + "; ".join(str(item) for item in capability_report["blockers"])
-        )
-    destination_input = Path(runtime_plugin_destination)
-    if not destination_input.is_absolute():
-        raise LocalEntryError(
-            "--runtime-plugin-destination must be an absolute .dll path."
-        )
-    destination = destination_input.resolve()
-    working_directory = Path(profile.working_directory).resolve()
-    try:
-        destination.relative_to(working_directory)
-    except ValueError as exc:
-        raise LocalEntryError(
-            "--runtime-plugin-destination must remain inside the configured "
-            "runtime.gtfo.working_directory."
-        ) from exc
-    if destination.suffix.lower() != ".dll":
-        raise LocalEntryError(
-            "--runtime-plugin-destination must identify one .dll file."
-        )
-    if not destination.parent.is_dir():
-        raise LocalEntryError(
-            "Runtime plugin destination directory does not exist: "
-            f"{destination.parent}"
-        )
-    if profile.terminate_after_capture is not True:
-        raise LocalEntryError(
-            "Run-scoped plugin deployment requires "
-            "runtime.gtfo.terminate_after_capture=true before launch."
-        )
-    stagger_profile = stagger_profile_from_settings(settings)
-    stagger_acceptance = None
-    if stagger_profile is not None:
-        if profile.operator_completion_required is not True:
-            raise LocalEntryError(
-                "Two-process stagger Runtime requires "
-                "runtime.gtfo.operator_completion_required=true."
-            )
-        stagger_acceptance = build_gtfo_stagger_acceptance_report(
-            stagger_profile,
-            working_directory=profile.working_directory,
-            acceptance_criteria=acceptance_criteria,
-        )
-        if stagger_acceptance["status"] != "ready":
-            raise LocalEntryError(
-                "GTFO stagger Runtime admission blocked: "
-                + "; ".join(
-                    str(item) for item in stagger_acceptance["blockers"]
-                )
-            )
-    return {
-        "requested": True,
-        "evidence_source": "gtfo_real_runtime_automation",
-        "capability_scope": "runtime_harness_preflight",
-        "allow_game_launch": allow_game_launch,
-        "authorization_scope": "this_run_only" if allow_game_launch else None,
-        "settings_enabled": True,
-        "profile": {
-            "profile_id": profile.profile_id,
-            "game_executable": profile.game_executable,
-            "working_directory": profile.working_directory,
-            "launch_args": list(profile.launch_args),
-            "log_paths": list(profile.log_paths),
-            "screenshot_directory": profile.screenshot_directory,
-            "screenshot_timeout_seconds": profile.screenshot_timeout_seconds,
-            "startup_markers": list(profile.startup_markers),
-            "acceptance_markers": dict(profile.acceptance_markers),
-            "timeout_seconds": profile.timeout_seconds,
-            "poll_interval_seconds": profile.poll_interval_seconds,
-            "output_limit_chars": profile.output_limit_chars,
-            "terminate_after_capture": profile.terminate_after_capture,
-            "operator_completion_required": profile.operator_completion_required,
-            "operator_completion_timeout_seconds": (
-                profile.operator_completion_timeout_seconds
-            ),
-        },
-        "capability_report": capability_report,
-        "stagger_acceptance": stagger_acceptance,
-        "plugin_deployment": {
-            "requested": True,
-            "destination_path": str(destination),
-            "allow_game_directory_write": True,
-            "restore_after_runtime": True,
-            "performed_by_run_request": True,
-            "verified_deployed_artifact_hash": False,
-            "destination_existed_at_admission": destination.is_file(),
-            "destination_sha256_at_admission": (
-                hashlib.sha256(destination.read_bytes()).hexdigest()
-                if destination.is_file()
-                else None
-            ),
-        },
-    }
-
-
 def _runtime_resume_admission_snapshot(
     runtime_admission: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -2634,21 +2482,6 @@ def _runtime_resume_admission_snapshot(
         "provider": runtime_admission.get("evidence_source")
         or runtime_admission.get("provider"),
         "runtime_admission": dict(runtime_admission),
-    }
-
-
-def _runtime_graph_options(
-    settings: Any,
-    *,
-    run_gtfo_runtime: bool,
-    allow_game_launch: bool,
-) -> dict[str, Any]:
-    """Select compile-only or Runtime-through-terminal graph routing."""
-
-    return {
-        "settings": settings if run_gtfo_runtime else None,
-        "allow_game_launch": allow_game_launch if run_gtfo_runtime else False,
-        "stop_after_build": not run_gtfo_runtime,
     }
 
 
@@ -2896,11 +2729,6 @@ def run_local_request(
         allow_game_launch=allow_game_launch,
         runtime_plugin_destination=runtime_plugin_destination,
         allow_game_directory_write=allow_game_directory_write,
-    )
-    runtime_graph_options = _runtime_graph_options(
-        settings,
-        run_gtfo_runtime=run_gtfo_runtime,
-        allow_game_launch=allow_game_launch,
     )
     local_model_identity: dict[str, Any] | None = None
     local_ollama_server_version: str | None = None
@@ -3700,7 +3528,7 @@ def run_local_request(
         if isinstance(direct_stagger_admission, Mapping)
         else None
     )
-    runtime_evidence_factory = (
+    raw_runtime_evidence_factory = (
         _make_deploying_runtime_evidence_factory(
             settings=settings,
             allow_game_launch=allow_game_launch,
@@ -3731,6 +3559,19 @@ def run_local_request(
             ),
         )
         if run_gtfo_runtime
+        else None
+    )
+    runtime_evidence_factory = (
+        _bind_owner_validated_runtime_evidence_factory(
+            raw_runtime_evidence_factory,
+            settings=settings,
+            allow_game_launch=allow_game_launch,
+            runtime_plugin_destination=runtime_plugin_destination,
+            allow_game_directory_write=allow_game_directory_write,
+            expected_runtime_admission=runtime_admission,
+        )
+        if raw_runtime_evidence_factory is not None
+        and runtime_plugin_destination is not None
         else None
     )
 
@@ -3829,29 +3670,81 @@ def run_local_request(
         },
     )
 
-    graph = build_graph(
-        artifact_store,
+    product_request = ProductExecutionRequestV1(
+        contract_version="1",
+        run_id=run_id,
+        request_id=request_id,
+        user_request=description,
+        target_domain="gtfo",
+        target_mod=source.name,
+        requested_completion_scope=(
+            "runtime_workflow" if run_gtfo_runtime else "compile_only"
+        ),
+        repair_budget=2,
+        isolated_workspace_root=str(run_root),
+        isolated_target_root=str(target_copy.resolve()),
+        source_root=str(source),
+        artifact_store_root=str(artifact_store.root),
+        source_snapshot_sha256=initial_source_snapshot_sha256,
+        isolated_source_snapshot_sha256=_source_snapshot_sha256(
+            _source_snapshot(target_copy)
+        ),
+        input_bindings=(
+            ProductExecutionInputBindingV1.create(
+                "source_revision_binding",
+                dict(source_revision_binding) if source_revision_binding else None,
+            ),
+            ProductExecutionInputBindingV1.create(
+                "source_disclosure", source_disclosure
+            ),
+            ProductExecutionInputBindingV1.create(
+                "model_admission", model_admission
+            ),
+            ProductExecutionInputBindingV1.create(
+                "runtime_admission", runtime_admission
+            ),
+        ),
+        completion_classification=tuple(
+            sorted(
+                (
+                    (str(key), value)
+                    for key, value in dict(completion_classification or {}).items()
+                ),
+                key=lambda item: item[0].encode("utf-8"),
+            )
+        ),
+        confirmed_isolated_write=True,
+        allow_build=True,
+    )
+    product_adapters = ProductExecutionAdaptersV1(
         evidence_pack_factory=evidence_factory,
         patch_change_factory=patch_change_factory,
         dry_run_factory=dry_run_factory,
         isolated_apply_factory=isolated_apply_factory,
         build_result_factory=build_result_factory,
         runtime_evidence_factory=runtime_evidence_factory,
-        use_default_proposal_git_binding=False,
-        persist_build_runtime_handoff=not run_gtfo_runtime,
-        **runtime_graph_options,
+        compiled_artifact_verifier=active_compiled_artifact_verifier,
+        source_change_verifier=source_change_verifier,
     )
-    state = create_initial_state(
-        run_id=run_id,
-        request_id=request_id,
-        user_request=description,
-        target_domain="gtfo",
-        target_mod=source.name,
-        confirmed_isolated_write=True,
+    product_preflight = preflight_product_execution(
+        product_request,
+        product_adapters,
+        artifact_store,
     )
+    if product_preflight.preflight_status != "ready":
+        raise LocalEntryError(
+            "Product execution preflight was blocked: "
+            + "; ".join(item.message for item in product_preflight.blockers)
+        )
     with _working_directory(run_root):
         try:
-            result = graph.invoke(state)
+            product_result = execute_product_execution(
+                product_preflight,
+                product_adapters,
+                artifact_store,
+            )
+        except ProductExecutionContractError:
+            raise
         except Exception as exc:
             provider_failure = _persist_local_failure_diagnostics(
                 run_root=run_root,
@@ -3870,58 +3763,79 @@ def run_local_request(
                     else None
                 ),
             )
-            raise LocalEntryError(f"Controlled graph failed: {type(exc).__name__}: {exc}") from exc
+            raise LocalEntryError(
+                f"Controlled product executor failed: {type(exc).__name__}: {exc}"
+            ) from exc
 
-    final_build_succeeded = (
-        result.get("build_summary", {}).get("claims_real_build_success") is True
+    product_result_projection = product_result.to_dict()
+    output_paths = {
+        item.artifact_role: item.artifact_ref.path for item in product_result.outputs
+    }
+    validation_details = {
+        item.detail_kind: item.payload
+        for item in product_result.validation_facts.details
+    }
+    variant_projection = product_result.variant_result.to_dict()
+    build_summary = {
+        "status": variant_projection.get("build_status", "not_reached"),
+        "claims_real_build_success": variant_projection.get(
+            "claims_real_build_success"
+        ),
+    }
+    runtime_summary = {
+        key: variant_projection.get(key)
+        for key in ("runtime_status", "eval_verdict", "final_status")
+        if key in variant_projection
+    }
+    runtime_chain_roles = (
+        "build_result",
+        "runtime_evidence",
+        "eval_report",
+        "workflow_summary",
     )
-    final_artifact_verification = _verify_final_compiled_artifact_if_built(
-        graph_result=result,
-        target_copy=target_copy,
-        expected_artifact=expected_artifact,
-        verifier=active_compiled_artifact_verifier,
+    runtime_verification_chain = {
+        "requested": run_gtfo_runtime,
+        "artifact_refs": {
+            role: output_paths.get(role) for role in runtime_chain_roles
+        },
+        "workflow_chain_completed": bool(
+            run_gtfo_runtime
+            and product_result.execution_disposition == "succeeded"
+            and all(output_paths.get(role) for role in runtime_chain_roles)
+        ),
+    }
+    output_readback = validation_details.get("output_readback") or []
+    isolated_apply_payload = next(
+        (
+            item.get("data")
+            for item in output_readback
+            if isinstance(item, Mapping)
+            and item.get("artifact_type") == "isolated_apply_result"
+        ),
+        {},
     )
-    final_canonical_snapshot = _source_snapshot(source)
+    actual_write_performed = bool(
+        isinstance(isolated_apply_payload, Mapping)
+        and isolated_apply_payload.get("actual_write_performed") is True
+    )
+    patch_payload_parser_entered = "patch_proposal" in output_paths
+    selected_classification = dict(product_request.completion_classification)
+    final_artifact_verification = validation_details.get("compiled_artifact")
+    source_change_verification = validation_details.get("source_change")
     canonical_source_unchanged = (
-        final_canonical_snapshot == initial_source_snapshot
-        and _source_snapshot_sha256(final_canonical_snapshot)
-        == initial_source_snapshot_sha256
+        product_result.validation_facts.canonical_source_status == "passed"
     )
-    if not canonical_source_unchanged:
-        raise LocalEntryError("Canonical source changed during the isolated run.")
-    final_isolated_snapshot = _source_snapshot(target_copy)
-    source_change_verification = None
-    if final_build_succeeded and source_change_verifier is not None:
-        source_change_verification = source_change_verifier(
-            initial_source_snapshot,
-            final_isolated_snapshot,
-        )
-    actual_write_performed = final_isolated_snapshot != initial_source_snapshot
-    patch_payload_parser_entered = "patch_proposal" in (result.get("artifacts") or {})
-    selected_classification = dict(completion_classification or {})
-    if selected_classification:
-        if result.get("build_summary", {}).get("claims_real_build_success") is not True:
-            raise LocalEntryError(
-                "Completion classification requires a real successful build."
-            )
-        if active_compiled_artifact_verifier is None or source_change_verifier is None:
-            raise LocalEntryError(
-                "Completion classification requires compiled artifact and source change verification."
-            )
 
     summary = {
         "run_id": run_id,
-        "current_stage": result["current_stage"],
-        "feature_id": result.get("feature_id"),
-        "blockers": result.get("blockers") or [],
-        "artifacts": result.get("artifacts") or {},
-        "build_summary": result.get("build_summary") or {},
-        "runtime_summary": result.get("runtime_summary") or {},
+        "current_stage": product_result.terminal_node,
+        "feature_id": product_result.feature_id,
+        "blockers": [item.to_dict() for item in product_result.blockers],
+        "artifacts": output_paths,
+        "build_summary": build_summary,
+        "runtime_summary": runtime_summary,
         "runtime_admission": runtime_admission,
-        "runtime_verification_chain": _runtime_verification_chain(
-            result,
-            requested=run_gtfo_runtime,
-        ),
+        "runtime_verification_chain": runtime_verification_chain,
         "run_root": str(run_root),
         "build_stdout": str(build_stdout) if build_stdout.exists() else None,
         "build_stderr": str(build_stderr) if build_stderr.exists() else None,
@@ -3941,19 +3855,32 @@ def run_local_request(
         "final_artifact_verification": final_artifact_verification,
         "canonical_source_unchanged": canonical_source_unchanged,
         "initial_isolated_source_snapshot": initial_source_snapshot,
-        "final_isolated_source_snapshot": final_isolated_snapshot,
+        "final_isolated_source_snapshot": (
+            source_change_verification.get("final_snapshot")
+            if isinstance(source_change_verification, Mapping)
+            else None
+        ),
         "source_change_verification": source_change_verification,
         "completion_classification": selected_classification,
+        "product_execution_result": product_result_projection,
     }
-    _persist_graph_terminal_result(
-        run_root=run_root,
-        run_id=run_id,
-        request_id=request_id,
-        summary=summary,
-        model_call_count=model_call_count,
-        patch_payload_parser_entered=patch_payload_parser_entered,
-        actual_write_performed=actual_write_performed,
-    )
+    try:
+        _persist_graph_terminal_result(
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            summary=summary,
+            model_call_count=model_call_count,
+            patch_payload_parser_entered=patch_payload_parser_entered,
+            actual_write_performed=actual_write_performed,
+        )
+    except Exception as exc:
+        raise ProductExecutionPresentationError(
+            product_execution_result=product_result,
+            failure_class=type(exc).__name__,
+            failure_message=str(exc) or type(exc).__name__,
+            sink="run_manifest_and_result_json",
+        ) from exc
     return summary
 
 
@@ -9392,19 +9319,11 @@ def resume_local_runtime(
 
 
 def _source_snapshot(root: Path) -> list[dict[str, Any]]:
-    return [
-        {
-            "path": path.relative_to(root).as_posix(),
-            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-            "size": path.stat().st_size,
-        }
-        for path in sorted(root.rglob("*"))
-        if path.is_file() and "bin" not in path.parts and "obj" not in path.parts
-    ]
+    return _product_source_snapshot(root)
 
 
 def _source_snapshot_sha256(snapshot: list[dict[str, Any]]) -> str:
-    return _sha256_json(snapshot)
+    return _product_source_snapshot_sha256(snapshot)
 
 
 def _sha256_json(value: Any) -> str:
@@ -9415,30 +9334,6 @@ def _sha256_json(value: Any) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
-
-
-def _verify_source_revision_binding(
-    *,
-    source: Path,
-    snapshot: list[dict[str, Any]],
-    snapshot_sha256: str,
-    binding: Mapping[str, str] | None,
-) -> None:
-    if binding is None:
-        return
-    expected_snapshot = binding.get("complete_snapshot_sha256")
-    if expected_snapshot != snapshot_sha256:
-        raise LocalEntryError("Canonical source complete snapshot SHA256 does not match binding.")
-    plugin_entry = next(
-        (item for item in snapshot if item.get("path") == "Plugin.cs"),
-        None,
-    )
-    if plugin_entry is None:
-        raise LocalEntryError("Canonical source binding requires Plugin.cs.")
-    if binding.get("plugin_cs_sha256") != plugin_entry.get("sha256"):
-        raise LocalEntryError("Canonical source Plugin.cs SHA256 does not match binding.")
-    if not binding.get("repository_head") or not binding.get("subtree_tree"):
-        raise LocalEntryError("Canonical source binding requires repository_head and subtree_tree.")
 
 
 def _external_evidence_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -9582,76 +9477,6 @@ def _verify_bepin_plugin_identity(
     }
 
 
-def _source_disclosure_record(
-    *,
-    provider: str,
-    model: str,
-    base_url: str | None,
-    approved_at: str,
-    approval_id: str | None = None,
-    provider_adapter: str | None = None,
-    destination_url: str | None = None,
-) -> dict[str, Any]:
-    return {
-        "approved": True,
-        "approved_at": approved_at,
-        "approval_id": approval_id,
-        "approval_actor_type": "local_cli_invoker",
-        "consent_mechanism": "--allow-source-disclosure",
-        "provider_adapter": provider_adapter,
-        "destination": {
-            "provider": provider,
-            "model": model,
-            "base_url": _sanitized_endpoint_url(base_url),
-            "request_url": _sanitized_endpoint_url(destination_url),
-        },
-        "approved_data_classes": list(SOURCE_DISCLOSURE_DATA_CLASSES),
-        "requested_data_classes": list(SOURCE_DISCLOSURE_DATA_CLASSES),
-        "scope": "this_run_only",
-    }
-
-
-def _local_no_external_disclosure_record() -> dict[str, Any]:
-    return {
-        "occurred": False,
-        "approved": False,
-        "approved_at": None,
-        "approval_id": None,
-        "approval_actor_type": None,
-        "consent_mechanism": None,
-        "provider_adapter": None,
-        "destination": None,
-        "approved_data_classes": [],
-        "requested_data_classes": [],
-        "scope": "this_run_only",
-        "reason": "local_model_execution",
-    }
-
-
-def _local_model_admission_record(
-    *,
-    model_identity: Mapping[str, Any],
-    provider_adapter: str,
-) -> dict[str, Any]:
-    base_url = str(model_identity["base_url"])
-    return {
-        "provider": "ollama",
-        "model": str(model_identity["name"]),
-        "model_digest": str(model_identity["digest"]),
-        "provider_adapter": provider_adapter,
-        "execution_locality": "local",
-        "base_url": base_url,
-        "destination": f"{base_url}/api/chat",
-        "external_disclosure_occurred": False,
-        "api_key_required": False,
-        "api_key_read": False,
-        "api_key_persisted": False,
-        "automatic_provider_fallback": False,
-        "automatic_external_retry": False,
-        "data_processing_location": "machine_local",
-    }
-
-
 def _persist_local_failure_diagnostics(
     *,
     run_root: Path,
@@ -9710,29 +9535,6 @@ def _persist_local_failure_diagnostics(
         retention["not_retained_reason"] = "policy_limit_exceeded"
     diagnostics["diagnostic_content"] = retention
     return diagnostics
-
-
-def _external_model_admission_record(
-    source_disclosure: Mapping[str, Any],
-) -> dict[str, Any]:
-    destination = source_disclosure.get("destination")
-    destination_data = destination if isinstance(destination, dict) else {}
-    return {
-        "provider": destination_data.get("provider"),
-        "model": destination_data.get("model"),
-        "model_digest": None,
-        "provider_adapter": source_disclosure.get("provider_adapter"),
-        "execution_locality": "external",
-        "base_url": destination_data.get("base_url"),
-        "destination": destination_data.get("request_url"),
-        "external_disclosure_occurred": True,
-        "api_key_required": True,
-        "api_key_read": True,
-        "api_key_persisted": False,
-        "automatic_provider_fallback": False,
-        "automatic_external_retry": False,
-        "data_processing_location": "external_provider",
-    }
 
 
 def _read_ollama_model_identity(base_url: str, model: str) -> dict[str, Any]:
@@ -9938,20 +9740,6 @@ def _project_text_property(project_file: Path, *, property_name: str) -> str:
             f"Project file must define exactly one non-empty {property_name}."
         )
     return values[0]
-
-
-def _sanitized_endpoint_url(base_url: str | None) -> str | None:
-    if base_url is None:
-        return None
-    parsed = urlsplit(base_url)
-    if not parsed.scheme or parsed.hostname is None:
-        raise LocalEntryError("Configured LLM base_url is not a valid absolute URL.")
-    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
-    try:
-        netloc = f"{host}:{parsed.port}" if parsed.port is not None else host
-    except ValueError as exc:
-        raise LocalEntryError("Configured LLM base_url has an invalid port.") from exc
-    return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
 
 
 @contextmanager

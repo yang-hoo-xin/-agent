@@ -27,6 +27,9 @@ EXPECTED_ACCEPTANCE_CRITERIA = (
 EXPECTED_RUNTIME_PLAN_WITH_BRIEF = (
     "compile or static validation",
     "startup_loaded",
+    "target_path_executed",
+    "acceptance_evidence_observed",
+    "non_goals_preserved",
     "diagnostic marker observed",
 )
 

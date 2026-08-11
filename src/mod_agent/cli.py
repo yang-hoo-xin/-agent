@@ -28,6 +28,11 @@ from .local_entry import (
     run_local_request,
 )
 from .planning import ModPlanningBriefBuilder, RequestPlanner
+from .product_execution import (
+    ProductExecutionContractError,
+    ProductExecutionResultV1,
+)
+from .product_executor import ProductExecutionPresentationError
 from .runtime import (
     StaggerDiagnosticDiffPreflightError,
     StaggerEditAuthorityApprovalError,
@@ -1029,6 +1034,40 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ollama_max_output_tokens=args.ollama_max_output_tokens,
                 ollama_context_window=args.ollama_context_window,
             )
+        except ProductExecutionPresentationError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "PRESENTATION_FAILED",
+                        "product_execution_result": (
+                            exc.product_execution_result.to_dict()
+                        ),
+                        "audit_error": {
+                            "failure_class": exc.failure_class,
+                            "failure_message": exc.failure_message,
+                            "sink": exc.sink,
+                        },
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
+        except ProductExecutionContractError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "CONTRACT_ERROR",
+                        "reason": exc.reason,
+                        "side_effects_may_have_started": (
+                            exc.side_effects_may_have_started
+                        ),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 2
         except LocalEntryError as exc:
             print(
                 json.dumps(
@@ -1039,23 +1078,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        if args.run_gtfo_runtime:
-            return (
-                0
-                if (
-                    result.get("current_stage") == "done"
-                    and result.get("runtime_summary", {}).get(
-                        "claims_real_runtime_success"
-                    )
-                    is True
-                )
-                else 1
-            )
-        return (
-            0
-            if result.get("build_summary", {}).get("claims_real_build_success") is True
-            else 1
-        )
+        structured = result.get("product_execution_result")
+        if not isinstance(structured, Mapping):
+            return 2
+        try:
+            machine_result = ProductExecutionResultV1.from_dict(structured)
+        except (ProductExecutionContractError, ValueError, TypeError):
+            return 2
+        return {
+            "succeeded": 0,
+            "domain_blocked": 1,
+            "platform_blocked": 2,
+            "partial": 2,
+        }[machine_result.execution_disposition]
 
     if args.command == "preflight-stagger-edit-authority":
         try:
