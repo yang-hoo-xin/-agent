@@ -1337,7 +1337,19 @@ def _validate_lifecycle(attempts: tuple[ProductExecutionStoreAttemptV1, ...]) ->
                 side_effects_may_have_started=True,
             )
         if next_node == "create_repair_plan":
-            if node not in grammar.repair_transition_sources or next_attempt != attempt + 1:
+            same_attempt_terminal = (
+                next_attempt == attempt
+                and (
+                    node in {"collect_runtime_evidence", "resolve_runtime_binding"}
+                    or (
+                        node in {"build", "review_proposal"}
+                        and attempt == grammar.max_repair_attempt
+                    )
+                )
+            )
+            if node not in grammar.repair_transition_sources or not (
+                next_attempt == attempt + 1 or same_attempt_terminal
+            ):
                 raise ProductExecutionContractError(
                     "RepairPlan transition changed its source or attempt number.",
                     side_effects_may_have_started=True,
@@ -1377,6 +1389,173 @@ def _validate_lifecycle(attempts: tuple[ProductExecutionStoreAttemptV1, ...]) ->
             )
 
 
+def _output_readback_envelopes(
+    facts: "ProductExecutionFactsV1",
+) -> dict[int, Mapping[str, Any]] | None:
+    status = facts.validation_facts.output_readback_status
+    if status == "failed":
+        return None
+    committed_outputs = facts.outputs
+    if status == "not_applicable":
+        if committed_outputs:
+            raise ProductExecutionContractError(
+                "Committed product outputs lack output readback facts.",
+                side_effects_may_have_started=True,
+            )
+        return {}
+    if status != "passed":
+        raise ProductExecutionContractError(
+            "Product output readback status cannot validate committed outputs.",
+            side_effects_may_have_started=True,
+        )
+    detail = next(
+        (
+            item
+            for item in facts.validation_facts.details
+            if item.detail_kind == "output_readback"
+        ),
+        None,
+    )
+    payload = detail.payload if detail is not None else None
+    if type(payload) is not list or len(payload) != len(committed_outputs):
+        raise ProductExecutionContractError(
+            "Product output readback does not match committed output order.",
+            side_effects_may_have_started=True,
+        )
+    envelopes: dict[int, Mapping[str, Any]] = {}
+    for output, envelope in zip(committed_outputs, payload, strict=True):
+        if not isinstance(envelope, Mapping) or (
+            envelope.get("feature_id") != output.artifact_ref.feature_id
+            or envelope.get("artifact_type") != output.artifact_ref.artifact_type
+            or envelope.get("artifact_hash") != output.artifact_ref.artifact_hash
+        ):
+            raise ProductExecutionContractError(
+                "Product output readback changed Artifact identity or order.",
+                side_effects_may_have_started=True,
+            )
+        envelopes[output.sequence] = envelope
+    return envelopes
+
+
+def _validate_repair_plan_lifecycle_predicates(
+    facts: "ProductExecutionFactsV1",
+) -> None:
+    envelopes = _output_readback_envelopes(facts)
+    if envelopes is None:
+        if (
+            facts.terminal_node == "blocked"
+            and facts.store_attempts
+            and all(
+                item.store_result.outcome == "committed"
+                for item in facts.store_attempts
+            )
+            and facts.store_attempts[-1].node_name == "create_repair_plan"
+            and facts.failure_stage in {None, "post_execution_validation"}
+        ):
+            raise ProductExecutionContractError(
+                "Unreadable terminal RepairPlan lacks its committed BlockedReport.",
+                side_effects_may_have_started=True,
+            )
+        return
+    attempts = facts.store_attempts
+    grammar = PRODUCT_EXECUTION_DECLARATION.lifecycle_grammar
+    for index, item in enumerate(attempts):
+        if item.node_name != "create_repair_plan" or item.store_result.outcome != "committed":
+            continue
+        envelope = envelopes.get(item.sequence)
+        if envelope is None:
+            raise ProductExecutionContractError(
+                "Committed RepairPlan lacks exact output readback.",
+                side_effects_may_have_started=True,
+            )
+        prior = next(
+            (
+                previous
+                for previous in reversed(attempts[:index])
+                if previous.node_name != "create_repair_plan"
+            ),
+            None,
+        )
+        if prior is None or prior.node_name not in grammar.repair_transition_sources:
+            raise ProductExecutionContractError(
+                "RepairPlan readback lacks its declared lifecycle source.",
+                side_effects_may_have_started=True,
+            )
+        later = next(
+            (
+                following
+                for following in attempts[index + 1 :]
+                if following.node_name != "create_repair_plan"
+            ),
+            None,
+        )
+        data = envelope.get("data")
+        payload_terminal = envelope.get("status") == "blocked"
+        terminal = later is not None and later.node_name == "blocked"
+        if later is None and payload_terminal:
+            terminal = facts.failure_stage == "blocked_execution"
+        source_attempt = prior.repair_attempt
+        expected_attempt = (
+            source_attempt
+            if terminal
+            and (
+                prior.node_name in {"collect_runtime_evidence", "resolve_runtime_binding"}
+                or source_attempt == grammar.max_repair_attempt
+            )
+            else source_attempt + 1
+        )
+        if item.repair_attempt != expected_attempt:
+            raise ProductExecutionContractError(
+                "RepairPlan readback disagrees with its declared attempt transition.",
+                side_effects_may_have_started=True,
+            )
+        blockers = data.get("blockers") if isinstance(data, Mapping) else None
+        expected_exhausted = terminal and source_attempt == grammar.max_repair_attempt
+        allowed_exhausted = (
+            {False, True}
+            if expected_exhausted
+            and prior.node_name
+            in {"collect_runtime_evidence", "resolve_runtime_binding"}
+            else {expected_exhausted}
+        )
+        expected_status = "blocked" if terminal else "success"
+        expected_next_stage = None if terminal else "generate_patch_proposal"
+        if (
+            not isinstance(data, Mapping)
+            or envelope.get("status") != expected_status
+            or type(data.get("retry_count")) is not int
+            or data.get("retry_count") != expected_attempt
+            or type(data.get("retry_budget")) is not int
+            or data.get("retry_budget") != grammar.max_repair_attempt
+            or type(data.get("retry_budget_remaining")) is not int
+            or data.get("retry_budget_remaining")
+            != grammar.max_repair_attempt - source_attempt
+            or type(data.get("retry_exhausted")) is not bool
+            or data.get("retry_exhausted") not in allowed_exhausted
+            or data.get("allowed_next_stage") != expected_next_stage
+            or type(blockers) is not list
+            or (terminal and not blockers)
+            or (not terminal and blockers)
+        ):
+            raise ProductExecutionContractError(
+                "RepairPlan readback violates its declaration-owned lifecycle predicate.",
+                side_effects_may_have_started=True,
+            )
+
+
+def _validate_terminal_effect_boundary(facts: "ProductExecutionFactsV1") -> None:
+    if not facts.store_attempts or facts.store_attempts[-1].node_name != "blocked":
+        return
+    terminal_attempt = facts.store_attempts[-1].repair_attempt
+    if any(
+        event.repair_attempt > terminal_attempt for event in facts.effect_events
+    ):
+        raise ProductExecutionContractError(
+            "Product effect trace continues after its blocked repair terminal.",
+            side_effects_may_have_started=True,
+        )
+
+
 @dataclass(frozen=True)
 class _ProductExecutionResultIdentityV1:
     run_id: str
@@ -1404,6 +1583,8 @@ def _validate_product_execution_result_facts(
     _validate_store_trace(facts.store_attempts, facts.outputs)
     _validate_effect_trace(facts.effect_events)
     _validate_lifecycle(facts.store_attempts)
+    _validate_repair_plan_lifecycle_predicates(facts)
+    _validate_terminal_effect_boundary(facts)
     if facts.feature_id is not None:
         _require_non_empty(facts.feature_id, "feature_id")
     if facts.terminal_node not in {None, "build", "done", "blocked"}:

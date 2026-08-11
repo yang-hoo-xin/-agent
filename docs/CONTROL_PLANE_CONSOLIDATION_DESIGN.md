@@ -4558,6 +4558,189 @@ P4: not_started
 overall_control_plane_consolidation: partial
 ```
 
+###### 15.11.2.14.9 P2.2 follow-up合同：repair-exhausted lifecycle/result completion
+
+> **当前状态**：`P2_2_authority_migration=implemented_and_committed`；
+> `P2_2_completion=follow_up_implemented_pending_independent_verification`；
+> `contract_verdict=approved`；
+> `implementation_authorization=granted_within_§15.11.2.14.9_exact_scope`；`overall=partial`。
+> **合同时间盒**：`started_at=2026-08-11T15:17:45.2707417+08:00`，
+> `target_checkpoint=2026-08-11T17:17:45.2707417+08:00`，
+> `absolute_hard_stop=2026-08-11T19:17:45.2707417+08:00`。
+> 独立审核已批准本节合同；当前唯一follow-up实现对象仍须通过实施后独立验收，批准前不得提交。
+
+本follow-up只修复§15.11.2.14已提交Option B lifecycle grammar对既有owner-produced terminal RepairPlan链的错误拒绝，不重新打开
+Option A、Product Executor架构或P2.2公共schema。基线为
+`0d59953925eacedc19220d6d3b7a6dca113a409e`；历史实现提交
+`f57045bb5b3f671f60bdd107308ba9fe3f3c3293`及最终文档checkpoint不得回滚、改写或amend。
+
+真实链为：Build attempt 0 failed → RepairPlan attempt 1 → Build attempt 1 failed → RepairPlan attempt 2 →
+Build attempt 2 failed → blocked RepairPlan attempt 2 → BlockedReport attempt 2。`RepairPlanner.from_build_failure()`在
+`retry_count == retry_budget == 2`时保持同一attempt并固定`retry_exhausted=true`；StateGraph按既有conditional edge写入
+blocked RepairPlan后立即进入blocked terminal。当前唯一错误解释位于
+`src/mod_agent/product_execution.py::_validate_lifecycle()`：它把所有进入`create_repair_plan`的transition都要求为
+`next_attempt == attempt + 1`，因而在全部Store事实已committed后抛`ProductExecutionContractError`，没有形成合法的
+`ProductExecutionResultV1`。
+
+本包的owner与兼容边界如下：
+
+| 合同轴 | 精确决定 |
+|---|---|
+| `current_authority` | `RepairPlanner`拥有retry-budget与RepairPlan payload事实；existing StateGraph conditional edges拥有实时Build→repair→blocked route；`ArtifactStore.write_with_result()`拥有每次C5事实；`PRODUCT_EXECUTION_DECLARATION.lifecycle_grammar`与`project_product_execution_result()`拥有冻结trace/result解释。 |
+| `target_authority` | owner不变。仅由declaration-owned lifecycle validator认识下表全部owner-produced terminal RepairPlan transition，并在C5与output-readback事实允许时从既有冻结readback验证最小RepairPlan终止谓词；projector据此输出原V1的C5、post-validation或domain-blocked结果。 |
+| `removed_authority` | 删除“所有`create_repair_plan`都必须递增attempt”的过宽解释；不在Graph、CLI、fixture或`from_dict()`增加第二张例外表。 |
+| `public_contract` | `ProductExecutionResultV1`字段、version、序列化与disposition值域不变。改变的是既有V1 declaration grammar对真实合法trace的接受集合；`from_dict()`仍经同一projector/validator重放。 |
+| `compatibility` | 可继续repair的transition仍严格递增attempt；owner-produced terminal RepairPlan按下表允许递增或保持attempt；既有compile/runtime success、普通domain blocked、Store blocked/partial、Presentation及CLI JSON/exit保持。 |
+| `semantic_boundary` | RepairPlanner仍是RepairPlan payload owner；product declaration只验证本result lifecycle所需的最小终止谓词，不复制RepairPlan完整schema、retry计算或Graph route。 |
+
+精确owner-produced shape表如下。`source_attempt`是进入RepairPlan前StateGraph已冻结的repair attempt；`max`逐字取
+`ProductExecutionLifecycleGrammarV1.max_repair_attempt == 2`。表中“terminal”均要求owner-produced blockers非空且Graph按
+`route_after_repair_plan`进入BlockedReport；不得用泛化的“任意有blocker”替代表内source/attempt/payload组合。
+
+| source node / RepairPlanner owner | source条件 | RepairPlan attempt | `retry_exhausted` | envelope status / `blockers` | `allowed_next_stage` | route class |
+|---|---|---:|---|---|---|---|
+| `build` / `from_build_failure` | `source_attempt < max`且owner产生可执行minimal change、无blocker | `source_attempt + 1` | `false` | `success` / empty | `generate_patch_proposal` | continue repair |
+| `build` / `from_build_failure` | `source_attempt < max`但owner因evidence/minimal-change条件产生blocker | `source_attempt + 1` | `false` | `blocked` / non-empty | `null` | terminal |
+| `build` / `from_build_failure` | `source_attempt == max` | `source_attempt` | `true` | `blocked` / non-empty | `null` | terminal |
+| `review_proposal` / `from_review_failure` | `source_attempt < max` | `source_attempt + 1` | `false` | `blocked` / non-empty | `null` | terminal |
+| `review_proposal` / `from_review_failure` | `source_attempt == max` | `source_attempt` | `true` | `blocked` / non-empty | `null` | terminal |
+| `collect_runtime_evidence|resolve_runtime_binding` / `from_runtime_failure` | `source_attempt < max`且owner确认source repair allowed并产生可执行minimal change、无blocker | `source_attempt + 1` | `false` | `success` / empty | `generate_patch_proposal` | continue repair |
+| `collect_runtime_evidence|resolve_runtime_binding` / `from_runtime_failure` | owner不允许source repair、未解析exact target或没有可执行minimal change | `source_attempt` | `false` | `blocked` / non-empty | `null` | terminal |
+| `collect_runtime_evidence|resolve_runtime_binding` / `from_runtime_failure` | source repair allowed且`source_attempt == max` | `source_attempt` | `true` | `blocked` / non-empty | `null` | terminal |
+
+精确grammar与validation priority：
+
+1. 所有进入`create_repair_plan`的source仍必须属于
+   `ProductExecutionLifecycleGrammarV1.repair_transition_sources`。continue repair必须逐字匹配上表并递增attempt；terminal repair
+   可以按表递增或保持attempt。任何表外source/attempt组合均fail-closed。
+2. 同attempt terminal的structural chain只允许
+   `source(source_attempt) → create_repair_plan(source_attempt) → blocked(source_attempt)`；RepairPlan是noncommitted最终Store
+   attempt时允许链在RepairPlan停止，BlockedReport是noncommitted最终Store attempt时允许链在BlockedReport停止。任何
+   noncommitted必须最后，之后无Store/effect。该结构层只豁免最终未committed role自身不存在的payload/output；它不豁免此前
+   已经committed且成功readback的RepairPlan predicate。
+3. 若最终noncommitted role就是RepairPlan，该attempt没有RepairPlan output，validator只验证第2项的source/attempt/last结构，随后
+   projector按Store-owned C5 fact形成既有`blocked|partial`与exact `repair_plan_store`。若最终noncommitted role是BlockedReport，
+   此前committed RepairPlan在`output_readback_status == "passed"`时仍必须通过第5项owner-produced predicate；通过后最终
+   `blocked|partial`与`blocked_report_store`仍只由BlockedReport的C5结果决定。任何其他final noncommitted role同理：所有此前
+   committed且成功readback的RepairPlan必须有效，但最终disposition不得被payload validator改写。
+4. 若Store全部committed，但`validation_facts.output_readback_status == "failed"`，只允许完整structural terminal chain
+   `source → RepairPlan → BlockedReport`且三者attempt符合上表；不读取或猜测RepairPlan payload，projector必须按既有
+   `partial/post_execution_validation`返回并保留全部committed outputs/receipts，不得声称domain-blocked。
+   若存在final noncommitted Store且`output_readback_status == "failed"`，无法验证的committed payload同样不触发predicate
+   ContractError，最终结果仍由该noncommitted C5 fact优先；不得回退为post-validation或domain-blocked。
+5. 只要RepairPlan已经committed且`output_readback_status == "passed"`，无论后续BlockedReport已committed还是最终
+   `blocked_before_commit|partial`，declaration validator都必须从
+   `validation_facts.details`中`detail_kind == "output_readback"`的冻结Store envelopes，按对应
+   `ProductExecutionOutputV1`顺序与exact ArtifactRef/hash绑定，验证表中owner-produced RepairPlan谓词。所有terminal rows共同要求：
+   envelope `status == "blocked"`；`data.retry_count`等于表定RepairPlan attempt；
+   `data.retry_budget == max`；`data.retry_budget_remaining == max - source_attempt`；
+   `data.retry_exhausted`等于表值；`data.allowed_next_stage is null`；`data.blockers`是非空array。continue rows共同要求
+   envelope `status == "success"`、`data.retry_count == source_attempt + 1`、同一budget/remaining公式、
+   `retry_exhausted is false`、`allowed_next_stage == "generate_patch_proposal"`且`blockers`为空array。
+   该验证只读取RepairPlan owner已经物化的lifecycle字段，不重新定义其余payload schema。
+6. 完整terminal RepairPlan之后必须立即且仅能出现同attempt committed `blocked_report`，`terminal_node == "blocked"`，随后无Store
+   attempt、无更高repair attempt、无Build或其他effect。后续调用次数由真实public链spy固定；serialized trace同时拒绝任何
+   BlockedReport之后的Store项或更高attempt effect。
+7. `ProductExecutionResultV1.from_dict()`必须经同一declaration validator重放上述C5 noncommitted、readback failed和readback
+   passed三层规则；不得在strict parser建立旁表、重排trace、补默认值。已知成功readback的committed RepairPlan predicate漂移
+   必须拒绝；不可读的committed payload不得以ContractError覆盖C5/post-validation终态。
+
+合法终态唯一为：
+
+| facts | `platform_status` | `execution_disposition` | `failure_stage` | blockers/outputs/receipts |
+|---|---|---|---|---|
+| 上表任一owner-produced terminal RepairPlan → exact same-attempt BlockedReport，全部Store committed且output readback passed | `completed` | `domain_blocked` | `null` | 保留全部exact committed outputs、同序C5 receipts与RepairPlan/terminal domain blockers；`platform_blockers=()` |
+
+Store或execution失败优先级不因本例外改变：任一真实Store attempt为`blocked_before_commit|partial`时仍由C5结果形成
+`blocked|partial`及exact `<role>_store`，noncommitted必须最后，之后Store/effect为0；任何execution failure仍按既有
+`<node>_execution`矩阵处理。不得把Store-owned partial改写成domain-blocked或用post-execution readback partial替代。
+
+实施范围固定为：
+
+- 生产：`src/mod_agent/product_execution.py`，只修改declaration-owned lifecycle/predicate validation及必要private delegation；
+- 测试：`tests/unit/test_product_execution.py`、`tests/unit/test_mod_agent_cli.py`；
+- 文档：`docs/CONTROL_PLANE_CONSOLIDATION_DESIGN.md`仅回填真实实施与验收checkpoint。
+
+不得修改`workflow/graph.py`、`repair/planner.py`、`product_executor.py`、`local_entry.py`、`cli.py`、ArtifactStore/C5、
+public schema、Option B route owner或未跟踪Authority文档；不得进入P2.3、P2.4、P3或P4。若上述三文件不足，或发现需要
+改变StateGraph route、RepairPlanner预算语义、公共字段/版本、Artifact/Approval类型或新增result owner，立即停止并重新送审。
+
+合同approved后的最低authority/integration证据为：
+
+1. 真实public `preflight_product_execution()`→`execute_product_execution()`运行Build exit sequence `[1, 1, 1]`，得到
+   attempt序列`build 0 → repair_plan 1 → build 1 → repair_plan 2 → build 2 → repair_plan 2 → blocked_report 2`；结果精确为
+   `completed/domain_blocked/null`，全部Store结果committed，blockers只含domain事实，严格
+   `ProductExecutionResultV1.from_dict(result.to_dict()) == result`。
+2. 正向表驱动覆盖上表各continue/terminal shape，至少包含review max同attempt、runtime非授权/无minimal-change的未到max同attempt、
+   runtime max同attempt以及Build max同attempt；负向serialized gates覆盖每个source的表外attempt、terminal/continue predicate混用、
+   `status/retry_exhausted/retry_count/retry_budget/retry_budget_remaining/allowed_next_stage/blockers`逐项漂移、缺失/错attempt
+   BlockedReport及blocked terminal后追加Store/effect/更高attempt。所有规则只经production projector重放。
+3. 分层优先级回归至少覆盖：同attempt RepairPlan本身`blocked_before_commit|partial`；同attempt committed RepairPlan后的
+   BlockedReport `blocked_before_commit|partial`；全部committed但RepairPlan readback失败。前两类保留C5 machine truth与
+   noncommitted-last，第三类固定`partial/post_execution_validation`。另加strict负向门：已committed且readback passed但payload
+   predicate被篡改的RepairPlan + final noncommitted BlockedReport必须拒绝；相同C5失败配合法RepairPlan必须逐字保留原
+   `blocked|partial`结果。readback failed时不得因无法验证payload而覆盖C5/post-validation；全部路径经strict serialized replay
+   得到相同决定。
+4. 不mock `run_local_request`、public Product Executor或Graph的真实CLI compile success，及同等级真实CLI runtime success；允许注入
+   合同已登记的确定性低层model/Build/Runtime effect adapters，禁止真实产品Build/Runtime/GTFO/游戏目录写入。
+5. 以`PRODUCT_EXECUTION_DECLARATION.node_store_roles`的每个active node/role pair为参数化输入，在能真实到达该role的public
+   product链注入Store `blocked_before_commit`与真实Store-owned `partial`。`partial`必须由temporary ArtifactStore在该实际
+   `write_with_result()`的commit protocol中注入latest-alias或pending-cleanup失败得到，不能手造ArtifactWriteResult，也不能用
+   post-execution readback失败替代。每行断言noncommitted-last、committed prefix原样保留、后续Store/effect为0及exact failure stage。
+   重复repair role另由`[1,1,1]`链证明attempt 0→1→2 prefix不被flat unique-role表示压缩。
+6. 保留并重跑P2.2原focused suite；对实际生产文件运行`py_compile`，对唯一staged identity运行`git diff --cached --check`。
+
+合同批准后只形成一个follow-up staged identity并送同一独立审核页。`post_implementation_verdict=approved`前不得提交；若
+绝对截止仍未闭合，则停止、保留精确HEAD/status/diff/tests并登记incomplete checkpoint，不做WIP commit。
+
+实施与验收回填（2026-08-11）：
+
+- declaration-owned lifecycle/predicate validator现已接受Build、Review、Runtime owner产生的普通递增与表定同attempt terminal
+  RepairPlan，同时继续拒绝表外attempt、payload predicate漂移、缺失/错attempt BlockedReport、blocked terminal后的Store或更高
+  attempt effect；`ProductExecutionResultV1.from_dict()`通过同一projector重放，不存在parser旁表。
+- final noncommitted RepairPlan只按结构与C5事实停止；final noncommitted BlockedReport之前已经committed且readback passed的
+  RepairPlan仍执行owner-produced predicate；readback failed不覆盖C5或`post_execution_validation`优先级。
+- 独立初验指出并已修正两项遗漏：Runtime/Binding在max attempt时同时接受owner-produced的source-repair exhausted `true`与
+  non-source-repair terminal `false`，但Build/Review max仍只接受exhausted；全部Store committed且readback failed时，blocked machine
+  terminal不得停在committed RepairPlan，必须保留同attempt committed BlockedReport。真实Runtime非授权max公共链与删除BlockedReport的
+  strict replay负向门均已覆盖。
+- 真实public `[1,1,1]` Build链形成attempt 0→1→2→同attempt terminal 2并返回
+  `completed/domain_blocked/null`；Review未耗尽/耗尽、Runtime非授权/耗尽形态与strict roundtrip均已覆盖。
+- active Store role矩阵使用temporary `ArtifactStore.write_with_result()`真实注入`blocked_before_commit|partial`，断言
+  noncommitted-last、真实committed prefix、first-failure-stop与后续Store/effect为0；未手造C5 result。
+- 真实CLI compile与runtime回归均从`run-request`进入`run_local_request`、public Product Executor和真实StateGraph；只注入已登记的
+  deterministic低层model/Build/Runtime adapters，未执行产品Build、GTFO、游戏目录写或正式产品Store副作用。
+- 验证结果：`tests/unit/test_product_execution.py`为83 passed；`tests/unit/test_mod_agent_cli.py`为53 passed；P2.2联合focused suite
+  （product execution、workflow graph、local entry、CLI、delivery e2e）为335 passed；生产文件`py_compile`通过。
+- 实际修改仍严格为`src/mod_agent/product_execution.py`、`tests/unit/test_product_execution.py`、
+  `tests/unit/test_mod_agent_cli.py`及本文档checkpoint；Graph、RepairPlanner、Product Executor、local entry、CLI生产、ArtifactStore/C5、
+  public schema与P2.3–P4均未修改。当前状态为`implemented_pending_independent_verification`，不得提交。
+
+```yaml
+P2_2_authority_migration: implemented_and_committed
+P2_2_completion: follow_up_implemented_pending_independent_verification
+follow_up_kind: repair_exhausted_lifecycle_result_completion
+contract_verdict: approved
+implementation_authorization: granted_within_§15.11.2.14.9_exact_scope
+implementation_status: implemented_pending_independent_verification
+post_implementation_verdict: pending_independent_verification
+allowed_production_files:
+  - src/mod_agent/product_execution.py
+allowed_test_files:
+  - tests/unit/test_product_execution.py
+  - tests/unit/test_mod_agent_cli.py
+public_schema_change: none
+graph_route_change: none
+repair_planner_change: none
+artifact_store_C5_change: none
+unresolved_contract_decisions: []
+P2_3: not_started
+P2_4: not_started
+P3: not_started
+P4: not_started
+overall: partial
+```
+
 ## 16. 变更控制与非黑箱要求
 
 本文档只有经用户明确批准后才成为规范性实施约束。

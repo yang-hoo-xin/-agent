@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 import src.mod_agent.local_entry as local_entry_module
 
@@ -16,6 +18,7 @@ from src.libs.llm import (
     AgentTurnProviderError,
     AgentTurnResponse,
     AgentUsage,
+    ChatResponse,
 )
 from src.mod_agent import __version__
 from src.mod_agent.artifacts import ArtifactRef
@@ -38,6 +41,7 @@ from src.mod_agent.intelligent_evidence_only import (
     run_intelligent_evidence_only,
 )
 from src.mod_agent.local_entry import LocalEntryError
+from src.mod_agent.runtime import RuntimeEvidenceItem, build_real_runtime_evidence_payload
 
 
 def _successful_edit_authority_cli_result(
@@ -1625,6 +1629,430 @@ def test_cli_run_request_uses_real_public_product_executor_and_graph(
     assert [item["artifact_role"] for item in machine["store_attempts"]] == [
         "request_planning_report",
         "blocked_report",
+    ]
+    assert all(
+        item["store_result"]["outcome"] == "committed"
+        for item in machine["store_attempts"]
+    )
+
+
+def test_cli_run_request_real_public_product_executor_compile_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "Example"
+    bepinex = tmp_path / "BepInEx"
+    workspace = tmp_path / "runs"
+    target.mkdir()
+    bepinex.mkdir()
+    (target / "Example.csproj").write_text(
+        "<Project><PropertyGroup>"
+        "<AssemblyName>Example</AssemblyName>"
+        f"<BepInExDir>{bepinex}</BepInExDir>"
+        "</PropertyGroup></Project>",
+        encoding="utf-8",
+    )
+    (target / "Plugin.cs").write_text(
+        "namespace Example; public sealed class Plugin { public void Load() {} }\n",
+        encoding="utf-8",
+    )
+    (target / "nuget.config").write_text("<configuration />", encoding="utf-8")
+
+    digest = "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
+    identity = {
+        "name": "qwen3:4b-instruct",
+        "model": "qwen3:4b-instruct",
+        "digest": digest,
+        "modified_at": "2026-07-16T14:06:42.9800065+08:00",
+        "size": 2497293803,
+        "details": {
+            "context_length": 262144,
+            "parameter_size": "4.0B",
+            "quantization_level": "Q4_K_M",
+        },
+        "capabilities": ["completion", "tools"],
+        "base_url": "http://127.0.0.1:11434",
+    }
+    monkeypatch.setattr(local_entry_module, "_read_ollama_model_identity", lambda *_: identity)
+    monkeypatch.setattr(local_entry_module, "_read_ollama_server_version", lambda *_: "0.32.1")
+    monkeypatch.setattr(
+        local_entry_module.LLMFactory,
+        "create",
+        staticmethod(lambda settings, **kwargs: local_entry_module.OllamaLLM(settings, **kwargs)),
+    )
+
+    def deterministic_chat(self, messages, trace=None, **kwargs):
+        request = json.loads(messages[-1].content)
+        evidence_by_id = {
+            item["evidence_id"]: item
+            for item in request["evidence"]
+            if isinstance(item, dict) and item.get("evidence_id")
+        }
+        changes = []
+        for unit in request["required_change_units"]:
+            binding_id = unit["edit_binding_id"]
+            context = request["edit_binding_contexts"][binding_id]
+            before = evidence_by_id[context["evidence_id"]]["excerpt"]
+            markers = request["required_validation_by_binding"].get(binding_id) or []
+            marker_text = " ".join(
+                item for item in markers if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", item)
+            )
+            replacement = "{ /* PRODUCT_TEST_CHANGE"
+            if marker_text:
+                replacement += f" {marker_text}"
+            replacement += " */ }"
+            after = before.replace("{}", replacement, 1)
+            if after == before:
+                after = before + "\n// PRODUCT_TEST_CHANGE " + marker_text
+            changes.append(
+                {
+                    "change_id": unit["change_id"],
+                    "change_type": "modify_behavior",
+                    "edit_binding_id": binding_id,
+                    "operation": "exact_text_replace",
+                    "rationale": "Deterministic evidence-bound CLI integration change.",
+                    "expected_validation": markers or ["dotnet build"],
+                    "rollback_hint": "Restore the exact prior source text.",
+                    "patch": {
+                        "kind": "exact_text_replace",
+                        "before_text": before,
+                        "after_text": after,
+                        "expected_occurrences": 1,
+                    },
+                }
+            )
+        recorder = kwargs.get("provider_request_recorder")
+        if callable(recorder):
+            recorder(
+                {
+                    "body_sha256": "sha256:" + "a" * 64,
+                    "body_utf8": "{}",
+                    "timeout_seconds": 120,
+                    "trust_environment": False,
+                    "follow_redirects": False,
+                }
+            )
+        return ChatResponse(
+            content=json.dumps({"changes": changes}),
+            model="qwen3:4b-instruct",
+            usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+            raw_response={"done": True, "done_reason": "stop"},
+        )
+
+    monkeypatch.setattr(local_entry_module.OllamaLLM, "chat", deterministic_chat)
+
+    def build(profile):
+        artifact = profile.working_directory / "bin" / "Debug" / "Example.dll"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_bytes(b"deterministic compiled artifact")
+        return local_entry_module.NuGetIsolatedBuildExecution(
+            restore_exit_code=0,
+            build_exit_code=0,
+            restore_stdout="restore ok",
+            restore_stderr="",
+            build_stdout="build ok",
+            build_stderr="",
+            duration_ms=2,
+        )
+
+    monkeypatch.setattr(local_entry_module, "_run_nuget_isolated_build", build)
+
+    class ExactApprovalInput:
+        def readline(self) -> str:
+            for path in workspace.rglob("*.json"):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, UnicodeDecodeError):
+                    continue
+                if payload.get("artifact_type") == "dry_run_result":
+                    diff_hash = (payload.get("data") or {}).get("diff_hash")
+                    if isinstance(diff_hash, str):
+                        return diff_hash + "\n"
+            raise AssertionError("CLI requested approval before durable DryRunResult existed")
+
+    monkeypatch.setattr("src.mod_agent.cli.sys.stdin", ExactApprovalInput())
+    exit_code = main(
+        [
+            "run-request",
+            "make Load record deterministic product diagnostics",
+            "--target-project",
+            str(target),
+            "--workspace-root",
+            str(workspace),
+            "--settings",
+            "config/settings.yaml",
+            "--local-ollama",
+            "--ollama-model",
+            "qwen3:4b-instruct",
+            "--ollama-context-window",
+            "32768",
+            "--confirm-isolated-write",
+            "--allow-build",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert "product_execution_result" in payload, payload
+    machine = payload["product_execution_result"]
+    assert exit_code == 0
+    assert machine["platform_status"] == "completed"
+    assert machine["execution_disposition"] == "succeeded"
+    assert machine["terminal_node"] == "build"
+    assert [item["artifact_role"] for item in machine["store_attempts"][-4:]] == [
+        "dry_run_result",
+        "isolated_apply_result",
+        "build_result",
+        "workflow_checkpoint",
+    ]
+    assert all(
+        item["store_result"]["outcome"] == "committed"
+        for item in machine["store_attempts"]
+    )
+
+
+def test_cli_run_request_real_public_product_executor_runtime_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    target = tmp_path / "Example"
+    bepinex = tmp_path / "BepInEx"
+    workspace = tmp_path / "runs"
+    runtime_root = tmp_path / "runtime"
+    destination = runtime_root / "BepInEx" / "plugins" / "Example.dll"
+    target.mkdir()
+    bepinex.mkdir()
+    destination.parent.mkdir(parents=True)
+    executable = runtime_root / "GTFO.exe"
+    executable.write_bytes(b"deterministic runtime executable")
+    runtime_config = runtime_root / "BepInEx" / "config" / "BepInEx.cfg"
+    runtime_config.parent.mkdir(parents=True, exist_ok=True)
+    runtime_config.write_text(
+        "[Logging.Disk]\nAppendLog = false\n", encoding="utf-8"
+    )
+    (target / "Example.csproj").write_text(
+        "<Project><PropertyGroup>"
+        "<AssemblyName>Example</AssemblyName>"
+        f"<BepInExDir>{bepinex}</BepInExDir>"
+        "</PropertyGroup></Project>",
+        encoding="utf-8",
+    )
+    (target / "Plugin.cs").write_text(
+        "namespace Example; public sealed class Plugin { public void Load() {} }\n",
+        encoding="utf-8",
+    )
+    (target / "nuget.config").write_text("<configuration />", encoding="utf-8")
+    settings_payload = yaml.safe_load(Path("config/settings.yaml").read_text(encoding="utf-8"))
+    settings_payload["runtime"]["gtfo"].update(
+        {
+            "enabled": True,
+            "game_executable": str(executable),
+            "working_directory": str(runtime_root),
+            "launch_args": ["-deterministic-test"],
+            "log_paths": ["BepInEx/LogOutput.log"],
+            "screenshot_directory": str(runtime_root / "screenshots"),
+            "startup_markers": ["Chainloader startup complete"],
+            "acceptance_markers": {},
+            "terminate_after_capture": True,
+        }
+    )
+    settings_path = tmp_path / "settings.yaml"
+    settings_path.write_text(yaml.safe_dump(settings_payload), encoding="utf-8")
+
+    digest = "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
+    identity = {
+        "name": "qwen3:4b-instruct",
+        "model": "qwen3:4b-instruct",
+        "digest": digest,
+        "modified_at": "2026-07-16T14:06:42.9800065+08:00",
+        "size": 2497293803,
+        "details": {
+            "context_length": 262144,
+            "parameter_size": "4.0B",
+            "quantization_level": "Q4_K_M",
+        },
+        "capabilities": ["completion", "tools"],
+        "base_url": "http://127.0.0.1:11434",
+    }
+    monkeypatch.setattr(local_entry_module, "_read_ollama_model_identity", lambda *_: identity)
+    monkeypatch.setattr(local_entry_module, "_read_ollama_server_version", lambda *_: "0.32.1")
+    monkeypatch.setattr(
+        local_entry_module.LLMFactory,
+        "create",
+        staticmethod(lambda settings, **kwargs: local_entry_module.OllamaLLM(settings, **kwargs)),
+    )
+
+    def deterministic_chat(self, messages, trace=None, **kwargs):
+        request = json.loads(messages[-1].content)
+        evidence_by_id = {
+            item["evidence_id"]: item
+            for item in request["evidence"]
+            if isinstance(item, dict) and item.get("evidence_id")
+        }
+        changes = []
+        for unit in request["required_change_units"]:
+            binding_id = unit["edit_binding_id"]
+            context = request["edit_binding_contexts"][binding_id]
+            before = evidence_by_id[context["evidence_id"]]["excerpt"]
+            markers = request["required_validation_by_binding"].get(binding_id) or []
+            marker_text = " ".join(
+                item for item in markers if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", item)
+            )
+            replacement = "{ /* PRODUCT_RUNTIME_TEST_CHANGE"
+            if marker_text:
+                replacement += f" {marker_text}"
+            replacement += " */ }"
+            after = before.replace("{}", replacement, 1)
+            if after == before:
+                after = before + "\n// PRODUCT_RUNTIME_TEST_CHANGE " + marker_text
+            changes.append(
+                {
+                    "change_id": unit["change_id"],
+                    "change_type": "modify_behavior",
+                    "edit_binding_id": binding_id,
+                    "operation": "exact_text_replace",
+                    "rationale": "Deterministic evidence-bound Runtime CLI change.",
+                    "expected_validation": markers or ["dotnet build"],
+                    "rollback_hint": "Restore the exact prior source text.",
+                    "patch": {
+                        "kind": "exact_text_replace",
+                        "before_text": before,
+                        "after_text": after,
+                        "expected_occurrences": 1,
+                    },
+                }
+            )
+        recorder = kwargs.get("provider_request_recorder")
+        if callable(recorder):
+            recorder(
+                {
+                    "body_sha256": "sha256:" + "b" * 64,
+                    "body_utf8": "{}",
+                    "timeout_seconds": 120,
+                    "trust_environment": False,
+                    "follow_redirects": False,
+                }
+            )
+        return ChatResponse(
+            content=json.dumps({"changes": changes}),
+            model="qwen3:4b-instruct",
+            usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+            raw_response={"done": True, "done_reason": "stop"},
+        )
+
+    monkeypatch.setattr(local_entry_module.OllamaLLM, "chat", deterministic_chat)
+
+    def build(profile):
+        artifact = profile.working_directory / "bin" / "Debug" / "Example.dll"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_bytes(b"deterministic runtime compiled artifact")
+        return local_entry_module.NuGetIsolatedBuildExecution(
+            restore_exit_code=0,
+            build_exit_code=0,
+            restore_stdout="restore ok",
+            restore_stderr="",
+            build_stdout="build ok",
+            build_stderr="",
+            duration_ms=2,
+        )
+
+    monkeypatch.setattr(local_entry_module, "_run_nuget_isolated_build", build)
+
+    def deterministic_runtime_factory(**_kwargs):
+        def run(feature_id, build_payload, feature_spec):
+            criteria = tuple(feature_spec["acceptance_criteria"])
+            return build_real_runtime_evidence_payload(
+                feature_id=feature_id,
+                input_execution_mode=build_payload["execution_mode"],
+                evidence_items=(
+                    RuntimeEvidenceItem(
+                        item_type="runtime_log",
+                        source="deterministic_cli_runtime",
+                        locator="runtime://cli-success",
+                        supports_acceptance=criteria,
+                        confidence=1.0,
+                        raw_excerpt="All requested Runtime criteria were observed.",
+                    ),
+                ),
+                startup_loaded=True,
+                gameplay_behavior_verified=True,
+                verification_status="verified",
+                raw_runtime_output="All requested Runtime criteria were observed.",
+                acceptance_criteria=criteria,
+                runtime_verification_plan=tuple(feature_spec["runtime_verification_plan"]),
+                plugin_marker_binding={
+                    "marker_source": "deterministic_cli_runtime",
+                    "markers": [
+                        {
+                            "acceptance_criterion": criterion,
+                            "marker": f"CLI_MARKER_{index}",
+                            "observed": True,
+                        }
+                        for index, criterion in enumerate(criteria, start=1)
+                    ],
+                },
+            )
+
+        return run
+
+    monkeypatch.setattr(
+        local_entry_module,
+        "_make_deploying_runtime_evidence_factory",
+        deterministic_runtime_factory,
+    )
+
+    class ExactApprovalInput:
+        def readline(self) -> str:
+            for path in workspace.rglob("*.json"):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, UnicodeDecodeError):
+                    continue
+                if payload.get("artifact_type") == "dry_run_result":
+                    diff_hash = (payload.get("data") or {}).get("diff_hash")
+                    if isinstance(diff_hash, str):
+                        return diff_hash + "\n"
+            raise AssertionError("CLI requested approval before durable DryRunResult existed")
+
+    monkeypatch.setattr("src.mod_agent.cli.sys.stdin", ExactApprovalInput())
+    exit_code = main(
+        [
+            "run-request",
+            "make Load record deterministic product diagnostics",
+            "--target-project",
+            str(target),
+            "--workspace-root",
+            str(workspace),
+            "--settings",
+            str(settings_path),
+            "--local-ollama",
+            "--ollama-model",
+            "qwen3:4b-instruct",
+            "--ollama-context-window",
+            "32768",
+            "--confirm-isolated-write",
+            "--allow-build",
+            "--run-gtfo-runtime",
+            "--allow-game-launch",
+            "--runtime-plugin-destination",
+            str(destination),
+            "--allow-game-directory-write",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert "product_execution_result" in payload, payload
+    machine = payload["product_execution_result"]
+    assert exit_code == 0
+    assert machine["platform_status"] == "completed"
+    assert machine["execution_disposition"] == "succeeded"
+    assert machine["terminal_node"] == "done"
+    assert [item["artifact_role"] for item in machine["store_attempts"][-4:]] == [
+        "build_result",
+        "runtime_evidence",
+        "eval_report",
+        "workflow_summary",
     ]
     assert all(
         item["store_result"]["outcome"] == "committed"
