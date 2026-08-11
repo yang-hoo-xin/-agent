@@ -3947,10 +3947,11 @@ declaration projector重放phase/chain规则。
 `user_authorization_semantics=resolved_by_user`，A方案的protocol/operation边界没有获得实施授权。独立审核确认
 当前P2.2“Build adapter adoption”与`run_local_request()`真实same-invocation完整生命周期边界不匹配，继续逐字段修补
 会把入口迁移扩大成新的durable execution平台。用户已经选择B，因此当前精确状态为
-`architecture_boundary_selected_option_b`、`b_implementation_contract=not_started`、
-`implementation_authorization=not_granted`；§15.11.2.8–.11保留为A方案的未批准设计记录，不是rejected最终结论，
-也不是P2.2a–d实施合同。当前只允许形成并独立审核B的精确implementation contract；不得继续给A追加字段、修改
-代码/测试/Store/index或启动P2.2a–d/P2.3–P4。
+`architecture_boundary_selected_option_b`、`b_implementation_contract=independently_approved_pending_implementation`、
+`implementation_authorization=granted_within_§15.11.2.14_exact_scope`；批准绑定的合同文档SHA256为
+`3E954A76DF8141347960DE1888C92BE3947C93113C0586330B9E213EC82C105A`。§15.11.2.8–.11保留为A方案的未批准设计记录，
+不是rejected最终结论，也不是P2.2a–d实施合同。只允许按§15.11.2.14的I/II/III连续checkpoint实施；不得继续给A追加字段或
+启动P2.3–P4。
 
 以下原拆包仅说明A方案的成本，不构成当前实施顺序或授权：
 
@@ -4111,6 +4112,370 @@ P4  focused authority→全仓库回归→受控真实Build/Runtime→第二产�
 Repair Planning与dynamic review保持`deferred_non_active`；MCP、HTTP API和Mod Agent Dashboard当前保持
 只读adapter，不建立执行型迁移包。`local_entry.py`文件体量不单独触发重构，只允许在对应authority迁移
 中净减少旧分支。
+
+##### 15.11.2.14 Option B 单一实施合同：same-invocation Public Product Executor
+
+> **合同状态**：`independently_approved_pending_implementation`；
+> `contract_verdict=approved`；`implementation_authorization=granted_within_§15.11.2.14_exact_scope`；
+> 批准绑定文档SHA256=`3E954A76DF8141347960DE1888C92BE3947C93113C0586330B9E213EC82C105A`。
+> **本轮时间盒**：`started_at=2026-08-07T15:01:21.3958612+08:00`，
+> `target_checkpoint=2026-08-07T16:01:21.3958612+08:00`，
+> `absolute_hard_stop=2026-08-07T16:31:21.3958612+08:00`。本节只授权只读源码inventory与本权威文档修改；
+> 独立`contract_verdict=approved`前不得修改生产代码、测试、Store或Git index。
+
+本合同把§15.11.2.13已经由用户选择并独立确认的Option B一次性闭合为三个实施章节。三个章节共享同一public
+contract、同一result/C5 owner和同一active-entry迁移边界；它们不是三轮合同。合同approved后允许按I/II/III三个
+代码checkpoint连续实施、分别运行focused tests，最后只形成一个整包staged identity并做一次正式独立实施后验收。
+任何checkpoint发现需要改变本节public schema、authority、C5终态、Graph lifecycle或兼容矩阵时必须停止并重新送审。
+
+###### 15.11.2.14.1 真实active Graph/Store inventory与条件路径
+
+当前`run_local_request()`构造普通Graph时不传`verification_operation`。因此下表所有active Store调用都必须在
+product-executor mode中使用`ArtifactStore.write_with_result()`；已有只在verification controls下启用的C5分支必须
+委托同一product recorder，而不是保留第二种result解释。`Store role`按一次真实调用记录，repair中的重复role按
+`repair_attempt`重复出现，不压成unique-role chain。
+
+| Graph node / exact symbol | Store role与调用次序 | domain short-chain / reachable branch | P2.2处理 |
+| --- | --- | --- | --- |
+| `plan_request` / `_run_plan_request` | `request_planning_report` | `plan.blocked=true`后进入`blocked` | `write()`→`write_with_result()` |
+| `planning_brief` / `_run_planning_brief` | `mod_planning_brief` | `planning_brief.blocked=true`后进入`blocked` | 同上 |
+| `draft_feature_spec` / `_run_draft_feature_spec` | `feature_spec` | `feature_spec.blocked=true`后进入`blocked` | 同上；`_materialize_feature_spec_revision`不在当前入口scope |
+| `retrieve_evidence` / `_run_retrieve_evidence` | `evidence_pack` | `can_generate_patch=false`后进入`blocked` | 同上 |
+| `create_implementation_plan` / `_run_create_implementation_plan` | `implementation_plan` | `implementation.blocking=true`后进入`blocked` | 同上 |
+| `generate_patch_proposal` / `_run_generate_patch_proposal` | `patch_proposal` | blocked proposal进入`blocked`；repair轮次重复该role | 同上 |
+| `review_proposal` / `_run_review_proposal` | 可选`critic_assessment`，随后`proposal_review` | critic committed后review仍必须真实执行；review可进入dry-run、repair或blocked | 两次调用均迁移；任一noncommitted后停止且不调用下一次Store |
+| `dry_run_apply` / `_run_dry_run_apply` | `dry_run_result` | review/human gate未通过时committed blocked结果进入`blocked` | 同上 |
+| `isolated_apply` / `_run_isolated_apply` | `isolated_apply_result` | exact diff reject、未批准或apply失败均是committed domain结果并进入`blocked`；apply effect=0或按真实调用记录 | 同上 |
+| `build` / `_run_build` | `build_result`；compile-only成功时随后`workflow_checkpoint` | failed mutation Build进入repair；blocked进入`blocked`；compile-only成功必须同时commit checkpoint才算成功 | BuildResult与checkpoint都保留C5 receipt；不改Build lineage/route |
+| `create_repair_plan` / `_run_create_repair_plan` | `repair_plan` | `RepairPlanner(retry_budget=2)`；有blocker/预算耗尽后进入`blocked`，否则进入下一Proposal轮次 | 同上；budget仍由现有Planner+Graph state拥有 |
+| `resolve_runtime_binding` / `_run_resolve_runtime_binding` | `binding_resolution` | product-behavior repair binding可继续repair；blocked进入`blocked` | 同上 |
+| `collect_runtime_evidence` / `_run_runtime_evidence` | `runtime_evidence` | accepted进入Eval；适用时进入binding/repair；否则进入blocked | product mode统一启用现有`write_with_result()`分支 |
+| `evaluate` / `_run_fake_evaluate` | `eval_report` | gate blocked进入`blocked`；其他进入`done` | product mode统一启用现有C5分支 |
+| `done` / `_run_workflow_summary` | `workflow_summary` | runtime scope成功只在exact accepted terminal payload committed后成立 | product mode统一启用现有C5分支 |
+| `blocked` / `StubNodeRunner.run` | `blocked_report` | 只表示Graph已经选出的domain terminal；不得用于包装平台Store/execution失败 | product mode启用C5；平台first-failure-stop直接END，不再写本role |
+
+`_materialize_feature_spec_revision`只在`feature_spec_revision_projection`非空时可达；当前`run_local_request()`没有该输入，
+本包不修改、测试或宣称迁移该条件路径。dynamic Human review、Edit Authority、Repair Planning Authority与manual/cross-process
+Runtime Resume仍使用原有独立入口和协议，不进入ordinary same-invocation product mode。
+
+###### 15.11.2.14.2 共享exact公共类型、owner与结果矩阵
+
+新增纯合同模块`src/mod_agent/product_execution.py`，不得导入`local_entry.py`或`workflow/graph.py`。它是以下exact
+schema、严格parser和projector的唯一owner：
+
+1. `ProductExecutionRequestV1`：exact字段为`contract_version="1"`、`run_id`、`request_id`、`user_request`、
+   `target_domain`、`target_mod`、`requested_completion_scope`（`compile_only|runtime_workflow`）、
+   `repair_budget=2`、absolute `isolated_workspace_root`、absolute `isolated_target_root`、absolute `source_root`、
+   absolute `artifact_store_root`、`source_snapshot_sha256`、`isolated_source_snapshot_sha256`、
+   exact ordered `input_bindings`、exact sorted `completion_classification`、exact bool
+   `confirmed_isolated_write`与exact bool `allow_build`。ready preflight要求后两者均true；这些是
+   execution/permission facts，不构成workflow Approval Identity。run/request/user/target字段均为non-empty string；四个root均为
+   normalized absolute string；两个snapshot SHA均为64位小写hex；repair_budget必须是exact int 2而非bool；`input_bindings`必须是
+   tuple且逐项为严格`ProductExecutionInputBindingV1`；unknown/extra/missing/type/null一律拒绝。
+2. `ProductExecutionAdaptersV1`由`src/mod_agent/product_executor.py`拥有，exact字段为
+   `evidence_pack_factory`、`patch_change_factory`、`dry_run_factory`、`isolated_apply_factory`、
+   `build_result_factory`、nullable `runtime_evidence_factory`、nullable `compiled_artifact_verifier`与nullable
+   `source_change_verifier`。compile-only要求runtime adapter为null；runtime scope要求非null。测试可注入确定性adapter；
+   生产adapter仍由`run_local_request()`按现有权限、settings和physical binding构造。callable不序列化、不持久化、不进入任何
+   request/result/hash；preflight与execute只比较exact字段拓扑、callable类型与scope，不要求同一个
+   `ProductExecutionAdaptersV1`或callable对象实例。
+3. `ProductExecutionGraphModeV1`：data-only frozen carrier，exact字段为`contract_version="1"`和完整
+   `ProductExecutionRequestV1`；`build_graph(..., product_execution_mode=...)`是唯一Graph carrier。它不携callable、route、
+   result status、receipt或Approval hash，且不能与`verification_operation`、Authority gate、feature revision、legacy
+   `stop_after_build`/`persist_build_runtime_handoff`/interrupt selector混用。
+4. `ProductExecutionInputBindingV1`：exact字段为`contract_version="1"`、`binding_kind`
+   （`source_revision_binding|source_disclosure|model_admission|runtime_admission`）、对应exact
+   `binding_contract_version`（依次为`source_revision_binding_v1|source_disclosure_v1|model_admission_v1|runtime_admission_v1`）、
+   `canonical_payload`与`canonical_payload_sha256`。payload只允许recursive JSON
+   null/bool/int/string/list/object（object key必须string），hash一律委托C2/C3中立canonical JSON/SHA256 primitive并逐字重算；
+   它是input integrity，不是Approval Identity。四项必须按上述顺序各出现一次；source revision payload允许null或object，其他
+   三项必须object。`canonical_payload`是对应既有owner本次产生的完整record，而不是Product Executor重新定义的字段projection：
+   source revision仍由`_verify_source_revision_binding`拥有；source disclosure仍由
+   `_source_disclosure_record|_local_no_external_disclosure_record`拥有；model admission仍由
+   `_external_model_admission_record|_local_model_admission_record`拥有；runtime admission仍由`_runtime_admission_record`及其runtime
+   profile/capability owner拥有。`binding_contract_version`只版本化wrapper与owner选择，不取得、复制或冻结owner payload内部schema。
+   `ProductExecutionInputBindingV1.from_dict`只验证wrapper exact shape、canonical JSON类型、kind/version组合与payload hash，不解释
+   payload内部业务字段；ready preflight必须另外通过fixed `ProductExecutionInputBindingResolverV1`委托上述唯一owner校验
+   owner-produced record与request scope/adapter topology的一致性。resolver不接受caller validator callable，也不得保存
+   disclosure/model/runtime/source字段旁表。为消除`product_executor→local_entry`反向导入，实施时把上述六个既有
+   builder/validator符号机械迁移为`product_executor.py`中的唯一原定义，`local_entry.py`删除原函数体并直接import/delegate同一符号；
+   runtime profile/capability的下层owner仍在现有runtime模块。迁移前后record bytes、字段解释、失败边界与所有legacy caller不变；
+   严禁复制实现形成schema双owner。
+   execute再次逐字比较preflight的四个binding wrapper bytes，并在Graph/effect前委托同一resolver做TOCTOU一致性重验；model response与
+   Runtime physical destination仍由既有effect owner在实际调用前重验。`completion_classification`为按key
+   UTF-8排序、key唯一非空string/value exact bool的tuple；空tuple表示不适用。
+
+当前P2.2 public pair的授权真实性边界明确收窄为active product entry adoption：`run_local_request()`是唯一production request
+creator，它先从本次真实`allow_source_disclosure`、model/settings、`run_gtfo_runtime`、`allow_game_launch`、
+`runtime_plugin_destination`与`allow_game_directory_write`输入调用既有owner，随后才把owner-produced record放入binding wrapper。
+public pair保证wrapper/hash、scope、adapter、Graph与effect之间逐字一致，但不声称仅凭record+self-hash可以独立证明任意Python
+caller的授权来源，也不登记“拒绝所有self-hash伪造”为V1能力。existing outer authorization与各effect前physical validation保持
+唯一真实性owner；未来若要把该pair开放为不经过active entry的独立授权API，必须另审raw authorization input contract，不能通过
+解释payload内部字段补齐。
+5. `ProductExecutionStoreAttemptV1`：exact字段为`contract_version="1"`、从0连续递增的`sequence`、`phase`、
+   `repair_attempt`（0..2）、
+   exact `node_name`、exact `artifact_role`和Store-owned `ArtifactWriteResult`。`ProductExecutionOutputV1`逐项保存同一
+   `contract_version="1"`、sequence/phase/attempt/node/role与committed `ArtifactRef`。
+   phase值域固定为`planning|evidence|proposal|application|build|repair|runtime|evaluation|terminal`，node对应phase只由下述
+   declaration的`node_phases`解释。sequence/repair_attempt均须为exact int而非bool。
+   `ProductExecutionEffectEventV1`按调用先后保存`contract_version="1"`、从0连续递增的`sequence`、`phase`、`repair_attempt`、`effect_role`
+   （`evidence_retrieval|patch_generation|dry_run|isolated_apply|build|runtime`）、`event_status`
+   （`started|completed|failed`）、nullable `failure_class`与nullable `failure_message`。每次effect必须先有started，
+   completed/failed必须紧随同role/phase/attempt的started且二选一；started/completed要求failure字段均null，failed要求两者
+   non-empty。它只回答effect是否可能开始，不替代Artifact或domain结果；callable本身不序列化、不持久化、不进入任何hash。
+6. `ProductExecutionPreflightResultV1`：exact字段为`contract_version="1"`、`preflight_status`（`ready|blocked`）、
+   non-null exact `request`、`failure_stage`（`authorization|admission|execution_constraint|null`）与exact
+   `blockers: tuple[ProductExecutionBlockerV1,...]`。ready要求failure null且blockers空；blocked要求failure non-null、
+   至少一个platform blocker且Graph/Store/effect调用全为0。未知/extra/type错误在request形成前抛ContractError，不伪造
+   nullable request。它没有Approval hash或Envelope。
+7. `ProductExecutionResultV1`：exact字段为`contract_version="1"`、`run_id`、`request_id`、nullable `feature_id`、
+   `requested_completion_scope`、`platform_status`（`completed|blocked|partial`）、`execution_disposition`
+   （`succeeded|domain_blocked|platform_blocked|partial`）、nullable closed `failure_stage`、
+   `side_effects_may_have_started`、`terminal_node`（`build|done|blocked|null`）、ordered `store_attempts`、ordered
+   `outputs`、exact `effect_events`、exact `ProductExecutionValidationFactsV1`、
+   `blockers: tuple[ProductExecutionBlockerV1,...]`和exact
+   `variant_result: ProductBuildCompletionV1|ProductRuntimeCompletionV1`。result不保存Presentation/audit错误、run-local文件路径、
+   Store totals或latest alias判断。run/request必须与request逐字相同且non-empty；feature_id若non-null必须non-empty；
+   `side_effects_may_have_started`必须exact bool；in-memory collection统一为tuple，`to_dict`唯一投影为JSON array，`from_dict`
+   只接受array并按原序恢复tuple；extra/missing/type/null/order drift一律拒绝。
+8. `ProductExecutionBlockerV1` exact字段为`contract_version="1"`、`owner`（`domain|platform`）、non-empty `stage`、non-empty
+   `code`、non-empty `message`与non-empty `source_node`。domain blocker只能来自现有Graph node冻结输出；platform
+   blocker只能由product Graph boundary/preflight产生。completed+succeeded要求两类blocker均空；completed+domain_blocked
+   至少一个domain blocker且platform blocker为空；blocked/partial要求至少一个platform blocker。
+9. `ProductExecutionValidationDetailV1` exact字段为`contract_version="1"`、`detail_kind`
+   （`output_readback|canonical_source|compiled_artifact|source_change|completion_classification`）与recursive canonical JSON
+   `payload`；它保存现有legacy audit所需的exact verifier输出，但不能独立改变status。`ProductExecutionValidationFactsV1`
+   exact字段为`contract_version="1"`、`output_readback_status`、`canonical_source_status`、`compiled_artifact_status`、`source_change_status`、
+   `completion_classification_status`（各为`not_applicable|passed|failed`）、nullable `failure_class`、nullable
+   `failure_message`和按上述kind固定顺序、每kind恰一项的`details`。任一failed要求failure两字段non-empty并强制
+   partial/post_execution_validation；全为passed/not_applicable要求failure两字段null。验证顺序固定为上述五项并first-failure-stop：
+   失败项detail payload=null，失败后的项status=`not_applicable`且payload=null；失败前已完成项保留真实payload。无committed output时
+   output readback为not_applicable，否则必须passed或failed；canonical-source在Graph已invoke后适用；compiled artifact只在
+   real successful Build后适用；source-change只在successful Build且adapter非null时适用；completion classification只在request
+   tuple非空时适用并要求successful Build及前两个适用verifier均passed。status为not_applicable要求对应payload=null；passed要求
+   payload为当次fixed validator实际返回的canonical JSON，不能伪造成功payload。
+10. `ProductBuildCompletionV1` exact字段为`contract_version="1"`、nullable `build_result_ref`、nullable `workflow_checkpoint_ref`、
+    `build_status`（`not_reached|unavailable|success|failed|blocked`）和nullable exact bool `claims_real_build_success`。
+    status与ref/claim逐项绑定：`not_reached`要求build ref与claim均null；`unavailable`要求build ref non-null而claim null；
+    `success|failed|blocked`要求build ref non-null，success要求claim=true，failed|blocked要求claim=false；checkpoint ref non-null只允许
+    compile scope successful full chain。
+    succeeded要求两ref non-null、status=success、claim=true；domain_blocked要求blocked_report在common outputs中committed，且build
+    status/ref按实际prefix满足上述规则；platform blocked/partial按真实prefix允许尚未到达字段为not_reached或已无法readback字段为unavailable。
+11. `ProductRuntimeCompletionV1` exact字段为`contract_version="1"`、nullable `build_result_ref`、`runtime_evidence_ref`、`eval_report_ref`、
+    `workflow_summary_ref`、`blocked_report_ref`，`build_status`
+    （`not_reached|unavailable|success|failed|blocked`）、`runtime_status`
+    （`not_reached|unavailable|accepted|not_accepted|blocked`）、`eval_verdict`
+    （`not_reached|unavailable|accepted|blocked|inconclusive`）和`final_status`
+    （`not_reached|unavailable|accepted|blocked|inconclusive`）。succeeded要求前四ref non-null、blocked ref null及
+    success/accepted/accepted/accepted。build/runtime/eval三阶段的`not_reached`要求对应ref null，`unavailable`要求对应committed ref
+    non-null但payload事实不可读，其他非`not_reached`值要求对应ref non-null并逐字来自该Artifact payload；后一阶段非not_reached前，
+    所有前置阶段必须已经有committed ref。`final_status=not_reached`要求summary/blocked refs均null；`accepted|inconclusive`要求summary
+    ref non-null且blocked ref null；`blocked`要求blocked ref non-null且summary ref null；`unavailable`要求summary/blocked refs恰有一个
+    non-null并指向不可读的实际committed terminal Artifact。domain_blocked要求blocked ref non-null、summary ref null且其余字段逐项匹配
+    实际committed prefix；platform blocked/partial只允许对应prefix中实际committed refs，不能用status填充值代替missing Artifact。
+
+`ProductExecutionResultV1.from_dict`必须只委托`project_product_execution_result()`和
+`ArtifactWriteResult.from_dict()`重放全部不变量；不得在CLI、local entry、Graph或第二parser复制status/receipt规则。
+projector只消费resolved product declaration、Graph实际终端fact、exact immutable output payload、ordered Store facts和
+effect events；不得读取latest、revision totals、current filesystem existence、stdout、manifest或Presentation。
+`failure_stage`的closed owner同样是`ProductExecutionDeclarationV1`：只允许`graph_start`、
+`post_execution_validation`，以及由同一declaration的exact node生成的`<node_name>_execution`和由其exact Store role生成的
+`<artifact_role>_store`；caller不能提交任意字符串。`ProductExecutionValidationFactsV1`保存fixed executor对canonical
+source unchanged、exact compiled artifact、适用source-change与completion classification boundary的通过/失败事实及其
+non-authoritative detail；这些验证必须在machine result冻结前完成，失败时不得先返回succeeded。
+`validate_product_execution_facts`先完成strict canonical fact validation；`project_product_execution_result`对已通过该
+validator的facts必须是deterministic total function，不存在`result_projection` machine failure stage。未知version/shape、
+不合法trace或编程输入抛`ProductExecutionContractError`；若Graph副作用已经发生，公共调用不得用fallback projector伪造
+`ProductExecutionResultV1`，也不得自动重入，已经committed的C5/Artifact事实保持有效。
+
+结果矩阵固定为：
+
+| facts | `platform_status` | `execution_disposition` | terminal/output要求 |
+| --- | --- | --- | --- |
+| compile scope：real successful final BuildResult与其WorkflowCheckpoint均committed | `completed` | `succeeded` | terminal=`build`；两项均有同序matching committed receipt |
+| runtime scope：final successful Build、accepted RuntimeEvidence、accepted EvalReport与accepted WorkflowSummary均committed | `completed` | `succeeded` | terminal=`done`；exact terminal chain与matching receipts齐全 |
+| Graph按现有conditional edge到`blocked`且BlockedReport committed | `completed` | `domain_blocked` | terminal=`blocked`；保留所有committed prefix；failure_stage=null |
+| exact diff明确reject并commit blocked IsolatedApplyResult，随后BlockedReport committed | `completed` | `domain_blocked` | apply effect=0；不得改写为platform failure |
+| 首次Store调用`blocked_before_commit`，此前无committed output且无effect started | `blocked` | `platform_blocked` | terminal=null；保留唯一noncommitted receipt；无output |
+| 任意Store `partial`，或Store failure前已有committed output/effect可能开始 | `partial` | `partial` | exact committed prefix+最后noncommitted receipt；后续Store/effect=0 |
+| catchable node/effect异常且无committed prefix、可证明effect未开始 | `blocked` | `platform_blocked` | 无伪造receipt；exact node execution stage |
+| catchable node/effect异常且已有committed prefix或effect可能开始 | `partial` | `partial` | 保留prefix/effect fact；无伪造receipt；后续调用=0 |
+| Graph outputs committed后exact output readback或fixed canonical-source/compiled-artifact/source-change/completion-classification validation失败 | `partial` | `partial` | failure_stage=`post_execution_validation`；保留全部真实Store facts，unreadable payload status=`unavailable`，不声称product success |
+| 进程硬退出/BaseException/进程终止 | 无结果保证 | 无结果保证 | 不自动重入、retry/recovery；不从Artifact/latest/run-local文件重建旧receipt或伪造result |
+
+ordered不变量为：每个actual Store调用恰有一个attempt；committed attempt逐项产生同sequence/phase/attempt/node/role/ref的
+output；noncommitted attempt至多一个且必须最后；noncommitted后Graph不得调用任何Store或effect；没有调用就没有receipt；
+重复repair role必须保留不同repair_attempt和sequence。`request planning→terminal`的node-role allowlist由
+`ProductExecutionDeclarationV1.node_store_roles`在同一模块唯一登记，恰为§15.11.2.14.1表；不得在Graph、local entry或
+测试建立第二张role/terminal表。
+
+`ProductExecutionDeclarationV1`的exact frozen字段为`contract_version="1"`、ordered
+`node_store_roles: tuple[(node_name, artifact_role),...]`、ordered
+`node_phases: tuple[(node_name, phase),...]`与exact `lifecycle_grammar: ProductExecutionLifecycleGrammarV1`。
+`ProductExecutionLifecycleGrammarV1`是strict result trace语法的唯一owner；其exact frozen字段为
+`contract_version="1"`、ordered `initial_prefix: tuple[str,...]`、ordered
+`allowed_successors: tuple[(node_name, tuple[next_node,...]),...]`、ordered
+`repair_transition_sources: tuple[str,...]`、exact int `max_repair_attempt=2`与ordered
+`terminal_nodes: tuple[str,...]`。所有tuple non-empty、node string non-empty且同一map key唯一；每个grammar node必须存在于
+`node_phases`，每个Store node必须存在于`node_store_roles`，无Store route node不得出现在该role表；所有Store role必须恰为
+§15.11.2.14.1 allowlist中的role，phase必须属于上述闭合值域。
+constructor/from_dict逐字拒绝extra/missing/type/order drift。它只验证Graph已经冻结的history，绝不供Graph
+选择实时next route。exact grammar固定为：
+
+- attempt 0 initial prefix只能是下列ordered tuple的合法前缀：
+  `plan_request→planning_brief→draft_feature_spec→retrieve_evidence→create_implementation_plan→generate_patch_proposal→review_proposal`；
+  前五个planning/evidence节点各最多一次，禁止重复、跳过或在Build之后出现；
+- proposal cycle从`generate_patch_proposal→review_proposal`开始，随后只允许
+  `dry_run_apply→isolated_apply→build`、`create_repair_plan`或`blocked`；product mode的non-null
+  `isolated_apply_factory`与`confirmed_isolated_write=true`使isolated apply成为所有成功Build链的必经node，绝不允许
+  `dry_run_apply→build`；optional
+  `critic_assessment`只能位于同一review node的`proposal_review`之前，不能单独结束success；
+- product mode的`allowed_successors`必须逐字登记现有resolved route：`review_proposal→(dry_run_apply|create_repair_plan|blocked)`、
+  `dry_run_apply→(isolated_apply|blocked)`、`isolated_apply→(build|blocked)`；不得沿用base registry中仅在factory为null时存在的
+  `dry_run_apply→build`。exact diff reject、未批准或apply failure由committed IsolatedApplyResult形成domain fact后只进入`blocked`；
+- failed Build、revise Proposal或适用Runtime/binding failure可以进入`create_repair_plan`。只有committed non-blocking
+  RepairPlan才能把repair_attempt从N增加到N+1并回到PatchProposal；attempt必须连续0→1→2，不得跳号、倒退或超过2；
+  同一repair attempt内Proposal/Review/DryRun/Apply/Build的attempt值逐字一致；
+- successful Build在compile scope只允许随后committed WorkflowCheckpoint并以terminal=build结束；runtime scope只允许
+  `collect_runtime_evidence→evaluate→(done|blocked)`，或从Runtime进入
+  `resolve_runtime_binding→create_repair_plan`/`create_repair_plan`/`blocked`；WorkflowSummary只能紧随committed
+  EvalReport的done route；
+- domain short-chain只能在现有conditional edge已经选择blocked后追加一个BlockedReport并结束；platform
+  first-failure-stop在失败node直接结束且不得追加BlockedReport；noncommitted Store attempt或failed effect event之后无后继；
+- exact合法terminal为compile `build`、runtime `done`或domain `blocked`。任何其他committed-only prefix只有在同一
+  result存在合法platform failure stage时才能结束，不能投影completed。
+
+constructor与strict parser必须用该grammar拒绝Build早于Evidence、Summary早于Eval、重复planning、缺少上一轮repair的
+attempt=2、跨attempt role错位、跳过isolated_apply后出现committed Build及其他非法短链；正向门覆盖repair 0→1→2、compile success、runtime success、early domain block、
+exact-diff reject、Eval→Blocked与repair exhausted。grammar改变属于public result contract变化，必须重新审核。
+
+domain completion predicates固定为：compile success必须是final BuildResult payload `status="success"`且
+`claims_real_build_success=true`并有committed WorkflowCheckpoint；runtime success必须是exact final RuntimeEvidence
+accepted、EvalReport verdict accepted且WorkflowSummary `final_status="accepted"`。任何较短prefix不能仅因role合法而成为
+succeeded。Graph到blocked且BlockedReport committed才是domain_blocked；review revise、failed Build或Runtime repair route在
+repair budget未耗尽时都不是terminal result。projector只能验证Graph已选route，不另算下一route。
+
+common nullability固定为：completed要求failure_stage=null、feature_id non-null、terminal_node non-null且无platform blocker；
+completed+succeeded要求全部blocker为空；completed+domain_blocked要求terminal_node=blocked且至少一个domain blocker。
+blocked/partial要求failure_stage non-null、至少一个platform blocker；blocked要求outputs为空、store_attempts只允许零项或一个
+blocked_before_commit；partial允许committed prefix并可有一个最后noncommitted。side_effects_may_have_started只由effect event
+的started事实决定，不从Artifact commit反推。from_dict必须逐项重放这些规则。
+
+###### 15.11.2.14.3 A—Result/C5边界实施表
+
+| 字段 | 精确合同 |
+| --- | --- |
+| `current_authority` | 普通product Graph各node调用兼容`write()`；Build/Runtime/Eval/Summary/Blocked的C5分支只受verification controls启用；`run_local_request()`从Graph summary/claims解释终态。 |
+| `target_authority` | Store独占单次C5三态；`ProductExecutionDeclarationV1`+`project_product_execution_result()`独占ordered product result；existing conditional edges独占domain lifecycle route。 |
+| `removed_authority` | 所有active node兼容`write()`路径、Graph summary到platform status的外围解释、flat unique-role chain、ref/latest/totals到receipt的反推。 |
+| `public_contract` | §15.11.2.14.2的StoreAttempt/Output/Effect/Result exact schema与结果矩阵；不修改`ArtifactWriteResult` public schema。 |
+| `compatibility` | Artifact payload、status、upstream order、Registry/Store semantic validation、repair budget=2、conditional edges与historical Artifact bytes不变；domain-short-chain语义不变。 |
+| `semantic_boundary` | product mode只把真实Store facts放入ephemeral Graph state；平台failure执行first-failure-stop；domain blocked仍由Graph进入BlockedReport；hard exit无result保证。 |
+| `exact_files` | `src/mod_agent/product_execution.py`（new）、`src/mod_agent/workflow/graph.py`、`src/mod_agent/workflow/state.py`、`src/mod_agent/workflow/nodes.py`、`tests/unit/test_product_execution.py`（new）、`tests/unit/test_workflow_graph.py`。 |
+| `exact_symbols` | `ProductExecutionDeclarationV1`、`ProductExecutionGraphModeV1`、`ProductExecutionStoreAttemptV1`、`ProductExecutionOutputV1`、`ProductExecutionEffectEventV1`、`ProductExecutionResultV1`、`project_product_execution_result`、`build_graph`、`ModAgentState`、`StateOwnershipPolicy`、表§15.11.2.14.1全部node函数、`StubNodeRunner.run`。 |
+| `authority_tests` | 参数化每个active Store调用的blocked_before_commit/partial/committed；noncommitted-last、repeated repair role、critic-first-stop、compile checkpoint failure、terminal blocked failure；supporting wrapper schema exact/extra/nullability与binding hash/owner重验；静态/委托spy证明Product Executor没有复制source disclosure/model/runtime/source revision字段表或validator，legacy与public pair只命中同一owner；lifecycle grammar拒绝Build-before-Evidence、Summary-before-Eval、重复planning、repair跳号/错位/非法短链并接受repair 0→1→2及全部合法terminal；strict parser roundtrip与伪造/乱序receipt拒绝；静态证明普通product mode无`write()`。 |
+| `integration_test` | temporary filesystem ArtifactStore上的compile success、runtime success、exact-diff reject、Build repair success、repair exhausted、early planning blocked与每phase Store failure；只注入确定性test adapters。 |
+| `stop_conditions` | 需要改Artifact/Registry/C5 schema、改变Graph conditional edge或repair budget、需要第五种result owner、发现未登记active Store调用或现有合法domain route被拒绝时停止回审。 |
+| `unresolved_contract_decisions` | `[]` |
+
+###### 15.11.2.14.4 B—Public Product Executor实施表
+
+| 字段 | 精确合同 |
+| --- | --- |
+| `current_authority` | `run_local_request()`直接`build_graph()`、`create_initial_state()`、`graph.invoke()`；Graph普通模式无统一C5 recorder；外层从state生成machine verdict。 |
+| `target_authority` | `src/mod_agent/product_executor.py::preflight_product_execution`与`execute_product_execution`是唯一public pair；execute重跑preflight，构造exact Graph mode与initial state，只调用一次existing StateGraph，并把Graph facts交唯一projector。 |
+| `removed_authority` | public caller直接传product route bool/string、在Graph外选择Build/Repair/Runtime/Eval next node、通过private dict/callable dispatcher解释terminal、构造workflow总Approval hash；`local_entry`中六个input-record owner的旧函数体删除，只保留对迁移后同一符号的调用。 |
+| `public_contract` | 输入为`ProductExecutionRequestV1`、`ProductExecutionAdaptersV1`和ArtifactStore；preflight返回`ProductExecutionPreflightResultV1`；execute只接受ready preflight对应的exact request/adapters并返回`ProductExecutionResultV1`。execute重跑preflight时要求request与四个input binding canonical bytes逐字相等，并重验adapter字段presence/callable type与completion scope拓扑；不要求同一callable对象实例，也不序列化/hash callable。无expected approval hash、ResumeReport或cross-call authorization。 |
+| `compatibility` | `run_local_request()`原参数、compile-only stop+checkpoint、optional Runtime、same-invocation repair最多2次、exact diff交互、actual Human/cross-process Resume均保持；现有verification operation public pairs不变。 |
+| `semantic_boundary` | whole workflow无总Approval Identity。已有canonical sub-action identity继续调用原owner；`_read_exact_diff_approval`/PatchApplier exact diff、BuildResult immediate lineage、`_runtime_admission_record`与runtime factory permission只作为各自可信binding，由原validator在effect前重验，不升级为workflow identity。Graph START逐项比较initial state与exact request；各effect adapter调用前再次验证scope/adapter topology与其原有physical binding；canonical-source/compiled-artifact/source-change fixed validation在result冻结前完成。 |
+| `exact_files` | `src/mod_agent/product_execution.py`（new）、`src/mod_agent/product_executor.py`（new）、`src/mod_agent/workflow/graph.py`、`src/mod_agent/workflow/state.py`、`tests/unit/test_product_execution.py`（new）、`tests/unit/test_workflow_graph.py`。 |
+| `exact_symbols` | `ProductExecutionRequestV1`、`ProductExecutionInputBindingV1`、`ProductExecutionInputBindingResolverV1`、`ProductExecutionAdaptersV1`、`ProductExecutionPreflightResultV1`、`ProductExecutionGraphModeV1`、`ProductExecutionResultV1`、`validate_product_execution_facts`、`preflight_product_execution`、`execute_product_execution`、`_verify_source_revision_binding`、`_source_disclosure_record`、`_local_no_external_disclosure_record`、`_external_model_admission_record`、`_local_model_admission_record`、`_runtime_admission_record`、`build_graph`、`create_initial_state`。 |
+| `authority_tests` | unknown/extra/version/type/mixed verification+product mode拒绝；Graph START request drift在首个Store/effect前拒绝；scope/adapter mismatch拒绝且不要求callable对象identity；四个binding wrapper parser只管wrapper/hash且fixed resolver逐项委托原owner，production request必须由run_local的显式授权输入命中同一owner，wrapper/hash或scope漂移拒绝，但不虚构“仅凭payload证明任意Python caller授权来源”的测试；public execute只invoke Graph一次；canonical fact validator错误不得调用fallback projector，pre-effect ContractError与post-Graph ContractError的side-effect/null-result边界分别锁定；projector/parser唯一；无Approval hash/ResumeReport/A方案字段。 |
+| `integration_test` | public preflight→execute→real existing Graph→temporary Store→strict result；compile/runtime/repair路径均record-and-delegate真实Graph，不mock public pair或直接`graph.invoke`冒充公共链。 |
+| `stop_conditions` | 需要新增Artifact/Approval/Resume union/Runtime v2、cross-process exactly-once、改变verification identity bytes、让executor维护第二route表、为input binding复制既有schema/validator或需要Graph外恢复hard-exit调用时停止回审。 |
+| `unresolved_contract_decisions` | `[]` |
+
+catchable pre-Graph public shape/admission错误在ready preflight形成前返回blocked preflight，Graph/Store/effect=0。execute开始后可归属
+的node/Store/effect失败必须返回§15.11.2.14.2 machine result。输入端错误Python类型、未知contract version或extra fields在
+Graph前抛`ProductExecutionContractError`且零副作用；Graph返回后的canonical fact validator若发现平台编程错误，同样抛
+`ProductExecutionContractError`但不得声称零副作用、不得伪造ProductExecutionResult或自动重入，durable Store事实保持。
+该异常exact字段为non-empty `reason`与exact bool `side_effects_may_have_started`；CLI只输出
+`{status:"CONTRACT_ERROR",reason,side_effects_may_have_started}`并exit2，顶层status不是product platform verdict。
+Public Product Executor不写run manifest/result JSON；这些是active entry的Presentation/audit。硬退出可能没有返回值，且本合同
+不增加持久化result或恢复协议。
+
+###### 15.11.2.14.5 C—Active Entry降级实施表
+
+| 字段 | 精确合同 |
+| --- | --- |
+| `current_authority` | `local_entry.py::run_local_request`直接Graph invoke并读取`current_stage`、`build_summary.claims_real_build_success`、`runtime_summary`、artifacts生成终态；`cli.py::run-request`再次按`current_stage`与Build/Runtime claims决定exit。 |
+| `target_authority` | `run_local_request`只准备workspace/model/exact request/effect adapters，调用public preflight+execute，并从冻结ProductExecutionResult做legacy/audit Presentation；CLI只用strict parsed `execution_disposition`决定exit。 |
+| `removed_authority` | `run_local_request`中的`build_graph`/`create_initial_state`/`graph.invoke`、`final_build_succeeded`终态判断、`_runtime_verification_chain`完成判定及基于current_stage/claims/summary/totals/latest/path/file-existence的route或terminal解释；CLI相同判断。`_verify_final_compiled_artifact_if_built`、canonical source snapshot比较、适用`source_change_verifier`与`completion_classification`的machine gate从local entry移入executor冻结前唯一validation boundary；local entry只投影该次已经冻结的validation details，不重复读取或重跑。 |
+| `public_contract` | `run_local_request`现有签名与legacy顶层mapping保留，并新增exact `product_execution_result`；legacy `current_stage`/build/runtime/artifacts仅从冻结result与exact outputs投影，不参与exit。CLI exit：`succeeded→0`、`domain_blocked→1`、`platform_blocked|partial→2`；missing/invalid structured result fail-closed为2。 |
+| `compatibility` | pre-executor source disclosure、model selection、baseline Build、isolated workspace、run manifest/failure audit与现有LocalEntryError边界保留；明确diff reject保持正常domain-blocked mapping/exit1。catchable Graph/Store/post-execution validation失败从旧`LocalEntryError`升级为strict product result并exit2，这是本迁移登记的允许变化。result形成后的manifest/result JSON写失败抛`ProductExecutionPresentationError`；CLI exact JSON只有`status="PRESENTATION_FAILED"`、`product_execution_result`和`audit_error={failure_class,failure_message,sink}`三个顶层字段并exit2，不得降级nested machine truth。 |
+| `semantic_boundary` | canonical-source、compiled-artifact、source-change和completion-classification只在executor的`validate_product_execution_outputs`执行一次并可在冻结前形成partial；冻结后run manifest/result JSON、stdout/stderr路径和相同validation detail的展示是Presentation，失败只能抛携带逐字相同result的`ProductExecutionPresentationError`。CLI不得读取Graph state、Artifact payload claims或legacy summary决定机器结果。 |
+| `exact_files` | `src/mod_agent/product_execution.py`（new）、`src/mod_agent/product_executor.py`（new）、`src/mod_agent/local_entry.py`、`src/mod_agent/cli.py`、`tests/unit/test_product_execution.py`（new）、`tests/unit/test_local_entry.py`、`tests/unit/test_mod_agent_cli.py`、`tests/unit/test_mod_delivery_e2e.py`。 |
+| `exact_symbols` | `run_local_request`、`_verify_final_compiled_artifact_if_built`（删除machine owner或机械委托executor）、canonical source snapshot比较、`source_change_verifier`调用、`completion_classification` gate、`validate_product_execution_outputs`、`_runtime_verification_chain`（降级为Presentation-only或删除其完成判断）、`_persist_graph_terminal_result`（Presentation-only）、CLI `main`的`run-request` branch、`ProductExecutionPresentationError`、`preflight_product_execution`、`execute_product_execution`。 |
+| `authority_tests` | rg/AST证明run_local/CLI不再import/call `build_graph`、`create_initial_state`、`graph.invoke`或读取上述claims/current_stage决定exit；legacy mapping不能改变nested result；generic pre-result LocalEntryError仍exit2；Presentation failure保留逐字相同result。 |
+| `integration_test` | 至少一条不mock `run_local_request`、public executor或Graph的CLI compile链和一条runtime链；只mock最低层model/build/runtime effects，使用temporary filesystem Store；另覆盖domain reject exit1、Store blocked/partial exit2、Graph全部Store committed后compiled/canonical/source-change validation失败形成partial，以及result冻结后audit sink失败保持同一result并exit2。 |
+| `stop_conditions` | 需要改变`run_local_request`参数或CLI flags、删除现有audit字段、改变exact diff/Build/Runtime permission、触碰P2.3/P2.4/P3/P4或Authority文档时停止回审。 |
+| `unresolved_contract_decisions` | `[]` |
+
+###### 15.11.2.14.6 exact允许范围、三checkpoint与完成门
+
+本合同approved后的生产文件全集只允许：
+
+- `src/mod_agent/product_execution.py`（new）；
+- `src/mod_agent/product_executor.py`（new）；
+- `src/mod_agent/workflow/graph.py`；
+- `src/mod_agent/workflow/state.py`；
+- `src/mod_agent/workflow/nodes.py`；
+- `src/mod_agent/local_entry.py`；
+- `src/mod_agent/cli.py`。
+
+测试文件全集只允许：
+
+- `tests/unit/test_product_execution.py`（new）；
+- `tests/unit/test_workflow_graph.py`；
+- `tests/unit/test_local_entry.py`；
+- `tests/unit/test_mod_agent_cli.py`；
+- `tests/unit/test_mod_delivery_e2e.py`。
+
+`ArtifactStore`、Registry、checkpointing、transitions、verification operations、Artifact/Approval schema与历史driver均不修改。
+实施checkpoint I只做Graph Store-result carrier/C5 adoption；II只做public executor/result与真实failure matrix；III只做
+run_local/CLI authority removal。三段都不得单独commit或进入下一P项；每段focused通过且文档登记事实后，最终合为一个
+staged对象送一次独立实施后验收。authority门必须证明：Graph是唯一same-invocation route owner，Store是唯一C5 owner，
+product projector是唯一machine result owner，run_local/CLI只剩normalization/Presentation，且任何旧路径都不能绕过
+typed mode直接执行product Graph。Product Executor只拥有binding wrapper与组合规则，不得重新拥有source revision、source disclosure、
+model admission或runtime admission payload schema；如导入方向要求迁移原owner，旧定义必须删除并由所有caller委托同一符号。
+
+最低focused命令由实施阶段按上述五个测试文件形成；不得执行产品Build/Runtime/GTFO或正式Store。若批准后的真实测试发现
+需要第八个生产文件、第六个测试文件、公共schema变化、额外active Store path或任何A方案durable能力，立即停止并回合同
+审核。P2.2在最终独立实施验收与commit checkpoint前保持open；P2.3、P2.4、P3、P4保持not_started/stopped。
+
+```yaml
+option_b_implementation_contract: independently_approved_pending_implementation
+contract_verdict: approved
+approved_contract_document_sha256: 3E954A76DF8141347960DE1888C92BE3947C93113C0586330B9E213EC82C105A
+architecture_boundary_verdict: option_b
+public_executor_pair:
+  - preflight_product_execution
+  - execute_product_execution
+typed_graph_mode: ProductExecutionGraphModeV1
+machine_result_owner: project_product_execution_result
+machine_result_schema: ProductExecutionResultV1
+store_truth_owner: ArtifactWriteResult
+graph_route_owner: existing_StateGraph_conditional_edges
+whole_workflow_approval_identity: none
+durability: same_invocation_only
+implementation_checkpoints:
+  - I_graph_store_result_carrier_and_C5_adoption
+  - II_public_product_executor_and_ProductExecutionResultV1
+  - III_run_local_request_and_CLI_authority_removal
+unresolved_contract_decisions: []
+implementation_authorization: granted_within_§15.11.2.14_exact_scope
+P2_3_P2_4_P3_P4: stopped
+```
 
 ## 16. 变更控制与非黑箱要求
 
