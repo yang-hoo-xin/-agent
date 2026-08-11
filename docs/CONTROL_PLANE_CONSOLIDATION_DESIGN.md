@@ -3314,12 +3314,14 @@ control_plane_semantic_gates:
     commit: 6f79b2557242d129104dc05b638f59f4b9c7f079
     required_path: public_entry_to_graph_to_checkpoint_or_store_to_structured_result
   build_production_adapter_adoption:
-    status: pending_P2_2_run_local_request_migration
+    status: proved_through_option_b_product_executor
     existing_public_api: implemented
     distinct_active_adapter: none
-    production_adapter_adoption: not_yet_proven
+    production_adapter_adoption: proved_by_active_run_local_request_product_executor
+    verification_only_build_public_pair_independent_production_adapter: none
   run_local_request_authority_migration:
-    status: contract_blocked_by_existing_typed_build_semantic_mismatch
+    status: independently_verified_and_committed
+    implementation_commit: f57045bb5b3f671f60bdd107308ba9fe3f3c3293
   intelligent_evidence_request_authority_migration:
     status: contract_not_started
   evidence_request_authority_migration:
@@ -3947,11 +3949,12 @@ declaration projector重放phase/chain规则。
 `user_authorization_semantics=resolved_by_user`，A方案的protocol/operation边界没有获得实施授权。独立审核确认
 当前P2.2“Build adapter adoption”与`run_local_request()`真实same-invocation完整生命周期边界不匹配，继续逐字段修补
 会把入口迁移扩大成新的durable execution平台。用户已经选择B，因此当前精确状态为
-`architecture_boundary_selected_option_b`、`b_implementation_contract=independently_approved_pending_implementation`、
+`architecture_boundary_selected_option_b`、`b_implementation_contract=independently_verified_and_committed`、
 `implementation_authorization=granted_within_§15.11.2.14_exact_scope`；批准绑定的合同文档SHA256为
 `3E954A76DF8141347960DE1888C92BE3947C93113C0586330B9E213EC82C105A`。§15.11.2.8–.11保留为A方案的未批准设计记录，
 不是rejected最终结论，也不是P2.2a–d实施合同。只允许按§15.11.2.14的I/II/III连续checkpoint实施；不得继续给A追加字段或
-启动P2.3–P4。
+启动P2.3–P4。该实施已由独立审核验收并提交为
+`f57045bb5b3f671f60bdd107308ba9fe3f3c3293`；§15.11.2.14.8是覆盖本节早期pending措辞的当前checkpoint。
 
 以下原拆包仅说明A方案的成本，不构成当前实施顺序或授权：
 
@@ -4115,9 +4118,11 @@ Repair Planning与dynamic review保持`deferred_non_active`；MCP、HTTP API和M
 
 ##### 15.11.2.14 Option B 单一实施合同：same-invocation Public Product Executor
 
-> **合同状态**：`independently_approved_pending_implementation`；
+> **合同状态**：`independently_verified_and_committed`；
 > `contract_verdict=approved`；`implementation_authorization=granted_within_§15.11.2.14_exact_scope`；
 > 批准绑定文档SHA256=`3E954A76DF8141347960DE1888C92BE3947C93113C0586330B9E213EC82C105A`。
+> 实施后独立验收为`post_implementation_verdict=approved`，提交为
+> `f57045bb5b3f671f60bdd107308ba9fe3f3c3293`；§15.11.2.14.8覆盖本节较早的实施前时间点记录。
 > **本轮时间盒**：`started_at=2026-08-07T15:01:21.3958612+08:00`，
 > `target_checkpoint=2026-08-07T16:01:21.3958612+08:00`，
 > `absolute_hard_stop=2026-08-07T16:31:21.3958612+08:00`。本节只授权只读源码inventory与本权威文档修改；
@@ -4519,6 +4524,38 @@ implementation_authorization: granted_within_§15.11.2.14_exact_scope
 implementation_base_head: da57921b4eda16d2f40a23e3e6572db04acd295b
 post_implementation_verdict: pending_independent_verification
 P2_3_P2_4_P3_P4: stopped
+```
+
+###### 15.11.2.14.8 Option B 最终独立验收与提交checkpoint
+
+独立审核对§15.11.2.14的唯一staged implementation identity给出
+`post_implementation_verdict=approved`，并独立重跑同一focused命令得到
+`269 passed in 72.75s`。获批对象随后原样提交为
+`f57045bb5b3f671f60bdd107308ba9fe3f3c3293`（`feat(control-plane): adopt typed product executor`）；
+提交后tracked/index clean，仅既有未跟踪Authority文档保留。
+
+该checkpoint仅证明Option B Product Executor已成为active `run_local_request()`的生产执行边界，并据此证明Build production
+adoption。它不声称verification-only Build public pair获得了独立production adapter，也不证明P2.3、P2.4、P3或P4；这些后续项
+继续保持`not_started/stopped`。§15.11.2.12、§15.11.2.14顶部及本节YAML中较早的
+`independently_approved_pending_implementation`、`implemented_pending_independent_verification`与
+`pending_independent_verification`只记录当时时点，均由本checkpoint覆盖。A方案历史设计仍未获实施授权。
+
+```yaml
+option_b_implementation_contract: independently_verified_and_committed
+post_implementation_verdict: approved
+implementation_commit: f57045bb5b3f671f60bdd107308ba9fe3f3c3293
+independent_verification:
+  command: python -m pytest tests/unit/test_product_execution.py tests/unit/test_workflow_graph.py tests/unit/test_local_entry.py tests/unit/test_mod_agent_cli.py tests/unit/test_mod_delivery_e2e.py -q
+  result: 269 passed in 72.75s
+run_local_request_authority_migration: independently_verified_and_committed
+build_production_adapter_adoption:
+  status: proved_through_option_b_product_executor
+  verification_only_build_public_pair_independent_production_adapter: none
+P2_3: not_started
+P2_4: not_started
+P3: not_started
+P4: not_started
+overall_control_plane_consolidation: partial
 ```
 
 ## 16. 变更控制与非黑箱要求
