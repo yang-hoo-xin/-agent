@@ -4561,13 +4561,14 @@ overall_control_plane_consolidation: partial
 ###### 15.11.2.14.9 P2.2 follow-up合同：repair-exhausted lifecycle/result completion
 
 > **当前状态**：`P2_2_authority_migration=implemented_and_committed`；
-> `P2_2_completion=follow_up_implemented_pending_independent_verification`；
+> `P2_2_completion=follow_up_independently_verified_and_committed`；
 > `contract_verdict=approved`；
-> `implementation_authorization=granted_within_§15.11.2.14.9_exact_scope`；`overall=partial`。
+> `post_implementation_verdict=approved`；`overall=partial`。
 > **合同时间盒**：`started_at=2026-08-11T15:17:45.2707417+08:00`，
 > `target_checkpoint=2026-08-11T17:17:45.2707417+08:00`，
 > `absolute_hard_stop=2026-08-11T19:17:45.2707417+08:00`。
-> 独立审核已批准本节合同；当前唯一follow-up实现对象仍须通过实施后独立验收，批准前不得提交。
+> 独立审核已批准本节合同与最终实现；follow-up提交为
+> `20b6ccb34e9322f4c73d7556130e7da043aff110`。P2.3–P4仍未启动。
 
 本follow-up只修复§15.11.2.14已提交Option B lifecycle grammar对既有owner-produced terminal RepairPlan链的错误拒绝，不重新打开
 Option A、Product Executor架构或P2.2公共schema。基线为
@@ -4714,16 +4715,18 @@ public schema、Option B route owner或未跟踪Authority文档；不得进入P2
   （product execution、workflow graph、local entry、CLI、delivery e2e）为335 passed；生产文件`py_compile`通过。
 - 实际修改仍严格为`src/mod_agent/product_execution.py`、`tests/unit/test_product_execution.py`、
   `tests/unit/test_mod_agent_cli.py`及本文档checkpoint；Graph、RepairPlanner、Product Executor、local entry、CLI生产、ArtifactStore/C5、
-  public schema与P2.3–P4均未修改。当前状态为`implemented_pending_independent_verification`，不得提交。
+  public schema与P2.3–P4均未修改。独立复验确认83项product suite通过、两项原始反例关闭且staged identity无漂移；实现已提交为
+  `20b6ccb34e9322f4c73d7556130e7da043aff110`。
 
 ```yaml
 P2_2_authority_migration: implemented_and_committed
-P2_2_completion: follow_up_implemented_pending_independent_verification
+P2_2_completion: follow_up_independently_verified_and_committed
 follow_up_kind: repair_exhausted_lifecycle_result_completion
 contract_verdict: approved
 implementation_authorization: granted_within_§15.11.2.14.9_exact_scope
-implementation_status: implemented_pending_independent_verification
-post_implementation_verdict: pending_independent_verification
+implementation_status: independently_verified_and_committed
+post_implementation_verdict: approved
+implementation_commit: 20b6ccb34e9322f4c73d7556130e7da043aff110
 allowed_production_files:
   - src/mod_agent/product_execution.py
 allowed_test_files:
