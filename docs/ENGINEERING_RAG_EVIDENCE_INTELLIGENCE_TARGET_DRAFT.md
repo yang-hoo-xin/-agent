@@ -1186,7 +1186,7 @@ Eval dataset/protocol version 属于独立 Eval 运行输入，不属于 RAG/ER 
 
 每项只能得到 `adopt`、`adapt`、`defer` 或 `reject` 的显式裁决及理由。不得在未完成该 adoption matrix 前建立功能重复的 evaluator、regression comparator、quality policy、Arm A runner 或 transition gate。
 
-本节在目标文档 checkpoint 时只登记 adoption matrix 的义务。矩阵现已物化到 `docs/ENGINEERING_RAG_1A_MINIMAL_EVAL_CONTRACT.md`，但仍待独立合同审核；这不表示资产已经获得正式采用批准、收敛完成或形成统一生产体系。合同必须分别裁决普通 `EvalRunner`、Ragas evaluator、局部 Trace/Event、`AgentQualityEvaluator`、`RetrievalRegressionRunner`、`QualityGatePolicy`、`OfficialArmARunner` 和 transition gate；不能用 inventory 行或未审核草案代替采用结论。
+本节在目标文档 checkpoint 时只登记 adoption matrix 的义务。矩阵已经物化到 `docs/ENGINEERING_RAG_1A_MINIMAL_EVAL_CONTRACT.md` 并完成独立合同审核：`contract_materialization_verdict=approved`、`rag_1a_contract_verdict=changes_required`、`minimal_eval_contract_verdict=changes_required`。物化与审核不表示资产已经获得正式采用批准、收敛完成或形成统一生产级 Trace/Eval 体系。合同仍须分别裁决普通 `EvalRunner`、Ragas evaluator、局部 Trace/Event、`AgentQualityEvaluator`、`RetrievalRegressionRunner`、`QualityGatePolicy`、`OfficialArmARunner` 和 transition gate；不能用 inventory 行或 changes-required 设计输入代替采用结论。
 
 复用不等于提升语义权威：
 
@@ -1463,7 +1463,7 @@ hook_discovery_versioned_semantics: not_implemented
 engineering_evidence_multi_lane_admission: not_implemented_as_closed_contract
 rag_1a_inventory: completed
 rag_1a_contract_review_object: materialized_changes_required
-minimal_eval_adoption_findings: materialized_and_independently_reviewed
+minimal_eval_adoption_findings: materialized_and_reviewed_within_changes_required_contract_not_adoption_approved
 minimal_eval_contract_review_object: materialized_changes_required
 better_hit_feedback_environment_source: located_hash_verified_calibration_only
 better_hit_feedback_formal_positive_golden: blocked_by_answer_leakage_and_nonportable_corpus
@@ -1484,10 +1484,10 @@ trace_cross_system_correlation_and_propagation_contract: not_implemented
 target_document_review_verdict: approved
 target_document_reviewed_sha256: 02CEC26C2A9328AEC0DC3ED262587C9CAD5732B756B2E03B9CAE7D8EFFDBC85D
 target_document_checkpoint_commit: c4152675a14924f408f611f126d610775a9b64c6
-overall: target_document_independently_approved_and_git_tracked_contracts_pending_review
+overall: target_document_independently_approved_and_git_tracked_joint_contract_materialized_and_reviewed_rag_1a_and_calibration_eval_changes_required_data_readiness_blocking_implementation_not_authorized
 implementation_authorization: not_granted
 ```
 
-目标文档已完成独立审核并以 `c4152675a14924f408f611f126d610775a9b64c6` 纳入 Git。RAG-1A 有界清点、最小 Eval adoption findings 及共享 actual/expected facts 接口已经物化到 `docs/ENGINEERING_RAG_1A_MINIMAL_EVAL_CONTRACT.md`；下一步只允许对该文件进行独立合同审核并闭合其中明确登记的 unresolved decisions。
+目标文档已完成独立审核并以 `c4152675a14924f408f611f126d610775a9b64c6` 纳入 Git。联合合同已冻结为 `design_and_boundary_input`；当前唯一主动包是 BetterHitFeedback / WallCrawler 两切片 Data Readiness。只有 `data_readiness_verdict=approved` 后，才并行收缩 RAG-1A 最小语义合同和 Calibration Eval 既有资产适配合同，并分别接受独立审核。当前不得修改 RAG/ER 生产代码。promotion/held-out、正式百分比阈值、全 provider reproducibility、完整 Trace/CI 均不是当前 Data Readiness 或 RAG-1A 首包的前置条件。
 
 当前不得修改 RAG/ER 生产代码或启动 RAG-1A/RAG-1B 实施。两份合同草案形成不等于合同批准；现有 Trace/Eval asset inventory 或 adoption matrix 也不证明生产级 Trace/Eval 已完成。
