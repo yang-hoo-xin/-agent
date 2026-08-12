@@ -1207,7 +1207,7 @@ BetterHitFeedback 与 WallCrawler 两切片完成后，可以把其中经实际�
 1. 题目与 expected judgment 分离；
 2. 被测检索范围采用明确 allowlist；
 3. 物理事实从内容身份绑定的输入重算；
-4. expected judgment 由人工单独拥有；
+4. expected judgment 独立于被测系统输出，并由明确登记的标注/复核者拥有；当前两切片采用 operator-confirmed requirements + independently model-reviewed technical calibration annotation，不表示独立人类标注、盲测、held-out 或 promotion；
 5. 被测系统输出与 annotation 只在比较阶段相遇；
 6. 脚本只报告重放事实，不授予产品或质量 verdict。
 
@@ -1555,8 +1555,7 @@ architecture_direction: approved
 joint_contract: design_and_boundary_input
 rag_1a_contract: draft_changes_required
 calibration_eval_contract: draft_changes_required
-data_readiness: blocking
-implementation_authorization: not_granted
+data_readiness: bounded_fixture_review_passed_no_independent_data_readiness_verdict
 general_hybrid_retrieval: implemented_but_not_currently_proven_as_default
 dense_capability: implemented_but_disabled_by_default
 reranker_capability: implemented_but_disabled_by_default
@@ -1578,29 +1577,25 @@ rag_1a_inventory: completed
 rag_1a_contract_review_object: materialized_changes_required
 minimal_eval_adoption_findings: materialized_and_reviewed_within_changes_required_contract_not_adoption_approved
 minimal_eval_contract_review_object: materialized_changes_required
-better_hit_feedback_environment_source: located_hash_verified_calibration_only
-better_hit_feedback_formal_positive_golden: blocked_by_answer_leakage_and_nonportable_corpus
-wall_crawler_negative_source: available_for_contract_review
+better_hit_feedback_environment_source: hash_bound_current_api_il_historical_implementation_and_bounded_runtime_inputs_replayed
+better_hit_feedback_formal_positive_golden: bounded_fixture_review_passed_reference_assisted_calibration_sufficient_continue
+wall_crawler_negative_source: bounded_fixture_review_passed_independent_calibration_insufficient_block
 rag_1a_code_implementation:
-  status: blocked
-  blocked_by:
-    - rag_1a_contract_approval
-    - minimal_eval_contract_approval
+  status: not_started_after_fixture_handoff
 p2_2_option_b_product_executor: independently_verified_and_committed
 p2_2_option_b_implementation_commit: f57045bb5b3f671f60bdd107308ba9fe3f3c3293
 p2_2_follow_up_completion: independently_verified_and_committed
 p2_2_follow_up_implementation_commit: 20b6ccb34e9322f4c73d7556130e7da043aff110
 p2_2_follow_up_checkpoint_commit: 14db12ea429233bb3c8378cdfb20bd6be63fbbfc
-rag_1b: blocked_by_rag_1a_completion_and_independent_rag_1b_contract_review
+rag_1b: follows_rag_1a_runnable_capability
 trace_eval_platform: separate_future_document
 trace_cross_system_correlation_and_propagation_contract: not_implemented
 target_document_review_verdict: approved
 target_document_reviewed_sha256: 02CEC26C2A9328AEC0DC3ED262587C9CAD5732B756B2E03B9CAE7D8EFFDBC85D
 target_document_checkpoint_commit: c4152675a14924f408f611f126d610775a9b64c6
-overall: target_document_independently_approved_and_git_tracked_joint_contract_materialized_and_reviewed_rag_1a_and_calibration_eval_changes_required_data_readiness_blocking_implementation_not_authorized
-implementation_authorization: not_granted
+overall: two_feature_specific_calibration_fixtures_bounded_review_passed_without_data_readiness_verdict_then_capability_first_standard_rag_and_rag_1a
 ```
 
-目标文档已完成独立审核并以 `c4152675a14924f408f611f126d610775a9b64c6` 纳入 Git。联合合同已冻结为 `design_and_boundary_input`；当前唯一主动包是 BetterHitFeedback / WallCrawler 两切片 Data Readiness。只有 `data_readiness_verdict=approved` 后，才并行收缩 RAG-1A 最小语义合同和 Calibration Eval 既有资产适配合同，并分别接受独立审核。当前不得修改 RAG/ER 生产代码。promotion/held-out、正式百分比阈值、全 provider reproducibility、完整 Trace/CI 均不是当前 Data Readiness 或 RAG-1A 首包的前置条件。
+目标文档已完成独立审核并纳入 Git。BetterHitFeedback / WallCrawler 两切片已形成分层 fixture：manifest 只拥有输入世界与 allowlist 身份，projection 只拥有从内容身份绑定输入重算的物理事实，annotation 的 judgment hash 只覆盖七项技术判断，provenance 与 replay metadata 不进入 judgment hash。BHF 冻结结论为 `sufficient/continue`，只允许选择 `ES_Hitreact.ActivateState` 观察方向并进入实施规划；WallCrawler 冻结结论为 `insufficient/block`。10f8 本地与精确 `207c0572d7f78dffffe498140c0ad1fcb76c5d23` clean checkout 已使用相同合法外部输入完成机械重放；独立有界 fixture 审核已通过。机械重放与该有界审核均不授予独立 Data Readiness、产品质量或副作用 verdict。
 
-当前不得修改 RAG/ER 生产代码或启动 RAG-1A/RAG-1B 实施。两份合同草案形成不等于合同批准；现有 Trace/Eval asset inventory 或 adoption matrix 也不证明生产级 Trace/Eval 已完成。
+有界 fixture 验收后，后续直接按本文的能力目标、语义边界、失败边界与顺序推进可运行、可验证的标准 RAG 与 RAG/ER：共享一次来源身份、摄取/切块、索引、确定性 BM25/live-read、引用/coverage 和配置身份基础；标准 RAG 使用自身的文档问答、引用与证据不足数据；RAG-1A 使用 BHF/WC calibration 验证 Hook Discovery、证据准入、lane coverage、关系、三层充分性与 planning continue/block，随后由 RAG-1B 接入活跃产品入口。不得继续用合同、authorization/status、Trace/Eval、Dashboard 或状态回填替代能力交付；Dense/Fusion/reranker 仍由实测决定，完整 Trace、CI promotion、held-out 和 Dashboard 延期。

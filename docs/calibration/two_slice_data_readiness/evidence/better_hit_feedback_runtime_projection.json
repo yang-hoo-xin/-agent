@@ -1,0 +1,63 @@
+{
+  "projection_schema_version": "offline_fixture_evidence_projection_v1",
+  "input_roles": [
+    "bhf_historical_successful_implementation",
+    "bhf_runtime_result",
+    "bhf_runtime_bounded_log",
+    "bhf_runtime_full_log"
+  ],
+  "historical_implementation_extraction": {
+    "source_sha256": "77D0E4C6554444AB027E2FD6F98A3BC2EC7C5D6BCC8F54F977B655920922F0AE",
+    "source_facts": [
+      "typeof(ES_Hitreact),",
+      "\"ActivateState\",",
+      "typeof(ES_HitreactType),",
+      "typeof(ImpactDirection),",
+      "typeof(bool),",
+      "typeof(Agent),",
+      "typeof(Vector3),",
+      "typeof(DamageNoiseLevel)",
+      "private static class StaggerFeedbackActivateStatePatch",
+      "[HarmonyPostfix]",
+      "ES_HitreactType.Micro",
+      "ES_HitreactType.Light",
+      "ES_HitreactType.Heavy",
+      "sourcePlayer.IsLocallyOwned",
+      "target=ES_Hitreact.ActivateState"
+    ]
+  },
+  "runtime_result_bindings": {
+    "run_id": "stagger_formal_repair_build_001_run_001",
+    "feature_id": "feature_4f4c63c3802d",
+    "source_sha256": "77d0e4c6554444ab027e2fd6f98a3bc2ec7c5d6bcc8f54f977b655920922f0ae",
+    "source_snapshot_sha256": "cd7543ee1bbaaa6109cb52b59e93c411ac07f38a9dfd5f6666313010a7adf08f",
+    "dll_sha256": "d0a831d5d6ebf88cf98b1749c9e97539811baaf90d80a4c3c9c1006f23aa4526",
+    "diff_hash": "sha256:9269d2c2388077748cacb49e1ceeb01d02a8469aa2304c90e89cbfd82edefb73"
+  },
+  "raw_log_extraction": {
+    "result_marker": "signal=STAGGER_FEEDBACK_SHOWN target=ES_Hitreact.ActivateState",
+    "damage_input_marker": "signal=HOOK_TRIGGERED target=Dam_EnemyDamageBase.BulletDamage",
+    "required_result_predicates": [
+      "visual_spawn_succeeded=true",
+      "audio_event_accepted=true"
+    ],
+    "enabled_bounded_log": {
+      "line_count": 82,
+      "result_marker_count": 4,
+      "damage_input_marker_count": 2,
+      "observed_reaction_types": [
+        "Heavy",
+        "Light"
+      ]
+    },
+    "enabled_full_log": {
+      "line_count": 760,
+      "result_marker_count": 18,
+      "damage_input_marker_count": 14,
+      "observed_reaction_types": [
+        "Heavy",
+        "Light"
+      ]
+    }
+  }
+}

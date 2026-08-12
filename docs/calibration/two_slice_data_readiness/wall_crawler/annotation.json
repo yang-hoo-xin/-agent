@@ -1,0 +1,99 @@
+{
+  "annotation_schema_version": "two_feature_specific_technical_annotation_v2",
+  "case_identity": "wall_crawler_insufficient_evidence_calibration",
+  "calibration_position": "independent_bounded_negative_calibration_development",
+  "annotation_version": "5",
+  "annotation_process": "independent_evidence_re_adjudication",
+  "technical_review_authority": "independently_model_reviewed_technical_calibration_annotation",
+  "technical_calibration_annotation_status": "frozen_after_operator_product_semantics_confirmation",
+  "historical_reference_accessed": false,
+  "historical_reference_role": "not_accessed",
+  "historical_reference_is_sole_authority": false,
+  "current_rag_actual_output_accessed": false,
+  "evidence_projection_relationship": "evidence projection may support annotation creation, but annotation judgment is not mechanically derived from projection",
+  "runtime_evidence_role": "not_available",
+  "judgment_payload": {
+    "required_evidence": [
+      "Evidence of a movement mechanism that can traverse arbitrary surfaces rather than only a fixed ladder path.",
+      "Evidence that wall and ceiling surfaces and their usable surface normals can be obtained.",
+      "Evidence that movement and turning can be maintained in a surface-relative coordinate frame.",
+      "Evidence that the capability can integrate with the existing AI so normal movement, turning, actions, and attacks remain AI-controlled.",
+      "Evidence of a JSON area-configuration entry point and a runtime binding from configured areas to the current area.",
+      "A fail-closed rule that forbids crawling in unconfigured, unknown, or parse-failed areas.",
+      "A reliable way to identify enemies that already support a prone locomotion pose for ceiling traversal.",
+      "Positive integration evidence that the selected mechanism does not inherently replace or disable normal attack state transitions."
+    ],
+    "forbidden_evidence": [
+      "A fixed ladder route, fixed path, or straight-line movement mechanism treated as proof of arbitrary wall and ceiling traversal.",
+      "The user-provided reference clue bep/plugins/xxxrundowns/.json treated as a verified path, schema, or field definition.",
+      "A reference Mod, community description, symbol name, nop/ret wrapper, or abstract declaration promoted to current behavioral authority.",
+      "A current product readiness, can_generate_patch, blocker code, or prior Agent/RAG output used to create or decide the expected judgment.",
+      "A permissive fallback that enables crawling when area configuration is absent, unknown, or cannot be parsed.",
+      "A mechanism that wholly takes over or pauses the original AI treated as satisfying normal AI movement, actions, and attacks.",
+      "Absence of evidence that attacks are disabled treated as positive proof that normal attack state transitions remain available."
+    ],
+    "acceptable_hook_full_identities": [],
+    "forbidden_hook_full_identities": [
+      {
+        "assembly_sha256": "DD0C57D5C527E78B40FAB798456EDD73413DA0F140995A63FCA3619C36C32698",
+        "module_mvid": "28e7d845-eb8b-48af-a5b2-9b1addb278ae",
+        "declaring_type": "ES_PathMove",
+        "method_name": "CommonFixedUpdate",
+        "metadata_token": "0x06000B8C",
+        "signature_blob": "200001",
+        "forbidden_scope": "not acceptable as sufficient planning Hook while its exact body is nop/ret"
+      },
+      {
+        "assembly_sha256": "DD0C57D5C527E78B40FAB798456EDD73413DA0F140995A63FCA3619C36C32698",
+        "module_mvid": "28e7d845-eb8b-48af-a5b2-9b1addb278ae",
+        "declaring_type": "ES_PathMove",
+        "method_name": "UpdateRotation",
+        "metadata_token": "0x06000B8E",
+        "signature_blob": "200001",
+        "forbidden_scope": "not acceptable as sufficient planning Hook while its exact body is nop/ret"
+      },
+      {
+        "assembly_sha256": "DD0C57D5C527E78B40FAB798456EDD73413DA0F140995A63FCA3619C36C32698",
+        "module_mvid": "28e7d845-eb8b-48af-a5b2-9b1addb278ae",
+        "declaring_type": "ES_PathMoveBase",
+        "method_name": "UpdateRotation",
+        "metadata_token": "0x06000B93",
+        "signature_blob": "200001",
+        "forbidden_scope": "not acceptable as sufficient planning Hook while the exact declaration is abstract and has no body"
+      }
+    ],
+    "required_missing_evidence": [
+      "A mechanism for arbitrary-surface movement rather than only a fixed ladder route.",
+      "A way to obtain wall and ceiling surfaces and their surface normals.",
+      "Movement and turning maintained in a surface-relative coordinate frame.",
+      "Integration with the existing AI rather than wholly taking over or pausing it.",
+      "A JSON area-configuration entry point and runtime area binding.",
+      "Default prohibition when area configuration is absent, unknown, or cannot be parsed.",
+      "A reliable way to identify enemies that support a prone locomotion pose.",
+      "Positive integration evidence that the mechanism does not inherently replace or disable normal attack state transitions."
+    ],
+    "expected_sufficiency": "insufficient",
+    "expected_control_action": "block"
+  },
+  "judgment_hash_protocol": "sha256_of_canonical_json_over_judgment_payload_only",
+  "proposed_judgment_hash": "FD57B8971AD642E8471AB047E261EEFA407EEE5A94FF6448F97731F53894F7B7",
+  "frozen_judgment_hash": "FD57B8971AD642E8471AB047E261EEFA407EEE5A94FF6448F97731F53894F7B7",
+  "operator_confirmation": {
+    "requirements_status": "completed",
+    "requirements_confirmed_by": "user_via_current_task_instruction",
+    "final_payload_product_semantics_status": "confirmed",
+    "confirmation_scope": [
+      "natural_language_requirement",
+      "product_hard_constraints",
+      "product_semantics_for_continue_and_block"
+    ],
+    "does_not_grant": [
+      "technical_hook_approval",
+      "patch_apply_build_or_runtime_authority",
+      "data_readiness_verdict",
+      "product_execution_approval"
+    ],
+    "final_payload_confirmed_by": "user_via_delegated_source_thread_019fcd6a-8925-7570-93af-328a8f384a00",
+    "final_payload_confirmed_at": "2026-08-12T08:20:48.239Z"
+  }
+}

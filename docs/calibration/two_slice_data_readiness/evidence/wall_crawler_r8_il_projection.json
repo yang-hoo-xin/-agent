@@ -1,0 +1,69 @@
+{
+  "projection_schema_version": "offline_fixture_evidence_projection_v1",
+  "input_role": "r8_modules_asm",
+  "inspector_source_ref": "scripts/r8_il_inspector/Program.cs",
+  "target_code_executed": false,
+  "missing_symbols": [],
+  "source_structure_facts": [
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/Enemies/ES_ClimbLadder.cs",
+      "facts": [
+        "private OffMeshLinkData m_currentLinkDataForDebug;",
+        "private Vector3 m_startPos;",
+        "private Vector3 m_endPos;",
+        "private Vector3 m_normal;",
+        "private Vector3 m_moveTarget;",
+        "private OffMeshLink m_navMeshLink;",
+        "private void DoStartClimbLadder(Vector3 startPos, Vector3 endPos, Vector3 normal, float animSpeedMul)"
+      ]
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/Enemies/EnemyLocomotion.cs",
+      "facts": [
+        "EnemyCrawlFlip = 0x20,",
+        "EnemyCrawl = 0x40,",
+        "public ES_PathMoveBase PathMove;",
+        "public ES_ClimbLadder ClimbLadder;"
+      ]
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/AIGraph/AIG_CourseNode.cs",
+      "facts": [
+        "public LG_Zone m_zone;",
+        "public LG_Area m_area;"
+      ]
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/GameData/LevelLayoutDataBlock.cs",
+      "facts": [
+        "public List<ExpeditionZoneData> Zones { get; set; }"
+      ]
+    }
+  ],
+  "methods": [
+    {
+      "symbol": "ES_PathMove.CommonFixedUpdate",
+      "metadata_token": "0x06000B8C",
+      "signature_blob": "200001",
+      "has_method_body": true,
+      "rva": 8282,
+      "il_bytes": "002A"
+    },
+    {
+      "symbol": "ES_PathMove.UpdateRotation",
+      "metadata_token": "0x06000B8E",
+      "signature_blob": "200001",
+      "has_method_body": true,
+      "rva": 8282,
+      "il_bytes": "002A"
+    },
+    {
+      "symbol": "ES_PathMoveBase.UpdateRotation",
+      "metadata_token": "0x06000B93",
+      "signature_blob": "200001",
+      "has_method_body": false,
+      "rva": 0,
+      "il_bytes": ""
+    }
+  ]
+}

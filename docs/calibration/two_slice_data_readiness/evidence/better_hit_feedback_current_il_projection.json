@@ -1,0 +1,54 @@
+{
+  "projection_schema_version": "offline_fixture_evidence_projection_v1",
+  "input_role": "current_interop_assembly",
+  "inspector_source_ref": "scripts/r8_il_inspector/Program.cs",
+  "target_code_executed": false,
+  "source_api_facts": [
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/ES_Hitreact.cs",
+      "facts": [
+        "public override void ActivateState(ES_HitreactType hitreactType, ImpactDirection impactDirection, bool attackerIsPlayer, Agent attacker, Vector3 damagePos, DamageNoiseLevel noiseLevel = DamageNoiseLevel.Normal)"
+      ]
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/ES_HitreactType.cs",
+      "facts": [
+        "Micro = 2,",
+        "Light = 3,",
+        "Heavy = 4,",
+        "ToDeath = 5,",
+        "InstantRagdollDeath = 6"
+      ]
+    }
+  ],
+  "methods": [
+    {
+      "symbol": "ES_Hitreact.ActivateState",
+      "metadata_token": "0x06001387",
+      "signature_blob": "2006011184301184340212B9DC11511186F8",
+      "has_method_body": true,
+      "rva": 332376
+    },
+    {
+      "symbol": "ES_Hitreact.DoHitReact",
+      "metadata_token": "0x0600138A",
+      "signature_blob": "200701081184301184340C0211511151",
+      "has_method_body": true,
+      "rva": 332768
+    },
+    {
+      "symbol": "Dam_EnemyDamageBase.BulletDamage",
+      "metadata_token": "0x060023B4",
+      "signature_blob": "200A010C12B9DC11511151115102080C0C09",
+      "has_method_body": true,
+      "rva": 595676
+    },
+    {
+      "symbol": "Enemies.EnemyAgent.OnTakeDamage",
+      "metadata_token": "0x0600F223",
+      "signature_blob": "2005010C12B9DC11511151118430",
+      "has_method_body": true,
+      "rva": 4262008
+    }
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "manifest_schema_version": "two_feature_specific_offline_fixture_manifest_v1",
+  "case_identity": "wall_crawler_insufficient_evidence_calibration",
+  "request": {
+    "ref": "docs/calibration/two_slice_data_readiness/wall_crawler/request.txt",
+    "sha256": "B60BF872F06F8772B5D558629A1179A5D3E7C5E8CC463CEA33514596088B6F0A"
+  },
+  "external_inputs": [
+    {
+      "logical_role": "r8_root",
+      "locator_argument": "--r8-root",
+      "acquisition_step": "Supply the lawful R8 export containing the allowlisted roots and assembly.",
+      "expected_assembly": {
+        "relative_path": "Library/ScriptAssemblies/Modules-ASM.dll",
+        "sha256": "DD0C57D5C527E78B40FAB798456EDD73413DA0F140995A63FCA3619C36C32698",
+        "mvid": "28e7d845-eb8b-48af-a5b2-9b1addb278ae"
+      }
+    }
+  ],
+  "actual_retrieval_scope": {
+    "mode": "allowlist_only",
+    "external_root_role": "r8_root",
+    "search_root_allowlist": [
+      "Assets/Scripts/Modules-ASM",
+      "Datablocks"
+    ],
+    "runtime_access_requirement": "The future tested system may read only these registered retrieval roots.",
+    "excluded_source_classes": [
+      "historical_implementation",
+      "technical_annotation",
+      "evidence_projection",
+      "project_state_or_implementation_queue",
+      "tests_with_fixed_answers",
+      "prior_agent_or_rag_outputs",
+      "product_readiness_can_generate_patch_or_blocker_diagnostics"
+    ]
+  },
+  "canonical_corpus_snapshot": {
+    "canonical_snapshot_owner_ref": "src/mod_agent/evaluation/arm_a.py::RunManifestCollector.canonical_corpus_snapshot",
+    "search_root_allowlist": [
+      "Assets/Scripts/Modules-ASM",
+      "Datablocks"
+    ],
+    "file_count": 3196,
+    "corpus_snapshot_sha256": "sha256:40ed82c420c7192f64c539cc983c40aae7e1a8fe221e0c2cd0e31964ace26ba2"
+  },
+  "included_sources": [
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/ES_PathMove.cs",
+      "size_bytes": 1990,
+      "sha256": "092CDB08DAC61D0847D173AA189D5C114E96460FFEBFC57D66C02231443ACBD5",
+      "role": "hook_target_and_path_move_source",
+      "authority": "R8_EXPECTED_SHA256"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/ES_PathMoveBase.cs",
+      "size_bytes": 995,
+      "sha256": "CBC5BE7E277DD49065CCC613C5184D7F0F777A2F5C1881E70FB5BF6A12AECC17",
+      "role": "abstract_path_move_api_source",
+      "authority": "R8_EXPECTED_SHA256"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/Enemies/EnemyAgent.cs",
+      "size_bytes": 9380,
+      "sha256": "DF0434B497E6293378708E3640521F6B01BE03FE8470A0C37E3E557F1D6B62D3",
+      "role": "enemy_identity_and_locomotion_link",
+      "authority": "R8_EXPECTED_SHA256"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/Enemies/EnemyLocomotion.cs",
+      "size_bytes": 7093,
+      "sha256": "55A5A8BFAA85CE7E91AB7187A5615469C97DBD4E67266333971E14B3540DDEC4",
+      "role": "locomotion_to_path_move_link",
+      "authority": "R8_EXPECTED_SHA256"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/Enemies/ES_ClimbLadder.cs",
+      "size_bytes": 1656,
+      "sha256": "E6E3BAB8336E1E6BF3367184E558E4C71D902AFB4BDA774F706D8625BAB4E34B",
+      "role": "bounded_ladder_structure_source",
+      "authority": "manifest_bound_r8_source"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/AIGraph/AIG_CourseNode.cs",
+      "size_bytes": 4651,
+      "sha256": "0CE67E4ECEA125044648F7AA969564CEAF3136D95E7397607BA1804C1EBC44C8",
+      "role": "course_node_to_zone_link",
+      "authority": "R8_EXPECTED_SHA256"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/LevelGeneration/LG_Zone.cs",
+      "size_bytes": 3466,
+      "sha256": "0798F031D42FA9235F098761C044E6BDCF0E6C0D98D12A03FF8D28328BE57291",
+      "role": "zone_identity_source",
+      "authority": "R8_EXPECTED_SHA256"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/GameData/LevelLayoutDataBlock.cs",
+      "size_bytes": 475,
+      "sha256": "2A236C4F1FD8A32BB23864F1140DE78ECD35D053159E69DED7754CF5BB7E8E8A",
+      "role": "layout_data_api_source",
+      "authority": "R8_EXPECTED_SHA256"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/GameData/ExpeditionZoneData.cs",
+      "size_bytes": 5594,
+      "sha256": "2F5141477B448841B7D4592FFDA691EFAF07CE96E5E386AF1759CD778CC160D1",
+      "role": "expedition_zone_api_source",
+      "authority": "R8_EXPECTED_SHA256"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/GameData/ExpeditionInTierData.cs",
+      "size_bytes": 3050,
+      "sha256": "36DBB3E4B73ABBC9548CF9C3F0A089C9484DFECC69C99E0A4D52BED30A02D81F",
+      "role": "rundown_to_layout_api_source",
+      "authority": "R8_EXPECTED_SHA256"
+    },
+    {
+      "relative_path": "Datablocks/GameData_LevelLayoutDataBlock_bin.json",
+      "size_bytes": 8884106,
+      "sha256": "1B70C20F55F7205AE32FCA65ED805A70173F5C3126EC25EDA27E4CEBF24C79E7",
+      "role": "layout_data_instance_source",
+      "authority": "R8_EXPECTED_SHA256"
+    },
+    {
+      "relative_path": "Datablocks/GameData_RundownDataBlock_bin.json",
+      "size_bytes": 749522,
+      "sha256": "5EBFE2CB25D0ADCECB5C622C781F0C142B55B2C16807EF5F0E1406C069B9667D",
+      "role": "rundown_data_instance_source",
+      "authority": "R8_EXPECTED_SHA256"
+    }
+  ]
+}

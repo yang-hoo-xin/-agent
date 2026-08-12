@@ -1,0 +1,88 @@
+{
+  "annotation_schema_version": "two_feature_specific_technical_annotation_v2",
+  "case_identity": "better_hit_feedback_positive_calibration",
+  "calibration_position": "reference_assisted_positive_calibration_development",
+  "annotation_version": "5",
+  "annotation_process": "reference_assisted_re_adjudication",
+  "technical_review_authority": "independently_model_reviewed_technical_calibration_annotation",
+  "technical_calibration_annotation_status": "frozen_after_operator_product_semantics_confirmation",
+  "historical_reference_accessed": true,
+  "historical_reference_role": "implementation_reference_and_behavior_confirmation_support",
+  "historical_reference_is_sole_authority": false,
+  "current_rag_actual_output_accessed": false,
+  "evidence_projection_relationship": "evidence projection may support annotation creation, but annotation judgment is not mechanically derived from projection",
+  "runtime_evidence_role": "post_selection_support_only",
+  "judgment_payload": {
+    "required_evidence": [
+      "A current-version exact observation-point identity bound to the physical assembly SHA256 and MVID.",
+      "Current API and IL evidence that ES_Hitreact.ActivateState exists with a method body and exposes hitreactType, attackerIsPlayer, attacker, impactDirection, damagePos, and noiseLevel parameters.",
+      "Current enum declarations that separately identify Micro, Light, and Heavy and the death reactions ToDeath and InstantRagdollDeath, without treating those declarations as proof of Runtime result semantics.",
+      "A historical successful implementation that used ES_Hitreact.ActivateState as the reaction observation point and accepted Micro, Light, and Heavy, treated only as reference-assisted support rather than sole authority.",
+      "Hash-bound bounded Runtime observations that separately record ES_Hitreact.ActivateState result markers for the actually observed Light and Heavy reactions, visual and audio acceptance predicates, and Dam_EnemyDamageBase.BulletDamage input markers; the bound Runtime does not observe Micro.",
+      "An explicit planning boundary that the evidence is sufficient only to select ES_Hitreact.ActivateState as the observation direction and enter implementation planning; player-gun-source and same-enemy association, Micro-path Runtime verification, event multiplicity and deduplication while allowing later independent events, complete death-path and other boundary Runtime regression, and final Runtime correctness are non-blocking later planning and Runtime-verification work."
+    ],
+    "forbidden_evidence": [
+      "The historical BetterHitFeedback implementation or its selected Hook used as the sole expected-fact authority.",
+      "Historical instrumented Runtime markers used as the sole basis for choosing or approving a Hook.",
+      "A gunshot, damage callback, damage multiplier, or temporal proximity treated by itself as proof that the same enemy entered the corresponding non-death stagger.",
+      "A method name, non-empty body, or Runtime marker count mechanically converted into an acceptable Hook, sufficiency judgment, or continue/block action.",
+      "A Hook name copied from project status, implementation queue, tests, prior Agent/RAG output, or an unbound/newest-file path.",
+      "The sufficient/continue judgment represented as final Runtime acceptance, strict exact-once proof, complete death-path coverage, or coverage of all boundary cases."
+    ],
+    "acceptable_hook_full_identities": [
+      {
+        "assembly_sha256": "B0127EB1E9228A61B7ED04EA0152348E24DA693636711D03A248049618BB74BB",
+        "module_mvid": "85155e68-33a5-4fa5-a419-c563e7ea5e60",
+        "declaring_type": "ES_Hitreact",
+        "method_name": "ActivateState",
+        "metadata_token": "0x06001387",
+        "signature_blob": "2006011184301184340212B9DC11511186F8",
+        "acceptance_scope": "acceptable observation-point direction for implementation planning based on current API/IL identity and parameters, current reaction enum declarations, a historical successful implementation covering Micro, Light, and Heavy, and hash-bound bounded Runtime support that observed Light and Heavy only; player-gun-source and same-enemy association, Micro-path Runtime verification, event multiplicity and deduplication while allowing later independent events, complete death-path and other boundary Runtime regression, and final Runtime correctness remain non-blocking later work"
+      }
+    ],
+    "forbidden_hook_full_identities": [
+      {
+        "assembly_sha256": "B0127EB1E9228A61B7ED04EA0152348E24DA693636711D03A248049618BB74BB",
+        "module_mvid": "85155e68-33a5-4fa5-a419-c563e7ea5e60",
+        "declaring_type": "Dam_EnemyDamageBase",
+        "method_name": "BulletDamage",
+        "metadata_token": "0x060023B4",
+        "signature_blob": "200A010C12B9DC11511151115102080C0C09",
+        "forbidden_scope": "cannot be the sole authority that the same enemy entered the corresponding non-death stagger or that the feedback event is unique"
+      },
+      {
+        "assembly_sha256": "B0127EB1E9228A61B7ED04EA0152348E24DA693636711D03A248049618BB74BB",
+        "module_mvid": "85155e68-33a5-4fa5-a419-c563e7ea5e60",
+        "declaring_type": "Enemies.EnemyAgent",
+        "method_name": "OnTakeDamage",
+        "metadata_token": "0x0600F223",
+        "signature_blob": "2005010C12B9DC11511151118430",
+        "forbidden_scope": "cannot be the sole authority that the same enemy entered the corresponding non-death stagger or that the feedback event is unique"
+      }
+    ],
+    "required_missing_evidence": [],
+    "expected_sufficiency": "sufficient",
+    "expected_control_action": "continue"
+  },
+  "judgment_hash_protocol": "sha256_of_canonical_json_over_judgment_payload_only",
+  "proposed_judgment_hash": "C43DA97715FF4408FF1687EBB7B4756B2F5FED8D3EBF1ADF78A53EED8F1507A1",
+  "frozen_judgment_hash": "C43DA97715FF4408FF1687EBB7B4756B2F5FED8D3EBF1ADF78A53EED8F1507A1",
+  "operator_confirmation": {
+    "requirements_status": "completed",
+    "requirements_confirmed_by": "user_via_current_task_instruction",
+    "final_payload_product_semantics_status": "confirmed",
+    "confirmation_scope": [
+      "natural_language_requirement",
+      "product_hard_constraints",
+      "product_semantics_for_continue_and_block"
+    ],
+    "does_not_grant": [
+      "technical_hook_approval",
+      "patch_apply_build_or_runtime_authority",
+      "data_readiness_verdict",
+      "product_execution_approval"
+    ],
+    "final_payload_confirmed_by": "user_via_delegated_source_thread_019fcd6a-8925-7570-93af-328a8f384a00",
+    "final_payload_confirmed_at": "2026-08-12T08:20:48.239Z"
+  }
+}

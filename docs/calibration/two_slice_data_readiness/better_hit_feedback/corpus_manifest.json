@@ -1,0 +1,117 @@
+{
+  "manifest_schema_version": "two_feature_specific_offline_fixture_manifest_v1",
+  "case_identity": "better_hit_feedback_positive_calibration",
+  "request": {
+    "ref": "docs/calibration/two_slice_data_readiness/better_hit_feedback/request.txt",
+    "sha256": "975612665FF3779774E09D189D1C7877E31E34B5E924C07D0E1CD2050E005187"
+  },
+  "external_inputs": [
+    {
+      "logical_role": "r8_root",
+      "locator_argument": "--r8-root",
+      "acquisition_step": "Supply the lawful R8 export containing the allowlisted roots.",
+      "expected_files": [
+        {
+          "relative_path": "Assets/Scripts/Modules-ASM/ES_Hitreact.cs",
+          "size_bytes": 1959,
+          "sha256": "C66E37CACD04C324377542E302FE62AC215D5A61B53BB9CD54A8D167AAD2A243"
+        },
+        {
+          "relative_path": "Assets/Scripts/Modules-ASM/ES_HitreactType.cs",
+          "size_bytes": 153,
+          "sha256": "7546DDAB756D241603C70D5466FE36191779739806608EA6950091E01616EBA9"
+        },
+        {
+          "relative_path": "Assets/Scripts/Modules-ASM/Dam_EnemyDamageBase.cs",
+          "size_bytes": 5905,
+          "sha256": "E31975299217FEAFFC80D92ECE871E11AEE7F0A74E60314110A69FDDD7FC7B78"
+        }
+      ]
+    },
+    {
+      "logical_role": "current_interop_assembly",
+      "locator_argument": "--current-interop-assembly",
+      "expected_path_suffix": "BepInEx/interop/Modules-ASM.dll",
+      "expected_sha256": "B0127EB1E9228A61B7ED04EA0152348E24DA693636711D03A248049618BB74BB",
+      "expected_mvid": "85155e68-33a5-4fa5-a419-c563e7ea5e60",
+      "acquisition_step": "Supply the interop assembly generated from the operator's installed game."
+    },
+    {
+      "logical_role": "bhf_historical_successful_implementation",
+      "locator_argument": "--bhf-historical-implementation",
+      "expected_sha256": "77D0E4C6554444AB027E2FD6F98A3BC2EC7C5D6BCC8F54F977B655920922F0AE",
+      "size_bytes": 136655,
+      "acquisition_step": "Supply the hash-bound historical BetterHitFeedback implementation that produced the bound Runtime support records."
+    },
+    {
+      "logical_role": "bhf_runtime_result",
+      "locator_argument": "--bhf-runtime-result",
+      "expected_sha256": "6C3401CFDA586B64C09575C74E77BC03C1327E88FBDFC96C711E2C5CD687BC94",
+      "size_bytes": 175877,
+      "acquisition_step": "Supply the original runtime_result.json from the bound instrumented run."
+    },
+    {
+      "logical_role": "bhf_runtime_bounded_log",
+      "locator_argument": "--bhf-runtime-bounded-log",
+      "expected_sha256": "D8FD1585E6782F06E1C7BE91D1C7757509183F955F29289842E216822E7E3A54",
+      "size_bytes": 20050,
+      "acquisition_step": "Supply the original enabled bounded log bound by runtime_result.json."
+    },
+    {
+      "logical_role": "bhf_runtime_full_log",
+      "locator_argument": "--bhf-runtime-full-log",
+      "expected_sha256": "38B6EE210AC22315D970248CC519B9A02AE087C441EAE765BD93A3B76257E71D",
+      "size_bytes": 155869,
+      "acquisition_step": "Supply the original enabled full log bound by runtime_result.json."
+    }
+  ],
+  "actual_retrieval_scope": {
+    "mode": "allowlist_only",
+    "external_root_role": "r8_root",
+    "search_root_allowlist": [
+      "Assets/Scripts/Modules-ASM",
+      "Datablocks"
+    ],
+    "runtime_access_requirement": "The future tested system may read only these registered retrieval roots.",
+    "excluded_source_classes": [
+      "historical_better_hit_feedback_implementation",
+      "technical_annotation",
+      "runtime_expected_or_support_records",
+      "project_state_or_implementation_queue",
+      "tests_with_fixed_answers",
+      "prior_agent_or_rag_outputs"
+    ]
+  },
+  "canonical_corpus_snapshot": {
+    "canonical_snapshot_owner_ref": "src/mod_agent/evaluation/arm_a.py::RunManifestCollector.canonical_corpus_snapshot",
+    "search_root_allowlist": [
+      "Assets/Scripts/Modules-ASM",
+      "Datablocks"
+    ],
+    "file_count": 3196,
+    "corpus_snapshot_sha256": "sha256:40ed82c420c7192f64c539cc983c40aae7e1a8fe221e0c2cd0e31964ace26ba2"
+  },
+  "included_sources": [
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/ES_Hitreact.cs",
+      "size_bytes": 1959,
+      "sha256": "C66E37CACD04C324377542E302FE62AC215D5A61B53BB9CD54A8D167AAD2A243",
+      "role": "raw_api_source",
+      "authority": "hash_bound_r8_decompiled_source_not_current_runtime_behavior"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/ES_HitreactType.cs",
+      "size_bytes": 153,
+      "sha256": "7546DDAB756D241603C70D5466FE36191779739806608EA6950091E01616EBA9",
+      "role": "raw_api_source",
+      "authority": "hash_bound_r8_enum_declaration_not_product_semantics"
+    },
+    {
+      "relative_path": "Assets/Scripts/Modules-ASM/Dam_EnemyDamageBase.cs",
+      "size_bytes": 5905,
+      "sha256": "E31975299217FEAFFC80D92ECE871E11AEE7F0A74E60314110A69FDDD7FC7B78",
+      "role": "raw_input_event_api_source",
+      "authority": "hash_bound_r8_decompiled_source_not_reaction_result_authority"
+    }
+  ]
+}
