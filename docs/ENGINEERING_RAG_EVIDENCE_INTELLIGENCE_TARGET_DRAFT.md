@@ -1186,7 +1186,7 @@ Eval dataset/protocol version 属于独立 Eval 运行输入，不属于 RAG/ER 
 
 每项只能得到 `adopt`、`adapt`、`defer` 或 `reject` 的显式裁决及理由。不得在未完成该 adoption matrix 前建立功能重复的 evaluator、regression comparator、quality policy、Arm A runner 或 transition gate。
 
-本节在目标文档 checkpoint 时只登记 adoption matrix 的义务。矩阵已经物化到 `docs/ENGINEERING_RAG_1A_MINIMAL_EVAL_CONTRACT.md` 并完成独立合同审核：`contract_materialization_verdict=approved`、`rag_1a_contract_verdict=changes_required`、`minimal_eval_contract_verdict=changes_required`。物化与审核不表示资产已经获得正式采用批准、收敛完成或形成统一生产级 Trace/Eval 体系。合同仍须分别裁决普通 `EvalRunner`、Ragas evaluator、局部 Trace/Event、`AgentQualityEvaluator`、`RetrievalRegressionRunner`、`QualityGatePolicy`、`OfficialArmARunner` 和 transition gate；不能用 inventory 行或 changes-required 设计输入代替采用结论。
+本节在目标文档 checkpoint 时只登记 adoption matrix 的义务。联合设计曾在 Git checkpoint `7938ced`（`docs(rag-er): checkpoint changes-required joint contract design`）中物化并完成独立审核：`contract_materialization_verdict=approved`、`rag_1a_contract_verdict=changes_required`、`minimal_eval_contract_verdict=changes_required`，没有获得代码实施或资产采用授权。该联合合同已从 active tree 删除，只作为 Git 历史中的设计与边界输入保留；如需核对，必须从该精确 checkpoint 只读回看。两切片 fixture handoff 完成后，应根据当时的真实数据与当前源码重新收缩 RAG-1A 和 Calibration Eval 合同，不得直接恢复或实施历史对象中的具体 schema、runner、指标、文件范围或测试门。后续合同仍须分别裁决普通 `EvalRunner`、Ragas evaluator、局部 Trace/Event、`AgentQualityEvaluator`、`RetrievalRegressionRunner`、`QualityGatePolicy`、`OfficialArmARunner` 和 transition gate；不能用 inventory 行或 changes-required 历史设计代替采用结论。
 
 复用不等于提升语义权威：
 
@@ -1197,6 +1197,119 @@ Eval dataset/protocol version 属于独立 Eval 运行输入，不属于 RAG/ER 
 - 现有 calibration/development fixture 只证明 evaluator、runner 和 gate 的机械行为；没有真实 held-out Case、正式 protocol identity 和可比较运行报告时，不得声称产品质量改善。
 
 独立 Trace 合同需要解决的是可信关联、基数和传播规则，而不是预先规定一个 ID 强行贯穿全部对象。一个请求可以关联多次检索、Graph/repair attempt、Artifact commit、Build/Runtime 和 Eval run；同一 Artifact 或 Eval 数据也可能参与多次运行。具体是一对一、一对多还是多对多，以及哪些 identity 可以作为可信 join key，必须由原 identity owner 和后续 Trace 合同共同固定。关联不完整只影响观测完整性，不得改变 Approval、Graph route、Store commit truth 或冻结机器结果。
+
+### 17.4.1 证据约束型校准夹具轻量模式
+
+BetterHitFeedback 与 WallCrawler 两切片完成后，可以把其中经实际重放证明必要的共同边界提炼为“证据约束型校准夹具”（Evidence-grounded Calibration Fixture）轻量模式。该模式用于后续相似工程评测任务的讨论输入；是否复用必须根据新任务的问题、可取得证据和失败边界另行确认，不能因任务名称或字段相似而自动套用。
+
+可复用内容只限以下六项结构原则：
+
+1. 题目与 expected judgment 分离；
+2. 被测检索范围采用明确 allowlist；
+3. 物理事实从内容身份绑定的输入重算；
+4. expected judgment 由人工单独拥有；
+5. 被测系统输出与 annotation 只在比较阶段相遇；
+6. 脚本只报告重放事实，不授予产品或质量 verdict。
+
+这六项原则描述的是如何制作可复算、可比较且不向被测系统直接暴露 expected judgment 的校准夹具，不是通用 Eval schema、runner、Registry、Readiness authority、质量门或产品控制面。当前两个切片也不能证明该模式已经覆盖其他任务类型、RAG 泛化能力、held-out 表现或产品晋级条件。
+
+后续遇到相似内容时，应先讨论并核对新任务的输入表示、证据 owner、允许检索范围、人工判断来源和失败边界，再决定是否复用该模式。只有多个不同任务的实际夹具证明存在稳定的共同机械步骤时，才允许另行讨论共享工具；不得从当前两条切片直接推导通用评测平台。
+
+### 17.5 最终 Trace、Eval、质量门、CI/CD 与 Dashboard 工程闭环目标
+
+本节记录长期工程指导目标，不是 RAG-1A 的实施合同，也不授权建设完整 Trace/Eval 平台、CI 流水线或 Dashboard。它的作用是把当前分散在 RAG、ER、控制面、Artifact、Build/Runtime、Eval 和历史可观测性材料中的原则收敛成同一条最终产品闭环，同时防止“治理和面板建设替代检索与证据能力交付”。
+
+目标不是收集更多日志，而是让每次真实请求和每次代码、配置或模型变更最终都能够回答：
+
+- 本次运行实际执行了什么，使用了哪些源码、语料、配置、模型和工具版本；
+- 检索了哪些范围，各 lane 的 coverage、命中、失败和 fallback 是什么；
+- 哪些证据被接纳或排除，形成了哪些 Hook/方案备选项、支持、冲突和缺失关系；
+- 为什么允许继续规划，或为什么因证据不足而停止；
+- Graph、ArtifactStore、Build、repair、Runtime 和产品终态分别发生了什么；
+- actual facts 与独立 Golden expected facts 的差异是什么；
+- 相对冻结 baseline 是否发生质量、稳定性、延迟或成本回退；
+- 回退应只报告、产生告警，还是阻止 PR 合并或 Release；
+- 使用者能否从面板中的失败指标逐层定位到 Case、检索路径、EvidencePack、Artifact、Receipt、Graph 节点和 Build/Runtime 事实。
+
+长期闭环如下：
+
+```text
+代码、配置、语料、模型或产品变更
+  ↓
+单元、集成、静态与确定性安全测试
+  ↓
+冻结 dataset / judgment / protocol / corpus / config identity
+  ↓
+RAG / ER / Agent / Graph / Store / Build / Runtime 产生可信 actual facts
+  ↓
+Trace 按经审核的关联规则保存实际发生的事实
+  ↓
+Eval 将 actual facts 与独立 expected facts 比较
+  ↓
+不可变评测报告与失败归因
+  ↓
+版本化 QualityGatePolicy
+  ↓
+PR / Nightly / Release 分层执行、报告、告警或阻断
+  ↓
+Dashboard 只读展示、趋势比较和失败钻取
+```
+
+各层职责必须保持正交：
+
+- **Trace** 只记录实际发生的事件、身份、关联、阶段、延迟、成本和失败，不决定证据是否正确，不生成 Golden，也不授予副作用权限；
+- **Eval** 只比较可信 actual facts 与独立 expected facts，产生适用指标和失败归因，不把标签或分数写回 EvidencePack、Graph、Store 或产品结果；
+- **Gate** 只消费已冻结的 Eval 报告、适用 Case 和版本化策略，将指标转化为通过、告警或阻断结论，不重新执行检索或解释单条业务事实；
+- **CI/CD** 负责触发、隔离运行、保存报告 artifact、传播 job verdict 和执行发布策略，不成为新的业务事实 owner；
+- **Dashboard** 只读取结构化报告与可信投影，展示当前 commit、dataset/protocol/corpus/config identity、指标、baseline delta、失败 Case、延迟和成本趋势，不自行计算 gate truth。
+
+未来 Trace 至少应能关联适用的请求、检索、Graph attempt、Artifact、Store Receipt、Build/Runtime 和 Eval run，但本文不预设单一全局根 ID。关联可能是一对多或多对多；精确传播、可信 join key、采样、脱敏、保留期限和 exporter 由后续独立 Trace 合同固定。Trace 缺失或 exporter 失败只能降低观测完整性，不能重算已经冻结的机器结果。
+
+未来评测与 CI/CD 应分层采用：
+
+- **PR**：运行快速、稳定、确定性的 schema/serializer、Golden 泄漏、数据身份、stale corpus、forbidden Hook/文件、false continue 及已批准 calibration smoke。答案泄漏、不可比较却声称通过、证据不足仍继续等安全边界可以成为硬失败；检索分数、延迟和成本的小幅波动不得在没有批准 policy 和稳定数据前被随意设为硬门；
+- **Nightly**：运行更完整的 development 数据、重复运行、方差、baseline/treatment、延迟、token、成本和 Dense/Fusion/reranker 实验，主要形成趋势与回归归因；只有经过独立批准且已证明稳定的规则才能阻断后续 promotion；
+- **Release**：在后续数据成熟后使用冻结 held-out、fresh corpus、相同 protocol、明确 metric applicability 和版本化 QualityGatePolicy。Release gate 失败可以阻止发布，但 held-out、promotion 和正式百分比阈值不是当前 Data Readiness 或 RAG-1A 第一实现包的前置条件。
+
+面板最终应支持以下最小诊断路径：
+
+```text
+失败 gate / 指标
+  ↓
+受影响 Case 与 actual/expected 差异
+  ↓
+检索 lane、范围、coverage、排名和 fallback
+  ↓
+接纳/排除证据及 Hook/方案支持、冲突、缺失关系
+  ↓
+EvidencePack 与三层充分性
+  ↓
+Graph / Store / Build / repair / Runtime 阶段
+  ↓
+原始 Trace、Artifact、Receipt、日志和版本身份
+```
+
+失败处置必须区分产品事实、评测基础设施和观测基础设施：纯读取、查询、评测或 exporter 失败可以按照以后批准的幂等策略重试；可能启动副作用的 Apply、Build、Runtime 不得因 Trace/Eval 或 Dashboard 失败自动重放。进程硬退出而没有形成结构化结果时，不根据面板、文件存在性或历史 totals 伪造成功或失败；未来恢复能力必须继续服从控制面和 effect recovery 合同。
+
+本闭环是长期完成方向，不改变当前能力优先顺序：
+
+```text
+两切片 Data Readiness
+  ↓
+只收缩 source authority、lane coverage、planning predicate 等最小合同决定
+  ↓
+RAG-1A 检索、证据准入与充分性能力实施
+  ↓
+运行 BetterHitFeedback / WallCrawler calibration
+  ↓
+复用并适配既有 Evaluator 形成报告
+  ↓
+RAG-1B 活跃产品入口采用
+  ↓
+数据成熟后再建设完整 Trace / CI/CD / Dashboard 闭环
+```
+
+因此，完整 Trace、Langfuse/OpenTelemetry、正式 CI 晋级门、统一 Dashboard、40–60 条数据、held-out、promotion 和全部未来 provider/model/reranker 身份不得成为当前 Data Readiness 或 RAG-1A 的前置阻断项。Data Readiness 是能力实施前最后一个主动前置包；其通过后若继续扩建控制层、合同或可观测性平台而没有交付可运行的 RAG-1A 检索与证据能力，即违反本文的能力优先目标。
 
 ## 18. MCP、HTTP API 与 Dashboard 边界
 
