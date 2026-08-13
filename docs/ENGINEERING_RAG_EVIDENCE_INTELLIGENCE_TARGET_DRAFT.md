@@ -206,6 +206,15 @@ RAG/ER 不声称最终 Hook 一定正确。它负责提供可审计的证据基�
 - Agentic retrieval router；
 - 通用证据需求框架。
 
+上述延期边界针对跨领域、动态选择任意工具、开放式自循环以及统一处理所有工程需求的通用 Agentic retrieval router 或通用证据需求框架。该延期不排除 RAG-1A 第一 Hook Discovery 切片完成既定产品目标所必需的有界 Agent Evidence Discovery 子层。该子层只负责：
+
+- 将自然语言功能需求投影为可审计的工程问题和约束；
+- 将工程问题投影为来源角色、检索路径、查询表达和 coverage 要求；
+- 调用既有 RAG/ER 检索与精确验证能力形成 Hook/方案备选项；
+- 将 actual evidence 交给既有单一证据语义所有者计算关系和充分性。
+
+它不建立通用 Agent 框架、第二工作流、动态工具注册中心、无限自主循环、第二充分性所有者或副作用控制器。第一阶段的 Requirement Projection 只处理 Hook Discovery 所需的最小工程语义，不得扩张为统一处理所有 Agent 任务的 `Requirement Framework`。
+
 ## 4. 术语与双路径体系
 
 ### 4.1 标准文档 RAG
@@ -278,7 +287,14 @@ retrieval diagnostics
 ```text
                               自然语言需求
                                    │
-                                需求分解
+                         Agent Evidence Discovery
+                    ┌──────────────┴──────────────┐
+                    │                             │
+          Requirement Projection           Search Planning
+                    │                             │
+                    └──────────────┬──────────────┘
+                                   │
+                       Bounded Discovery Loop
                                    │
                ┌───────────────────┴───────────────────┐
                │                                       │
@@ -302,6 +318,15 @@ retrieval diagnostics
                                    │
                                 既有控制面
 ```
+
+Agent Evidence Discovery 决定应调查什么以及如何使用检索工具；RAG/ER 负责执行检索并返回当前来源事实；Evidence Reasoning 负责解释已准入证据支持什么、冲突什么、缺少什么以及是否足以进入实施规划。
+
+三者可以组合，但不得互相取代：
+
+- BM25、symbol search、metadata/IL inspector 不解释最终需求；
+- Requirement Projection 和 Search Planning 不拥有来源真实性或充分性；
+- EvidencePack 不反向生成搜索计划或 Golden；
+- Eval 不参与 actual discovery。
 
 ## 5. 当前已验证基础与真实限制
 
@@ -926,7 +951,10 @@ RAG-1A 与 RAG-1B 是同一项工程证据能力的两个实施阶段，不是�
 交付可验证的 Hook Discovery Evidence 语义：
 
 ```text
-需求类型
+自然语言需求
+  → Requirement Projection
+  → Search Planning
+  → Bounded Discovery Loop
   → 来源感知的检索路径事实
   → 证据准入
   → Hook/方案备选项关系
@@ -955,6 +983,7 @@ RAG-1A 可能涉及但不预先授权：
 - Evidence 模型和序列化器；
 - readiness 兼容适配器；
 - retriever 检索路径/覆盖投影；
+- 第一 Hook Discovery 切片的最小 Requirement Projection、Search Planning 和 Bounded Discovery Loop；
 - 单一语义所有者；
 - Registry 委托；
 - 聚焦的单元/合同测试。
@@ -972,6 +1001,120 @@ RAG-1A 不得：
 - 生产化 Dense/RRF/reranker；
 - 修改 Build/Runtime/Product 逻辑；
 - 建立第二 readiness 所有者。
+
+### 13.5 RAG-1A 必需的 Agent Evidence Discovery 子层
+
+#### 13.5.1 缺失能力与架构位置
+
+RAG-1A 的目标不是只验证预先给定的工程方向。它必须能够在没有获得 Golden、历史实现、最终 Hook 身份或预期充分性结论的条件下，从自然语言需求和允许来源中形成可审计的工程调查过程。
+
+给定 Hook 后验证其 SHA、MVID、metadata token、signature、方法体和 IL，只能证明 evidence verification 成立；不能证明系统具备 evidence discovery。RAG-1A 完成必须同时具备发现与验证能力。
+
+Agent Evidence Discovery 位于 Agent 请求与 RAG/ER 工具之间：
+
+```text
+自然语言请求
+  → Requirement Projection
+  → Search Planning
+  → Bounded Discovery Loop
+  → RAG/ER retrieval and precise verification
+  → Evidence Reasoning
+  → EvidencePack
+```
+
+它是 RAG-1A 达成自然语言到工程证据发现目标所必需的子层，不属于底层 BM25、Dense、symbol、metadata 或 IL provider，也不是独立产品、通用 Agent 框架或第二控制面。
+
+#### 13.5.2 Requirement Projection
+
+Requirement Projection 将自然语言投影为第一 Hook Discovery 切片所需的最小、可审计工程语义，包括：
+
+- 行为目标；
+- 触发条件；
+- 主体和目标对象；
+- 硬约束；
+- 禁止结果；
+- 用户提供的实现线索；
+- 可观察验收信号；
+- 进入规划前必须回答的问题；
+- 可以延期到规划或 Runtime 阶段的问题。
+
+用户提供的实现线索不得自动升级为实现决定。例如“可以调查爬梯子逻辑”表示需要调查梯子机制解决了什么问题，不表示必须复制梯子路径或采用固定路线。
+
+Requirement Projection 不得输出：
+
+- 最终预期 Hook；
+- Golden Case 或 judgment identity；
+- expected evidence 或 expected missing evidence；
+- expected sufficiency；
+- expected continue/block；
+- Annotation 中的 acceptable/forbidden Hook 身份。
+
+第一阶段只实现 Hook Discovery 的有界投影，不建立面向所有 Agent 任务的统一 Requirement Framework。其他需求类型只有在真实产品切片证明需要后，才可以另行扩展，不得通过预留通用字段提前拥有。
+
+#### 13.5.3 Search Planning
+
+Search Planning 将 Requirement Projection 投影为有界调查计划，包括：
+
+- 需要回答的工程问题；
+- 必需和可选来源角色；
+- 需要执行的检索路径；
+- 每条路径的查询表达；
+- coverage 要求；
+- 需要进行精确源码、API、metadata 或 IL 验证的发现；
+- 哪些未闭合问题会阻止实施规划；
+- 哪些问题明确延期到规划或 Runtime 验证。
+
+Search Plan 中出现完整方法身份，只能因为 earlier actual retrieval 已经发现该身份；不得从 Golden、历史实现、固定测试或预期 Annotation 复制。
+
+Requirement Projection 和 Search Planning 只负责调查输入，不拥有来源真实性、EvidencePack 三层充分性、Approval、Apply、Build、Runtime 或产品结果。
+
+#### 13.5.4 Bounded Discovery Loop
+
+Bounded Discovery Loop 是 RAG-1A 的实际产品能力，不是校准 runner：
+
+```text
+根据 Search Plan 做开放发现
+  → 从 actual evidence 形成 Hook/方案备选项
+  → 对实际发现的方向做精确源码/API/metadata/IL 验证
+  → 针对一个明确且仍可检索的缺口最多补充一次查询
+  → 冻结 actual facts
+  → 交给 Evidence Reasoning
+```
+
+第一阶段固定为有界过程：
+
+- 一次开放发现；
+- 一次针对实际发现方向的精确验证；
+- 最多一次由明确缺口触发的补充检索。
+
+不得演变为无限自循环、任意工具自主选择、通用任务分解框架或第二 Agent 工作流。若补充检索后仍缺少 planning-blocking evidence，应产生 bounded partial 或 block，而不是继续扩大搜索。
+
+#### 13.5.5 单一所有权与接口
+
+| 事实或决定 | 唯一职责 |
+| --- | --- |
+| 自然语言工程语义投影 | Requirement Projection |
+| 调查问题、来源角色和检索计划 | Search Planning |
+| 实际检索与精确验证执行 | Bounded Discovery Loop 调用既有 RAG/ER 工具 |
+| 当前来源身份与物理事实 | 原来源、索引、metadata/IL owner |
+| 证据准入、关系和三层充分性 | 既有 RAG-1A 单一证据语义所有者 |
+| 持久化证据结果 | EvidencePack |
+| expected facts 与比较 | 独立 Calibration Eval |
+| 副作用授权和产品状态 | 既有控制面 |
+
+不得因增加 Agent Evidence Discovery 而新增第二 Evidence Artifact、第二充分性规则表、第二 Graph route、第二 Store commit truth 或新的 Approval Identity。
+
+#### 13.5.6 失败边界
+
+- 无法形成有意义的工程问题：返回需求投影不足；真实交互可请求澄清，冻结校准题只能产生 bounded partial/block；
+- 无法形成来源或查询：返回搜索规划不足，不声称已完成检索；
+- 必需检索路径失败：retrieval insufficient；
+- 只发现名称但无法绑定当前身份：engineering insufficient；
+- 只发现 `nop; ret`、abstract 或 supporting lead：不得提升为行为事实；
+- 证据相互冲突：contradictory/block；
+- 明确缺口在一次补充检索后仍未闭合：planning block；
+- actual 提前读取 Golden 或历史答案：本次校准无效，不计作普通能力失败；
+- Eval 或 Trace 失败：不得修改已冻结的 actual EvidencePack。
 
 ## 14. RAG-1B：公共证据入口采用
 
@@ -1052,6 +1195,8 @@ RAG-1B 不得：
 - 达到规划就绪度时只允许进入实施规划；
 - 结果不自动获得 Apply/Build/Runtime 权限。
 
+BetterHitFeedback 的 Hidden-Golden Discovery Run 必须在没有收到 `ES_Hitreact.ActivateState` 最终身份的条件下，从自然语言和允许来源发现并精确绑定有依据的观察方向；同时不能把伤害输入单独解释为反应结果。其 `sufficient/continue` 只表示足以进入实施规划，不证明最终 Runtime 正确、严格一次触发、全部死亡路径或所有边界条件。
+
 ### 15.2 负向切片：WallCrawler Hook 证据不足
 
 需要证明：
@@ -1063,6 +1208,8 @@ RAG-1B 不得：
 - unsupported planning 被阻止；
 - 没有业务副作用。
 
+WallCrawler 的 Hidden-Golden Discovery Run 必须在没有收到冻结缺失清单和预期 block 结论的条件下，从自然语言推导工程约束，发现 PathMove、Ladder、locomotion、zone/layout 等相关结构，并根据 `nop; ret`、abstract 和行为证据缺失产生 `insufficient/block`。用户提供的梯子与 JSON 路径只能作为调查线索，不能自动升级为实现方向或当前事实。
+
 ### 15.3 不能使用的验收方式
 
 - 把预期 Hook 写死在实现中；
@@ -1072,6 +1219,64 @@ RAG-1B 不得：
 - 只证明 Artifact 写入成功；
 - 只证明测试数量增加；
 - 用 Build/Runtime 成功替代 retrieval/sufficiency 正确性。
+
+### 15.4 Hidden-Golden Discovery Run
+
+Hidden-Golden Discovery Run 是对 RAG-1A 真实 Agent Evidence Discovery 能力的 expected truth isolation protocol，不是 Discovery Loop 本身，也不得实现第二套发现逻辑。它不是 hidden test、blind benchmark 或 held-out benchmark。BetterHitFeedback 的 Golden 形成使用了历史实现和有界 Runtime 观察作为 expected 侧的参考辅助，因此不能声称严格盲测；这里的 Hidden 只表示 actual 生成期间隔离 expected truth。
+
+```text
+              Golden annotation
+                     │
+                     × actual 冻结前不可见
+                     │
+自然语言请求
+  → 真实 Requirement Projection
+  → 真实 Search Planning
+  → 真实 Bounded Discovery Loop
+  → 真实 Evidence Reasoning
+  → 冻结 actual EvidencePack
+                     │
+                     ▼
+          Eval 加载 Golden expected facts
+                     │
+                     ▼
+          比较 actual / expected 并归因
+```
+
+Actual 运行只可读取：
+
+- 原始自然语言请求；
+- manifest 登记的 allowlist 和 corpus identity；
+- 内容身份绑定的当前源码、API、程序集、metadata/IL；
+- 当前检索配置；
+- 由当前请求形成的 Requirement Projection 和 Search Plan。
+
+Actual 冻结前不可读取：
+
+- Golden annotation 和 judgment hash；
+- acceptable/forbidden Hook 完整身份；
+- expected evidence、expected missing evidence、expected sufficiency 和 expected action；
+- 历史成功实现和 expected 侧 Runtime support records；
+- 固定答案测试、项目状态中的已选 Hook 和先前 Agent/RAG 输出。
+
+Hidden 表示 expected truth 对 actual 不可见，不表示隐藏 actual 过程。Actual 必须保存足以审计以下关系的结构化事实：
+
+```text
+request
+  → requirement projection
+  → search plan
+  → executed queries and lane coverage
+  → discovered evidence
+  → precise verification
+  → Hook/方案备选项
+  → support/conflict/missing
+  → three-layer sufficiency
+  → EvidencePack
+```
+
+不要求保存私有思维链。可追溯性由结构化输入、查询、coverage、证据引用、身份验证、关系、原因和稳定 ref/hash/version 提供。
+
+Eval 只能在 actual 冻结后读取 Golden；它只能比较和归因，不得补齐、重算或修改 actual facts。若 actual 在冻结前读取任何 expected truth，本次校准协议失效，不得把结果计作 Discovery 能力成绩。
 
 ## 16. 能力采用矩阵
 
@@ -1135,6 +1340,14 @@ RAG/ER 至少应能够向未来独立能力提供可信投影：
 - Eval runner 比较 actual facts 与 expected facts，并产生指标、分数和回归判断；
 - RAG/ER 不写入 Golden 标签，不根据当前输出反向生成 expected facts，也不把 Eval 分数保存为 EvidencePack 事实；
 - 测试、Dashboard、Trace 和 Eval 不能为了让 Case 通过而改写实际检索、来源准入或充分性结果。
+
+Hidden-Golden 不降低 actual 的可追溯性，只隔离 expected truth：
+
+- RAG/ER 保存实际执行的需求投影、搜索计划、query、coverage、证据、精确验证、关系和充分性；
+- Calibration Eval 单独保存 Golden judgment identity、frozen actual ref、比较协议和失败归因；
+- expected facts 不进入 EvidencePack，actual facts 不因 Eval 结果被修改；
+- 当前阶段使用各原 owner 的 ref/hash/version 建立关系，不预设一个全局根 ID；
+- 后续 Trace 合同可以消费这些事实，但不得重算 Discovery 或充分性。
 
 ### 17.2 实验复现身份原则
 
@@ -1461,6 +1674,14 @@ RAG-1A 代码实施必须同时满足：
 - 最小 Eval 合同独立审核批准；
 - 两份合同对 actual/expected facts、复现身份和正负切片的接口无冲突。
 
+RAG-1A 当前缺失能力的实施顺序是依赖链，不是三个并行开发任务：
+
+1. **Actual Execution Isolation**：移除固定 Hook、固定缺口和 expected facts 对 actual 的注入；
+2. **Agent Evidence Discovery Capability**：实现最小 Requirement Projection、Search Planning 和 Bounded Discovery Loop；
+3. **Hidden-Golden Discovery Validation**：调用同一真实能力路径生成并冻结 actual，再由 Eval 与 Golden 比较。
+
+第一步完成不要求 BetterHitFeedback/WallCrawler 保持原结论；移除答案注入后暴露 discovery 缺失属于有效结果。第二步不得实现为 BetterHitFeedback/WallCrawler 专用映射，应使用至少一条无关自然语言 smoke 证明不存在 Case 硬编码。第三步不得在 calibration adapter 中复制发现逻辑。
+
 ### 21.3 RAG-1A 完成门
 
 - 单一语义/充分性所有者；
@@ -1469,6 +1690,15 @@ RAG-1A 代码实施必须同时满足：
 - 正向/负向语义测试通过；
 - Registry/Graph/CLI 无重复规则；
 - 无新 Artifact/Controller/Store 语义。
+- actual 路径不存在固定 Hook、固定 missing evidence 或 expected action 注入；
+- 自然语言可以形成可审计的 Requirement Projection 和 Search Plan；
+- 至少一条无关自然语言 smoke 证明不是 BetterHitFeedback/WallCrawler 固定映射；
+- Hook/方案备选项只能从已准入 actual evidence 形成；
+- BetterHitFeedback 在 Hidden-Golden 条件下发现并验证有依据的观察方向，产生 `sufficient/continue` 并保留后续限制；
+- WallCrawler 在 Hidden-Golden 条件下发现相关结构和关键行为缺口，产生 `insufficient/block`；
+- actual 冻结前无法读取 Golden expected facts；
+- Eval 只能比较冻结结果，不能修改 actual；
+- 不新增通用 Agent router、统一 Requirement Framework、第二工作流、第二充分性 owner 或副作用权限。
 
 ### 21.4 RAG-1B 实施门
 
@@ -1571,8 +1801,8 @@ trusted_held_out_agent_retrieval_quality_evidence: not_established
 trace_eval_asset_adoption_matrix: materialized_contract_review_changes_required
 rag_1a_existing_agent_eval_schema_compatibility_review: completed_requires_versioned_adaptation
 mod_agent_evidence_retrieval: deterministic_symbol_and_text_baseline
-hook_discovery_versioned_semantics: not_implemented
-engineering_evidence_multi_lane_admission: not_implemented_as_closed_contract
+hook_discovery_versioned_semantics: uncommitted_initial_wip_with_oracle_injection_not_closed
+engineering_evidence_multi_lane_admission: uncommitted_initial_wip_not_closed
 rag_1a_inventory: completed
 rag_1a_contract_review_object: materialized_changes_required
 minimal_eval_adoption_findings: materialized_and_reviewed_within_changes_required_contract_not_adoption_approved
@@ -1581,7 +1811,16 @@ better_hit_feedback_environment_source: hash_bound_current_api_il_historical_imp
 better_hit_feedback_formal_positive_golden: bounded_fixture_review_passed_reference_assisted_calibration_sufficient_continue
 wall_crawler_negative_source: bounded_fixture_review_passed_independent_calibration_insufficient_block
 rag_1a_code_implementation:
-  status: not_started_after_fixture_handoff
+  status: uncommitted_wip_after_fixture_handoff
+  worktree: rag_capability_mainline
+  base_commit: d86770ac649a77b5be64c465b8027f2e52ccd923
+  retrieval_and_precise_verification: initial_working_slice
+  evidence_reasoning: initial_working_slice
+  actual_execution_isolation: not_completed
+  requirement_projection: not_implemented
+  search_planning: not_implemented
+  bounded_discovery_loop: not_implemented
+  hidden_golden_discovery_validation: not_run
 p2_2_option_b_product_executor: independently_verified_and_committed
 p2_2_option_b_implementation_commit: f57045bb5b3f671f60bdd107308ba9fe3f3c3293
 p2_2_follow_up_completion: independently_verified_and_committed
@@ -1593,6 +1832,7 @@ trace_cross_system_correlation_and_propagation_contract: not_implemented
 target_document_review_verdict: approved
 target_document_reviewed_sha256: 02CEC26C2A9328AEC0DC3ED262587C9CAD5732B756B2E03B9CAE7D8EFFDBC85D
 target_document_checkpoint_commit: c4152675a14924f408f611f126d610775a9b64c6
+current_agent_discovery_clarification: recorded_in_current_document_checkpoint_pending_independent_review
 overall: two_feature_specific_calibration_fixtures_bounded_review_passed_without_data_readiness_verdict_then_capability_first_standard_rag_and_rag_1a
 ```
 
