@@ -321,12 +321,17 @@ def test_ollama_adapter_uses_native_tools_and_local_usage() -> None:
             },
             "prompt_eval_count": 123,
             "eval_count": 17,
+            "total_duration": 4_000_000_000,
+            "load_duration": 500_000_000,
+            "prompt_eval_duration": 1_000_000_000,
+            "eval_duration": 2_000_000_000,
         }
 
     adapter = OllamaChatAgentAdapter(
         base_url="http://127.0.0.1:11434",
         model="qwen3:4b-instruct",
         max_output_tokens=2048,
+        context_window=32768,
         request_sender=send,
     )
     response = adapter.complete_turn(
@@ -340,13 +345,25 @@ def test_ollama_adapter_uses_native_tools_and_local_usage() -> None:
     assert url == "http://127.0.0.1:11434/api/chat"
     assert payload["stream"] is False
     assert payload["think"] is False
-    assert payload["options"] == {"temperature": 0.0, "num_predict": 2048}
+    assert payload["options"] == {
+        "temperature": 0.0,
+        "num_predict": 2048,
+        "seed": 0,
+        "num_ctx": 32768,
+    }
     assert payload["tools"][0]["function"]["name"] == "search_dotnet_metadata"
     assert headers == {"Content-Type": "application/json"}
     assert response.tool_calls[0].call_id.startswith("ollama-call-")
     assert response.tool_calls[0].arguments == {"source_id": "r8-modules"}
     assert response.usage.input_tokens == 123
     assert response.usage.output_tokens == 17
+    assert response.provider_diagnostic is not None
+    assert response.provider_diagnostic["ollama_total_duration_ns"] == 4_000_000_000
+    assert response.provider_diagnostic["ollama_load_duration_ns"] == 500_000_000
+    assert response.provider_diagnostic["ollama_prompt_eval_duration_ns"] == 1_000_000_000
+    assert response.provider_diagnostic["ollama_eval_duration_ns"] == 2_000_000_000
+    assert response.provider_diagnostic["tokens_per_second"] == 8.5
+    assert response.provider_diagnostic["first_token_duration_available"] is False
 
 
 def test_ollama_adapter_replays_native_tool_exchange_and_forces_schema() -> None:

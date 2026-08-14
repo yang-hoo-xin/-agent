@@ -10,6 +10,11 @@ from .models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
     missing_evidence_from_blockers,
 )
+from .hook_discovery import (
+    HOOK_DISCOVERY_REQUEST_TYPE,
+    build_hook_discovery_semantics,
+    evidence_pack_state_from_hook_discovery,
+)
 
 HOOK_SOURCE_TYPES = frozenset({"target_source", "reference_mod", "decompiled_api"})
 CONCRETE_HOOK_TARGET_SOURCE_TYPES = frozenset({"decompiled_api"})
@@ -26,8 +31,33 @@ class EvidenceReadinessClassifier:
         request: EvidenceRequest,
         items: list[EvidenceItem],
         excluded: list[dict[str, object]] | None = None,
+        lane_coverage: tuple[dict[str, object], ...] = (),
     ) -> EvidencePack:
         """Return an evidence pack with readiness and blockers."""
+
+        if request.hook_requirement.get("request_type") == HOOK_DISCOVERY_REQUEST_TYPE:
+            semantics = build_hook_discovery_semantics(
+                hook_requirement=request.hook_requirement,
+                items=items,
+                lane_coverage=lane_coverage,
+            )
+            state = evidence_pack_state_from_hook_discovery(
+                semantics=semantics,
+                items=items,
+                excluded=excluded or [],
+            )
+            return EvidencePack(
+                query=request.query,
+                readiness=state["readiness"],
+                can_generate_patch=state["can_generate_patch"],
+                items=state["items"],
+                excluded=state["excluded"],
+                gaps=state["gaps"],
+                blockers=state["blockers"],
+                missing_evidence=missing_evidence_from_blockers(state["blockers"]),
+                hook_discovery=semantics,
+                message=state["message"],
+            )
 
         if not items:
             return EvidencePack.empty(

@@ -28,6 +28,13 @@ from .arm_a import (
     RunManifestCollector,
 )
 from .gate import build_transition_eval_gate_report
+from .hidden_golden import (
+    HIDDEN_GOLDEN_CALIBRATION_EVAL_VERSION,
+    HiddenGoldenActualInput,
+    HiddenGoldenCalibrationError,
+    evaluate_committed_hidden_golden,
+    load_hidden_golden_actual_input,
+)
 from .quality_policy import QualityGatePolicy, evaluate_quality_policy
 from .retrieval_regression import (
     RetrievalRegressionRunner,
@@ -67,6 +74,11 @@ __all__ = [
     "VersionedAgentQualityCases",
     "VersionedObservations",
     "build_transition_eval_gate_report",
+    "HIDDEN_GOLDEN_CALIBRATION_EVAL_VERSION",
+    "HiddenGoldenActualInput",
+    "HiddenGoldenCalibrationError",
+    "evaluate_committed_hidden_golden",
+    "load_hidden_golden_actual_input",
     "compare_reports",
     "load_agent_quality_cases",
     "load_observations",

@@ -212,13 +212,17 @@ class DenseRetriever:
             List of RetrievalResult objects.
         """
         results = []
+        collection = getattr(self.vector_store, "collection_name", None)
         for raw in raw_results:
             try:
+                metadata = dict(raw.get('metadata', {}))
+                if collection:
+                    metadata["collection"] = collection
                 result = RetrievalResult(
                     chunk_id=str(raw.get('id', '')),
                     score=float(raw.get('score', 0.0)),
                     text=str(raw.get('text', '')),
-                    metadata=raw.get('metadata', {}),
+                    metadata=metadata,
                 )
                 results.append(result)
             except (ValueError, TypeError) as e:

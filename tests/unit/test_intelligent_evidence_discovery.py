@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from src.mod_agent.evidence.discovery import (
+    AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION,
     ChatEvidenceDiscoveryModel,
     EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
     EvidenceDiscoveryDisclosure,
@@ -22,11 +23,27 @@ from src.mod_agent.evidence.discovery import (
     IntelligentEvidencePackFactory,
     ToolObservation,
     evidence_discovery_source_from_definition,
+    validate_agent_discovery_actual,
 )
 from src.mod_agent.evidence.discovery_tools import LocalAssemblyEvidenceToolExecutor
-from src.mod_agent.evidence.discovery_loop import _validate_finish
-from src.mod_agent.evidence.models import EvidenceItem
-from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.evidence.calibration import run_better_hit_feedback_calibration
+from src.mod_agent.evidence.discovery_contract import (
+    REQUIREMENT_PROJECTION_SCHEMA_VERSION,
+    SEARCH_PLAN_SCHEMA_VERSION,
+    evidence_discovery_finish_schema,
+    evidence_discovery_planning_schema,
+)
+from src.mod_agent.evidence.discovery_loop import (
+    _validate_finish,
+    _validate_supplemental_search,
+)
+from src.mod_agent.evidence.models import EvidenceItem, EvidencePack
+from src.mod_agent.artifacts import (
+    ArtifactRef,
+    ArtifactRegistryError,
+    ArtifactStore,
+    ArtifactTypeRegistry,
+)
 from src.mod_agent.workflow import build_graph, create_initial_state
 from src.mod_agent.domain.wallcrawler_acceptance import (
     evaluate_wallcrawler_local_evidence,
@@ -66,8 +83,9 @@ class _ScriptedModel:
 
 
 class _ObservedToolExecutor:
-    def __init__(self) -> None:
+    def __init__(self, *, symbol: str = "Observed.Type.Move") -> None:
         self.actions: list[dict[str, object]] = []
+        self.symbol = symbol
 
     def execute(
         self,
@@ -93,7 +111,7 @@ class _ObservedToolExecutor:
                             "relative_path": "Modules-ASM.dll",
                             "assembly_sha256": "A" * 64,
                             "module_mvid": "00000000-0000-0000-0000-000000000001",
-                            "symbol": "Observed.Type.Move",
+                            "symbol": self.symbol,
                             "metadata_token": "0x06000001",
                         }
                     ]
@@ -111,7 +129,7 @@ class _ObservedToolExecutor:
             data={
                 "candidate_ref": str(arguments["candidate_ref"]),
                 "method_id": "method_obs_001",
-                "symbol": "Observed.Type.Move",
+                "symbol": self.symbol,
                 "metadata_token": "0x06000001",
                 "has_method_body": True,
                 "rva": 123,
@@ -125,7 +143,7 @@ class _ObservedToolExecutor:
                     evidence_id="observed_il_001",
                     source_type="decompiled_api",
                     source_path="Modules-ASM.dll",
-                    symbol="Observed.Type.Move",
+                    symbol=self.symbol,
                     span=None,
                     retrieval_method="agent_selected_il_read",
                     score=1.0,
@@ -136,6 +154,12 @@ class _ObservedToolExecutor:
                     file_hash="A" * 64,
                     usage="hook_target",
                     authority="mod_agent_deterministic",
+                    source_authority=source.source_authority,
+                    declaring_type=self.symbol.rsplit(".", 1)[0],
+                    method_name=self.symbol.rsplit(".", 1)[1],
+                    module_mvid="00000000-0000-0000-0000-000000000001",
+                    metadata_token="0x06000001",
+                    signature_blob="200001",
                 ),
             ),
         )
@@ -184,6 +208,7 @@ def _request(
             source_type="decompiled_api",
             kind="il2cpp_interop_directory",
             evidence_class="current_installed_generated_interop",
+            source_authority="authoritative",
             description="Current installed generated interop assemblies.",
             root_path=tmp_path,
             allowed_tools=("search_dotnet_metadata", "inspect_method_il"),
@@ -196,6 +221,7 @@ def _request(
                 source_type="decompiled_api",
                 kind="unity_script_assembly",
                 evidence_class="supplied_r8_unity_export",
+                source_authority="supporting",
                 description="User-supplied R8 Unity assembly snapshot.",
                 root_path=second_root,
                 allowed_tools=("search_dotnet_metadata", "inspect_method_il"),
@@ -237,6 +263,1689 @@ def _metadata_then_il_responses(
         },
         *finishes,
     ]
+
+
+def _actual_plan(
+    *,
+    behavior_goal: str,
+    queries: list[str],
+    evidence_need: str,
+    hard_constraints: list[str] | None = None,
+    implementation_hints: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "action": "plan",
+        "planning_status": "ready",
+        "requirement_projection": {
+            "schema_version": "hook_requirement_projection_v2",
+            "behavior_goal": behavior_goal,
+            "trigger": None,
+            "actor": None,
+            "target": None,
+            "hard_constraints": list(hard_constraints or []),
+            "forbidden_outcomes": [],
+            "implementation_hints": [
+                {"text": text, "role": "investigation_lead"}
+                for text in (implementation_hints or [])
+            ],
+            "acceptance_signals": [],
+            "planning_blocking_questions": [
+                {"requirement_id": "req-primary", "question": evidence_need}
+            ],
+            "deferred_planning_or_runtime_questions": [],
+        },
+        "search_plan": {
+            "schema_version": "hook_discovery_search_plan_v2",
+            "engineering_questions": [
+                {
+                    "question_id": "question-primary",
+                    "question": evidence_need,
+                    "requirement_ids": ["req-primary"],
+                }
+            ],
+            "source_roles": [
+                {"source_id": "current-interop", "role": "current_api_and_il"}
+            ],
+            "planned_lanes": [
+                {
+                    "lane": "managed_metadata_discovery",
+                    "tool": "search_dotnet_metadata",
+                    "source_ids": ["current-interop"],
+                },
+                {
+                    "lane": "exact_il_verification",
+                    "tool": "inspect_method_il",
+                    "source_ids": ["current-interop"],
+                },
+            ],
+            "query_families": [
+                {
+                    "family_id": "request-derived-behavior",
+                    "queries": queries,
+                    "evidence_need": evidence_need,
+                    "source_ids": ["current-interop"],
+                    "tool": "search_dotnet_metadata",
+                    "question_ids": ["question-primary"],
+                }
+            ],
+            "initial_stop_condition": "Stop after exact IL verification closes the first question.",
+            "initial_expand_condition": "Expand once only when a recorded planning question remains open.",
+        },
+    }
+
+
+def _finish_after_observed_il(
+    *, symbol: str = "Observed.Type.Move",
+) -> dict[str, object]:
+    return {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [
+            {
+                "claim": f"Observed inspected symbol: {symbol}.",
+                "claim_status": "observed",
+                "observation_ids": ["obs-002"],
+                "limitations": [],
+                "requirement_ids": ["req-primary"],
+                "relationship": "support",
+            }
+        ],
+        "unresolved_questions": ["Runtime behavior remains unresolved."],
+        "missing_capabilities": [],
+    }
+
+
+def _validated_actual_from_plan(plan: dict[str, object]) -> dict[str, object]:
+    return {
+        "schema_version": AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION,
+        "planning_status": plan["planning_status"],
+        "requirement_projection": plan["requirement_projection"],
+        "search_plan": plan["search_plan"],
+    }
+
+
+def _strict_semantic_payload(
+    tmp_path: Path,
+    *,
+    decision: str,
+) -> dict[str, object]:
+    evidence_need = "Which current method exposes movement?"
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need=evidence_need,
+    )
+    finish = _finish_after_observed_il()
+    finish["decision"] = decision
+    if decision == "sufficient_for_proposal":
+        finish["unresolved_questions"] = []
+    if decision == "conflicting_evidence":
+        finish["unresolved_questions"] = []
+        finish["evidence_conclusions"][0]["relationship"] = "conflict"
+    result = EvidenceDiscoverySpecialist(
+        model=_ScriptedModel(
+            [
+                plan,
+                {
+                    "action": "use_tool",
+                    "tool": "search_dotnet_metadata",
+                    "source_id": "current-interop",
+                    "arguments": _metadata_arguments("movement"),
+                    "evidence_need": evidence_need,
+                    "derived_from_observation_ids": [],
+                },
+                {
+                    "action": "use_tool",
+                    "tool": "inspect_method_il",
+                    "source_id": "current-interop",
+                    "arguments": {"candidate_ref": "candidate_obs_001"},
+                    "evidence_need": "Verify the observed method.",
+                    "derived_from_observation_ids": ["obs-001"],
+                },
+                finish,
+            ]
+        ),
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+    return result.pack.to_artifact_payload()
+
+
+def _strict_roundtrip_feature_payload(feature_id: str) -> dict[str, object]:
+    return {
+        "node_name": "draft_feature_spec",
+        "stage": "feature_spec",
+        "message": "Strict semantic EvidencePack roundtrip fixture.",
+        "feature_id": feature_id,
+        "user_request": "Find a current movement observation point.",
+        "target_behavior": "Find a current movement observation point.",
+        "non_goals": [],
+        "target_mod": None,
+        "risk_level": "medium",
+        "acceptance_criteria": [],
+        "evidence_requirements": [],
+        "runtime_verification_plan": [],
+        "blocked": False,
+        "blockers": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("decision", "readiness", "can_generate_patch"),
+    [
+        ("sufficient_for_proposal", "sufficient", True),
+        ("needs_more_evidence", "insufficient", False),
+        ("conflicting_evidence", "contradictory", False),
+    ],
+)
+def test_phase_2c_semantic_evidence_pack_committed_strict_roundtrip(
+    tmp_path: Path,
+    decision: str,
+    readiness: str,
+    can_generate_patch: bool,
+) -> None:
+    payload = _strict_semantic_payload(tmp_path, decision=decision)
+    assert payload["readiness"] == readiness
+    assert payload["can_generate_patch"] is can_generate_patch
+    canonical_before = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="evidence_pack",
+        status="success",
+        payload=payload,
+    )
+    store = ArtifactStore(tmp_path / f"artifacts-{decision}")
+    feature_id = f"feature-{decision}"
+    feature_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="feature_spec",
+        payload=_strict_roundtrip_feature_payload(feature_id),
+    )
+    ref = store.write(
+        feature_id=feature_id,
+        artifact_type="evidence_pack",
+        payload=payload,
+        upstream_refs=[feature_ref],
+    )
+    committed = store.read(ref)["data"]
+    rehydrated = EvidencePack.from_artifact_payload(committed)
+    canonical_after = json.dumps(
+        rehydrated.to_artifact_payload(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    assert canonical_after == canonical_before
+    assert rehydrated.hook_discovery == payload["hook_discovery"]
+    assert rehydrated.agent_discovery == payload["agent_discovery"]
+    assert rehydrated.readiness == readiness
+    assert rehydrated.can_generate_patch is can_generate_patch
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "hook_version",
+        "hook_extra_field",
+        "evidence_ref",
+        "observation_ref",
+        "query_family_ref",
+        "engineering_question_ref",
+        "action_ref",
+        "planning_action",
+        "top_readiness",
+        "top_can_generate_patch",
+        "top_authoritative_for_patch",
+        "agent_version",
+        "agent_hash",
+        "remove_agent_keep_hash",
+        "remove_agent_clear_hash",
+        "top_extra_field",
+        "agent_without_hook",
+        "semantic_sections_removed",
+    ],
+)
+def test_phase_2c_semantic_evidence_pack_tampering_fails_closed(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    payload = deepcopy(
+        _strict_semantic_payload(tmp_path, decision="sufficient_for_proposal")
+    )
+    if mutation == "hook_version":
+        payload["hook_discovery"]["schema_version"] = "hook_discovery_evidence_v1"
+    elif mutation == "hook_extra_field":
+        payload["hook_discovery"]["unexpected"] = True
+    elif mutation == "evidence_ref":
+        payload["hook_discovery"]["evidence_relationships"][0][
+            "evidence_ids"
+        ] = ["missing-evidence"]
+    elif mutation == "observation_ref":
+        payload["hook_discovery"]["evidence_relationships"][0][
+            "observation_ids"
+        ] = ["missing-observation"]
+    elif mutation == "query_family_ref":
+        payload["hook_discovery"]["evidence_relationships"][0][
+            "query_family_ids"
+        ] = ["missing-family"]
+    elif mutation == "engineering_question_ref":
+        payload["hook_discovery"]["evidence_relationships"][0][
+            "engineering_question_ids"
+        ] = ["missing-question"]
+    elif mutation == "action_ref":
+        payload["hook_discovery"]["evidence_relationships"][0][
+            "action_indexes"
+        ] = [99]
+    elif mutation == "planning_action":
+        payload["hook_discovery"]["planning_action"] = "block"
+    elif mutation == "top_readiness":
+        payload["readiness"] = "insufficient"
+    elif mutation == "top_can_generate_patch":
+        payload["can_generate_patch"] = False
+        payload["authoritative_for_patch"] = False
+    elif mutation == "top_authoritative_for_patch":
+        payload["authoritative_for_patch"] = False
+    elif mutation == "agent_version":
+        payload["agent_discovery"]["schema_version"] = "agent_evidence_discovery_actual_v1"
+    elif mutation == "agent_hash":
+        payload["prompt_contract"]["agent_discovery_sha256"] = "0" * 64
+    elif mutation == "remove_agent_keep_hash":
+        payload.pop("agent_discovery")
+    elif mutation == "remove_agent_clear_hash":
+        payload.pop("agent_discovery")
+        payload["prompt_contract"]["agent_discovery_sha256"] = None
+    elif mutation == "top_extra_field":
+        payload["unexpected"] = True
+    elif mutation == "agent_without_hook":
+        payload.pop("hook_discovery")
+    elif mutation == "semantic_sections_removed":
+        payload.pop("hook_discovery")
+        payload.pop("agent_discovery")
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError(mutation)
+
+    with pytest.raises(ArtifactRegistryError, match="Invalid semantic EvidencePack"):
+        ArtifactTypeRegistry().validate_write(
+            artifact_type="evidence_pack",
+            status="success",
+            payload=payload,
+        )
+
+
+def test_phase_2_search_plan_rejects_duplicate_query_family_id() -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement method.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    search_plan = plan["search_plan"]
+    assert isinstance(search_plan, dict)
+    search_plan["query_families"].append({
+        "family_id": "request-derived-behavior",
+        "queries": ["locomotion"],
+        "evidence_need": "Which current method exposes movement?",
+        "source_ids": ["current-interop"],
+        "tool": "search_dotnet_metadata",
+        "question_ids": ["question-primary"],
+    })
+
+    with pytest.raises(ValueError, match="SEARCH_PLAN_QUERY_FAMILY_ID_DUPLICATE"):
+        validate_agent_discovery_actual(_validated_actual_from_plan(plan))
+
+
+def test_phase_2_search_plan_rejects_ambiguous_query_family_dispatch() -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement method.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    projection = plan["requirement_projection"]
+    search_plan = plan["search_plan"]
+    assert isinstance(projection, dict) and isinstance(search_plan, dict)
+    projection["planning_blocking_questions"].append({
+        "requirement_id": "req-secondary",
+        "question": "Which current method preserves movement state?",
+    })
+    search_plan["engineering_questions"].append({
+        "question_id": "question-secondary",
+        "question": "Which current method preserves movement state?",
+        "requirement_ids": ["req-secondary"],
+    })
+    search_plan["query_families"].append({
+        "family_id": "ambiguous-secondary-family",
+        "queries": ["movement"],
+        "evidence_need": "Which current method exposes movement?",
+        "source_ids": ["current-interop"],
+        "tool": "search_dotnet_metadata",
+        "question_ids": ["question-secondary"],
+    })
+
+    with pytest.raises(
+        ValueError,
+        match="SEARCH_PLAN_QUERY_FAMILY_DISPATCH_AMBIGUOUS",
+    ):
+        validate_agent_discovery_actual(_validated_actual_from_plan(plan))
+
+
+def test_phase_2_unrelated_hook_request_freezes_plan_before_tools(
+    tmp_path: Path,
+) -> None:
+    request_text = (
+        "When a terminal finishes authentication, briefly pulse nearby corridor lights."
+    )
+    evidence_need = "Which current managed methods expose terminal completion signals?"
+    plan = _actual_plan(
+        behavior_goal="Pulse nearby corridor lights after terminal authentication.",
+        queries=["terminal authentication complete", "corridor light pulse"],
+        evidence_need=evidence_need,
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments(
+                    "terminal authentication complete", "corridor light pulse"
+                ),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the exact identity returned by metadata discovery.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _finish_after_observed_il(),
+        ]
+    )
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(replace(_request(tmp_path), natural_language_request=request_text, require_actual_planning=True))
+
+    assert len(model.calls) == 4
+    first_call = json.dumps(model.calls[0], ensure_ascii=False)
+    assert request_text in first_call
+    assert "terminal authentication complete" not in first_call
+    assert "Observed.Type.Move" not in first_call
+    assert "hook-discovery-playbook" not in first_call
+    assert result.agent_discovery == result.pack.agent_discovery
+    assert result.agent_discovery == {
+        "schema_version": "agent_evidence_discovery_actual_v2",
+        "planning_status": "ready",
+        "requirement_projection": plan["requirement_projection"],
+        "search_plan": plan["search_plan"],
+    }
+    assert [item["tool"] for item in result.actions] == [
+        "search_dotnet_metadata",
+        "inspect_method_il",
+    ]
+    payload = result.pack.to_artifact_payload()
+    assert payload["agent_discovery"] == result.agent_discovery
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+    assert result.pack.hook_discovery is not None
+    assert result.pack.hook_discovery["lane_coverage"] == [
+        {
+            "lane": "managed_metadata_discovery",
+            "status": "searched_with_results",
+            "hit_count": 1,
+            "scope": {
+                "tool": "search_dotnet_metadata",
+                "source_ids": ["current-interop"],
+                "action_count": 1,
+            },
+            "failure": None,
+        },
+        {
+            "lane": "exact_il_verification",
+            "status": "searched_with_results",
+            "hit_count": 1,
+            "scope": {
+                "tool": "inspect_method_il",
+                "source_ids": ["current-interop"],
+                "action_count": 1,
+            },
+            "failure": None,
+        },
+    ]
+
+
+def test_phase_2_complete_plan_executes_when_model_labels_it_insufficient(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current method exposes movement?"
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need=evidence_need,
+    )
+    plan["planning_status"] = "search_planning_insufficient"
+    model = _ScriptedModel(
+        [
+            plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("movement"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the observed method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _finish_after_observed_il(),
+        ]
+    )
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    assert result.agent_discovery is not None
+    assert result.agent_discovery["planning_status"] == "ready"
+    assert [action["tool"] for action in result.actions] == [
+        "search_dotnet_metadata",
+        "inspect_method_il",
+    ]
+    assert result.pack.hook_discovery["evidence_relationships"][0] == {
+        "requirement_id": "req-primary",
+        "description": evidence_need,
+        "relationship": "support",
+        "evidence_ids": ["observed_il_001"],
+        "decisive_evidence_ids": ["observed_il_001"],
+        "observation_ids": ["obs-002"],
+        "planning_blocking": True,
+        "limitations": [],
+        "query_family_ids": ["request-derived-behavior"],
+        "engineering_question_ids": ["question-primary"],
+        "action_indexes": [1, 2],
+    }
+    assert result.pack.hook_discovery["sufficiency"] == {
+        "retrieval": {"status": "sufficient", "reasons": []},
+        "engineering": {
+            "status": "insufficient",
+            "reasons": ["Runtime behavior remains unresolved."],
+        },
+        "planning": {
+            "status": "insufficient",
+            "reasons": ["Runtime behavior remains unresolved."],
+        },
+    }
+    assert result.pack.hook_discovery["planning_action"] == "block"
+    assert result.pack.readiness == "insufficient"
+    assert result.pack.can_generate_patch is False
+    assert result.pack.budget_summary["planning_model_steps_used"] == 1
+    assert result.pack.budget_summary["model_steps_used"] == 3
+    assert result.pack.budget_summary["total_model_steps_used"] == 4
+
+
+def test_actual_planning_finish_schema_requires_requirement_relationships() -> None:
+    legacy_required = evidence_discovery_finish_schema()["properties"][
+        "evidence_conclusions"
+    ]["items"]["required"]
+    actual_required = evidence_discovery_finish_schema(
+        require_requirement_binding=True
+    )["properties"]["evidence_conclusions"]["items"]["required"]
+
+    assert legacy_required == [
+        "claim",
+        "claim_status",
+        "observation_ids",
+        "limitations",
+    ]
+    assert actual_required == [
+        *legacy_required,
+        "requirement_ids",
+        "relationship",
+    ]
+
+
+def test_actual_planning_allows_one_schema_bound_correction(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current method exposes movement?"
+    valid_plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need=evidence_need,
+    )
+    invalid_plan = deepcopy(valid_plan)
+    invalid_plan["search_plan"]["engineering_questions"][0][
+        "requirement_ids"
+    ] = ["unknown-requirement"]
+    model = _ScriptedModel(
+        [
+            invalid_plan,
+            valid_plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("movement"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the observed method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _finish_after_observed_il(),
+        ]
+    )
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    correction = model.calls[1][-1]["content"]
+    assert correction["message_type"] == "actual_planning_validation_error"
+    assert correction["error_code"] == "SEARCH_PLAN_ENGINEERING_REQUIREMENT_UNKNOWN"
+    assert correction["required_next_action"] == "plan"
+    assert "ES_Hitreact.ActivateState" not in json.dumps(correction)
+    assert result.agent_discovery is not None
+    assert result.agent_discovery["planning_status"] == "ready"
+    assert result.pack.budget_summary["planning_model_steps_used"] == 2
+    assert result.pack.budget_summary["total_model_steps_used"] == 5
+
+
+def test_actual_planning_second_invalid_plan_stops_without_tools(
+    tmp_path: Path,
+) -> None:
+    invalid_plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    invalid_plan["search_plan"]["engineering_questions"][0][
+        "requirement_ids"
+    ] = ["unknown-requirement"]
+    model = _ScriptedModel([invalid_plan, deepcopy(invalid_plan)])
+    executor = _ObservedToolExecutor()
+
+    with pytest.raises(
+        ValueError,
+        match="SEARCH_PLAN_ENGINEERING_REQUIREMENT_UNKNOWN",
+    ):
+        EvidenceDiscoverySpecialist(
+            model=model,
+            tool_executor=executor,
+        ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    assert len(model.calls) == 2
+    assert executor.actions == []
+
+
+def test_supplemental_family_reports_exact_binding_failures() -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    plan["search_plan"]["query_families"].append(
+        {
+            "family_id": "guard-family",
+            "queries": ["guard"],
+            "evidence_need": "Find guard metadata.",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    first_action = {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": "current-interop",
+        "arguments": _metadata_arguments("movement"),
+        "evidence_need": "Which current method exposes movement?",
+        "derived_from_observation_ids": [],
+    }
+    supplemental = {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": "current-interop",
+        "arguments": _metadata_arguments("guard"),
+        "evidence_need": "Find guard metadata.",
+        "derived_from_observation_ids": [],
+    }
+    actual = _validated_actual_from_plan(plan)
+
+    with pytest.raises(
+        ValueError,
+        match="SUPPLEMENTAL_ACTION_OBSERVATION_BINDING_REQUIRED",
+    ):
+        _validate_supplemental_search(
+            supplemental,
+            actions=[first_action],
+            agent_discovery=actual,
+        )
+
+    supplemental["derived_from_observation_ids"] = ["obs-001"]
+    supplemental["evidence_need"] = "changed need"
+    with pytest.raises(ValueError, match="SUPPLEMENTAL_EVIDENCE_NEED_MISMATCH"):
+        _validate_supplemental_search(
+            supplemental,
+            actions=[first_action],
+            agent_discovery=actual,
+        )
+
+
+def test_phase_2_model_sufficient_cannot_hide_unbound_planning_question(
+    tmp_path: Path,
+) -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    projection = plan["requirement_projection"]
+    search_plan = plan["search_plan"]
+    assert isinstance(projection, dict) and isinstance(search_plan, dict)
+    projection["planning_blocking_questions"].append({
+        "requirement_id": "req-guard",
+        "question": "Which current method proves the required guard?",
+    })
+    search_plan["engineering_questions"].append({
+        "question_id": "question-guard",
+        "question": "Which current method proves the required guard?",
+        "requirement_ids": ["req-guard"],
+    })
+    search_plan["query_families"].append({
+        "family_id": "guard-family",
+        "queries": ["guard"],
+        "evidence_need": "Which current method proves the required guard?",
+        "source_ids": ["current-interop"],
+        "tool": "search_dotnet_metadata",
+        "question_ids": ["question-guard"],
+    })
+    finish = _finish_after_observed_il()
+    finish["decision"] = "sufficient_for_proposal"
+    finish["unresolved_questions"] = []
+    model = _ScriptedModel([
+        plan,
+        {
+            "action": "use_tool",
+            "tool": "search_dotnet_metadata",
+            "source_id": "current-interop",
+            "arguments": _metadata_arguments("movement"),
+            "evidence_need": "Which current method exposes movement?",
+            "derived_from_observation_ids": [],
+        },
+        {
+            "action": "use_tool",
+            "tool": "inspect_method_il",
+            "source_id": "current-interop",
+            "arguments": {"candidate_ref": "candidate_obs_001"},
+            "evidence_need": "Verify the observed method.",
+            "derived_from_observation_ids": ["obs-001"],
+        },
+        finish,
+    ])
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    semantics = result.pack.hook_discovery
+    assert semantics is not None
+    relationships = {
+        value["requirement_id"]: value for value in semantics["evidence_relationships"]
+    }
+    assert relationships["req-primary"]["relationship"] == "support"
+    assert relationships["req-guard"]["relationship"] == "missing"
+    assert semantics["planning_action"] == "block"
+    assert result.pack.readiness == "insufficient"
+    assert result.pack.can_generate_patch is False
+
+
+def test_phase_2_all_authoritative_planning_questions_close_top_level(
+    tmp_path: Path,
+) -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    projection = plan["requirement_projection"]
+    assert isinstance(projection, dict)
+    projection["deferred_planning_or_runtime_questions"] = [
+        "Which Runtime event multiplicity occurs in production?"
+    ]
+    finish = _finish_after_observed_il()
+    finish["decision"] = "sufficient_for_proposal"
+    finish["unresolved_questions"] = []
+    model = _ScriptedModel([
+        plan,
+        {
+            "action": "use_tool",
+            "tool": "search_dotnet_metadata",
+            "source_id": "current-interop",
+            "arguments": _metadata_arguments("movement"),
+            "evidence_need": "Which current method exposes movement?",
+            "derived_from_observation_ids": [],
+        },
+        {
+            "action": "use_tool",
+            "tool": "inspect_method_il",
+            "source_id": "current-interop",
+            "arguments": {"candidate_ref": "candidate_obs_001"},
+            "evidence_need": "Verify the observed method.",
+            "derived_from_observation_ids": ["obs-001"],
+        },
+        finish,
+    ])
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    semantics = result.pack.hook_discovery
+    assert semantics is not None
+    assert semantics["sufficiency"] == {
+        "retrieval": {"status": "sufficient", "reasons": []},
+        "engineering": {"status": "sufficient", "reasons": []},
+        "planning": {"status": "sufficient", "reasons": []},
+    }
+    assert semantics["planning_action"] == "continue"
+    assert result.pack.readiness == "sufficient"
+    assert result.pack.can_generate_patch is True
+    assert result.pack.gaps == ()
+    assert result.pack.blockers == ()
+    assert [item.evidence_id for item in result.pack.items] == ["observed_il_001"]
+
+
+def test_phase_2_authoritative_conflict_projects_contradictory_top_level(
+    tmp_path: Path,
+) -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    finish = _finish_after_observed_il()
+    finish["decision"] = "conflicting_evidence"
+    finish["evidence_conclusions"][0]["relationship"] = "conflict"
+    finish["unresolved_questions"] = []
+    model = _ScriptedModel([
+        plan,
+        {
+            "action": "use_tool",
+            "tool": "search_dotnet_metadata",
+            "source_id": "current-interop",
+            "arguments": _metadata_arguments("movement"),
+            "evidence_need": "Which current method exposes movement?",
+            "derived_from_observation_ids": [],
+        },
+        {
+            "action": "use_tool",
+            "tool": "inspect_method_il",
+            "source_id": "current-interop",
+            "arguments": {"candidate_ref": "candidate_obs_001"},
+            "evidence_need": "Verify the observed method.",
+            "derived_from_observation_ids": ["obs-001"],
+        },
+        finish,
+    ])
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    semantics = result.pack.hook_discovery
+    assert semantics is not None
+    assert semantics["evidence_relationships"][0]["relationship"] == "conflict"
+    assert semantics["sufficiency"]["engineering"]["status"] == "contradictory"
+    assert semantics["sufficiency"]["planning"]["status"] == "contradictory"
+    assert result.pack.readiness == "contradictory"
+    assert result.pack.can_generate_patch is False
+
+
+def test_legacy_evidence_pack_serialization_does_not_add_agent_discovery() -> None:
+    payload = EvidencePack.empty(
+        query="legacy deterministic request",
+        reason="no matched evidence",
+    ).to_artifact_payload()
+
+    assert "agent_discovery" not in payload
+
+
+def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
+    tmp_path: Path,
+) -> None:
+    r8_root = tmp_path / "r8"
+    (r8_root / "Assets" / "Scripts" / "Modules-ASM").mkdir(parents=True)
+    evidence_need = "Which current managed method exposes an enemy reaction?"
+    plan = _actual_plan(
+        behavior_goal="Observe an enemy reaction for user feedback.",
+        queries=["enemy reaction"],
+        evidence_need=evidence_need,
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("enemy reaction"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the identity from the current metadata observation.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _finish_after_observed_il(),
+        ]
+    )
+    source_root = tmp_path / "interop"
+    source_root.mkdir()
+    source = EvidenceDiscoverySource(
+        source_id="current-interop",
+        source_type="decompiled_api",
+        kind="il2cpp_interop_directory",
+        evidence_class="current_installed_generated_interop",
+        source_authority="authoritative",
+        description="Current generated interop used as an actual physical source.",
+        root_path=source_root,
+        allowed_tools=("search_dotnet_metadata", "inspect_method_il"),
+    )
+
+    pack = run_better_hit_feedback_calibration(
+        r8_root=r8_root,
+        request="Show feedback when a shot makes an enemy react.",
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+        sources=(source,),
+    )
+
+    assert pack.agent_discovery is not None
+    assert pack.prompt_contract["actual_planning_required"] is True
+    assert [item["tool"] for item in pack.tool_trace_summary] == [
+        "search_dotnet_metadata",
+        "inspect_method_il",
+    ]
+    assert pack.input_audit == {
+        "manual_symbol_count": 0,
+        "manual_tool_sequence_count": 0,
+        "precomputed_report_count": 0,
+        "operator_intervention_count": 0,
+    }
+
+
+def test_phase_2_bhf_symbol_identity_only_enters_after_tool_observation(
+    tmp_path: Path,
+) -> None:
+    request_text = "Show a yellow marker and play a sound when a shot makes an enemy stagger."
+    evidence_need = "Which current managed methods expose an enemy stagger reaction?"
+    plan = _actual_plan(
+        behavior_goal="Observe a shot-triggered enemy stagger for feedback.",
+        queries=["enemy stagger reaction"],
+        evidence_need=evidence_need,
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("enemy stagger reaction"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the identity observed in the metadata result.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _finish_after_observed_il(symbol="ES_Hitreact.ActivateState"),
+        ]
+    )
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(symbol="ES_Hitreact.ActivateState"),
+    ).discover(replace(_request(tmp_path), natural_language_request=request_text, require_actual_planning=True))
+
+    assert "ES_Hitreact.ActivateState" not in json.dumps(model.calls[0], ensure_ascii=False)
+    assert "ES_Hitreact.ActivateState" not in json.dumps(result.agent_discovery, ensure_ascii=False)
+    assert "ES_Hitreact.ActivateState" in json.dumps(model.calls[2], ensure_ascii=False)
+    assert result.pack.items[0].symbol == "ES_Hitreact.ActivateState"
+
+
+def test_phase_2_wall_hints_remain_separate_from_hard_constraints(
+    tmp_path: Path,
+) -> None:
+    hard_constraint = "Unconfigured areas must never allow surface crawling."
+    ladder_hint = "Investigate existing ladder movement logic."
+    json_hint = "Investigate the supplied JSON map configuration reference."
+    evidence_need = "What current mechanisms expose surface movement and configured areas?"
+    plan = _actual_plan(
+        behavior_goal="Allow eligible enemies to use configured walls and ceilings.",
+        queries=["surface movement", "configured area"],
+        evidence_need=evidence_need,
+        hard_constraints=[hard_constraint],
+        implementation_hints=[ladder_hint, json_hint],
+    )
+    model = _ScriptedModel([
+        plan,
+        {
+            "action": "use_tool",
+            "tool": "search_dotnet_metadata",
+            "source_id": "current-interop",
+            "arguments": _metadata_arguments("surface movement", "configured area"),
+            "evidence_need": evidence_need,
+            "derived_from_observation_ids": [],
+        },
+        {
+            "action": "use_tool",
+            "tool": "inspect_method_il",
+            "source_id": "current-interop",
+            "arguments": {"candidate_ref": "candidate_obs_001"},
+            "evidence_need": "Verify the observed surface-related identity.",
+            "derived_from_observation_ids": ["obs-001"],
+        },
+        _finish_after_observed_il(),
+    ])
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request=(
+                "Let eligible enemies crawl on configured walls and ceilings; investigate ladder logic and a JSON map reference."
+            ),
+            require_actual_planning=True,
+        )
+    )
+    assert result.agent_discovery is not None
+    projection = result.agent_discovery["requirement_projection"]
+    assert projection["hard_constraints"] == [hard_constraint]
+    assert projection["implementation_hints"] == [
+        {"text": ladder_hint, "role": "investigation_lead"},
+        {"text": json_hint, "role": "investigation_lead"},
+    ]
+    assert "expected_control_action" not in json.dumps(result.agent_discovery)
+
+
+def test_phase_2_zero_result_uses_one_planned_expansion_then_observation_bound_il(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current managed method exposes surface movement?"
+    plan = _actual_plan(
+        behavior_goal="Find a current surface movement observation point.",
+        queries=["enemy wall movement behavior"],
+        evidence_need=evidence_need,
+    )
+    search_plan = plan["search_plan"]
+    assert isinstance(search_plan, dict)
+    families = search_plan["query_families"]
+    assert isinstance(families, list)
+    families.append(
+        {
+            "family_id": "planned-broader-movement",
+            "queries": ["movement"],
+            "evidence_need": evidence_need,
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("enemy wall movement behavior"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("movement"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_002"},
+                "evidence_need": "Verify the identity from the expanded metadata observation.",
+                "derived_from_observation_ids": ["obs-002"],
+            },
+            {
+                **_finish_after_observed_il(),
+                "evidence_conclusions": [
+                    {
+                        "claim": "Observed inspected symbol: Observed.Type.Move.",
+                        "claim_status": "observed",
+                        "observation_ids": ["obs-003"],
+                        "limitations": [],
+                    }
+                ],
+            },
+        ]
+    )
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_QueryAwareObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request="Find a current mechanism for surface movement.",
+            require_actual_planning=True,
+        )
+    )
+
+    assert [action["tool"] for action in result.actions] == [
+        "search_dotnet_metadata",
+        "search_dotnet_metadata",
+        "inspect_method_il",
+    ]
+    assert result.actions[2]["arguments"] == {"candidate_ref": "candidate_obs_002"}
+    assert result.pack.budget_summary["tool_calls_used"] == 3
+
+
+def test_phase_2_terminal_supplemental_method_stays_unverified_and_blocked(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current managed methods expose the behavior and its guard?"
+    plan = _actual_plan(
+        behavior_goal="Find an observation point and its current guard.",
+        queries=["movement"],
+        evidence_need=evidence_need,
+    )
+    search_plan = plan["search_plan"]
+    assert isinstance(search_plan, dict)
+    families = search_plan["query_families"]
+    assert isinstance(families, list)
+    families.append(
+        {
+            "family_id": "planned-guard-search",
+            "queries": ["guard"],
+            "evidence_need": "Find the frozen guard metadata family.",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("movement"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the first observed method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("guard"),
+                "evidence_need": "Find the frozen guard metadata family.",
+                "derived_from_observation_ids": ["obs-002"],
+            },
+            {
+                "action": "finish",
+                "decision": "sufficient_for_proposal",
+                "evidence_conclusions": [
+                    {
+                        "claim": "Observed inspected symbol: Observed.Type.Move.",
+                        "claim_status": "observed",
+                        "observation_ids": ["obs-002"],
+                        "limitations": [],
+                        "requirement_ids": ["req-primary"],
+                        "relationship": "support",
+                    }
+                ],
+                "unresolved_questions": [],
+                "missing_capabilities": [],
+            },
+        ]
+    )
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request="Find a behavior observation point and its guard.",
+            require_actual_planning=True,
+        )
+    )
+
+    assert [action["tool"] for action in result.actions] == [
+        "search_dotnet_metadata",
+        "inspect_method_il",
+        "search_dotnet_metadata",
+    ]
+    assert len(result.pack.items) == 1
+    assert result.pack.can_generate_patch is False
+    assert result.pack.readiness == "insufficient"
+    assert result.pack.unresolved_questions == (
+        "Tool budget ended with metadata method references that did not receive exact IL verification: candidate_obs_003",
+    )
+
+
+def test_phase_2_second_zero_method_search_rejects_third_metadata(
+    tmp_path: Path,
+) -> None:
+    class _AlwaysZeroMetadataExecutor(_ObservedToolExecutor):
+        def execute(self, **kwargs) -> ToolObservation:
+            action = kwargs["action"]
+            source = kwargs["source"]
+            observation_id = kwargs["observation_id"]
+            self.actions.append(action)
+            return ToolObservation(
+                observation_id=observation_id,
+                tool="search_dotnet_metadata",
+                source_id=source.source_id,
+                summary="The bounded literal metadata search returned no methods.",
+                data={"methods": [], "types": [], "fields": []},
+            )
+
+    evidence_need = "Which current managed method exposes movement?"
+    plan = _actual_plan(
+        behavior_goal="Find a current movement method.",
+        queries=["surface movement"],
+        evidence_need=evidence_need,
+    )
+    search_plan = plan["search_plan"]
+    assert isinstance(search_plan, dict)
+    families = search_plan["query_families"]
+    assert isinstance(families, list)
+    families.extend(
+        [
+            {
+                "family_id": "alternate-movement",
+                "queries": ["locomotion"],
+                "evidence_need": evidence_need,
+                "source_ids": ["current-interop"],
+                "tool": "search_dotnet_metadata",
+                "question_ids": ["question-primary"],
+            },
+            {
+                "family_id": "forbidden-third-movement",
+                "queries": ["path move"],
+                "evidence_need": evidence_need,
+                "source_ids": ["current-interop"],
+                "tool": "search_dotnet_metadata",
+                "question_ids": ["question-primary"],
+            },
+        ]
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("surface movement"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("locomotion"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("path move"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": ["obs-002"],
+            },
+        ]
+    )
+    executor = _AlwaysZeroMetadataExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+
+    with pytest.raises(
+        ValueError,
+        match="SECOND_METADATA_SEARCH_EXHAUSTED_WITHOUT_METHOD",
+    ):
+        specialist.discover(
+            replace(
+                _request(tmp_path),
+                natural_language_request="Find a current movement method.",
+                require_actual_planning=True,
+            )
+        )
+
+    assert len(executor.actions) == 2
+    assert specialist.runtime_diagnostics["failure_stage"] == "action_validation"
+
+
+def test_actual_zero_result_correction_replays_only_unexecuted_frozen_family(
+    tmp_path: Path,
+) -> None:
+    class _ZeroMetadataExecutor(_ObservedToolExecutor):
+        def execute(self, **kwargs) -> ToolObservation:
+            action = kwargs["action"]
+            source = kwargs["source"]
+            self.actions.append(action)
+            return ToolObservation(
+                observation_id=kwargs["observation_id"],
+                tool="search_dotnet_metadata",
+                source_id=source.source_id,
+                summary="No methods matched the frozen family.",
+                data={"methods": [], "types": [], "fields": []},
+            )
+
+    evidence_need = "Which current method exposes movement?"
+    plan = _actual_plan(
+        behavior_goal="Find a current movement method.",
+        queries=["surface movement"],
+        evidence_need=evidence_need,
+    )
+    plan["search_plan"]["query_families"].append(
+        {
+            "family_id": "alternate-movement",
+            "queries": ["locomotion"],
+            "evidence_need": "Find the alternate frozen movement family.",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    open_finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [],
+        "unresolved_questions": ["No method identity has been observed."],
+        "missing_capabilities": [],
+    }
+    model = _ScriptedModel(
+        [
+            plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("surface movement"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            open_finish,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("locomotion"),
+                "evidence_need": "Find the alternate frozen movement family.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            open_finish,
+        ]
+    )
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ZeroMetadataExecutor(),
+    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    correction = model.calls[3][-2]["content"]
+    assert correction["allowed_unexecuted_query_families"] == [
+        plan["search_plan"]["query_families"][1]
+    ]
+    assert result.run_status == "completed"
+
+
+def test_phase_2_supplemental_search_rejects_already_executed_family_with_new_tuning(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current managed method exposes movement?"
+    plan = _actual_plan(
+        behavior_goal="Find and verify a current movement method.",
+        queries=["movement"],
+        evidence_need=evidence_need,
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("movement"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the observed movement method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": {
+                    "queries": ["movement"],
+                    "result_kinds": ["types", "fields"],
+                    "limit_per_kind": 5,
+                },
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": ["obs-002"],
+            },
+        ]
+    )
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+
+    with pytest.raises(
+        ValueError,
+        match="SUPPLEMENTAL_QUERY_FAMILY_ALREADY_EXECUTED",
+    ):
+        specialist.discover(
+            replace(
+                _request(tmp_path),
+                natural_language_request="Find and verify a current movement method.",
+                require_actual_planning=True,
+            )
+        )
+
+    assert len(executor.actions) == 2
+    assert specialist.runtime_diagnostics["failure_stage"] == "action_validation"
+
+
+def test_phase_2_type_and_field_hits_do_not_enable_exact_il(
+    tmp_path: Path,
+) -> None:
+    class _TypeFieldOnlyExecutor(_ObservedToolExecutor):
+        def execute(self, **kwargs) -> ToolObservation:
+            action = kwargs["action"]
+            source = kwargs["source"]
+            observation_id = kwargs["observation_id"]
+            self.actions.append(action)
+            return ToolObservation(
+                observation_id=observation_id,
+                tool="search_dotnet_metadata",
+                source_id=source.source_id,
+                summary="Only type and field investigation leads were observed.",
+                data={
+                    "methods": [],
+                    "types": [{"symbol": "Observed.Type"}],
+                    "fields": [{"symbol": "Observed.Type.Speed"}],
+                },
+            )
+
+    evidence_need = "Which current managed method exposes movement?"
+    plan = _actual_plan(
+        behavior_goal="Find a movement method.",
+        queries=["movement"],
+        evidence_need=evidence_need,
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("movement"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "type_or_field_is_not_a_method_ref"},
+                "evidence_need": "Attempt exact verification.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+        ]
+    )
+    specialist = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_TypeFieldOnlyExecutor(),
+    )
+
+    with pytest.raises(ValueError, match="UNVERIFIED_CANDIDATE_REFERENCE"):
+        specialist.discover(
+            replace(
+                _request(tmp_path),
+                natural_language_request="Find a current movement method.",
+                require_actual_planning=True,
+            )
+        )
+
+    assert specialist.runtime_diagnostics["failure_stage"] == "action_validation"
+
+
+@pytest.mark.parametrize(
+    ("planning_status", "search_plan", "expected_status"),
+    (
+        ("requirement_projection_insufficient", None, "requirement_projection_insufficient"),
+        (
+            "search_planning_insufficient",
+            {
+                "schema_version": "hook_discovery_search_plan_v2",
+                "engineering_questions": [],
+                "source_roles": [],
+                "planned_lanes": [],
+                "query_families": [],
+                "initial_stop_condition": "Stop because no valid literal query exists.",
+                "initial_expand_condition": "Do not expand without a meaningful engineering question.",
+            },
+            "search_planning_insufficient",
+        ),
+    ),
+)
+def test_phase_2_planning_failures_stop_before_tool_execution(
+    tmp_path: Path,
+    planning_status: str,
+    search_plan: dict[str, object] | None,
+    expected_status: str,
+) -> None:
+    projection = _actual_plan(
+        behavior_goal="A bounded behavior goal.",
+        queries=["bounded behavior"],
+        evidence_need="Which current managed method exposes the behavior?",
+    )["requirement_projection"]
+    assert isinstance(projection, dict)
+    if planning_status == "requirement_projection_insufficient":
+        projection = {**projection, "behavior_goal": "", "planning_blocking_questions": []}
+    model = _ScriptedModel([
+        {
+            "action": "plan",
+            "planning_status": planning_status,
+            "requirement_projection": projection,
+            "search_plan": search_plan,
+        }
+    ])
+    executor = _ObservedToolExecutor()
+    result = EvidenceDiscoverySpecialist(model=model, tool_executor=executor).discover(
+        replace(_request(tmp_path), natural_language_request="Do something.", require_actual_planning=True)
+    )
+
+    assert result.run_status == expected_status
+    assert result.pack.readiness == "insufficient"
+    assert result.actions == ()
+    assert result.observations == ()
+    assert executor.actions == []
+    payload = result.pack.to_artifact_payload()
+    assert "hook_discovery" not in payload
+    assert payload["agent_discovery"]["planning_status"] == planning_status
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+
+    store = ArtifactStore(tmp_path / f"early-termination-{planning_status}")
+    feature_id = f"feature-{planning_status}"
+    feature_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="feature_spec",
+        payload=_strict_roundtrip_feature_payload(feature_id),
+    )
+    evidence_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="evidence_pack",
+        payload=payload,
+        upstream_refs=[feature_ref],
+    )
+    committed = store.read(evidence_ref)["data"]
+    assert EvidencePack.from_artifact_payload(committed).to_artifact_payload() == payload
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "agent_version",
+        "agent_extra_field",
+        "agent_hash",
+        "top_readiness",
+        "top_can_generate_patch",
+        "run_status",
+        "execution_trace",
+        "hook_segment",
+    ],
+)
+def test_phase_2c_agent_only_early_termination_tampering_fails_closed(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    projection = _actual_plan(
+        behavior_goal="A bounded behavior goal.",
+        queries=["bounded behavior"],
+        evidence_need="Which current managed method exposes the behavior?",
+    )["requirement_projection"]
+    assert isinstance(projection, dict)
+    projection = {
+        **projection,
+        "behavior_goal": "",
+        "planning_blocking_questions": [],
+    }
+    result = EvidenceDiscoverySpecialist(
+        model=_ScriptedModel(
+            [{
+                "action": "plan",
+                "planning_status": "requirement_projection_insufficient",
+                "requirement_projection": projection,
+                "search_plan": None,
+            }]
+        ),
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request="Do something.",
+            require_actual_planning=True,
+        )
+    )
+    payload = deepcopy(result.pack.to_artifact_payload())
+    if mutation == "agent_version":
+        payload["agent_discovery"]["schema_version"] = "agent_evidence_discovery_actual_v1"
+    elif mutation == "agent_extra_field":
+        payload["agent_discovery"]["unexpected"] = True
+    elif mutation == "agent_hash":
+        payload["prompt_contract"]["agent_discovery_sha256"] = "0" * 64
+    elif mutation == "top_readiness":
+        payload["readiness"] = "partial"
+    elif mutation == "top_can_generate_patch":
+        payload["can_generate_patch"] = True
+        payload["authoritative_for_patch"] = True
+    elif mutation == "run_status":
+        payload["run_status"] = "completed"
+    elif mutation == "execution_trace":
+        payload["trace_refs"] = ["obs-001"]
+    elif mutation == "hook_segment":
+        payload["hook_discovery"] = {}
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError(mutation)
+
+    with pytest.raises(ArtifactRegistryError, match="Invalid semantic EvidencePack"):
+        ArtifactTypeRegistry().validate_write(
+            artifact_type="evidence_pack",
+            status="success",
+            payload=payload,
+        )
+
+
+def test_actual_planning_required_is_request_configuration_not_semantic_proof() -> None:
+    payload = EvidencePack.empty(
+        query="Legacy diagnostic with requested planning.",
+        reason="No semantic section was frozen.",
+    ).to_artifact_payload()
+    payload["prompt_contract"] = {
+        "actual_planning_required": True,
+        "agent_discovery_sha256": None,
+    }
+
+    assert EvidencePack.requires_strict_semantic_rehydrate(payload) is False
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="evidence_pack",
+        status="success",
+        payload=payload,
+    )
+
+
+def test_actual_planning_schema_exposes_exact_nested_versions_to_real_models() -> None:
+    schema = evidence_discovery_planning_schema()
+    properties = schema["properties"]
+
+    assert properties["requirement_projection"]["properties"]["schema_version"] == {
+        "type": "string",
+        "const": REQUIREMENT_PROJECTION_SCHEMA_VERSION,
+    }
+    assert properties["search_plan"]["properties"]["schema_version"] == {
+        "type": "string",
+        "const": SEARCH_PLAN_SCHEMA_VERSION,
+    }
 
 
 def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
@@ -397,7 +2106,7 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
     assert result.pack.budget_summary["total_discovery_message_bytes"] == sum(
         result.pack.budget_summary["discovery_message_bytes_by_turn"]
     )
-    assert result.pack.budget_summary["total_discovery_message_bytes"] < 16_000
+    assert result.pack.budget_summary["total_discovery_message_bytes"] < 17_000
 
 
 def test_each_turn_replays_compact_history_and_only_the_latest_full_observation(
@@ -944,7 +2653,7 @@ def test_repeated_method_context_is_deduplicated_and_byte_accounted(
     assert final_compact["observed_method_catalog"] == []
     assert len(final_compact["inspection_catalog"]) == 1
     assert final_compact_bytes < 2_700
-    assert result.pack.budget_summary["total_discovery_message_bytes"] < 44_000
+    assert result.pack.budget_summary["total_discovery_message_bytes"] < 47_000
     assert result.pack.budget_summary["total_discovery_message_bytes"] == sum(
         result.pack.budget_summary["discovery_message_bytes_by_turn"]
     )
@@ -2174,6 +3883,7 @@ def test_source_registry_can_bind_an_exact_relative_assembly(tmp_path: Path) -> 
                 "evidence_discovery_kind": "unity_script_assembly",
                 "evidence_class": "supplied_r8_unity_export",
                 "description": "R8 Modules assembly supplied by the user.",
+                "evidence_authority": "supporting",
                 "allowed_tools": [
                     "search_dotnet_metadata",
                     "inspect_method_il",
@@ -2201,6 +3911,35 @@ def test_source_registry_can_bind_an_exact_relative_assembly(tmp_path: Path) -> 
     assert search.data["assemblies_discovered"] == 1
     assert search.data["assemblies"][0]["relative_path"] == "Modules-ASM.dll"
     assert source.model_view()["assembly_relative_paths"] == ["Modules-ASM.dll"]
+    assert source.source_authority == "supporting"
+    assert source.model_view()["source_authority"] == "supporting"
+
+
+@pytest.mark.parametrize("authority", [None, "invalid"])
+def test_source_registry_rejects_missing_or_invalid_evidence_authority(
+    tmp_path: Path,
+    authority: str | None,
+) -> None:
+    (tmp_path / "Modules-ASM.dll").write_bytes(b"managed-test-bytes")
+    metadata = {
+        "evidence_discovery_kind": "unity_script_assembly",
+        "evidence_class": "supplied_r8_unity_export",
+        "description": "R8 Modules assembly supplied by the user.",
+        "allowed_tools": ["search_dotnet_metadata", "inspect_method_il"],
+        "assembly_relative_paths": ["Modules-ASM.dll"],
+    }
+    if authority is not None:
+        metadata["evidence_authority"] = authority
+    definition = SourceDefinition(
+        source_id="r8-modules",
+        source_type="decompiled_api",
+        root_path=tmp_path,
+        allowed_extensions=frozenset({".dll"}),
+        metadata=metadata,
+    )
+
+    with pytest.raises(ValueError, match="authority"):
+        evidence_discovery_source_from_definition(definition)
 
 
 def test_source_version_identity_must_match_live_assembly(tmp_path: Path) -> None:
@@ -2210,6 +3949,7 @@ def test_source_version_identity_must_match_live_assembly(tmp_path: Path) -> Non
         source_type="decompiled_api",
         kind="unity_script_assembly",
         evidence_class="supplied_r8_unity_export",
+        source_authority="supporting",
         description="R8 Modules assembly supplied by the user.",
         root_path=tmp_path,
         allowed_tools=("search_dotnet_metadata", "inspect_method_il"),
@@ -2252,6 +3992,7 @@ def test_machine_local_registry_loader_uses_exact_schema(tmp_path: Path) -> None
                             "evidence_discovery_kind": "unity_script_assembly",
                             "evidence_class": "supplied_r8_unity_export",
                             "description": "R8 Modules assembly supplied by the user.",
+                            "evidence_authority": "supporting",
                             "allowed_tools": [
                                 "search_dotnet_metadata",
                                 "inspect_method_il",

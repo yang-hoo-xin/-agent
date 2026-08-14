@@ -314,6 +314,86 @@ public class Plugin
     assert pack.items[0].authority == "mod_agent_deterministic"
 
 
+def test_deterministic_retriever_uses_shared_chinese_tokenization(tmp_path: Path) -> None:
+    db = _index_source(
+        tmp_path,
+        {
+            "behavior.md": "敌人进入踉跄反应时显示黄色标记。",
+        },
+        source_type="domain_note",
+    )
+
+    pack = DeterministicEvidenceRetriever(db).retrieve(
+        EvidenceRequest(query="敌人踉跄时显示黄色标记", requires_hook_evidence=False)
+    )
+
+    assert pack.items
+    assert any("踉跄" in item.excerpt for item in pack.items)
+
+
+def test_hook_discovery_uses_explicit_decomposed_search_terms(tmp_path: Path) -> None:
+    db = _index_source(
+        tmp_path,
+        {"ES_Hitreact.cs": "public class ES_Hitreact { }"},
+        source_type="decompiled_api",
+    )
+
+    pack = DeterministicEvidenceRetriever(db).retrieve(
+        EvidenceRequest(
+            query="敌人踉跄时显示黄色标记",
+            requires_hook_evidence=False,
+            hook_requirement={"search_terms": ["hitreact enemy reaction"]},
+        )
+    )
+
+    assert any("ES_Hitreact" in item.excerpt for item in pack.items)
+
+
+def test_retriever_keeps_preverified_lane_independent_from_shared_capacity(
+    tmp_path: Path,
+) -> None:
+    db = _index_source(
+        tmp_path,
+        {"guide.md": "movement rotation surface normal"},
+        source_type="domain_note",
+    )
+    preverified = EvidenceItem(
+        evidence_id="ev_il",
+        source_type="decompiled_api",
+        source_path="Modules-ASM.dll",
+        symbol="ES_PathMove.UpdateRotation",
+        span=None,
+        retrieval_method="cli_metadata_il_read",
+        score=1.0,
+        claim_supported="Bound physical IL facts.",
+        excerpt="{}",
+        source_hash="D" * 64,
+        authority="mod_agent_deterministic",
+        source_authority="authoritative",
+    )
+
+    pack = DeterministicEvidenceRetriever(db).retrieve(
+        EvidenceRequest(
+            query="surface movement",
+            requires_hook_evidence=False,
+            max_items=2,
+        ),
+        preverified_items=(preverified,),
+        preverified_lane_coverage=(
+            {
+                "lane": "metadata_il",
+                "status": "searched_with_results",
+                "hit_count": 1,
+                "scope": {"assembly_sha256": "D" * 64},
+                "failure": None,
+            },
+        ),
+    )
+
+    assert pack.items[0].evidence_id == "ev_il"
+    assert len(pack.items) == 2
+
+
 def test_concrete_hook_request_requires_decompiled_api_hook_target() -> None:
     item = EvidenceItem(
         evidence_id="ev_001",

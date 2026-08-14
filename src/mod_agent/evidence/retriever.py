@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
@@ -22,6 +21,7 @@ from src.mod_agent.knowledge import (
     evidence_identity_from_metadata,
 )
 from src.mod_agent.performance import OperationUsage, PerformanceBudgetPolicy
+from src.core.query_engine.tokenization import tokenize_retrieval_text
 
 from .dense import DenseRetrievalHit, DenseRetrievalProvider, DisabledDenseRetrievalProvider
 from .models import (
@@ -34,7 +34,6 @@ from .models import (
 )
 from .readiness import EvidenceReadinessClassifier
 
-_TERM_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{1,}")
 _TEXT_EXTENSIONS = frozenset({".json", ".yaml", ".yml", ".md", ".txt", ".log", ".cfg"})
 
 
@@ -67,12 +66,18 @@ class DeterministicEvidenceRetriever:
         self.dense_top_k = dense_top_k
         self.performance_policy = performance_policy
 
-    def retrieve(self, request: EvidenceRequest) -> EvidencePack:
+    def retrieve(
+        self,
+        request: EvidenceRequest,
+        *,
+        preverified_items: tuple[EvidenceItem, ...] = (),
+        preverified_lane_coverage: tuple[dict[str, object], ...] = (),
+    ) -> EvidencePack:
         """Retrieve evidence and classify readiness."""
 
         total_started = perf_counter()
         query_started = perf_counter()
-        terms = self._terms(request.query)
+        terms = self._request_terms(request)
         query_processing_ms = _elapsed_ms(query_started)
         if not terms:
             pack = EvidencePack.empty(
@@ -106,9 +111,12 @@ class DeterministicEvidenceRetriever:
 
         sources = self._source_map()
         allowed_source_ids = set(request.source_ids or sources)
-        items: list[EvidenceItem] = []
+        items: list[EvidenceItem] = list(preverified_items)
         excluded: list[dict[str, object]] = []
-        seen: set[str] = set()
+        seen: set[str] = {item.evidence_id for item in preverified_items}
+        lane_coverage: list[dict[str, object]] = [
+            dict(item) for item in preverified_lane_coverage
+        ]
 
         symbol_started = perf_counter()
         stable_version = self.database.stable_index_version(self.collection_id)
@@ -146,30 +154,55 @@ class DeterministicEvidenceRetriever:
                 if len(items) >= request.max_items:
                     break
         symbol_ms = _elapsed_ms(symbol_started)
+        symbol_count = len(
+            [item for item in items if item.retrieval_method == "symbol_exact"]
+        )
+        lane_coverage.append(
+            self._lane_coverage(
+                lane="symbol_metadata",
+                hit_count=symbol_count,
+                status=("searched_with_results" if symbol_count else "searched_and_absent"),
+                source_ids=allowed_source_ids,
+            )
+        )
 
         bm25_started = perf_counter()
         bm25_disabled_reason = ""
         bm25_count = 0
-        if len(items) < request.max_items:
-            bm25_items, bm25_disabled_reason = self._bm25_items(
-                terms=terms,
-                sources=sources,
-                allowed_source_ids=allowed_source_ids,
-                max_items=request.max_items - len(items),
-            )
-            for item in bm25_items:
-                if item.evidence_id not in seen:
-                    items.append(item)
-                    seen.add(item.evidence_id)
-            bm25_count = len(bm25_items)
+        bm25_items, bm25_disabled_reason = self._bm25_items(
+            terms=terms,
+            sources=sources,
+            allowed_source_ids=allowed_source_ids,
+            max_items=request.max_items,
+        )
+        for item in bm25_items:
+            if item.evidence_id not in seen and len(items) < request.max_items:
+                items.append(item)
+                seen.add(item.evidence_id)
+        bm25_count = len(bm25_items)
         bm25_ms = _elapsed_ms(bm25_started)
+        lane_coverage.append(
+            self._lane_coverage(
+                lane="sparse_bm25",
+                hit_count=bm25_count,
+                status=(
+                    "failed"
+                    if bm25_disabled_reason
+                    else "searched_with_results"
+                    if bm25_count
+                    else "searched_and_absent"
+                ),
+                source_ids=allowed_source_ids,
+                failure=bm25_disabled_reason or None,
+            )
+        )
 
         dense_started = perf_counter()
         dense_items: list[EvidenceItem] = []
         dense_disabled_reason = ""
         dense_budget_summary: dict[str, object] = {}
         dense_trace_refs: tuple[str, ...] = ()
-        if len(items) < request.max_items:
+        if self.dense_enabled:
             (
                 dense_items,
                 dense_disabled_reason,
@@ -180,35 +213,68 @@ class DeterministicEvidenceRetriever:
                 sources=sources,
                 allowed_source_ids=allowed_source_ids,
                 index_version=stable_version.index_version if stable_version else None,
-                max_items=request.max_items - len(items),
+                max_items=request.max_items,
             )
             for item in dense_items:
-                if item.evidence_id not in seen:
+                if item.evidence_id not in seen and len(items) < request.max_items:
                     items.append(item)
                     seen.add(item.evidence_id)
+        else:
+            dense_report = DisabledDenseRetrievalProvider().retrieve(
+                query=request.query,
+                chunks=(),
+                top_k=0,
+            )
+            dense_disabled_reason = dense_report.disabled_reason
+            dense_budget_summary = {"dense_retrieval": dense_report.usage_dict()}
         dense_ms = _elapsed_ms(dense_started)
+        lane_coverage.append(
+            self._lane_coverage(
+                lane="dense",
+                hit_count=len(dense_items),
+                status=(
+                    "not_searched"
+                    if not self.dense_enabled
+                    else "failed"
+                    if dense_disabled_reason
+                    else "searched_with_results"
+                    if dense_items
+                    else "searched_and_absent"
+                ),
+                source_ids=allowed_source_ids,
+                failure=dense_disabled_reason or None,
+            )
+        )
 
         text_started = perf_counter()
         text_count = 0
-        if len(items) < request.max_items:
-            text_items = self._text_items(
-                terms=terms,
-                sources=sources,
-                allowed_source_ids=allowed_source_ids,
-                max_items=request.max_items - len(items),
-            )
-            for item in text_items:
-                if item.evidence_id not in seen:
-                    items.append(item)
-                    seen.add(item.evidence_id)
-            text_count = len(text_items)
+        text_items = self._text_items(
+            terms=terms,
+            sources=sources,
+            allowed_source_ids=allowed_source_ids,
+            max_items=request.max_items,
+        )
+        for item in text_items:
+            if item.evidence_id not in seen and len(items) < request.max_items:
+                items.append(item)
+                seen.add(item.evidence_id)
+        text_count = len(text_items)
         text_ms = _elapsed_ms(text_started)
+        lane_coverage.append(
+            self._lane_coverage(
+                lane="live_text",
+                hit_count=text_count,
+                status=("searched_with_results" if text_count else "searched_and_absent"),
+                source_ids=allowed_source_ids,
+            )
+        )
 
         readiness_started = perf_counter()
         pack = self.readiness_classifier.classify(
             request=request,
             items=items[: request.max_items],
             excluded=excluded,
+            lane_coverage=tuple(lane_coverage),
         )
         readiness_ms = _elapsed_ms(readiness_started)
         return self._with_observability(
@@ -220,7 +286,7 @@ class DeterministicEvidenceRetriever:
             readiness_ms=readiness_ms,
             total_ms=_elapsed_ms(total_started),
             excluded_count=len(excluded),
-            symbol_count=len([item for item in items if item.retrieval_method == "symbol_exact"]),
+            symbol_count=symbol_count,
             bm25_count=bm25_count,
             dense_count=len(dense_items),
             text_count=text_count,
@@ -242,7 +308,7 @@ class DeterministicEvidenceRetriever:
         return EvidenceItem(
             evidence_id=symbol.symbol_id,
             source_type=source_type,
-            source_path=symbol.source_path,
+            source_path=symbol.relative_path,
             symbol=symbol.name,
             span={
                 "start_line": symbol.start_line,
@@ -255,6 +321,7 @@ class DeterministicEvidenceRetriever:
             source_hash=symbol.content_hash,
             file_hash=symbol.content_hash,
             authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
+            source_authority=self._source_authority(source),
             risk_notes=(),
         )
 
@@ -333,7 +400,7 @@ class DeterministicEvidenceRetriever:
         return EvidenceItem(
             evidence_id=evidence_id,
             source_type=source_type,
-            source_path=entry.source_path,
+            source_path=str(entry.metadata.get("relative_path", entry.source_path)),
             symbol=entry.symbol,
             span=span,
             retrieval_method="symbol_exact",
@@ -351,6 +418,7 @@ class DeterministicEvidenceRetriever:
             return_type=_optional_str(entry.metadata.get("return_type")),
             method_kind=_optional_str(entry.metadata.get("method_kind")),
             authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
+            source_authority=self._source_authority(source),
             risk_notes=(),
         )
 
@@ -404,7 +472,7 @@ class DeterministicEvidenceRetriever:
         return EvidenceItem(
             evidence_id=f"bm25_{hit.chunk_id}",
             source_type=source_type,
-            source_path=hit.source_path,
+            source_path=str(hit.metadata.get("relative_path", hit.source_path)),
             symbol=None,
             span=hit.span,
             retrieval_method="bm25",
@@ -416,6 +484,7 @@ class DeterministicEvidenceRetriever:
             excerpt=hit.excerpt,
             **evidence_identity_from_metadata(hit.metadata),
             authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
+            source_authority=self._source_authority(source),
             risk_notes=(),
         )
 
@@ -456,7 +525,7 @@ class DeterministicEvidenceRetriever:
                 EvidenceItem(
                     evidence_id=evidence_id,
                     source_type=source_type,
-                    source_path=indexed_file.source_path,
+                    source_path=indexed_file.relative_path,
                     symbol=None,
                     span={"start_line": line_number, "end_line": line_number},
                     retrieval_method="text_match",
@@ -469,6 +538,7 @@ class DeterministicEvidenceRetriever:
                     source_hash=indexed_file.content_hash,
                     file_hash=indexed_file.content_hash,
                     authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
+                    source_authority=self._source_authority(source),
                     risk_notes=(),
                 )
             )
@@ -591,7 +661,9 @@ class DeterministicEvidenceRetriever:
         return EvidenceItem(
             evidence_id=f"dense_{chunk.chunk_id}",
             source_type=source_type,
-            source_path=str(chunk.metadata.get("source_path", "")),
+            source_path=str(
+                chunk.metadata.get("relative_path", chunk.metadata.get("source_path", ""))
+            ),
             symbol=None,
             span=span,
             retrieval_method="dense",
@@ -603,6 +675,7 @@ class DeterministicEvidenceRetriever:
             excerpt=chunk.chunk_text.strip()[:240],
             **evidence_identity_from_metadata(chunk.metadata),
             authority=LEGACY_RAG_AUXILIARY_AUTHORITY,
+            source_authority=self._source_authority(source),
             risk_notes=("Dense retrieval cannot approve V1 implementation gates.",),
         )
 
@@ -610,15 +683,54 @@ class DeterministicEvidenceRetriever:
         return {source.source_id: source for source in self.database.list_sources()}
 
     @staticmethod
+    def _source_authority(source: SourceRecord | None) -> str | None:
+        if source is None:
+            return None
+        value = source.metadata.get("evidence_authority")
+        return value if value in {"authoritative", "supporting", "lead"} else None
+
+    @staticmethod
+    def _lane_coverage(
+        *,
+        lane: str,
+        hit_count: int,
+        status: str,
+        source_ids: set[str],
+        failure: str | None = None,
+    ) -> dict[str, object]:
+        return {
+            "lane": lane,
+            "status": status,
+            "hit_count": hit_count,
+            "scope": {"source_ids": sorted(source_ids)},
+            "failure": failure,
+        }
+
+    @staticmethod
     def _terms(query: str) -> tuple[str, ...]:
         terms: list[str] = []
         seen: set[str] = set()
-        for match in _TERM_RE.finditer(query):
-            term = match.group(0)
+        for term in tokenize_retrieval_text(query, lowercase=False):
             key = term.lower()
             if key not in seen:
                 terms.append(term)
                 seen.add(key)
+        return tuple(terms)
+
+    @classmethod
+    def _request_terms(cls, request: EvidenceRequest) -> tuple[str, ...]:
+        terms = list(cls._terms(request.query))
+        search_terms = request.hook_requirement.get("search_terms", [])
+        if not isinstance(search_terms, list) or not all(
+            isinstance(term, str) and term.strip() for term in search_terms
+        ):
+            raise ValueError("hook_requirement.search_terms must be a string array.")
+        seen = {term.lower() for term in terms}
+        for search_term in search_terms:
+            for term in cls._terms(search_term):
+                if term.lower() not in seen:
+                    terms.append(term)
+                    seen.add(term.lower())
         return tuple(terms)
 
     @staticmethod

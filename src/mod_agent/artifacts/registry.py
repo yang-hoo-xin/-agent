@@ -145,6 +145,16 @@ class ArtifactTypeRegistry:
             _validate_edit_authority_approval(payload, allow_legacy=True)
         if artifact_type == "runtime_evidence":
             _validate_runtime_evidence_consolidation_binding(payload)
+        if artifact_type == "evidence_pack":
+            from ..evidence.models import EvidencePack
+
+            if EvidencePack.requires_strict_semantic_rehydrate(payload):
+                try:
+                    EvidencePack.from_artifact_payload(payload)
+                except ValueError as exc:
+                    raise ArtifactRegistryError(
+                        f"Invalid semantic EvidencePack: {exc}"
+                    ) from exc
         if artifact_type == "repair_planning_request":
             _validate_repair_planning_authority_request(payload)
         if artifact_type == "repair_planning_approval":

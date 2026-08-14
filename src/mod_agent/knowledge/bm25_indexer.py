@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import math
-import re
 from collections import Counter, defaultdict
+
+from src.core.query_engine.tokenization import tokenize_retrieval_text
 
 from .database import KnowledgeDatabase
 from .models import BM25Hit, BM25IndexResult, KnowledgeChunkRecord
-
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
-
 
 class BM25Indexer:
     """Build and query a local BM25 inverted index stored in SQLite."""
@@ -214,7 +212,10 @@ class BM25Indexer:
 def tokenize_bm25(text: str) -> tuple[str, ...]:
     """Normalize text into BM25 lexical tokens."""
 
-    tokens = [normalize_bm25_token(match.group(0)) for match in _TOKEN_RE.finditer(text)]
+    tokens = [
+        normalize_bm25_token(token)
+        for token in tokenize_retrieval_text(text, lowercase=False)
+    ]
     return tuple(token for token in tokens if token)
 
 

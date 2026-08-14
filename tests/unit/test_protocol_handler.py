@@ -474,7 +474,12 @@ class TestServerProtocolHandlerIntegration:
             handler=search_handler,
         )
 
-        server = create_mcp_server("test-server", "1.0.0", protocol_handler=handler)
+        server = create_mcp_server(
+            "test-server",
+            "1.0.0",
+            protocol_handler=handler,
+            register_tools=False,
+        )
 
         # Verify tools are accessible through protocol handler
         tools = handler.get_tool_schemas()
@@ -501,7 +506,12 @@ class TestServerProtocolHandlerIntegration:
             handler=search_handler,
         )
 
-        server = create_mcp_server("test-server", "1.0.0", protocol_handler=handler)
+        server = create_mcp_server(
+            "test-server",
+            "1.0.0",
+            protocol_handler=handler,
+            register_tools=False,
+        )
 
         # Execute through protocol handler
         result = await handler.execute_tool("search", {"query": "test", "top_k": 10})

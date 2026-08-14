@@ -8,6 +8,14 @@ from pathlib import Path
 
 import pytest
 
+from src.mod_agent.evidence.discovery import (
+    EvidenceDiscoveryRequest,
+    EvidenceDiscoverySpecialist,
+    evidence_discovery_source_from_definition,
+)
+from src.mod_agent.evidence.discovery_tools import LocalAssemblyEvidenceToolExecutor
+from src.mod_agent.knowledge import SourceDefinition
+
 
 def _restore_and_build(
     project: Path,
@@ -109,6 +117,7 @@ def test_inspector_resolves_direct_generic_boolean_property(
         "public static class Plugin\n"
         "{\n"
         "    public static SettingBox<bool> SettingsHandle { get; } = new();\n"
+        "    public static void PulseCorridorLights() { }\n"
         "}\n",
         encoding="utf-8",
     )
@@ -188,6 +197,187 @@ def test_inspector_resolves_direct_generic_boolean_property(
     assert access["generic_result_type_parameter_index"] == 0
     assert access["closed_result_type"] == "System.Boolean"
     assert access["declaring_type_metadata_token"].startswith("0x02")
+
+    class _ActualPathModel:
+        def __init__(self) -> None:
+            self.turn = 0
+
+        def complete(self, messages: tuple[dict[str, object], ...]) -> str:
+            self.turn += 1
+            if self.turn == 1:
+                return json.dumps(
+                    {
+                        "action": "plan",
+                        "planning_status": "ready",
+                        "requirement_projection": {
+                            "schema_version": "hook_requirement_projection_v2",
+                            "behavior_goal": "Pulse corridor lights after an event.",
+                            "trigger": "event completion",
+                            "actor": None,
+                            "target": "corridor lights",
+                            "hard_constraints": [],
+                            "forbidden_outcomes": [],
+                            "implementation_hints": [],
+                            "acceptance_signals": [],
+                            "planning_blocking_questions": [{
+                                "requirement_id": "req-light-pulse",
+                                "question": "Which current managed method exposes the light pulse action?",
+                            }],
+                            "deferred_planning_or_runtime_questions": [],
+                        },
+                        "search_plan": {
+                            "schema_version": "hook_discovery_search_plan_v2",
+                            "engineering_questions": [{
+                                "question_id": "question-light-pulse",
+                                "question": "Which current managed method exposes the light pulse action?",
+                                "requirement_ids": ["req-light-pulse"],
+                            }],
+                            "source_roles": [
+                                {"source_id": "controlled-assembly", "role": "current_metadata_and_il"}
+                            ],
+                            "planned_lanes": [
+                                {
+                                    "lane": "managed_metadata_discovery",
+                                    "tool": "search_dotnet_metadata",
+                                    "source_ids": ["controlled-assembly"],
+                                },
+                                {
+                                    "lane": "exact_il_verification",
+                                    "tool": "inspect_method_il",
+                                    "source_ids": ["controlled-assembly"],
+                                },
+                            ],
+                            "query_families": [
+                                {
+                                    "family_id": "request-derived-light-pulse",
+                                    "queries": ["PulseCorridorLights"],
+                                    "evidence_need": "Which current managed method exposes the light pulse action?",
+                                    "source_ids": ["controlled-assembly"],
+                                    "tool": "search_dotnet_metadata",
+                                    "question_ids": ["question-light-pulse"],
+                                }
+                            ],
+                            "initial_stop_condition": "Stop after exact IL verification.",
+                            "initial_expand_condition": "Expand once only for a recorded blocker.",
+                        },
+                    }
+                )
+            if self.turn == 2:
+                return json.dumps(
+                    {
+                        "action": "use_tool",
+                        "tool": "search_dotnet_metadata",
+                        "source_id": "controlled-assembly",
+                        "arguments": {
+                            "queries": ["PulseCorridorLights"],
+                            "result_kinds": ["methods"],
+                            "limit_per_kind": 5,
+                        },
+                        "evidence_need": "Which current managed method exposes the light pulse action?",
+                        "derived_from_observation_ids": [],
+                    }
+                )
+            serialized = json.dumps(messages)
+            if self.turn == 3:
+                marker = '"candidate_ref": "'
+                start = serialized.index(marker) + len(marker)
+                candidate_ref = serialized[start : serialized.index('"', start)]
+                return json.dumps(
+                    {
+                        "action": "use_tool",
+                        "tool": "inspect_method_il",
+                        "source_id": "controlled-assembly",
+                        "arguments": {"candidate_ref": candidate_ref},
+                        "evidence_need": "Verify the observed method identity and IL body.",
+                        "derived_from_observation_ids": ["obs-001"],
+                    }
+                )
+            return json.dumps(
+                {
+                    "action": "finish",
+                    "decision": "needs_more_evidence",
+                    "evidence_conclusions": [
+                        {
+                            "claim": "Observed inspected symbol: Example.Plugin.PulseCorridorLights.",
+                            "claim_status": "observed",
+                            "observation_ids": ["obs-002"],
+                            "limitations": [],
+                            "requirement_ids": ["req-light-pulse"],
+                            "relationship": "support",
+                        }
+                    ],
+                    "unresolved_questions": ["Runtime event timing remains unverified."],
+                    "missing_capabilities": [],
+                }
+            )
+
+    actual_result = EvidenceDiscoverySpecialist(
+        model=_ActualPathModel(),
+        tool_executor=LocalAssemblyEvidenceToolExecutor.from_inspector(
+            inspector / "bin" / "Debug" / "net7.0" / "r8_il_inspector.dll"
+        ),
+    ).discover(
+        EvidenceDiscoveryRequest(
+            run_id="controlled-real-metadata-il",
+            request_id="controlled-light-pulse-request",
+            natural_language_request=(
+                "When an event completes, briefly pulse the corridor lights."
+            ),
+            sources=(
+                evidence_discovery_source_from_definition(SourceDefinition(
+                    source_id="controlled-assembly",
+                    source_type="decompiled_api",
+                    root_path=consumer_output,
+                    allowed_extensions=frozenset({".dll"}),
+                    metadata={
+                        "evidence_discovery_kind": "controlled_managed_fixture",
+                        "evidence_class": "current_controlled_assembly",
+                        "evidence_authority": "authoritative",
+                        "description": "Controlled managed assembly for the real discovery path.",
+                        "allowed_tools": [
+                            "search_dotnet_metadata",
+                            "inspect_method_il",
+                        ],
+                        "assembly_relative_paths": ["Example.dll"],
+                        "version_identity": {},
+                    },
+                )),
+            ),
+            max_tool_calls=3,
+            max_model_steps=4,
+            require_actual_planning=True,
+        )
+    )
+
+    assert [action["tool"] for action in actual_result.actions] == [
+        "search_dotnet_metadata",
+        "inspect_method_il",
+    ]
+    assert actual_result.observations[0].data["methods"][0]["symbol"] == (
+        "Example.Plugin.PulseCorridorLights"
+    )
+    assert actual_result.observations[1].data["candidate_ref"] == (
+        actual_result.observations[0].data["methods"][0]["candidate_ref"]
+    )
+    assert actual_result.observations[1].data["has_method_body"] is True
+    assert actual_result.pack.items[0].symbol == "Example.Plugin.PulseCorridorLights"
+    source = actual_result.pack.items[0]
+    assert source.source_authority == "authoritative"
+    assert source.source_hash == actual_result.observations[1].data["assembly_sha256"]
+    assert source.module_mvid == actual_result.observations[1].data["module_mvid"]
+    assert source.metadata_token == actual_result.observations[1].data["metadata_token"]
+    assert source.signature_blob
+    semantics = actual_result.pack.hook_discovery
+    assert semantics is not None
+    assert semantics["source_admission"]["admitted_evidence_ids"] == [
+        source.evidence_id
+    ]
+    relationship = semantics["evidence_relationships"][0]
+    assert relationship["requirement_id"] == "req-light-pulse"
+    assert relationship["engineering_question_ids"] == ["question-light-pulse"]
+    assert relationship["query_family_ids"] == ["request-derived-light-pulse"]
+    assert relationship["observation_ids"] == ["obs-002"]
+    assert relationship["decisive_evidence_ids"] == [source.evidence_id]
     assert access["property_metadata_token"].startswith("0x17")
     assert access["getter_metadata_token"].startswith("0x06")
     assert report["target_code_executed"] is False

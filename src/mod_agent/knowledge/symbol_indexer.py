@@ -42,9 +42,20 @@ class SymbolIndexer:
                 collection_id=collection_id,
                 index_version=index_version,
             )
-        entries: list[SymbolIndexEntry] = []
+        entries_by_identity: dict[
+            tuple[str, str, str, str, str], SymbolIndexEntry
+        ] = {}
         for chunk in indexed_chunks:
-            entries.extend(self._entries_from_chunk(chunk))
+            for entry in self._entries_from_chunk(chunk):
+                identity = (
+                    entry.collection_id,
+                    entry.index_version,
+                    entry.symbol,
+                    entry.symbol_kind,
+                    entry.chunk_id,
+                )
+                entries_by_identity.setdefault(identity, entry)
+        entries = list(entries_by_identity.values())
         database.replace_symbol_index(
             collection_id=collection_id,
             index_version=index_version,

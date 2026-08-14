@@ -330,6 +330,9 @@ class GetDocumentSummaryTool:
         Raises:
             DocumentNotFoundError: If document is not found.
         """
+        if not doc_id or not doc_id.strip():
+            raise ValueError("doc_id cannot be empty")
+
         chunks = self._find_document_chunks(doc_id, collection)
         
         if not chunks:
@@ -572,6 +575,26 @@ class GetDocumentSummaryTool:
             CallToolResult with formatted document summary or error.
         """
         logger.info(f"Executing get_document_summary (doc_id={doc_id}, collection={collection})")
+
+        # Avoid scheduling a known-missing store dependency into the executor.
+        # Tests and alternate callers that inject a client retain their normal path.
+        get_collection_func = getattr(self._get_collection, "__func__", None)
+        if self._chroma_client is None and get_collection_func is GetDocumentSummaryTool._get_collection:
+            try:
+                import chromadb  # noqa: F401
+            except ImportError:
+                return types.CallToolResult(
+                    content=[
+                        types.TextContent(
+                            type="text",
+                            text=(
+                                "## Error\n\nAn error occurred: chromadb package is required "
+                                "for get_document_summary"
+                            ),
+                        )
+                    ],
+                    isError=True,
+                )
         
         try:
             # Run blocking ChromaDB I/O in a thread to avoid blocking

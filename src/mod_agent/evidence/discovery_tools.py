@@ -465,7 +465,11 @@ class LocalAssemblyEvidenceToolExecutor:
             usage="hook_evidence",
             declaring_type=declaring_type,
             method_name=method_name,
+            module_mvid=observed.module_mvid,
+            metadata_token=observed.metadata_token,
+            signature_blob=str(method.get("signature_blob") or ""),
             authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
+            source_authority=source.source_authority,
             risk_notes=(
                 "CLI metadata inspection did not load or execute the target assembly.",
             ),

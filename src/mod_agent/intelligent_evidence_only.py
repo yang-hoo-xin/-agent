@@ -170,6 +170,8 @@ def run_intelligent_evidence_only(
     ollama_base_url: str = "http://127.0.0.1:11434",
     ollama_model: str = "qwen3:4b-instruct",
     ollama_max_output_tokens: int = 4096,
+    ollama_context_window: int | None = None,
+    ollama_request_timeout_seconds: float = 180.0,
     inspector_path: str | Path = _DEFAULT_INSPECTOR,
     phase1_lineage: bool = False,
 ) -> dict[str, Any]:
@@ -231,11 +233,48 @@ def run_intelligent_evidence_only(
     )
     run_id = f"intelligent_evidence_{uuid4().hex}"
     request_id = f"request_{uuid4().hex}"
+    local_model_runtime: dict[str, object] | None = None
     if local_ollama:
+        from .local_entry import (
+            _assert_ollama_model_identity_stable,
+            _read_ollama_model_identity,
+            _read_ollama_server_version,
+            _validate_ollama_context_window,
+        )
+
+        model_identity_before = _read_ollama_model_identity(
+            ollama_base_url, ollama_model
+        )
+        declared_context_limit = (
+            _validate_ollama_context_window(
+                model_identity_before,
+                requested_context_window=ollama_context_window,
+            )
+            if ollama_context_window is not None
+            else None
+        )
+        server_version_before = _read_ollama_server_version(ollama_base_url)
+        local_model_runtime = {
+            "identity_before": dict(model_identity_before),
+            "server_version_before": server_version_before,
+            "configuration": {
+                "context_window": ollama_context_window,
+                "declared_context_limit": declared_context_limit,
+                "temperature": 0.0,
+                "max_output_tokens": ollama_max_output_tokens,
+                "thinking": False,
+                "streaming": False,
+                "seed": 0,
+                "request_timeout_seconds": ollama_request_timeout_seconds,
+            },
+        }
         client = OllamaChatAgentAdapter(
             base_url=ollama_base_url,
             model=ollama_model,
             max_output_tokens=ollama_max_output_tokens,
+            context_window=ollama_context_window,
+            seed=0,
+            request_timeout_seconds=ollama_request_timeout_seconds,
         )
         model = EvidenceDiscoveryAgentModel(
             client,
@@ -281,6 +320,9 @@ def run_intelligent_evidence_only(
             tool_executor=executor,
         ),
         sources=sources,
+        max_tool_calls=3,
+        max_model_steps=4,
+        require_actual_planning=True,
     )
     graph = build_graph(
         store,
@@ -304,6 +346,7 @@ def run_intelligent_evidence_only(
             failure={},
             phase1_bindings=phase1_bindings,
             lineage={"status": "started"} if phase1_lineage else None,
+            local_model_runtime=local_model_runtime,
         ),
         status="running",
     )
@@ -340,6 +383,20 @@ def run_intelligent_evidence_only(
             artifact_hash=result["artifact_hashes"]["evidence_pack"],
         )
         pack = store.read(evidence_ref)["data"]
+        if local_ollama:
+            model_identity_after = _read_ollama_model_identity(
+                ollama_base_url, ollama_model
+            )
+            _assert_ollama_model_identity_stable(
+                expected=model_identity_before,
+                observed=model_identity_after,
+            )
+            server_version_after = _read_ollama_server_version(ollama_base_url)
+            if server_version_after != server_version_before:
+                raise IntelligentEvidenceEntryError("OLLAMA_SERVER_VERSION_DRIFT")
+            assert local_model_runtime is not None
+            local_model_runtime["identity_after"] = dict(model_identity_after)
+            local_model_runtime["server_version_after"] = server_version_after
     except (OSError, RuntimeError, ValueError) as exc:
         error_code = _evidence_run_failure_code(exc)
         terminal_run_status = str(getattr(exc, "run_status", "") or "")
@@ -385,6 +442,7 @@ def run_intelligent_evidence_only(
                     if phase1_lineage
                     else None
                 ),
+                local_model_runtime=local_model_runtime,
             ),
             status="failed",
             upstream_refs=[started_attempt_ref] if phase1_lineage else None,
@@ -543,6 +601,7 @@ def run_intelligent_evidence_only(
                 and lineage_checks is not None
                 else None
             ),
+            local_model_runtime=local_model_runtime,
         ),
         status=(
             "success"
@@ -655,9 +714,11 @@ def _evidence_run_attempt_payload(
     failure_diagnostics: dict[str, object] | None = None,
     phase1_bindings: dict[str, dict[str, object]] | None = None,
     lineage: dict[str, object] | None = None,
+    local_model_runtime: dict[str, object] | None = None,
 ) -> dict[str, object]:
     model_calls = int(getattr(model, "model_call_count", 0))
     provider_turns = getattr(model, "provider_turn_records", ())
+    structured_outputs = getattr(model, "structured_output_records", ())
     payload: dict[str, object] = {
         "node_name": "retrieve_evidence",
         "stage": "evidence_retrieval",
@@ -675,11 +736,14 @@ def _evidence_run_attempt_payload(
         "accepted_model_actions": accepted_model_actions,
         "tool_calls_executed": tool_calls_executed,
         "provider_turns": [dict(item) for item in provider_turns],
+        "structured_outputs": [dict(item) for item in structured_outputs],
         "failure_attribution": failure_attribution,
         "failure": dict(failure),
     }
     if failure_diagnostics is not None:
         payload["failure_diagnostics"] = dict(failure_diagnostics)
+    if local_model_runtime is not None:
+        payload["local_model_runtime"] = dict(local_model_runtime)
     if phase1_bindings is not None:
         payload.update(
             {

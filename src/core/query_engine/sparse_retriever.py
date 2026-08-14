@@ -65,6 +65,7 @@ class SparseRetriever:
         vector_store: Optional[BaseVectorStore] = None,
         default_top_k: int = 10,
         default_collection: str = "default",
+        fail_on_unavailable_index: bool = False,
     ) -> None:
         """Initialize SparseRetriever with dependencies.
         
@@ -77,6 +78,10 @@ class SparseRetriever:
             default_top_k: Default number of results to return (default: 10).
                            Can be overridden from settings.retrieval.sparse_top_k.
             default_collection: Default BM25 index collection name (default: "default").
+            fail_on_unavailable_index: Raise when the requested BM25 index cannot
+                be loaded. The compatibility default keeps the historical empty
+                result behavior; product entry points that distinguish platform
+                failure from no matches should enable this option.
         
         Note:
             Dependencies can be injected for testing (with mocks) or for
@@ -85,6 +90,7 @@ class SparseRetriever:
         self.bm25_indexer = bm25_indexer
         self.vector_store = vector_store
         self.default_collection = default_collection
+        self.fail_on_unavailable_index = fail_on_unavailable_index
         
         # Extract default_top_k from settings if available
         self.default_top_k = default_top_k
@@ -144,6 +150,10 @@ class SparseRetriever:
         
         # Step 1: Ensure index is loaded
         if not self._ensure_index_loaded(effective_collection):
+            if self.fail_on_unavailable_index:
+                raise RuntimeError(
+                    f"BM25 index for collection '{effective_collection}' is unavailable"
+                )
             logger.warning(
                 f"BM25 index for collection '{effective_collection}' not available. "
                 "Returning empty results."
@@ -179,7 +189,7 @@ class SparseRetriever:
             ) from e
         
         # Step 4: Merge BM25 scores with text/metadata
-        results = self._merge_results(bm25_results, records)
+        results = self._merge_results(bm25_results, records, effective_collection)
         
         logger.debug(f"Retrieved {len(results)} results for keywords")
         return results
@@ -243,12 +253,14 @@ class SparseRetriever:
         self,
         bm25_results: List[Dict[str, Any]],
         records: List[Dict[str, Any]],
+        collection: Optional[str] = None,
     ) -> List[RetrievalResult]:
         """Merge BM25 scores with text and metadata from vector store.
         
         Args:
             bm25_results: Results from BM25 query, each with 'chunk_id' and 'score'.
             records: Records from vector store, each with 'id', 'text', 'metadata'.
+            collection: Logical collection selected for this retrieval.
         
         Returns:
             List of RetrievalResult objects with complete information.
@@ -269,7 +281,9 @@ class SparseRetriever:
             
             # Validate record has expected fields
             text = record.get('text', '')
-            metadata = record.get('metadata', {})
+            metadata = dict(record.get('metadata', {}))
+            if collection:
+                metadata["collection"] = collection
             
             try:
                 result = RetrievalResult(
@@ -294,6 +308,7 @@ def create_sparse_retriever(
     bm25_indexer: Optional[BM25Indexer] = None,
     vector_store: Optional[BaseVectorStore] = None,
     index_dir: str = "data/db/bm25",
+    fail_on_unavailable_index: bool = False,
 ) -> SparseRetriever:
     """Factory function to create a SparseRetriever with optional dependency injection.
     
@@ -307,6 +322,8 @@ def create_sparse_retriever(
         vector_store: Optional pre-configured vector store.
                       If None, created from VectorStoreFactory.
         index_dir: Directory for BM25 index files (default: "data/db/bm25").
+        fail_on_unavailable_index: Raise instead of returning no matches when
+            the requested index cannot be loaded.
     
     Returns:
         Configured SparseRetriever instance.
@@ -328,4 +345,5 @@ def create_sparse_retriever(
         settings=settings,
         bm25_indexer=bm25_indexer,
         vector_store=vector_store,
+        fail_on_unavailable_index=fail_on_unavailable_index,
     )

@@ -379,6 +379,12 @@ def build_parser() -> argparse.ArgumentParser:
     intelligent_evidence_parser.add_argument(
         "--ollama-max-output-tokens", type=int, default=4096
     )
+    intelligent_evidence_parser.add_argument(
+        "--ollama-context-window", type=int
+    )
+    intelligent_evidence_parser.add_argument(
+        "--ollama-request-timeout-seconds", type=float, default=180.0
+    )
 
     apply_parser = subparsers.add_parser(
         "apply-patch",
@@ -928,6 +934,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ollama_base_url=args.ollama_base_url,
                 ollama_model=args.ollama_model,
                 ollama_max_output_tokens=args.ollama_max_output_tokens,
+                ollama_context_window=args.ollama_context_window,
+                ollama_request_timeout_seconds=args.ollama_request_timeout_seconds,
             )
         except ArtifactStorePreflightError as exc:
             print(

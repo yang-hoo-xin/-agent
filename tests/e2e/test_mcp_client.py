@@ -76,10 +76,6 @@ def _send_jsonrpc(
     assert proc.stdin is not None
     assert proc.stdout is not None
 
-    for msg in messages:
-        proc.stdin.write(json.dumps(msg) + "\n")
-        proc.stdin.flush()
-
     responses: List[Dict[str, Any]] = []
     stop_event = threading.Event()
 
@@ -101,6 +97,26 @@ def _send_jsonrpc(
 
     reader_thread = threading.Thread(target=_reader, daemon=True)
     reader_thread.start()
+
+    # Complete initialization before sending post-initialization requests.
+    # The MCP lifecycle does not permit arbitrary requests to race ahead of
+    # the initialize response and initialized notification.
+    pending_messages = list(messages)
+    if pending_messages and pending_messages[0].get("method") == "initialize":
+        proc.stdin.write(json.dumps(pending_messages.pop(0)) + "\n")
+        proc.stdin.flush()
+        init_deadline = time.time() + timeout
+        while _find(responses, 1) is None and time.time() < init_deadline:
+            time.sleep(0.01)
+
+    for msg in pending_messages:
+        proc.stdin.write(json.dumps(msg) + "\n")
+        proc.stdin.flush()
+        request_id = msg.get("id")
+        if request_id is not None:
+            response_deadline = time.time() + timeout
+            while _find(responses, request_id) is None and time.time() < response_deadline:
+                time.sleep(0.01)
 
     # Wait until we have enough responses *or* timeout expires
     deadline = time.time() + timeout

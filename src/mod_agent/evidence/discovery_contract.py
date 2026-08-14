@@ -23,13 +23,18 @@ from src.libs.llm import (
 )
 from src.mod_agent.knowledge.source_registry import SourceDefinition
 
-from .models import EvidenceItem, EvidencePack
+from .models import EvidenceItem, EvidencePack, missing_evidence_from_blockers
 
 EVIDENCE_DISCOVERY_TOOLS = frozenset(
     {"search_dotnet_metadata", "inspect_method_il"}
 )
 EVIDENCE_DISCOVERY_RESULT_KINDS = frozenset({"methods", "types", "fields"})
 EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v9"
+AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v2"
+AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION = "agent_evidence_discovery_actual_v2"
+REQUIREMENT_PROJECTION_SCHEMA_VERSION = "hook_requirement_projection_v2"
+SEARCH_PLAN_SCHEMA_VERSION = "hook_discovery_search_plan_v2"
+EVIDENCE_SOURCE_AUTHORITIES = frozenset({"authoritative", "supporting", "lead"})
 EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES = (
     "natural_language_request",
     "source_registry_model_views",
@@ -132,6 +137,7 @@ class EvidenceDiscoveryAgentModel:
         self._pending_response: AgentTurnResponse | None = None
         self._usage_records: list[dict[str, object]] = []
         self._provider_turn_records: list[dict[str, object]] = []
+        self._structured_output_records: list[dict[str, object]] = []
         self._model_call_count = 0
         self._accepted_action_count = 0
         self._runtime_stage = "not_started"
@@ -147,6 +153,10 @@ class EvidenceDiscoveryAgentModel:
     @property
     def provider_turn_records(self) -> tuple[dict[str, object], ...]:
         return tuple(dict(item) for item in self._provider_turn_records)
+
+    @property
+    def structured_output_records(self) -> tuple[dict[str, object], ...]:
+        return tuple(dict(item) for item in self._structured_output_records)
 
     @property
     def model_call_count(self) -> int:
@@ -166,6 +176,7 @@ class EvidenceDiscoveryAgentModel:
         self._pending_response = None
         self._usage_records.clear()
         self._provider_turn_records.clear()
+        self._structured_output_records.clear()
         self._model_call_count = 0
         self._accepted_action_count = 0
         self._runtime_stage = "model_request_construction"
@@ -176,6 +187,8 @@ class EvidenceDiscoveryAgentModel:
         latest_observation: object | None = None
         tool_result_insert_index: int | None = None
         force_finish = False
+        force_plan = False
+        actual_planning_run = False
         for item in messages:
             role = str(item.get("role") or "")
             content = item.get("content")
@@ -187,6 +200,13 @@ class EvidenceDiscoveryAgentModel:
                 raise ValueError("EVIDENCE_MODEL_MESSAGE_ROLE_INVALID")
             if isinstance(content, dict) and content.get("required_next_action") == "finish":
                 force_finish = True
+            if isinstance(content, dict) and content.get("required_next_action") == "plan":
+                force_plan = True
+            if (
+                isinstance(content, dict)
+                and content.get("message_type") == "frozen_actual_plan"
+            ):
+                actual_planning_run = True
             if isinstance(content, dict) and content.get("message_type") == "finish_validation_error":
                 force_finish = True
             agent_messages.append(AgentMessage(role=role, content=content))
@@ -209,10 +229,18 @@ class EvidenceDiscoveryAgentModel:
 
         request = AgentTurnRequest(
             messages=tuple(agent_messages),
-            tools=() if force_finish else _discovery_tool_definitions(),
-            tool_choice="none" if force_finish else "auto",
+            tools=() if force_finish or force_plan else _discovery_tool_definitions(),
+            tool_choice="none" if force_finish or force_plan else "auto",
             parallel_tool_calls=False,
-            response_format=_finish_response_format() if force_finish else None,
+            response_format=(
+                _planning_response_format()
+                if force_plan
+                else _finish_response_format(
+                    require_requirement_binding=actual_planning_run
+                )
+                if force_finish
+                else None
+            ),
             tool_results=tool_results,
             tool_result_insert_index=tool_result_insert_index,
             provider_state=provider_state,
@@ -246,14 +274,37 @@ class EvidenceDiscoveryAgentModel:
             call = response.tool_calls[0]
             self._runtime_stage = "adapter_action_conversion"
             action = _action_from_tool_call(call.name, call.arguments)
+            normalized_output = json.dumps(
+                action, ensure_ascii=False, separators=(",", ":")
+            )
+            self._structured_output_records.append(
+                {
+                    "model_call_index": self._model_call_count,
+                    "output_kind": "normalized_tool_action",
+                    "structured_output": normalized_output,
+                    "structured_output_sha256": hashlib.sha256(
+                        normalized_output.encode("utf-8")
+                    ).hexdigest(),
+                }
+            )
             self._accepted_action_count += 1
             self._pending_response = response
             self._runtime_stage = "adapter_action_accepted"
-            return json.dumps(action, ensure_ascii=False, separators=(",", ":"))
+            return normalized_output
         self._pending_response = None
         self._runtime_stage = "adapter_finish_extraction"
         if not response.content or not response.content.strip():
             raise ValueError("EVIDENCE_MODEL_EMPTY_RESPONSE")
+        self._structured_output_records.append(
+            {
+                "model_call_index": self._model_call_count,
+                "output_kind": "provider_structured_content",
+                "structured_output": response.content,
+                "structured_output_sha256": hashlib.sha256(
+                    response.content.encode("utf-8")
+                ).hexdigest(),
+            }
+        )
         self._runtime_stage = "adapter_finish_accepted"
         return response.content
 
@@ -322,6 +373,7 @@ class EvidenceDiscoverySource:
     source_type: str
     kind: str
     evidence_class: str
+    source_authority: str
     description: str
     root_path: str | Path
     allowed_tools: tuple[str, ...]
@@ -331,6 +383,8 @@ class EvidenceDiscoverySource:
     def __post_init__(self) -> None:
         if not self.source_id or any(value in self.source_id for value in ("/", "\\", "..")):
             raise ValueError("Evidence discovery source_id is invalid.")
+        if self.source_authority not in EVIDENCE_SOURCE_AUTHORITIES:
+            raise ValueError("Evidence discovery source authority is invalid.")
         root = Path(self.root_path).resolve()
         if not root.is_dir():
             raise ValueError(f"Evidence discovery source root is not a directory: {root}")
@@ -368,6 +422,7 @@ class EvidenceDiscoverySource:
             "source_type": self.source_type,
             "kind": self.kind,
             "evidence_class": self.evidence_class,
+            "source_authority": self.source_authority,
             "description": self.description,
             "allowed_tools": list(self.allowed_tools),
             "assembly_relative_paths": list(self.assembly_relative_paths),
@@ -382,7 +437,12 @@ def evidence_discovery_source_from_definition(
 
     metadata = definition.metadata
     values: dict[str, str] = {}
-    for field_name in ("evidence_discovery_kind", "evidence_class", "description"):
+    for field_name in (
+        "evidence_discovery_kind",
+        "evidence_class",
+        "description",
+        "evidence_authority",
+    ):
         value = metadata.get(field_name)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"Evidence discovery source metadata requires {field_name}.")
@@ -407,6 +467,7 @@ def evidence_discovery_source_from_definition(
         source_type=definition.source_type,
         kind=values["evidence_discovery_kind"],
         evidence_class=values["evidence_class"],
+        source_authority=values["evidence_authority"],
         description=values["description"],
         root_path=definition.root_path,
         allowed_tools=tuple(allowed_tools),
@@ -431,6 +492,7 @@ class EvidenceDiscoveryRequest:
     manual_tool_sequence: tuple[str, ...] = ()
     precomputed_reports: tuple[str, ...] = ()
     operator_intervention_count: int = 0
+    require_actual_planning: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -454,6 +516,8 @@ class EvidenceDiscoveryRequest:
                 raise ValueError(f"{name} must be positive.")
         if self.operator_intervention_count < 0:
             raise ValueError("operator_intervention_count cannot be negative.")
+        if self.require_actual_planning and self.max_tool_calls > 3:
+            raise ValueError("FIRST_HOOK_DISCOVERY_TOOL_BUDGET_EXCEEDS_THREE")
         if self.manual_symbols or self.manual_tool_sequence or self.precomputed_reports:
             raise ValueError(
                 "Intelligent evidence acceptance forbids manual symbols, tool sequences, "
@@ -951,6 +1015,518 @@ class EvidenceDiscoveryResult:
     observations: tuple[ToolObservation, ...]
     input_audit: dict[str, int]
     intelligence_transfer: dict[str, bool]
+    agent_discovery: dict[str, object] | None = None
+
+
+def validate_agent_discovery_actual(value: dict[str, object]) -> None:
+    """Validate the versioned actual-only requirement and search projection."""
+
+    if set(value) != {
+        "schema_version",
+        "planning_status",
+        "requirement_projection",
+        "search_plan",
+    }:
+        raise ValueError("AGENT_DISCOVERY_ACTUAL_SHAPE_INVALID")
+    if value.get("schema_version") != AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION:
+        raise ValueError("AGENT_DISCOVERY_ACTUAL_VERSION_INVALID")
+    status = value.get("planning_status")
+    if status not in {
+        "ready",
+        "requirement_projection_insufficient",
+        "search_planning_insufficient",
+    }:
+        raise ValueError("AGENT_DISCOVERY_PLANNING_STATUS_INVALID")
+    projection = value.get("requirement_projection")
+    if not isinstance(projection, dict):
+        raise ValueError("REQUIREMENT_PROJECTION_MUST_BE_OBJECT")
+    _validate_requirement_projection(
+        projection,
+        require_meaningful=status != "requirement_projection_insufficient",
+    )
+    search_plan = value.get("search_plan")
+    if status == "requirement_projection_insufficient":
+        if search_plan is not None:
+            raise ValueError("REQUIREMENT_PROJECTION_INSUFFICIENT_HAS_SEARCH_PLAN")
+        return
+    if not isinstance(search_plan, dict):
+        raise ValueError("SEARCH_PLAN_MUST_BE_OBJECT")
+    _validate_search_plan(search_plan, require_queries=status == "ready")
+    if status != "ready":
+        return
+    requirement_ids = {
+        str(item["requirement_id"])
+        for item in projection["planning_blocking_questions"]
+        if isinstance(item, dict)
+    }
+    for question in search_plan["engineering_questions"]:
+        if any(value not in requirement_ids for value in question["requirement_ids"]):
+            raise ValueError("SEARCH_PLAN_ENGINEERING_REQUIREMENT_UNKNOWN")
+    referenced_requirement_ids = {
+        str(value)
+        for question in search_plan["engineering_questions"]
+        for value in question["requirement_ids"]
+    }
+    if referenced_requirement_ids != requirement_ids:
+        raise ValueError("SEARCH_PLAN_ENGINEERING_REQUIREMENT_COVERAGE_INVALID")
+    question_ids = {
+        str(question["question_id"])
+        for question in search_plan["engineering_questions"]
+    }
+    planned_question_ids = {
+        str(value)
+        for family in search_plan["query_families"]
+        for value in family["question_ids"]
+    }
+    if planned_question_ids != question_ids:
+        raise ValueError("SEARCH_PLAN_QUERY_FAMILY_QUESTION_COVERAGE_INVALID")
+
+
+def normalize_agent_discovery_planning_actual(
+    value: dict[str, object],
+) -> dict[str, object]:
+    """Classify plan executability from validated actual content, not model opinion."""
+
+    if set(value) != {
+        "schema_version",
+        "planning_status",
+        "requirement_projection",
+        "search_plan",
+    }:
+        raise ValueError("AGENT_DISCOVERY_ACTUAL_SHAPE_INVALID")
+    if value.get("schema_version") != AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION:
+        raise ValueError("AGENT_DISCOVERY_ACTUAL_VERSION_INVALID")
+    if value.get("planning_status") not in {
+        "ready",
+        "requirement_projection_insufficient",
+        "search_planning_insufficient",
+    }:
+        raise ValueError("AGENT_DISCOVERY_PLANNING_STATUS_INVALID")
+    projection = value.get("requirement_projection")
+    if not isinstance(projection, dict):
+        raise ValueError("REQUIREMENT_PROJECTION_MUST_BE_OBJECT")
+    _validate_requirement_projection(projection, require_meaningful=False)
+    projection_is_meaningful = bool(
+        _nonempty_string(projection.get("behavior_goal"))
+        and projection.get("planning_blocking_questions")
+    )
+    search_plan = value.get("search_plan")
+    if not projection_is_meaningful:
+        if search_plan is not None:
+            raise ValueError("REQUIREMENT_PROJECTION_INSUFFICIENT_HAS_SEARCH_PLAN")
+        normalized_status = "requirement_projection_insufficient"
+    else:
+        if not isinstance(search_plan, dict):
+            raise ValueError("SEARCH_PLAN_MUST_BE_OBJECT")
+        _validate_search_plan(search_plan, require_queries=False)
+        normalized_status = (
+            "ready"
+            if search_plan.get("engineering_questions")
+            and search_plan.get("query_families")
+            and search_plan.get("planned_lanes")
+            else "search_planning_insufficient"
+        )
+    normalized = {
+        **value,
+        "planning_status": normalized_status,
+    }
+    validate_agent_discovery_actual(normalized)
+    return normalized
+
+
+def agent_discovery_early_termination_state(
+    value: dict[str, object],
+) -> dict[str, object]:
+    """Project one validated pre-tool planning stop without inventing Hook semantics."""
+
+    validate_agent_discovery_actual(value)
+    status = value["planning_status"]
+    if status == "requirement_projection_insufficient":
+        code = "REQUIREMENT_PROJECTION_INSUFFICIENT"
+        message = (
+            "The request could not be projected into a meaningful Hook Discovery "
+            "engineering problem."
+        )
+    elif status == "search_planning_insufficient":
+        code = "SEARCH_PLANNING_INSUFFICIENT"
+        message = (
+            "The projected engineering problem did not produce an executable "
+            "bounded search plan."
+        )
+    else:
+        raise ValueError("AGENT_DISCOVERY_EARLY_TERMINATION_STATUS_INVALID")
+    blockers = (
+        {"code": code, "message": message, "needed_evidence": [message]},
+    )
+    return {
+        "run_status": status,
+        "readiness": "insufficient",
+        "can_generate_patch": False,
+        "gaps": (message,),
+        "blockers": blockers,
+        "missing_evidence": missing_evidence_from_blockers(blockers),
+        "message": message,
+    }
+
+
+def evidence_discovery_planning_schema() -> dict[str, object]:
+    """Return the provider-neutral first-turn planning response schema."""
+
+    string_array = {"type": "array", "items": {"type": "string"}}
+    nullable_string = {"type": ["string", "null"]}
+    requirement = {
+        "type": "object",
+        "properties": {
+            "requirement_id": {"type": "string"},
+            "question": {"type": "string"},
+        },
+        "required": ["requirement_id", "question"],
+        "additionalProperties": False,
+    }
+    engineering_question = {
+        "type": "object",
+        "properties": {
+            "question_id": {"type": "string"},
+            "question": {"type": "string"},
+            "requirement_ids": string_array,
+        },
+        "required": ["question_id", "question", "requirement_ids"],
+        "additionalProperties": False,
+    }
+    projection = {
+        "type": "object",
+        "properties": {
+            "schema_version": {
+                "type": "string",
+                "const": REQUIREMENT_PROJECTION_SCHEMA_VERSION,
+            },
+            "behavior_goal": {"type": "string"},
+            "trigger": nullable_string,
+            "actor": nullable_string,
+            "target": nullable_string,
+            "hard_constraints": string_array,
+            "forbidden_outcomes": string_array,
+            "implementation_hints": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "role": {"type": "string", "enum": ["investigation_lead"]},
+                    },
+                    "required": ["text", "role"],
+                    "additionalProperties": False,
+                },
+            },
+            "acceptance_signals": string_array,
+            "planning_blocking_questions": {
+                "type": "array",
+                "items": requirement,
+            },
+            "deferred_planning_or_runtime_questions": string_array,
+        },
+        "required": [
+            "schema_version",
+            "behavior_goal",
+            "trigger",
+            "actor",
+            "target",
+            "hard_constraints",
+            "forbidden_outcomes",
+            "implementation_hints",
+            "acceptance_signals",
+            "planning_blocking_questions",
+            "deferred_planning_or_runtime_questions",
+        ],
+        "additionalProperties": False,
+    }
+    search_plan = {
+        "type": ["object", "null"],
+        "properties": {
+            "schema_version": {
+                "type": "string",
+                "const": SEARCH_PLAN_SCHEMA_VERSION,
+            },
+            "engineering_questions": {
+                "type": "array",
+                "items": engineering_question,
+            },
+            "source_roles": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "source_id": {"type": "string"},
+                        "role": {"type": "string"},
+                    },
+                    "required": ["source_id", "role"],
+                    "additionalProperties": False,
+                },
+            },
+            "planned_lanes": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "lane": {"type": "string"},
+                        "tool": {"type": "string"},
+                        "source_ids": string_array,
+                    },
+                    "required": ["lane", "tool", "source_ids"],
+                    "additionalProperties": False,
+                },
+            },
+            "query_families": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "family_id": {"type": "string"},
+                        "queries": string_array,
+                        "evidence_need": {"type": "string"},
+                        "source_ids": string_array,
+                        "tool": {"type": "string"},
+                        "question_ids": string_array,
+                    },
+                    "required": [
+                        "family_id",
+                        "queries",
+                        "evidence_need",
+                        "source_ids",
+                        "tool",
+                        "question_ids",
+                    ],
+                    "additionalProperties": False,
+                },
+            },
+            "initial_stop_condition": {"type": "string"},
+            "initial_expand_condition": {"type": "string"},
+        },
+        "required": [
+            "schema_version",
+            "engineering_questions",
+            "source_roles",
+            "planned_lanes",
+            "query_families",
+            "initial_stop_condition",
+            "initial_expand_condition",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["plan"]},
+            "planning_status": {
+                "type": "string",
+                "enum": [
+                    "ready",
+                    "requirement_projection_insufficient",
+                    "search_planning_insufficient",
+                ],
+            },
+            "requirement_projection": projection,
+            "search_plan": search_plan,
+        },
+        "required": [
+            "action",
+            "planning_status",
+            "requirement_projection",
+            "search_plan",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def _validate_requirement_projection(
+    value: dict[str, object], *, require_meaningful: bool
+) -> None:
+    required = {
+        "schema_version",
+        "behavior_goal",
+        "trigger",
+        "actor",
+        "target",
+        "hard_constraints",
+        "forbidden_outcomes",
+        "implementation_hints",
+        "acceptance_signals",
+        "planning_blocking_questions",
+        "deferred_planning_or_runtime_questions",
+    }
+    if set(value) != required:
+        raise ValueError("REQUIREMENT_PROJECTION_SHAPE_INVALID")
+    if value.get("schema_version") != REQUIREMENT_PROJECTION_SCHEMA_VERSION:
+        raise ValueError("REQUIREMENT_PROJECTION_VERSION_INVALID")
+    for field_name in ("trigger", "actor", "target"):
+        field_value = value.get(field_name)
+        if field_value is not None and not _nonempty_string(field_value):
+            raise ValueError("REQUIREMENT_PROJECTION_PARTICIPANT_INVALID")
+    for field_name in (
+        "hard_constraints",
+        "forbidden_outcomes",
+        "acceptance_signals",
+        "deferred_planning_or_runtime_questions",
+    ):
+        _validate_string_array(value.get(field_name), field_name)
+    planning_questions = value.get("planning_blocking_questions")
+    if not isinstance(planning_questions, list):
+        raise ValueError("PLANNING_BLOCKING_QUESTIONS_INVALID")
+    requirement_ids: list[str] = []
+    for question in planning_questions:
+        if (
+            not isinstance(question, dict)
+            or set(question) != {"requirement_id", "question"}
+            or not _nonempty_string(question.get("requirement_id"))
+            or not _nonempty_string(question.get("question"))
+        ):
+            raise ValueError("PLANNING_BLOCKING_QUESTION_INVALID")
+        requirement_ids.append(str(question["requirement_id"]))
+    if len(requirement_ids) != len(set(requirement_ids)):
+        raise ValueError("PLANNING_REQUIREMENT_ID_DUPLICATE")
+    hints = value.get("implementation_hints")
+    if not isinstance(hints, list):
+        raise ValueError("IMPLEMENTATION_HINTS_INVALID")
+    for hint in hints:
+        if (
+            not isinstance(hint, dict)
+            or set(hint) != {"text", "role"}
+            or not _nonempty_string(hint.get("text"))
+            or hint.get("role") != "investigation_lead"
+        ):
+            raise ValueError("IMPLEMENTATION_HINT_INVALID")
+    if require_meaningful and (
+        not _nonempty_string(value.get("behavior_goal"))
+        or not value.get("planning_blocking_questions")
+    ):
+        raise ValueError("REQUIREMENT_PROJECTION_NOT_MEANINGFUL")
+
+
+def _validate_search_plan(value: dict[str, object], *, require_queries: bool) -> None:
+    required = {
+        "schema_version",
+        "engineering_questions",
+        "source_roles",
+        "planned_lanes",
+        "query_families",
+        "initial_stop_condition",
+        "initial_expand_condition",
+    }
+    if set(value) != required:
+        raise ValueError("SEARCH_PLAN_SHAPE_INVALID")
+    if value.get("schema_version") != SEARCH_PLAN_SCHEMA_VERSION:
+        raise ValueError("SEARCH_PLAN_VERSION_INVALID")
+    engineering_questions = value.get("engineering_questions")
+    source_roles = value.get("source_roles")
+    lanes = value.get("planned_lanes")
+    families = value.get("query_families")
+    if not all(
+        isinstance(item, list)
+        for item in (engineering_questions, source_roles, lanes, families)
+    ):
+        raise ValueError("SEARCH_PLAN_COLLECTION_INVALID")
+    question_ids: list[str] = []
+    for item in engineering_questions:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"question_id", "question", "requirement_ids"}
+            or not _nonempty_string(item.get("question_id"))
+            or not _nonempty_string(item.get("question"))
+        ):
+            raise ValueError("SEARCH_PLAN_ENGINEERING_QUESTION_INVALID")
+        _validate_string_array(
+            item.get("requirement_ids"), "requirement_ids", allow_empty=False
+        )
+        question_ids.append(str(item["question_id"]))
+    if len(question_ids) != len(set(question_ids)):
+        raise ValueError("SEARCH_PLAN_QUESTION_ID_DUPLICATE")
+    for item in source_roles:
+        if not isinstance(item, dict) or set(item) != {"source_id", "role"} or not all(
+            _nonempty_string(item.get(field)) for field in ("source_id", "role")
+        ):
+            raise ValueError("SEARCH_PLAN_SOURCE_ROLE_INVALID")
+    for item in lanes:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"lane", "tool", "source_ids"}
+            or not _nonempty_string(item.get("lane"))
+            or item.get("tool") not in EVIDENCE_DISCOVERY_TOOLS
+        ):
+            raise ValueError("SEARCH_PLAN_LANE_INVALID")
+        _validate_string_array(item.get("source_ids"), "source_ids", allow_empty=False)
+    family_ids: list[str] = []
+    dispatch_keys: set[tuple[str, str, tuple[str, ...], str]] = set()
+    for item in families:
+        if (
+            not isinstance(item, dict)
+            or set(item)
+            != {
+                "family_id",
+                "queries",
+                "evidence_need",
+                "source_ids",
+                "tool",
+                "question_ids",
+            }
+            or not _nonempty_string(item.get("family_id"))
+            or not _nonempty_string(item.get("evidence_need"))
+            or item.get("tool") != "search_dotnet_metadata"
+        ):
+            raise ValueError("SEARCH_PLAN_QUERY_FAMILY_INVALID")
+        _validate_string_array(item.get("queries"), "queries", allow_empty=False)
+        _validate_string_array(item.get("source_ids"), "source_ids", allow_empty=False)
+        _validate_string_array(item.get("question_ids"), "question_ids", allow_empty=False)
+        if any(value not in question_ids for value in item["question_ids"]):
+            raise ValueError("SEARCH_PLAN_QUERY_FAMILY_QUESTION_UNKNOWN")
+        family_id = str(item["family_id"])
+        if family_id in family_ids:
+            raise ValueError("SEARCH_PLAN_QUERY_FAMILY_ID_DUPLICATE")
+        family_ids.append(family_id)
+        for source_id in item["source_ids"]:
+            dispatch_key = (
+                str(item["tool"]),
+                str(source_id),
+                tuple(str(query) for query in item["queries"]),
+                str(item["evidence_need"]),
+            )
+            if dispatch_key in dispatch_keys:
+                raise ValueError("SEARCH_PLAN_QUERY_FAMILY_DISPATCH_AMBIGUOUS")
+            dispatch_keys.add(dispatch_key)
+    if not all(
+        _nonempty_string(value.get(field))
+        for field in ("initial_stop_condition", "initial_expand_condition")
+    ):
+        raise ValueError("SEARCH_PLAN_STOP_EXPAND_INVALID")
+    if require_queries and (
+        not value.get("engineering_questions") or not families or not lanes
+    ):
+        raise ValueError("SEARCH_PLAN_NO_VALID_QUERY")
+
+
+def _validate_string_array(
+    value: object, field_name: str, *, allow_empty: bool = True
+) -> None:
+    if (
+        not isinstance(value, list)
+        or (not allow_empty and not value)
+        or any(not _nonempty_string(item) for item in value)
+        or len(value) != len(set(value))
+    ):
+        raise ValueError(f"{field_name.upper()}_INVALID")
+
+
+def _nonempty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _planning_response_format() -> AgentResponseFormat:
+    return AgentResponseFormat(
+        name="agent_evidence_discovery_plan",
+        description=(
+            "Actual-only Hook Discovery requirement projection and bounded search plan."
+        ),
+        schema=evidence_discovery_planning_schema(),
+    )
 
 
 def _discovery_tool_definitions() -> tuple[AgentToolDefinition, ...]:
@@ -1038,7 +1614,9 @@ def _discovery_tool_definitions() -> tuple[AgentToolDefinition, ...]:
     )
 
 
-def evidence_discovery_finish_schema() -> dict[str, object]:
+def evidence_discovery_finish_schema(
+    *, require_requirement_binding: bool = False
+) -> dict[str, object]:
     """Return the exact model-facing schema enforced for a discovery finish."""
     conclusion = {
         "type": "object",
@@ -1056,8 +1634,26 @@ def evidence_discovery_finish_schema() -> dict[str, object]:
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
             },
+            "requirement_ids": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+            },
+            "relationship": {
+                "type": "string",
+                "enum": ["support", "conflict", "missing"],
+            },
         },
-        "required": ["claim", "claim_status", "observation_ids", "limitations"],
+        "required": [
+            "claim",
+            "claim_status",
+            "observation_ids",
+            "limitations",
+            *(
+                ["requirement_ids", "relationship"]
+                if require_requirement_binding
+                else []
+            ),
+        ],
         "additionalProperties": False,
     }
     return {
@@ -1111,11 +1707,15 @@ def evidence_discovery_finish_decision_constraints() -> dict[str, object]:
     }
 
 
-def _finish_response_format() -> AgentResponseFormat:
+def _finish_response_format(
+    *, require_requirement_binding: bool = False
+) -> AgentResponseFormat:
     return AgentResponseFormat(
         name="evidence_discovery_finish",
         description="Final grounded evidence decision for the bounded discovery run.",
-        schema=evidence_discovery_finish_schema(),
+        schema=evidence_discovery_finish_schema(
+            require_requirement_binding=require_requirement_binding
+        ),
     )
 
 

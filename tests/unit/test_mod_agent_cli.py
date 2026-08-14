@@ -230,6 +230,73 @@ class _CliILRunner:
         }
 
 
+def _cli_actual_plan_response(*, provider: str, model: str) -> AgentTurnResponse:
+    return AgentTurnResponse(
+        provider=provider,
+        model=model,
+        content=json.dumps(
+            {
+                "action": "plan",
+                "planning_status": "ready",
+                "requirement_projection": {
+                    "schema_version": "hook_requirement_projection_v2",
+                    "behavior_goal": "Discover and inspect one current movement method.",
+                    "trigger": None,
+                    "actor": None,
+                    "target": None,
+                    "hard_constraints": [],
+                    "forbidden_outcomes": [],
+                    "implementation_hints": [],
+                    "acceptance_signals": [],
+                    "planning_blocking_questions": [{
+                        "requirement_id": "req-movement",
+                        "question": "Which current managed method exposes movement behavior?",
+                    }],
+                    "deferred_planning_or_runtime_questions": [],
+                },
+                "search_plan": {
+                    "schema_version": "hook_discovery_search_plan_v2",
+                    "engineering_questions": [{
+                        "question_id": "question-movement",
+                        "question": "Which current managed method exposes movement behavior?",
+                        "requirement_ids": ["req-movement"],
+                    }],
+                    "source_roles": [
+                        {"source_id": "cli-source", "role": "current_api_and_il"}
+                    ],
+                    "planned_lanes": [
+                        {
+                            "lane": "managed_metadata_discovery",
+                            "tool": "search_dotnet_metadata",
+                            "source_ids": ["cli-source"],
+                        },
+                        {
+                            "lane": "exact_il_verification",
+                            "tool": "inspect_method_il",
+                            "source_ids": ["cli-source"],
+                        },
+                    ],
+                    "query_families": [
+                        {
+                            "family_id": "movement-behavior",
+                            "queries": ["movement"],
+                            "evidence_need": "Find one observed movement method.",
+                            "source_ids": ["cli-source"],
+                            "tool": "search_dotnet_metadata",
+                            "question_ids": ["question-movement"],
+                        }
+                    ],
+                    "initial_stop_condition": "Stop after exact IL verification.",
+                    "initial_expand_condition": "Expand once only for a recorded open question.",
+                },
+            }
+        ),
+        stop_reason="stop",
+        request_id="provider-cli-plan",
+        usage=AgentUsage(input_tokens=8, output_tokens=12),
+    )
+
+
 class _CliInjectedAgentAdapter:
     provider = "injected_cli_agent"
     instances: list["_CliInjectedAgentAdapter"] = []
@@ -240,10 +307,16 @@ class _CliInjectedAgentAdapter:
         base_url: str,
         model: str,
         max_output_tokens: int,
+        context_window: int | None = None,
+        seed: int = 0,
+        request_timeout_seconds: float = 180.0,
     ) -> None:
         self.base_url = base_url
         self.model = model
         self.max_output_tokens = max_output_tokens
+        self.context_window = context_window
+        self.seed = seed
+        self.request_timeout_seconds = request_timeout_seconds
         self.turn = 0
         self.model_observations: list[object] = []
         self.__class__.instances.append(self)
@@ -254,6 +327,8 @@ class _CliInjectedAgentAdapter:
             observation = request.tool_results[0].output
             self.model_observations.append(observation)
         if self.turn == 1:
+            return _cli_actual_plan_response(provider=self.provider, model=self.model)
+        if self.turn == 2:
             return AgentTurnResponse(
                 provider=self.provider,
                 model=self.model,
@@ -277,7 +352,7 @@ class _CliInjectedAgentAdapter:
                 usage=AgentUsage(input_tokens=10, output_tokens=5),
                 provider_state={"turn": 1},
             )
-        if self.turn == 2:
+        if self.turn == 3:
             observation = self.model_observations[-1]
             assert isinstance(observation, dict)
             serialized = json.dumps(observation)
@@ -306,7 +381,7 @@ class _CliInjectedAgentAdapter:
                     ),
                 ),
                 stop_reason="tool_calls",
-                request_id="provider-cli-002",
+                request_id="provider-cli-003",
                 usage=AgentUsage(input_tokens=20, output_tokens=5),
                 provider_state={"turn": 2},
             )
@@ -325,6 +400,8 @@ class _CliInjectedAgentAdapter:
                             "claim_status": "observed",
                             "observation_ids": ["obs-002"],
                             "limitations": [],
+                            "requirement_ids": ["req-movement"],
+                            "relationship": "support",
                         }
                     ],
                     "unresolved_questions": [
@@ -334,7 +411,7 @@ class _CliInjectedAgentAdapter:
                 }
             ),
             stop_reason="stop",
-            request_id="provider-cli-003",
+            request_id="provider-cli-004",
             usage=AgentUsage(input_tokens=30, output_tokens=10),
         )
 
@@ -360,6 +437,8 @@ class _CliUnknownToolAgentAdapter:
 
     def complete_turn(self, request) -> AgentTurnResponse:
         self.calls += 1
+        if self.calls == 1:
+            return _cli_actual_plan_response(provider=self.provider, model=self.model)
         return AgentTurnResponse(
             provider=self.provider,
             model=self.model,
@@ -798,6 +877,7 @@ def test_cli_intelligent_evidence_request_persists_candidate_binding_provenance(
                         "metadata": {
                             "evidence_discovery_kind": "unity_script_assembly",
                             "evidence_class": "cli_candidate_reference_test",
+                            "evidence_authority": "authoritative",
                             "description": "Generic CLI source capability view.",
                             "allowed_tools": [
                                 "search_dotnet_metadata",
@@ -878,7 +958,7 @@ def test_cli_intelligent_evidence_request_persists_candidate_binding_provenance(
     attempt = attempt_envelope["data"]
     assert attempt["run_id"] == payload["run_id"]
     assert attempt["run_validity"] == "valid_run"
-    assert attempt["model_calls"] == 3
+    assert attempt["model_calls"] == 4
     assert attempt["external_model_calls"] == 0
     assert attempt["accepted_model_actions"] == 3
     assert attempt["tool_calls_executed"] == 2
@@ -907,6 +987,7 @@ def test_phase1_source_bound_no_write_run_persists_complete_lineage(
                         "metadata": {
                             "evidence_discovery_kind": "unity_script_assembly",
                             "evidence_class": "phase1_lineage_test",
+                            "evidence_authority": "authoritative",
                             "description": "Phase 1 test source.",
                             "allowed_tools": [
                                 "search_dotnet_metadata",
@@ -1034,6 +1115,7 @@ def test_cli_unknown_external_tool_persists_invalid_attempt_without_execution_or
                         "metadata": {
                             "evidence_discovery_kind": "unity_script_assembly",
                             "evidence_class": "cli_unknown_tool_test",
+                            "evidence_authority": "authoritative",
                             "description": "Generic CLI source capability view.",
                             "allowed_tools": [
                                 "search_dotnet_metadata",
@@ -1094,7 +1176,7 @@ def test_cli_unknown_external_tool_persists_invalid_attempt_without_execution_or
     diagnostic = payload["diagnostic"]
     assert diagnostic["run_id"] == f"intelligent_evidence_{'3' * 32}"
     assert diagnostic["stage"] == "tool_call_validation"
-    assert diagnostic["external_model_calls"] == 1
+    assert diagnostic["external_model_calls"] == 2
     assert diagnostic["accepted_model_actions"] == 0
     assert diagnostic["tool_calls_executed"] == 0
     assert diagnostic["failure_attribution"] == (
@@ -1107,8 +1189,8 @@ def test_cli_unknown_external_tool_persists_invalid_attempt_without_execution_or
     assert attempt["run_id"] == diagnostic["run_id"]
     assert attempt["run_validity"] == "invalid_run"
     assert attempt["terminal_stage"] == "tool_call_validation"
-    assert attempt["model_calls"] == 1
-    assert attempt["external_model_calls"] == 1
+    assert attempt["model_calls"] == 2
+    assert attempt["external_model_calls"] == 2
     assert attempt["accepted_model_actions"] == 0
     assert attempt["tool_calls_executed"] == 0
     assert attempt["failure"]["code"] == "UNKNOWN_EVIDENCE_TOOL"
@@ -1126,19 +1208,19 @@ def test_cli_unknown_external_tool_persists_invalid_attempt_without_execution_or
     assert failure_diagnostics["traceback"]["source_lines_persisted"] is False
     assert failure_diagnostics["traceback"]["locals_persisted"] is False
     assert failure_diagnostics["traceback"]["exception_message_persisted"] is False
-    assert attempt["provider_turns"][0]["streaming"] is False
-    assert attempt["provider_turns"][0]["usage"]["total_tokens"] == 60
+    assert attempt["provider_turns"][1]["streaming"] is False
+    assert attempt["provider_turns"][1]["usage"]["total_tokens"] == 60
     serialized_attempt = json.dumps(attempt, ensure_ascii=False)
     assert "test-api-key" not in serialized_attempt
     assert str(source_root) not in serialized_attempt
     assert "Discover one exact movement method and inspect its IL." not in (
         serialized_attempt
     )
-    tool_identity = attempt["provider_turns"][0]["tool_calls"][0]
+    tool_identity = attempt["provider_turns"][1]["tool_calls"][0]
     assert tool_identity["provider_reported_tool_name"] == "search_metadata"
     assert tool_identity["adapter_extracted_tool_name"] == "search_metadata"
     assert len(tool_identity["arguments_sha256"]) == 64
-    assert _CliUnknownToolAgentAdapter.instances[0].calls == 1
+    assert _CliUnknownToolAgentAdapter.instances[0].calls == 2
     assert executor.actions == []
     artifact_root = tmp_path / "a"
     attempt_revisions = [
@@ -1183,6 +1265,7 @@ def test_cli_failed_attempt_persists_partial_execution_diagnostics(
                         "metadata": {
                             "evidence_discovery_kind": "unity_script_assembly",
                             "evidence_class": "cli_failure_diagnostics_test",
+                            "evidence_authority": "authoritative",
                             "description": "Generic CLI source capability view.",
                             "allowed_tools": [
                                 "search_dotnet_metadata",
@@ -1318,7 +1401,11 @@ def test_cli_intelligent_evidence_request_selects_local_ollama_without_disclosur
             "--ollama-base-url",
             "http://127.0.0.1:11434",
             "--ollama-model",
-            "qwen3:4b-instruct",
+            "qwen3.6:27b",
+            "--ollama-context-window",
+            "32768",
+            "--ollama-request-timeout-seconds",
+            "600",
         ]
     )
 
@@ -1327,7 +1414,9 @@ def test_cli_intelligent_evidence_request_selects_local_ollama_without_disclosur
     assert captured["local_ollama"] is True
     assert captured["allow_evidence_disclosure"] is False
     assert captured["ollama_base_url"] == "http://127.0.0.1:11434"
-    assert captured["ollama_model"] == "qwen3:4b-instruct"
+    assert captured["ollama_model"] == "qwen3.6:27b"
+    assert captured["ollama_context_window"] == 32768
+    assert captured["ollama_request_timeout_seconds"] == 600.0
 
 
 def test_cli_intelligent_evidence_request_blocks_without_disclosure(

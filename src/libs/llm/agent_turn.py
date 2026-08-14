@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from hashlib import sha256
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Protocol
@@ -253,14 +254,36 @@ class OllamaChatAgentAdapter:
         base_url: str,
         model: str,
         max_output_tokens: int,
+        context_window: int | None = None,
+        seed: int = 0,
+        request_timeout_seconds: float = 180.0,
         request_sender: JsonRequestSender | None = None,
     ) -> None:
-        if not model.strip() or max_output_tokens <= 0:
+        if (
+            not model.strip()
+            or max_output_tokens <= 0
+            or (
+                context_window is not None
+                and (
+                    isinstance(context_window, bool)
+                    or not isinstance(context_window, int)
+                    or context_window <= max_output_tokens
+                )
+            )
+            or isinstance(seed, bool)
+            or not isinstance(seed, int)
+            or request_timeout_seconds <= 0
+        ):
             raise ValueError("Ollama Agent adapter configuration is invalid.")
         self.base_url = validate_loopback_http_base_url(base_url)
         self.model = model
         self.max_output_tokens = max_output_tokens
-        self._send = request_sender or _LoopbackHttpJsonSender()
+        self.context_window = context_window
+        self.seed = seed
+        self.request_timeout_seconds = request_timeout_seconds
+        self._send = request_sender or _LoopbackHttpJsonSender(
+            timeout_seconds=request_timeout_seconds
+        )
 
     def complete_turn(self, request: AgentTurnRequest) -> AgentTurnResponse:
         messages = [_chat_message(item) for item in request.messages]
@@ -285,25 +308,31 @@ class OllamaChatAgentAdapter:
                 )
             insert_at = _insert_index(request.tool_result_insert_index, len(messages))
             messages[insert_at:insert_at] = exchange
+        options: dict[str, object] = {
+            "temperature": request.temperature,
+            "num_predict": self.max_output_tokens,
+            "seed": self.seed,
+        }
+        if self.context_window is not None:
+            options["num_ctx"] = self.context_window
         payload: dict[str, object] = {
             "model": self.model,
             "messages": messages,
             "stream": False,
             "think": False,
-            "options": {
-                "temperature": request.temperature,
-                "num_predict": self.max_output_tokens,
-            },
+            "options": options,
         }
         if request.tools:
             payload["tools"] = [_chat_tool(tool) for tool in request.tools]
         if request.response_format is not None:
             payload["format"] = request.response_format.schema
+        request_started = time.perf_counter()
         data = self._send(
             f"{self.base_url}/api/chat",
             payload,
             {"Content-Type": "application/json"},
         )
+        client_elapsed_seconds = time.perf_counter() - request_started
         message = data.get("message")
         if not isinstance(message, dict):
             raise AgentTurnProviderError("OLLAMA_CHAT_RESPONSE_INVALID")
@@ -325,6 +354,16 @@ class OllamaChatAgentAdapter:
                 "content": message.get("content"),
                 "tool_calls": raw_tool_calls,
             },
+            provider_diagnostic=_ollama_provider_diagnostic(
+                data=data,
+                requested_model=self.model,
+                max_output_tokens=self.max_output_tokens,
+                context_window=self.context_window,
+                temperature=request.temperature,
+                seed=self.seed,
+                client_elapsed_seconds=client_elapsed_seconds,
+                tool_calls=tool_calls,
+            ),
             raw_response=data,
         )
 
@@ -716,6 +755,57 @@ def _parse_ollama_tool_call(item: object) -> AgentToolCall:
         name=name,
         arguments=arguments,
     )
+
+
+def _ollama_provider_diagnostic(
+    *,
+    data: dict[str, Any],
+    requested_model: str,
+    max_output_tokens: int,
+    context_window: int | None,
+    temperature: float,
+    seed: int,
+    client_elapsed_seconds: float,
+    tool_calls: tuple[AgentToolCall, ...],
+) -> dict[str, object]:
+    """Retain bounded native timing facts without treating them as evidence."""
+
+    eval_count = _int_value(data.get("eval_count"))
+    eval_duration_ns = _int_value(data.get("eval_duration"))
+    tokens_per_second = (
+        eval_count / (eval_duration_ns / 1_000_000_000)
+        if eval_count > 0 and eval_duration_ns > 0
+        else None
+    )
+    return {
+        "api_type": "ollama_native_chat",
+        "streaming": False,
+        "thinking": False,
+        "requested_model": requested_model,
+        "returned_model": str(data.get("model") or ""),
+        "configured_context_window": context_window,
+        "configured_temperature": temperature,
+        "configured_seed": seed,
+        "configured_max_output_tokens": max_output_tokens,
+        "client_total_duration_seconds": client_elapsed_seconds,
+        "ollama_total_duration_ns": _int_value(data.get("total_duration")),
+        "ollama_load_duration_ns": _int_value(data.get("load_duration")),
+        "ollama_prompt_eval_duration_ns": _int_value(
+            data.get("prompt_eval_duration")
+        ),
+        "ollama_eval_duration_ns": eval_duration_ns,
+        "tokens_per_second": tokens_per_second,
+        "first_token_duration_available": False,
+        "finish_reason": str(data.get("done_reason") or "") or None,
+        "tool_calls": [
+            {"tool_call_id": call.call_id, "normalized_tool_name": call.name}
+            for call in tool_calls
+        ],
+        "usage": AgentUsage(
+            input_tokens=_int_value(data.get("prompt_eval_count")),
+            output_tokens=eval_count,
+        ).to_dict(),
+    }
 
 
 def _parse_arguments(value: object) -> dict[str, object]:

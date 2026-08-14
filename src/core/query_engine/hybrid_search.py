@@ -735,9 +735,9 @@ class HybridSearch:
                 if not set(meta_tags) & set(value):
                     return False
             elif key == "source_path":
-                # Partial match for path
+                # Source filtering is an identity boundary, not fuzzy relevance.
                 source = metadata.get("source_path", "")
-                if value not in source:
+                if source != value:
                     return False
             else:
                 # Generic exact match
@@ -753,6 +753,7 @@ def create_hybrid_search(
     dense_retriever: Optional[DenseRetriever] = None,
     sparse_retriever: Optional[SparseRetriever] = None,
     fusion: Optional[RRFFusion] = None,
+    config: Optional[HybridSearchConfig] = None,
 ) -> HybridSearch:
     """Factory function to create HybridSearch with default components.
     
@@ -765,6 +766,8 @@ def create_hybrid_search(
         dense_retriever: DenseRetriever instance.
         sparse_retriever: SparseRetriever instance.
         fusion: RRFFusion instance. If None, creates default with k=60.
+        config: Explicit retrieval-lane configuration. When omitted, the
+            historical settings-derived behavior is preserved.
         
     Returns:
         Configured HybridSearch instance.
@@ -793,4 +796,5 @@ def create_hybrid_search(
         dense_retriever=dense_retriever,
         sparse_retriever=sparse_retriever,
         fusion=fusion,
+        config=config,
     )

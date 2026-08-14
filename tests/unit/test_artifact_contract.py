@@ -648,6 +648,49 @@ def _evidence_payload() -> dict[str, object]:
     }
 
 
+def test_legacy_evidence_pack_bytes_hash_and_read_meaning_are_unchanged(
+    tmp_path: Path,
+) -> None:
+    payload = _evidence_payload()
+    canonical_before = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    assert len(canonical_before) == 770
+    assert hashlib.sha256(canonical_before).hexdigest() == (
+        "64e6a90a6d52e73babbcf0ea9e6fda2e0df88bc3574ef7f8a192f1e24940dbe1"
+    )
+
+    registry = ArtifactTypeRegistry()
+    registry.validate_write(
+        artifact_type="evidence_pack",
+        status="success",
+        payload=payload,
+    )
+    store = ArtifactStore(tmp_path / "legacy-evidence-pack")
+    feature_ref = store.write(
+        feature_id="feature_legacy_evidence_pack",
+        artifact_type="feature_spec",
+        payload={
+            **_feature_payload(),
+            "feature_id": "feature_legacy_evidence_pack",
+        },
+    )
+    evidence_ref = store.write(
+        feature_id="feature_legacy_evidence_pack",
+        artifact_type="evidence_pack",
+        payload=payload,
+        upstream_refs=[feature_ref],
+    )
+    committed = store.read(evidence_ref)["data"]
+    canonical_after = json.dumps(
+        committed, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+    assert canonical_after == canonical_before
+    assert "hook_discovery" not in committed
+    assert "agent_discovery" not in committed
+
+
 def test_every_workflow_artifact_type_is_registered() -> None:
     registry = ArtifactTypeRegistry()
 

@@ -348,6 +348,19 @@ class TestSparseRetrieverEmptyResults:
         
         assert results == []
 
+    def test_retrieve_raises_when_required_index_is_unavailable(self):
+        """Product callers can distinguish index failure from no matches."""
+        bm25 = MockBM25IndexerFailing(fail_on_load=True)
+        vs = MockVectorStore()
+        retriever = SparseRetriever(
+            bm25_indexer=bm25,
+            vector_store=vs,
+            fail_on_unavailable_index=True,
+        )
+
+        with pytest.raises(RuntimeError, match="BM25 index.*unavailable"):
+            retriever.retrieve(["test"])
+
 
 # ============================================================================
 # Test: Error Handling

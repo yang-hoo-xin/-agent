@@ -1,8 +1,8 @@
 """MCP Tool: query_knowledge_hub
 
 This tool provides knowledge retrieval capabilities through the MCP protocol.
-It combines HybridSearch (Dense + Sparse + RRF Fusion) with optional Reranking
-to find relevant documents and return formatted results with citations.
+Its deterministic default is BM25 sparse retrieval. Dense retrieval, fusion,
+and reranking are explicit experiments rather than default query behavior.
 
 Usage via MCP:
     Tool name: query_knowledge_hub
@@ -25,9 +25,10 @@ from src.core.response.response_builder import ResponseBuilder, MCPToolResponse
 from src.core.settings import load_settings, resolve_path, Settings
 from src.core.trace import TraceContext, TraceCollector
 from src.core.types import RetrievalResult
+from src.core.query_engine.query_processor import QueryProcessor
 
 if TYPE_CHECKING:
-    from src.core.query_engine.hybrid_search import HybridSearch
+    from src.core.query_engine.hybrid_search import HybridSearch, HybridSearchResult
     from src.core.query_engine.reranker import CoreReranker
 
 logger = logging.getLogger(__name__)
@@ -37,8 +38,9 @@ logger = logging.getLogger(__name__)
 TOOL_NAME = "query_knowledge_hub"
 TOOL_DESCRIPTION = """Search the knowledge base for relevant documents.
 
-This tool uses hybrid search (semantic + keyword) to find the most relevant 
-documents matching your query. Results include source citations for reference.
+This tool uses deterministic BM25 keyword retrieval by default. Results include
+source citations and explicit retrieval coverage. Dense retrieval and reranking
+remain disabled unless configured for an experiment.
 
 Parameters:
 - query: Your search question or keywords
@@ -77,12 +79,31 @@ class QueryKnowledgeHubConfig:
         default_top_k: Default number of results if not specified
         max_top_k: Maximum allowed top_k value
         default_collection: Default collection if not specified
-        enable_rerank: Whether to apply reranking
+        enable_dense: Whether to run the experimental dense lane
+        enable_rerank: Whether to apply experimental reranking
     """
     default_top_k: int = 5
     max_top_k: int = 20
     default_collection: str = "default"
-    enable_rerank: bool = True
+    enable_dense: bool = False
+    enable_rerank: bool = False
+
+
+@dataclass
+class KnowledgeRetrievalOutcome:
+    """Bounded query outcome before response rendering."""
+
+    results: List[RetrievalResult]
+    retrieval_status: str
+    answer_allowance: str
+    searched_lanes: List[str]
+    failed_lanes: Dict[str, str]
+    unsearched_lanes: Dict[str, str]
+    applied_filters: Dict[str, Any]
+
+    @property
+    def required_coverage_complete(self) -> bool:
+        return "sparse_bm25" in self.searched_lanes and "sparse_bm25" not in self.failed_lanes
 
 
 class QueryKnowledgeHubTool:
@@ -163,36 +184,39 @@ class QueryKnowledgeHubTool:
         
         # Import here to avoid circular imports and allow lazy loading
         from src.core.query_engine.query_processor import QueryProcessor
-        from src.core.query_engine.hybrid_search import create_hybrid_search
-        from src.core.query_engine.dense_retriever import create_dense_retriever
+        from src.core.query_engine.hybrid_search import HybridSearchConfig, create_hybrid_search
         from src.core.query_engine.sparse_retriever import create_sparse_retriever
-        from src.core.query_engine.reranker import create_core_reranker
         from src.ingestion.storage.bm25_indexer import BM25Indexer
-        from src.libs.embedding.embedding_factory import EmbeddingFactory
         from src.libs.vector_store.vector_store_factory import VectorStoreFactory
+
+        vector_store = VectorStoreFactory.create(
+            self.settings,
+            collection_name=collection,
+        )
         
         # === Fully cached components (stateless, never go stale) ===
-        if self._embedding_client is None:
-            self._embedding_client = EmbeddingFactory.create(self.settings)
-        
-        if self._reranker is None:
+        dense_retriever = None
+        if self.config.enable_dense:
+            from src.core.query_engine.dense_retriever import create_dense_retriever
+            from src.libs.embedding.embedding_factory import EmbeddingFactory
+
+            if self._embedding_client is None:
+                self._embedding_client = EmbeddingFactory.create(self.settings)
+
+            dense_retriever = create_dense_retriever(
+                settings=self.settings,
+                embedding_client=self._embedding_client,
+                vector_store=vector_store,
+            )
+
+        if self.config.enable_rerank and self._reranker is None:
+            from src.core.query_engine.reranker import create_core_reranker
             self._reranker = create_core_reranker(settings=self.settings)
         
         # === Rebuild for new collection ===
         # ChromaDB PersistentClient uses SQLite under the hood —
         # concurrent readers see committed writes from other processes
         # (dashboard ingestion), so caching the client is safe.
-        vector_store = VectorStoreFactory.create(
-            self.settings,
-            collection_name=collection,
-        )
-        
-        dense_retriever = create_dense_retriever(
-            settings=self.settings,
-            embedding_client=self._embedding_client,
-            vector_store=vector_store,
-        )
-        
         # BM25Indexer just holds the index dir path; the SparseRetriever
         # calls _ensure_index_loaded() on every search, which always
         # reloads from disk — so it picks up dashboard-written data.
@@ -201,6 +225,7 @@ class QueryKnowledgeHubTool:
             settings=self.settings,
             bm25_indexer=bm25_indexer,
             vector_store=vector_store,
+            fail_on_unavailable_index=True,
         )
         sparse_retriever.default_collection = collection
         
@@ -210,11 +235,24 @@ class QueryKnowledgeHubTool:
             query_processor=query_processor,
             dense_retriever=dense_retriever,
             sparse_retriever=sparse_retriever,
+            config=HybridSearchConfig(
+                dense_top_k=self._retrieval_setting("dense_top_k", 20),
+                sparse_top_k=self._retrieval_setting("sparse_top_k", 20),
+                fusion_top_k=self._retrieval_setting("fusion_top_k", 10),
+                enable_dense=self.config.enable_dense,
+                enable_sparse=True,
+                parallel_retrieval=self.config.enable_dense,
+                metadata_filter_post=True,
+            ),
         )
         
         self._current_collection = collection
         self._initialized = True
         logger.info(f"Query components initialized for collection: {collection}")
+
+    def _retrieval_setting(self, name: str, default: int) -> int:
+        retrieval = getattr(self.settings, "retrieval", None)
+        return int(getattr(retrieval, name, default)) if retrieval is not None else default
     
     async def execute(
         self,
@@ -244,7 +282,9 @@ class QueryKnowledgeHubTool:
             top_k or self.config.default_top_k,
             self.config.max_top_k
         )
-        effective_collection = collection or self.config.default_collection
+        parsed_query = QueryProcessor().process(query)
+        query_collection = parsed_query.filters.get("collection")
+        effective_collection = collection or query_collection or self.config.default_collection
         
         logger.info(
             f"Executing query_knowledge_hub: query='{query[:50]}...', "
@@ -271,9 +311,10 @@ class QueryKnowledgeHubTool:
             }, elapsed_ms=_init_elapsed)
             
             # Perform hybrid search (blocking: embedding API + DB queries)
-            results = await asyncio.to_thread(
-                self._perform_search, query, effective_top_k, trace,
+            outcome = await asyncio.to_thread(
+                self._perform_search, query, effective_top_k, trace, effective_collection,
             )
+            results = outcome.results
             
             # Apply reranking if enabled (may call LLM API)
             if self.config.enable_rerank and results:
@@ -287,6 +328,7 @@ class QueryKnowledgeHubTool:
                 query=query,
                 collection=effective_collection,
             )
+            self._attach_retrieval_metadata(response, outcome)
             
             # Store final results in trace for dashboard display
             trace.metadata["final_results"] = [
@@ -319,16 +361,18 @@ class QueryKnowledgeHubTool:
         query: str,
         top_k: int,
         trace: Optional[Any] = None,
-    ) -> List[RetrievalResult]:
-        """Perform hybrid search.
+        collection: Optional[str] = None,
+    ) -> KnowledgeRetrievalOutcome:
+        """Perform retrieval and preserve lane coverage and failure state.
         
         Args:
             query: Search query.
             top_k: Maximum results.
             trace: Optional TraceContext for observability.
+            collection: Exact physical collection selected by the tool.
             
         Returns:
-            List of RetrievalResult.
+            KnowledgeRetrievalOutcome with results and coverage.
         """
         if self._hybrid_search is None:
             raise RuntimeError("HybridSearch not initialized")
@@ -336,18 +380,115 @@ class QueryKnowledgeHubTool:
         # Use a larger initial retrieval for reranking
         initial_top_k = top_k * 2 if self.config.enable_rerank else top_k
         
-        try:
-            results = self._hybrid_search.search(
-                query=query,
-                top_k=initial_top_k,
-                filters=None,
-                trace=trace,
-                return_details=False,
+        details = self._hybrid_search.search(
+            query=query,
+            top_k=initial_top_k,
+            filters={"collection": collection} if collection else None,
+            trace=trace,
+            return_details=True,
+        )
+        if isinstance(details, list):
+            raise RuntimeError("HybridSearch did not return retrieval details")
+        return self._build_retrieval_outcome(details, collection)
+
+    def _build_retrieval_outcome(
+        self,
+        details: HybridSearchResult,
+        collection: Optional[str] = None,
+    ) -> KnowledgeRetrievalOutcome:
+        searched_lanes: List[str] = []
+        failed_lanes: Dict[str, str] = {}
+        unsearched_lanes: Dict[str, str] = {}
+
+        if details.sparse_error:
+            failed_lanes["sparse_bm25"] = details.sparse_error
+        elif details.sparse_results is not None:
+            searched_lanes.append("sparse_bm25")
+        else:
+            unsearched_lanes["sparse_bm25"] = "query_produced_no_searchable_terms"
+
+        if self.config.enable_dense:
+            if details.dense_error:
+                failed_lanes["dense"] = details.dense_error
+            elif details.dense_results is not None:
+                searched_lanes.append("dense")
+            else:
+                unsearched_lanes["dense"] = "configured_lane_not_executed"
+        else:
+            unsearched_lanes["dense"] = "disabled_by_default"
+
+        if "sparse_bm25" in failed_lanes or "sparse_bm25" in unsearched_lanes:
+            retrieval_status = "retrieval_failed"
+            answer_allowance = "none"
+        elif not details.results:
+            retrieval_status = "evidence_insufficient"
+            answer_allowance = "evidence_insufficient_response"
+        elif failed_lanes or any(
+            reason != "disabled_by_default" for reason in unsearched_lanes.values()
+        ):
+            retrieval_status = "bounded_partial"
+            answer_allowance = "bounded_partial_results"
+        else:
+            retrieval_status = "source_supported_results"
+            answer_allowance = "source_supported_results"
+
+        applied_filters = dict(details.processed_query.filters) if details.processed_query else {}
+        if collection:
+            applied_filters["collection"] = collection
+        return KnowledgeRetrievalOutcome(
+            results=details.results,
+            retrieval_status=retrieval_status,
+            answer_allowance=answer_allowance,
+            searched_lanes=searched_lanes,
+            failed_lanes=failed_lanes,
+            unsearched_lanes=unsearched_lanes,
+            applied_filters=applied_filters,
+        )
+
+    def _attach_retrieval_metadata(
+        self,
+        response: MCPToolResponse,
+        outcome: KnowledgeRetrievalOutcome,
+    ) -> None:
+        response.metadata.update({
+            "retrieval_status": outcome.retrieval_status,
+            "answer_allowance": outcome.answer_allowance,
+            "required_lanes": ["sparse_bm25"],
+            "searched_lanes": outcome.searched_lanes,
+            "failed_lanes": outcome.failed_lanes,
+            "unsearched_lanes": outcome.unsearched_lanes,
+            "required_coverage_complete": outcome.required_coverage_complete,
+            "applied_filters": outcome.applied_filters,
+            "retrieval_configuration": {
+                "baseline": "sparse_bm25",
+                "dense_enabled": self.config.enable_dense,
+                "rerank_enabled": self.config.enable_rerank,
+            },
+        })
+
+        if outcome.retrieval_status == "evidence_insufficient":
+            response.content = (
+                "## 证据不足\n\n"
+                "已完成所需的 BM25 检索，但没有找到足以支持明确回答的来源内容。"
+                "这不是平台执行失败。\n\n" + response.content
             )
-            return results if isinstance(results, list) else results.results
-        except Exception as e:
-            logger.warning(f"Hybrid search failed: {e}")
-            return []
+        elif outcome.retrieval_status == "bounded_partial":
+            response.content = (
+                "## 有界部分结果\n\n"
+                "以下内容有来源支持，但部分已配置检索路径失败或未执行；"
+                "不得据此补全缺失事实。\n\n" + response.content
+            )
+        elif outcome.retrieval_status == "retrieval_failed":
+            response.content = (
+                "## 检索失败\n\n"
+                "所需的 BM25 检索路径未成功完成，不能把本次结果解释为证据不足。"
+            )
+            response.citations = []
+            response.is_empty = True
+            response.metadata["error"] = outcome.failed_lanes.get(
+                "sparse_bm25",
+                outcome.unsearched_lanes.get("sparse_bm25", "required retrieval not completed"),
+            )
     
     def _apply_rerank(
         self,
@@ -420,6 +561,19 @@ class QueryKnowledgeHubTool:
                 "query": query,
                 "collection": collection,
                 "error": error_message,
+                "retrieval_status": "retrieval_failed",
+                "answer_allowance": "none",
+                "required_lanes": ["sparse_bm25"],
+                "searched_lanes": [],
+                "failed_lanes": {"initialization_or_retrieval": error_message},
+                "unsearched_lanes": {"sparse_bm25": "platform_failure"},
+                "required_coverage_complete": False,
+                "applied_filters": {},
+                "retrieval_configuration": {
+                    "baseline": "sparse_bm25",
+                    "dense_enabled": self.config.enable_dense,
+                    "rerank_enabled": self.config.enable_rerank,
+                },
             },
             is_empty=True,
         )

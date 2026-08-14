@@ -7,6 +7,8 @@ import json
 from typing import Any
 
 from .discovery_contract import (
+    AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION,
+    AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION,
     EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION,
     EVIDENCE_DISCOVERY_RESULT_KINDS,
     EvidenceDiscoveryModel,
@@ -15,11 +17,19 @@ from .discovery_contract import (
     EvidenceDiscoverySource,
     EvidenceDiscoveryToolExecutor,
     ToolObservation,
+    agent_discovery_early_termination_state,
     evidence_discovery_finish_decision_constraints,
     evidence_discovery_finish_schema,
+    evidence_discovery_planning_schema,
+    normalize_agent_discovery_planning_actual,
     observed_conclusion_matches_bound_fact,
+    validate_agent_discovery_actual,
 )
 from .models import EvidencePack, missing_evidence_from_blockers
+from .hook_discovery import (
+    build_agent_discovery_semantics,
+    evidence_pack_state_from_hook_discovery,
+)
 
 
 class IntelligentEvidencePackFactory:
@@ -34,6 +44,7 @@ class IntelligentEvidencePackFactory:
         max_model_steps: int = 8,
         max_result_bytes_per_call: int = 65_536,
         max_total_observation_bytes: int = 262_144,
+        require_actual_planning: bool = False,
     ) -> None:
         self.specialist = specialist
         self.sources = sources
@@ -41,6 +52,7 @@ class IntelligentEvidencePackFactory:
         self.max_model_steps = max_model_steps
         self.max_result_bytes_per_call = max_result_bytes_per_call
         self.max_total_observation_bytes = max_total_observation_bytes
+        self.require_actual_planning = require_actual_planning
         self.last_result: EvidenceDiscoveryResult | None = None
 
     @property
@@ -66,6 +78,7 @@ class IntelligentEvidencePackFactory:
                 max_model_steps=self.max_model_steps,
                 max_result_bytes_per_call=self.max_result_bytes_per_call,
                 max_total_observation_bytes=self.max_total_observation_bytes,
+                require_actual_planning=self.require_actual_planning,
             )
         )
         self.last_result = result
@@ -88,6 +101,8 @@ class EvidenceDiscoverySpecialist:
         self.model = model
         self.tool_executor = tool_executor
         self._runtime_diagnostics = _new_runtime_diagnostics()
+        self._agent_discovery: dict[str, object] | None = None
+        self._planning_model_steps_used = 0
 
     @property
     def runtime_diagnostics(self) -> dict[str, object]:
@@ -102,6 +117,8 @@ class EvidenceDiscoverySpecialist:
 
     def discover(self, request: EvidenceDiscoveryRequest) -> EvidenceDiscoveryResult:
         self._runtime_diagnostics = _new_runtime_diagnostics()
+        self._agent_discovery = None
+        self._planning_model_steps_used = 0
         self._runtime_diagnostics["failure_stage"] = "run_initialization"
         try:
             result = self._discover(request)
@@ -128,6 +145,7 @@ class EvidenceDiscoverySpecialist:
         if callable(begin_tool_run):
             begin_tool_run(run_id=request.run_id)
         sources = {source.source_id: source for source in request.sources}
+        source_views = [source.model_view() for source in request.sources]
         initial_messages: tuple[dict[str, object], ...] = (
             {"role": "system", "content": _system_contract()},
             {
@@ -135,7 +153,7 @@ class EvidenceDiscoverySpecialist:
                 "content": {
                     "request_id": request.request_id,
                     "goal": request.natural_language_request,
-                    "sources": [source.model_view() for source in request.sources],
+                    "sources": source_views,
                     "constraints": {
                         "read_only": True,
                         "target_code_execution": False,
@@ -146,8 +164,105 @@ class EvidenceDiscoverySpecialist:
                 },
             },
         )
+        agent_discovery: dict[str, object] | None = None
+        if request.require_actual_planning:
+            self._runtime_diagnostics["failure_stage"] = "requirement_projection"
+            planning_messages = (
+                initial_messages[0],
+                initial_messages[1],
+                {
+                    "role": "user",
+                    "content": {
+                        "message_type": "actual_planning_request",
+                        "required_next_action": "plan",
+                        "planning_scope": "first_hook_discovery_slice",
+                    "rules": [
+                            "Project only semantics stated or directly implied by the request.",
+                            "Implementation hints are investigation_lead values, not facts or decisions.",
+                            "Use only registered source_ids and allowed tools in the search plan.",
+                            "Do not include a final Hook identity, Golden, expected evidence, historical answer, or prior output.",
+                            "Queries are literal managed-symbol substring families derived from request semantics.",
+                            "planning_status is advisory; deterministic validation classifies whether the returned projection and plan are executable.",
+                        ],
+                    },
+                },
+            )
+            raw_plan = self.model.complete(planning_messages)
+            self._planning_model_steps_used = 1
+            self._runtime_diagnostics["failure_stage"] = "search_planning"
+            try:
+                agent_discovery = _validated_actual_plan_from_raw(
+                    raw_plan,
+                    sources=sources,
+                )
+            except ValueError as exc:
+                first_error = str(exc)
+                self._runtime_diagnostics["correction_attempted"] = True
+                correction_messages = (
+                    *planning_messages,
+                    {
+                        "role": "assistant",
+                        "content": {
+                            "message_type": "rejected_actual_plan",
+                            "structured_output": raw_plan,
+                        },
+                    },
+                    {
+                        "role": "user",
+                        "content": {
+                            "message_type": "actual_planning_validation_error",
+                            "error_code": first_error,
+                            "required_next_action": "plan",
+                            "required_plan_schema": evidence_discovery_planning_schema(),
+                            "instruction": (
+                                "Return one corrected actual-only plan. Preserve request "
+                                "semantics and registered source_ids; do not add a Hook "
+                                "identity, Golden, expected facts, historical answer, or "
+                                "prior output beyond correcting this rejected plan."
+                            ),
+                        },
+                    },
+                )
+                corrected_raw_plan = self.model.complete(correction_messages)
+                self._planning_model_steps_used = 2
+                agent_discovery = _validated_actual_plan_from_raw(
+                    corrected_raw_plan,
+                    sources=sources,
+                )
+            self._agent_discovery = agent_discovery
+            if agent_discovery["planning_status"] != "ready":
+                return self._planning_insufficient_result(
+                    request=request,
+                    agent_discovery=agent_discovery,
+                )
+            initial_messages = (
+                initial_messages[0],
+                initial_messages[1],
+                {
+                    "role": "assistant",
+                    "content": {
+                        "message_type": "frozen_actual_plan",
+                        "agent_discovery": agent_discovery,
+                    },
+                },
+                {
+                    "role": "user",
+                    "content": {
+                        "message_type": "execute_frozen_plan",
+                        "required_next_action": "use_tool",
+                        "instruction": (
+                            "Begin with one planned metadata query family. Exact IL may "
+                            "consume only a candidate_ref from this run's observation."
+                        ),
+                    },
+                },
+            )
         prompt_contract = {
-            "version": EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION,
+            "version": (
+                AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION
+                if request.require_actual_planning
+                else EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION
+            ),
             "system_contract_sha256": _json_sha256(initial_messages[0]["content"]),
             "initial_context_sha256": _json_sha256(initial_messages[1]["content"]),
             "context_strategy": (
@@ -155,6 +270,10 @@ class EvidenceDiscoverySpecialist:
                 "repeat_correction_and_supported_facts_v6"
             ),
             "raw_prompt_persisted": False,
+            "actual_planning_required": request.require_actual_planning,
+            "agent_discovery_sha256": (
+                _json_sha256(agent_discovery) if agent_discovery is not None else None
+            ),
         }
         actions: list[dict[str, object]] = []
         model_action_attempts: list[dict[str, object]] = []
@@ -254,20 +373,40 @@ class EvidenceDiscoverySpecialist:
                             model_action_attempts=model_action_attempts,
                         )
                     zero_result_recovery_correction_used = True
+                    required_change = (
+                        "Use search_dotnet_metadata once with a materially "
+                        "different literal managed-symbol substring, result_kinds, "
+                        "or authorized source. Do not infer a hidden symbol."
+                    )
+                    if self._agent_discovery is not None:
+                        required_change = (
+                            "Use exactly one not-yet-executed query family from "
+                            "frozen_actual_plan. Preserve that family's queries and "
+                            "evidence_need, select one of its source_ids, and bind "
+                            "derived_from_observation_ids to the zero-result metadata "
+                            "observation. Do not invent or alter a query family."
+                        )
                     tool_action_validation_error = {
                         "error_code": "ZERO_RESULT_RECOVERY_REQUIRED",
                         "rejected_action_signature_sha256": _json_sha256(action),
-                        "required_change": (
-                            "Use search_dotnet_metadata once with a materially "
-                            "different literal managed-symbol substring, result_kinds, "
-                            "or authorized source. Do not infer a hidden symbol."
-                        ),
+                        "required_change": required_change,
                         "finish_allowed": False,
                     }
+                    if self._agent_discovery is not None:
+                        tool_action_validation_error[
+                            "allowed_unexecuted_query_families"
+                        ] = _unexecuted_query_family_views(
+                            agent_discovery=self._agent_discovery,
+                            actions=actions,
+                        )
                     continue
                 self._runtime_diagnostics["failure_stage"] = "finish_validation"
                 try:
-                    _validate_finish(action, observations_by_id)
+                    _validate_finish(
+                        action,
+                        observations_by_id,
+                        agent_discovery=self._agent_discovery,
+                    )
                 except ValueError as exc:
                     error = str(exc)
                     model_action_attempts.append(
@@ -369,6 +508,13 @@ class EvidenceDiscoverySpecialist:
                 observations_by_id=observations_by_id,
                 candidate_origins=candidate_origins,
             )
+            if self._agent_discovery is not None:
+                _validate_action_against_frozen_plan(
+                    action,
+                    actions=actions,
+                    observations=observations,
+                    agent_discovery=self._agent_discovery,
+                )
             self._runtime_diagnostics["failure_stage"] = "repeat_policy"
             action_signature = _tool_action_signature(action)
             if action_signature in executed_tool_action_signatures:
@@ -484,6 +630,54 @@ class EvidenceDiscoverySpecialist:
             model_action_attempts=model_action_attempts,
         )
 
+    def _planning_insufficient_result(
+        self,
+        *,
+        request: EvidenceDiscoveryRequest,
+        agent_discovery: dict[str, object],
+    ) -> EvidenceDiscoveryResult:
+        state = agent_discovery_early_termination_state(agent_discovery)
+        status = str(state["run_status"])
+        input_audit = _input_audit(request)
+        pack = EvidencePack(
+            query=request.natural_language_request,
+            readiness=state["readiness"],
+            can_generate_patch=state["can_generate_patch"],
+            gaps=state["gaps"],
+            blockers=state["blockers"],
+            missing_evidence=state["missing_evidence"],
+            run_status=status,
+            agent_discovery=agent_discovery,
+            prompt_contract={
+                "version": AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION,
+                "actual_planning_required": True,
+                "agent_discovery_sha256": _json_sha256(agent_discovery),
+                "raw_prompt_persisted": False,
+            },
+            input_audit=input_audit,
+            message=str(state["message"]),
+        )
+        transfer = {
+            "source_selection_by_platform": True,
+            "tool_selection_by_platform": False,
+            "symbol_discovery_by_platform": False,
+            "followup_selection_by_platform": False,
+            "evidence_interpretation_by_platform": False,
+            "converged_before_budget": True,
+            "grounded_conclusion_by_platform": False,
+            "unproductive_repetition_absent": True,
+            "semantic_relevance_evaluated": False,
+        }
+        return EvidenceDiscoveryResult(
+            run_status=status,
+            pack=pack,
+            actions=(),
+            observations=(),
+            input_audit=input_audit,
+            intelligence_transfer=transfer,
+            agent_discovery=agent_discovery,
+        )
+
     def _result(
         self,
         *,
@@ -501,6 +695,21 @@ class EvidenceDiscoverySpecialist:
         model_action_attempts: list[dict[str, object]],
     ) -> EvidenceDiscoveryResult:
         self._runtime_diagnostics["failure_stage"] = "result_construction"
+        unverified_method_refs = _unverified_method_refs(
+            actions=actions,
+            observations=observations,
+            max_tool_calls=request.max_tool_calls,
+        )
+        if unverified_method_refs:
+            finish = dict(finish)
+            finish["decision"] = "needs_more_evidence"
+            finish["unresolved_questions"] = [
+                *list(finish.get("unresolved_questions", [])),
+                (
+                    "Tool budget ended with metadata method references that did not "
+                    "receive exact IL verification: " + ", ".join(unverified_method_refs)
+                ),
+            ]
         unresolved = tuple(str(item) for item in finish.get("unresolved_questions", []))
         missing_capabilities = tuple(
             str(item) for item in finish.get("missing_capabilities", [])
@@ -558,29 +767,73 @@ class EvidenceDiscoverySpecialist:
             for observation in observations
             for fact in observation.supported_facts()
         )
+        hook_discovery = (
+            build_agent_discovery_semantics(
+                agent_discovery=self._agent_discovery,
+                items=items,
+                actions=actions,
+                observations=observations,
+                finish=finish,
+            )
+            if self._agent_discovery is not None
+            else None
+        )
+        semantic_state = (
+            evidence_pack_state_from_hook_discovery(
+                semantics=hook_discovery,
+                items=items,
+            )
+            if hook_discovery is not None
+            else None
+        )
+        if semantic_state is not None:
+            blockers = semantic_state["blockers"]
         pack = EvidencePack(
             query=request.natural_language_request,
-            readiness="partial" if items else "insufficient",
-            can_generate_patch=False,
-            items=items,
-            gaps=(*unresolved, *missing_capabilities),
+            readiness=(
+                semantic_state["readiness"]
+                if semantic_state is not None
+                else "partial" if items else "insufficient"
+            ),
+            can_generate_patch=(
+                semantic_state["can_generate_patch"]
+                if semantic_state is not None
+                else False
+            ),
+            items=(semantic_state["items"] if semantic_state is not None else items),
+            excluded=(semantic_state["excluded"] if semantic_state is not None else ()),
+            gaps=(
+                semantic_state["gaps"]
+                if semantic_state is not None
+                else (*unresolved, *missing_capabilities)
+            ),
             blockers=blockers,
             retrieval_methods_used=tuple(
                 dict.fromkeys(observation.tool for observation in observations)
             ),
-            missing_evidence=missing_evidence_from_blockers(blockers),
             disabled_modes={
                 "bm25": "Not used by the bounded intelligent evidence loop.",
                 "dense": "Not used by the bounded intelligent evidence loop.",
                 "fusion": "Not used by the bounded intelligent evidence loop.",
                 "rerank": "Not used by the bounded intelligent evidence loop.",
             },
+            missing_evidence=missing_evidence_from_blockers(blockers),
             timing={},
             budget_summary={
                 "max_tool_calls": request.max_tool_calls,
                 "tool_calls_used": len(actions),
                 "max_model_steps": request.max_model_steps,
                 "model_steps_used": model_steps_used,
+                **(
+                    {
+                        "planning_model_steps_used": self._planning_model_steps_used,
+                        "total_model_steps_used": (
+                            model_steps_used + self._planning_model_steps_used
+                        ),
+                    }
+                    if request.require_actual_planning
+                    else {}
+                ),
                 "max_result_bytes_per_call": request.max_result_bytes_per_call,
                 "max_total_observation_bytes": request.max_total_observation_bytes,
                 "total_observation_bytes_used": total_observation_bytes,
@@ -655,9 +908,15 @@ class EvidenceDiscoverySpecialist:
             },
             input_audit=input_audit,
             intelligence_transfer=intelligence_transfer,
+            hook_discovery=hook_discovery,
+            agent_discovery=self._agent_discovery,
             message=(
-                "The Evidence specialist selected sources and tools through a bounded "
-                "action/observation loop; deterministic policy retained routing authority."
+                semantic_state["message"]
+                if semantic_state is not None
+                else (
+                    "The Evidence specialist selected sources and tools through a bounded "
+                    "action/observation loop; deterministic policy retained routing authority."
+                )
             ),
         )
         return EvidenceDiscoveryResult(
@@ -667,6 +926,7 @@ class EvidenceDiscoverySpecialist:
             observations=tuple(observations),
             input_audit=input_audit,
             intelligence_transfer=intelligence_transfer,
+            agent_discovery=self._agent_discovery,
         )
 
     def _budget_result(
@@ -769,12 +1029,15 @@ def _build_turn_messages(
                         "blocked_by_missing_capability",
                         "conflicting_evidence",
                     ],
-                    "required_finish_schema": evidence_discovery_finish_schema(),
+                    "required_finish_schema": evidence_discovery_finish_schema(
+                        require_requirement_binding=request.require_actual_planning
+                    ),
                     "decision_constraints": (
                         evidence_discovery_finish_decision_constraints()
                     ),
                     "repair_focus": _finish_validation_repair_focus(
-                        finish_validation_error
+                        finish_validation_error,
+                        require_requirement_binding=request.require_actual_planning,
                     ),
                     "available_inspection_observation_ids": (
                         _inspection_observation_ids(observations)
@@ -929,6 +1192,33 @@ def _metadata_candidate_refs(
     return refs
 
 
+def _unverified_method_refs(
+    *,
+    actions: list[dict[str, object]],
+    observations: list[ToolObservation],
+    max_tool_calls: int,
+) -> list[str]:
+    """Keep method refs from a terminal metadata call as unverified leads."""
+
+    if (
+        not actions
+        or len(actions) < max_tool_calls
+        or actions[-1].get("tool") != "search_dotnet_metadata"
+        or not observations
+        or observations[-1].tool != "search_dotnet_metadata"
+    ):
+        return []
+    observed = set(_metadata_candidate_refs([observations[-1]]))
+    inspected = {
+        str(arguments["candidate_ref"])
+        for action in actions
+        if action.get("tool") == "inspect_method_il"
+        and isinstance((arguments := action.get("arguments")), dict)
+        and arguments.get("candidate_ref")
+    }
+    return sorted(observed - inspected)
+
+
 def _zero_result_recovery_required(
     *,
     actions: list[dict[str, object]],
@@ -956,27 +1246,41 @@ def _zero_result_recovery_required(
     return not _metadata_candidate_refs(observations)
 
 
-def _finish_validation_repair_focus(error_code: str) -> dict[str, object]:
+def _finish_validation_repair_focus(
+    error_code: str,
+    *,
+    require_requirement_binding: bool = False,
+) -> dict[str, object]:
     if error_code == "DISCOVERY_DECISION_INVALID":
         return {
             "field": "decision",
             "requirement": "Use exactly one value from allowed_decisions.",
         }
     if error_code == "EVIDENCE_CONCLUSION_SHAPE_INVALID":
+        required_keys = [
+            "claim",
+            "claim_status",
+            "observation_ids",
+            "limitations",
+        ]
+        field_types = {
+            "claim": "non-empty string",
+            "claim_status": "observed | inferred | unknown",
+            "observation_ids": "array of non-empty strings",
+            "limitations": "array of non-empty strings",
+        }
+        if require_requirement_binding:
+            required_keys.extend(["requirement_ids", "relationship"])
+            field_types.update(
+                {
+                    "requirement_ids": "array of planning requirement ids",
+                    "relationship": "support | conflict | missing",
+                }
+            )
         return {
             "field": "evidence_conclusions[]",
-            "required_keys": [
-                "claim",
-                "claim_status",
-                "observation_ids",
-                "limitations",
-            ],
-            "field_types": {
-                "claim": "non-empty string",
-                "claim_status": "observed | inferred | unknown",
-                "observation_ids": "array of non-empty strings",
-                "limitations": "array of non-empty strings",
-            },
+            "required_keys": required_keys,
+            "field_types": field_types,
             "additional_keys_allowed": False,
         }
     if error_code == "EVIDENCE_CONCLUSION_INSPECTION_REFERENCE_REQUIRED":
@@ -985,6 +1289,15 @@ def _finish_validation_repair_focus(error_code: str) -> dict[str, object]:
             "requirement": (
                 "At least one observed or inferred conclusion must cite one id "
                 "from available_inspection_observation_ids."
+            ),
+        }
+    if error_code == "EVIDENCE_CONCLUSION_REQUIREMENT_BINDING_INVALID":
+        return {
+            "field": "evidence_conclusions[]",
+            "requirement": (
+                "For the frozen actual plan, add non-empty requirement_ids drawn "
+                "exactly from planning_blocking_questions and set relationship to "
+                "support, conflict, or missing."
             ),
         }
     if error_code == "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH":
@@ -1230,6 +1543,274 @@ def _parse_action(raw: str) -> dict[str, object]:
     return action
 
 
+def _parse_planning_action(raw: str) -> dict[str, object]:
+    try:
+        action = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"PLANNING_ACTION_INVALID_JSON: {exc}") from exc
+    if not isinstance(action, dict) or action.get("action") != "plan":
+        raise ValueError("PLANNING_ACTION_TYPE_INVALID")
+    if set(action) != {
+        "action",
+        "planning_status",
+        "requirement_projection",
+        "search_plan",
+    }:
+        raise ValueError("PLANNING_ACTION_SHAPE_INVALID")
+    return action
+
+
+def _validated_actual_plan_from_raw(
+    raw: str,
+    *,
+    sources: dict[str, EvidenceDiscoverySource],
+) -> dict[str, object]:
+    plan_action = _parse_planning_action(raw)
+    agent_discovery = normalize_agent_discovery_planning_actual(
+        {
+            "schema_version": AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION,
+            "planning_status": plan_action["planning_status"],
+            "requirement_projection": plan_action["requirement_projection"],
+            "search_plan": plan_action["search_plan"],
+        }
+    )
+    _validate_plan_against_sources(agent_discovery, sources=sources)
+    return agent_discovery
+
+
+def _validate_plan_against_sources(
+    agent_discovery: dict[str, object],
+    *,
+    sources: dict[str, EvidenceDiscoverySource],
+) -> None:
+    search_plan = agent_discovery.get("search_plan")
+    if search_plan is None:
+        return
+    if not isinstance(search_plan, dict):
+        raise ValueError("SEARCH_PLAN_MUST_BE_OBJECT")
+    for collection_name in ("source_roles", "planned_lanes", "query_families"):
+        entries = search_plan.get(collection_name)
+        if not isinstance(entries, list):
+            raise ValueError("SEARCH_PLAN_COLLECTION_INVALID")
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValueError("SEARCH_PLAN_ENTRY_INVALID")
+            source_ids = (
+                [entry.get("source_id")]
+                if collection_name == "source_roles"
+                else entry.get("source_ids")
+            )
+            if not isinstance(source_ids, list) or any(
+                source_id not in sources for source_id in source_ids
+            ):
+                raise ValueError("SEARCH_PLAN_UNAUTHORIZED_SOURCE")
+            tool = entry.get("tool")
+            if isinstance(tool, str) and any(
+                tool not in sources[str(source_id)].allowed_tools
+                for source_id in source_ids
+            ):
+                raise ValueError("SEARCH_PLAN_SOURCE_TOOL_NOT_ALLOWED")
+
+
+def _validate_action_against_frozen_plan(
+    action: dict[str, object],
+    *,
+    actions: list[dict[str, object]],
+    observations: list[ToolObservation],
+    agent_discovery: dict[str, object],
+) -> None:
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(search_plan, dict):
+        raise ValueError("SEARCH_PLAN_MUST_BE_OBJECT")
+    if not actions:
+        if action.get("tool") != "search_dotnet_metadata":
+            raise ValueError("FIRST_DISCOVERY_ACTION_MUST_BE_METADATA_SEARCH")
+        arguments = action.get("arguments")
+        families = search_plan.get("query_families")
+        if not isinstance(arguments, dict) or not isinstance(families, list):
+            raise ValueError("FIRST_DISCOVERY_ACTION_NOT_PLANNED")
+        if len(_matching_query_family_ids(action=action, families=families)) != 1:
+            raise ValueError("FIRST_DISCOVERY_ACTION_NOT_PLANNED")
+        return
+    if len(actions) == 1:
+        if action.get("tool") == "inspect_method_il":
+            return
+        if not _latest_metadata_observation_has_no_identity(observations):
+            raise ValueError("SECOND_DISCOVERY_ACTION_MUST_VERIFY_OBSERVED_IDENTITY")
+        _validate_supplemental_search(
+            action,
+            actions=actions,
+            agent_discovery=agent_discovery,
+        )
+        return
+    if len(actions) == 2:
+        if (
+            action.get("tool") == "inspect_method_il"
+            and _latest_metadata_observation_has_identity(observations)
+        ):
+            return
+        if (
+            actions[0].get("tool") == "search_dotnet_metadata"
+            and actions[1].get("tool") == "search_dotnet_metadata"
+            and not _latest_metadata_observation_has_identity(observations)
+        ):
+            raise ValueError("SECOND_METADATA_SEARCH_EXHAUSTED_WITHOUT_METHOD")
+        _validate_supplemental_search(
+            action,
+            actions=actions,
+            agent_discovery=agent_discovery,
+        )
+        return
+    raise ValueError("FIRST_HOOK_DISCOVERY_TOOL_BUDGET_EXHAUSTED")
+
+
+def _validate_supplemental_search(
+    action: dict[str, object],
+    *,
+    actions: list[dict[str, object]],
+    agent_discovery: dict[str, object],
+) -> None:
+    if action.get("tool") != "search_dotnet_metadata":
+        raise ValueError("SUPPLEMENTAL_ACTION_MUST_BE_METADATA_SEARCH")
+    projection = agent_discovery.get("requirement_projection")
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(projection, dict) or not isinstance(search_plan, dict):
+        raise ValueError("AGENT_DISCOVERY_PLAN_MUST_BE_OBJECT")
+    families = search_plan.get("query_families")
+    arguments = action.get("arguments")
+    matching_family_ids = _matching_query_family_ids(
+        action=action,
+        families=families if isinstance(families, list) else [],
+        match_evidence_need=False,
+    )
+    executed_family_ids = {
+        family_id
+        for executed_action in actions
+        for family_id in _matching_query_family_ids(
+            action=executed_action,
+            families=families if isinstance(families, list) else [],
+        )
+    }
+    selected_family = (
+        next(
+            (
+                family
+                for family in families
+                if isinstance(family, dict)
+                and family.get("family_id") in matching_family_ids
+            ),
+            None,
+        )
+        if isinstance(families, list)
+        else None
+    )
+    if not isinstance(families, list) or not isinstance(arguments, dict):
+        raise ValueError("SUPPLEMENTAL_ACTION_SHAPE_INVALID")
+    if not action.get("derived_from_observation_ids"):
+        raise ValueError("SUPPLEMENTAL_ACTION_OBSERVATION_BINDING_REQUIRED")
+    if len(matching_family_ids) != 1 or not isinstance(selected_family, dict):
+        raise ValueError("SUPPLEMENTAL_QUERY_FAMILY_MATCH_INVALID")
+    if action.get("evidence_need") != selected_family.get("evidence_need"):
+        raise ValueError("SUPPLEMENTAL_EVIDENCE_NEED_MISMATCH")
+    if matching_family_ids[0] in executed_family_ids:
+        raise ValueError("SUPPLEMENTAL_QUERY_FAMILY_ALREADY_EXECUTED")
+
+
+def _matching_query_family_ids(
+    *,
+    action: dict[str, object],
+    families: list[object],
+    match_evidence_need: bool = True,
+) -> list[str]:
+    """Resolve exact frozen query families without comparing action tuning fields."""
+
+    arguments = action.get("arguments")
+    if action.get("tool") != "search_dotnet_metadata" or not isinstance(arguments, dict):
+        return []
+    matches: list[str] = []
+    for family in families:
+        if (
+            isinstance(family, dict)
+            and isinstance(family.get("family_id"), str)
+            and family.get("queries") == arguments.get("queries")
+            and action.get("source_id") in family.get("source_ids", [])
+            and family.get("tool") == "search_dotnet_metadata"
+            and (
+                not match_evidence_need
+                or family.get("evidence_need") == action.get("evidence_need")
+            )
+        ):
+            matches.append(str(family["family_id"]))
+    return matches
+
+
+def _unexecuted_query_family_views(
+    *,
+    agent_discovery: dict[str, object],
+    actions: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(search_plan, dict):
+        return []
+    families = search_plan.get("query_families")
+    if not isinstance(families, list):
+        return []
+    executed_ids = {
+        family_id
+        for action in actions
+        for family_id in _matching_query_family_ids(
+            action=action,
+            families=families,
+        )
+    }
+    return [
+        {
+            key: (
+                list(family[key])
+                if isinstance(family.get(key), list)
+                else family.get(key)
+            )
+            for key in (
+                "family_id",
+                "queries",
+                "evidence_need",
+                "source_ids",
+                "tool",
+                "question_ids",
+            )
+        }
+        for family in families
+        if isinstance(family, dict)
+        and isinstance(family.get("family_id"), str)
+        and family["family_id"] not in executed_ids
+    ]
+
+
+def _latest_metadata_observation_has_no_identity(
+    observations: list[ToolObservation],
+) -> bool:
+    return (
+        bool(observations)
+        and observations[-1].tool == "search_dotnet_metadata"
+        and not _latest_metadata_observation_has_identity(observations)
+    )
+
+
+def _latest_metadata_observation_has_identity(
+    observations: list[ToolObservation],
+) -> bool:
+    if not observations or observations[-1].tool != "search_dotnet_metadata":
+        return False
+    methods = observations[-1].data.get("methods")
+    return bool(
+        isinstance(methods, list)
+        and any(
+            isinstance(method, dict) and method.get("candidate_ref")
+            for method in methods
+        )
+    )
+
+
 def _validate_tool_action(
     action: dict[str, object],
     *,
@@ -1237,14 +1818,15 @@ def _validate_tool_action(
     observations_by_id: dict[str, ToolObservation],
     candidate_origins: dict[str, tuple[str, str]],
 ) -> None:
-    if set(action) != {
+    required_fields = {
         "action",
         "tool",
         "source_id",
         "arguments",
         "evidence_need",
         "derived_from_observation_ids",
-    }:
+    }
+    if set(action) != required_fields:
         raise ValueError("TOOL_ACTION_SHAPE_INVALID")
     if not str(action.get("evidence_need") or "").strip():
         raise ValueError("TOOL_EVIDENCE_NEED_INVALID")
@@ -1319,6 +1901,8 @@ def _validate_observation(
 def _validate_finish(
     finish: dict[str, object],
     observations_by_id: dict[str, ToolObservation],
+    *,
+    agent_discovery: dict[str, object] | None = None,
 ) -> None:
     if set(finish) != {
         "action",
@@ -1344,12 +1928,15 @@ def _validate_finish(
     if any(not isinstance(item, str) or not item.strip() for item in (*unresolved, *missing)):
         raise ValueError("DISCOVERY_FINISH_TEXT_ITEMS_INVALID")
     for conclusion in conclusions:
-        if not isinstance(conclusion, dict) or set(conclusion) != {
-            "claim",
-            "claim_status",
-            "observation_ids",
-            "limitations",
-        }:
+        base_fields = {
+            "claim", "claim_status", "observation_ids", "limitations"
+        }
+        planning_fields = {"requirement_ids", "relationship"}
+        if (
+            not isinstance(conclusion, dict)
+            or frozenset(conclusion)
+            not in {frozenset(base_fields), frozenset(base_fields | planning_fields)}
+        ):
             raise ValueError("EVIDENCE_CONCLUSION_SHAPE_INVALID")
         if not str(conclusion.get("claim") or "").strip():
             raise ValueError("EVIDENCE_CONCLUSION_CLAIM_INVALID")
@@ -1358,8 +1945,12 @@ def _validate_finish(
             raise ValueError("EVIDENCE_CONCLUSION_STATUS_INVALID")
         refs = conclusion.get("observation_ids")
         limitations = conclusion.get("limitations")
-        if not isinstance(refs, list) or not isinstance(limitations, list) or any(
+        if (
+            not isinstance(refs, list)
+            or not isinstance(limitations, list)
+            or any(
             not isinstance(item, str) or not item.strip() for item in limitations
+            )
         ):
             raise ValueError("EVIDENCE_CONCLUSION_FIELDS_INVALID")
         if len(refs) != len(set(refs)):
@@ -1374,6 +1965,26 @@ def _validate_finish(
             raise ValueError("UNKNOWN_CONCLUSION_MUST_NOT_CITE_OBSERVATION")
         if status == "unknown" and not limitations:
             raise ValueError("UNKNOWN_CONCLUSION_LIMITATIONS_REQUIRED")
+        if agent_discovery is not None:
+            refs = conclusion.get("requirement_ids")
+            relationship = conclusion.get("relationship")
+            projection = agent_discovery.get("requirement_projection")
+            if not isinstance(projection, dict):
+                raise ValueError("REQUIREMENT_PROJECTION_MUST_BE_OBJECT")
+            blockers = projection.get("planning_blocking_questions")
+            valid_requirement_ids = {
+                str(value["requirement_id"])
+                for value in blockers
+                if isinstance(blockers, list) and isinstance(value, dict)
+            }
+            if (
+                not isinstance(refs, list)
+                or not refs
+                or len(refs) != len(set(refs))
+                or any(value not in valid_requirement_ids for value in refs)
+                or relationship not in {"support", "conflict", "missing"}
+            ):
+                raise ValueError("EVIDENCE_CONCLUSION_REQUIREMENT_BINDING_INVALID")
     inspection_observation_ids = {
         observation_id
         for observation_id, observation in observations_by_id.items()
@@ -1399,6 +2010,15 @@ def _validate_finish(
         raise ValueError("NEEDS_MORE_EVIDENCE_REQUIRES_OPEN_GAP")
     if decision == "blocked_by_missing_capability" and not missing:
         raise ValueError("MISSING_CAPABILITY_DECISION_REQUIRES_CAPABILITY")
+    relationship_values = {
+        conclusion.get("relationship")
+        for conclusion in conclusions
+        if isinstance(conclusion, dict) and "relationship" in conclusion
+    }
+    if agent_discovery is not None and (
+        (decision == "conflicting_evidence") != ("conflict" in relationship_values)
+    ):
+        raise ValueError("CONFLICTING_DECISION_RELATIONSHIP_MISMATCH")
     for conclusion in conclusions:
         if conclusion.get("claim_status") != "observed":
             continue
@@ -1549,6 +2169,10 @@ def _system_contract() -> dict[str, object]:
                         "A grounded finish cites an inspect_method_il observation_id in at "
                         "least one observed or inferred conclusion."
                     ),
+                    (
+                        "For an actual frozen plan, every conclusion names exact "
+                        "requirement_ids and one support, conflict, or missing relationship."
+                    ),
                 ],
             },
         },
@@ -1568,6 +2192,10 @@ def _system_contract() -> dict[str, object]:
                 "supported_fact and cite only that fact's observation_id."
             ),
             "Inferred conclusions must state limitations; unknown conclusions cite no observation.",
+            (
+                "A model decision never closes a planning requirement without a bound "
+                "relationship and admitted authoritative physical evidence."
+            ),
             "When budget_state.required_next_action is finish, return finish and do not request another tool.",
             "Community evidence cannot confirm current runtime behavior.",
         ],

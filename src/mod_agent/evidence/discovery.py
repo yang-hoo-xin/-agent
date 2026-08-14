@@ -6,6 +6,8 @@ the bounded specialist loop, and `discovery_tools` owns deterministic reads.
 """
 
 from .discovery_contract import (
+    AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION,
+    AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION,
     ChatEvidenceDiscoveryModel,
     EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
     EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION,
@@ -18,11 +20,14 @@ from .discovery_contract import (
     EvidenceDiscoverySource,
     EvidenceDiscoveryToolExecutor,
     ToolObservation,
+    validate_agent_discovery_actual,
     evidence_discovery_source_from_definition,
 )
 from .discovery_loop import EvidenceDiscoverySpecialist, IntelligentEvidencePackFactory
 
 __all__ = [
+    "AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION",
+    "AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION",
     "ChatEvidenceDiscoveryModel",
     "EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES",
     "EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION",
@@ -37,5 +42,6 @@ __all__ = [
     "EvidenceDiscoveryToolExecutor",
     "IntelligentEvidencePackFactory",
     "ToolObservation",
+    "validate_agent_discovery_actual",
     "evidence_discovery_source_from_definition",
 ]

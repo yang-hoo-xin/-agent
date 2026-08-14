@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .models import (
     CHUNK_IDENTITY_FIELDS,
@@ -190,6 +191,51 @@ class KnowledgeDatabase:
             metadata=dict(document.metadata),
         )
 
+    def upsert_documents(
+        self,
+        documents: list[Document],
+    ) -> list[KnowledgeDocumentRecord]:
+        """Persist a bounded document snapshot in one transaction."""
+
+        records: list[KnowledgeDocumentRecord] = []
+        rows: list[tuple[str, str, str, str, str]] = []
+        for document in documents:
+            self._validate_document_identity(document)
+            source_id = self._required_metadata(document.metadata, "source_id")
+            raw_text_hash = self._required_metadata(document.metadata, "raw_text_hash")
+            canonical_text_hash = self._required_metadata(
+                document.metadata, "canonical_text_hash"
+            )
+            rows.append(
+                (
+                    document.document_id,
+                    source_id,
+                    raw_text_hash,
+                    canonical_text_hash,
+                    json.dumps(document.metadata, sort_keys=True),
+                )
+            )
+            records.append(
+                KnowledgeDocumentRecord(
+                    document_id=document.document_id,
+                    source_id=source_id,
+                    raw_text_hash=raw_text_hash,
+                    canonical_text_hash=canonical_text_hash,
+                    metadata=dict(document.metadata),
+                )
+            )
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO knowledge_documents (
+                    document_id, source_id, raw_text_hash, canonical_text_hash, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+        return records
+
     def get_document(self, document_id: str) -> KnowledgeDocumentRecord | None:
         """Return persisted document metadata by id."""
 
@@ -245,6 +291,57 @@ class KnowledgeDatabase:
             content_hash=content_hash,
             metadata=dict(chunk.metadata),
         )
+
+    def upsert_chunks(
+        self,
+        chunks: list[Chunk],
+        *,
+        collection_id: str,
+        index_version: str,
+    ) -> list[KnowledgeChunkRecord]:
+        """Persist a bounded chunk snapshot in one transaction."""
+
+        records: list[KnowledgeChunkRecord] = []
+        rows: list[tuple[str, str, str, str, str, str, str, str]] = []
+        for chunk in chunks:
+            self._validate_chunk_identity(chunk)
+            content_hash = self._required_metadata(chunk.metadata, "content_hash")
+            rows.append(
+                (
+                    chunk.chunk_id,
+                    chunk.document_id,
+                    collection_id,
+                    index_version,
+                    chunk.text,
+                    chunk.text_for_retrieval,
+                    content_hash,
+                    json.dumps(chunk.metadata, sort_keys=True),
+                )
+            )
+            records.append(
+                KnowledgeChunkRecord(
+                    chunk_id=chunk.chunk_id,
+                    document_id=chunk.document_id,
+                    collection_id=collection_id,
+                    index_version=index_version,
+                    chunk_text=chunk.text,
+                    text_for_retrieval=chunk.text_for_retrieval,
+                    content_hash=content_hash,
+                    metadata=dict(chunk.metadata),
+                )
+            )
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO knowledge_chunks (
+                    chunk_id, document_id, collection_id, index_version, chunk_text,
+                    text_for_retrieval, content_hash, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+        return records
 
     def list_chunks(
         self,
@@ -603,6 +700,27 @@ class KnowledgeDatabase:
                 ).fetchall()
         return [IndexedFile(**dict(row)) for row in rows]
 
+    def symbols_for_file(
+        self,
+        *,
+        source_id: str,
+        source_path: str,
+    ) -> list[SymbolRecord]:
+        """Return exact symbol records already extracted for one file."""
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT symbol_id, source_id, source_path, relative_path, name, kind,
+                       start_line, end_line, signature, excerpt, content_hash
+                FROM symbols
+                WHERE source_id = ? AND source_path = ?
+                ORDER BY start_line, name
+                """,
+                (source_id, source_path),
+            ).fetchall()
+        return [SymbolRecord(**dict(row)) for row in rows]
+
     def upsert_file(
         self,
         *,
@@ -633,6 +751,66 @@ class KnowledgeDatabase:
             content_hash=content_hash,
             indexed_at=indexed_at,
         )
+
+    def replace_indexed_source_files(
+        self,
+        *,
+        source_id: str,
+        files: list[IndexedFile],
+        symbols_by_path: dict[str, list[SymbolRecord]],
+    ) -> None:
+        """Persist changed file identities and their symbols in one transaction."""
+
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO indexed_files (
+                    file_id, source_id, source_path, relative_path, content_hash, indexed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        item.file_id,
+                        item.source_id,
+                        item.source_path,
+                        item.relative_path,
+                        item.content_hash,
+                        item.indexed_at,
+                    )
+                    for item in files
+                ],
+            )
+            conn.executemany(
+                "DELETE FROM symbols WHERE source_id = ? AND source_path = ?",
+                [(source_id, source_path) for source_path in symbols_by_path],
+            )
+            conn.executemany(
+                """
+                INSERT INTO symbols (
+                    symbol_id, source_id, source_path, relative_path, name, kind,
+                    start_line, end_line, signature, excerpt, content_hash
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        symbol.symbol_id,
+                        symbol.source_id,
+                        symbol.source_path,
+                        symbol.relative_path,
+                        symbol.name,
+                        symbol.kind,
+                        symbol.start_line,
+                        symbol.end_line,
+                        symbol.signature,
+                        symbol.excerpt,
+                        symbol.content_hash,
+                    )
+                    for symbols in symbols_by_path.values()
+                    for symbol in symbols
+                ],
+            )
 
     def replace_symbols_for_file(
         self,
@@ -1034,10 +1212,15 @@ class KnowledgeDatabase:
         if status not in allowed:
             raise KnowledgeDatabaseError(f"Unsupported status: {status!r}")
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     @staticmethod
     def _now() -> str:

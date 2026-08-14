@@ -9,6 +9,7 @@ import pytest
 
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.knowledge import (
+    BM25Indexer,
     Chunk,
     IndexedFile,
     IncrementalIndexer,
@@ -109,6 +110,125 @@ def test_incremental_indexer_extracts_symbols_and_searches_exact_symbol(
     assert results[0].name == "Load"
     assert results[0].source_path == str(plugin.resolve())
     assert results[0].to_evidence_item()["symbol"] == "Load"
+
+
+def test_incremental_indexer_builds_stable_retrieval_snapshot(tmp_path: Path) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    root = tmp_path / "source"
+    root.mkdir()
+    _write_plugin(root)
+    (root / "guide.md").write_text(
+        "敌人进入踉跄反应时显示黄色标记。\n",
+        encoding="utf-8",
+    )
+    registry = SourceRegistry(db)
+    registry.register(
+        SourceDefinition(
+            source_id="current_api",
+            source_type="decompiled_api",
+            root_path=root,
+            metadata={"evidence_authority": "authoritative"},
+            allowed_extensions=frozenset({".cs", ".md"}),
+        )
+    )
+    indexer = IncrementalIndexer(database=db, source_registry=registry)
+    indexer.index_source("current_api")
+
+    first = indexer.build_retrieval_snapshot("current_api")
+    second = indexer.build_retrieval_snapshot("current_api")
+
+    assert first.status == "stable"
+    assert second.index_version == first.index_version
+    assert db.stable_index_version("knowledge_hub") == second
+    assert db.list_chunks(
+        collection_id="knowledge_hub",
+        index_version=first.index_version,
+    )
+    assert db.search_symbol_index(
+        collection_id="knowledge_hub",
+        index_version=first.index_version,
+        symbol="Load",
+    )
+    assert BM25Indexer(db).query(
+        collection_id="knowledge_hub",
+        index_version=first.index_version,
+        tokens=["踉跄"],
+        top_k=5,
+    )
+
+
+def test_retrieval_snapshot_deduplicates_overloads_in_one_chunk(
+    tmp_path: Path,
+) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    root = tmp_path / "source"
+    root.mkdir()
+    (root / "Overloads.cs").write_text(
+        "public class Overloads {\n"
+        "    public void Apply(int value) {}\n"
+        "    public void Apply(string value) {}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    registry = SourceRegistry(db)
+    registry.register(
+        SourceDefinition(
+            source_id="current_api",
+            source_type="decompiled_api",
+            root_path=root,
+            allowed_extensions=frozenset({".cs"}),
+        )
+    )
+    indexer = IncrementalIndexer(database=db, source_registry=registry)
+    indexer.index_source("current_api")
+
+    snapshot = indexer.build_retrieval_snapshot("current_api")
+
+    matches = db.search_symbol_index(
+        collection_id="knowledge_hub",
+        index_version=snapshot.index_version,
+        symbol="Apply",
+    )
+    assert len(matches) == 1
+
+
+def test_retrieval_snapshot_combines_registered_sources_once(tmp_path: Path) -> None:
+    db = KnowledgeDatabase(tmp_path / "knowledge.db")
+    registry = SourceRegistry(db)
+    for source_id, text in (
+        ("api_source", "public class EnemyMovement {}\n"),
+        ("data_source", '{"area": 42}\n'),
+    ):
+        root = tmp_path / source_id
+        root.mkdir()
+        (root / ("source.cs" if source_id == "api_source" else "data.json")).write_text(
+            text,
+            encoding="utf-8",
+        )
+        registry.register(
+            SourceDefinition(
+                source_id=source_id,
+                source_type=("decompiled_api" if source_id == "api_source" else "domain_note"),
+                root_path=root,
+                metadata={"evidence_authority": "authoritative"},
+                allowed_extensions=frozenset({".cs", ".json"}),
+            )
+        )
+    indexer = IncrementalIndexer(database=db, source_registry=registry)
+    indexer.index_source("api_source")
+    indexer.index_source("data_source")
+
+    snapshot = indexer.build_retrieval_snapshot(("api_source", "data_source"))
+
+    assert snapshot.source_count == 2
+    chunks = db.list_chunks(
+        collection_id="knowledge_hub",
+        index_version=snapshot.index_version,
+    )
+    assert {chunk.metadata["source_id"] for chunk in chunks} == {
+        "api_source",
+        "data_source",
+    }
 
 
 def test_document_and_chunk_identity_mapping_is_explicit(tmp_path: Path) -> None:

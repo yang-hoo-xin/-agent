@@ -11,6 +11,8 @@ from .dense import (
 )
 from .models import EvidenceItem, EvidencePack, EvidenceReadiness, EvidenceRequest
 from .discovery import (
+    AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION,
+    AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION,
     ChatEvidenceDiscoveryModel,
     EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
     EvidenceDiscoveryDisclosure,
@@ -22,9 +24,15 @@ from .discovery import (
     EvidenceDiscoverySpecialist,
     IntelligentEvidencePackFactory,
     ToolObservation,
+    validate_agent_discovery_actual,
     evidence_discovery_source_from_definition,
 )
 from .gtfo_r8 import GTFOR8EvidenceProvider, R8EvidenceError
+from .calibration import (
+    calibration_summary,
+    run_better_hit_feedback_calibration,
+    run_wall_crawler_calibration,
+)
 from .discovery_tools import LocalAssemblyEvidenceToolExecutor
 from .r8_il import (
     BoundILInspectionRunner,
@@ -33,10 +41,20 @@ from .r8_il import (
     R8ILInspectionRunner,
 )
 from .readiness import EvidenceReadinessClassifier
+from .hook_discovery import (
+    HOOK_DISCOVERY_REQUEST_TYPE,
+    HOOK_DISCOVERY_SCHEMA_VERSION,
+    HookDiscoverySemanticsError,
+    build_hook_discovery_semantics,
+    build_agent_discovery_semantics,
+    validate_hook_discovery_semantics,
+)
 from .retriever import DeterministicEvidenceRetriever
 from .rg_live import RgLiveEvidenceProvider
 
 __all__ = [
+    "AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION",
+    "AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION",
     "DenseRetrievalHit",
     "DenseRetrievalProvider",
     "DenseRetrievalReport",
@@ -58,6 +76,9 @@ __all__ = [
     "EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES",
     "MetadataSearchRunner",
     "GTFOR8EvidenceProvider",
+    "calibration_summary",
+    "run_better_hit_feedback_calibration",
+    "run_wall_crawler_calibration",
     "LocalAssemblyEvidenceToolExecutor",
     "R8EvidenceError",
     "BoundILInspectionRunner",
@@ -65,8 +86,15 @@ __all__ = [
     "R8ILInspectionRunner",
     "EvidenceReadiness",
     "EvidenceReadinessClassifier",
+    "HOOK_DISCOVERY_REQUEST_TYPE",
+    "HOOK_DISCOVERY_SCHEMA_VERSION",
+    "HookDiscoverySemanticsError",
+    "build_hook_discovery_semantics",
+    "build_agent_discovery_semantics",
+    "validate_hook_discovery_semantics",
     "EvidenceRequest",
     "ToolObservation",
+    "validate_agent_discovery_actual",
     "FakeDenseRetrievalProvider",
     "VectorStoreDenseRetrievalProvider",
     "create_vector_store_dense_provider",
