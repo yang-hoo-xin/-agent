@@ -72,14 +72,79 @@ def _metadata_arguments(*queries: str, limit_per_kind: int = 20) -> dict[str, ob
     }
 
 
+def _family_selection(
+    family_id: str,
+    *,
+    source_id: str = "current-interop",
+    derived_from_observation_ids: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": source_id,
+        "family_id": family_id,
+        "derived_from_observation_ids": list(
+            derived_from_observation_ids or []
+        ),
+    }
+
+
 class _ScriptedModel:
-    def __init__(self, responses: list[dict[str, object]]) -> None:
-        self._responses = [json.dumps(item) for item in responses]
+    def __init__(
+        self,
+        responses: list[dict[str, object]],
+        *,
+        emit_stable_family_selection: bool = True,
+    ) -> None:
+        self._responses = [deepcopy(item) for item in responses]
+        self._emit_stable_family_selection = emit_stable_family_selection
+        self._frozen_plan: dict[str, object] | None = None
         self.calls: list[tuple[dict[str, object], ...]] = []
 
     def complete(self, messages: tuple[dict[str, object], ...]) -> str:
         self.calls.append(messages)
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if response.get("action") == "plan":
+            self._frozen_plan = deepcopy(response)
+        elif (
+            self._emit_stable_family_selection
+            and response.get("action") == "use_tool"
+            and response.get("tool") == "search_dotnet_metadata"
+            and "family_id" not in response
+        ):
+            response = self._stable_family_selection(response)
+        return json.dumps(response)
+
+    def _stable_family_selection(
+        self,
+        response: dict[str, object],
+    ) -> dict[str, object]:
+        plan = self._frozen_plan
+        search_plan = plan.get("search_plan") if isinstance(plan, dict) else None
+        families = search_plan.get("query_families") if isinstance(search_plan, dict) else None
+        arguments = response.get("arguments")
+        if not isinstance(families, list) or not isinstance(arguments, dict):
+            return response
+        matches = [
+            family
+            for family in families
+            if isinstance(family, dict)
+            and family.get("tool") == response.get("tool")
+            and response.get("source_id") in family.get("source_ids", [])
+            and family.get("queries") == arguments.get("queries")
+            and family.get("evidence_need") == response.get("evidence_need")
+        ]
+        if len(matches) != 1:
+            return response
+        return {
+            "action": "use_tool",
+            "tool": "search_dotnet_metadata",
+            "source_id": response["source_id"],
+            "family_id": matches[0]["family_id"],
+            "derived_from_observation_ids": list(
+                response.get("derived_from_observation_ids", [])
+            ),
+        }
 
 
 class _ObservedToolExecutor:
@@ -482,6 +547,19 @@ def test_phase_2c_semantic_evidence_pack_committed_strict_roundtrip(
     assert rehydrated.agent_discovery == payload["agent_discovery"]
     assert rehydrated.readiness == readiness
     assert rehydrated.can_generate_patch is can_generate_patch
+    first_attempt = rehydrated.model_action_trace[0]
+    assert first_attempt["action"] == _family_selection(
+        "request-derived-behavior"
+    )
+    assert first_attempt["resolved_action"] == {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": "current-interop",
+        "arguments": _metadata_arguments("movement", limit_per_kind=10),
+        "evidence_need": "Which current method exposes movement?",
+        "derived_from_observation_ids": [],
+        "query_family_id": "request-derived-behavior",
+    }
 
 
 @pytest.mark.parametrize(
@@ -494,6 +572,13 @@ def test_phase_2c_semantic_evidence_pack_committed_strict_roundtrip(
         "query_family_ref",
         "engineering_question_ref",
         "action_ref",
+        "resolved_action_hash",
+        "resolved_action_binding",
+        "resolved_action_family_ref",
+        "resolved_action_tuning",
+        "resolved_action_extra_field",
+        "raw_family_action_extra_field",
+        "raw_family_id_removed",
         "planning_action",
         "top_readiness",
         "top_can_generate_patch",
@@ -538,6 +623,47 @@ def test_phase_2c_semantic_evidence_pack_tampering_fails_closed(
         payload["hook_discovery"]["evidence_relationships"][0][
             "action_indexes"
         ] = [99]
+    elif mutation in {"raw_family_action_extra_field", "raw_family_id_removed"}:
+        action = payload["model_action_trace"][0]["action"]
+        if mutation == "raw_family_action_extra_field":
+            action["unexpected"] = True
+        else:
+            action.pop("family_id")
+        payload["model_action_trace"][0]["action_sha256"] = hashlib.sha256(
+            json.dumps(
+                action,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    elif mutation in {
+        "resolved_action_hash",
+        "resolved_action_binding",
+        "resolved_action_family_ref",
+        "resolved_action_tuning",
+        "resolved_action_extra_field",
+    }:
+        resolved = payload["model_action_trace"][0]["resolved_action"]
+        if mutation == "resolved_action_family_ref":
+            resolved.pop("query_family_id")
+        elif mutation == "resolved_action_tuning":
+            resolved["arguments"]["limit_per_kind"] = 49
+        elif mutation == "resolved_action_extra_field":
+            resolved["unexpected"] = True
+        else:
+            resolved["arguments"]["queries"] = ["rewritten-query"]
+        if mutation != "resolved_action_hash":
+            payload["model_action_trace"][0]["resolved_action_sha256"] = (
+                hashlib.sha256(
+                    json.dumps(
+                        resolved,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+            )
     elif mutation == "planning_action":
         payload["hook_discovery"]["planning_action"] = "block"
     elif mutation == "top_readiness":
@@ -715,6 +841,102 @@ def test_phase_2_unrelated_hook_request_freezes_plan_before_tools(
             "failure": None,
         },
     ]
+
+
+def test_actual_metadata_family_selection_resolves_only_frozen_content(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current method exposes movement?"
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need=evidence_need,
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            _family_selection("request-derived-behavior"),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the observed method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _finish_after_observed_il(),
+        ]
+    )
+    executor = _ObservedToolExecutor()
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    assert executor.actions[0] == {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": "current-interop",
+        "arguments": _metadata_arguments("movement", limit_per_kind=10),
+        "evidence_need": evidence_need,
+        "derived_from_observation_ids": [],
+        "query_family_id": "request-derived-behavior",
+    }
+    assert result.pack.model_action_trace[0]["action"] == _family_selection(
+        "request-derived-behavior"
+    )
+    assert result.pack.model_action_trace[0]["resolved_action"] == executor.actions[0]
+
+
+@pytest.mark.parametrize(
+    ("raw_action", "error_code"),
+    [
+        (
+            _family_selection("unknown-family"),
+            "QUERY_FAMILY_ID_UNKNOWN",
+        ),
+        (
+            _family_selection(
+                "request-derived-behavior",
+                source_id="r8-snapshot",
+            ),
+            "QUERY_FAMILY_SOURCE_NOT_ALLOWED",
+        ),
+        (
+            {
+                **_family_selection("request-derived-behavior"),
+                "arguments": _metadata_arguments("rewritten-query"),
+                "evidence_need": "Rewritten evidence need.",
+            },
+            "QUERY_FAMILY_SELECTION_SHAPE_INVALID",
+        ),
+    ],
+)
+def test_actual_metadata_family_selection_rejects_before_dispatch(
+    tmp_path: Path,
+    raw_action: dict[str, object],
+    error_code: str,
+) -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    model = _ScriptedModel(
+        [plan, raw_action],
+        emit_stable_family_selection=False,
+    )
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+
+    with pytest.raises(ValueError, match=error_code):
+        specialist.discover(
+            replace(_request(tmp_path), require_actual_planning=True)
+        )
+
+    assert executor.actions == []
+    assert specialist.runtime_diagnostics["failure_stage"] == "action_validation"
 
 
 def test_phase_2_complete_plan_executes_when_model_labels_it_insufficient(
@@ -917,6 +1139,7 @@ def test_supplemental_family_reports_exact_binding_failures() -> None:
         "arguments": _metadata_arguments("movement"),
         "evidence_need": "Which current method exposes movement?",
         "derived_from_observation_ids": [],
+        "query_family_id": "request-derived-behavior",
     }
     supplemental = {
         "action": "use_tool",
@@ -925,6 +1148,7 @@ def test_supplemental_family_reports_exact_binding_failures() -> None:
         "arguments": _metadata_arguments("guard"),
         "evidence_need": "Find guard metadata.",
         "derived_from_observation_ids": [],
+        "query_family_id": "guard-family",
     }
     actual = _validated_actual_from_plan(plan)
 
@@ -940,7 +1164,7 @@ def test_supplemental_family_reports_exact_binding_failures() -> None:
 
     supplemental["derived_from_observation_ids"] = ["obs-001"]
     supplemental["evidence_need"] = "changed need"
-    with pytest.raises(ValueError, match="SUPPLEMENTAL_EVIDENCE_NEED_MISMATCH"):
+    with pytest.raises(ValueError, match="SUPPLEMENTAL_QUERY_FAMILY_MATCH_INVALID"):
         _validate_supplemental_search(
             supplemental,
             actions=[first_action],
@@ -1675,12 +1899,7 @@ def test_phase_2_supplemental_search_rejects_already_executed_family_with_new_tu
                 "action": "use_tool",
                 "tool": "search_dotnet_metadata",
                 "source_id": "current-interop",
-                "arguments": {
-                    "queries": ["movement"],
-                    "result_kinds": ["types", "fields"],
-                    "limit_per_kind": 5,
-                },
-                "evidence_need": evidence_need,
+                "family_id": "request-derived-behavior",
                 "derived_from_observation_ids": ["obs-002"],
             },
         ]
@@ -1690,7 +1909,7 @@ def test_phase_2_supplemental_search_rejects_already_executed_family_with_new_tu
 
     with pytest.raises(
         ValueError,
-        match="SUPPLEMENTAL_QUERY_FAMILY_ALREADY_EXECUTED",
+        match="QUERY_FAMILY_ALREADY_EXECUTED",
     ):
         specialist.discover(
             replace(
@@ -4233,6 +4452,79 @@ def test_agent_turn_model_maps_native_tool_call_and_bound_observation() -> None:
     assert client.requests[1].tool_results[0].call_id == "call-test-001"
     assert client.requests[1].tool_result_insert_index == 1
     assert model.usage_records[1]["total_tokens"] == 27
+
+
+def test_agent_turn_actual_plan_exposes_only_stable_family_selection() -> None:
+    class _FamilySelectionClient:
+        provider = "test_agent_turn"
+        model = "test-agent-model"
+
+        def __init__(self) -> None:
+            self.requests = []
+
+        def complete_turn(self, request):
+            self.requests.append(request)
+            return AgentTurnResponse(
+                provider=self.provider,
+                model=self.model,
+                content=None,
+                tool_calls=(
+                    AgentToolCall(
+                        call_id="call-family-001",
+                        name="search_dotnet_metadata",
+                        arguments={
+                            "source_id": "current-interop",
+                            "family_id": "request-derived-behavior",
+                            "derived_from_observation_ids": [],
+                        },
+                    ),
+                ),
+                stop_reason="tool_calls",
+                request_id="request-family-001",
+                usage=AgentUsage(input_tokens=10, output_tokens=5),
+            )
+
+    client = _FamilySelectionClient()
+    model = EvidenceDiscoveryAgentModel(
+        client,
+        local_execution=EvidenceDiscoveryLocalExecution(
+            endpoint="http://127.0.0.1:11434",
+            provider=client.provider,
+            model=client.model,
+        ),
+    )
+
+    action = json.loads(
+        model.complete(
+            (
+                {"role": "system", "content": {"contract": "v2"}},
+                {
+                    "role": "user",
+                    "content": {
+                        "message_type": "frozen_actual_plan",
+                        "agent_discovery": {},
+                    },
+                },
+            )
+        )
+    )
+
+    assert action == _family_selection("request-derived-behavior")
+    metadata_tool = next(
+        tool
+        for tool in client.requests[0].tools
+        if tool.name == "search_dotnet_metadata"
+    )
+    assert set(metadata_tool.parameters["properties"]) == {
+        "source_id",
+        "family_id",
+        "derived_from_observation_ids",
+    }
+    assert metadata_tool.parameters["required"] == [
+        "source_id",
+        "derived_from_observation_ids",
+        "family_id",
+    ]
 
 
 def test_agent_turn_model_preserves_provider_and_adapter_tool_names_on_rejection() -> None:

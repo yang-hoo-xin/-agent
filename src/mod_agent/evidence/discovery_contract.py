@@ -229,7 +229,13 @@ class EvidenceDiscoveryAgentModel:
 
         request = AgentTurnRequest(
             messages=tuple(agent_messages),
-            tools=() if force_finish or force_plan else _discovery_tool_definitions(),
+            tools=(
+                ()
+                if force_finish or force_plan
+                else _discovery_tool_definitions(
+                    require_family_selection=actual_planning_run
+                )
+            ),
             tool_choice="none" if force_finish or force_plan else "auto",
             parallel_tool_calls=False,
             response_format=(
@@ -1529,7 +1535,9 @@ def _planning_response_format() -> AgentResponseFormat:
     )
 
 
-def _discovery_tool_definitions() -> tuple[AgentToolDefinition, ...]:
+def _discovery_tool_definitions(
+    *, require_family_selection: bool = False
+) -> tuple[AgentToolDefinition, ...]:
     common_properties: dict[str, object] = {
         "source_id": {"type": "string", "minLength": 1},
         "evidence_need": {"type": "string", "minLength": 1},
@@ -1538,55 +1546,86 @@ def _discovery_tool_definitions() -> tuple[AgentToolDefinition, ...]:
             "items": {"type": "string", "minLength": 1},
         },
     }
+    metadata_properties: dict[str, object]
+    metadata_required: list[str]
+    metadata_description: str
+    if require_family_selection:
+        metadata_properties = {
+            "source_id": common_properties["source_id"],
+            "derived_from_observation_ids": common_properties[
+                "derived_from_observation_ids"
+            ],
+            "family_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "Exact family_id from frozen_actual_plan. The control layer "
+                    "resolves tool, queries, evidence_need, result kinds, and limit."
+                ),
+            },
+        }
+        metadata_required = [
+            "source_id",
+            "derived_from_observation_ids",
+            "family_id",
+        ]
+        metadata_description = (
+            "Select one exact, not-yet-executed family_id from frozen_actual_plan. "
+            "Do not repeat or rewrite its queries, evidence_need, tool, or tuning."
+        )
+    else:
+        metadata_properties = {
+            **common_properties,
+            "queries": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 12,
+                "description": (
+                    "Literal symbol-name substrings, not natural-language "
+                    "behavior descriptions. Matching is case-insensitive "
+                    "against fully qualified managed type, method, and field "
+                    "symbols."
+                ),
+                "items": {"type": "string", "minLength": 1},
+            },
+            "result_kinds": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {
+                    "type": "string",
+                    "enum": ["methods", "types", "fields"],
+                },
+            },
+            "limit_per_kind": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50,
+            },
+        }
+        metadata_required = [
+            "source_id",
+            "evidence_need",
+            "derived_from_observation_ids",
+            "queries",
+            "result_kinds",
+            "limit_per_kind",
+        ]
+        metadata_description = (
+            "Search managed metadata symbols in one registered source using "
+            "case-insensitive literal-substring matching. Queries match fully "
+            "qualified managed type, method, and field symbols; this is not "
+            "behavioral or semantic search. Select result kinds and a small "
+            "per-kind limit to keep the observation focused."
+        )
     return (
         AgentToolDefinition(
             name="search_dotnet_metadata",
-            description=(
-                "Search managed metadata symbols in one registered source using "
-                "case-insensitive literal-substring matching. Queries match fully "
-                "qualified managed type, method, and field symbols; this is not "
-                "behavioral or semantic search. Select result kinds and a small "
-                "per-kind limit to keep the observation focused."
-            ),
+            description=metadata_description,
             parameters={
                 "type": "object",
-                "properties": {
-                    **common_properties,
-                    "queries": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 12,
-                        "description": (
-                            "Literal symbol-name substrings, not natural-language "
-                            "behavior descriptions. Matching is case-insensitive "
-                            "against fully qualified managed type, method, and field "
-                            "symbols."
-                        ),
-                        "items": {"type": "string", "minLength": 1},
-                    },
-                    "result_kinds": {
-                        "type": "array",
-                        "minItems": 1,
-                        "uniqueItems": True,
-                        "items": {
-                            "type": "string",
-                            "enum": ["methods", "types", "fields"],
-                        },
-                    },
-                    "limit_per_kind": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 50,
-                    },
-                },
-                "required": [
-                    "source_id",
-                    "evidence_need",
-                    "derived_from_observation_ids",
-                    "queries",
-                    "result_kinds",
-                    "limit_per_kind",
-                ],
+                "properties": metadata_properties,
+                "required": metadata_required,
                 "additionalProperties": False,
             },
         ),
@@ -1759,8 +1798,19 @@ def _action_from_tool_call(
     source_id = arguments.pop("source_id", None)
     evidence_need = arguments.pop("evidence_need", None)
     derived = arguments.pop("derived_from_observation_ids", None)
+    family_id = arguments.pop("family_id", None)
     if name not in EVIDENCE_DISCOVERY_TOOLS:
         raise ValueError("UNKNOWN_EVIDENCE_TOOL")
+    if name == "search_dotnet_metadata" and family_id is not None:
+        if arguments or evidence_need is not None:
+            raise ValueError("QUERY_FAMILY_SELECTION_ARGUMENTS_INVALID")
+        return {
+            "action": "use_tool",
+            "tool": name,
+            "source_id": source_id,
+            "family_id": family_id,
+            "derived_from_observation_ids": derived,
+        }
     return {
         "action": "use_tool",
         "tool": name,

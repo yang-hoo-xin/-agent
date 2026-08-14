@@ -339,10 +339,7 @@ class _CliInjectedAgentAdapter:
                         name="search_dotnet_metadata",
                         arguments={
                             "source_id": "cli-source",
-                            "queries": ["movement"],
-                            "result_kinds": ["methods"],
-                            "limit_per_kind": 5,
-                            "evidence_need": "Find one observed movement method.",
+                            "family_id": "movement-behavior",
                             "derived_from_observation_ids": [],
                         },
                     ),

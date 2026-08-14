@@ -315,6 +315,8 @@ class EvidenceDiscoverySpecialist:
             raw = self.model.complete(messages)
             self._runtime_diagnostics["failure_stage"] = "action_parsing"
             action = _parse_action(raw)
+            raw_action = action
+            resolved_action: dict[str, object] | None = None
             if correction_required and action["action"] != "finish":
                 model_action_attempts.append(
                     _model_action_attempt(
@@ -380,11 +382,11 @@ class EvidenceDiscoverySpecialist:
                     )
                     if self._agent_discovery is not None:
                         required_change = (
-                            "Use exactly one not-yet-executed query family from "
-                            "frozen_actual_plan. Preserve that family's queries and "
-                            "evidence_need, select one of its source_ids, and bind "
-                            "derived_from_observation_ids to the zero-result metadata "
-                            "observation. Do not invent or alter a query family."
+                            "Select exactly one not-yet-executed family_id from "
+                            "frozen_actual_plan, select one of that family's source_ids, "
+                            "and bind derived_from_observation_ids to the zero-result "
+                            "metadata observation. Do not copy or alter the family's "
+                            "tool, queries, evidence_need, or tuning."
                         )
                     tool_action_validation_error = {
                         "error_code": "ZERO_RESULT_RECOVERY_REQUIRED",
@@ -502,6 +504,14 @@ class EvidenceDiscoverySpecialist:
                     model_action_attempts=model_action_attempts,
                 )
             self._runtime_diagnostics["failure_stage"] = "action_validation"
+            if self._agent_discovery is not None:
+                action = _resolve_action_from_frozen_plan(
+                    raw_action,
+                    actions=actions,
+                    agent_discovery=self._agent_discovery,
+                )
+                if action != raw_action:
+                    resolved_action = action
             _validate_tool_action(
                 action,
                 sources=sources,
@@ -521,9 +531,10 @@ class EvidenceDiscoverySpecialist:
                 model_action_attempts.append(
                     _model_action_attempt(
                         model_step=model_step,
-                        action=action,
+                        action=raw_action,
                         status="rejected",
                         validation_error="REPEATED_EXACT_TOOL_ACTION",
+                        resolved_action=resolved_action,
                     )
                 )
                 if repeated_action_correction_used:
@@ -556,8 +567,9 @@ class EvidenceDiscoverySpecialist:
             model_action_attempts.append(
                 _model_action_attempt(
                     model_step=model_step,
-                    action=action,
+                    action=raw_action,
                     status="accepted",
+                    resolved_action=resolved_action,
                 )
             )
             observation_id = f"obs-{len(observations) + 1:03d}"
@@ -1612,6 +1624,82 @@ def _validate_plan_against_sources(
                 raise ValueError("SEARCH_PLAN_SOURCE_TOOL_NOT_ALLOWED")
 
 
+def _resolve_action_from_frozen_plan(
+    raw_action: dict[str, object],
+    *,
+    actions: list[dict[str, object]],
+    agent_discovery: dict[str, object],
+) -> dict[str, object]:
+    """Resolve one exact metadata family selection without text matching."""
+
+    if raw_action.get("tool") != "search_dotnet_metadata":
+        return raw_action
+    if set(raw_action) != {
+        "action",
+        "tool",
+        "source_id",
+        "family_id",
+        "derived_from_observation_ids",
+    }:
+        raise ValueError("QUERY_FAMILY_SELECTION_SHAPE_INVALID")
+    family_id = raw_action.get("family_id")
+    if not isinstance(family_id, str) or not family_id.strip():
+        raise ValueError("QUERY_FAMILY_ID_INVALID")
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(search_plan, dict):
+        raise ValueError("SEARCH_PLAN_MUST_BE_OBJECT")
+    families = search_plan.get("query_families")
+    if not isinstance(families, list):
+        raise ValueError("SEARCH_PLAN_QUERY_FAMILIES_INVALID")
+    matches = [
+        family
+        for family in families
+        if isinstance(family, dict) and family.get("family_id") == family_id
+    ]
+    if len(matches) != 1:
+        raise ValueError("QUERY_FAMILY_ID_UNKNOWN")
+    family = matches[0]
+    if family.get("tool") != "search_dotnet_metadata":
+        raise ValueError("QUERY_FAMILY_TOOL_INVALID")
+    source_ids = family.get("source_ids")
+    if (
+        not isinstance(source_ids, list)
+        or raw_action.get("source_id") not in source_ids
+    ):
+        raise ValueError("QUERY_FAMILY_SOURCE_NOT_ALLOWED")
+    if family_id in {
+        str(action.get("query_family_id"))
+        for action in actions
+        if isinstance(action.get("query_family_id"), str)
+    }:
+        raise ValueError("QUERY_FAMILY_ALREADY_EXECUTED")
+    queries = family.get("queries")
+    evidence_need = family.get("evidence_need")
+    if (
+        not isinstance(queries, list)
+        or not queries
+        or any(not isinstance(query, str) or not query.strip() for query in queries)
+        or not isinstance(evidence_need, str)
+        or not evidence_need.strip()
+    ):
+        raise ValueError("QUERY_FAMILY_FROZEN_CONTENT_INVALID")
+    return {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": raw_action["source_id"],
+        "arguments": {
+            "queries": list(queries),
+            "result_kinds": ["methods"],
+            "limit_per_kind": 10,
+        },
+        "evidence_need": evidence_need,
+        "derived_from_observation_ids": list(
+            raw_action.get("derived_from_observation_ids") or []
+        ),
+        "query_family_id": family_id,
+    }
+
+
 def _validate_action_against_frozen_plan(
     action: dict[str, object],
     *,
@@ -1677,19 +1765,14 @@ def _validate_supplemental_search(
     if not isinstance(projection, dict) or not isinstance(search_plan, dict):
         raise ValueError("AGENT_DISCOVERY_PLAN_MUST_BE_OBJECT")
     families = search_plan.get("query_families")
-    arguments = action.get("arguments")
     matching_family_ids = _matching_query_family_ids(
         action=action,
         families=families if isinstance(families, list) else [],
-        match_evidence_need=False,
     )
     executed_family_ids = {
-        family_id
+        str(executed_action["query_family_id"])
         for executed_action in actions
-        for family_id in _matching_query_family_ids(
-            action=executed_action,
-            families=families if isinstance(families, list) else [],
-        )
+        if isinstance(executed_action.get("query_family_id"), str)
     }
     selected_family = (
         next(
@@ -1704,14 +1787,12 @@ def _validate_supplemental_search(
         if isinstance(families, list)
         else None
     )
-    if not isinstance(families, list) or not isinstance(arguments, dict):
+    if not isinstance(families, list):
         raise ValueError("SUPPLEMENTAL_ACTION_SHAPE_INVALID")
     if not action.get("derived_from_observation_ids"):
         raise ValueError("SUPPLEMENTAL_ACTION_OBSERVATION_BINDING_REQUIRED")
     if len(matching_family_ids) != 1 or not isinstance(selected_family, dict):
         raise ValueError("SUPPLEMENTAL_QUERY_FAMILY_MATCH_INVALID")
-    if action.get("evidence_need") != selected_family.get("evidence_need"):
-        raise ValueError("SUPPLEMENTAL_EVIDENCE_NEED_MISMATCH")
     if matching_family_ids[0] in executed_family_ids:
         raise ValueError("SUPPLEMENTAL_QUERY_FAMILY_ALREADY_EXECUTED")
 
@@ -1720,25 +1801,23 @@ def _matching_query_family_ids(
     *,
     action: dict[str, object],
     families: list[object],
-    match_evidence_need: bool = True,
 ) -> list[str]:
-    """Resolve exact frozen query families without comparing action tuning fields."""
+    """Verify a resolved action against its exact frozen family identity."""
 
     arguments = action.get("arguments")
     if action.get("tool") != "search_dotnet_metadata" or not isinstance(arguments, dict):
         return []
+    family_id = action.get("query_family_id")
     matches: list[str] = []
     for family in families:
         if (
             isinstance(family, dict)
             and isinstance(family.get("family_id"), str)
+            and family.get("family_id") == family_id
             and family.get("queries") == arguments.get("queries")
             and action.get("source_id") in family.get("source_ids", [])
             and family.get("tool") == "search_dotnet_metadata"
-            and (
-                not match_evidence_need
-                or family.get("evidence_need") == action.get("evidence_need")
-            )
+            and family.get("evidence_need") == action.get("evidence_need")
         ):
             matches.append(str(family["family_id"]))
     return matches
@@ -1756,12 +1835,9 @@ def _unexecuted_query_family_views(
     if not isinstance(families, list):
         return []
     executed_ids = {
-        family_id
+        str(action["query_family_id"])
         for action in actions
-        for family_id in _matching_query_family_ids(
-            action=action,
-            families=families,
-        )
+        if isinstance(action.get("query_family_id"), str)
     }
     return [
         {
@@ -1826,11 +1902,14 @@ def _validate_tool_action(
         "evidence_need",
         "derived_from_observation_ids",
     }
-    if set(action) != required_fields:
+    tool = str(action.get("tool") or "")
+    allowed_shapes = {frozenset(required_fields)}
+    if tool == "search_dotnet_metadata":
+        allowed_shapes.add(frozenset(required_fields | {"query_family_id"}))
+    if frozenset(action) not in allowed_shapes:
         raise ValueError("TOOL_ACTION_SHAPE_INVALID")
     if not str(action.get("evidence_need") or "").strip():
         raise ValueError("TOOL_EVIDENCE_NEED_INVALID")
-    tool = str(action.get("tool") or "")
     source_id = str(action.get("source_id") or "")
     if source_id not in sources:
         raise ValueError("UNAUTHORIZED_SOURCE_REFERENCE")
@@ -1847,6 +1926,11 @@ def _validate_tool_action(
     if len(derived) != len(set(derived)):
         raise ValueError("DUPLICATE_OBSERVATION_REFERENCE")
     if tool == "search_dotnet_metadata":
+        if "query_family_id" in action and (
+            not isinstance(action.get("query_family_id"), str)
+            or not str(action["query_family_id"]).strip()
+        ):
+            raise ValueError("QUERY_FAMILY_ID_INVALID")
         if set(arguments) != {"queries", "result_kinds", "limit_per_kind"}:
             raise ValueError("METADATA_SEARCH_ARGUMENTS_INVALID")
         queries = arguments.get("queries")
@@ -2360,6 +2444,7 @@ def _tool_action_signature(action: dict[str, object]) -> str:
         {
             "tool": action.get("tool"),
             "source_id": action.get("source_id"),
+            "query_family_id": action.get("query_family_id"),
             "arguments": action.get("arguments"),
         }
     )
@@ -2381,6 +2466,7 @@ def _model_action_attempt(
     action: dict[str, object],
     status: str,
     validation_error: str | None = None,
+    resolved_action: dict[str, object] | None = None,
 ) -> dict[str, object]:
     record: dict[str, object] = {
         "model_step": model_step,
@@ -2389,6 +2475,9 @@ def _model_action_attempt(
         "action": dict(action),
         "action_sha256": _json_sha256(action),
     }
+    if resolved_action is not None:
+        record["resolved_action"] = dict(resolved_action)
+        record["resolved_action_sha256"] = _json_sha256(resolved_action)
     if validation_error is not None:
         record["validation_error"] = validation_error
     return record

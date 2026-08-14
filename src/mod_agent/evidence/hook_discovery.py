@@ -436,15 +436,10 @@ def _agent_observation_requirement_bindings(
         if action.get("tool") == "search_dotnet_metadata":
             arguments = action.get("arguments")
             if isinstance(arguments, Mapping):
-                family_rows = [
-                    family
-                    for family in families
-                    if isinstance(family, Mapping)
-                    and family.get("queries") == arguments.get("queries")
-                    and family.get("tool") == action.get("tool")
-                    and family.get("evidence_need") == action.get("evidence_need")
-                    and action.get("source_id") in family.get("source_ids", [])
-                ]
+                family_rows = _families_for_resolved_action(
+                    action=action,
+                    families=families,
+                )
             if len(family_rows) != 1:
                 raise HookDiscoverySemanticsError(
                     "Metadata observation must bind exactly one frozen query family."
@@ -495,6 +490,30 @@ def _agent_observation_requirement_bindings(
             ),
         }
     return bindings
+
+
+def _families_for_resolved_action(
+    *,
+    action: Mapping[str, Any],
+    families: list[Any],
+) -> list[Mapping[str, Any]]:
+    arguments = action.get("arguments")
+    if not isinstance(arguments, Mapping):
+        return []
+    query_family_id = action.get("query_family_id")
+    return [
+        family
+        for family in families
+        if isinstance(family, Mapping)
+        and (
+            query_family_id is None
+            or family.get("family_id") == query_family_id
+        )
+        and family.get("queries") == arguments.get("queries")
+        and family.get("tool") == action.get("tool")
+        and family.get("evidence_need") == action.get("evidence_need")
+        and action.get("source_id") in family.get("source_ids", [])
+    ]
 
 
 def _relationship_trace(
@@ -1070,6 +1089,11 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
         }
         if attempt.get("status") == "rejected":
             allowed_attempt_fields.add("validation_error")
+        has_resolved_action = "resolved_action" in attempt
+        if has_resolved_action:
+            allowed_attempt_fields.update(
+                {"resolved_action", "resolved_action_sha256"}
+            )
         if set(attempt) != allowed_attempt_fields:
             raise HookDiscoverySemanticsError("Model action trace shape is invalid.")
         if (
@@ -1094,8 +1118,74 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
         ).hexdigest()
         if attempt.get("action_sha256") != action_sha256:
             raise HookDiscoverySemanticsError("Model action trace hash is invalid.")
+        resolved_action = attempt.get("resolved_action")
+        if has_resolved_action:
+            if not isinstance(resolved_action, Mapping):
+                raise HookDiscoverySemanticsError(
+                    "Resolved model action trace is invalid."
+                )
+            resolved_sha256 = hashlib.sha256(
+                json.dumps(
+                    resolved_action,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            if attempt.get("resolved_action_sha256") != resolved_sha256:
+                raise HookDiscoverySemanticsError(
+                    "Resolved model action trace hash is invalid."
+                )
+        raw_family_id = action.get("family_id")
+        if raw_family_id is not None or has_resolved_action:
+            resolved_arguments = (
+                resolved_action.get("arguments")
+                if isinstance(resolved_action, Mapping)
+                else None
+            )
+            if (
+                set(action)
+                != {
+                    "action",
+                    "tool",
+                    "source_id",
+                    "family_id",
+                    "derived_from_observation_ids",
+                }
+                or action.get("action") != "use_tool"
+                or action.get("tool") != "search_dotnet_metadata"
+                or not isinstance(raw_family_id, str)
+                or not raw_family_id
+                or not isinstance(resolved_action, Mapping)
+                or set(resolved_action)
+                != {
+                    "action",
+                    "tool",
+                    "source_id",
+                    "arguments",
+                    "evidence_need",
+                    "derived_from_observation_ids",
+                    "query_family_id",
+                }
+                or resolved_action.get("action") != action.get("action")
+                or resolved_action.get("tool") != action.get("tool")
+                or resolved_action.get("source_id") != action.get("source_id")
+                or resolved_action.get("derived_from_observation_ids")
+                != action.get("derived_from_observation_ids")
+                or resolved_action.get("query_family_id") != raw_family_id
+                or not isinstance(resolved_arguments, Mapping)
+                or set(resolved_arguments)
+                != {"queries", "result_kinds", "limit_per_kind"}
+                or resolved_arguments.get("result_kinds") != ["methods"]
+                or resolved_arguments.get("limit_per_kind") != 10
+            ):
+                raise HookDiscoverySemanticsError(
+                    "Model family selection and resolved action topology differ."
+                )
         if attempt.get("status") == "accepted" and action.get("action") == "use_tool":
-            accepted_actions.append(action)
+            accepted_actions.append(
+                resolved_action if isinstance(resolved_action, Mapping) else action
+            )
     if len(accepted_actions) != len(observation_rows):
         raise HookDiscoverySemanticsError("Accepted tool action trace is incomplete.")
 
@@ -1119,14 +1209,10 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
             arguments = action.get("arguments")
             if not isinstance(arguments, Mapping):
                 raise HookDiscoverySemanticsError("Metadata action arguments are invalid.")
-            matched_families = [
-                family
-                for family in families
-                if family.get("tool") == action.get("tool")
-                and family.get("queries") == arguments.get("queries")
-                and family.get("evidence_need") == action.get("evidence_need")
-                and action.get("source_id") in family.get("source_ids", [])
-            ]
+            matched_families = _families_for_resolved_action(
+                action=action,
+                families=families,
+            )
             if len(matched_families) != 1:
                 raise HookDiscoverySemanticsError(
                     "Metadata trace must bind exactly one frozen query family."
