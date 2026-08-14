@@ -575,6 +575,13 @@ def test_v2_agent_search_plan_strict_roundtrip_preserves_bytes_and_hash(
     search_plan["schema_version"] = "hook_discovery_search_plan_v2"
     for lane in search_plan["planned_lanes"]:
         lane.pop("question_ids")
+    payload["prompt_contract"]["version"] = "agent_evidence_discovery_prompt_v2"
+    payload["budget_summary"]["discovery_message_bytes_by_turn"] = [
+        6546,
+        7573,
+        8139,
+    ]
+    payload["budget_summary"]["total_discovery_message_bytes"] = 22_258
     payload["prompt_contract"]["agent_discovery_sha256"] = hashlib.sha256(
         json.dumps(
             agent_discovery,
@@ -1437,6 +1444,15 @@ def test_supplemental_family_reports_exact_binding_failures() -> None:
         "query_family_id": "guard-family",
     }
     actual = _validated_actual_from_plan(plan)
+    observations = [
+        ToolObservation(
+            observation_id="obs-001",
+            tool="search_dotnet_metadata",
+            source_id="current-interop",
+            summary="The initial frozen family was executed.",
+            data={"methods": [], "types": [], "fields": []},
+        )
+    ]
 
     with pytest.raises(
         ValueError,
@@ -1445,6 +1461,7 @@ def test_supplemental_family_reports_exact_binding_failures() -> None:
         _validate_supplemental_search(
             supplemental,
             actions=[first_action],
+            observations=observations,
             agent_discovery=actual,
         )
 
@@ -1454,7 +1471,80 @@ def test_supplemental_family_reports_exact_binding_failures() -> None:
         _validate_supplemental_search(
             supplemental,
             actions=[first_action],
+            observations=observations,
             agent_discovery=actual,
+        )
+
+
+def test_supplemental_family_must_share_the_origin_engineering_question() -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current status observation point.",
+        queries=["status"],
+        evidence_need="Which current method exposes the status transition?",
+    )
+    projection = plan["requirement_projection"]
+    search_plan = plan["search_plan"]
+    assert isinstance(projection, dict) and isinstance(search_plan, dict)
+    projection["planning_blocking_questions"].append(
+        {
+            "requirement_id": "req-output",
+            "question": "Which current method renders an output effect?",
+        }
+    )
+    search_plan["engineering_questions"].append(
+        {
+            "question_id": "question-output",
+            "question": "Which current method renders an output effect?",
+            "requirement_ids": ["req-output"],
+        }
+    )
+    search_plan["query_families"].append(
+        {
+            "family_id": "output-family",
+            "queries": ["overlay"],
+            "evidence_need": "Find output-effect metadata.",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-output"],
+        }
+    )
+    action = {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": "current-interop",
+        "arguments": _metadata_arguments("overlay"),
+        "evidence_need": "Find output-effect metadata.",
+        "derived_from_observation_ids": ["obs-001"],
+        "query_family_id": "output-family",
+    }
+    first_action = {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": "current-interop",
+        "arguments": _metadata_arguments("status"),
+        "evidence_need": "Which current method exposes the status transition?",
+        "derived_from_observation_ids": [],
+        "query_family_id": "request-derived-behavior",
+    }
+    observations = [
+        ToolObservation(
+            observation_id="obs-001",
+            tool="search_dotnet_metadata",
+            source_id="current-interop",
+            summary="The first family returned unrelated methods.",
+            data={"methods": [{"candidate_ref": "unrelated-ref"}]},
+        )
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="SUPPLEMENTAL_QUERY_FAMILY_QUESTION_BINDING_MISMATCH",
+    ):
+        _validate_supplemental_search(
+            action,
+            actions=[first_action],
+            observations=observations,
+            agent_discovery=_validated_actual_from_plan(plan),
         )
 
 
@@ -1702,6 +1792,7 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
 
     assert pack.agent_discovery is not None
     assert pack.prompt_contract["actual_planning_required"] is True
+    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v3"
     assert [item["tool"] for item in pack.tool_trace_summary] == [
         "search_dotnet_metadata",
         "inspect_method_il",
@@ -1896,6 +1987,77 @@ def test_phase_2_zero_result_uses_one_planned_expansion_then_observation_bound_i
     assert result.pack.budget_summary["tool_calls_used"] == 3
 
 
+def test_phase_2_nonzero_irrelevant_metadata_can_use_same_question_alternate_then_il(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current managed method exposes the status transition?"
+    plan = _actual_plan(
+        behavior_goal="Find a current status-transition observation point.",
+        queries=["status"],
+        evidence_need=evidence_need,
+    )
+    search_plan = plan["search_plan"]
+    assert isinstance(search_plan, dict)
+    search_plan["query_families"].append(
+        {
+            "family_id": "alternate-transition-vocabulary",
+            "queries": ["transition"],
+            "evidence_need": evidence_need,
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    finish = _finish_after_observed_il()
+    finish["evidence_conclusions"][0]["observation_ids"] = ["obs-003"]
+    model = _ScriptedModel(
+        [
+            plan,
+            _family_selection("request-derived-behavior"),
+            _family_selection(
+                "alternate-transition-vocabulary",
+                derived_from_observation_ids=["obs-001"],
+            ),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_002"},
+                "evidence_need": "Verify the method returned by the alternate family.",
+                "derived_from_observation_ids": ["obs-002"],
+            },
+            finish,
+        ]
+    )
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request=(
+                "When a temporary status transition starts, record the observation point."
+            ),
+            require_actual_planning=True,
+            max_model_steps=4,
+        )
+    )
+
+    assert [action["tool"] for action in result.actions] == [
+        "search_dotnet_metadata",
+        "search_dotnet_metadata",
+        "inspect_method_il",
+    ]
+    assert result.actions[1]["query_family_id"] == (
+        "alternate-transition-vocabulary"
+    )
+    assert result.actions[2]["arguments"] == {
+        "candidate_ref": "candidate_obs_002"
+    }
+    assert result.pack.budget_summary["tool_calls_used"] == 3
+
+
 def test_phase_2_terminal_supplemental_method_stays_unverified_and_blocked(
     tmp_path: Path,
 ) -> None:
@@ -2084,6 +2246,138 @@ def test_phase_2_second_zero_method_search_rejects_third_metadata(
     assert specialist.runtime_diagnostics["failure_stage"] == "action_validation"
 
 
+def test_phase_2_second_nonzero_metadata_requires_observation_bound_il(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current managed method exposes the status transition?"
+    plan = _actual_plan(
+        behavior_goal="Find a current status-transition observation point.",
+        queries=["status"],
+        evidence_need=evidence_need,
+    )
+    search_plan = plan["search_plan"]
+    assert isinstance(search_plan, dict)
+    search_plan["query_families"].extend(
+        [
+            {
+                "family_id": "alternate-transition",
+                "queries": ["transition"],
+                "evidence_need": evidence_need,
+                "source_ids": ["current-interop"],
+                "tool": "search_dotnet_metadata",
+                "question_ids": ["question-primary"],
+            },
+            {
+                "family_id": "forbidden-third-family",
+                "queries": ["activate"],
+                "evidence_need": evidence_need,
+                "source_ids": ["current-interop"],
+                "tool": "search_dotnet_metadata",
+                "question_ids": ["question-primary"],
+            },
+        ]
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            _family_selection("request-derived-behavior"),
+            _family_selection(
+                "alternate-transition",
+                derived_from_observation_ids=["obs-001"],
+            ),
+            _family_selection(
+                "forbidden-third-family",
+                derived_from_observation_ids=["obs-002"],
+            ),
+        ]
+    )
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+
+    with pytest.raises(
+        ValueError,
+        match="SECOND_METADATA_SEARCH_REQUIRES_IDENTITY_VERIFICATION",
+    ):
+        specialist.discover(
+            replace(
+                _request(tmp_path),
+                natural_language_request=(
+                    "When a temporary status transition starts, record its observation point."
+                ),
+                require_actual_planning=True,
+            )
+        )
+
+    assert [action["tool"] for action in executor.actions] == [
+        "search_dotnet_metadata",
+        "search_dotnet_metadata",
+    ]
+    assert specialist.runtime_diagnostics["failure_stage"] == "action_validation"
+
+
+def test_phase_2_second_metadata_il_rejects_first_observation_reference(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current managed method exposes the status transition?"
+    plan = _actual_plan(
+        behavior_goal="Find a current status-transition observation point.",
+        queries=["status"],
+        evidence_need=evidence_need,
+    )
+    search_plan = plan["search_plan"]
+    assert isinstance(search_plan, dict)
+    search_plan["query_families"].append(
+        {
+            "family_id": "alternate-transition",
+            "queries": ["transition"],
+            "evidence_need": evidence_need,
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            _family_selection("request-derived-behavior"),
+            _family_selection(
+                "alternate-transition",
+                derived_from_observation_ids=["obs-001"],
+            ),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the method from the first metadata observation.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+        ]
+    )
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+
+    with pytest.raises(
+        ValueError,
+        match="SECOND_METADATA_IL_MUST_BIND_LATEST_OBSERVATION",
+    ):
+        specialist.discover(
+            replace(
+                _request(tmp_path),
+                natural_language_request=(
+                    "When a temporary status transition starts, record its observation point."
+                ),
+                require_actual_planning=True,
+            )
+        )
+
+    assert [action["tool"] for action in executor.actions] == [
+        "search_dotnet_metadata",
+        "search_dotnet_metadata",
+    ]
+    assert specialist.runtime_diagnostics["failure_stage"] == "action_validation"
+
+
 def test_actual_zero_result_correction_replays_only_unexecuted_frozen_family(
     tmp_path: Path,
 ) -> None:
@@ -2114,6 +2408,37 @@ def test_actual_zero_result_correction_replays_only_unexecuted_frozen_family(
             "source_ids": ["current-interop"],
             "tool": "search_dotnet_metadata",
             "question_ids": ["question-primary"],
+        }
+    )
+    plan["requirement_projection"]["planning_blocking_questions"].append(
+        {
+            "requirement_id": "req-output",
+            "question": "Which current method renders a downstream output?",
+        }
+    )
+    plan["search_plan"]["engineering_questions"].append(
+        {
+            "question_id": "question-output",
+            "question": "Which current method renders a downstream output?",
+            "requirement_ids": ["req-output"],
+        }
+    )
+    plan["search_plan"]["planned_lanes"].append(
+        {
+            "lane": "downstream-output-search",
+            "tool": "search_dotnet_metadata",
+            "source_ids": ["current-interop"],
+            "question_ids": ["question-output"],
+        }
+    )
+    plan["search_plan"]["query_families"].append(
+        {
+            "family_id": "unrelated-output-family",
+            "queries": ["overlay"],
+            "evidence_need": "Find downstream output metadata.",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-output"],
         }
     )
     open_finish = {
@@ -2353,6 +2678,60 @@ def test_phase_2_planning_failures_stop_before_tool_execution(
     assert EvidencePack.from_artifact_payload(committed).to_artifact_payload() == payload
 
 
+def test_phase_2c_agent_only_early_termination_prompt_versions_are_closed() -> None:
+    projection = _actual_plan(
+        behavior_goal="A bounded behavior goal.",
+        queries=["bounded behavior"],
+        evidence_need="Which current managed method exposes the behavior?",
+    )["requirement_projection"]
+    assert isinstance(projection, dict)
+    projection = {
+        **projection,
+        "behavior_goal": "",
+        "planning_blocking_questions": [],
+    }
+    result = EvidenceDiscoverySpecialist(
+        model=_ScriptedModel(
+            [
+                {
+                    "action": "plan",
+                    "planning_status": "requirement_projection_insufficient",
+                    "requirement_projection": projection,
+                    "search_plan": None,
+                }
+            ]
+        ),
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(Path(".")),
+            natural_language_request="Do something.",
+            require_actual_planning=True,
+        )
+    )
+    payload = result.pack.to_artifact_payload()
+
+    for version in (
+        "agent_evidence_discovery_prompt_v2",
+        "agent_evidence_discovery_prompt_v3",
+    ):
+        versioned = deepcopy(payload)
+        versioned["prompt_contract"]["version"] = version
+        assert EvidencePack.from_artifact_payload(versioned).to_artifact_payload() == versioned
+
+    for version in (
+        "agent_evidence_discovery_prompt_v1",
+        "agent_evidence_discovery_prompt_v4",
+    ):
+        versioned = deepcopy(payload)
+        versioned["prompt_contract"]["version"] = version
+        with pytest.raises(
+            ValueError,
+            match="EVIDENCE_PACK_EARLY_TERMINATION_PROMPT_BINDING_INVALID",
+        ):
+            EvidencePack.from_artifact_payload(versioned)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -2463,9 +2842,58 @@ def test_actual_planning_schema_exposes_exact_nested_versions_to_real_models() -
     family_question_description = properties["search_plan"]["properties"][
         "query_families"
     ]["items"]["properties"]["question_ids"]["description"]
+    family_query_description = properties["search_plan"]["properties"][
+        "query_families"
+    ]["items"]["properties"]["queries"]["description"]
+    deferred_description = properties["requirement_projection"]["properties"][
+        "deferred_planning_or_runtime_questions"
+    ]["description"]
     assert "authorized actual evidence" in requirement_description
     assert "not user ambiguity" in requirement_description
     assert "Only question_id values declared" in family_question_description
+    assert "OR union" in family_query_description
+    assert "broad term expands" in family_query_description
+    assert "space-separated behavioral sentences" in family_query_description
+    assert "event deduplication" in deferred_description
+    assert "final Runtime correctness" in deferred_description
+
+
+def test_actual_planning_prompt_keeps_first_observation_scope_and_alternate_strategy(
+    tmp_path: Path,
+) -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current status-transition observation point.",
+        queries=["status"],
+        evidence_need="Which current method exposes the status transition?",
+    )
+    model = _ScriptedModel(
+        [plan, _family_selection("request-derived-behavior")]
+    )
+
+    EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request=(
+                "When a temporary status transition starts, record its observation point."
+            ),
+            require_actual_planning=True,
+            max_tool_calls=1,
+            max_model_steps=1,
+        )
+    )
+
+    planning_request = model.calls[0][-1]["content"]
+    rules = planning_request["rules"]
+    serialized = json.dumps(rules, ensure_ascii=False)
+    assert "not peer planning blockers" in serialized
+    assert "one vocabulary-distinct alternate family" in serialized
+    assert "not a universal Search Plan schema minimum" in serialized
+    assert "space-separated behavioral sentences" in serialized
+    assert "ActivateState" not in serialized
+    assert "expected_control_action" not in serialized
 
 
 def test_actual_planning_schema_aligns_direct_nonempty_validator_constraints() -> None:
@@ -5059,6 +5487,8 @@ def test_agent_turn_actual_plan_exposes_only_stable_family_selection() -> None:
         "derived_from_observation_ids",
         "family_id",
     ]
+    assert "literal-substring OR union" in metadata_tool.description
+    assert "Broad terms expand" in metadata_tool.description
 
 
 def test_agent_turn_model_preserves_provider_and_adapter_tool_names_on_rejection() -> None:

@@ -30,7 +30,10 @@ EVIDENCE_DISCOVERY_TOOLS = frozenset(
 )
 EVIDENCE_DISCOVERY_RESULT_KINDS = frozenset({"methods", "types", "fields"})
 EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v9"
-AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v2"
+AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v3"
+AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSION = (
+    "agent_evidence_discovery_prompt_v2"
+)
 AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION = "agent_evidence_discovery_actual_v2"
 REQUIREMENT_PROJECTION_SCHEMA_VERSION = "hook_requirement_projection_v2"
 SEARCH_PLAN_SCHEMA_VERSION = "hook_discovery_search_plan_v3"
@@ -1309,10 +1312,20 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
                     "For planning_status=ready this must be non-empty. Each entry is "
                     "an engineering requirement that authorized actual evidence must "
                     "answer before implementation planning; it is not user ambiguity, "
-                    "a Golden fact, or an expected missing-evidence list."
+                    "a Golden fact, or an expected missing-evidence list. For the first "
+                    "Hook Discovery slice, include only requirements needed to discover "
+                    "one trigger or observation direction."
                 ),
             },
-            "deferred_planning_or_runtime_questions": string_array,
+            "deferred_planning_or_runtime_questions": {
+                **string_array,
+                "description": (
+                    "Downstream implementation and Runtime work that is not required to "
+                    "identify the first trigger or observation direction, including "
+                    "presentation or feedback effects, event deduplication, boundary "
+                    "regression, and final Runtime correctness."
+                ),
+            },
         },
         "required": [
             "schema_version",
@@ -1378,7 +1391,17 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
                     "type": "object",
                     "properties": {
                         "family_id": {"type": "string", "minLength": 1},
-                        "queries": nonempty_string_array,
+                        "queries": {
+                            **nonempty_string_array,
+                            "description": (
+                                "Case-insensitive literal substrings matched as an OR "
+                                "union against fully qualified managed symbols. Each "
+                                "broad term expands the bounded result set. Prefer short "
+                                "symbol fragments or established engineering terms; do "
+                                "not use space-separated behavioral sentences as primary "
+                                "metadata queries."
+                            ),
+                        },
                         "evidence_need": {"type": "string", "minLength": 1},
                         "source_ids": nonempty_string_array,
                         "tool": {"type": "string"},
@@ -1694,7 +1717,10 @@ def _discovery_tool_definitions(
         ]
         metadata_description = (
             "Select one exact, not-yet-executed family_id from frozen_actual_plan. "
-            "Do not repeat or rewrite its queries, evidence_need, tool, or tuning."
+            "The control layer executes that family's queries as a case-insensitive "
+            "literal-substring OR union over fully qualified managed symbols. Broad "
+            "terms expand the bounded result set. Do not repeat or rewrite the "
+            "family's queries, evidence_need, tool, or tuning."
         )
     else:
         metadata_properties = {

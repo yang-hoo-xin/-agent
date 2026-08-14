@@ -181,8 +181,9 @@ class EvidenceDiscoverySpecialist:
                             "Implementation hints are investigation_lead values, not facts or decisions.",
                             "planning_blocking_questions are engineering requirements that authorized actual evidence must answer before implementation planning; they are not user ambiguities or expected missing facts.",
                             "A ready plan declares at least one stable requirement_id, maps every requirement through engineering_questions, and lets every query family reference only declared question_id values.",
-                            "Each planned lane references the engineering question identities it covers. Queries in one family are an OR union of literal substrings; broad literals enlarge the bounded result set.",
-                            "The first Hook Discovery slice investigates one trigger or observation direction. Output presentation, feedback effects, event deduplication, and end-to-end Runtime correctness remain deferred unless needed to identify that direction.",
+                            "Each planned lane references the engineering question identities it covers. Queries in one family are a case-insensitive OR union of literal managed-symbol substrings; every broad literal enlarges the bounded result set. Prefer short symbol fragments or established engineering terms, not space-separated behavioral sentences.",
+                            "The first Hook Discovery slice investigates one trigger or observation direction. planning_blocking_questions contain only evidence-answerable requirements needed to identify that direction. Output presentation, feedback effects, event deduplication, death-path coverage, boundary regression, and final Runtime correctness belong in deferred_planning_or_runtime_questions and are not peer planning blockers.",
+                            "For this bounded first Hook Discovery slice, freeze one initial symbol-level query family and one vocabulary-distinct alternate family for the same primary engineering question. This is a bounded search strategy, not a universal Search Plan schema minimum.",
                             "Use only registered source_ids and allowed tools in the search plan.",
                             "Do not include a final Hook identity, Golden, expected evidence, historical answer, or prior output.",
                             "Queries are literal managed-symbol substring families derived from request semantics.",
@@ -261,7 +262,12 @@ class EvidenceDiscoverySpecialist:
                         "required_next_action": "use_tool",
                         "instruction": (
                             "Begin with one planned metadata query family. Exact IL may "
-                            "consume only a candidate_ref from this run's observation."
+                            "consume only a candidate_ref from this run's observation. "
+                            "After reading the first metadata observation, inspect a "
+                            "method only when its returned symbol and matched_queries "
+                            "address the primary engineering question; otherwise select "
+                            "one not-yet-executed alternate family bound to that same "
+                            "question."
                         ),
                     },
                 },
@@ -1850,11 +1856,10 @@ def _validate_action_against_frozen_plan(
     if len(actions) == 1:
         if action.get("tool") == "inspect_method_il":
             return
-        if not _latest_metadata_observation_has_no_identity(observations):
-            raise ValueError("SECOND_DISCOVERY_ACTION_MUST_VERIFY_OBSERVED_IDENTITY")
         _validate_supplemental_search(
             action,
             actions=actions,
+            observations=observations,
             agent_discovery=agent_discovery,
         )
         return
@@ -1863,6 +1868,11 @@ def _validate_action_against_frozen_plan(
             action.get("tool") == "inspect_method_il"
             and _latest_metadata_observation_has_identity(observations)
         ):
+            latest_observation_id = observations[-1].observation_id
+            if action.get("derived_from_observation_ids") != [latest_observation_id]:
+                raise ValueError(
+                    "SECOND_METADATA_IL_MUST_BIND_LATEST_OBSERVATION"
+                )
             return
         if (
             actions[0].get("tool") == "search_dotnet_metadata"
@@ -1870,9 +1880,15 @@ def _validate_action_against_frozen_plan(
             and not _latest_metadata_observation_has_identity(observations)
         ):
             raise ValueError("SECOND_METADATA_SEARCH_EXHAUSTED_WITHOUT_METHOD")
+        if (
+            actions[0].get("tool") == "search_dotnet_metadata"
+            and actions[1].get("tool") == "search_dotnet_metadata"
+        ):
+            raise ValueError("SECOND_METADATA_SEARCH_REQUIRES_IDENTITY_VERIFICATION")
         _validate_supplemental_search(
             action,
             actions=actions,
+            observations=observations,
             agent_discovery=agent_discovery,
         )
         return
@@ -1883,6 +1899,7 @@ def _validate_supplemental_search(
     action: dict[str, object],
     *,
     actions: list[dict[str, object]],
+    observations: list[ToolObservation],
     agent_discovery: dict[str, object],
 ) -> None:
     if action.get("tool") != "search_dotnet_metadata":
@@ -1916,12 +1933,48 @@ def _validate_supplemental_search(
     )
     if not isinstance(families, list):
         raise ValueError("SUPPLEMENTAL_ACTION_SHAPE_INVALID")
-    if not action.get("derived_from_observation_ids"):
+    if not observations or len(actions) != len(observations):
+        raise ValueError("SUPPLEMENTAL_ACTION_OBSERVATION_BINDING_INVALID")
+    if action.get("derived_from_observation_ids") != [
+        observations[-1].observation_id
+    ]:
         raise ValueError("SUPPLEMENTAL_ACTION_OBSERVATION_BINDING_REQUIRED")
     if len(matching_family_ids) != 1 or not isinstance(selected_family, dict):
         raise ValueError("SUPPLEMENTAL_QUERY_FAMILY_MATCH_INVALID")
     if matching_family_ids[0] in executed_family_ids:
         raise ValueError("SUPPLEMENTAL_QUERY_FAMILY_ALREADY_EXECUTED")
+    family_by_id = {
+        str(family["family_id"]): family
+        for family in families
+        if isinstance(family, dict) and isinstance(family.get("family_id"), str)
+    }
+    latest_action = actions[-1]
+    origin_family_id = latest_action.get("query_family_id")
+    if latest_action.get("tool") == "inspect_method_il":
+        derived_ids = latest_action.get("derived_from_observation_ids")
+        metadata_origins = {
+            str(origin_action["query_family_id"])
+            for origin_action, observation in zip(actions, observations)
+            if isinstance(derived_ids, list)
+            and observation.observation_id in derived_ids
+            and origin_action.get("tool") == "search_dotnet_metadata"
+            and isinstance(origin_action.get("query_family_id"), str)
+        }
+        if len(metadata_origins) != 1:
+            raise ValueError("SUPPLEMENTAL_ORIGIN_QUERY_FAMILY_INVALID")
+        origin_family_id = next(iter(metadata_origins))
+    origin_family = family_by_id.get(str(origin_family_id or ""))
+    if not isinstance(origin_family, dict):
+        raise ValueError("SUPPLEMENTAL_ORIGIN_QUERY_FAMILY_INVALID")
+    if latest_action.get("tool") == "search_dotnet_metadata":
+        selected_question_ids = selected_family.get("question_ids")
+        origin_question_ids = origin_family.get("question_ids")
+        if (
+            not isinstance(selected_question_ids, list)
+            or not isinstance(origin_question_ids, list)
+            or set(selected_question_ids) != set(origin_question_ids)
+        ):
+            raise ValueError("SUPPLEMENTAL_QUERY_FAMILY_QUESTION_BINDING_MISMATCH")
 
 
 def _matching_query_family_ids(
@@ -1966,6 +2019,25 @@ def _unexecuted_query_family_views(
         for action in actions
         if isinstance(action.get("query_family_id"), str)
     }
+    required_question_ids: set[str] | None = None
+    if actions and actions[-1].get("tool") == "search_dotnet_metadata":
+        latest_family_id = actions[-1].get("query_family_id")
+        latest_family = next(
+            (
+                family
+                for family in families
+                if isinstance(family, dict)
+                and family.get("family_id") == latest_family_id
+            ),
+            None,
+        )
+        latest_question_ids = (
+            latest_family.get("question_ids")
+            if isinstance(latest_family, dict)
+            else None
+        )
+        if isinstance(latest_question_ids, list):
+            required_question_ids = {str(value) for value in latest_question_ids}
     return [
         {
             key: (
@@ -1986,6 +2058,14 @@ def _unexecuted_query_family_views(
         if isinstance(family, dict)
         and isinstance(family.get("family_id"), str)
         and family["family_id"] not in executed_ids
+        and (
+            required_question_ids is None
+            or (
+                isinstance(family.get("question_ids"), list)
+                and {str(value) for value in family["question_ids"]}
+                == required_question_ids
+            )
+        )
     ]
 
 
