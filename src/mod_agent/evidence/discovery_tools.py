@@ -179,9 +179,9 @@ class LocalAssemblyEvidenceToolExecutor:
             and len(assemblies) != 1
         ):
             raise ValueError("SOURCE_VERSION_IDENTITY_REQUIRES_ONE_ASSEMBLY")
-        methods: list[dict[str, object]] = []
-        types: list[dict[str, object]] = []
-        fields: list[dict[str, object]] = []
+        method_pool: list[dict[str, object]] = []
+        type_pool: list[dict[str, object]] = []
+        field_pool: list[dict[str, object]] = []
         assembly_views: list[dict[str, object]] = []
         matched_counts = {"methods": 0, "types": 0, "fields": 0}
         truncated_by_kind = {"methods": False, "types": False, "fields": False}
@@ -228,85 +228,91 @@ class LocalAssemblyEvidenceToolExecutor:
             matched_counts["methods"] += len(raw_methods)
             matched_counts["types"] += len(raw_types)
             matched_counts["fields"] += len(raw_fields)
-            if "methods" in result_kinds:
-                for raw in raw_methods:
-                    if len(methods) >= limit_per_kind:
-                        truncated = True
-                        truncated_by_kind["methods"] = True
-                        break
-                    if not isinstance(raw, dict):
-                        raise ValueError("METADATA_METHOD_RESULT_INVALID")
-                    symbol = str(raw["symbol"])
-                    metadata_token = str(raw["metadata_token"])
-                    method_id = _stable_id(
-                        "method", assembly_id, metadata_token, symbol
-                    )
-                    observed = _ObservedMethod(
-                        source_id=source.source_id,
-                        assembly_path=assembly,
-                        relative_path=relative_path,
-                        assembly_sha256=assembly_hash,
-                        module_mvid=module_mvid,
-                        symbol=symbol,
-                        metadata_token=metadata_token,
-                    )
-                    self._observed_methods[method_id] = observed
-                    candidate_ref = _stable_id(
-                        "candidate",
-                        self._run_id,
-                        source.source_id,
-                        observation_id,
-                        method_id,
-                    )
-                    self._candidate_bindings[candidate_ref] = _CandidateBinding(
-                        run_id=self._run_id,
-                        observation_id=observation_id,
-                        source_id=source.source_id,
-                        method_id=method_id,
-                    )
-                    methods.append(
-                        {
-                            "candidate_ref": candidate_ref,
-                            "method_id": method_id,
-                            "assembly_id": assembly_id,
-                            "symbol": symbol,
-                            "metadata_token": metadata_token,
-                            "has_method_body": raw.get("has_method_body") is True,
-                        }
-                    )
-            if "types" in result_kinds:
-                remaining = limit_per_kind - len(types)
-                types.extend(
-                    _public_metadata_rows(
-                        raw_types,
-                        assembly_id=assembly_id,
-                        limit=remaining,
-                    )
+            for raw in raw_methods:
+                if not isinstance(raw, dict):
+                    raise ValueError("METADATA_METHOD_RESULT_INVALID")
+                symbol = str(raw["symbol"])
+                metadata_token = str(raw["metadata_token"])
+                method_pool.append(
+                    {
+                        "assembly_id": assembly_id,
+                        "symbol": symbol,
+                        "metadata_token": metadata_token,
+                        "has_method_body": raw.get("has_method_body") is True,
+                        "matched_queries": _matched_queries(symbol, queries),
+                        "observed": _ObservedMethod(
+                            source_id=source.source_id,
+                            assembly_path=assembly,
+                            relative_path=relative_path,
+                            assembly_sha256=assembly_hash,
+                            module_mvid=module_mvid,
+                            symbol=symbol,
+                            metadata_token=metadata_token,
+                        ),
+                    }
                 )
-                if len(raw_types) > max(remaining, 0):
-                    truncated = True
-                    truncated_by_kind["types"] = True
-            if "fields" in result_kinds:
-                remaining = limit_per_kind - len(fields)
-                fields.extend(
-                    _public_metadata_rows(
-                        raw_fields,
-                        assembly_id=assembly_id,
-                        limit=remaining,
-                    )
+            type_pool.extend(
+                _public_metadata_rows(
+                    raw_types,
+                    assembly_id=assembly_id,
+                    queries=queries,
                 )
-                if len(raw_fields) > max(remaining, 0):
-                    truncated = True
-                    truncated_by_kind["fields"] = True
-            if all(
-                kind not in result_kinds
-                or len({"methods": methods, "types": types, "fields": fields}[kind])
-                >= limit_per_kind
-                for kind in ("methods", "types", "fields")
-            ):
-                if assembly != assemblies[-1]:
-                    truncated = True
-                break
+            )
+            field_pool.extend(
+                _public_metadata_rows(
+                    raw_fields,
+                    assembly_id=assembly_id,
+                    queries=queries,
+                )
+            )
+        method_pool.sort(key=lambda row: _metadata_relevance_key(row, queries))
+        type_pool.sort(key=lambda row: _metadata_relevance_key(row, queries))
+        field_pool.sort(key=lambda row: _metadata_relevance_key(row, queries))
+        methods: list[dict[str, object]] = []
+        if "methods" in result_kinds:
+            for row in method_pool[:limit_per_kind]:
+                observed = row["observed"]
+                assert isinstance(observed, _ObservedMethod)
+                method_id = _stable_id(
+                    "method",
+                    str(row["assembly_id"]),
+                    observed.metadata_token,
+                    observed.symbol,
+                )
+                self._observed_methods[method_id] = observed
+                candidate_ref = _stable_id(
+                    "candidate",
+                    self._run_id,
+                    source.source_id,
+                    observation_id,
+                    method_id,
+                )
+                self._candidate_bindings[candidate_ref] = _CandidateBinding(
+                    run_id=self._run_id,
+                    observation_id=observation_id,
+                    source_id=source.source_id,
+                    method_id=method_id,
+                )
+                methods.append(
+                    {
+                        "candidate_ref": candidate_ref,
+                        "method_id": method_id,
+                        "assembly_id": row["assembly_id"],
+                        "symbol": row["symbol"],
+                        "metadata_token": row["metadata_token"],
+                        "has_method_body": row["has_method_body"],
+                        "matched_queries": row["matched_queries"],
+                    }
+                )
+        types = type_pool[:limit_per_kind] if "types" in result_kinds else []
+        fields = field_pool[:limit_per_kind] if "fields" in result_kinds else []
+        pools = {"methods": method_pool, "types": type_pool, "fields": field_pool}
+        returned = {"methods": methods, "types": types, "fields": fields}
+        for kind in ("methods", "types", "fields"):
+            if kind in result_kinds and len(pools[kind]) > len(returned[kind]):
+                truncated = True
+                truncated_by_kind[kind] = True
+        matched_query_counts = _per_query_counts(queries, pools)
         data: dict[str, object] = {
             "queries": list(queries),
             "requested_result_kinds": list(result_kinds),
@@ -316,11 +322,16 @@ class LocalAssemblyEvidenceToolExecutor:
             "unreadable_or_non_managed_assemblies": unreadable_count,
             "assemblies": assembly_views,
             "matched_counts": matched_counts,
+            "matched_query_counts": matched_query_counts,
             "returned_counts": {
                 "methods": len(methods),
                 "types": len(types),
                 "fields": len(fields),
             },
+            "returned_query_counts": _per_query_counts(
+                queries,
+                {"methods": methods, "types": types, "fields": fields},
+            ),
             "truncated_by_kind": truncated_by_kind,
             "results_truncated": truncated,
             "methods": methods,
@@ -360,6 +371,14 @@ class LocalAssemblyEvidenceToolExecutor:
                 "types": len(data["types"]),
                 "fields": len(data["fields"]),
             }
+        )
+        data["returned_query_counts"] = _per_query_counts(
+            queries,
+            {
+                "methods": data["methods"],
+                "types": data["types"],
+                "fields": data["fields"],
+            },
         )
         visible_methods = data["methods"]
         assert isinstance(visible_methods, list)
@@ -506,12 +525,12 @@ def _public_metadata_rows(
     rows: object,
     *,
     assembly_id: str,
-    limit: int,
+    queries: tuple[str, ...],
 ) -> list[dict[str, object]]:
     if not isinstance(rows, list):
         raise ValueError("METADATA_RESULT_ROWS_INVALID")
     result: list[dict[str, object]] = []
-    for raw in rows[: max(limit, 0)]:
+    for raw in rows:
         if not isinstance(raw, dict):
             raise ValueError("METADATA_RESULT_ROW_INVALID")
         result.append(
@@ -519,9 +538,50 @@ def _public_metadata_rows(
                 "assembly_id": assembly_id,
                 "symbol": str(raw["symbol"]),
                 "metadata_token": str(raw["metadata_token"]),
+                "matched_queries": _matched_queries(str(raw["symbol"]), queries),
             }
         )
     return result
+
+
+def _matched_queries(symbol: str, queries: tuple[str, ...]) -> list[str]:
+    normalized_symbol = symbol.casefold()
+    return [query for query in queries if query.casefold() in normalized_symbol]
+
+
+def _metadata_relevance_key(
+    row: dict[str, object], queries: tuple[str, ...]
+) -> tuple[object, ...]:
+    matched = row.get("matched_queries")
+    if not isinstance(matched, list) or not matched:
+        raise ValueError("METADATA_MATCH_BINDING_INVALID")
+    query_order = {query: index for index, query in enumerate(queries)}
+    matched_strings = [str(value) for value in matched]
+    return (
+        -len(matched_strings),
+        -max(len(value) for value in matched_strings),
+        -sum(len(value) for value in matched_strings),
+        min(query_order[value] for value in matched_strings),
+        str(row["symbol"]).casefold(),
+        str(row["metadata_token"]),
+    )
+
+
+def _per_query_counts(
+    queries: tuple[str, ...],
+    rows_by_kind: dict[str, list[dict[str, object]]],
+) -> dict[str, dict[str, int]]:
+    return {
+        query: {
+            kind: sum(
+                1
+                for row in rows_by_kind[kind]
+                if query in row.get("matched_queries", [])
+            )
+            for kind in ("methods", "types", "fields")
+        }
+        for query in queries
+    }
 
 
 def _stable_id(kind: str, *parts: str) -> str:

@@ -556,6 +556,19 @@ def _agent_lane_coverage(
     planned_lanes = search_plan.get("planned_lanes")
     if not isinstance(planned_lanes, list):
         raise HookDiscoverySemanticsError("Search plan planned_lanes must be an array.")
+    binding_by_observation = _agent_observation_requirement_bindings(
+        search_plan=search_plan,
+        actions=actions,
+        observations=observations,
+    )
+    families = search_plan.get("query_families")
+    if not isinstance(families, list):
+        raise HookDiscoverySemanticsError("Search plan query_families must be an array.")
+    legacy_lane_keys = [
+        (raw_lane.get("tool"), tuple(raw_lane.get("source_ids", [])))
+        for raw_lane in planned_lanes
+        if isinstance(raw_lane, Mapping)
+    ]
     coverage: list[dict[str, Any]] = []
     for raw_lane in planned_lanes:
         if not isinstance(raw_lane, Mapping):
@@ -565,16 +578,66 @@ def _agent_lane_coverage(
         source_ids = raw_lane.get("source_ids")
         if not isinstance(source_ids, list):
             raise HookDiscoverySemanticsError("Search plan source_ids must be an array.")
-        matching_observations = [
-            observation
-            for observation in observations
-            if observation.tool == tool and observation.source_id in source_ids
-        ]
-        matching_actions = [
-            action
-            for action in actions
-            if action.get("tool") == tool and action.get("source_id") in source_ids
-        ]
+        question_ids = raw_lane.get("question_ids")
+        if question_ids is None:
+            lane_key = (tool, tuple(source_ids))
+            if legacy_lane_keys.count(lane_key) != 1:
+                raise HookDiscoverySemanticsError(
+                    "Legacy lanes with the same tool and sources are ambiguous."
+                )
+            matching_indexes = [
+                index
+                for index, action in enumerate(actions)
+                if action.get("tool") == tool
+                and action.get("source_id") in source_ids
+            ]
+        else:
+            if not isinstance(question_ids, list) or not all(
+                isinstance(value, str) and value for value in question_ids
+            ):
+                raise HookDiscoverySemanticsError(
+                    "Search plan lane question_ids must be a string array."
+                )
+            lane_questions = set(question_ids)
+            matching_indexes = []
+            for index, (action, observation) in enumerate(zip(actions, observations)):
+                if (
+                    action.get("tool") != tool
+                    or action.get("source_id") not in source_ids
+                ):
+                    continue
+                if tool == "search_dotnet_metadata":
+                    direct_families = _families_for_resolved_action(
+                        action=action,
+                        families=families,
+                    )
+                    if len(direct_families) != 1:
+                        raise HookDiscoverySemanticsError(
+                            "Metadata lane must bind exactly one frozen query family."
+                        )
+                    action_questions = set(direct_families[0]["question_ids"])
+                else:
+                    action_questions = set(
+                        binding_by_observation[str(observation.observation_id)][
+                            "engineering_question_ids"
+                        ]
+                    )
+                if lane_questions.intersection(action_questions):
+                    matching_indexes.append(index)
+        matching_observations = [observations[index] for index in matching_indexes]
+        matching_actions = [actions[index] for index in matching_indexes]
+        actual_source_ids = (
+            list(source_ids)
+            if question_ids is None
+            else [
+                source_id
+                for source_id in source_ids
+                if any(
+                    action.get("source_id") == source_id
+                    for action in matching_actions
+                )
+            ]
+        )
         hit_count = sum(
             len(observation.evidence_items)
             if tool == "inspect_method_il"
@@ -602,7 +665,7 @@ def _agent_lane_coverage(
                 "hit_count": hit_count,
                 "scope": {
                     "tool": tool,
-                    "source_ids": list(source_ids),
+                    "source_ids": actual_source_ids,
                     "action_count": len(matching_actions),
                 },
                 "failure": None,
@@ -1222,11 +1285,12 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
             value not in trace_binding for value in derived
         ):
             raise HookDiscoverySemanticsError("Action derivation trace is invalid.")
-        question_binding = {
+        direct_question_binding = {
             str(question_id)
             for family in matched_families
             for question_id in family["question_ids"]
         }
+        question_binding = set(direct_question_binding)
         family_binding = {
             str(family["family_id"]) for family in matched_families
         }
@@ -1244,10 +1308,54 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
             action_binding.update(parent["action_indexes"])
         trace_binding[str(observation["observation_id"])] = {
             "question_ids": question_binding,
+            "direct_question_ids": direct_question_binding,
             "family_ids": family_binding,
             "requirement_ids": requirement_binding,
             "action_indexes": action_binding,
         }
+    planned_lanes = search_plan["planned_lanes"]
+    coverage = pack.hook_discovery["lane_coverage"]
+    if len(coverage) != len(planned_lanes):
+        raise HookDiscoverySemanticsError("Lane coverage count drifted.")
+    for lane, persisted in zip(planned_lanes, coverage):
+        if lane.get("question_ids") is None:
+            continue
+        lane_questions = set(lane["question_ids"])
+        matching_action_indexes = [
+            index
+            for index, (action, observation) in enumerate(
+                zip(accepted_actions, observation_rows), 1
+            )
+            if action.get("tool") == lane.get("tool")
+            and action.get("source_id") in lane.get("source_ids", [])
+            and lane_questions.intersection(
+                trace_binding[str(observation["observation_id"])][
+                    "direct_question_ids"
+                    if action.get("tool") == "search_dotnet_metadata"
+                    else "question_ids"
+                ]
+            )
+        ]
+        actual_source_ids = [
+            source_id
+            for source_id in lane.get("source_ids", [])
+            if any(
+                accepted_actions[index - 1].get("source_id") == source_id
+                for index in matching_action_indexes
+            )
+        ]
+        if persisted["lane"] != lane.get("lane") or persisted["scope"] != {
+            "tool": lane.get("tool"),
+            "source_ids": actual_source_ids,
+            "action_count": len(matching_action_indexes),
+        }:
+            raise HookDiscoverySemanticsError("Lane coverage binding drifted.")
+        if not matching_action_indexes and (
+            persisted["status"] != "not_searched" or persisted["hit_count"] != 0
+        ):
+            raise HookDiscoverySemanticsError(
+                "Unexecuted lane must remain not_searched."
+            )
     for relationship in pack.hook_discovery["evidence_relationships"]:
         if relationship["requirement_id"] not in requirement_ids:
             raise HookDiscoverySemanticsError("Relationship requirement ref is invalid.")

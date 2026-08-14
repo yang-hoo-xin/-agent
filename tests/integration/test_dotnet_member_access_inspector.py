@@ -226,7 +226,7 @@ def test_inspector_resolves_direct_generic_boolean_property(
                             "deferred_planning_or_runtime_questions": [],
                         },
                         "search_plan": {
-                            "schema_version": "hook_discovery_search_plan_v2",
+                            "schema_version": "hook_discovery_search_plan_v3",
                             "engineering_questions": [{
                                 "question_id": "question-light-pulse",
                                 "question": "Which current managed method exposes the light pulse action?",
@@ -240,11 +240,13 @@ def test_inspector_resolves_direct_generic_boolean_property(
                                     "lane": "managed_metadata_discovery",
                                     "tool": "search_dotnet_metadata",
                                     "source_ids": ["controlled-assembly"],
+                                    "question_ids": ["question-light-pulse"],
                                 },
                                 {
                                     "lane": "exact_il_verification",
                                     "tool": "inspect_method_il",
                                     "source_ids": ["controlled-assembly"],
+                                    "question_ids": ["question-light-pulse"],
                                 },
                             ],
                             "query_families": [
@@ -268,12 +270,7 @@ def test_inspector_resolves_direct_generic_boolean_property(
                         "action": "use_tool",
                         "tool": "search_dotnet_metadata",
                         "source_id": "controlled-assembly",
-                        "arguments": {
-                            "queries": ["PulseCorridorLights"],
-                            "result_kinds": ["methods"],
-                            "limit_per_kind": 5,
-                        },
-                        "evidence_need": "Which current managed method exposes the light pulse action?",
+                        "family_id": "request-derived-light-pulse",
                         "derived_from_observation_ids": [],
                     }
                 )

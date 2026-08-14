@@ -185,7 +185,7 @@ class _CliMetadataRunner:
             "module_mvid": "00000000-0000-0000-0000-000000000042",
             "methods": [
                 {
-                    "symbol": "Observed.Type.Move",
+                    "symbol": "Observed.Type.Movement",
                     "metadata_token": "0x06000042",
                     "has_method_body": True,
                 }
@@ -201,13 +201,13 @@ class _CliILRunner:
 
     def inspect(self, assembly_path: str | Path) -> dict[str, object]:
         assembly = Path(assembly_path)
-        assert self.symbols == ("Observed.Type.Move",)
+        assert self.symbols == ("Observed.Type.Movement",)
         return {
             "assembly_sha256": hashlib.sha256(assembly.read_bytes()).hexdigest().upper(),
             "module_mvid": "00000000-0000-0000-0000-000000000042",
             "methods": [
                 {
-                    "symbol": "Observed.Type.Move",
+                    "symbol": "Observed.Type.Movement",
                     "metadata_token": "0x06000042",
                     "attributes": "Public",
                     "impl_attributes": "IL",
@@ -392,7 +392,7 @@ class _CliInjectedAgentAdapter:
                     "evidence_conclusions": [
                         {
                             "claim": (
-                                "Observed inspected symbol: Observed.Type.Move."
+                                "Observed inspected symbol: Observed.Type.Movement."
                             ),
                             "claim_status": "observed",
                             "observation_ids": ["obs-002"],
@@ -945,7 +945,7 @@ def test_cli_intelligent_evidence_request_persists_candidate_binding_provenance(
     assert pack["model_action_trace"][1]["action"]["arguments"] == {
         "candidate_ref": binding["candidate_ref"]
     }
-    assert pack["items"][0]["symbol"] == "Observed.Type.Move"
+    assert pack["items"][0]["symbol"] == "Observed.Type.Movement"
     adapter = _CliInjectedAgentAdapter.instances[0]
     assert len(adapter.model_observations) == 2
     assert "method_id" not in json.dumps(adapter.model_observations)
@@ -1035,7 +1035,7 @@ def test_phase1_source_bound_no_write_run_persists_complete_lineage(
     )
     monkeypatch.setattr(
         "src.mod_agent.intelligent_evidence_only._PHASE1_METHOD_SYMBOL",
-        "Observed.Type.Move",
+        "Observed.Type.Movement",
     )
     uuid_values = iter(("7" * 32, "8" * 32))
     monkeypatch.setattr(

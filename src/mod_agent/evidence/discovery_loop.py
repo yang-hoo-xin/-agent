@@ -176,9 +176,13 @@ class EvidenceDiscoverySpecialist:
                         "message_type": "actual_planning_request",
                         "required_next_action": "plan",
                         "planning_scope": "first_hook_discovery_slice",
-                    "rules": [
+                        "rules": [
                             "Project only semantics stated or directly implied by the request.",
                             "Implementation hints are investigation_lead values, not facts or decisions.",
+                            "planning_blocking_questions are engineering requirements that authorized actual evidence must answer before implementation planning; they are not user ambiguities or expected missing facts.",
+                            "A ready plan declares at least one stable requirement_id, maps every requirement through engineering_questions, and lets every query family reference only declared question_id values.",
+                            "Each planned lane references the engineering question identities it covers. Queries in one family are an OR union of literal substrings; broad literals enlarge the bounded result set.",
+                            "The first Hook Discovery slice investigates one trigger or observation direction. Output presentation, feedback effects, event deduplication, and end-to-end Runtime correctness remain deferred unless needed to identify that direction.",
                             "Use only registered source_ids and allowed tools in the search plan.",
                             "Do not include a final Hook identity, Golden, expected evidence, historical answer, or prior output.",
                             "Queries are literal managed-symbol substring families derived from request semantics.",
@@ -212,11 +216,16 @@ class EvidenceDiscoverySpecialist:
                         "content": {
                             "message_type": "actual_planning_validation_error",
                             "error_code": first_error,
+                            "topology_issues": _planning_topology_issues(raw_plan),
                             "required_next_action": "plan",
                             "required_plan_schema": evidence_discovery_planning_schema(),
                             "instruction": (
                                 "Return one corrected actual-only plan. Preserve request "
-                                "semantics and registered source_ids; do not add a Hook "
+                                "semantics and registered source_ids. Correct every listed "
+                                "topology issue by declaring stable planning requirements, "
+                                "mapping them through engineering questions, and binding "
+                                "query families only to declared question identities. Do not "
+                                "add a Hook "
                                 "identity, Golden, expected facts, historical answer, or "
                                 "prior output beyond correcting this rejected plan."
                             ),
@@ -1321,6 +1330,16 @@ def _finish_validation_repair_focus(
                 "interpretation in a separate inferred conclusion with limitations."
             ),
         }
+    if error_code == "EVIDENCE_CONCLUSION_OBSERVATION_REQUIRED":
+        return {
+            "field": "evidence_conclusions[]",
+            "requirement": (
+                "An observed claim must exactly copy one supported_fact canonical_claim. "
+                "An inferred claim must cite at least one actual observation_id and "
+                "state non-empty limitations. If no observation grounds the claim, use "
+                "claim_status=unknown with no observation_ids and non-empty limitations."
+            ),
+        }
     return {
         "field": "finish",
         "requirement": "Match required_finish_schema exactly.",
@@ -1570,6 +1589,114 @@ def _parse_planning_action(raw: str) -> dict[str, object]:
     }:
         raise ValueError("PLANNING_ACTION_SHAPE_INVALID")
     return action
+
+
+def _planning_topology_issues(raw: str) -> list[dict[str, object]]:
+    """Describe only structural planning-reference failures from one rejected output."""
+
+    try:
+        action = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    if not isinstance(action, dict):
+        return []
+    projection = action.get("requirement_projection")
+    search_plan = action.get("search_plan")
+    if not isinstance(projection, dict) or not isinstance(search_plan, dict):
+        return []
+
+    requirements = projection.get("planning_blocking_questions")
+    engineering_questions = search_plan.get("engineering_questions")
+    query_families = search_plan.get("query_families")
+    requirements = requirements if isinstance(requirements, list) else []
+    engineering_questions = (
+        engineering_questions if isinstance(engineering_questions, list) else []
+    )
+    query_families = query_families if isinstance(query_families, list) else []
+
+    requirement_ids = {
+        str(item["requirement_id"])
+        for item in requirements
+        if isinstance(item, dict)
+        and isinstance(item.get("requirement_id"), str)
+        and str(item["requirement_id"]).strip()
+    }
+    question_ids = {
+        str(item["question_id"])
+        for item in engineering_questions
+        if isinstance(item, dict)
+        and isinstance(item.get("question_id"), str)
+        and str(item["question_id"]).strip()
+    }
+    issues: list[dict[str, object]] = []
+    if not requirement_ids:
+        issues.append({"code": "PLANNING_REQUIREMENTS_EMPTY"})
+    if not question_ids:
+        issues.append({"code": "ENGINEERING_QUESTIONS_EMPTY"})
+
+    referenced_requirement_ids: set[str] = set()
+    for item in engineering_questions:
+        if not isinstance(item, dict):
+            continue
+        refs = item.get("requirement_ids")
+        if not isinstance(refs, list):
+            continue
+        referenced_requirement_ids.update(str(value) for value in refs)
+    unknown_requirement_ids = sorted(referenced_requirement_ids - requirement_ids)
+    if unknown_requirement_ids:
+        issues.append(
+            {
+                "code": "ENGINEERING_REQUIREMENT_REFERENCE_UNKNOWN",
+                "unknown_requirement_ids": unknown_requirement_ids,
+            }
+        )
+    uncovered_requirement_ids = sorted(requirement_ids - referenced_requirement_ids)
+    if uncovered_requirement_ids:
+        issues.append(
+            {
+                "code": "PLANNING_REQUIREMENT_NOT_COVERED",
+                "requirement_ids": uncovered_requirement_ids,
+            }
+        )
+
+    referenced_question_ids: set[str] = set()
+    family_ids_by_question_id: dict[str, set[str]] = {}
+    for item in query_families:
+        if not isinstance(item, dict):
+            continue
+        family_id = item.get("family_id")
+        refs = item.get("question_ids")
+        if not isinstance(refs, list):
+            continue
+        for value in refs:
+            question_id = str(value)
+            referenced_question_ids.add(question_id)
+            if isinstance(family_id, str) and family_id.strip():
+                family_ids_by_question_id.setdefault(question_id, set()).add(family_id)
+    unknown_question_ids = sorted(referenced_question_ids - question_ids)
+    if unknown_question_ids:
+        issues.append(
+            {
+                "code": "QUERY_FAMILY_QUESTION_REFERENCE_UNKNOWN",
+                "unknown_question_ids": unknown_question_ids,
+                "family_ids": sorted(
+                    {
+                        family_id
+                        for question_id in unknown_question_ids
+                        for family_id in family_ids_by_question_id.get(question_id, set())
+                    }
+                ),
+            }
+        )
+    uncovered_question_ids = sorted(question_ids - referenced_question_ids)
+    if uncovered_question_ids:
+        issues.append(
+            {
+                "code": "ENGINEERING_QUESTION_NOT_COVERED",
+                "question_ids": uncovered_question_ids,
+            }
+        )
+    return issues
 
 
 def _validated_actual_plan_from_raw(

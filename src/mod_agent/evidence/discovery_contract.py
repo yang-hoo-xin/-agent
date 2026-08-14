@@ -33,7 +33,8 @@ EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v9"
 AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v2"
 AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION = "agent_evidence_discovery_actual_v2"
 REQUIREMENT_PROJECTION_SCHEMA_VERSION = "hook_requirement_projection_v2"
-SEARCH_PLAN_SCHEMA_VERSION = "hook_discovery_search_plan_v2"
+SEARCH_PLAN_SCHEMA_VERSION = "hook_discovery_search_plan_v3"
+_LEGACY_SEARCH_PLAN_SCHEMA_VERSION = "hook_discovery_search_plan_v2"
 EVIDENCE_SOURCE_AUTHORITIES = frozenset({"authoritative", "supporting", "lead"})
 EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES = (
     "natural_language_request",
@@ -609,7 +610,9 @@ def _supported_observation_facts(
     facts: list[dict[str, object]] = []
     if observation.tool == "search_dotnet_metadata":
         matched_counts = data.get("matched_counts")
+        matched_query_counts = data.get("matched_query_counts")
         returned_counts = data.get("returned_counts")
+        returned_query_counts = data.get("returned_query_counts")
         truncated_by_kind = data.get("truncated_by_kind")
         if all(
             isinstance(value, dict)
@@ -622,19 +625,24 @@ def _supported_observation_facts(
                 "results_truncated": data.get("results_truncated") is True,
                 "truncated_by_kind": dict(truncated_by_kind),
             }
+            if isinstance(matched_query_counts, dict) and isinstance(
+                returned_query_counts, dict
+            ):
+                value["matched_query_counts"] = dict(matched_query_counts)
+                value["returned_query_counts"] = dict(returned_query_counts)
+            canonical_claim = _canonical_claim_for_persisted_fact(
+                fact_type="metadata_search_result",
+                subject=observation.source_id,
+                value=value,
+            )
+            assert canonical_claim is not None
             facts.append(
                 _observation_fact(
                     observation=observation,
                     fact_type="metadata_search_result",
                     subject=observation.source_id,
                     value=value,
-                    canonical_claim=(
-                        "Observed metadata search result: "
-                        f"matched_counts={_canonical_json(value['matched_counts'])}; "
-                        f"returned_counts={_canonical_json(value['returned_counts'])}; "
-                        "results_truncated="
-                        f"{str(value['results_truncated']).lower()}."
-                    ),
+                    canonical_claim=canonical_claim,
                 )
             )
     elif observation.tool == "inspect_method_il" and data.get("symbol"):
@@ -890,12 +898,20 @@ def _canonical_claim_for_persisted_fact(
     value: dict[str, object],
 ) -> str | None:
     if fact_type == "metadata_search_result":
-        if set(value) != {
+        legacy_fields = {
             "queries",
             "matched_counts",
             "returned_counts",
             "results_truncated",
             "truncated_by_kind",
+        }
+        current_fields = legacy_fields | {
+            "matched_query_counts",
+            "returned_query_counts",
+        }
+        if frozenset(value) not in {
+            frozenset(legacy_fields),
+            frozenset(current_fields),
         }:
             return None
         queries = value.get("queries")
@@ -911,10 +927,26 @@ def _canonical_claim_for_persisted_fact(
             or not isinstance(value.get("results_truncated"), bool)
         ):
             return None
+        if set(value) == legacy_fields:
+            return (
+                "Observed metadata search result: "
+                f"matched_counts={_canonical_json(matched_counts)}; "
+                f"returned_counts={_canonical_json(returned_counts)}; "
+                "results_truncated="
+                f"{str(value['results_truncated']).lower()}."
+            )
+        matched_query_counts = value.get("matched_query_counts")
+        returned_query_counts = value.get("returned_query_counts")
+        if not isinstance(matched_query_counts, dict) or not isinstance(
+            returned_query_counts, dict
+        ):
+            return None
         return (
             "Observed metadata search result: "
             f"matched_counts={_canonical_json(matched_counts)}; "
+            f"matched_query_counts={_canonical_json(matched_query_counts)}; "
             f"returned_counts={_canonical_json(returned_counts)}; "
+            f"returned_query_counts={_canonical_json(returned_query_counts)}; "
             "results_truncated="
             f"{str(value['results_truncated']).lower()}."
         )
@@ -1086,6 +1118,15 @@ def validate_agent_discovery_actual(value: dict[str, object]) -> None:
     }
     if planned_question_ids != question_ids:
         raise ValueError("SEARCH_PLAN_QUERY_FAMILY_QUESTION_COVERAGE_INVALID")
+    search_plan_version = search_plan.get("schema_version")
+    if search_plan_version == SEARCH_PLAN_SCHEMA_VERSION:
+        lane_question_ids = {
+            str(value)
+            for lane in search_plan["planned_lanes"]
+            for value in lane["question_ids"]
+        }
+        if lane_question_ids != question_ids:
+            raise ValueError("SEARCH_PLAN_LANE_QUESTION_COVERAGE_INVALID")
 
 
 def normalize_agent_discovery_planning_actual(
@@ -1178,13 +1219,32 @@ def agent_discovery_early_termination_state(
 def evidence_discovery_planning_schema() -> dict[str, object]:
     """Return the provider-neutral first-turn planning response schema."""
 
-    string_array = {"type": "array", "items": {"type": "string"}}
-    nullable_string = {"type": ["string", "null"]}
+    string_array = {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1},
+    }
+    nonempty_string_array = {**string_array, "minItems": 1}
+    nullable_string = {"type": ["string", "null"], "minLength": 1}
     requirement = {
         "type": "object",
         "properties": {
-            "requirement_id": {"type": "string"},
-            "question": {"type": "string"},
+            "requirement_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "Stable identity for one engineering requirement that actual "
+                    "evidence must answer before implementation planning can begin."
+                ),
+            },
+            "question": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "Engineering fact that must be established from authorized actual "
+                    "sources. This is not a request-clarification question or an "
+                    "expected-answer field."
+                ),
+            },
         },
         "required": ["requirement_id", "question"],
         "additionalProperties": False,
@@ -1192,9 +1252,26 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
     engineering_question = {
         "type": "object",
         "properties": {
-            "question_id": {"type": "string"},
-            "question": {"type": "string"},
-            "requirement_ids": string_array,
+            "question_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Stable identity for this search-planning question.",
+            },
+            "question": {
+                "type": "string",
+                "minLength": 1,
+                "description": (
+                    "Searchable engineering question derived from the referenced "
+                    "planning requirements."
+                ),
+            },
+            "requirement_ids": {
+                **nonempty_string_array,
+                "description": (
+                    "Only requirement_id values declared in "
+                    "planning_blocking_questions."
+                ),
+            },
         },
         "required": ["question_id", "question", "requirement_ids"],
         "additionalProperties": False,
@@ -1217,7 +1294,7 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
                 "items": {
                     "type": "object",
                     "properties": {
-                        "text": {"type": "string"},
+                        "text": {"type": "string", "minLength": 1},
                         "role": {"type": "string", "enum": ["investigation_lead"]},
                     },
                     "required": ["text", "role"],
@@ -1228,6 +1305,12 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
             "planning_blocking_questions": {
                 "type": "array",
                 "items": requirement,
+                "description": (
+                    "For planning_status=ready this must be non-empty. Each entry is "
+                    "an engineering requirement that authorized actual evidence must "
+                    "answer before implementation planning; it is not user ambiguity, "
+                    "a Golden fact, or an expected missing-evidence list."
+                ),
             },
             "deferred_planning_or_runtime_questions": string_array,
         },
@@ -1262,8 +1345,8 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
                 "items": {
                     "type": "object",
                     "properties": {
-                        "source_id": {"type": "string"},
-                        "role": {"type": "string"},
+                        "source_id": {"type": "string", "minLength": 1},
+                        "role": {"type": "string", "minLength": 1},
                     },
                     "required": ["source_id", "role"],
                     "additionalProperties": False,
@@ -1274,11 +1357,18 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
                 "items": {
                     "type": "object",
                     "properties": {
-                        "lane": {"type": "string"},
+                        "lane": {"type": "string", "minLength": 1},
                         "tool": {"type": "string"},
-                        "source_ids": string_array,
+                        "source_ids": nonempty_string_array,
+                        "question_ids": {
+                            **nonempty_string_array,
+                            "description": (
+                                "Only question_id values declared in "
+                                "engineering_questions."
+                            ),
+                        },
                     },
-                    "required": ["lane", "tool", "source_ids"],
+                    "required": ["lane", "tool", "source_ids", "question_ids"],
                     "additionalProperties": False,
                 },
             },
@@ -1287,12 +1377,18 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
                 "items": {
                     "type": "object",
                     "properties": {
-                        "family_id": {"type": "string"},
-                        "queries": string_array,
-                        "evidence_need": {"type": "string"},
-                        "source_ids": string_array,
+                        "family_id": {"type": "string", "minLength": 1},
+                        "queries": nonempty_string_array,
+                        "evidence_need": {"type": "string", "minLength": 1},
+                        "source_ids": nonempty_string_array,
                         "tool": {"type": "string"},
-                        "question_ids": string_array,
+                        "question_ids": {
+                            **nonempty_string_array,
+                            "description": (
+                                "Only question_id values declared in "
+                                "engineering_questions."
+                            ),
+                        },
                     },
                     "required": [
                         "family_id",
@@ -1305,8 +1401,8 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
                     "additionalProperties": False,
                 },
             },
-            "initial_stop_condition": {"type": "string"},
-            "initial_expand_condition": {"type": "string"},
+            "initial_stop_condition": {"type": "string", "minLength": 1},
+            "initial_expand_condition": {"type": "string", "minLength": 1},
         },
         "required": [
             "schema_version",
@@ -1321,6 +1417,11 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
     }
     return {
         "type": "object",
+        "description": (
+            "For planning_status=ready: declare one or more stable planning "
+            "requirements, map every requirement through engineering_questions, "
+            "and let every query family reference only declared question_id values."
+        ),
         "properties": {
             "action": {"type": "string", "enum": ["plan"]},
             "planning_status": {
@@ -1420,7 +1521,11 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
     }
     if set(value) != required:
         raise ValueError("SEARCH_PLAN_SHAPE_INVALID")
-    if value.get("schema_version") != SEARCH_PLAN_SCHEMA_VERSION:
+    schema_version = value.get("schema_version")
+    if schema_version not in {
+        SEARCH_PLAN_SCHEMA_VERSION,
+        _LEGACY_SEARCH_PLAN_SCHEMA_VERSION,
+    }:
         raise ValueError("SEARCH_PLAN_VERSION_INVALID")
     engineering_questions = value.get("engineering_questions")
     source_roles = value.get("source_roles")
@@ -1451,15 +1556,33 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
             _nonempty_string(item.get(field)) for field in ("source_id", "role")
         ):
             raise ValueError("SEARCH_PLAN_SOURCE_ROLE_INVALID")
+    lane_binding_keys: set[tuple[str, tuple[str, ...], tuple[str, ...]]] = set()
     for item in lanes:
+        allowed_lane_fields = {"lane", "tool", "source_ids"}
+        if schema_version == SEARCH_PLAN_SCHEMA_VERSION:
+            allowed_lane_fields.add("question_ids")
         if (
             not isinstance(item, dict)
-            or set(item) != {"lane", "tool", "source_ids"}
+            or set(item) != allowed_lane_fields
             or not _nonempty_string(item.get("lane"))
             or item.get("tool") not in EVIDENCE_DISCOVERY_TOOLS
         ):
             raise ValueError("SEARCH_PLAN_LANE_INVALID")
         _validate_string_array(item.get("source_ids"), "source_ids", allow_empty=False)
+        if schema_version == SEARCH_PLAN_SCHEMA_VERSION:
+            _validate_string_array(
+                item.get("question_ids"), "question_ids", allow_empty=False
+            )
+            if any(value not in question_ids for value in item["question_ids"]):
+                raise ValueError("SEARCH_PLAN_LANE_QUESTION_UNKNOWN")
+            lane_binding_key = (
+                str(item["tool"]),
+                tuple(str(value) for value in item["source_ids"]),
+                tuple(str(value) for value in item["question_ids"]),
+            )
+            if lane_binding_key in lane_binding_keys:
+                raise ValueError("SEARCH_PLAN_LANE_BINDING_AMBIGUOUS")
+            lane_binding_keys.add(lane_binding_key)
     family_ids: list[str] = []
     dispatch_keys: set[tuple[str, str, tuple[str, ...], str]] = set()
     for item in families:
