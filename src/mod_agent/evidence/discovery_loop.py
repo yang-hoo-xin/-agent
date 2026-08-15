@@ -183,7 +183,6 @@ class EvidenceDiscoverySpecialist:
                             "A ready plan declares at least one stable requirement_id, maps every requirement through engineering_questions, and lets every query family reference only declared question_id values.",
                             "Each planned lane references the engineering question identities it covers. Queries in one family are a case-insensitive OR union of literal managed-symbol substrings; every broad literal enlarges the bounded result set. Prefer short symbol fragments or established engineering terms, not space-separated behavioral sentences.",
                             "The first Hook Discovery slice investigates one trigger or observation direction. planning_blocking_questions contain only evidence-answerable requirements needed to identify that direction. Output presentation, feedback effects, event deduplication, death-path coverage, boundary regression, and final Runtime correctness belong in deferred_planning_or_runtime_questions and are not peer planning blockers.",
-                            "For this bounded first Hook Discovery slice, freeze one initial symbol-level query family and one vocabulary-distinct alternate family for the same primary engineering question. This is a bounded search strategy, not a universal Search Plan schema minimum.",
                             "Use only registered source_ids and allowed tools in the search plan.",
                             "Do not include a final Hook identity, Golden, expected evidence, historical answer, or prior output.",
                             "Queries are literal managed-symbol substring families derived from request semantics.",
@@ -265,9 +264,10 @@ class EvidenceDiscoverySpecialist:
                             "consume only a candidate_ref from this run's observation. "
                             "After reading the first metadata observation, inspect a "
                             "method only when its returned symbol and matched_queries "
-                            "address the primary engineering question; otherwise select "
-                            "one not-yet-executed alternate family bound to that same "
-                            "question."
+                            "address the primary engineering question. When they do not, "
+                            "select another family only if the frozen plan already contains "
+                            "one not-yet-executed family bound to that same question; "
+                            "otherwise stop without inventing or rewriting a family_id."
                         ),
                     },
                 },
@@ -357,12 +357,24 @@ class EvidenceDiscoverySpecialist:
                     model_action_attempts=model_action_attempts,
                 )
             if action["action"] == "finish":
-                if _zero_result_recovery_required(
+                zero_result_recovery_required = _zero_result_recovery_required(
                     actions=actions,
                     observations=observations,
                     request=request,
                     model_step=model_step,
-                ):
+                )
+                allowed_unexecuted_query_families: list[dict[str, object]] | None = None
+                if zero_result_recovery_required and self._agent_discovery is not None:
+                    allowed_unexecuted_query_families = (
+                        _unexecuted_query_family_views(
+                            agent_discovery=self._agent_discovery,
+                            actions=actions,
+                        )
+                    )
+                    zero_result_recovery_required = bool(
+                        allowed_unexecuted_query_families
+                    )
+                if zero_result_recovery_required:
                     model_action_attempts.append(
                         _model_action_attempt(
                             model_step=model_step,
@@ -412,10 +424,7 @@ class EvidenceDiscoverySpecialist:
                     if self._agent_discovery is not None:
                         tool_action_validation_error[
                             "allowed_unexecuted_query_families"
-                        ] = _unexecuted_query_family_views(
-                            agent_discovery=self._agent_discovery,
-                            actions=actions,
-                        )
+                        ] = allowed_unexecuted_query_families
                     continue
                 self._runtime_diagnostics["failure_stage"] = "finish_validation"
                 try:

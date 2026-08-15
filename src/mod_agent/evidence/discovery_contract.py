@@ -30,9 +30,12 @@ EVIDENCE_DISCOVERY_TOOLS = frozenset(
 )
 EVIDENCE_DISCOVERY_RESULT_KINDS = frozenset({"methods", "types", "fields"})
 EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v9"
-AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v3"
-AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSION = (
-    "agent_evidence_discovery_prompt_v2"
+AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v4"
+AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSIONS = frozenset(
+    {
+        "agent_evidence_discovery_prompt_v2",
+        "agent_evidence_discovery_prompt_v3",
+    }
 )
 AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION = "agent_evidence_discovery_actual_v2"
 REQUIREMENT_PROJECTION_SCHEMA_VERSION = "hook_requirement_projection_v2"

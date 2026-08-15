@@ -602,7 +602,7 @@ def _evidence_item_from_artifact_payload(value: Mapping[str, Any]) -> EvidenceIt
 
 def _validate_agent_discovery_early_termination_pack(pack: EvidencePack) -> None:
     from .discovery_contract import (
-        AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSION,
+        AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSIONS,
         AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION,
         agent_discovery_early_termination_state,
     )
@@ -661,10 +661,10 @@ def _validate_agent_discovery_early_termination_pack(pack: EvidencePack) -> None
         for key, value in pack.prompt_contract.items()
         if key != "version"
     }
-    if prompt_version not in {
-        AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSION,
-        AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION,
-    } or prompt_contract_without_version != {
+    if prompt_version not in (
+        AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSIONS
+        | {AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION}
+    ) or prompt_contract_without_version != {
         "actual_planning_required": True,
         "agent_discovery_sha256": expected_agent_hash,
         "raw_prompt_persisted": False,

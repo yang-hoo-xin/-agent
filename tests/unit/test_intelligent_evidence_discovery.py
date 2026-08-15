@@ -1792,7 +1792,7 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
 
     assert pack.agent_discovery is not None
     assert pack.prompt_contract["actual_planning_required"] is True
-    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v3"
+    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v4"
     assert [item["tool"] for item in pack.tool_trace_summary] == [
         "search_dotnet_metadata",
         "inspect_method_il",
@@ -2484,6 +2484,88 @@ def test_actual_zero_result_correction_replays_only_unexecuted_frozen_family(
     assert result.run_status == "completed"
 
 
+def test_actual_zero_result_without_frozen_alternate_can_stop(
+    tmp_path: Path,
+) -> None:
+    class _ZeroMetadataExecutor(_ObservedToolExecutor):
+        def execute(self, **kwargs: object) -> ToolObservation:
+            action = kwargs["action"]
+            source = kwargs["source"]
+            observation_id = kwargs["observation_id"]
+            assert isinstance(action, dict)
+            assert isinstance(source, EvidenceDiscoverySource)
+            assert isinstance(observation_id, str)
+            self.actions.append(action)
+            return ToolObservation(
+                observation_id=observation_id,
+                tool="search_dotnet_metadata",
+                source_id=source.source_id,
+                summary="No managed symbol matched the frozen family.",
+                data={"methods": [], "types": [], "fields": []},
+            )
+
+    plan = _actual_plan(
+        behavior_goal="Find a current status observation point.",
+        queries=["status"],
+        evidence_need="Which current method exposes the status transition?",
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            _family_selection("request-derived-behavior"),
+            {
+                "action": "finish",
+                "decision": "needs_more_evidence",
+                "evidence_conclusions": [
+                    {
+                        "claim": "The frozen metadata family did not expose a method identity.",
+                        "claim_status": "unknown",
+                        "observation_ids": [],
+                        "limitations": [
+                            "No additional family was frozen for the same engineering question."
+                        ],
+                        "requirement_ids": ["req-primary"],
+                        "relationship": "missing",
+                    }
+                ],
+                "unresolved_questions": [
+                    "The current status-transition method identity remains unresolved."
+                ],
+                "missing_capabilities": [],
+            },
+        ]
+    )
+    executor = _ZeroMetadataExecutor()
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request="Record when a temporary status begins.",
+            require_actual_planning=True,
+        )
+    )
+
+    assert len(executor.actions) == 1
+    assert result.run_status == "completed"
+    assert result.pack.readiness == "insufficient"
+    assert [item["status"] for item in result.pack.model_action_trace] == [
+        "accepted",
+        "accepted",
+    ]
+    assert all(
+        not (
+            isinstance(message.get("content"), dict)
+            and message["content"].get("error_code")
+            == "ZERO_RESULT_RECOVERY_REQUIRED"
+        )
+        for call in model.calls
+        for message in call
+    )
+
+
 def test_phase_2_supplemental_search_rejects_already_executed_family_with_new_tuning(
     tmp_path: Path,
 ) -> None:
@@ -2714,6 +2796,7 @@ def test_phase_2c_agent_only_early_termination_prompt_versions_are_closed() -> N
     for version in (
         "agent_evidence_discovery_prompt_v2",
         "agent_evidence_discovery_prompt_v3",
+        "agent_evidence_discovery_prompt_v4",
     ):
         versioned = deepcopy(payload)
         versioned["prompt_contract"]["version"] = version
@@ -2721,7 +2804,7 @@ def test_phase_2c_agent_only_early_termination_prompt_versions_are_closed() -> N
 
     for version in (
         "agent_evidence_discovery_prompt_v1",
-        "agent_evidence_discovery_prompt_v4",
+        "agent_evidence_discovery_prompt_v5",
     ):
         versioned = deepcopy(payload)
         versioned["prompt_contract"]["version"] = version
@@ -2858,7 +2941,7 @@ def test_actual_planning_schema_exposes_exact_nested_versions_to_real_models() -
     assert "final Runtime correctness" in deferred_description
 
 
-def test_actual_planning_prompt_keeps_first_observation_scope_and_alternate_strategy(
+def test_actual_planning_prompt_keeps_scope_without_global_alternate_requirement(
     tmp_path: Path,
 ) -> None:
     plan = _actual_plan(
@@ -2889,11 +2972,22 @@ def test_actual_planning_prompt_keeps_first_observation_scope_and_alternate_stra
     rules = planning_request["rules"]
     serialized = json.dumps(rules, ensure_ascii=False)
     assert "not peer planning blockers" in serialized
-    assert "one vocabulary-distinct alternate family" in serialized
-    assert "not a universal Search Plan schema minimum" in serialized
+    assert "one vocabulary-distinct alternate family" not in serialized
+    assert "not a universal Search Plan schema minimum" not in serialized
     assert "space-separated behavioral sentences" in serialized
     assert "ActivateState" not in serialized
     assert "expected_control_action" not in serialized
+
+    execution_instruction = next(
+        message["content"]["instruction"]
+        for message in model.calls[1]
+        if isinstance(message.get("content"), dict)
+        and message["content"].get("message_type") == "execute_frozen_plan"
+    )
+    assert "only if the frozen plan already contains" in execution_instruction
+    assert "otherwise stop without inventing or rewriting a family_id" in (
+        execution_instruction
+    )
 
 
 def test_actual_planning_schema_aligns_direct_nonempty_validator_constraints() -> None:
