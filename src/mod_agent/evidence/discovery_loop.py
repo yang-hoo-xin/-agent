@@ -182,7 +182,8 @@ class EvidenceDiscoverySpecialist:
                             "planning_blocking_questions are engineering requirements that authorized actual evidence must answer before implementation planning; they are not user ambiguities or expected missing facts.",
                             "A ready plan declares at least one stable requirement_id, maps every requirement through engineering_questions, and lets every query family reference only declared question_id values.",
                             "Each planned lane references the engineering question identities it covers. Queries in one family are a case-insensitive OR union of literal managed-symbol substrings; every broad literal enlarges the bounded result set. Prefer short symbol fragments or established engineering terms, not space-separated behavioral sentences.",
-                            "The first Hook Discovery slice investigates one trigger or observation direction. planning_blocking_questions contain only evidence-answerable requirements needed to identify that direction. Output presentation, feedback effects, event deduplication, death-path coverage, boundary regression, and final Runtime correctness belong in deferred_planning_or_runtime_questions and are not peer planning blockers.",
+                            "Keep every genuine planning-blocking engineering question, and set initial_focus_question_id to the one question selected for the first bounded Discovery execution.",
+                            "For a request where an observable event or state X leads to a downstream effect Y, select observability of X as the first execution focus. Defer presentation or implementation of Y, the X-to-Y system connection, deduplication, boundary regression, and final Runtime correctness from the first execution focus. This orders investigation only; it does not assert a Hook, sufficiency, or expected truth.",
                             "Use only registered source_ids and allowed tools in the search plan.",
                             "Do not include a final Hook identity, Golden, expected evidence, historical answer, or prior output.",
                             "Queries are literal managed-symbol substring families derived from request semantics.",
@@ -224,7 +225,10 @@ class EvidenceDiscoverySpecialist:
                                 "semantics and registered source_ids. Correct every listed "
                                 "topology issue by declaring stable planning requirements, "
                                 "mapping them through engineering questions, and binding "
-                                "query families only to declared question identities. Do not "
+                                "query families only to declared question identities. Select "
+                                "one declared engineering question as initial_focus_question_id; "
+                                "downstream effects and their final Runtime correctness remain "
+                                "deferred from the first execution focus. Do not "
                                 "add a Hook "
                                 "identity, Golden, expected facts, historical answer, or "
                                 "prior output beyond correcting this rejected plan."
@@ -260,7 +264,8 @@ class EvidenceDiscoverySpecialist:
                         "message_type": "execute_frozen_plan",
                         "required_next_action": "use_tool",
                         "instruction": (
-                            "Begin with one planned metadata query family. Exact IL may "
+                            "Begin with a frozen metadata query family whose question_ids "
+                            "include initial_focus_question_id. Exact IL may "
                             "consume only a candidate_ref from this run's observation. "
                             "After reading the first metadata observation, inspect a "
                             "method only when its returned symbol and matched_queries "
@@ -1648,6 +1653,16 @@ def _planning_topology_issues(raw: str) -> list[dict[str, object]]:
         issues.append({"code": "PLANNING_REQUIREMENTS_EMPTY"})
     if not question_ids:
         issues.append({"code": "ENGINEERING_QUESTIONS_EMPTY"})
+    initial_focus_question_id = search_plan.get("initial_focus_question_id")
+    if not isinstance(initial_focus_question_id, str) or not initial_focus_question_id.strip():
+        issues.append({"code": "INITIAL_FOCUS_QUESTION_MISSING"})
+    elif initial_focus_question_id not in question_ids:
+        issues.append(
+            {
+                "code": "INITIAL_FOCUS_QUESTION_UNKNOWN",
+                "initial_focus_question_id": initial_focus_question_id,
+            }
+        )
 
     referenced_requirement_ids: set[str] = set()
     for item in engineering_questions:
@@ -1861,6 +1876,23 @@ def _validate_action_against_frozen_plan(
             raise ValueError("FIRST_DISCOVERY_ACTION_NOT_PLANNED")
         if len(_matching_query_family_ids(action=action, families=families)) != 1:
             raise ValueError("FIRST_DISCOVERY_ACTION_NOT_PLANNED")
+        initial_focus_question_id = search_plan.get("initial_focus_question_id")
+        if initial_focus_question_id is not None:
+            selected_family = next(
+                (
+                    family
+                    for family in families
+                    if isinstance(family, dict)
+                    and family.get("family_id") == action.get("query_family_id")
+                ),
+                None,
+            )
+            if (
+                not isinstance(selected_family, dict)
+                or initial_focus_question_id
+                not in selected_family.get("question_ids", [])
+            ):
+                raise ValueError("FIRST_DISCOVERY_ACTION_NOT_INITIAL_FOCUS")
         return
     if len(actions) == 1:
         if action.get("tool") == "inspect_method_il":

@@ -1263,6 +1263,15 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
     for index, (action, observation) in enumerate(
         zip(accepted_actions, observation_rows), 1
     ):
+        initial_focus_question_id = search_plan.get("initial_focus_question_id")
+        if (
+            index == 1
+            and initial_focus_question_id is not None
+            and action.get("tool") != "search_dotnet_metadata"
+        ):
+            raise HookDiscoverySemanticsError(
+                "First Agent Discovery action must be metadata for the frozen focus."
+            )
         if action.get("tool") != observation.get("tool") or action.get(
             "source_id"
         ) != observation.get("source_id"):
@@ -1279,6 +1288,13 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
             if len(matched_families) != 1:
                 raise HookDiscoverySemanticsError(
                     "Metadata trace must bind exactly one frozen query family."
+                )
+            if index == 1 and initial_focus_question_id is not None and (
+                initial_focus_question_id
+                not in matched_families[0].get("question_ids", [])
+            ):
+                raise HookDiscoverySemanticsError(
+                    "First metadata trace must bind the frozen initial focus."
                 )
         derived = action.get("derived_from_observation_ids")
         if not isinstance(derived, list) or any(

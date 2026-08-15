@@ -361,6 +361,7 @@ def _actual_plan(
         },
         "search_plan": {
             "schema_version": SEARCH_PLAN_SCHEMA_VERSION,
+            "initial_focus_question_id": "question-primary",
             "engineering_questions": [
                 {
                     "question_id": "question-primary",
@@ -399,6 +400,55 @@ def _actual_plan(
             "initial_expand_condition": "Expand once only when a recorded planning question remains open.",
         },
     }
+
+
+def _add_secondary_planning_question(
+    plan: dict[str, object],
+    *,
+    deferred: bool = False,
+) -> None:
+    projection = plan["requirement_projection"]
+    search_plan = plan["search_plan"]
+    assert isinstance(projection, dict)
+    assert isinstance(search_plan, dict)
+    if deferred:
+        projection["deferred_planning_or_runtime_questions"].append(
+            "Verify the downstream effect during Runtime evaluation."
+        )
+        return
+    projection["planning_blocking_questions"].append(
+        {
+            "requirement_id": "req-secondary",
+            "question": "Which current method exposes the downstream integration boundary?",
+        }
+    )
+    search_plan["engineering_questions"].append(
+        {
+            "question_id": "question-secondary",
+            "question": "Which current method exposes the downstream integration boundary?",
+            "requirement_ids": ["req-secondary"],
+        }
+    )
+    search_plan["planned_lanes"].append(
+        {
+            "lane": "secondary_metadata_discovery",
+            "tool": "search_dotnet_metadata",
+            "source_ids": ["current-interop"],
+            "question_ids": ["question-secondary"],
+        }
+    )
+    search_plan["query_families"].append(
+        {
+            "family_id": "secondary-integration",
+            "queries": ["integration"],
+            "evidence_need": (
+                "Which current method exposes the downstream integration boundary?"
+            ),
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-secondary"],
+        }
+    )
 
 
 def _finish_after_observed_il(
@@ -573,6 +623,7 @@ def test_v2_agent_search_plan_strict_roundtrip_preserves_bytes_and_hash(
     search_plan = agent_discovery["search_plan"]
     assert isinstance(search_plan, dict)
     search_plan["schema_version"] = "hook_discovery_search_plan_v2"
+    search_plan.pop("initial_focus_question_id")
     for lane in search_plan["planned_lanes"]:
         lane.pop("question_ids")
     payload["prompt_contract"]["version"] = "agent_evidence_discovery_prompt_v2"
@@ -616,6 +667,125 @@ def test_v2_agent_search_plan_strict_roundtrip_preserves_bytes_and_hash(
         "question_ids" not in lane
         for lane in rehydrated["agent_discovery"]["search_plan"]["planned_lanes"]
     )
+
+
+def test_v3_agent_search_plan_strict_roundtrip_preserves_bytes_and_hash(
+    tmp_path: Path,
+) -> None:
+    payload = _strict_semantic_payload(tmp_path, decision="needs_more_evidence")
+    agent_discovery = payload["agent_discovery"]
+    assert isinstance(agent_discovery, dict)
+    search_plan = agent_discovery["search_plan"]
+    assert isinstance(search_plan, dict)
+    search_plan["schema_version"] = "hook_discovery_search_plan_v3"
+    search_plan.pop("initial_focus_question_id")
+    payload["prompt_contract"]["version"] = "agent_evidence_discovery_prompt_v4"
+    payload["budget_summary"]["discovery_message_bytes_by_turn"] = [
+        6898,
+        7925,
+        8491,
+    ]
+    payload["budget_summary"]["total_discovery_message_bytes"] = 23_314
+    payload["prompt_contract"]["agent_discovery_sha256"] = hashlib.sha256(
+        json.dumps(
+            agent_discovery,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    canonical_before = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    hash_before = hashlib.sha256(canonical_before).hexdigest()
+    assert len(canonical_before) == 12_157
+    assert hash_before == (
+        "d58b92570daefe67cd4ade09608db986bfe49135661b14d260fa115966a1c473"
+    )
+
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="evidence_pack", status="success", payload=payload
+    )
+    rehydrated = EvidencePack.from_artifact_payload(payload).to_artifact_payload()
+    canonical_after = json.dumps(
+        rehydrated, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+    assert canonical_after == canonical_before
+    assert hashlib.sha256(canonical_after).hexdigest() == hash_before
+    assert rehydrated["agent_discovery"]["search_plan"]["schema_version"] == (
+        "hook_discovery_search_plan_v3"
+    )
+
+
+def test_strict_reader_rejects_first_trace_outside_tampered_initial_focus(
+    tmp_path: Path,
+) -> None:
+    payload = _strict_semantic_payload(tmp_path, decision="needs_more_evidence")
+    agent_discovery = payload["agent_discovery"]
+    search_plan = agent_discovery["search_plan"]
+    search_plan["engineering_questions"].append(
+        {
+            "question_id": "question-secondary",
+            "question": "Which current method exposes a secondary boundary?",
+            "requirement_ids": ["req-primary"],
+        }
+    )
+    for lane in search_plan["planned_lanes"]:
+        lane["question_ids"].append("question-secondary")
+    search_plan["query_families"].append(
+        {
+            "family_id": "secondary-boundary",
+            "queries": ["secondary"],
+            "evidence_need": "Which current method exposes a secondary boundary?",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-secondary"],
+        }
+    )
+    search_plan["initial_focus_question_id"] = "question-secondary"
+    payload["prompt_contract"]["agent_discovery_sha256"] = hashlib.sha256(
+        json.dumps(
+            agent_discovery,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="Invalid semantic EvidencePack",
+    ):
+        ArtifactTypeRegistry().validate_write(
+            artifact_type="evidence_pack",
+            status="success",
+            payload=payload,
+        )
+
+
+def test_strict_reader_rejects_tampered_first_il_action_for_current_focus(
+    tmp_path: Path,
+) -> None:
+    payload = _strict_semantic_payload(tmp_path, decision="needs_more_evidence")
+    inspect_attempt = next(
+        deepcopy(attempt)
+        for attempt in payload["model_action_trace"]
+        if attempt["action"].get("tool") == "inspect_method_il"
+    )
+    payload["model_action_trace"][0] = inspect_attempt
+    payload["observation_trace"][0]["tool"] = "inspect_method_il"
+    payload["tool_trace_summary"][0]["tool"] = "inspect_method_il"
+
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="Invalid semantic EvidencePack",
+    ):
+        ArtifactTypeRegistry().validate_write(
+            artifact_type="evidence_pack",
+            status="success",
+            payload=payload,
+        )
 
 
 @pytest.mark.parametrize(
@@ -817,6 +987,127 @@ def test_phase_2_search_plan_rejects_ambiguous_query_family_dispatch() -> None:
         match="SEARCH_PLAN_QUERY_FAMILY_DISPATCH_AMBIGUOUS",
     ):
         validate_agent_discovery_actual(_validated_actual_from_plan(plan))
+
+
+def test_search_plan_initial_focus_must_reference_declared_engineering_question() -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement method.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    plan["search_plan"]["initial_focus_question_id"] = "question-unknown"
+
+    with pytest.raises(
+        ValueError,
+        match="SEARCH_PLAN_INITIAL_FOCUS_QUESTION_UNKNOWN",
+    ):
+        validate_agent_discovery_actual(_validated_actual_from_plan(plan))
+
+
+def test_search_plan_preserves_other_blockers_and_rejects_deferred_focus() -> None:
+    plan = _actual_plan(
+        behavior_goal="Observe an event before a downstream effect.",
+        queries=["event"],
+        evidence_need="Which current method exposes the event?",
+    )
+    _add_secondary_planning_question(plan)
+    _add_secondary_planning_question(plan, deferred=True)
+    validate_agent_discovery_actual(_validated_actual_from_plan(plan))
+    projection = plan["requirement_projection"]
+    assert len(projection["planning_blocking_questions"]) == 2
+    assert len(projection["deferred_planning_or_runtime_questions"]) == 1
+
+    plan["search_plan"]["initial_focus_question_id"] = (
+        "Verify the downstream effect during Runtime evaluation."
+    )
+    with pytest.raises(
+        ValueError,
+        match="SEARCH_PLAN_INITIAL_FOCUS_QUESTION_UNKNOWN",
+    ):
+        validate_agent_discovery_actual(_validated_actual_from_plan(plan))
+
+
+def test_first_metadata_action_must_bind_frozen_initial_focus(
+    tmp_path: Path,
+) -> None:
+    plan = _actual_plan(
+        behavior_goal="Observe an event before a downstream effect.",
+        queries=["event"],
+        evidence_need="Which current method exposes the event?",
+    )
+    _add_secondary_planning_question(plan)
+    plan["search_plan"]["initial_focus_question_id"] = "question-secondary"
+    model = _ScriptedModel(
+        [
+            plan,
+            _family_selection("request-derived-behavior"),
+            _family_selection("secondary-integration"),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the method observed for the initial focus.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _finish_after_observed_il(),
+        ]
+    )
+    executor = _ObservedToolExecutor()
+
+    with pytest.raises(
+        ValueError,
+        match="FIRST_DISCOVERY_ACTION_NOT_INITIAL_FOCUS",
+    ):
+        EvidenceDiscoverySpecialist(
+            model=model,
+            tool_executor=executor,
+        ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    assert executor.actions == []
+
+
+def test_multi_question_plan_executes_focus_and_preserves_other_blocker(
+    tmp_path: Path,
+) -> None:
+    plan = _actual_plan(
+        behavior_goal="Observe an event before a downstream effect.",
+        queries=["event"],
+        evidence_need="Which current method exposes the event?",
+    )
+    _add_secondary_planning_question(plan)
+    model = _ScriptedModel(
+        [
+            plan,
+            _family_selection("request-derived-behavior"),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the observed initial-focus method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _finish_after_observed_il(),
+        ]
+    )
+    executor = _ObservedToolExecutor()
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    assert result.agent_discovery["search_plan"]["initial_focus_question_id"] == (
+        "question-primary"
+    )
+    assert len(
+        result.agent_discovery["requirement_projection"][
+            "planning_blocking_questions"
+        ]
+    ) == 2
+    assert executor.actions[0]["query_family_id"] == "request-derived-behavior"
+    assert executor.actions[0]["tool"] == "search_dotnet_metadata"
 
 
 def test_phase_2_unrelated_hook_request_freezes_plan_before_tools(
@@ -1365,6 +1656,10 @@ def test_actual_planning_correction_reports_empty_and_dangling_topology_only(
         {"code": "PLANNING_REQUIREMENTS_EMPTY"},
         {"code": "ENGINEERING_QUESTIONS_EMPTY"},
         {
+            "code": "INITIAL_FOCUS_QUESTION_UNKNOWN",
+            "initial_focus_question_id": "question-primary",
+        },
+        {
             "code": "QUERY_FAMILY_QUESTION_REFERENCE_UNKNOWN",
             "unknown_question_ids": ["unregistered-question"],
             "family_ids": ["request-derived-behavior"],
@@ -1792,7 +2087,7 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
 
     assert pack.agent_discovery is not None
     assert pack.prompt_contract["actual_planning_required"] is True
-    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v4"
+    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v5"
     assert [item["tool"] for item in pack.tool_trace_summary] == [
         "search_dotnet_metadata",
         "inspect_method_il",
@@ -2797,6 +3092,7 @@ def test_phase_2c_agent_only_early_termination_prompt_versions_are_closed() -> N
         "agent_evidence_discovery_prompt_v2",
         "agent_evidence_discovery_prompt_v3",
         "agent_evidence_discovery_prompt_v4",
+        "agent_evidence_discovery_prompt_v5",
     ):
         versioned = deepcopy(payload)
         versioned["prompt_contract"]["version"] = version
@@ -2804,7 +3100,7 @@ def test_phase_2c_agent_only_early_termination_prompt_versions_are_closed() -> N
 
     for version in (
         "agent_evidence_discovery_prompt_v1",
-        "agent_evidence_discovery_prompt_v5",
+        "agent_evidence_discovery_prompt_v6",
     ):
         versioned = deepcopy(payload)
         versioned["prompt_contract"]["version"] = version
@@ -2919,6 +3215,13 @@ def test_actual_planning_schema_exposes_exact_nested_versions_to_real_models() -
         "type": "string",
         "const": SEARCH_PLAN_SCHEMA_VERSION,
     }
+    focus_schema = properties["search_plan"]["properties"][
+        "initial_focus_question_id"
+    ]
+    assert focus_schema["type"] == ["string", "null"]
+    assert focus_schema["minLength"] == 1
+    assert "first bounded Discovery focus" in focus_schema["description"]
+    assert "initial_focus_question_id" in properties["search_plan"]["required"]
     requirement_description = properties["requirement_projection"]["properties"][
         "planning_blocking_questions"
     ]["description"]
@@ -2971,7 +3274,9 @@ def test_actual_planning_prompt_keeps_scope_without_global_alternate_requirement
     planning_request = model.calls[0][-1]["content"]
     rules = planning_request["rules"]
     serialized = json.dumps(rules, ensure_ascii=False)
-    assert "not peer planning blockers" in serialized
+    assert "Keep every genuine planning-blocking engineering question" in serialized
+    assert "observable event or state X" in serialized
+    assert "initial_focus_question_id" in serialized
     assert "one vocabulary-distinct alternate family" not in serialized
     assert "not a universal Search Plan schema minimum" not in serialized
     assert "space-separated behavioral sentences" in serialized
@@ -2985,6 +3290,7 @@ def test_actual_planning_prompt_keeps_scope_without_global_alternate_requirement
         and message["content"].get("message_type") == "execute_frozen_plan"
     )
     assert "only if the frozen plan already contains" in execution_instruction
+    assert "include initial_focus_question_id" in execution_instruction
     assert "otherwise stop without inventing or rewriting a family_id" in (
         execution_instruction
     )
@@ -3013,6 +3319,7 @@ def test_actual_planning_schema_aligns_direct_nonempty_validator_constraints() -
     assert family_item["properties"]["queries"]["minItems"] == 1
     assert family_item["properties"]["source_ids"]["minItems"] == 1
     assert family_item["properties"]["question_ids"]["minItems"] == 1
+    assert search_plan["properties"]["initial_focus_question_id"]["minLength"] == 1
 
 
 def test_declared_ready_empty_search_plan_is_normalized_to_bounded_stop(
@@ -3026,6 +3333,7 @@ def test_declared_ready_empty_search_plan_is_normalized_to_bounded_stop(
     declared_ready["search_plan"]["engineering_questions"] = []
     declared_ready["search_plan"]["planned_lanes"] = []
     declared_ready["search_plan"]["query_families"] = []
+    declared_ready["search_plan"]["initial_focus_question_id"] = None
     executor = _ObservedToolExecutor()
 
     result = EvidenceDiscoverySpecialist(
@@ -3057,6 +3365,7 @@ def test_first_planning_and_bounded_correction_use_same_schema_owner(
     stopped["search_plan"]["engineering_questions"] = []
     stopped["search_plan"]["planned_lanes"] = []
     stopped["search_plan"]["query_families"] = []
+    stopped["search_plan"]["initial_focus_question_id"] = None
 
     class _PlanningClient:
         provider = "test_agent_turn"

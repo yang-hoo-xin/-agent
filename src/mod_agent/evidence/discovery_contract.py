@@ -30,17 +30,22 @@ EVIDENCE_DISCOVERY_TOOLS = frozenset(
 )
 EVIDENCE_DISCOVERY_RESULT_KINDS = frozenset({"methods", "types", "fields"})
 EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v9"
-AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v4"
+AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v5"
 AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSIONS = frozenset(
     {
         "agent_evidence_discovery_prompt_v2",
         "agent_evidence_discovery_prompt_v3",
+        "agent_evidence_discovery_prompt_v4",
     }
 )
 AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION = "agent_evidence_discovery_actual_v2"
 REQUIREMENT_PROJECTION_SCHEMA_VERSION = "hook_requirement_projection_v2"
-SEARCH_PLAN_SCHEMA_VERSION = "hook_discovery_search_plan_v3"
-_LEGACY_SEARCH_PLAN_SCHEMA_VERSION = "hook_discovery_search_plan_v2"
+SEARCH_PLAN_SCHEMA_VERSION = "hook_discovery_search_plan_v4"
+_SEARCH_PLAN_SCHEMA_VERSION_V2 = "hook_discovery_search_plan_v2"
+_SEARCH_PLAN_SCHEMA_VERSION_V3 = "hook_discovery_search_plan_v3"
+_LEGACY_SEARCH_PLAN_SCHEMA_VERSIONS = frozenset(
+    {_SEARCH_PLAN_SCHEMA_VERSION_V2, _SEARCH_PLAN_SCHEMA_VERSION_V3}
+)
 EVIDENCE_SOURCE_AUTHORITIES = frozenset({"authoritative", "supporting", "lead"})
 EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES = (
     "natural_language_request",
@@ -1125,7 +1130,7 @@ def validate_agent_discovery_actual(value: dict[str, object]) -> None:
     if planned_question_ids != question_ids:
         raise ValueError("SEARCH_PLAN_QUERY_FAMILY_QUESTION_COVERAGE_INVALID")
     search_plan_version = search_plan.get("schema_version")
-    if search_plan_version == SEARCH_PLAN_SCHEMA_VERSION:
+    if search_plan_version != _SEARCH_PLAN_SCHEMA_VERSION_V2:
         lane_question_ids = {
             str(value)
             for lane in search_plan["planned_lanes"]
@@ -1356,6 +1361,15 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
                 "type": "array",
                 "items": engineering_question,
             },
+            "initial_focus_question_id": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "description": (
+                    "Exact question_id selected by the model as the first bounded "
+                    "Discovery focus. It must reference engineering_questions; the "
+                    "first tool action must use a frozen query family bound to it."
+                ),
+            },
             "source_roles": {
                 "type": "array",
                 "items": {
@@ -1433,6 +1447,7 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
         "required": [
             "schema_version",
             "engineering_questions",
+            "initial_focus_question_id",
             "source_roles",
             "planned_lanes",
             "query_families",
@@ -1536,6 +1551,12 @@ def _validate_requirement_projection(
 
 
 def _validate_search_plan(value: dict[str, object], *, require_queries: bool) -> None:
+    schema_version = value.get("schema_version")
+    if schema_version not in {
+        SEARCH_PLAN_SCHEMA_VERSION,
+        *_LEGACY_SEARCH_PLAN_SCHEMA_VERSIONS,
+    }:
+        raise ValueError("SEARCH_PLAN_VERSION_INVALID")
     required = {
         "schema_version",
         "engineering_questions",
@@ -1545,14 +1566,10 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
         "initial_stop_condition",
         "initial_expand_condition",
     }
+    if schema_version == SEARCH_PLAN_SCHEMA_VERSION:
+        required.add("initial_focus_question_id")
     if set(value) != required:
         raise ValueError("SEARCH_PLAN_SHAPE_INVALID")
-    schema_version = value.get("schema_version")
-    if schema_version not in {
-        SEARCH_PLAN_SCHEMA_VERSION,
-        _LEGACY_SEARCH_PLAN_SCHEMA_VERSION,
-    }:
-        raise ValueError("SEARCH_PLAN_VERSION_INVALID")
     engineering_questions = value.get("engineering_questions")
     source_roles = value.get("source_roles")
     lanes = value.get("planned_lanes")
@@ -1577,6 +1594,19 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
         question_ids.append(str(item["question_id"]))
     if len(question_ids) != len(set(question_ids)):
         raise ValueError("SEARCH_PLAN_QUESTION_ID_DUPLICATE")
+    if schema_version == SEARCH_PLAN_SCHEMA_VERSION and require_queries:
+        initial_focus_question_id = value.get("initial_focus_question_id")
+        if not _nonempty_string(initial_focus_question_id):
+            raise ValueError("SEARCH_PLAN_INITIAL_FOCUS_QUESTION_INVALID")
+        if initial_focus_question_id not in question_ids:
+            raise ValueError("SEARCH_PLAN_INITIAL_FOCUS_QUESTION_UNKNOWN")
+    elif schema_version == SEARCH_PLAN_SCHEMA_VERSION:
+        initial_focus_question_id = value.get("initial_focus_question_id")
+        if initial_focus_question_id is not None and (
+            not _nonempty_string(initial_focus_question_id)
+            or initial_focus_question_id not in question_ids
+        ):
+            raise ValueError("SEARCH_PLAN_INITIAL_FOCUS_QUESTION_UNKNOWN")
     for item in source_roles:
         if not isinstance(item, dict) or set(item) != {"source_id", "role"} or not all(
             _nonempty_string(item.get(field)) for field in ("source_id", "role")
@@ -1585,7 +1615,7 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
     lane_binding_keys: set[tuple[str, tuple[str, ...], tuple[str, ...]]] = set()
     for item in lanes:
         allowed_lane_fields = {"lane", "tool", "source_ids"}
-        if schema_version == SEARCH_PLAN_SCHEMA_VERSION:
+        if schema_version != _SEARCH_PLAN_SCHEMA_VERSION_V2:
             allowed_lane_fields.add("question_ids")
         if (
             not isinstance(item, dict)
@@ -1595,7 +1625,7 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
         ):
             raise ValueError("SEARCH_PLAN_LANE_INVALID")
         _validate_string_array(item.get("source_ids"), "source_ids", allow_empty=False)
-        if schema_version == SEARCH_PLAN_SCHEMA_VERSION:
+        if schema_version != _SEARCH_PLAN_SCHEMA_VERSION_V2:
             _validate_string_array(
                 item.get("question_ids"), "question_ids", allow_empty=False
             )
