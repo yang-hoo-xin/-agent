@@ -416,7 +416,12 @@ class LocalAssemblyEvidenceToolExecutor:
         root = Path(source.root_path)
         assembly = observed.assembly_path.resolve()
         _require_inside(assembly, root)
-        report = self.il_runner_factory((observed.symbol,)).inspect(assembly)
+        report = self.il_runner_factory((observed.symbol,)).inspect_observed_method(
+            assembly,
+            assembly_sha256=observed.assembly_sha256,
+            module_mvid=observed.module_mvid,
+            metadata_token=observed.metadata_token,
+        )
         if (
             report.get("assembly_sha256") != observed.assembly_sha256
             or report.get("module_mvid") != observed.module_mvid

@@ -199,9 +199,19 @@ class _CliILRunner:
     def __init__(self, symbols: tuple[str, ...]) -> None:
         self.symbols = symbols
 
-    def inspect(self, assembly_path: str | Path) -> dict[str, object]:
+    def inspect_observed_method(
+        self,
+        assembly_path: str | Path,
+        *,
+        assembly_sha256: str,
+        module_mvid: str,
+        metadata_token: str,
+    ) -> dict[str, object]:
         assembly = Path(assembly_path)
         assert self.symbols == ("Observed.Type.Movement",)
+        assert assembly_sha256 == hashlib.sha256(assembly.read_bytes()).hexdigest().upper()
+        assert module_mvid == "00000000-0000-0000-0000-000000000042"
+        assert metadata_token == "0x06000042"
         return {
             "assembly_sha256": hashlib.sha256(assembly.read_bytes()).hexdigest().upper(),
             "module_mvid": "00000000-0000-0000-0000-000000000042",

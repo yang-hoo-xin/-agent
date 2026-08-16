@@ -337,7 +337,6 @@ def test_hook_discovery_uses_explicit_decomposed_search_terms(tmp_path: Path) ->
         {"ES_Hitreact.cs": "public class ES_Hitreact { }"},
         source_type="decompiled_api",
     )
-
     pack = DeterministicEvidenceRetriever(db).retrieve(
         EvidenceRequest(
             query="敌人踉跄时显示黄色标记",
@@ -347,6 +346,305 @@ def test_hook_discovery_uses_explicit_decomposed_search_terms(tmp_path: Path) ->
     )
 
     assert any("ES_Hitreact" in item.excerpt for item in pack.items)
+
+
+def test_lane_local_budget_preserves_symbol_bm25_and_code_text_results(
+    tmp_path: Path,
+) -> None:
+    db = _index_source(
+        tmp_path,
+        {
+            "ReactionState.cs": (
+                "public class ReactionState {\n"
+                "    public void EnterReaction() {}\n"
+                "    public void ExitReaction() {}\n"
+                "}\n"
+            ),
+        },
+        source_type="decompiled_api",
+    )
+    IncrementalIndexer(
+        database=db,
+        source_registry=SourceRegistry(db),
+    ).build_retrieval_snapshot(("target_mod",))
+
+    pack = DeterministicEvidenceRetriever(db).retrieve(
+        EvidenceRequest(
+            query="ReactionState",
+            requires_hook_evidence=False,
+            max_items=6,
+        ),
+        lane_max_items=2,
+    )
+
+    methods = {item.retrieval_method for item in pack.items}
+    assert methods == {"symbol_exact", "bm25", "text_match"}
+    coverage = pack.budget_summary["deterministic_lane_coverage"]
+    assert [row["lane"] for row in coverage] == [
+        "symbol_metadata",
+        "sparse_bm25",
+        "dense",
+        "live_text",
+    ]
+    assert coverage[0]["hit_count"] == 2
+    assert coverage[1]["hit_count"] > 0
+    assert coverage[3]["hit_count"] > 0
+
+
+def test_bounded_source_query_set_keeps_queries_and_lanes_independent(
+    tmp_path: Path,
+) -> None:
+    db = _index_source(
+        tmp_path,
+        {
+            "TerminalLighting.cs": (
+                "public class TerminalFlow {\n"
+                "    public void FinishAuthentication() {}\n"
+                "}\n"
+                "public class CorridorLighting {\n"
+                "    public void PulseCorridorLights() {}\n"
+                "}\n"
+            ),
+        },
+        source_type="decompiled_api",
+    )
+    IncrementalIndexer(
+        database=db,
+        source_registry=SourceRegistry(db),
+    ).build_retrieval_snapshot(("target_mod",))
+
+    pack = DeterministicEvidenceRetriever(db).retrieve_query_set(
+        queries=(
+            {
+                "query_id": "source_query_authentication",
+                "origin": "initial_focus_question",
+                "query": "FinishAuthentication",
+            },
+            {
+                "query_id": "source_query_lighting",
+                "origin": "initial_focus_query_family",
+                "query": "PulseCorridorLights",
+            },
+        ),
+        source_ids=("target_mod",),
+        per_query_lane_max_items=1,
+        max_items=6,
+    )
+
+    execution = pack.budget_summary["source_query_execution"]
+    assert {item["query_id"] for item in execution} == {
+        "source_query_authentication",
+        "source_query_lighting",
+    }
+    for query_id in (
+        "source_query_authentication",
+        "source_query_lighting",
+    ):
+        rows = [item for item in execution if item["query_id"] == query_id]
+        assert [item["lane"] for item in rows] == [
+            "symbol_metadata",
+            "sparse_bm25",
+            "live_text",
+            "dense",
+        ]
+        assert any(item["admitted_evidence_refs"] for item in rows)
+        assert all(item["result_limit"] == 1 for item in rows)
+    assert any(item.symbol == "FinishAuthentication" for item in pack.items)
+    assert any(item.symbol == "PulseCorridorLights" for item in pack.items)
+
+
+def test_bounded_source_query_set_applies_global_budget_fairly_across_queries(
+    tmp_path: Path,
+) -> None:
+    db = _index_source(
+        tmp_path,
+        {
+            "TerminalLighting.cs": (
+                "public class TerminalFlow {\n"
+                "    public void FinishAuthentication() {}\n"
+                "}\n"
+                "public class CorridorLighting {\n"
+                "    public void PulseCorridorLights() {}\n"
+                "}\n"
+            ),
+        },
+        source_type="decompiled_api",
+    )
+    IncrementalIndexer(
+        database=db,
+        source_registry=SourceRegistry(db),
+    ).build_retrieval_snapshot(("target_mod",))
+
+    pack = DeterministicEvidenceRetriever(db).retrieve_query_set(
+        queries=(
+            {
+                "query_id": "source_query_authentication",
+                "origin": "initial_focus_question",
+                "query": "FinishAuthentication",
+            },
+            {
+                "query_id": "source_query_lighting",
+                "origin": "initial_focus_query_family",
+                "query": "PulseCorridorLights",
+            },
+        ),
+        source_ids=("target_mod",),
+        per_query_lane_max_items=1,
+        max_items=2,
+    )
+
+    symbol_rows = [
+        row
+        for row in pack.budget_summary["source_query_execution"]
+        if row["lane"] == "symbol_metadata"
+    ]
+    assert [row["admitted_count"] for row in symbol_rows] == [1, 1]
+    initial_refs = {
+        evidence_ref
+        for row in pack.budget_summary["source_query_execution"]
+        for evidence_ref in row["admitted_evidence_refs"]
+    }
+    assert len(initial_refs) == 2
+    assert {
+        item.symbol for item in pack.items if item.evidence_id in initial_refs
+    } == {
+        "FinishAuthentication",
+        "PulseCorridorLights",
+    }
+
+
+def test_source_query_set_expands_observed_type_and_identifier_components(
+    tmp_path: Path,
+) -> None:
+    db = _index_source(
+        tmp_path,
+        {
+            "TerminalFlow.cs": (
+                "public class TerminalFlow {\n"
+                "    public void RunTerminalHandshake(AuthenticationCompletionRelay relay) {}\n"
+                "}\n"
+            ),
+            "AuthenticationCompletionRelay.cs": (
+                "public class AuthenticationCompletionRelay {\n"
+                "    public void MarkAuthenticationComplete() {}\n"
+                "}\n"
+            ),
+        },
+        source_type="decompiled_api",
+    )
+    IncrementalIndexer(
+        database=db,
+        source_registry=SourceRegistry(db),
+    ).build_retrieval_snapshot(("target_mod",))
+
+    pack = DeterministicEvidenceRetriever(db).retrieve_query_set(
+        queries=(
+            {
+                "query_id": "source_query_terminal_handshake",
+                "origin": "initial_focus_query_family",
+                "query": "RunTerminalHandshake",
+            },
+        ),
+        source_ids=("target_mod",),
+        per_query_lane_max_items=1,
+        max_items=3,
+    )
+
+    identifiers = pack.budget_summary["observed_identifier_extraction"]
+    assert any(
+        item["identifier"] == "AuthenticationCompletionRelay"
+        and item["extraction_kind"] == "source_excerpt"
+        for item in identifiers
+    )
+    assert {"Authentication", "Completion", "Relay"}.issubset(
+        {item["identifier"] for item in identifiers}
+    )
+    expansion = pack.budget_summary["bounded_identifier_reference_expansion"]
+    assert expansion["performed"] is True
+    expansion_refs = set(expansion["admitted_evidence_refs"])
+    assert any(
+        item.evidence_id in expansion_refs
+        and item.source_path.endswith("AuthenticationCompletionRelay.cs")
+        for item in pack.items
+    )
+
+
+def test_symbol_lane_ranks_specific_file_identity_above_directory_only_match(
+    tmp_path: Path,
+) -> None:
+    db = _index_source(
+        tmp_path,
+        {
+            "TerminalHelpers/Noise.cs": (
+                "public class Noise { public void terminal() {} }\n"
+            ),
+            "TerminalHelpers/Unrelated.cs": (
+                "public class Unrelated { public void Refresh() {} }\n"
+            ),
+            "TerminalAuthenticationFlow.cs": (
+                "public class TerminalAuthenticationFlow {\n"
+                "    public void FinishAuthentication() {}\n"
+                "}\n"
+            ),
+        },
+        source_type="decompiled_api",
+    )
+    IncrementalIndexer(
+        database=db,
+        source_registry=SourceRegistry(db),
+    ).build_retrieval_snapshot(("target_mod",))
+
+    pack = DeterministicEvidenceRetriever(db).retrieve(
+        EvidenceRequest(
+            query="terminal completion",
+            requires_hook_evidence=True,
+            source_ids=("target_mod",),
+            max_items=3,
+        ),
+        lane_max_items=1,
+    )
+
+    symbol_items = [
+        item for item in pack.items if item.retrieval_method == "symbol_exact"
+    ]
+    assert len(symbol_items) == 1
+    assert symbol_items[0].source_path == "TerminalAuthenticationFlow.cs"
+    assert symbol_items[0].symbol == "TerminalAuthenticationFlow"
+
+
+def test_model_selection_inventory_prioritizes_observed_dotted_method_identity() -> None:
+    item = EvidenceItem(
+        evidence_id="source_terminal_callback",
+        source_type="decompiled_api",
+        source_path="TerminalFlow.cs",
+        symbol=None,
+        span={"start_line": 8, "end_line": 8},
+        retrieval_method="text_match",
+        score=1.0,
+        claim_supported="Source contains an explicit interface method call.",
+        excerpt="authenticationEvents.MarkAuthenticationComplete();",
+        source_hash="C" * 64,
+        authority="mod_agent_deterministic",
+        source_authority="supporting",
+    )
+
+    inventory = (
+        DeterministicEvidenceRetriever.observed_identifier_selection_inventory(
+            (item,),
+            max_identifiers=1,
+        )
+    )
+
+    assert inventory == [
+        {
+            "observed_identifier": (
+                "authenticationEvents.MarkAuthenticationComplete"
+            ),
+            "extraction_kind": "source_excerpt",
+            "source_evidence_refs": ["source_terminal_callback"],
+            "source_paths": ["TerminalFlow.cs"],
+        }
+    ]
 
 
 def test_retriever_keeps_preverified_lane_independent_from_shared_capacity(

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, Callable
 
 from .discovery_contract import (
     AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION,
     AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION,
     EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION,
     EVIDENCE_DISCOVERY_RESULT_KINDS,
+    REQUIREMENT_PROJECTION_SCHEMA_VERSION,
+    SEARCH_PLAN_SCHEMA_VERSION,
+    _search_plan_family_dispatch_identities,
     EvidenceDiscoveryModel,
     EvidenceDiscoveryRequest,
     EvidenceDiscoveryResult,
@@ -24,12 +27,14 @@ from .discovery_contract import (
     normalize_agent_discovery_planning_actual,
     observed_conclusion_matches_bound_fact,
     validate_agent_discovery_actual,
+    validate_requirement_projection_actual,
 )
-from .models import EvidencePack, missing_evidence_from_blockers
+from .models import EvidenceItem, EvidencePack, missing_evidence_from_blockers
 from .hook_discovery import (
     build_agent_discovery_semantics,
     evidence_pack_state_from_hook_discovery,
 )
+from .retriever import DeterministicEvidenceRetriever
 
 
 class IntelligentEvidencePackFactory:
@@ -97,12 +102,22 @@ class EvidenceDiscoverySpecialist:
         *,
         model: EvidenceDiscoveryModel,
         tool_executor: EvidenceDiscoveryToolExecutor,
+        source_evidence_retriever: (
+            Callable[[tuple[dict[str, str], ...]], EvidencePack] | None
+        ) = None,
     ) -> None:
         self.model = model
         self.tool_executor = tool_executor
+        self.source_evidence_retriever = source_evidence_retriever
         self._runtime_diagnostics = _new_runtime_diagnostics()
         self._agent_discovery: dict[str, object] | None = None
         self._planning_model_steps_used = 0
+        self._source_evidence_pack: EvidencePack | None = None
+        self._source_focus_queries: tuple[str, ...] = ()
+        self._source_queries: tuple[dict[str, str], ...] = ()
+        self._source_query_revision: dict[str, object] | None = None
+        self._source_literal_bindings: list[dict[str, object]] = []
+        self._source_to_il_grounding: list[dict[str, object]] = []
 
     @property
     def runtime_diagnostics(self) -> dict[str, object]:
@@ -119,6 +134,12 @@ class EvidenceDiscoverySpecialist:
         self._runtime_diagnostics = _new_runtime_diagnostics()
         self._agent_discovery = None
         self._planning_model_steps_used = 0
+        self._source_evidence_pack = None
+        self._source_focus_queries = ()
+        self._source_queries = ()
+        self._source_query_revision = None
+        self._source_literal_bindings = []
+        self._source_to_il_grounding = []
         self._runtime_diagnostics["failure_stage"] = "run_initialization"
         try:
             result = self._discover(request)
@@ -173,81 +194,236 @@ class EvidenceDiscoverySpecialist:
                 {
                     "role": "user",
                     "content": {
-                        "message_type": "actual_planning_request",
-                        "required_next_action": "plan",
+                        "message_type": "actual_requirement_projection_request",
+                        "required_next_action": "project_requirements",
                         "planning_scope": "first_hook_discovery_slice",
                         "rules": [
                             "Project only semantics stated or directly implied by the request.",
                             "Implementation hints are investigation_lead values, not facts or decisions.",
                             "planning_blocking_questions are engineering requirements that authorized actual evidence must answer before implementation planning; they are not user ambiguities or expected missing facts.",
-                            "A ready plan declares at least one stable requirement_id, maps every requirement through engineering_questions, and lets every query family reference only declared question_id values.",
-                            "Each planned lane references the engineering question identities it covers. Queries in one family are a case-insensitive OR union of literal managed-symbol substrings; every broad literal enlarges the bounded result set. Prefer short symbol fragments or established engineering terms, not space-separated behavioral sentences.",
-                            "Keep every genuine planning-blocking engineering question, and set initial_focus_question_id to the one question selected for the first bounded Discovery execution.",
-                            "For a request where an observable event or state X leads to a downstream effect Y, select observability of X as the first execution focus. Defer presentation or implementation of Y, the X-to-Y system connection, deduplication, boundary regression, and final Runtime correctness from the first execution focus. This orders investigation only; it does not assert a Hook, sufficiency, or expected truth.",
-                            "Use only registered source_ids and allowed tools in the search plan.",
+                            "A ready projection states at least one engineering requirement for actual evidence to answer. Deterministic code assigns stable identities after this turn.",
+                            "For a request where an observable event or state X leads to a downstream effect Y, keep observability of X planning-blocking and defer presentation or implementation of Y, the X-to-Y system connection, deduplication, boundary regression, and final Runtime correctness.",
                             "Do not include a final Hook identity, Golden, expected evidence, historical answer, or prior output.",
-                            "Queries are literal managed-symbol substring families derived from request semantics.",
-                            "planning_status is advisory; deterministic validation classifies whether the returned projection and plan are executable.",
+                            "Do not produce engineering_questions, source roles, lanes, query families, tools, or search terms in this turn.",
+                            "planning_status is advisory; deterministic validation decides whether this projection is meaningful.",
                         ],
                     },
                 },
             )
-            raw_plan = self.model.complete(planning_messages)
+            raw_projection_or_legacy_plan = self.model.complete(planning_messages)
             self._planning_model_steps_used = 1
-            self._runtime_diagnostics["failure_stage"] = "search_planning"
             try:
-                agent_discovery = _validated_actual_plan_from_raw(
-                    raw_plan,
-                    sources=sources,
-                )
-            except ValueError as exc:
-                first_error = str(exc)
-                self._runtime_diagnostics["correction_attempted"] = True
-                correction_messages = (
-                    *planning_messages,
-                    {
-                        "role": "assistant",
-                        "content": {
-                            "message_type": "rejected_actual_plan",
-                            "structured_output": raw_plan,
+                first_action = json.loads(raw_projection_or_legacy_plan)
+            except json.JSONDecodeError:
+                first_action = None
+            if isinstance(first_action, dict) and first_action.get("action") == "plan":
+                # Preserve the pre-v6 provider-neutral model protocol for deterministic
+                # scripted integrations. New Agent turns use the two bounded schemas.
+                self._runtime_diagnostics["failure_stage"] = "search_planning"
+                raw_plan = raw_projection_or_legacy_plan
+                try:
+                    agent_discovery = _validated_actual_plan_from_raw(
+                        raw_plan,
+                        sources=sources,
+                    )
+                except ValueError as exc:
+                    first_error = str(exc)
+                    self._runtime_diagnostics["correction_attempted"] = True
+                    correction_messages = (
+                        *planning_messages,
+                        {
+                            "role": "assistant",
+                            "content": {
+                                "message_type": "rejected_actual_plan",
+                                "structured_output": raw_plan,
+                            },
                         },
-                    },
-                    {
-                        "role": "user",
-                        "content": {
-                            "message_type": "actual_planning_validation_error",
-                            "error_code": first_error,
-                            "topology_issues": _planning_topology_issues(raw_plan),
-                            "required_next_action": "plan",
-                            "required_plan_schema": evidence_discovery_planning_schema(),
-                            "instruction": (
-                                "Return one corrected actual-only plan. Preserve request "
-                                "semantics and registered source_ids. Correct every listed "
-                                "topology issue by declaring stable planning requirements, "
-                                "mapping them through engineering questions, and binding "
-                                "query families only to declared question identities. Select "
-                                "one declared engineering question as initial_focus_question_id; "
-                                "downstream effects and their final Runtime correctness remain "
-                                "deferred from the first execution focus. Do not "
-                                "add a Hook "
-                                "identity, Golden, expected facts, historical answer, or "
-                                "prior output beyond correcting this rejected plan."
-                            ),
+                        {
+                            "role": "user",
+                            "content": {
+                                "message_type": "actual_planning_validation_error",
+                                "error_code": first_error,
+                                "topology_issues": _planning_topology_issues(raw_plan),
+                                "required_next_action": "plan",
+                                "required_plan_schema": evidence_discovery_planning_schema(),
+                                "instruction": (
+                                    "Return one corrected actual-only plan. Preserve request "
+                                    "semantics and registered source_ids. Correct every listed "
+                                    "topology issue without adding a Hook identity, Golden, "
+                                    "expected facts, historical answer, or prior output."
+                                ),
+                            },
                         },
-                    },
+                    )
+                    corrected_raw_plan = self.model.complete(correction_messages)
+                    self._planning_model_steps_used = 2
+                    agent_discovery = _validated_actual_plan_from_raw(
+                        corrected_raw_plan,
+                        sources=sources,
+                    )
+            else:
+                projection_action = _parse_requirement_projection_action(
+                    raw_projection_or_legacy_plan
                 )
-                corrected_raw_plan = self.model.complete(correction_messages)
-                self._planning_model_steps_used = 2
-                agent_discovery = _validated_actual_plan_from_raw(
-                    corrected_raw_plan,
-                    sources=sources,
-                )
+                frozen_projection = projection_action["requirement_projection"]
+                if projection_action["planning_status"] == "requirement_projection_insufficient":
+                    raw_plan = json.dumps(
+                        {
+                            "action": "plan",
+                            "planning_status": "requirement_projection_insufficient",
+                            "requirement_projection": frozen_projection,
+                            "search_plan": None,
+                        },
+                        ensure_ascii=False,
+                    )
+                    agent_discovery = _validated_actual_plan_from_raw(
+                        raw_plan,
+                        sources=sources,
+                    )
+                else:
+                    self._runtime_diagnostics["failure_stage"] = "search_planning"
+                    planning_messages = (
+                        initial_messages[0],
+                        initial_messages[1],
+                        {
+                            "role": "user",
+                            "content": {
+                                "message_type": "frozen_requirement_projection",
+                                "required_next_action": "plan_search",
+                                "planning_scope": "first_hook_discovery_slice",
+                                "requirement_projection": frozen_projection,
+                                "requirement_projection_sha256": _json_sha256(
+                                    frozen_projection
+                                ),
+                                "rules": [
+                                    "Return only a Search Plan for the frozen Requirement Projection; do not repeat or revise the projection.",
+                                    "Return investigations in the same order as the frozen planning_blocking_questions. Each investigation states one engineering question, its allowed source_ids, and its nested query families.",
+                                    "Set initial_focus=true on exactly one investigation. Deterministic code assigns requirement, question, lane, and family identities and expands all cross-object references.",
+                                    "Queries in one family are a case-insensitive OR union of literal managed-symbol substrings. Use at most eight distinct short symbol fragments or established engineering terms per family.",
+                                    "Select only registered source_id values. Deterministic code owns Registry authority and fixes metadata search as the open-discovery tool; do not return source roles or tool names.",
+                                    "Do not return schema versions, identities, lanes, tools, source roles, or cross-object references.",
+                                    "Do not include a Hook identity, Golden, expected evidence, historical answer, annotation, or prior output.",
+                                    "planning_status is advisory; deterministic validation decides whether the frozen projection and returned Search Plan are executable.",
+                                ],
+                            },
+                        },
+                    )
+                    raw_search_plan = self.model.complete(planning_messages)
+                    self._planning_model_steps_used = 2
+                    planning_quality_findings = self._runtime_diagnostics[
+                        "planning_quality_findings"
+                    ]
+                    if not isinstance(planning_quality_findings, list):
+                        raise RuntimeError("PLANNING_QUALITY_FINDINGS_INVALID")
+                    search_action = _resolve_model_search_plan_action(
+                        _parse_search_plan_action(raw_search_plan),
+                        frozen_projection=frozen_projection,
+                        sources=sources,
+                        quality_findings=planning_quality_findings,
+                    )
+                    raw_plan = json.dumps(
+                        {
+                            "action": "plan",
+                            "planning_status": search_action["planning_status"],
+                            "requirement_projection": frozen_projection,
+                            "search_plan": search_action["search_plan"],
+                        },
+                        ensure_ascii=False,
+                    )
+                    agent_discovery = _validated_actual_plan_from_raw(
+                        raw_plan,
+                        sources=sources,
+                    )
             self._agent_discovery = agent_discovery
             if agent_discovery["planning_status"] != "ready":
                 return self._planning_insufficient_result(
                     request=request,
                     agent_discovery=agent_discovery,
                 )
+            if self.source_evidence_retriever is not None:
+                self._runtime_diagnostics["failure_stage"] = "source_vocabulary_discovery"
+                self._source_focus_queries = _initial_focus_query_terms(
+                    agent_discovery
+                )
+                self._source_queries = _source_query_inputs(
+                    natural_language_request=request.natural_language_request,
+                    agent_discovery=agent_discovery,
+                )
+                self._source_evidence_pack = self.source_evidence_retriever(
+                    self._source_queries,
+                )
+                self._runtime_diagnostics["failure_stage"] = (
+                    "source_observation_search_planning"
+                )
+                selection_inventory = _source_identifier_selection_inventory(
+                    self._source_evidence_pack
+                )
+                if not selection_inventory:
+                    raise ValueError("SOURCE_IDENTIFIER_INVENTORY_EMPTY")
+                source_grounded_messages = (
+                    *planning_messages,
+                    {
+                        "role": "assistant",
+                        "content": {
+                            "message_type": "initial_actual_plan",
+                            "agent_discovery": agent_discovery,
+                        },
+                    },
+                    {
+                        "role": "user",
+                        "content": {
+                            "message_type": "source_evidence_observation",
+                            "required_next_action": "source_identifier_selection",
+                            "observed_identifier_inventory": (
+                                _source_identifier_selection_model_view(
+                                    selection_inventory
+                                )
+                            ),
+                            "instruction": (
+                                "Return only one to four selection_ids for listed observed "
+                                "identifiers relevant to the frozen initial-focus engineering "
+                                "question. Do not return a family_id, identifier, metadata literal, "
+                                "query text, evidence ref, Requirement Projection, or Search Plan. "
+                                "Do not treat supporting source evidence as current assembly "
+                                "identity, and do not add a Hook answer, Golden fact, historical "
+                                "answer, annotation, or prior output."
+                            ),
+                        },
+                    },
+                )
+                grounded_raw_selection = self.model.complete(source_grounded_messages)
+                self._planning_model_steps_used += 1
+                agent_discovery, self._source_query_revision = (
+                    _validated_source_identifier_selection_from_raw(
+                        grounded_raw_selection,
+                        frozen_agent_discovery=agent_discovery,
+                        selection_inventory=selection_inventory,
+                        sources=sources,
+                    )
+                )
+                self._agent_discovery = agent_discovery
+                self._source_focus_queries = _initial_focus_query_terms(
+                    agent_discovery
+                )
+                self._source_literal_bindings = _source_metadata_literal_bindings(
+                    agent_discovery=agent_discovery,
+                    pack=self._source_evidence_pack,
+                    family_id=str(self._source_query_revision["family_id"]),
+                    evidence_refs=tuple(
+                        str(item)
+                        for item in self._source_query_revision[
+                            "source_evidence_refs"
+                        ]
+                    ),
+                )
+                if not any(
+                    item["evidence_refs"]
+                    for item in self._source_literal_bindings
+                ):
+                    self._runtime_diagnostics["failure_stage"] = (
+                        "source_to_metadata_grounding"
+                    )
+                    raise ValueError("SOURCE_TO_METADATA_GROUNDING_FAILURE")
             initial_messages = (
                 initial_messages[0],
                 initial_messages[1],
@@ -533,6 +709,7 @@ class EvidenceDiscoverySpecialist:
                     model_action_attempts=model_action_attempts,
                 )
             self._runtime_diagnostics["failure_stage"] = "action_validation"
+            il_source_grounding: dict[str, object] | None = None
             if self._agent_discovery is not None:
                 action = _resolve_action_from_frozen_plan(
                     raw_action,
@@ -554,6 +731,17 @@ class EvidenceDiscoverySpecialist:
                     observations=observations,
                     agent_discovery=self._agent_discovery,
                 )
+                if (
+                    action.get("tool") == "inspect_method_il"
+                    and self._source_literal_bindings
+                ):
+                    il_source_grounding = _source_grounding_for_il_action(
+                        action=action,
+                        actions=actions,
+                        observations=observations,
+                        agent_discovery=self._agent_discovery,
+                        literal_bindings=self._source_literal_bindings,
+                    )
             self._runtime_diagnostics["failure_stage"] = "repeat_policy"
             action_signature = _tool_action_signature(action)
             if action_signature in executed_tool_action_signatures:
@@ -590,6 +778,8 @@ class EvidenceDiscoverySpecialist:
                     "rejected_source_id": action["source_id"],
                 }
                 continue
+            if il_source_grounding is not None:
+                self._source_to_il_grounding.append(il_source_grounding)
             self._runtime_diagnostics["deterministic_validation_passed"] = int(
                 self._runtime_diagnostics["deterministic_validation_passed"]
             ) + 1
@@ -773,9 +963,15 @@ class EvidenceDiscoverySpecialist:
                 }
             )
         blockers = tuple(blockers_list)
-        items = tuple(
+        tool_items = tuple(
             item for observation in observations for item in observation.evidence_items
         )
+        source_items = (
+            self._source_evidence_pack.items
+            if self._source_evidence_pack is not None
+            else ()
+        )
+        items = _unique_evidence_items((*source_items, *tool_items))
         input_audit = _input_audit(request)
         conclusions = tuple(
             dict(item)
@@ -850,17 +1046,62 @@ class EvidenceDiscoverySpecialist:
             ),
             blockers=blockers,
             retrieval_methods_used=tuple(
-                dict.fromkeys(observation.tool for observation in observations)
+                dict.fromkeys(
+                    [item.retrieval_method for item in source_items]
+                    + [observation.tool for observation in observations]
+                )
             ),
-            disabled_modes={
-                "bm25": "Not used by the bounded intelligent evidence loop.",
-                "dense": "Not used by the bounded intelligent evidence loop.",
-                "fusion": "Not used by the bounded intelligent evidence loop.",
-                "rerank": "Not used by the bounded intelligent evidence loop.",
-            },
+            disabled_modes=(
+                dict(self._source_evidence_pack.disabled_modes)
+                if self._source_evidence_pack is not None
+                else {
+                    "bm25": "Not used by the bounded intelligent evidence loop.",
+                    "dense": "Not used by the bounded intelligent evidence loop.",
+                    "fusion": "Not used by the bounded intelligent evidence loop.",
+                    "rerank": "Not used by the bounded intelligent evidence loop.",
+                }
+            ),
             missing_evidence=missing_evidence_from_blockers(blockers),
-            timing={},
+            timing=(
+                dict(self._source_evidence_pack.timing)
+                if self._source_evidence_pack is not None
+                else {}
+            ),
             budget_summary={
+                **(
+                    {
+                        "source_discovery": {
+                            "query_terms": list(self._source_focus_queries),
+                            "source_queries": [
+                                dict(item) for item in self._source_queries
+                            ],
+                            "source_query_revision": (
+                                dict(self._source_query_revision)
+                                if self._source_query_revision is not None
+                                else None
+                            ),
+                            "item_ids": [item.evidence_id for item in source_items],
+                            "query_lane_execution": list(
+                                self._source_evidence_pack.budget_summary.get(
+                                    "source_query_execution", []
+                                )
+                            ),
+                            "metadata_literal_bindings": [
+                                dict(item) for item in self._source_literal_bindings
+                            ],
+                            "source_grounded_discovery": any(
+                                item["evidence_refs"]
+                                for item in self._source_literal_bindings
+                            ),
+                            "metadata_to_il_grounding": [
+                                dict(item) for item in self._source_to_il_grounding
+                            ],
+                            "readiness_is_not_planning_truth": True,
+                        }
+                    }
+                    if self._source_evidence_pack is not None
+                    else {}
+                ),
                 "max_tool_calls": request.max_tool_calls,
                 "tool_calls_used": len(actions),
                 "max_model_steps": request.max_model_steps,
@@ -946,6 +1187,33 @@ class EvidenceDiscoverySpecialist:
                 "candidate_binding_trace": candidate_binding_trace,
                 "target_code_executed": False,
                 "model_disclosure": _model_disclosure_record(self.model),
+                **(
+                    {
+                        "source_evidence": {
+                            "query_terms": list(self._source_focus_queries),
+                            "source_query_ids": [
+                                item["query_id"] for item in self._source_queries
+                            ],
+                            "evidence_ids": [item.evidence_id for item in source_items],
+                            "metadata_literal_bindings": [
+                                dict(item) for item in self._source_literal_bindings
+                            ],
+                            "metadata_to_il_grounding": [
+                                dict(item) for item in self._source_to_il_grounding
+                            ],
+                            "source_authorities": sorted(
+                                {
+                                    str(item.source_authority)
+                                    for item in source_items
+                                    if item.source_authority is not None
+                                }
+                            ),
+                            "used_for_current_assembly_identity": False,
+                        }
+                    }
+                    if self._source_evidence_pack is not None
+                    else {}
+                ),
             },
             input_audit=input_audit,
             intelligence_transfer=intelligence_transfer,
@@ -1004,6 +1272,296 @@ class EvidenceDiscoverySpecialist:
             finish_origin="deterministic_budget_stop",
             model_action_attempts=model_action_attempts,
         )
+
+
+def _initial_focus_query_terms(
+    agent_discovery: dict[str, object],
+) -> tuple[str, ...]:
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(search_plan, dict):
+        raise ValueError("SOURCE_DISCOVERY_SEARCH_PLAN_INVALID")
+    focus = search_plan.get("initial_focus_question_id")
+    if not isinstance(focus, str) or not focus:
+        raise ValueError("SOURCE_DISCOVERY_INITIAL_FOCUS_MISSING")
+    families = search_plan.get("query_families")
+    if not isinstance(families, list):
+        raise ValueError("SOURCE_DISCOVERY_QUERY_FAMILIES_INVALID")
+    terms: list[str] = []
+    for family in families:
+        if not isinstance(family, dict) or focus not in family.get("question_ids", []):
+            continue
+        queries = family.get("queries")
+        if not isinstance(queries, list):
+            raise ValueError("SOURCE_DISCOVERY_FAMILY_QUERIES_INVALID")
+        for query in queries:
+            if isinstance(query, str) and query.strip() and query not in terms:
+                terms.append(query)
+    if not terms:
+        raise ValueError("SOURCE_DISCOVERY_FOCUS_HAS_NO_QUERY_TERMS")
+    return tuple(terms)
+
+
+def _source_query_inputs(
+    *,
+    natural_language_request: str,
+    agent_discovery: dict[str, object],
+) -> tuple[dict[str, str], ...]:
+    projection = agent_discovery.get("requirement_projection")
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(projection, dict) or not isinstance(search_plan, dict):
+        raise ValueError("SOURCE_QUERY_CONTEXT_INVALID")
+    focus = search_plan.get("initial_focus_question_id")
+    questions = search_plan.get("engineering_questions")
+    if not isinstance(focus, str) or not isinstance(questions, list):
+        raise ValueError("SOURCE_QUERY_FOCUS_INVALID")
+    focus_question = next(
+        (
+            item.get("question")
+            for item in questions
+            if isinstance(item, dict) and item.get("question_id") == focus
+        ),
+        None,
+    )
+    raw_inputs: list[tuple[str, object]] = []
+    raw_inputs.extend(
+        ("initial_focus_query_family", query)
+        for query in _initial_focus_query_terms(agent_discovery)
+    )
+    raw_inputs.extend(
+        (
+            ("initial_focus_question", focus_question),
+            ("natural_language_request", natural_language_request),
+            (
+                "requirement_projection.behavior_goal",
+                projection.get("behavior_goal"),
+            ),
+            ("requirement_projection.trigger", projection.get("trigger")),
+        )
+    )
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for origin, value in raw_inputs:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        query = value.strip()
+        key = query.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(
+            {
+                "query_id": (
+                    f"source_query_{len(result) + 1:02d}_"
+                    f"{hashlib.sha256(query.encode('utf-8')).hexdigest()[:10]}"
+                ),
+                "origin": origin,
+                "query": query,
+            }
+        )
+    if not result:
+        raise ValueError("SOURCE_QUERY_GENERATION_FAILURE")
+    if len(result) > 24:
+        raise ValueError("SOURCE_QUERY_SET_BUDGET_EXCEEDED")
+    return tuple(result)
+
+
+def _source_identifier_selection_inventory(
+    pack: EvidencePack,
+) -> list[dict[str, object]]:
+    raw_budget = pack.budget_summary.get("combined_max_items", len(pack.items))
+    inventory_budget = min(
+        64,
+        raw_budget if isinstance(raw_budget, int) and raw_budget > 0 else len(pack.items),
+    )
+    identifiers = (
+        DeterministicEvidenceRetriever.observed_identifier_selection_inventory(
+            tuple(pack.items),
+            max_identifiers=inventory_budget,
+        )
+    )
+    return [
+        {
+            "selection_id": f"s{index:02d}",
+            **record,
+        }
+        for index, record in enumerate(identifiers, start=1)
+    ]
+
+
+def _source_identifier_selection_model_view(
+    inventory: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "selection_id": item["selection_id"],
+            "observed_identifier": item["observed_identifier"],
+            "source_path": (
+                item["source_paths"][0]
+                if isinstance(item.get("source_paths"), list)
+                and item["source_paths"]
+                else None
+            ),
+        }
+        for item in inventory
+    ]
+
+
+def _source_metadata_literal_bindings(
+    *,
+    agent_discovery: dict[str, object],
+    pack: EvidencePack,
+    family_id: str,
+    evidence_refs: tuple[str, ...],
+) -> list[dict[str, object]]:
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(search_plan, dict):
+        raise ValueError("SOURCE_GROUNDING_SEARCH_PLAN_INVALID")
+    focus = search_plan.get("initial_focus_question_id")
+    families = search_plan.get("query_families")
+    if not isinstance(focus, str) or not isinstance(families, list):
+        raise ValueError("SOURCE_GROUNDING_FOCUS_INVALID")
+    allowed_refs = set(evidence_refs)
+    bindings: list[dict[str, object]] = []
+    for family in families:
+        if (
+            not isinstance(family, dict)
+            or family.get("family_id") != family_id
+            or focus not in family.get("question_ids", [])
+        ):
+            continue
+        queries = family.get("queries")
+        if not isinstance(queries, list):
+            raise ValueError("SOURCE_GROUNDING_QUERIES_INVALID")
+        for literal in queries:
+            if not isinstance(literal, str) or not literal.strip():
+                raise ValueError("SOURCE_GROUNDING_LITERAL_INVALID")
+            matched_items: list[dict[str, object]] = []
+            needle = literal.casefold()
+            for item in pack.items:
+                if item.evidence_id not in allowed_refs:
+                    continue
+                fields = {
+                    "symbol": item.symbol,
+                    "declaring_type": item.declaring_type,
+                    "declaring_type_full_name": item.declaring_type_full_name,
+                    "method_name": item.method_name,
+                    "excerpt": item.excerpt,
+                    "source_path": item.source_path,
+                }
+                matched_fields = [
+                    name
+                    for name, value in fields.items()
+                    if isinstance(value, str) and needle in value.casefold()
+                ]
+                if not matched_fields:
+                    continue
+                matched_items.append(
+                    {
+                        "evidence_id": item.evidence_id,
+                        "matched_fields": matched_fields,
+                        "source_path": item.source_path,
+                        "source_span": item.span,
+                        "source_content_hash": (
+                            item.source_hash or item.file_hash or item.doc_hash
+                        ),
+                        "source_authority": item.source_authority,
+                    }
+                )
+            bindings.append(
+                {
+                    "query_family_id": family.get("family_id"),
+                    "initial_focus_question_id": focus,
+                    "metadata_literal": literal,
+                    "evidence_refs": [
+                        item["evidence_id"] for item in matched_items
+                    ],
+                    "evidence_matches": matched_items,
+                    "grounding_status": (
+                        "source_observed" if matched_items else "model_inferred"
+                    ),
+                }
+            )
+    return bindings
+
+
+def _source_grounding_for_il_action(
+    *,
+    action: dict[str, object],
+    actions: list[dict[str, object]],
+    observations: list[ToolObservation],
+    agent_discovery: dict[str, object],
+    literal_bindings: list[dict[str, object]],
+) -> dict[str, object]:
+    arguments = action.get("arguments")
+    derived = action.get("derived_from_observation_ids")
+    if not isinstance(arguments, dict) or not isinstance(derived, list) or not derived:
+        raise ValueError("IL_SOURCE_GROUNDING_INPUT_INVALID")
+    method_ref = arguments.get("candidate_ref")
+    observation_id = derived[-1]
+    observation_index = next(
+        (
+            index
+            for index, observation in enumerate(observations)
+            if observation.observation_id == observation_id
+        ),
+        None,
+    )
+    if observation_index is None or observation_index >= len(actions):
+        raise ValueError("IL_SOURCE_GROUNDING_OBSERVATION_UNKNOWN")
+    metadata_action = actions[observation_index]
+    method = next(
+        (
+            item
+            for item in observations[observation_index].data.get("methods", [])
+            if isinstance(item, dict) and item.get("candidate_ref") == method_ref
+        ),
+        None,
+    )
+    if not isinstance(method, dict):
+        raise ValueError("IL_SOURCE_GROUNDING_METHOD_UNKNOWN")
+    matched_queries = method.get("matched_queries")
+    if not isinstance(matched_queries, list):
+        raise ValueError("IL_SOURCE_GROUNDING_MATCHED_QUERIES_INVALID")
+    matched_bindings = [
+        item
+        for item in literal_bindings
+        if item.get("metadata_literal") in matched_queries
+        and item.get("evidence_refs")
+    ]
+    if not matched_bindings:
+        raise ValueError("IL_SELECTION_NOT_SOURCE_GROUNDED")
+    search_plan = agent_discovery.get("search_plan")
+    focus = (
+        search_plan.get("initial_focus_question_id")
+        if isinstance(search_plan, dict)
+        else None
+    )
+    return {
+        "initial_focus_question_id": focus,
+        "metadata_observation_id": observation_id,
+        "query_family_id": metadata_action.get("query_family_id"),
+        "matched_queries": list(matched_queries),
+        "source_evidence_refs": list(
+            dict.fromkeys(
+                str(ref)
+                for binding in matched_bindings
+                for ref in binding.get("evidence_refs", [])
+            )
+        ),
+        "method_ref": method_ref,
+        "method_symbol": method.get("symbol"),
+    }
+
+
+def _unique_evidence_items(items: tuple[EvidenceItem, ...]) -> tuple[EvidenceItem, ...]:
+    result: list[EvidenceItem] = []
+    seen: set[str] = set()
+    for item in items:
+        if item.evidence_id in seen:
+            continue
+        result.append(item)
+        seen.add(item.evidence_id)
+    return tuple(result)
 
 
 def _build_turn_messages(
@@ -1524,6 +2082,7 @@ def _new_runtime_diagnostics() -> dict[str, object]:
         "symbolic_failure_code": "none",
         "correction_attempted": False,
         "correction_unavailable_reason": "none",
+        "planning_quality_findings": [],
     }
 
 
@@ -1609,6 +2168,283 @@ def _parse_planning_action(raw: str) -> dict[str, object]:
     }:
         raise ValueError("PLANNING_ACTION_SHAPE_INVALID")
     return action
+
+
+def _parse_requirement_projection_action(raw: str) -> dict[str, object]:
+    try:
+        action = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"REQUIREMENT_PROJECTION_ACTION_INVALID_JSON: {exc}") from exc
+    if not isinstance(action, dict) or action.get("action") != "project_requirements":
+        raise ValueError("REQUIREMENT_PROJECTION_ACTION_TYPE_INVALID")
+    if set(action) != {"action", "planning_status", "requirement_projection"}:
+        raise ValueError("REQUIREMENT_PROJECTION_ACTION_SHAPE_INVALID")
+    if action.get("planning_status") not in {
+        "ready",
+        "requirement_projection_insufficient",
+    }:
+        raise ValueError("REQUIREMENT_PROJECTION_STATUS_INVALID")
+    projection = action.get("requirement_projection")
+    if not isinstance(projection, dict):
+        raise ValueError("REQUIREMENT_PROJECTION_MUST_BE_OBJECT")
+    required_projection_fields = {
+        "behavior_goal",
+        "trigger",
+        "actor",
+        "target",
+        "hard_constraints",
+        "forbidden_outcomes",
+        "implementation_hints",
+        "acceptance_signals",
+        "planning_blocking_questions",
+        "deferred_planning_or_runtime_questions",
+    }
+    if set(projection) != required_projection_fields:
+        raise ValueError("MODEL_REQUIREMENT_PROJECTION_SHAPE_INVALID")
+    question_texts = projection.get("planning_blocking_questions")
+    if not isinstance(question_texts, list) or any(
+        not isinstance(question, str) or not question.strip()
+        for question in question_texts
+    ):
+        raise ValueError("MODEL_PLANNING_BLOCKING_QUESTIONS_INVALID")
+    materialized_projection = {
+        **projection,
+        "schema_version": REQUIREMENT_PROJECTION_SCHEMA_VERSION,
+        "planning_blocking_questions": [
+            {
+                "requirement_id": f"requirement-{index:03d}",
+                "question": question.strip(),
+            }
+            for index, question in enumerate(question_texts, start=1)
+        ],
+    }
+    validate_requirement_projection_actual(
+        materialized_projection,
+        require_meaningful=action["planning_status"] == "ready",
+    )
+    return {**action, "requirement_projection": materialized_projection}
+
+
+def _parse_search_plan_action(raw: str) -> dict[str, object]:
+    try:
+        action = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"SEARCH_PLAN_ACTION_INVALID_JSON: {exc}") from exc
+    if not isinstance(action, dict) or action.get("action") != "plan_search":
+        raise ValueError("SEARCH_PLAN_ACTION_TYPE_INVALID")
+    if set(action) != {"action", "planning_status", "search_plan"}:
+        raise ValueError("SEARCH_PLAN_ACTION_SHAPE_INVALID")
+    if action.get("planning_status") not in {
+        "ready",
+        "search_planning_insufficient",
+    }:
+        raise ValueError("SEARCH_PLAN_STATUS_INVALID")
+    return action
+
+
+def _resolve_model_search_plan_action(
+    action: dict[str, object],
+    *,
+    frozen_projection: dict[str, object],
+    sources: dict[str, EvidenceDiscoverySource],
+    quality_findings: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    """Resolve model-owned search semantics into the existing persistent plan."""
+
+    plan = action.get("search_plan")
+    planning_status = action["planning_status"]
+    if planning_status == "search_planning_insufficient" and plan is None:
+        return {
+            **action,
+            "search_plan": {
+                "schema_version": SEARCH_PLAN_SCHEMA_VERSION,
+                "engineering_questions": [],
+                "initial_focus_question_id": None,
+                "source_roles": [],
+                "planned_lanes": [],
+                "query_families": [],
+                "initial_stop_condition": "Search planning stopped before execution.",
+                "initial_expand_condition": "No executable search plan was formed.",
+            },
+        }
+    if not isinstance(plan, dict):
+        raise ValueError("SEARCH_PLAN_MUST_BE_OBJECT")
+    if set(plan) != {
+        "investigations",
+        "initial_stop_condition",
+        "initial_expand_condition",
+    }:
+        raise ValueError("MODEL_SEARCH_PLAN_SHAPE_INVALID")
+    investigations = plan.get("investigations")
+    requirements = frozen_projection.get("planning_blocking_questions")
+    if not isinstance(investigations, list) or not isinstance(requirements, list):
+        raise ValueError("MODEL_SEARCH_PLAN_COLLECTION_INVALID")
+    if len(investigations) != len(requirements) or not investigations:
+        raise ValueError("MODEL_SEARCH_PLAN_REQUIREMENT_COVERAGE_INVALID")
+
+    selected_source_ids: list[str] = []
+
+    def resolve_source_ids(value: object) -> list[str]:
+        if (
+            not isinstance(value, list)
+            or not value
+            or any(not isinstance(item, str) or not item.strip() for item in value)
+            or len(value) != len(set(value))
+        ):
+            raise ValueError("MODEL_SEARCH_PLAN_SOURCE_IDS_INVALID")
+        resolved: list[str] = []
+        for source_id in value:
+            source = sources.get(source_id)
+            if source is None:
+                raise ValueError("MODEL_SEARCH_PLAN_SOURCE_ID_UNKNOWN")
+            if "search_dotnet_metadata" not in source.allowed_tools:
+                raise ValueError("MODEL_SEARCH_PLAN_SOURCE_METADATA_NOT_ALLOWED")
+            resolved.append(source_id)
+            if source_id not in selected_source_ids:
+                selected_source_ids.append(source_id)
+        return resolved
+
+    resolved_questions: list[dict[str, object]] = []
+    resolved_lanes: list[dict[str, object]] = []
+    resolved_families: list[dict[str, object]] = []
+    initial_focus_question_id: str | None = None
+    for question_index, (investigation, requirement) in enumerate(
+        zip(investigations, requirements, strict=True),
+        start=1,
+    ):
+        if not isinstance(requirement, dict):
+            raise ValueError("FROZEN_PLANNING_REQUIREMENT_INVALID")
+        if not isinstance(investigation, dict) or set(investigation) != {
+            "engineering_question",
+            "initial_focus",
+            "source_ids",
+            "query_families",
+        }:
+            raise ValueError("MODEL_SEARCH_PLAN_INVESTIGATION_SHAPE_INVALID")
+        engineering_question = investigation.get("engineering_question")
+        if not isinstance(engineering_question, str) or not engineering_question.strip():
+            raise ValueError("MODEL_SEARCH_PLAN_ENGINEERING_QUESTION_INVALID")
+        if not isinstance(investigation.get("initial_focus"), bool):
+            raise ValueError("MODEL_SEARCH_PLAN_INITIAL_FOCUS_INVALID")
+        question_id = f"question-{question_index:03d}"
+        requirement_id = str(requirement.get("requirement_id") or "")
+        if not requirement_id:
+            raise ValueError("FROZEN_PLANNING_REQUIREMENT_INVALID")
+        source_ids = resolve_source_ids(investigation.get("source_ids"))
+        model_families = investigation.get("query_families")
+        if not isinstance(model_families, list) or not model_families:
+            raise ValueError("MODEL_SEARCH_PLAN_QUERY_FAMILIES_INVALID")
+        if investigation["initial_focus"]:
+            if initial_focus_question_id is not None:
+                raise ValueError("MODEL_SEARCH_PLAN_INITIAL_FOCUS_INVALID")
+            initial_focus_question_id = question_id
+        resolved_questions.append(
+            {
+                "question_id": question_id,
+                "question": engineering_question.strip(),
+                "requirement_ids": [requirement_id],
+            }
+        )
+        resolved_lanes.append(
+            {
+                "lane": f"lane-{question_index:03d}",
+                "source_ids": source_ids,
+                "question_ids": [question_id],
+                "tool": "search_dotnet_metadata",
+            }
+        )
+        retained_dispatch_identities: dict[
+            frozenset[tuple[str, str, tuple[str, ...], str]], str
+        ] = {}
+        for model_family_index, family in enumerate(model_families, start=1):
+            if not isinstance(family, dict) or set(family) != {
+                "queries",
+                "evidence_need",
+            }:
+                raise ValueError("MODEL_SEARCH_PLAN_QUERY_FAMILY_SHAPE_INVALID")
+            evidence_need = family.get("evidence_need")
+            queries = family.get("queries")
+            if (
+                not isinstance(evidence_need, str)
+                or not evidence_need.strip()
+                or not isinstance(queries, list)
+            ):
+                raise ValueError("MODEL_SEARCH_PLAN_QUERY_FAMILY_INVALID")
+            normalized_queries: list[str] = []
+            for query in queries:
+                if not isinstance(query, str) or not query.strip():
+                    raise ValueError("MODEL_SEARCH_PLAN_QUERY_INVALID")
+                normalized = query.strip()
+                if normalized not in normalized_queries:
+                    normalized_queries.append(normalized)
+            if not normalized_queries:
+                raise ValueError("MODEL_SEARCH_PLAN_QUERY_FAMILY_INVALID")
+            resolved_family: dict[str, object] = {
+                "family_id": "",
+                "queries": normalized_queries,
+                "evidence_need": evidence_need.strip(),
+                "source_ids": list(source_ids),
+                "question_ids": [question_id],
+                "tool": "search_dotnet_metadata",
+            }
+            dispatch_identities = _search_plan_family_dispatch_identities(
+                resolved_family
+            )
+            retained_family_id = retained_dispatch_identities.get(
+                dispatch_identities
+            )
+            if retained_family_id is not None:
+                if quality_findings is not None:
+                    quality_findings.append(
+                        {
+                            "code": "DUPLICATE_QUERY_FAMILY_DISPATCH_COLLAPSED",
+                            "investigation_index": question_index,
+                            "duplicate_model_family_index": model_family_index,
+                            "retained_family_id": retained_family_id,
+                            "dispatch_identities": [
+                                {
+                                    "tool": tool,
+                                    "source_id": source_id,
+                                    "queries": list(queries),
+                                    "evidence_need": dispatch_evidence_need,
+                                }
+                                for (
+                                    tool,
+                                    source_id,
+                                    queries,
+                                    dispatch_evidence_need,
+                                ) in sorted(dispatch_identities)
+                            ],
+                        }
+                    )
+                continue
+            retained_index = len(retained_dispatch_identities) + 1
+            retained_family_id = (
+                f"family-{question_index:03d}-{retained_index:03d}"
+            )
+            resolved_family["family_id"] = retained_family_id
+            retained_dispatch_identities[dispatch_identities] = retained_family_id
+            resolved_families.append(resolved_family)
+    if initial_focus_question_id is None:
+        raise ValueError("MODEL_SEARCH_PLAN_INITIAL_FOCUS_INVALID")
+
+    resolved_plan = {
+        "schema_version": SEARCH_PLAN_SCHEMA_VERSION,
+        "engineering_questions": resolved_questions,
+        "initial_focus_question_id": initial_focus_question_id,
+        "source_roles": [
+            {
+                "source_id": source_id,
+                "role": sources[source_id].source_authority,
+            }
+            for source_id in selected_source_ids
+        ],
+        "planned_lanes": resolved_lanes,
+        "query_families": resolved_families,
+        "initial_stop_condition": plan.get("initial_stop_condition"),
+        "initial_expand_condition": plan.get("initial_expand_condition"),
+    }
+    return {**action, "search_plan": resolved_plan}
 
 
 def _planning_topology_issues(raw: str) -> list[dict[str, object]]:
@@ -1745,6 +2581,94 @@ def _validated_actual_plan_from_raw(
     )
     _validate_plan_against_sources(agent_discovery, sources=sources)
     return agent_discovery
+
+
+def _single_initial_focus_metadata_family(
+    agent_discovery: dict[str, object],
+) -> dict[str, object]:
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(search_plan, dict):
+        raise ValueError("SOURCE_IDENTIFIER_SELECTION_SEARCH_PLAN_INVALID")
+    focus = search_plan.get("initial_focus_question_id")
+    families = search_plan.get("query_families")
+    matches = [
+        family
+        for family in families
+        if isinstance(families, list)
+        and isinstance(family, dict)
+        and family.get("tool") == "search_dotnet_metadata"
+        and focus in family.get("question_ids", [])
+    ] if isinstance(families, list) else []
+    if len(matches) != 1:
+        raise ValueError("SOURCE_IDENTIFIER_SELECTION_FAMILY_AMBIGUOUS")
+    return matches[0]
+
+
+def _validated_source_identifier_selection_from_raw(
+    raw: str,
+    *,
+    frozen_agent_discovery: dict[str, object],
+    selection_inventory: list[dict[str, object]],
+    sources: dict[str, EvidenceDiscoverySource],
+) -> tuple[dict[str, object], dict[str, object]]:
+    try:
+        selection = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"SOURCE_IDENTIFIER_SELECTION_INVALID_JSON: {exc}") from exc
+    if not isinstance(selection, dict) or set(selection) != {
+        "action",
+        "selection_ids",
+    }:
+        raise ValueError("SOURCE_IDENTIFIER_SELECTION_SHAPE_INVALID")
+    if selection.get("action") != "select_observed_identifiers":
+        raise ValueError("SOURCE_IDENTIFIER_SELECTION_ACTION_INVALID")
+    selection_ids = selection.get("selection_ids")
+    if (
+        not isinstance(selection_ids, list)
+        or not 1 <= len(selection_ids) <= 4
+        or any(not isinstance(item, str) or not item for item in selection_ids)
+        or len(selection_ids) != len(set(selection_ids))
+    ):
+        raise ValueError("SOURCE_IDENTIFIER_SELECTION_CONTENT_INVALID")
+    inventory_by_id = {
+        str(item["selection_id"]): item for item in selection_inventory
+    }
+    selected_records: list[dict[str, object]] = []
+    for selection_id in selection_ids:
+        if selection_id not in inventory_by_id:
+            raise ValueError("SOURCE_IDENTIFIER_SELECTION_ID_INVALID")
+        record = inventory_by_id[selection_id]
+        selected_records.append(record)
+    revised = json.loads(
+        json.dumps(frozen_agent_discovery, ensure_ascii=False, separators=(",", ":"))
+    )
+    search_plan = revised.get("search_plan")
+    if not isinstance(search_plan, dict):
+        raise ValueError("SOURCE_IDENTIFIER_SELECTION_SEARCH_PLAN_INVALID")
+    family = _single_initial_focus_metadata_family(revised)
+    family_id = str(family["family_id"])
+    queries = list(
+        dict.fromkeys(
+            str(item["observed_identifier"]) for item in selected_records
+        )
+    )
+    evidence_refs = list(
+        dict.fromkeys(
+            str(evidence_ref)
+            for item in selected_records
+            for evidence_ref in item["source_evidence_refs"]
+        )
+    )
+    if not queries or not evidence_refs:
+        raise ValueError("SOURCE_IDENTIFIER_SELECTION_RESOLUTION_INVALID")
+    family["queries"] = list(queries)
+    validate_agent_discovery_actual(revised)
+    _validate_plan_against_sources(revised, sources=sources)
+    return revised, {
+        "family_id": family_id,
+        "queries": list(queries),
+        "source_evidence_refs": list(evidence_refs),
+    }
 
 
 def _validate_plan_against_sources(

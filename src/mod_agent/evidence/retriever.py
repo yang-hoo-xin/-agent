@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
@@ -34,7 +35,50 @@ from .models import (
 )
 from .readiness import EvidenceReadinessClassifier
 
-_TEXT_EXTENSIONS = frozenset({".json", ".yaml", ".yml", ".md", ".txt", ".log", ".cfg"})
+_TEXT_EXTENSIONS = frozenset(
+    {".cs", ".json", ".yaml", ".yml", ".md", ".txt", ".log", ".cfg"}
+)
+_CODE_IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_.]*\b")
+_CODE_IDENTIFIER_PART_RE = re.compile(
+    r"[A-Z]+(?=[A-Z][a-z]|\d|$)|[A-Z]?[a-z]+|\d+"
+)
+_SOURCE_IDENTIFIER_STOPWORDS = frozenset(
+    {
+        "abstract",
+        "base",
+        "bool",
+        "class",
+        "collections",
+        "default",
+        "enum",
+        "generic",
+        "false",
+        "float",
+        "internal",
+        "mono",
+        "monobehaviour",
+        "namespace",
+        "new",
+        "null",
+        "override",
+        "private",
+        "protected",
+        "public",
+        "return",
+        "sealed",
+        "setup",
+        "static",
+        "string",
+        "system",
+        "true",
+        "unityengine",
+        "using",
+        "vector",
+        "vector3",
+        "virtual",
+        "void",
+    }
+)
 
 
 class DeterministicEvidenceRetriever:
@@ -72,8 +116,12 @@ class DeterministicEvidenceRetriever:
         *,
         preverified_items: tuple[EvidenceItem, ...] = (),
         preverified_lane_coverage: tuple[dict[str, object], ...] = (),
+        lane_max_items: int | None = None,
     ) -> EvidencePack:
         """Retrieve evidence and classify readiness."""
+
+        if lane_max_items is not None and lane_max_items <= 0:
+            raise ValueError("lane_max_items must be positive when provided.")
 
         total_started = perf_counter()
         query_started = perf_counter()
@@ -107,6 +155,7 @@ class DeterministicEvidenceRetriever:
                 dense_required=self.dense_required,
                 dense_budget_summary={},
                 dense_trace_refs=(),
+                lane_coverage=(),
             )
 
         sources = self._source_map()
@@ -118,7 +167,11 @@ class DeterministicEvidenceRetriever:
             dict(item) for item in preverified_lane_coverage
         ]
 
+        lane_limit = min(request.max_items, lane_max_items or request.max_items)
         symbol_started = perf_counter()
+        symbol_pool: list[EvidenceItem] = []
+        symbol_seen: set[str] = set()
+        symbol_pool_limit = min(256, max(32, lane_limit * 64))
         stable_version = self.database.stable_index_version(self.collection_id)
         if stable_version is not None:
             for item in self._symbol_index_items(
@@ -126,37 +179,36 @@ class DeterministicEvidenceRetriever:
                 sources=sources,
                 allowed_source_ids=allowed_source_ids,
                 index_version=stable_version.index_version,
-                max_items=request.max_items,
+                max_items=symbol_pool_limit,
             ):
-                if item.evidence_id not in seen:
-                    items.append(item)
-                    seen.add(item.evidence_id)
-                if len(items) >= request.max_items:
-                    break
-        if len(items) < request.max_items:
-            for term in terms:
-                for symbol in self.database.search_symbols(term, limit=request.max_items):
-                    if symbol.source_id not in allowed_source_ids:
-                        excluded.append(
-                            {
-                                "source_path": symbol.source_path,
-                                "reason": "source_id_not_requested",
-                                "source_id": symbol.source_id,
-                            }
-                        )
-                        continue
-                    item = self._symbol_item(symbol, sources)
-                    if item.evidence_id not in seen:
-                        items.append(item)
-                        seen.add(item.evidence_id)
-                    if len(items) >= request.max_items:
-                        break
-                if len(items) >= request.max_items:
-                    break
+                if item.evidence_id not in symbol_seen:
+                    symbol_pool.append(item)
+                    symbol_seen.add(item.evidence_id)
+        for term in terms:
+            for symbol in self.database.search_symbols(term, limit=symbol_pool_limit):
+                if symbol.source_id not in allowed_source_ids:
+                    excluded.append(
+                        {
+                            "source_path": symbol.source_path,
+                            "reason": "source_id_not_requested",
+                            "source_id": symbol.source_id,
+                        }
+                    )
+                    continue
+                item = self._symbol_item(symbol, sources)
+                if item.evidence_id not in symbol_seen:
+                    symbol_pool.append(item)
+                    symbol_seen.add(item.evidence_id)
+        symbol_items = sorted(
+            symbol_pool,
+            key=lambda item: self._symbol_query_relevance_key(item, terms),
+        )[:lane_limit]
+        for item in symbol_items:
+            if item.evidence_id not in seen and len(items) < request.max_items:
+                items.append(item)
+                seen.add(item.evidence_id)
         symbol_ms = _elapsed_ms(symbol_started)
-        symbol_count = len(
-            [item for item in items if item.retrieval_method == "symbol_exact"]
-        )
+        symbol_count = len(symbol_items)
         lane_coverage.append(
             self._lane_coverage(
                 lane="symbol_metadata",
@@ -173,7 +225,7 @@ class DeterministicEvidenceRetriever:
             terms=terms,
             sources=sources,
             allowed_source_ids=allowed_source_ids,
-            max_items=request.max_items,
+            max_items=lane_limit,
         )
         for item in bm25_items:
             if item.evidence_id not in seen and len(items) < request.max_items:
@@ -252,7 +304,7 @@ class DeterministicEvidenceRetriever:
             terms=terms,
             sources=sources,
             allowed_source_ids=allowed_source_ids,
-            max_items=request.max_items,
+            max_items=lane_limit,
         )
         for item in text_items:
             if item.evidence_id not in seen and len(items) < request.max_items:
@@ -296,7 +348,432 @@ class DeterministicEvidenceRetriever:
             dense_required=self.dense_required,
             dense_budget_summary=dense_budget_summary,
             dense_trace_refs=dense_trace_refs,
+            lane_coverage=tuple(lane_coverage),
         )
+
+    def retrieve_query_set(
+        self,
+        *,
+        queries: tuple[dict[str, str], ...],
+        source_ids: tuple[str, ...],
+        per_query_lane_max_items: int = 3,
+        max_items: int = 36,
+        _expand_observed_identifiers: bool = True,
+    ) -> EvidencePack:
+        """Run each source-discovery query independently and merge bounded facts."""
+
+        if not queries:
+            raise ValueError("Source query set must not be empty.")
+        if per_query_lane_max_items <= 0 or max_items <= 0:
+            raise ValueError("Source query-set budgets must be positive.")
+        seen_query_ids: set[str] = set()
+        admitted_items: list[EvidenceItem] = []
+        admitted_ids: set[str] = set()
+        excluded: list[dict[str, object]] = []
+        lane_facts: list[dict[str, object]] = []
+        bounded_items_by_query_and_lane: dict[
+            tuple[int, str], list[EvidenceItem]
+        ] = {}
+        disabled_modes: dict[str, str] = {}
+        timing: dict[str, float] = {}
+        lane_methods = {
+            "symbol_metadata": "symbol_exact",
+            "sparse_bm25": "bm25",
+            "live_text": "text_match",
+            "dense": "dense",
+        }
+        lane_order = tuple(lane_methods)
+
+        for query_index, query_input in enumerate(queries):
+            if set(query_input) != {"query_id", "origin", "query"}:
+                raise ValueError("Source query input shape is invalid.")
+            query_id = query_input["query_id"].strip()
+            origin = query_input["origin"].strip()
+            query = query_input["query"].strip()
+            if not query_id or not origin or not query or query_id in seen_query_ids:
+                raise ValueError("Source query identity or text is invalid.")
+            seen_query_ids.add(query_id)
+            pack = self.retrieve(
+                EvidenceRequest(
+                    query=query,
+                    requires_hook_evidence=True,
+                    source_ids=source_ids,
+                    max_items=per_query_lane_max_items * 3,
+                    hook_requirement={
+                        "required": True,
+                        "reason": "bounded_source_vocabulary_discovery",
+                    },
+                ),
+                lane_max_items=per_query_lane_max_items,
+            )
+            excluded.extend(dict(item) for item in pack.excluded)
+            disabled_modes.update(pack.disabled_modes)
+            for key, value in pack.timing.items():
+                timing[key] = round(timing.get(key, 0.0) + float(value), 3)
+            coverage_by_lane = {
+                str(item.get("lane")): item
+                for item in pack.budget_summary.get(
+                    "deterministic_lane_coverage", []
+                )
+                if isinstance(item, dict)
+            }
+            for lane in lane_order:
+                method = lane_methods[lane]
+                bounded_items = [
+                    item for item in pack.items if item.retrieval_method == method
+                ]
+                bounded_refs = [item.evidence_id for item in bounded_items]
+                bounded_items_by_query_and_lane[(query_index, lane)] = bounded_items
+                coverage = coverage_by_lane.get(lane, {})
+                bounded_hit_count = int(coverage.get("hit_count", len(bounded_refs)))
+                lane_facts.append(
+                    {
+                        "query_index": query_index,
+                        "query_id": query_id,
+                        "query_origin": origin,
+                        "query": query,
+                        "lane": lane,
+                        "status": coverage.get("status", "not_searched"),
+                        "source_ids": list(source_ids),
+                        "bounded_hit_count": bounded_hit_count,
+                        "bounded_evidence_refs": bounded_refs,
+                        "deduplicated_count": 0,
+                        "truncated_count": 0,
+                        "admitted_count": 0,
+                        "admitted_evidence_refs": [],
+                        "result_limit": per_query_lane_max_items,
+                        "result_limit_reached": (
+                            bounded_hit_count >= per_query_lane_max_items
+                        ),
+                        "failure": coverage.get("failure"),
+                    }
+                )
+
+        facts_by_query_and_lane = {
+            (int(fact["query_index"]), str(fact["lane"])): fact
+            for fact in lane_facts
+        }
+        # Apply the global budget only after every query/lane has produced its
+        # bounded result.  Rank -> lane -> query ordering gives every non-empty
+        # query/lane bucket one opportunity before any bucket contributes its
+        # second item; source index order therefore cannot starve later queries.
+        for item_rank in range(per_query_lane_max_items):
+            for lane in lane_order:
+                for query_index in range(len(queries)):
+                    bounded_items = bounded_items_by_query_and_lane.get(
+                        (query_index, lane), []
+                    )
+                    if item_rank >= len(bounded_items):
+                        continue
+                    item = bounded_items[item_rank]
+                    fact = facts_by_query_and_lane[(query_index, lane)]
+                    if item.evidence_id in admitted_ids:
+                        fact["deduplicated_count"] = (
+                            int(fact["deduplicated_count"]) + 1
+                        )
+                        continue
+                    if len(admitted_items) >= max_items:
+                        fact["truncated_count"] = int(fact["truncated_count"]) + 1
+                        continue
+                    admitted_items.append(item)
+                    admitted_ids.add(item.evidence_id)
+                    admitted_refs = fact["admitted_evidence_refs"]
+                    if not isinstance(admitted_refs, list):
+                        raise RuntimeError("Source query admission facts are invalid.")
+                    admitted_refs.append(item.evidence_id)
+                    fact["admitted_count"] = int(fact["admitted_count"]) + 1
+
+        identifier_records: list[dict[str, object]] = []
+        expansion_execution: list[dict[str, object]] = []
+        expansion_item_ids: list[str] = []
+        combined_max_items = max_items
+        if _expand_observed_identifiers and admitted_items:
+            identifier_records = self._observed_source_identifiers(
+                tuple(admitted_items),
+                max_identifiers=16,
+            )
+            expansion_queries = tuple(
+                {
+                    "query_id": (
+                        f"source_identifier_{index:02d}_"
+                        f"{hashlib.sha256(str(record['identifier']).encode('utf-8')).hexdigest()[:10]}"
+                    ),
+                    "origin": "observed_identifier_exact_reference",
+                    "query": str(record["identifier"]),
+                }
+                for index, record in enumerate(identifier_records, start=1)
+            )
+            if expansion_queries:
+                expansion_max_items = min(48, max_items * 2)
+                expansion_pack = self.retrieve_query_set(
+                    queries=expansion_queries,
+                    source_ids=source_ids,
+                    per_query_lane_max_items=3,
+                    max_items=expansion_max_items,
+                    _expand_observed_identifiers=False,
+                )
+                combined_max_items += expansion_max_items
+                expansion_execution = list(
+                    expansion_pack.budget_summary.get("source_query_execution", [])
+                )
+                excluded.extend(dict(item) for item in expansion_pack.excluded)
+                disabled_modes.update(expansion_pack.disabled_modes)
+                for key, value in expansion_pack.timing.items():
+                    timing[key] = round(timing.get(key, 0.0) + float(value), 3)
+                for item in expansion_pack.items:
+                    if item.evidence_id in admitted_ids:
+                        continue
+                    if len(admitted_items) >= combined_max_items:
+                        break
+                    admitted_items.append(item)
+                    admitted_ids.add(item.evidence_id)
+                    expansion_item_ids.append(item.evidence_id)
+
+        return EvidencePack(
+            query="bounded source query set",
+            readiness="partial" if admitted_items else "insufficient",
+            can_generate_patch=False,
+            items=tuple(admitted_items),
+            excluded=tuple(excluded),
+            retrieval_methods_used=tuple(
+                dict.fromkeys(item.retrieval_method for item in admitted_items)
+            ),
+            disabled_modes=disabled_modes,
+            timing=timing,
+            budget_summary={
+                "source_query_execution": lane_facts,
+                "query_count": len(queries),
+                "per_query_lane_max_items": per_query_lane_max_items,
+                "max_items": max_items,
+                "combined_max_items": combined_max_items,
+                "admitted_item_count": len(admitted_items),
+                "observed_identifier_extraction": identifier_records,
+                "bounded_identifier_reference_expansion": {
+                    "performed": bool(identifier_records),
+                    "query_lane_execution": expansion_execution,
+                    "admitted_evidence_refs": expansion_item_ids,
+                    "expansion_kind": "exact_identifier_reference_and_type_lookup",
+                    "expansion_depth": 1 if identifier_records else 0,
+                },
+            },
+            message=(
+                "Bounded deterministic source queries produced supporting EvidenceItems; "
+                "their readiness is not planning truth."
+            ),
+        )
+
+    @classmethod
+    def _observed_source_identifiers(
+        cls,
+        items: tuple[EvidenceItem, ...],
+        *,
+        max_identifiers: int,
+    ) -> list[dict[str, object]]:
+        refs_by_identifier: dict[str, list[str]] = {}
+        form_by_identifier: dict[str, str] = {}
+        for item in items:
+            primary_values = (
+                item.symbol,
+                item.declaring_type,
+                item.declaring_type_full_name,
+                item.method_name,
+                Path(item.source_path).stem,
+            )
+            raw_identifiers: list[tuple[str, str]] = []
+            for value in primary_values:
+                if isinstance(value, str):
+                    raw_identifiers.extend(
+                        (identifier, "identity_field")
+                        for identifier in _CODE_IDENTIFIER_RE.findall(value)
+                    )
+            if isinstance(item.excerpt, str):
+                raw_identifiers.extend(
+                    (identifier, "source_excerpt")
+                    for identifier in _CODE_IDENTIFIER_RE.findall(item.excerpt)
+                )
+            per_item_seen: set[str] = set()
+            for identifier, origin in raw_identifiers:
+                for form, form_kind in cls._identifier_forms(identifier):
+                    key = form.casefold()
+                    if key in per_item_seen:
+                        continue
+                    per_item_seen.add(key)
+                    refs_by_identifier.setdefault(form, []).append(item.evidence_id)
+                    form_by_identifier.setdefault(
+                        form,
+                        origin if form_kind == "full" else f"{origin}_component",
+                    )
+        ranked = sorted(
+            refs_by_identifier,
+            key=lambda value: (
+                -cls._identifier_origin_priority(form_by_identifier[value]),
+                -len(cls._identifier_components(value)),
+                -len(value),
+                len(set(refs_by_identifier[value])),
+                value.casefold(),
+            ),
+        )
+        return [
+            {
+                "identifier": identifier,
+                "extraction_kind": form_by_identifier[identifier],
+                "source_evidence_refs": list(
+                    dict.fromkeys(refs_by_identifier[identifier])
+                ),
+            }
+            for identifier in ranked[:max_identifiers]
+        ]
+
+    @classmethod
+    def observed_identifier_selection_inventory(
+        cls,
+        items: tuple[EvidenceItem, ...],
+        *,
+        max_identifiers: int,
+    ) -> list[dict[str, object]]:
+        """Project bounded source facts into short model-selection identities."""
+
+        if max_identifiers <= 0:
+            raise ValueError("Observed identifier inventory budget must be positive.")
+        records: dict[str, dict[str, object]] = {}
+
+        def admit(
+            *,
+            identifier: str,
+            extraction_kind: str,
+            score: int,
+            item: EvidenceItem,
+        ) -> None:
+            normalized = identifier.strip("._")
+            if (
+                len(normalized) < 4
+                or normalized.casefold() in _SOURCE_IDENTIFIER_STOPWORDS
+            ):
+                return
+            record = records.setdefault(
+                normalized,
+                {
+                    "observed_identifier": normalized,
+                    "extraction_kind": extraction_kind,
+                    "score": score,
+                    "source_evidence_refs": [],
+                    "source_paths": [],
+                },
+            )
+            if score > int(record["score"]):
+                record["score"] = score
+                record["extraction_kind"] = extraction_kind
+            evidence_refs = record["source_evidence_refs"]
+            source_paths = record["source_paths"]
+            if not isinstance(evidence_refs, list) or not isinstance(source_paths, list):
+                raise RuntimeError("Observed identifier inventory record is invalid.")
+            if item.evidence_id not in evidence_refs:
+                evidence_refs.append(item.evidence_id)
+            if item.source_path not in source_paths:
+                source_paths.append(item.source_path)
+
+        for item in items:
+            for value in (
+                item.symbol,
+                item.declaring_type,
+                item.declaring_type_full_name,
+                item.method_name,
+                Path(item.source_path).stem,
+            ):
+                if not isinstance(value, str):
+                    continue
+                for identifier in _CODE_IDENTIFIER_RE.findall(value):
+                    forms = cls._identifier_forms(identifier)
+                    for form, form_kind in forms:
+                        admit(
+                            identifier=form,
+                            extraction_kind=(
+                                "identity_field"
+                                if form_kind == "full"
+                                else "identity_field_component"
+                            ),
+                            score=100 if form_kind == "full" else 70,
+                            item=item,
+                        )
+            if not isinstance(item.excerpt, str):
+                continue
+            for identifier in _CODE_IDENTIFIER_RE.findall(item.excerpt):
+                forms = cls._identifier_forms(identifier)
+                component_count = len(cls._identifier_components(identifier))
+                for form, form_kind in forms:
+                    if form_kind == "component":
+                        score = 60
+                    elif "." in identifier:
+                        score = 110
+                    elif component_count >= 2:
+                        score = 85
+                    else:
+                        score = 50
+                    admit(
+                        identifier=form,
+                        extraction_kind=(
+                            "source_excerpt"
+                            if form_kind == "full"
+                            else "source_excerpt_component"
+                        ),
+                        score=score,
+                        item=item,
+                    )
+
+        ranked = sorted(
+            records.values(),
+            key=lambda record: (
+                -int(record["score"]),
+                len(record["source_evidence_refs"]),
+                -len(cls._identifier_components(str(record["observed_identifier"]))),
+                -len(str(record["observed_identifier"])),
+                str(record["observed_identifier"]).casefold(),
+            ),
+        )
+        return [
+            {
+                "observed_identifier": str(record["observed_identifier"]),
+                "extraction_kind": str(record["extraction_kind"]),
+                "source_evidence_refs": list(record["source_evidence_refs"]),
+                "source_paths": list(record["source_paths"]),
+            }
+            for record in ranked[:max_identifiers]
+        ]
+
+    @classmethod
+    def _identifier_forms(cls, identifier: str) -> tuple[tuple[str, str], ...]:
+        full = identifier.strip("._")
+        if not full or full.casefold() in _SOURCE_IDENTIFIER_STOPWORDS:
+            return ()
+        forms: list[tuple[str, str]] = []
+        if len(full) >= 4:
+            forms.append((full, "full"))
+        for component in cls._identifier_components(full):
+            if (
+                len(component) >= 4
+                and component.casefold() not in _SOURCE_IDENTIFIER_STOPWORDS
+                and component.casefold() != full.casefold()
+                and all(component.casefold() != value.casefold() for value, _ in forms)
+            ):
+                forms.append((component, "component"))
+        return tuple(forms)
+
+    @staticmethod
+    def _identifier_components(identifier: str) -> tuple[str, ...]:
+        components: list[str] = []
+        for segment in re.split(r"[._]+", identifier):
+            components.extend(_CODE_IDENTIFIER_PART_RE.findall(segment))
+        return tuple(components)
+
+    @staticmethod
+    def _identifier_origin_priority(origin: str) -> int:
+        priorities = {
+            "identity_field_component": 4,
+            "identity_field": 3,
+            "source_excerpt_component": 2,
+            "source_excerpt": 1,
+        }
+        return priorities.get(origin, 0)
 
     def _symbol_item(
         self,
@@ -323,6 +800,54 @@ class DeterministicEvidenceRetriever:
             authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
             source_authority=self._source_authority(source),
             risk_notes=(),
+        )
+
+    @classmethod
+    def _symbol_query_relevance_key(
+        cls,
+        item: EvidenceItem,
+        terms: tuple[str, ...],
+    ) -> tuple[object, ...]:
+        symbol = (item.symbol or "").casefold()
+        source_path = Path(item.source_path)
+        stem = source_path.stem.casefold()
+        directory = str(source_path.parent).replace("\\", "/").casefold()
+        excerpt = item.excerpt.casefold()
+        term_keys = tuple(term.casefold() for term in terms)
+        exact_code_hits = sum(
+            symbol == term
+            for term, original in zip(term_keys, terms)
+            if any(char.isupper() for char in original) or any(
+                marker in original for marker in ("_", ".")
+            )
+        )
+        stem_hits = sum(term in stem for term in term_keys)
+        symbol_hits = sum(term in symbol for term in term_keys)
+        exact_hits = sum(symbol == term for term in term_keys)
+        excerpt_hits = sum(term in excerpt for term in term_keys)
+        directory_only_hits = sum(
+            term in directory
+            and term not in stem
+            and term not in symbol
+            and term not in excerpt
+            for term in term_keys
+        )
+        covered_terms = sum(
+            term in symbol or term in stem or term in excerpt
+            for term in term_keys
+        )
+        return (
+            -covered_terms,
+            -exact_code_hits,
+            -stem_hits,
+            -len(cls._identifier_components(source_path.stem)),
+            -symbol_hits,
+            -exact_hits,
+            -excerpt_hits,
+            directory_only_hits,
+            item.source_path.casefold(),
+            symbol,
+            item.evidence_id,
         )
 
     def _symbol_index_items(
@@ -773,6 +1298,7 @@ class DeterministicEvidenceRetriever:
         dense_required: bool,
         dense_budget_summary: dict[str, object],
         dense_trace_refs: tuple[str, ...],
+        lane_coverage: tuple[dict[str, object], ...],
     ) -> EvidencePack:
         methods = tuple(
             dict.fromkeys(item.retrieval_method for item in pack.items)
@@ -808,7 +1334,12 @@ class DeterministicEvidenceRetriever:
             retrieval_methods_used=methods,
             disabled_modes=disabled_modes,
             timing=timing,
-            budget_summary=dense_budget_summary,
+            budget_summary={
+                **dense_budget_summary,
+                "deterministic_lane_coverage": [
+                    dict(value) for value in lane_coverage
+                ],
+            },
             trace_refs=tuple(dict.fromkeys((*pack.trace_refs, *dense_trace_refs))),
         )
         if dense_required and dense_disabled_reason:

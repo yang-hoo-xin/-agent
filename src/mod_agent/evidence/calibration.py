@@ -13,6 +13,7 @@ import json
 import hashlib
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 from src.mod_agent.knowledge import (
     IncrementalIndexer,
@@ -59,8 +60,6 @@ def run_better_hit_feedback_calibration(
         tool_executor=tool_executor,
         sources=sources,
     )
-    if discovery is not None:
-        return _run_phase_2_discovery(request=request, dependencies=discovery)
     with tempfile.TemporaryDirectory(prefix="rag_er_bhf_") as temp_dir:
         retriever = _build_retriever(
             database_path=Path(temp_dir) / "knowledge.db",
@@ -69,11 +68,18 @@ def run_better_hit_feedback_calibration(
                     source_id="r8_modules_source",
                     source_type="decompiled_api",
                     root_path=source_root,
-                    metadata={"evidence_authority": "authoritative"},
+                    metadata={"evidence_authority": "supporting"},
                     allowed_extensions=frozenset({".cs"}),
                 ),
             ),
         )
+        if discovery is not None:
+            return _run_phase_2_discovery(
+                request=request,
+                dependencies=discovery,
+                source_retriever=retriever,
+                source_ids=("r8_modules_source",),
+            )
         return retriever.retrieve(
             _actual_only_request(request=request, max_items=30),
         )
@@ -103,8 +109,6 @@ def run_wall_crawler_calibration(
         tool_executor=tool_executor,
         sources=sources,
     )
-    if discovery is not None:
-        return _run_phase_2_discovery(request=request, dependencies=discovery)
     with tempfile.TemporaryDirectory(prefix="rag_er_wc_") as temp_dir:
         retriever = _build_retriever(
             database_path=Path(temp_dir) / "knowledge.db",
@@ -113,18 +117,25 @@ def run_wall_crawler_calibration(
                     source_id="r8_modules_source",
                     source_type="decompiled_api",
                     root_path=modules_root,
-                    metadata={"evidence_authority": "authoritative"},
+                    metadata={"evidence_authority": "supporting"},
                     allowed_extensions=frozenset({".cs"}),
                 ),
                 SourceDefinition(
                     source_id="r8_datablocks",
                     source_type="domain_note",
                     root_path=datablocks_root,
-                    metadata={"evidence_authority": "authoritative"},
+                    metadata={"evidence_authority": "supporting"},
                     allowed_extensions=frozenset({".json"}),
                 ),
             ),
         )
+        if discovery is not None:
+            return _run_phase_2_discovery(
+                request=request,
+                dependencies=discovery,
+                source_retriever=retriever,
+                source_ids=("r8_modules_source", "r8_datablocks"),
+            )
         return retriever.retrieve(
             _actual_only_request(request=request, max_items=50),
         )
@@ -176,6 +187,8 @@ def _run_phase_2_discovery(
         EvidenceDiscoveryToolExecutor,
         tuple[EvidenceDiscoverySource, ...],
     ],
+    source_retriever: DeterministicEvidenceRetriever,
+    source_ids: tuple[str, ...],
 ) -> EvidencePack:
     normalized = request.strip()
     if not normalized:
@@ -184,9 +197,16 @@ def _run_phase_2_discovery(
         )
     model, tool_executor, sources = dependencies
     request_digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    retrieve_source_evidence = _source_evidence_retrieval_callback(
+        source_retriever=source_retriever,
+        source_ids=source_ids,
+    )
+
     result = EvidenceDiscoverySpecialist(
         model=model,
         tool_executor=tool_executor,
+        source_evidence_retriever=retrieve_source_evidence,
     ).discover(
         EvidenceDiscoveryRequest(
             run_id=f"phase-2-discovery-{request_digest[:16]}",
@@ -199,6 +219,28 @@ def _run_phase_2_discovery(
         )
     )
     return result.pack
+
+
+def _source_evidence_retrieval_callback(
+    *,
+    source_retriever: DeterministicEvidenceRetriever,
+    source_ids: tuple[str, ...],
+) -> Callable[[tuple[dict[str, str], ...]], EvidencePack]:
+    def retrieve_source_evidence(
+        source_queries: tuple[dict[str, str], ...],
+    ) -> EvidencePack:
+        if not source_queries:
+            raise ActualExecutionIsolationError(
+                "Source evidence retrieval requires a bounded query set."
+            )
+        return source_retriever.retrieve_query_set(
+            queries=source_queries,
+            source_ids=source_ids,
+            per_query_lane_max_items=3,
+            max_items=36,
+        )
+
+    return retrieve_source_evidence
 
 
 # Current assemblies, the R8 assembly, an inspector executable, and

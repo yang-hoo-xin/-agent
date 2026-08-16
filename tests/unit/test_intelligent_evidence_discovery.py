@@ -32,8 +32,11 @@ from src.mod_agent.evidence.discovery_contract import (
     SEARCH_PLAN_SCHEMA_VERSION,
     evidence_discovery_finish_schema,
     evidence_discovery_planning_schema,
+    evidence_discovery_requirement_projection_schema,
+    evidence_discovery_search_plan_schema,
 )
 from src.mod_agent.evidence.discovery_loop import (
+    _resolve_model_search_plan_action,
     _validate_finish,
     _validate_supplemental_search,
 )
@@ -89,6 +92,21 @@ def _family_selection(
     }
 
 
+def _source_identifier_selection(
+    *identifiers: str,
+    selection_ids: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "action": "select_observed_identifiers",
+        "selection_ids": list(selection_ids)
+        if selection_ids is not None
+        else [
+            f"$source_selection_for_identifier:{identifier}"
+            for identifier in identifiers
+        ],
+    }
+
+
 class _ScriptedModel:
     def __init__(
         self,
@@ -106,6 +124,12 @@ class _ScriptedModel:
         response = self._responses.pop(0)
         if response.get("action") == "plan":
             self._frozen_plan = deepcopy(response)
+        elif response.get("action") == "select_observed_identifiers":
+            response = self._bind_source_identifier_selection(response, messages)
+            self._apply_source_identifier_selection_to_frozen_plan(
+                response,
+                messages,
+            )
         elif (
             self._emit_stable_family_selection
             and response.get("action") == "use_tool"
@@ -114,6 +138,83 @@ class _ScriptedModel:
         ):
             response = self._stable_family_selection(response)
         return json.dumps(response)
+
+    @staticmethod
+    def _bind_source_identifier_selection(
+        response: dict[str, object],
+        messages: tuple[dict[str, object], ...],
+    ) -> dict[str, object]:
+        observation = messages[-1].get("content") if messages else None
+        inventory = (
+            observation.get("observed_identifier_inventory", [])
+            if isinstance(observation, dict)
+            else []
+        )
+        selection_ids = response.get("selection_ids")
+        if not isinstance(selection_ids, list):
+            return response
+        for index, selection_id in enumerate(selection_ids):
+            if (
+                not isinstance(selection_id, str)
+                or not selection_id.startswith(
+                    "$source_selection_for_identifier:"
+                )
+            ):
+                continue
+            identifier = selection_id.split(":", 1)[1]
+            match = next(
+                (
+                    item.get("selection_id")
+                    for item in inventory
+                    if isinstance(item, dict)
+                    and item.get("observed_identifier") == identifier
+                ),
+                None,
+            )
+            if isinstance(match, str):
+                selection_ids[index] = match
+        return response
+
+    def _apply_source_identifier_selection_to_frozen_plan(
+        self,
+        response: dict[str, object],
+        messages: tuple[dict[str, object], ...],
+    ) -> None:
+        plan = self._frozen_plan
+        search_plan = plan.get("search_plan") if isinstance(plan, dict) else None
+        families = search_plan.get("query_families") if isinstance(search_plan, dict) else None
+        if not isinstance(families, list):
+            return
+        observation = messages[-1].get("content") if messages else None
+        inventory = (
+            observation.get("observed_identifier_inventory", [])
+            if isinstance(observation, dict)
+            else []
+        )
+        selection_ids = response.get("selection_ids")
+        if not isinstance(selection_ids, list):
+            return
+        identifiers = [
+            str(item["observed_identifier"])
+            for selection_id in selection_ids
+            for item in inventory
+            if isinstance(item, dict)
+            and item.get("selection_id") == selection_id
+        ]
+        search_plan = plan.get("search_plan") if isinstance(plan, dict) else None
+        focus = (
+            search_plan.get("initial_focus_question_id")
+            if isinstance(search_plan, dict)
+            else None
+        )
+        for family in families:
+            if (
+                isinstance(family, dict)
+                and family.get("tool") == "search_dotnet_metadata"
+                and focus in family.get("question_ids", [])
+            ):
+                family["queries"] = identifiers
+                return
 
     def _stable_family_selection(
         self,
@@ -228,6 +329,35 @@ class _ObservedToolExecutor:
                 ),
             ),
         )
+
+
+class _SourceGroundedObservedToolExecutor(_ObservedToolExecutor):
+    def execute(
+        self,
+        *,
+        action: dict[str, object],
+        source: EvidenceDiscoverySource,
+        observation_id: str,
+    ) -> ToolObservation:
+        observation = super().execute(
+            action=action,
+            source=source,
+            observation_id=observation_id,
+        )
+        if action.get("tool") != "search_dotnet_metadata":
+            return observation
+        arguments = action.get("arguments")
+        assert isinstance(arguments, dict)
+        data = dict(observation.data)
+        data["methods"] = [
+            {
+                **dict(item),
+                "matched_queries": list(arguments.get("queries", [])),
+            }
+            for item in observation.data.get("methods", [])
+            if isinstance(item, dict)
+        ]
+        return replace(observation, data=data)
 
 
 class _QueryAwareObservedToolExecutor(_ObservedToolExecutor):
@@ -2045,11 +2175,12 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
     model = _ScriptedModel(
         [
             plan,
+            _source_identifier_selection("EnemyReaction"),
             {
                 "action": "use_tool",
                 "tool": "search_dotnet_metadata",
                 "source_id": "current-interop",
-                "arguments": _metadata_arguments("enemy reaction"),
+                "arguments": _metadata_arguments("EnemyReaction"),
                 "evidence_need": evidence_need,
                 "derived_from_observation_ids": [],
             },
@@ -2066,6 +2197,10 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
     )
     source_root = tmp_path / "interop"
     source_root.mkdir()
+    (r8_root / "Assets" / "Scripts" / "Modules-ASM" / "EnemyReaction.cs").write_text(
+        "public class EnemyReaction { public void NotifyReaction() {} }\n",
+        encoding="utf-8",
+    )
     source = EvidenceDiscoverySource(
         source_id="current-interop",
         source_type="decompiled_api",
@@ -2081,13 +2216,69 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
         r8_root=r8_root,
         request="Show feedback when a shot makes an enemy react.",
         model=model,
-        tool_executor=_ObservedToolExecutor(),
+        tool_executor=_SourceGroundedObservedToolExecutor(),
         sources=(source,),
     )
 
     assert pack.agent_discovery is not None
     assert pack.prompt_contract["actual_planning_required"] is True
-    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v5"
+    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v6"
+    source_observation = model.calls[1][-1]["content"]
+    assert isinstance(source_observation, dict)
+    assert source_observation["message_type"] == "source_evidence_observation"
+    inventory = source_observation["observed_identifier_inventory"]
+    assert len(inventory) <= 64
+    assert all(
+        set(item) == {"selection_id", "observed_identifier", "source_path"}
+        for item in inventory
+    )
+    assert "source_evidence_refs" not in json.dumps(inventory)
+    assert "excerpt" not in json.dumps(inventory)
+    assert any(
+        item["observed_identifier"] == "EnemyReaction"
+        for item in inventory
+    )
+    assert pack.agent_discovery["search_plan"]["query_families"][0]["queries"] == [
+        "EnemyReaction"
+    ]
+    assert any(item.source_path == "EnemyReaction.cs" for item in pack.items)
+    assert {
+        item.source_authority
+        for item in pack.items
+        if item.source_path == "EnemyReaction.cs"
+    } == {"supporting"}
+    source_discovery = pack.budget_summary["source_discovery"]
+    assert source_discovery["query_terms"] == ["EnemyReaction"]
+    assert {
+        item["origin"] for item in source_discovery["source_queries"]
+    } >= {
+        "natural_language_request",
+        "requirement_projection.behavior_goal",
+        "initial_focus_question",
+        "initial_focus_query_family",
+    }
+    lane_execution = source_discovery["query_lane_execution"]
+    assert lane_execution
+    assert any(
+        item["admitted_evidence_refs"]
+        and any(
+            evidence.evidence_id in item["admitted_evidence_refs"]
+            for evidence in pack.items
+            if evidence.source_path == "EnemyReaction.cs"
+        )
+        for item in lane_execution
+    )
+    literal_binding = next(
+        item
+        for item in source_discovery["metadata_literal_bindings"]
+        if item["metadata_literal"] == "EnemyReaction"
+    )
+    assert literal_binding["grounding_status"] == "source_observed"
+    assert literal_binding["evidence_refs"]
+    assert source_discovery["source_grounded_discovery"] is True
+    assert source_discovery["metadata_to_il_grounding"][0][
+        "source_evidence_refs"
+    ] == literal_binding["evidence_refs"]
     assert [item["tool"] for item in pack.tool_trace_summary] == [
         "search_dotnet_metadata",
         "inspect_method_il",
@@ -2098,6 +2289,211 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
         "precomputed_report_count": 0,
         "operator_intervention_count": 0,
     }
+
+
+def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which managed method reports terminal authentication completion?"
+    plan = _actual_plan(
+        behavior_goal="Observe terminal authentication completion.",
+        queries=["authentication complete"],
+        evidence_need=evidence_need,
+    )
+    model = _ScriptedModel(
+        [
+            plan,
+            _source_identifier_selection(
+                "FinishAuthentication",
+            ),
+            {
+                "action": "use_tool",
+                "tool": "search_dotnet_metadata",
+                "source_id": "current-interop",
+                "arguments": _metadata_arguments("FinishAuthentication"),
+                "evidence_need": evidence_need,
+                "derived_from_observation_ids": [],
+            },
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the observed authentication method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _finish_after_observed_il(
+                symbol="TerminalFlow.FinishAuthentication"
+            ),
+        ]
+    )
+    captured_queries: list[tuple[dict[str, str], ...]] = []
+
+    def source_retriever(
+        queries: tuple[dict[str, str], ...],
+    ) -> EvidencePack:
+        captured_queries.append(queries)
+        return EvidencePack(
+            query="bounded source query set",
+            readiness="partial",
+            can_generate_patch=False,
+            items=(
+                EvidenceItem(
+                    evidence_id="source_terminal_finish",
+                    source_type="decompiled_api",
+                    source_path="TerminalFlow.cs",
+                    symbol="FinishAuthentication",
+                    span={"start_line": 12, "end_line": 12},
+                    retrieval_method="symbol_exact",
+                    score=1.0,
+                    claim_supported="The source declares FinishAuthentication.",
+                    excerpt="public void FinishAuthentication()",
+                    source_hash="B" * 64,
+                    declaring_type="TerminalFlow",
+                    method_name="FinishAuthentication",
+                    parameter_types=(),
+                    return_type="System.Void",
+                    authority="mod_agent_deterministic",
+                    source_authority="supporting",
+                ),
+            ),
+            budget_summary={"source_query_execution": []},
+        )
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_SourceGroundedObservedToolExecutor(
+            symbol="TerminalFlow.FinishAuthentication"
+        ),
+        source_evidence_retriever=source_retriever,
+    ).discover(
+        replace(
+            _request(tmp_path, include_second_source=False),
+            natural_language_request=(
+                "When a terminal finishes authentication, briefly pulse nearby "
+                "corridor lights."
+            ),
+            require_actual_planning=True,
+        )
+    )
+
+    assert captured_queries
+    assert {item["origin"] for item in captured_queries[0]} >= {
+        "natural_language_request",
+        "requirement_projection.behavior_goal",
+        "initial_focus_question",
+        "initial_focus_query_family",
+    }
+    source_discovery = result.pack.budget_summary["source_discovery"]
+    binding = source_discovery["metadata_literal_bindings"][0]
+    assert binding["metadata_literal"] == "FinishAuthentication"
+    assert binding["evidence_refs"] == ["source_terminal_finish"]
+    assert source_discovery["source_grounded_discovery"] is True
+    assert source_discovery["metadata_to_il_grounding"][0] == {
+        "initial_focus_question_id": "question-primary",
+        "metadata_observation_id": "obs-001",
+        "query_family_id": "request-derived-behavior",
+        "matched_queries": ["FinishAuthentication"],
+        "source_evidence_refs": ["source_terminal_finish"],
+        "method_ref": "candidate_obs_001",
+        "method_symbol": "TerminalFlow.FinishAuthentication",
+    }
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        ("unknown_selection", "SOURCE_IDENTIFIER_SELECTION_ID_INVALID"),
+        ("duplicate_selection", "SOURCE_IDENTIFIER_SELECTION_CONTENT_INVALID"),
+    ],
+)
+def test_source_identifier_selection_fails_before_tools_on_unknown_or_duplicate(
+    tmp_path: Path,
+    mutation: str,
+    error: str,
+) -> None:
+    evidence_need = "Which method reports terminal authentication completion?"
+    plan = _actual_plan(
+        behavior_goal="Observe terminal authentication completion.",
+        queries=["authentication"],
+        evidence_need=evidence_need,
+    )
+    selected = _source_identifier_selection(
+        "FinishAuthentication",
+        selection_ids=(
+            ["s99"]
+            if mutation == "unknown_selection"
+            else ["s01", "s01"]
+        ),
+    )
+    model = _ScriptedModel([plan, selected])
+    executor = _ObservedToolExecutor()
+
+    def source_retriever(
+        queries: tuple[dict[str, str], ...],
+    ) -> EvidencePack:
+        assert queries
+        return EvidencePack(
+            query="bounded source query set",
+            readiness="partial",
+            can_generate_patch=False,
+            items=(
+                EvidenceItem(
+                    evidence_id="source_terminal_finish",
+                    source_type="decompiled_api",
+                    source_path="TerminalFlow.cs",
+                    symbol="FinishAuthentication",
+                    span={"start_line": 12, "end_line": 12},
+                    retrieval_method="symbol_exact",
+                    score=1.0,
+                    claim_supported="The source declares FinishAuthentication.",
+                    excerpt="public void FinishAuthentication()",
+                    source_hash="B" * 64,
+                    authority="mod_agent_deterministic",
+                    source_authority="supporting",
+                ),
+            ),
+            budget_summary={"source_query_execution": []},
+        )
+
+    specialist = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+        source_evidence_retriever=source_retriever,
+    )
+    with pytest.raises(ValueError, match=error):
+        specialist.discover(
+            replace(
+                _request(tmp_path, include_second_source=False),
+                natural_language_request=(
+                    "When a terminal finishes authentication, briefly pulse nearby "
+                    "corridor lights."
+                ),
+                require_actual_planning=True,
+            )
+        )
+    assert executor.actions == []
+
+
+def test_v4_first_slice_requires_family_only_for_initial_focus() -> None:
+    plan = _actual_plan(
+        behavior_goal="Observe one event before downstream integration planning.",
+        queries=["event"],
+        evidence_need="Which method exposes the event?",
+    )
+    _add_secondary_planning_question(plan)
+    search_plan = plan["search_plan"]
+    assert isinstance(search_plan, dict)
+    secondary_family = search_plan["query_families"].pop()
+
+    validate_agent_discovery_actual(_validated_actual_from_plan(plan))
+
+    search_plan["query_families"] = [secondary_family]
+    with pytest.raises(
+        ValueError,
+        match="SEARCH_PLAN_INITIAL_FOCUS_FAMILY_MISSING",
+    ):
+        validate_agent_discovery_actual(_validated_actual_from_plan(plan))
 
 
 def test_phase_2_bhf_symbol_identity_only_enters_after_tool_observation(
@@ -3093,6 +3489,7 @@ def test_phase_2c_agent_only_early_termination_prompt_versions_are_closed() -> N
         "agent_evidence_discovery_prompt_v3",
         "agent_evidence_discovery_prompt_v4",
         "agent_evidence_discovery_prompt_v5",
+        "agent_evidence_discovery_prompt_v6",
     ):
         versioned = deepcopy(payload)
         versioned["prompt_contract"]["version"] = version
@@ -3100,7 +3497,7 @@ def test_phase_2c_agent_only_early_termination_prompt_versions_are_closed() -> N
 
     for version in (
         "agent_evidence_discovery_prompt_v1",
-        "agent_evidence_discovery_prompt_v6",
+        "agent_evidence_discovery_prompt_v7",
     ):
         versioned = deepcopy(payload)
         versioned["prompt_contract"]["version"] = version
@@ -3274,12 +3671,12 @@ def test_actual_planning_prompt_keeps_scope_without_global_alternate_requirement
     planning_request = model.calls[0][-1]["content"]
     rules = planning_request["rules"]
     serialized = json.dumps(rules, ensure_ascii=False)
-    assert "Keep every genuine planning-blocking engineering question" in serialized
+    assert "at least one engineering requirement" in serialized
     assert "observable event or state X" in serialized
-    assert "initial_focus_question_id" in serialized
+    assert "Deterministic code assigns stable identities" in serialized
     assert "one vocabulary-distinct alternate family" not in serialized
     assert "not a universal Search Plan schema minimum" not in serialized
-    assert "space-separated behavioral sentences" in serialized
+    assert "requirement_id" not in serialized
     assert "ActivateState" not in serialized
     assert "expected_control_action" not in serialized
 
@@ -3349,23 +3746,34 @@ def test_declared_ready_empty_search_plan_is_normalized_to_bounded_stop(
     assert executor.actions == []
 
 
-def test_first_planning_and_bounded_correction_use_same_schema_owner(
+def test_requirement_projection_and_search_plan_use_bounded_schema_views(
     tmp_path: Path,
 ) -> None:
-    rejected = _actual_plan(
+    full_plan = _actual_plan(
         behavior_goal="Find a current status transition observation point.",
         queries=["status", "transition"],
         evidence_need="Which current method exposes the status transition?",
     )
-    rejected["search_plan"]["engineering_questions"][0]["requirement_ids"] = [
-        "unknown-requirement"
+    projection_response = {
+        "action": "project_requirements",
+        "planning_status": "ready",
+        "requirement_projection": {
+            key: deepcopy(value)
+            for key, value in full_plan["requirement_projection"].items()
+            if key != "schema_version"
+        },
+    }
+    projection_response["requirement_projection"]["planning_blocking_questions"] = [
+        item["question"]
+        for item in full_plan["requirement_projection"][
+            "planning_blocking_questions"
+        ]
     ]
-    stopped = deepcopy(rejected)
-    stopped["planning_status"] = "search_planning_insufficient"
-    stopped["search_plan"]["engineering_questions"] = []
-    stopped["search_plan"]["planned_lanes"] = []
-    stopped["search_plan"]["query_families"] = []
-    stopped["search_plan"]["initial_focus_question_id"] = None
+    search_response = {
+        "action": "plan_search",
+        "planning_status": "search_planning_insufficient",
+        "search_plan": None,
+    }
 
     class _PlanningClient:
         provider = "test_agent_turn"
@@ -3373,7 +3781,7 @@ def test_first_planning_and_bounded_correction_use_same_schema_owner(
 
         def __init__(self) -> None:
             self.requests = []
-            self.responses = [rejected, stopped]
+            self.responses = [projection_response, search_response]
 
         def complete_turn(self, request):
             self.requests.append(request)
@@ -3402,13 +3810,153 @@ def test_first_planning_and_bounded_correction_use_same_schema_owner(
 
     assert result.run_status == "search_planning_insufficient"
     assert len(client.requests) == 2
-    first_format = client.requests[0].response_format
-    correction_format = client.requests[1].response_format
-    assert first_format is not None
-    assert correction_format is not None
-    assert first_format.name == correction_format.name == "agent_evidence_discovery_plan"
-    assert first_format.schema == correction_format.schema
-    assert first_format.schema == evidence_discovery_planning_schema()
+    projection_format = client.requests[0].response_format
+    search_format = client.requests[1].response_format
+    assert projection_format is not None
+    assert search_format is not None
+    assert projection_format.name == "agent_evidence_requirement_projection"
+    assert search_format.name == "agent_evidence_search_plan"
+    assert projection_format.schema == evidence_discovery_requirement_projection_schema()
+    assert search_format.schema == evidence_discovery_search_plan_schema()
+    investigations = search_format.schema["properties"]["search_plan"][
+        "properties"
+    ]["investigations"]
+    assert investigations["items"]["properties"]["query_families"]["items"][
+        "properties"
+    ]["queries"]["maxItems"] == 8
+    assert "requirement_id" not in json.dumps(projection_format.schema)
+    assert "question_id" not in json.dumps(search_format.schema)
+    assert "family_id" not in json.dumps(search_format.schema)
+    frozen_message = client.requests[1].messages[-1].content
+    assert frozen_message["message_type"] == "frozen_requirement_projection"
+    assert frozen_message["requirement_projection"]["planning_blocking_questions"] == [
+        {
+            "requirement_id": "requirement-001",
+            "question": full_plan["requirement_projection"][
+                "planning_blocking_questions"
+            ][0]["question"],
+        }
+    ]
+    assert "search_plan" not in frozen_message
+
+
+def test_model_search_plan_resolves_registry_authority_and_metadata_tool(
+    tmp_path: Path,
+) -> None:
+    persistent = _actual_plan(
+        behavior_goal="Find one observable authentication completion event.",
+        queries=["Terminal", "Authentication"],
+        evidence_need="Which current symbol exposes authentication completion?",
+    )
+    frozen_projection = persistent["requirement_projection"]
+    model_plan = {
+        "investigations": [
+            {
+                "engineering_question": (
+                    "Which current symbol exposes authentication completion?"
+                ),
+                "initial_focus": True,
+                "source_ids": ["current-interop"],
+                "query_families": [
+                    {
+                        "queries": ["Terminal", "Authentication", "Terminal"],
+                        "evidence_need": (
+                            "Which current symbol exposes authentication completion?"
+                        ),
+                    },
+                    {
+                        "queries": ["Terminal", "Authentication"],
+                        "evidence_need": (
+                            "Which current symbol exposes authentication completion?"
+                        ),
+                    },
+                    {
+                        "queries": ["FinishAuthentication"],
+                        "evidence_need": (
+                            "Which current symbol completes authentication?"
+                        ),
+                    }
+                ],
+            }
+        ],
+        "initial_stop_condition": "Stop after exact current evidence is found.",
+        "initial_expand_condition": "Expand only after an explicit gap.",
+    }
+    request = _request(tmp_path)
+    sources = {source.source_id: source for source in request.sources}
+    quality_findings: list[dict[str, object]] = []
+
+    resolved = _resolve_model_search_plan_action(
+        {
+            "action": "plan_search",
+            "planning_status": "ready",
+            "search_plan": model_plan,
+        },
+        frozen_projection=frozen_projection,
+        sources=sources,
+        quality_findings=quality_findings,
+    )
+    resolved_plan = resolved["search_plan"]
+
+    assert resolved_plan["source_roles"] == [
+        {"source_id": "current-interop", "role": "authoritative"}
+    ]
+    assert {lane["tool"] for lane in resolved_plan["planned_lanes"]} == {
+        "search_dotnet_metadata"
+    }
+    assert {family["tool"] for family in resolved_plan["query_families"]} == {
+        "search_dotnet_metadata"
+    }
+    assert resolved_plan["engineering_questions"] == [
+        {
+            "question_id": "question-001",
+            "question": "Which current symbol exposes authentication completion?",
+            "requirement_ids": [
+                frozen_projection["planning_blocking_questions"][0][
+                    "requirement_id"
+                ]
+            ],
+        }
+    ]
+    assert resolved_plan["initial_focus_question_id"] == "question-001"
+    assert resolved_plan["planned_lanes"][0]["lane"] == "lane-001"
+    assert resolved_plan["query_families"][0]["family_id"] == "family-001-001"
+    assert resolved_plan["query_families"][0]["queries"] == [
+        "Terminal",
+        "Authentication",
+    ]
+    assert [
+        family["family_id"] for family in resolved_plan["query_families"]
+    ] == ["family-001-001", "family-001-002"]
+    assert resolved_plan["query_families"][1]["queries"] == [
+        "FinishAuthentication"
+    ]
+    assert quality_findings == [
+        {
+            "code": "DUPLICATE_QUERY_FAMILY_DISPATCH_COLLAPSED",
+            "investigation_index": 1,
+            "duplicate_model_family_index": 2,
+            "retained_family_id": "family-001-001",
+            "dispatch_identities": [
+                {
+                    "tool": "search_dotnet_metadata",
+                    "source_id": "current-interop",
+                    "queries": ["Terminal", "Authentication"],
+                    "evidence_need": (
+                        "Which current symbol exposes authentication completion?"
+                    ),
+                }
+            ],
+        }
+    ]
+    assert "tool" not in evidence_discovery_search_plan_schema()["properties"][
+        "search_plan"
+    ]["properties"]["investigations"]["items"]["properties"]["query_families"][
+        "items"
+    ]["properties"]
+    assert "source_roles" not in evidence_discovery_search_plan_schema()[
+        "properties"
+    ]["search_plan"]["properties"]
 
 
 def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
@@ -5156,9 +5704,19 @@ class _ILRunner:
     def __init__(self, symbols: tuple[str, ...]) -> None:
         self.symbols = symbols
 
-    def inspect(self, assembly_path: str | Path) -> dict[str, object]:
+    def inspect_observed_method(
+        self,
+        assembly_path: str | Path,
+        *,
+        assembly_sha256: str,
+        module_mvid: str,
+        metadata_token: str,
+    ) -> dict[str, object]:
         assembly = Path(assembly_path)
         assert self.symbols == ("Observed.Type.Move",)
+        assert assembly_sha256 == hashlib.sha256(assembly.read_bytes()).hexdigest().upper()
+        assert module_mvid == "00000000-0000-0000-0000-000000000002"
+        assert metadata_token == "0x06000002"
         return {
             "assembly_sha256": hashlib.sha256(assembly.read_bytes()).hexdigest().upper(),
             "module_mvid": "00000000-0000-0000-0000-000000000002",

@@ -11,6 +11,7 @@ using System.Text.Json;
 if (args.Length < 2)
 {
     Console.Error.WriteLine("usage: r8_il_inspector <assembly> <Type.Method> [<Type.Method> ...]");
+    Console.Error.WriteLine("   or: r8_il_inspector <assembly> --inspect-method-token <0x06........> <Type.Method>");
     Console.Error.WriteLine("   or: r8_il_inspector <assembly> --find-metadata <literal-substring> [<literal-substring> ...]");
     Console.Error.WriteLine("   or: r8_il_inspector <consumer-assembly> --resolve-direct-boolean-member-accesses <dependency-root> <consumer-declaring-type> <receiver-member>");
     return 2;
@@ -125,7 +126,29 @@ if (args[1] == "--find-metadata")
     return 0;
 }
 
-var requestedSymbols = args.Skip(1).ToHashSet(StringComparer.Ordinal);
+var inspectMethodToken = args[1] == "--inspect-method-token";
+int? requestedMethodToken = null;
+string? requestedMethodSymbol = null;
+if (inspectMethodToken)
+{
+    if (args.Length != 4
+        || !args[2].StartsWith("0x06", StringComparison.Ordinal)
+        || args[2].Length != 10
+        || !int.TryParse(
+            args[2].AsSpan(2),
+            System.Globalization.NumberStyles.AllowHexSpecifier,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var parsedMethodToken))
+    {
+        Console.Error.WriteLine("--inspect-method-token requires one canonical method token and one exact Type.Method symbol");
+        return 2;
+    }
+    requestedMethodToken = parsedMethodToken;
+    requestedMethodSymbol = args[3];
+}
+var requestedSymbols = inspectMethodToken
+    ? new HashSet<string>(StringComparer.Ordinal)
+    : args.Skip(1).ToHashSet(StringComparer.Ordinal);
 var opcodeMap = BuildOpcodeMap();
 var methods = new List<object>();
 foreach (var typeHandle in metadata.TypeDefinitions)
@@ -137,13 +160,15 @@ foreach (var typeHandle in metadata.TypeDefinitions)
         var method = metadata.GetMethodDefinition(methodHandle);
         var methodName = metadata.GetString(method.Name);
         var symbol = $"{typeName}.{methodName}";
-        if (!requestedSymbols.Contains(symbol))
+        var token = MetadataTokens.GetToken(methodHandle);
+        if (inspectMethodToken
+            ? token != requestedMethodToken || symbol != requestedMethodSymbol
+            : !requestedSymbols.Contains(symbol))
         {
             continue;
         }
 
         var signature = Convert.ToHexString(metadata.GetBlobBytes(method.Signature));
-        var token = MetadataTokens.GetToken(methodHandle);
         if (method.RelativeVirtualAddress == 0)
         {
             methods.Add(new
@@ -187,10 +212,20 @@ foreach (var typeHandle in metadata.TypeDefinitions)
     }
 }
 
-var foundSymbols = methods
-    .Select(item => (string)item.GetType().GetProperty("symbol")!.GetValue(item)!)
-    .ToHashSet(StringComparer.Ordinal);
-var missingSymbols = requestedSymbols.Except(foundSymbols).OrderBy(value => value).ToArray();
+string[] missingSymbols;
+if (inspectMethodToken)
+{
+    missingSymbols = methods.Count == 1
+        ? Array.Empty<string>()
+        : new[] { requestedMethodSymbol! };
+}
+else
+{
+    var foundSymbols = methods
+        .Select(item => (string)item.GetType().GetProperty("symbol")!.GetValue(item)!)
+        .ToHashSet(StringComparer.Ordinal);
+    missingSymbols = requestedSymbols.Except(foundSymbols).OrderBy(value => value).ToArray();
+}
 var output = new
 {
     schema_version = "r8_il_inspection_v1",

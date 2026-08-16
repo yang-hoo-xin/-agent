@@ -30,12 +30,13 @@ EVIDENCE_DISCOVERY_TOOLS = frozenset(
 )
 EVIDENCE_DISCOVERY_RESULT_KINDS = frozenset({"methods", "types", "fields"})
 EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v9"
-AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v5"
+AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v6"
 AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSIONS = frozenset(
     {
         "agent_evidence_discovery_prompt_v2",
         "agent_evidence_discovery_prompt_v3",
         "agent_evidence_discovery_prompt_v4",
+        "agent_evidence_discovery_prompt_v5",
     }
 )
 AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION = "agent_evidence_discovery_actual_v2"
@@ -200,6 +201,9 @@ class EvidenceDiscoveryAgentModel:
         tool_result_insert_index: int | None = None
         force_finish = False
         force_plan = False
+        force_requirement_projection = False
+        force_search_plan = False
+        force_source_identifier_selection = False
         actual_planning_run = False
         for item in messages:
             role = str(item.get("role") or "")
@@ -214,6 +218,22 @@ class EvidenceDiscoveryAgentModel:
                 force_finish = True
             if isinstance(content, dict) and content.get("required_next_action") == "plan":
                 force_plan = True
+            if (
+                isinstance(content, dict)
+                and content.get("required_next_action") == "project_requirements"
+            ):
+                force_requirement_projection = True
+            if (
+                isinstance(content, dict)
+                and content.get("required_next_action") == "plan_search"
+            ):
+                force_search_plan = True
+            if (
+                isinstance(content, dict)
+                and content.get("required_next_action")
+                == "source_identifier_selection"
+            ):
+                force_source_identifier_selection = True
             if (
                 isinstance(content, dict)
                 and content.get("message_type") == "frozen_actual_plan"
@@ -243,15 +263,33 @@ class EvidenceDiscoveryAgentModel:
             messages=tuple(agent_messages),
             tools=(
                 ()
-                if force_finish or force_plan
+                if force_finish
+                or force_plan
+                or force_requirement_projection
+                or force_search_plan
+                or force_source_identifier_selection
                 else _discovery_tool_definitions(
                     require_family_selection=actual_planning_run
                 )
             ),
-            tool_choice="none" if force_finish or force_plan else "auto",
+            tool_choice=(
+                "none"
+                if force_finish
+                or force_plan
+                or force_requirement_projection
+                or force_search_plan
+                or force_source_identifier_selection
+                else "auto"
+            ),
             parallel_tool_calls=False,
             response_format=(
-                _planning_response_format()
+                _source_identifier_selection_response_format()
+                if force_source_identifier_selection
+                else _requirement_projection_response_format()
+                if force_requirement_projection
+                else _search_plan_response_format()
+                if force_search_plan
+                else _planning_response_format()
                 if force_plan
                 else _finish_response_format(
                     require_requirement_binding=actual_planning_run
@@ -1127,9 +1165,15 @@ def validate_agent_discovery_actual(value: dict[str, object]) -> None:
         for family in search_plan["query_families"]
         for value in family["question_ids"]
     }
-    if planned_question_ids != question_ids:
-        raise ValueError("SEARCH_PLAN_QUERY_FAMILY_QUESTION_COVERAGE_INVALID")
     search_plan_version = search_plan.get("schema_version")
+    if search_plan_version == SEARCH_PLAN_SCHEMA_VERSION:
+        initial_focus_question_id = str(
+            search_plan.get("initial_focus_question_id") or ""
+        )
+        if initial_focus_question_id not in planned_question_ids:
+            raise ValueError("SEARCH_PLAN_INITIAL_FOCUS_FAMILY_MISSING")
+    elif planned_question_ids != question_ids:
+        raise ValueError("SEARCH_PLAN_QUERY_FAMILY_QUESTION_COVERAGE_INVALID")
     if search_plan_version != _SEARCH_PLAN_SCHEMA_VERSION_V2:
         lane_question_ids = {
             str(value)
@@ -1315,6 +1359,7 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
             "acceptance_signals": string_array,
             "planning_blocking_questions": {
                 "type": "array",
+                "maxItems": 4,
                 "items": requirement,
                 "description": (
                     "For planning_status=ready this must be non-empty. Each entry is "
@@ -1327,6 +1372,7 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
             },
             "deferred_planning_or_runtime_questions": {
                 **string_array,
+                "maxItems": 8,
                 "description": (
                     "Downstream implementation and Runtime work that is not required to "
                     "identify the first trigger or observation direction, including "
@@ -1359,6 +1405,7 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
             },
             "engineering_questions": {
                 "type": "array",
+                "maxItems": 4,
                 "items": engineering_question,
             },
             "initial_focus_question_id": {
@@ -1372,6 +1419,7 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
             },
             "source_roles": {
                 "type": "array",
+                "maxItems": 8,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -1384,6 +1432,7 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
             },
             "planned_lanes": {
                 "type": "array",
+                "maxItems": 4,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -1404,12 +1453,14 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
             },
             "query_families": {
                 "type": "array",
+                "maxItems": 4,
                 "items": {
                     "type": "object",
                     "properties": {
                         "family_id": {"type": "string", "minLength": 1},
                         "queries": {
                             **nonempty_string_array,
+                            "maxItems": 8,
                             "description": (
                                 "Case-insensitive literal substrings matched as an OR "
                                 "union against fully qualified managed symbols. Each "
@@ -1550,6 +1601,14 @@ def _validate_requirement_projection(
         raise ValueError("REQUIREMENT_PROJECTION_NOT_MEANINGFUL")
 
 
+def validate_requirement_projection_actual(
+    value: dict[str, object], *, require_meaningful: bool
+) -> None:
+    """Validate one frozen actual Requirement Projection in its existing owner."""
+
+    _validate_requirement_projection(value, require_meaningful=require_meaningful)
+
+
 def _validate_search_plan(value: dict[str, object], *, require_queries: bool) -> None:
     schema_version = value.get("schema_version")
     if schema_version not in {
@@ -1667,13 +1726,7 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
         if family_id in family_ids:
             raise ValueError("SEARCH_PLAN_QUERY_FAMILY_ID_DUPLICATE")
         family_ids.append(family_id)
-        for source_id in item["source_ids"]:
-            dispatch_key = (
-                str(item["tool"]),
-                str(source_id),
-                tuple(str(query) for query in item["queries"]),
-                str(item["evidence_need"]),
-            )
+        for dispatch_key in _search_plan_family_dispatch_identities(item):
             if dispatch_key in dispatch_keys:
                 raise ValueError("SEARCH_PLAN_QUERY_FAMILY_DISPATCH_AMBIGUOUS")
             dispatch_keys.add(dispatch_key)
@@ -1686,6 +1739,22 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
         not value.get("engineering_questions") or not families or not lanes
     ):
         raise ValueError("SEARCH_PLAN_NO_VALID_QUERY")
+
+
+def _search_plan_family_dispatch_identities(
+    family: dict[str, object],
+) -> frozenset[tuple[str, str, tuple[str, ...], str]]:
+    """Return the exact physical dispatch identities used by plan validation."""
+
+    return frozenset(
+        (
+            str(family["tool"]),
+            str(source_id),
+            tuple(str(query) for query in family["queries"]),
+            str(family["evidence_need"]),
+        )
+        for source_id in family["source_ids"]
+    )
 
 
 def _validate_string_array(
@@ -1711,6 +1780,165 @@ def _planning_response_format() -> AgentResponseFormat:
             "Actual-only Hook Discovery requirement projection and bounded search plan."
         ),
         schema=evidence_discovery_planning_schema(),
+    )
+
+
+def evidence_discovery_requirement_projection_schema() -> dict[str, object]:
+    """Return the bounded provider view for the first planning subturn."""
+
+    full_schema = evidence_discovery_planning_schema()
+    persistent_projection = full_schema["properties"]["requirement_projection"]
+    model_projection = {
+        "type": "object",
+        "properties": {
+            key: value
+            for key, value in persistent_projection["properties"].items()
+            if key != "schema_version"
+        },
+        "required": [
+            key for key in persistent_projection["required"] if key != "schema_version"
+        ],
+        "additionalProperties": False,
+    }
+    model_projection["properties"]["planning_blocking_questions"] = {
+        "type": "array",
+        "maxItems": 4,
+        "items": {"type": "string", "minLength": 1},
+        "description": (
+            "Engineering questions actual evidence must answer before implementation "
+            "planning. Deterministic code assigns their identities."
+        ),
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "const": "project_requirements"},
+            "planning_status": {
+                "type": "string",
+                "enum": ["ready", "requirement_projection_insufficient"],
+            },
+            "requirement_projection": model_projection,
+        },
+        "required": ["action", "planning_status", "requirement_projection"],
+        "additionalProperties": False,
+    }
+
+
+def evidence_discovery_search_plan_schema() -> dict[str, object]:
+    """Return the nested model-owned view for one frozen Search Plan subturn."""
+
+    string_array = {
+        "type": "array",
+        "minItems": 1,
+        "items": {"type": "string", "minLength": 1},
+    }
+    model_family = {
+        "type": "object",
+        "properties": {
+            "queries": {**string_array, "maxItems": 8},
+            "evidence_need": {"type": "string", "minLength": 1},
+        },
+        "required": ["queries", "evidence_need"],
+        "additionalProperties": False,
+    }
+    investigation = {
+        "type": "object",
+        "properties": {
+            "engineering_question": {"type": "string", "minLength": 1},
+            "initial_focus": {"type": "boolean"},
+            "source_ids": string_array,
+            "query_families": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 4,
+                "items": model_family,
+            },
+        },
+        "required": [
+            "engineering_question",
+            "initial_focus",
+            "source_ids",
+            "query_families",
+        ],
+        "additionalProperties": False,
+    }
+    model_plan = {
+        "type": ["object", "null"],
+        "properties": {
+            "investigations": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 4,
+                "items": investigation,
+            },
+            "initial_stop_condition": {"type": "string", "minLength": 1},
+            "initial_expand_condition": {"type": "string", "minLength": 1},
+        },
+        "required": [
+            "investigations",
+            "initial_stop_condition",
+            "initial_expand_condition",
+        ],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "const": "plan_search"},
+            "planning_status": {
+                "type": "string",
+                "enum": ["ready", "search_planning_insufficient"],
+            },
+            "search_plan": model_plan,
+        },
+        "required": ["action", "planning_status", "search_plan"],
+        "additionalProperties": False,
+    }
+
+
+def _requirement_projection_response_format() -> AgentResponseFormat:
+    return AgentResponseFormat(
+        name="agent_evidence_requirement_projection",
+        description="Actual-only bounded Requirement Projection.",
+        schema=evidence_discovery_requirement_projection_schema(),
+    )
+
+
+def _search_plan_response_format() -> AgentResponseFormat:
+    return AgentResponseFormat(
+        name="agent_evidence_search_plan",
+        description="Actual-only bounded Search Plan for one frozen projection.",
+        schema=evidence_discovery_search_plan_schema(),
+    )
+
+
+def _source_identifier_selection_response_format() -> AgentResponseFormat:
+    return AgentResponseFormat(
+        name="agent_evidence_source_identifier_selection",
+        description=(
+            "Select bounded observed identifiers for an existing frozen "
+            "initial-focus family."
+        ),
+        schema={
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "const": "select_observed_identifiers",
+                },
+                "selection_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {"type": "string", "minLength": 1},
+                },
+            },
+            "required": [
+                "action",
+                "selection_ids",
+            ],
+            "additionalProperties": False,
+        },
     )
 
 

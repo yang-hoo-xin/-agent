@@ -109,6 +109,86 @@ class BoundILInspectionRunner:
         )
         return report
 
+    def inspect_observed_method(
+        self,
+        assembly_path: str | Path,
+        *,
+        assembly_sha256: str,
+        module_mvid: str,
+        metadata_token: str,
+    ) -> dict[str, Any]:
+        """Read one metadata-observed method by token without losing overload identity."""
+
+        if len(self.symbols) != 1:
+            raise R8ILInspectionError(
+                "Observed-method IL inspection requires one exact symbol."
+            )
+        try:
+            parsed_token = int(metadata_token.removeprefix("0x"), 16)
+        except ValueError as exc:
+            raise R8ILInspectionError(
+                "Observed method metadata_token is not canonical."
+            ) from exc
+        if metadata_token != f"0x{parsed_token:08X}" or not metadata_token.startswith(
+            "0x06"
+        ):
+            raise R8ILInspectionError(
+                "Observed method metadata_token is not canonical."
+            )
+        if not module_mvid:
+            raise R8ILInspectionError("Observed method module_mvid is missing.")
+        assembly = Path(assembly_path).resolve()
+        if not self.inspector_dll.is_file():
+            raise R8ILInspectionError(
+                f"IL inspector is not built: {self.inspector_dll}"
+            )
+        if not assembly.is_file():
+            raise R8ILInspectionError(f"Assembly is missing: {assembly}")
+        live_hash = hashlib.sha256(assembly.read_bytes()).hexdigest().upper()
+        if live_hash != assembly_sha256:
+            raise R8ILInspectionError("Observed assembly SHA256 changed before IL inspection.")
+        completed = subprocess.run(
+            (
+                self.dotnet_executable,
+                str(self.inspector_dll),
+                str(assembly),
+                "--inspect-method-token",
+                metadata_token,
+                self.symbols[0],
+            ),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise R8ILInspectionError(
+                f"R8 IL inspector exited {completed.returncode}: {completed.stderr.strip()}"
+            )
+        try:
+            report = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise R8ILInspectionError("IL inspector returned invalid JSON.") from exc
+        post_hash = hashlib.sha256(assembly.read_bytes()).hexdigest().upper()
+        if post_hash != assembly_sha256:
+            raise R8ILInspectionError("Assembly bytes changed during IL inspection.")
+        _validate_il_report(
+            report,
+            assembly=assembly,
+            assembly_hash=assembly_sha256,
+            expected_symbols=self.symbols,
+        )
+        if report.get("module_mvid") != module_mvid:
+            raise R8ILInspectionError("Observed method module_mvid changed during IL inspection.")
+        methods = report["methods"]
+        assert isinstance(methods, list) and isinstance(methods[0], dict)
+        if methods[0].get("metadata_token") != metadata_token:
+            raise R8ILInspectionError(
+                "Observed method metadata_token changed during IL inspection."
+            )
+        return report
+
 
 class MetadataSearchRunner:
     """Search literal metadata text in one supplied managed assembly."""

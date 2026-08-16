@@ -118,6 +118,7 @@ def test_inspector_resolves_direct_generic_boolean_property(
         "{\n"
         "    public static SettingBox<bool> SettingsHandle { get; } = new();\n"
         "    public static void PulseCorridorLights() { }\n"
+        "    public static void PulseCorridorLights(int duration) { }\n"
         "}\n",
         encoding="utf-8",
     )
@@ -353,8 +354,12 @@ def test_inspector_resolves_direct_generic_boolean_property(
     assert actual_result.observations[0].data["methods"][0]["symbol"] == (
         "Example.Plugin.PulseCorridorLights"
     )
+    assert len(actual_result.observations[0].data["methods"]) == 2
     assert actual_result.observations[1].data["candidate_ref"] == (
         actual_result.observations[0].data["methods"][0]["candidate_ref"]
+    )
+    assert actual_result.observations[1].data["metadata_token"] == (
+        actual_result.observations[0].data["methods"][0]["metadata_token"]
     )
     assert actual_result.observations[1].data["has_method_body"] is True
     assert actual_result.pack.items[0].symbol == "Example.Plugin.PulseCorridorLights"
