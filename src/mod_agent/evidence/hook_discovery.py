@@ -1083,6 +1083,78 @@ def _validate_persisted_sufficiency(pack: "EvidencePack") -> None:
         raise HookDiscoverySemanticsError("Planning sufficiency projection drifted.")
 
 
+def _validate_resolved_finish_fact_handles(
+    *,
+    action: Mapping[str, Any],
+    resolved_action: object,
+    observation_fact_catalog: tuple[dict[str, Any], ...],
+) -> None:
+    finish_fields = {
+        "action",
+        "decision",
+        "evidence_conclusions",
+        "unresolved_questions",
+        "missing_capabilities",
+    }
+    if (
+        set(action) != finish_fields
+        or action.get("action") != "finish"
+        or not isinstance(resolved_action, Mapping)
+        or set(resolved_action) != finish_fields
+        or resolved_action.get("action") != "finish"
+        or any(
+            action.get(field) != resolved_action.get(field)
+            for field in finish_fields - {"evidence_conclusions"}
+        )
+    ):
+        raise HookDiscoverySemanticsError(
+            "Resolved finish fact-handle topology is invalid."
+        )
+    raw_conclusions = action.get("evidence_conclusions")
+    resolved_conclusions = resolved_action.get("evidence_conclusions")
+    if (
+        not isinstance(raw_conclusions, list)
+        or not isinstance(resolved_conclusions, list)
+        or len(raw_conclusions) != len(resolved_conclusions)
+    ):
+        raise HookDiscoverySemanticsError(
+            "Resolved finish fact-handle conclusions are invalid."
+        )
+    facts_by_id = {
+        str(fact.get("fact_id")): fact
+        for fact in observation_fact_catalog
+        if isinstance(fact, Mapping) and isinstance(fact.get("fact_id"), str)
+    }
+    expanded = False
+    for raw, resolved in zip(raw_conclusions, resolved_conclusions):
+        if not isinstance(raw, Mapping) or not isinstance(resolved, Mapping):
+            raise HookDiscoverySemanticsError(
+                "Resolved finish fact-handle conclusion is invalid."
+            )
+        if raw == resolved:
+            continue
+        fact = facts_by_id.get(str(raw.get("claim") or ""))
+        if (
+            raw.get("claim_status") != "observed"
+            or fact is None
+            or raw.get("observation_ids") != [fact.get("observation_id")]
+            or set(raw) != set(resolved)
+            or any(
+                raw.get(field) != resolved.get(field)
+                for field in set(raw) - {"claim"}
+            )
+            or resolved.get("claim") != fact.get("canonical_claim")
+        ):
+            raise HookDiscoverySemanticsError(
+                "Resolved finish fact handle does not bind one frozen observation fact."
+            )
+        expanded = True
+    if not expanded:
+        raise HookDiscoverySemanticsError(
+            "Resolved finish action did not expand a frozen fact handle."
+        )
+
+
 def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
     agent = pack.agent_discovery
     if not isinstance(agent, Mapping) or agent.get("planning_status") != "ready":
@@ -1200,7 +1272,7 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
                     "Resolved model action trace hash is invalid."
                 )
         raw_family_id = action.get("family_id")
-        if raw_family_id is not None or has_resolved_action:
+        if raw_family_id is not None:
             resolved_arguments = (
                 resolved_action.get("arguments")
                 if isinstance(resolved_action, Mapping)
@@ -1245,6 +1317,12 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
                 raise HookDiscoverySemanticsError(
                     "Model family selection and resolved action topology differ."
                 )
+        elif has_resolved_action:
+            _validate_resolved_finish_fact_handles(
+                action=action,
+                resolved_action=resolved_action,
+                observation_fact_catalog=pack.observation_fact_catalog,
+            )
         if attempt.get("status") == "accepted" and action.get("action") == "use_tool":
             accepted_actions.append(
                 resolved_action if isinstance(resolved_action, Mapping) else action

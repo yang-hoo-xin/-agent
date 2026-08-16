@@ -474,7 +474,7 @@ class EvidenceDiscoverySpecialist:
             "initial_context_sha256": _json_sha256(initial_messages[1]["content"]),
             "context_strategy": (
                 "deduplicated_catalog_latest_observation_zero_result_recovery_"
-                "repeat_correction_and_supported_facts_v6"
+                "repeat_correction_method_focus_and_fact_handles_v7"
             ),
             "raw_prompt_persisted": False,
             "actual_planning_required": request.require_actual_planning,
@@ -510,6 +510,7 @@ class EvidenceDiscoverySpecialist:
                 tool_action_validation_error=tool_action_validation_error,
                 request=request,
                 model_step=model_step,
+                agent_discovery=self._agent_discovery,
             )
             discovery_message_bytes_by_turn.append(_json_size(messages))
             correction_required = finish_validation_error is not None
@@ -618,6 +619,12 @@ class EvidenceDiscoverySpecialist:
                             "allowed_unexecuted_query_families"
                         ] = allowed_unexecuted_query_families
                     continue
+                action = _resolve_finish_fact_handles(
+                    action,
+                    observations_by_id=observations_by_id,
+                )
+                if action != raw_action:
+                    resolved_action = action
                 self._runtime_diagnostics["failure_stage"] = "finish_validation"
                 try:
                     _validate_finish(
@@ -630,9 +637,10 @@ class EvidenceDiscoverySpecialist:
                     model_action_attempts.append(
                         _model_action_attempt(
                             model_step=model_step,
-                            action=action,
+                            action=raw_action,
                             status="rejected",
                             validation_error=error,
+                            resolved_action=resolved_action,
                         )
                     )
                     if finish_correction_used:
@@ -680,8 +688,9 @@ class EvidenceDiscoverySpecialist:
                 model_action_attempts.append(
                     _model_action_attempt(
                         model_step=model_step,
-                        action=action,
+                        action=raw_action,
                         status="accepted",
+                        resolved_action=resolved_action,
                     )
                 )
                 return self._result(
@@ -1587,6 +1596,7 @@ def _build_turn_messages(
     tool_action_validation_error: dict[str, object] | None,
     request: EvidenceDiscoveryRequest,
     model_step: int,
+    agent_discovery: dict[str, object] | None,
 ) -> tuple[dict[str, object], ...]:
     messages = list(initial_messages)
     if actions:
@@ -1627,6 +1637,12 @@ def _build_turn_messages(
         )
     if pending_observation is not None:
         messages.append({"role": "tool", "content": pending_observation.model_view()})
+        method_comparison = _method_focus_comparison(
+            pending_observation,
+            agent_discovery=agent_discovery,
+        )
+        if method_comparison is not None:
+            messages.append({"role": "user", "content": method_comparison})
     if finish_validation_error is not None:
         messages.append(
             {
@@ -1731,6 +1747,119 @@ def _build_turn_messages(
     return tuple(messages)
 
 
+def _method_focus_comparison(
+    observation: ToolObservation,
+    *,
+    agent_discovery: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Expose observed method shape beside the frozen initial-focus question."""
+
+    if observation.tool != "search_dotnet_metadata" or agent_discovery is None:
+        return None
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(search_plan, dict):
+        return None
+    focus_id = search_plan.get("initial_focus_question_id")
+    questions = search_plan.get("engineering_questions")
+    if not isinstance(focus_id, str) or not isinstance(questions, list):
+        return None
+    focus_question = next(
+        (
+            item.get("question")
+            for item in questions
+            if isinstance(item, dict) and item.get("question_id") == focus_id
+        ),
+        None,
+    )
+    if not isinstance(focus_question, str) or not focus_question:
+        return None
+    methods: list[dict[str, object]] = []
+    raw_methods = observation.data.get("methods")
+    if not isinstance(raw_methods, list):
+        return None
+    for raw in raw_methods:
+        if (
+            not isinstance(raw, dict)
+            or not isinstance(raw.get("candidate_ref"), str)
+            or not isinstance(raw.get("symbol"), str)
+        ):
+            continue
+        symbol = str(raw["symbol"])
+        method_leaf = symbol.rsplit(".", 1)[-1]
+        if symbol.endswith("..ctor") or symbol.endswith("..cctor"):
+            method_kind = "constructor"
+        elif method_leaf.startswith("get_") or method_leaf.startswith("set_"):
+            method_kind = "property_accessor"
+        else:
+            method_kind = "ordinary_method"
+        methods.append(
+            {
+                "candidate_ref": raw["candidate_ref"],
+                "symbol": symbol,
+                "matched_queries": list(raw.get("matched_queries") or []),
+                "has_method_body": raw.get("has_method_body"),
+                "method_kind": method_kind,
+            }
+        )
+    if not methods:
+        return None
+    return {
+        "message_type": "method_focus_comparison",
+        "initial_focus_question_id": focus_id,
+        "initial_focus_question": focus_question,
+        "metadata_observation_id": observation.observation_id,
+        "methods": methods,
+        "instruction": (
+            "Compare each observed symbol and matched_queries with the exact initial "
+            "focus question before selecting inspect_method_il. Prefer an ordinary "
+            "behavior method that directly addresses the focus. A constructor or "
+            "property accessor is structural evidence unless the focus explicitly "
+            "asks about construction or property access. Use only one listed "
+            "candidate_ref and bind it to metadata_observation_id."
+        ),
+    }
+
+
+def _resolve_finish_fact_handles(
+    finish: dict[str, object],
+    *,
+    observations_by_id: dict[str, ToolObservation],
+) -> dict[str, object]:
+    """Expand an exact run-local fact handle into its frozen canonical claim."""
+
+    conclusions = finish.get("evidence_conclusions")
+    if not isinstance(conclusions, list):
+        return finish
+    facts_by_id = {
+        str(fact["fact_id"]): fact
+        for observation in observations_by_id.values()
+        for fact in observation.supported_facts()
+    }
+    resolved_conclusions: list[object] = []
+    changed = False
+    for raw in conclusions:
+        if not isinstance(raw, dict) or raw.get("claim_status") != "observed":
+            resolved_conclusions.append(raw)
+            continue
+        fact = facts_by_id.get(str(raw.get("claim") or ""))
+        if fact is None or raw.get("observation_ids") != [fact["observation_id"]]:
+            resolved_conclusions.append(raw)
+            continue
+        resolved_conclusions.append(
+            {
+                **raw,
+                "claim": fact["canonical_claim"],
+            }
+        )
+        changed = True
+    if not changed:
+        return finish
+    return {
+        **finish,
+        "evidence_conclusions": resolved_conclusions,
+    }
+
+
 def _acceptance_progress(
     observations: list[ToolObservation],
 ) -> dict[str, object]:
@@ -1776,7 +1905,9 @@ def _acceptance_progress(
                 "Finish now with an observed or inferred conclusion whose observation_ids "
                 "includes one listed inspect_method_il observation id, unless one exact "
                 "unresolved gap justifies one new tool call. needs_more_evidence is valid; "
-                "do not broad-search or repeat a method."
+                "do not broad-search or repeat a method. For an observed conclusion, "
+                "set claim to one exact supported_fact fact_id; deterministic code expands "
+                "it to the frozen canonical_claim."
             )
         ]
     return {
@@ -1916,9 +2047,10 @@ def _finish_validation_repair_focus(
         return {
             "field": "evidence_conclusions[]",
             "requirement": (
-                "Each observed claim must exactly copy one supported_fact "
-                "canonical_claim and cite only that fact's observation_id. Put any "
-                "interpretation in a separate inferred conclusion with limitations."
+                "For each observed conclusion, set claim to one exact supported_fact "
+                "fact_id and cite only that fact's observation_id. Deterministic code "
+                "expands the handle to canonical_claim. Put interpretation in a "
+                "separate inferred conclusion with limitations."
             ),
         }
     if error_code == "EVIDENCE_CONCLUSION_OBSERVATION_REQUIRED":
@@ -3503,7 +3635,9 @@ def _system_contract() -> dict[str, object]:
                     "Then inspect that reference through inspect_method_il.",
                     (
                         "A grounded finish cites an inspect_method_il observation_id in at "
-                        "least one observed or inferred conclusion."
+                        "least one observed or inferred conclusion. An observed conclusion "
+                        "sets claim to one listed supported_fact fact_id; deterministic "
+                        "code expands it to canonical_claim."
                     ),
                     (
                         "For an actual frozen plan, every conclusion names exact "
@@ -3524,8 +3658,9 @@ def _system_contract() -> dict[str, object]:
             "An inspect_method_il candidate_ref must come from a prior observation.",
             "Observed and inferred conclusions must reference prior observations.",
             (
-                "An observed conclusion must exactly copy canonical_claim from one "
-                "supported_fact and cite only that fact's observation_id."
+                "An observed conclusion sets claim to one exact supported_fact fact_id "
+                "and cites only that fact's observation_id; deterministic code expands "
+                "the handle to canonical_claim."
             ),
             "Inferred conclusions must state limitations; unknown conclusions cite no observation.",
             (

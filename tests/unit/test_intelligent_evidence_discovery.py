@@ -36,6 +36,8 @@ from src.mod_agent.evidence.discovery_contract import (
     evidence_discovery_search_plan_schema,
 )
 from src.mod_agent.evidence.discovery_loop import (
+    _method_focus_comparison,
+    _resolve_finish_fact_handles,
     _resolve_action_from_frozen_plan,
     _resolve_model_search_plan_action,
     _validate_finish,
@@ -758,12 +760,21 @@ def test_v2_agent_search_plan_strict_roundtrip_preserves_bytes_and_hash(
     for lane in search_plan["planned_lanes"]:
         lane.pop("question_ids")
     payload["prompt_contract"]["version"] = "agent_evidence_discovery_prompt_v2"
+    payload["prompt_contract"]["context_strategy"] = (
+        "deduplicated_catalog_latest_observation_zero_result_recovery_"
+        "repeat_correction_and_supported_facts_v6"
+    )
+    payload["prompt_contract"]["system_contract_sha256"] = (
+        "da325eabf3c50521e9f3e8265e9f3ae924b7ab7edb36852c39ccc53dad30bd5d"
+    )
     payload["budget_summary"]["discovery_message_bytes_by_turn"] = [
         6546,
         7573,
         8139,
     ]
     payload["budget_summary"]["total_discovery_message_bytes"] = 22_258
+    payload["budget_summary"]["total_observation_bytes_used"] = 1_186
+    payload["observation_trace"][1]["model_payload_bytes"] = 708
     payload["prompt_contract"]["agent_discovery_sha256"] = hashlib.sha256(
         json.dumps(
             agent_discovery,
@@ -811,12 +822,21 @@ def test_v3_agent_search_plan_strict_roundtrip_preserves_bytes_and_hash(
     search_plan["schema_version"] = "hook_discovery_search_plan_v3"
     search_plan.pop("initial_focus_question_id")
     payload["prompt_contract"]["version"] = "agent_evidence_discovery_prompt_v4"
+    payload["prompt_contract"]["context_strategy"] = (
+        "deduplicated_catalog_latest_observation_zero_result_recovery_"
+        "repeat_correction_and_supported_facts_v6"
+    )
+    payload["prompt_contract"]["system_contract_sha256"] = (
+        "da325eabf3c50521e9f3e8265e9f3ae924b7ab7edb36852c39ccc53dad30bd5d"
+    )
     payload["budget_summary"]["discovery_message_bytes_by_turn"] = [
         6898,
         7925,
         8491,
     ]
     payload["budget_summary"]["total_discovery_message_bytes"] = 23_314
+    payload["budget_summary"]["total_observation_bytes_used"] = 1_186
+    payload["observation_trace"][1]["model_payload_bytes"] = 708
     payload["prompt_contract"]["agent_discovery_sha256"] = hashlib.sha256(
         json.dumps(
             agent_discovery,
@@ -2437,7 +2457,7 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
 
     assert pack.agent_discovery is not None
     assert pack.prompt_contract["actual_planning_required"] is True
-    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v6"
+    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v7"
     source_observation = model.calls[1][-1]["content"]
     assert isinstance(source_observation, dict)
     assert source_observation["message_type"] == "source_evidence_observation"
@@ -3739,6 +3759,7 @@ def test_phase_2c_agent_only_early_termination_prompt_versions_are_closed() -> N
         "agent_evidence_discovery_prompt_v4",
         "agent_evidence_discovery_prompt_v5",
         "agent_evidence_discovery_prompt_v6",
+        "agent_evidence_discovery_prompt_v7",
     ):
         versioned = deepcopy(payload)
         versioned["prompt_contract"]["version"] = version
@@ -3746,7 +3767,7 @@ def test_phase_2c_agent_only_early_termination_prompt_versions_are_closed() -> N
 
     for version in (
         "agent_evidence_discovery_prompt_v1",
-        "agent_evidence_discovery_prompt_v7",
+        "agent_evidence_discovery_prompt_v8",
     ):
         versioned = deepcopy(payload)
         versioned["prompt_contract"]["version"] = version
@@ -4320,7 +4341,7 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
     ]
     assert result.pack.prompt_contract["context_strategy"] == (
         "deduplicated_catalog_latest_observation_zero_result_recovery_"
-        "repeat_correction_and_supported_facts_v6"
+        "repeat_correction_method_focus_and_fact_handles_v7"
     )
     finish_schema = system_contract["actions"]["finish"]["schema"]
     assert finish_schema["required"] == [
@@ -4357,7 +4378,9 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
                 "Finish now with an observed or inferred conclusion whose observation_ids "
                 "includes one listed inspect_method_il observation id, unless one exact "
                 "unresolved gap justifies one new tool call. needs_more_evidence is valid; "
-                "do not broad-search or repeat a method."
+                "do not broad-search or repeat a method. For an observed conclusion, "
+                "set claim to one exact supported_fact fact_id; deterministic code expands "
+                "it to the frozen canonical_claim."
             )
         ],
         "required_next_action": "finish_or_use_tool_for_exact_gap",
@@ -4366,7 +4389,173 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
     assert result.pack.budget_summary["total_discovery_message_bytes"] == sum(
         result.pack.budget_summary["discovery_message_bytes_by_turn"]
     )
-    assert result.pack.budget_summary["total_discovery_message_bytes"] < 17_000
+    assert result.pack.budget_summary["total_discovery_message_bytes"] < 18_000
+
+
+def test_metadata_method_view_compares_observed_methods_with_initial_focus() -> None:
+    observation = ToolObservation(
+        observation_id="obs-001",
+        tool="search_dotnet_metadata",
+        source_id="current-interop",
+        summary="Two methods were observed.",
+        data={
+            "methods": [
+                {
+                    "candidate_ref": "ref-constructor",
+                    "symbol": "Observed.Reaction..ctor",
+                    "matched_queries": ["Reaction"],
+                    "has_method_body": True,
+                },
+                {
+                    "candidate_ref": "ref-behavior",
+                    "symbol": "Observed.Reaction.ActivateState",
+                    "matched_queries": ["Reaction", "ActivateState"],
+                    "has_method_body": True,
+                },
+            ]
+        },
+    )
+    agent_discovery = _actual_plan(
+        behavior_goal="Observe a requested state transition.",
+        queries=["Reaction", "ActivateState"],
+        evidence_need="Which current method observes the requested state transition?",
+    )
+
+    comparison = _method_focus_comparison(
+        observation,
+        agent_discovery=agent_discovery,
+    )
+
+    assert comparison is not None
+    assert comparison["initial_focus_question_id"] == "question-primary"
+    assert comparison["initial_focus_question"] == (
+        "Which current method observes the requested state transition?"
+    )
+    assert comparison["metadata_observation_id"] == "obs-001"
+    assert [item["method_kind"] for item in comparison["methods"]] == [
+        "constructor",
+        "ordinary_method",
+    ]
+    assert comparison["methods"][1]["candidate_ref"] == "ref-behavior"
+
+
+def test_finish_fact_handle_expands_to_frozen_canonical_fact(tmp_path: Path) -> None:
+    source = _request(tmp_path).sources[0]
+    executor = _ObservedToolExecutor()
+    metadata = executor.execute(
+        action={
+            "action": "use_tool",
+            "tool": "search_dotnet_metadata",
+            "source_id": source.source_id,
+            "arguments": _metadata_arguments("movement"),
+        },
+        source=source,
+        observation_id="obs-001",
+    )
+    inspection = executor.execute(
+        action={
+            "action": "use_tool",
+            "tool": "inspect_method_il",
+            "source_id": source.source_id,
+            "arguments": {"candidate_ref": "candidate_obs_001"},
+        },
+        source=source,
+        observation_id="obs-002",
+    )
+    fact = inspection.supported_facts()[0]
+    raw_finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [
+            {
+                "claim": fact["fact_id"],
+                "claim_status": "observed",
+                "observation_ids": ["obs-002"],
+                "limitations": [],
+            }
+        ],
+        "unresolved_questions": ["Runtime behavior remains unresolved."],
+        "missing_capabilities": [],
+    }
+
+    resolved = _resolve_finish_fact_handles(
+        raw_finish,
+        observations_by_id={"obs-001": metadata, "obs-002": inspection},
+    )
+
+    assert raw_finish["evidence_conclusions"][0]["claim"] == fact["fact_id"]
+    assert resolved["evidence_conclusions"][0]["claim"] == fact["canonical_claim"]
+    assert inspection.model_supported_facts()[0] == {
+        "fact_id": fact["fact_id"],
+        "observation_id": "obs-002",
+        "canonical_claim": fact["canonical_claim"],
+    }
+    _validate_finish(
+        resolved,
+        {"obs-001": metadata, "obs-002": inspection},
+    )
+
+
+def test_strict_reader_preserves_resolved_finish_fact_handle(tmp_path: Path) -> None:
+    payload = _strict_semantic_payload(
+        tmp_path,
+        decision="needs_more_evidence",
+    )
+    attempt = payload["model_action_trace"][-1]
+    resolved_action = deepcopy(attempt["action"])
+    fact = next(
+        item
+        for item in payload["observation_fact_catalog"]
+        if item["fact_type"] == "inspected_symbol"
+    )
+    attempt["action"]["evidence_conclusions"][0]["claim"] = fact["fact_id"]
+    attempt["action_sha256"] = hashlib.sha256(
+        json.dumps(
+            attempt["action"],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    attempt["resolved_action"] = resolved_action
+    attempt["resolved_action_sha256"] = hashlib.sha256(
+        json.dumps(
+            resolved_action,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="evidence_pack",
+        status="success",
+        payload=payload,
+    )
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+
+    tampered = deepcopy(payload)
+    tampered_resolved = tampered["model_action_trace"][-1]["resolved_action"]
+    tampered_resolved["evidence_conclusions"][0]["claim"] = (
+        "A model-authored interpretation cannot replace the frozen fact."
+    )
+    tampered["model_action_trace"][-1]["resolved_action_sha256"] = hashlib.sha256(
+        json.dumps(
+            tampered_resolved,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="Resolved finish fact handle does not bind one frozen observation fact",
+    ):
+        ArtifactTypeRegistry().validate_write(
+            artifact_type="evidence_pack",
+            status="success",
+            payload=tampered,
+        )
 
 
 def test_each_turn_replays_compact_history_and_only_the_latest_full_observation(
@@ -4693,9 +4882,10 @@ def test_mixed_observed_claim_is_corrected_into_exact_observed_and_inferred(
     assert correction["repair_focus"] == {
         "field": "evidence_conclusions[]",
         "requirement": (
-            "Each observed claim must exactly copy one supported_fact "
-            "canonical_claim and cite only that fact's observation_id. Put any "
-            "interpretation in a separate inferred conclusion with limitations."
+            "For each observed conclusion, set claim to one exact supported_fact "
+            "fact_id and cite only that fact's observation_id. Deterministic code "
+            "expands the handle to canonical_claim. Put interpretation in a "
+            "separate inferred conclusion with limitations."
         ),
     }
     assert [
@@ -4913,7 +5103,7 @@ def test_repeated_method_context_is_deduplicated_and_byte_accounted(
     assert final_compact["observed_method_catalog"] == []
     assert len(final_compact["inspection_catalog"]) == 1
     assert final_compact_bytes < 2_700
-    assert result.pack.budget_summary["total_discovery_message_bytes"] < 47_000
+    assert result.pack.budget_summary["total_discovery_message_bytes"] < 50_000
     assert result.pack.budget_summary["total_discovery_message_bytes"] == sum(
         result.pack.budget_summary["discovery_message_bytes_by_turn"]
     )
@@ -5949,6 +6139,44 @@ class _MixedRelevanceMetadataRunner:
         }
 
 
+class _QueryFairMetadataRunner:
+    def search(
+        self,
+        assembly_path: str | Path,
+        *,
+        queries: tuple[str, ...],
+    ) -> dict[str, object]:
+        assembly = Path(assembly_path)
+        return {
+            "assembly_sha256": hashlib.sha256(
+                assembly.read_bytes()
+            ).hexdigest().upper(),
+            "module_mvid": "00000000-0000-0000-0000-000000000005",
+            "methods": [
+                *[
+                    {
+                        "symbol": f"LongNamedStructure.Action{index}",
+                        "metadata_token": f"0x060001{index:02X}",
+                        "has_method_body": True,
+                    }
+                    for index in range(6)
+                ],
+                {
+                    "symbol": "ShortStructure.Observe",
+                    "metadata_token": "0x06000201",
+                    "has_method_body": True,
+                },
+                {
+                    "symbol": "AnotherShortStructure.Verify",
+                    "metadata_token": "0x06000202",
+                    "has_method_body": True,
+                },
+            ],
+            "types": [],
+            "fields": [],
+        }
+
+
 class _ILRunner:
     def __init__(self, symbols: tuple[str, ...]) -> None:
         self.symbols = symbols
@@ -6136,6 +6364,45 @@ def test_metadata_search_preserves_query_matches_and_ranks_before_truncation(
         observation_id="obs-001",
     )
     assert repeated.data == observation.data
+
+
+def test_metadata_method_window_is_fair_across_queries(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "Modules-ASM.dll").write_bytes(b"managed-test-bytes")
+    executor = LocalAssemblyEvidenceToolExecutor(
+        metadata_runner=_QueryFairMetadataRunner(),
+        il_runner_factory=_ILRunner,
+    )
+    executor.begin_run(run_id="run-query-fair-window")
+
+    observation = executor.execute(
+        action={
+            "tool": "search_dotnet_metadata",
+            "arguments": _metadata_arguments(
+                "LongNamedStructure",
+                "Short",
+                limit_per_kind=4,
+            ),
+        },
+        source=_request(tmp_path).sources[0],
+        observation_id="obs-001",
+    )
+
+    assert [row["symbol"] for row in observation.data["methods"]] == [
+        "LongNamedStructure.Action0",
+        "AnotherShortStructure.Verify",
+        "LongNamedStructure.Action1",
+        "ShortStructure.Observe",
+    ]
+    assert observation.data["matched_query_counts"] == {
+        "LongNamedStructure": {"methods": 6, "types": 0, "fields": 0},
+        "Short": {"methods": 2, "types": 0, "fields": 0},
+    }
+    assert observation.data["returned_query_counts"] == {
+        "LongNamedStructure": {"methods": 2, "types": 0, "fields": 0},
+        "Short": {"methods": 2, "types": 0, "fields": 0},
+    }
 
 
 def test_real_tool_executor_rejects_candidate_from_previous_run_or_source(

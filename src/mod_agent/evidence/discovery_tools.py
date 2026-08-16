@@ -270,7 +270,11 @@ class LocalAssemblyEvidenceToolExecutor:
         field_pool.sort(key=lambda row: _metadata_relevance_key(row, queries))
         methods: list[dict[str, object]] = []
         if "methods" in result_kinds:
-            for row in method_pool[:limit_per_kind]:
+            for row in _fair_metadata_window(
+                method_pool,
+                queries=queries,
+                limit=limit_per_kind,
+            ):
                 observed = row["observed"]
                 assert isinstance(observed, _ObservedMethod)
                 method_id = _stable_id(
@@ -570,6 +574,48 @@ def _metadata_relevance_key(
         str(row["symbol"]).casefold(),
         str(row["metadata_token"]),
     )
+
+
+def _fair_metadata_window(
+    rows: list[dict[str, object]],
+    *,
+    queries: tuple[str, ...],
+    limit: int,
+) -> list[dict[str, object]]:
+    """Interleave exact query views within one shared method budget."""
+
+    query_rows: dict[str, list[dict[str, object]]] = {}
+    for query in queries:
+        query_rows[query] = [
+            row
+            for row in rows
+            if query in row.get("matched_queries", [])
+        ]
+
+    selected: list[dict[str, object]] = []
+    selected_keys: set[tuple[str, str, str]] = set()
+    while len(selected) < limit:
+        progressed = False
+        for query in queries:
+            queue = query_rows[query]
+            while queue:
+                row = queue.pop(0)
+                key = (
+                    str(row["assembly_id"]),
+                    str(row["symbol"]),
+                    str(row["metadata_token"]),
+                )
+                if key in selected_keys:
+                    continue
+                selected.append(row)
+                selected_keys.add(key)
+                progressed = True
+                break
+            if len(selected) == limit:
+                break
+        if not progressed:
+            break
+    return selected
 
 
 def _per_query_counts(
