@@ -8,6 +8,7 @@ from .models import RequestPlan, Uncertainty, stable_feature_id
 
 _TERM_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
 _TARGET_MOD_RE = re.compile(r"\b([A-Z][A-Za-z0-9_]{3,})\b")
+_CJK_CHARACTER_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 
 _CONFIG_REQUEST_TERMS = (
     "config",
@@ -193,10 +194,21 @@ class RequestPlanner:
     @staticmethod
     def _is_ambiguous(request: str, terms: list[str]) -> bool:
         lowered = request.lower()
-        if len(request) < 8 or len(terms) < 2:
+        if len(request) < 8:
             return True
-        ambiguous_phrases = ("fix it", "that issue", "那个问题", "修一下", "test")
-        return any(phrase == lowered or phrase in lowered for phrase in ambiguous_phrases)
+        ambiguous_phrases = (
+            "fix it",
+            "that issue",
+            "那个问题",
+            "这个东西",
+            "修一下",
+            "test",
+        )
+        if any(phrase == lowered or phrase in lowered for phrase in ambiguous_phrases):
+            return True
+        if len(terms) >= 2:
+            return False
+        return len(_CJK_CHARACTER_RE.findall(request)) < 6
 
     @staticmethod
     def _extract_target_mod(request: str) -> str | None:

@@ -136,6 +136,30 @@ def test_request_planner_blocks_ambiguous_request() -> None:
     assert plan.uncertainties[0].uncertainty_id == "ambiguous_user_request"
 
 
+def test_request_planner_blocks_ambiguous_chinese_request() -> None:
+    plan = RequestPlanner().plan("请帮我处理一下这个东西")
+
+    assert plan.blocked is True
+    assert plan.route == "blocked_ambiguous"
+
+
+def test_request_planner_allows_clear_chinese_runtime_request_to_seek_evidence() -> None:
+    plan = RequestPlanner().plan(
+        "我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，"
+        "并播放一声简短提示音。",
+        target_mod="BetterHitFeedback",
+    )
+
+    assert plan.blocked is False
+    assert plan.route == "game_hook_investigation"
+    assert plan.requires_hook_evidence is True
+    assert plan.requires_runtime_evidence is True
+    assert plan.hook_requirement == {
+        "required": True,
+        "reason": "gameplay_method_interception",
+    }
+
+
 def test_non_goal_damage_terms_do_not_force_hook_evidence() -> None:
     plan = RequestPlanner().plan(
         "Change the kill marker color to pink without changing damage or sound.",

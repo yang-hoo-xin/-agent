@@ -41,9 +41,9 @@ def route_after_planning_brief(state: ModAgentState) -> str:
 
 
 def route_after_evidence(state: ModAgentState) -> str:
-    """Stop when evidence is not sufficient for patch generation."""
+    """Let Planning consume every committed EvidencePack, including blockers."""
 
-    if not state["evidence_summary"].get("can_generate_patch", False):
+    if "evidence_pack" not in state["artifacts"]:
         return "blocked"
     return "continue"
 

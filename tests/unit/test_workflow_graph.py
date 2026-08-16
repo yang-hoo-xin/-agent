@@ -6440,8 +6440,9 @@ def test_stop_after_evidence_ends_before_implementation_plan(tmp_path: Path) -> 
 def test_collection_resolution_failure_routes_to_blocked_after_evidence(
     tmp_path: Path,
 ) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
     graph = build_graph(
-        ArtifactStore(tmp_path / "artifacts"),
+        store,
         knowledge_database=_knowledge_with_load_symbol(tmp_path),
         collection_resolver=CollectionResolver(settings_path=tmp_path / "missing.yaml"),
     )
@@ -6459,6 +6460,47 @@ def test_collection_resolution_failure_routes_to_blocked_after_evidence(
     assert result["evidence_summary"]["can_generate_patch"] is False
     assert "Collection resolution failed" in result["evidence_summary"]["gaps"][0]
     assert result["blockers"][0]["code"] == "INSUFFICIENT_EVIDENCE"
+    assert "implementation_plan" in result["artifacts"]
+    implementation = store.read(
+        _artifact_ref(store, result, "implementation_plan")
+    )["data"]
+    assert implementation["blocking"] is True
+    assert implementation["proposed_changes"] == []
+
+
+def test_clear_chinese_request_reaches_evidence_then_planning_blocks_patch(
+    tmp_path: Path,
+) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        evidence_pack_factory=lambda _state, feature: EvidencePack.empty(
+            query=feature["target_behavior"],
+            reason="Current evidence does not identify the requested behavior.",
+        ),
+    )
+    result = graph.invoke(
+        create_initial_state(
+            run_id="run_bhf_negative",
+            request_id="req_bhf_negative",
+            user_request=(
+                "我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，"
+                "并播放一声简短提示音。"
+            ),
+            target_domain="gtfo",
+            target_mod="BetterHitFeedback",
+        )
+    )
+
+    assert "request_planning_report" in result["artifacts"]
+    assert "evidence_pack" in result["artifacts"]
+    assert "implementation_plan" in result["artifacts"]
+    assert "patch_proposal" not in result["artifacts"]
+    implementation = store.read(
+        _artifact_ref(store, result, "implementation_plan")
+    )["data"]
+    assert implementation["blocking"] is True
+    assert implementation["proposed_changes"] == []
 
 
 def test_vague_request_routes_to_blocked(tmp_path: Path) -> None:
