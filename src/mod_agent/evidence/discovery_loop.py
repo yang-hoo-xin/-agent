@@ -118,6 +118,7 @@ class EvidenceDiscoverySpecialist:
         self._source_query_revision: dict[str, object] | None = None
         self._source_literal_bindings: list[dict[str, object]] = []
         self._source_to_il_grounding: list[dict[str, object]] = []
+        self._completed_observations: list[dict[str, object]] = []
 
     @property
     def runtime_diagnostics(self) -> dict[str, object]:
@@ -130,6 +131,15 @@ class EvidenceDiscoverySpecialist:
         )
         return snapshot
 
+    @property
+    def completed_observations(self) -> tuple[dict[str, object], ...]:
+        """Return validated tool observations completed before any terminal failure."""
+
+        return tuple(
+            json.loads(json.dumps(item, ensure_ascii=False, separators=(",", ":")))
+            for item in self._completed_observations
+        )
+
     def discover(self, request: EvidenceDiscoveryRequest) -> EvidenceDiscoveryResult:
         self._runtime_diagnostics = _new_runtime_diagnostics()
         self._agent_discovery = None
@@ -140,6 +150,7 @@ class EvidenceDiscoverySpecialist:
         self._source_query_revision = None
         self._source_literal_bindings = []
         self._source_to_il_grounding = []
+        self._completed_observations = []
         self._runtime_diagnostics["failure_stage"] = "run_initialization"
         try:
             result = self._discover(request)
@@ -840,6 +851,7 @@ class EvidenceDiscoverySpecialist:
             executed_tool_action_signatures.add(action_signature)
             observations.append(observation)
             observations_by_id[observation.observation_id] = observation
+            self._completed_observations.append(observation.model_view())
             for method in observation.data.get("methods", []):
                 if isinstance(method, dict) and method.get("candidate_ref"):
                     candidate_origins[str(method["candidate_ref"])] = (

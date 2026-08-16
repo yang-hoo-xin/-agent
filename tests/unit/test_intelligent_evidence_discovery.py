@@ -3032,6 +3032,14 @@ def test_phase_2_second_nonzero_metadata_requires_observation_bound_il(
         "search_dotnet_metadata",
     ]
     assert specialist.runtime_diagnostics["failure_stage"] == "action_validation"
+    assert [
+        observation["observation_id"]
+        for observation in specialist.completed_observations
+    ] == ["obs-001", "obs-002"]
+    assert all(
+        observation["tool"] == "search_dotnet_metadata"
+        for observation in specialist.completed_observations
+    )
 
 
 def test_phase_2_second_metadata_il_rejects_first_observation_reference(
