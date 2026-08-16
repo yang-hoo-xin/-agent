@@ -1902,12 +1902,14 @@ def _acceptance_progress(
     else:
         remaining_requirements = [
             (
-                "Finish now with an observed or inferred conclusion whose observation_ids "
-                "includes one listed inspect_method_il observation id, unless one exact "
-                "unresolved gap justifies one new tool call. needs_more_evidence is valid; "
-                "do not broad-search or repeat a method. For an observed conclusion, "
-                "set claim to one exact supported_fact fact_id; deterministic code expands "
-                "it to the frozen canonical_claim."
+                "Compare the inspected method's supported_facts with the frozen initial "
+                "focus before deciding. A physical fact that does not support the requested "
+                "behavior cannot close that requirement. Choose exactly one bounded next "
+                "step: inspect one still-unverified method from observed_method_catalog; "
+                "execute one unexecuted frozen query family for an exact open question; or "
+                "finish with support/conflict/missing grounded only in listed fact_ids. "
+                "Do not broad-search, repeat a method, or promote an unrelated physical fact "
+                "to support. Deterministic code expands fact handles and frozen families."
             )
         ]
     return {
@@ -2944,7 +2946,7 @@ def _unique_pending_supplemental_observation_id(
     actions: list[dict[str, object]],
     observations: list[ToolObservation],
 ) -> str | None:
-    """Bind only one unconsumed metadata observation from the same question."""
+    """Bind one unconsumed latest observation to a model-selected frozen family."""
 
     if not observations or len(actions) != len(observations):
         return None
@@ -2965,6 +2967,8 @@ def _unique_pending_supplemental_observation_id(
     if observation is not observations[-1]:
         return None
     origin_action = actions[origin_index]
+    if origin_action.get("tool") == "inspect_method_il":
+        return observation.observation_id
     if origin_action.get("tool") != "search_dotnet_metadata":
         return None
     origin_family_id = origin_action.get("query_family_id")
@@ -3042,6 +3046,12 @@ def _validate_action_against_frozen_plan(
         return
     if len(actions) == 2:
         if (
+            actions[0].get("tool") == "search_dotnet_metadata"
+            and actions[1].get("tool") == "inspect_method_il"
+            and action.get("tool") == "inspect_method_il"
+        ):
+            return
+        if (
             action.get("tool") == "inspect_method_il"
             and _latest_metadata_observation_has_identity(observations)
         ):
@@ -3069,6 +3079,24 @@ def _validate_action_against_frozen_plan(
             agent_discovery=agent_discovery,
         )
         return
+    if len(actions) == 3:
+        if (
+            [item.get("tool") for item in actions]
+            == [
+                "search_dotnet_metadata",
+                "inspect_method_il",
+                "search_dotnet_metadata",
+            ]
+            and action.get("tool") == "inspect_method_il"
+            and _latest_metadata_observation_has_identity(observations)
+        ):
+            latest_observation_id = observations[-1].observation_id
+            if action.get("derived_from_observation_ids") != [latest_observation_id]:
+                raise ValueError(
+                    "SUPPLEMENTAL_METADATA_IL_MUST_BIND_LATEST_OBSERVATION"
+                )
+            return
+        raise ValueError("FIRST_HOOK_DISCOVERY_TOOL_BUDGET_EXHAUSTED")
     raise ValueError("FIRST_HOOK_DISCOVERY_TOOL_BUDGET_EXHAUSTED")
 
 

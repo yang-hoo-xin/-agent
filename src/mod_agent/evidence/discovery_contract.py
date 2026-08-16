@@ -573,8 +573,8 @@ class EvidenceDiscoveryRequest:
                 raise ValueError(f"{name} must be positive.")
         if self.operator_intervention_count < 0:
             raise ValueError("operator_intervention_count cannot be negative.")
-        if self.require_actual_planning and self.max_tool_calls > 3:
-            raise ValueError("FIRST_HOOK_DISCOVERY_TOOL_BUDGET_EXCEEDS_THREE")
+        if self.require_actual_planning and self.max_tool_calls > 4:
+            raise ValueError("FIRST_HOOK_DISCOVERY_TOOL_BUDGET_EXCEEDS_FOUR")
         if self.manual_symbols or self.manual_tool_sequence or self.precomputed_reports:
             raise ValueError(
                 "Intelligent evidence acceptance forbids manual symbols, tool sequences, "

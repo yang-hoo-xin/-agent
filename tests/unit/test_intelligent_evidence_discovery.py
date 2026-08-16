@@ -3103,6 +3103,70 @@ def test_phase_2_terminal_supplemental_method_stays_unverified_and_blocked(
     )
 
 
+def test_phase_2_negative_il_can_select_frozen_followup_and_verify_latest_method(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current method exposes the requested transition?"
+    plan = _actual_plan(
+        behavior_goal="Find a current transition observation point.",
+        queries=["input"],
+        evidence_need=evidence_need,
+    )
+    _add_secondary_planning_question(plan)
+    finish = _finish_after_observed_il()
+    finish["evidence_conclusions"][0]["observation_ids"] = ["obs-004"]
+    model = _ScriptedModel(
+        [
+            plan,
+            _family_selection("request-derived-behavior"),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify whether the input-side method closes the focus.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _family_selection("secondary-integration"),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_003"},
+                "evidence_need": "Verify the method returned by the frozen follow-up.",
+                "derived_from_observation_ids": ["obs-003"],
+            },
+            finish,
+        ]
+    )
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request=(
+                "When an input transition occurs, observe its downstream state change."
+            ),
+            require_actual_planning=True,
+            max_tool_calls=4,
+            max_model_steps=5,
+        )
+    )
+
+    assert [action["tool"] for action in result.actions] == [
+        "search_dotnet_metadata",
+        "inspect_method_il",
+        "search_dotnet_metadata",
+        "inspect_method_il",
+    ]
+    assert result.actions[2]["query_family_id"] == "secondary-integration"
+    assert result.actions[2]["derived_from_observation_ids"] == ["obs-002"]
+    assert result.actions[3]["derived_from_observation_ids"] == ["obs-003"]
+    assert result.pack.budget_summary["tool_calls_used"] == 4
+
+
 def test_phase_2_second_zero_method_search_rejects_third_metadata(
     tmp_path: Path,
 ) -> None:
@@ -4375,12 +4439,14 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
         },
         "remaining_acceptance_requirements": [
             (
-                "Finish now with an observed or inferred conclusion whose observation_ids "
-                "includes one listed inspect_method_il observation id, unless one exact "
-                "unresolved gap justifies one new tool call. needs_more_evidence is valid; "
-                "do not broad-search or repeat a method. For an observed conclusion, "
-                "set claim to one exact supported_fact fact_id; deterministic code expands "
-                "it to the frozen canonical_claim."
+                "Compare the inspected method's supported_facts with the frozen initial "
+                "focus before deciding. A physical fact that does not support the requested "
+                "behavior cannot close that requirement. Choose exactly one bounded next "
+                "step: inspect one still-unverified method from observed_method_catalog; "
+                "execute one unexecuted frozen query family for an exact open question; or "
+                "finish with support/conflict/missing grounded only in listed fact_ids. "
+                "Do not broad-search, repeat a method, or promote an unrelated physical fact "
+                "to support. Deterministic code expands fact handles and frozen families."
             )
         ],
         "required_next_action": "finish_or_use_tool_for_exact_gap",

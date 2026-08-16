@@ -213,8 +213,8 @@ def _run_phase_2_discovery(
             request_id=f"actual-request-{request_digest[16:32]}",
             natural_language_request=normalized,
             sources=sources,
-            max_tool_calls=3,
-            max_model_steps=4,
+            max_tool_calls=4,
+            max_model_steps=5,
             require_actual_planning=True,
         )
     )
