@@ -768,10 +768,10 @@ class DeterministicEvidenceRetriever:
     @staticmethod
     def _identifier_origin_priority(origin: str) -> int:
         priorities = {
-            "identity_field_component": 4,
-            "identity_field": 3,
-            "source_excerpt_component": 2,
-            "source_excerpt": 1,
+            "identity_field": 4,
+            "source_excerpt": 3,
+            "identity_field_component": 2,
+            "source_excerpt_component": 1,
         }
         return priorities.get(origin, 0)
 

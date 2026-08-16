@@ -559,6 +559,10 @@ def test_source_query_set_expands_observed_type_and_identifier_components(
     assert {"Authentication", "Completion", "Relay"}.issubset(
         {item["identifier"] for item in identifiers}
     )
+    identifier_order = [item["identifier"] for item in identifiers]
+    assert identifier_order.index(
+        "AuthenticationCompletionRelay"
+    ) < identifier_order.index("Authentication")
     expansion = pack.budget_summary["bounded_identifier_reference_expansion"]
     assert expansion["performed"] is True
     expansion_refs = set(expansion["admitted_evidence_refs"])
