@@ -2300,6 +2300,16 @@ def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
         queries=["authentication complete"],
         evidence_need=evidence_need,
     )
+    plan["search_plan"]["query_families"].append(
+        {
+            "family_id": "authentication-alternate",
+            "queries": ["auth complete"],
+            "evidence_need": "Which alternate symbol reports authentication completion?",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
     model = _ScriptedModel(
         [
             plan,
@@ -2385,6 +2395,24 @@ def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
         "initial_focus_query_family",
     }
     source_discovery = result.pack.budget_summary["source_discovery"]
+    assert result.agent_discovery["search_plan"]["query_families"] == [
+        {
+            "family_id": "request-derived-behavior",
+            "queries": ["FinishAuthentication"],
+            "evidence_need": evidence_need,
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        },
+        {
+            "family_id": "authentication-alternate",
+            "queries": ["auth complete"],
+            "evidence_need": "Which alternate symbol reports authentication completion?",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        },
+    ]
     binding = source_discovery["metadata_literal_bindings"][0]
     assert binding["metadata_literal"] == "FinishAuthentication"
     assert binding["evidence_refs"] == ["source_terminal_finish"]

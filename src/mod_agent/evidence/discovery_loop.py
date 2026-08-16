@@ -2583,7 +2583,7 @@ def _validated_actual_plan_from_raw(
     return agent_discovery
 
 
-def _single_initial_focus_metadata_family(
+def _initial_focus_metadata_family(
     agent_discovery: dict[str, object],
 ) -> dict[str, object]:
     search_plan = agent_discovery.get("search_plan")
@@ -2599,8 +2599,8 @@ def _single_initial_focus_metadata_family(
         and family.get("tool") == "search_dotnet_metadata"
         and focus in family.get("question_ids", [])
     ] if isinstance(families, list) else []
-    if len(matches) != 1:
-        raise ValueError("SOURCE_IDENTIFIER_SELECTION_FAMILY_AMBIGUOUS")
+    if not matches:
+        raise ValueError("SOURCE_IDENTIFIER_SELECTION_FAMILY_MISSING")
     return matches[0]
 
 
@@ -2645,7 +2645,7 @@ def _validated_source_identifier_selection_from_raw(
     search_plan = revised.get("search_plan")
     if not isinstance(search_plan, dict):
         raise ValueError("SOURCE_IDENTIFIER_SELECTION_SEARCH_PLAN_INVALID")
-    family = _single_initial_focus_metadata_family(revised)
+    family = _initial_focus_metadata_family(revised)
     family_id = str(family["family_id"])
     queries = list(
         dict.fromkeys(
