@@ -725,6 +725,7 @@ class EvidenceDiscoverySpecialist:
                 action = _resolve_action_from_frozen_plan(
                     raw_action,
                     actions=actions,
+                    observations=observations,
                     agent_discovery=self._agent_discovery,
                 )
                 if action != raw_action:
@@ -2721,6 +2722,7 @@ def _resolve_action_from_frozen_plan(
     raw_action: dict[str, object],
     *,
     actions: list[dict[str, object]],
+    observations: list[ToolObservation],
     agent_discovery: dict[str, object],
 ) -> dict[str, object]:
     """Resolve one exact metadata family selection without text matching."""
@@ -2776,6 +2778,18 @@ def _resolve_action_from_frozen_plan(
         or not evidence_need.strip()
     ):
         raise ValueError("QUERY_FAMILY_FROZEN_CONTENT_INVALID")
+    derived_from_observation_ids = list(
+        raw_action.get("derived_from_observation_ids") or []
+    )
+    if actions and not derived_from_observation_ids:
+        pending_observation_id = _unique_pending_supplemental_observation_id(
+            selected_family=family,
+            families=families,
+            actions=actions,
+            observations=observations,
+        )
+        if pending_observation_id is not None:
+            derived_from_observation_ids = [pending_observation_id]
     return {
         "action": "use_tool",
         "tool": "search_dotnet_metadata",
@@ -2786,11 +2800,65 @@ def _resolve_action_from_frozen_plan(
             "limit_per_kind": 10,
         },
         "evidence_need": evidence_need,
-        "derived_from_observation_ids": list(
-            raw_action.get("derived_from_observation_ids") or []
-        ),
+        "derived_from_observation_ids": derived_from_observation_ids,
         "query_family_id": family_id,
     }
+
+
+def _unique_pending_supplemental_observation_id(
+    *,
+    selected_family: dict[str, object],
+    families: list[object],
+    actions: list[dict[str, object]],
+    observations: list[ToolObservation],
+) -> str | None:
+    """Bind only one unconsumed metadata observation from the same question."""
+
+    if not observations or len(actions) != len(observations):
+        return None
+    consumed_observation_ids = {
+        str(observation_id)
+        for action in actions
+        for observation_id in action.get("derived_from_observation_ids", [])
+        if isinstance(observation_id, str)
+    }
+    pending = [
+        (index, observation)
+        for index, observation in enumerate(observations)
+        if observation.observation_id not in consumed_observation_ids
+    ]
+    if len(pending) != 1:
+        return None
+    origin_index, observation = pending[0]
+    if observation is not observations[-1]:
+        return None
+    origin_action = actions[origin_index]
+    if origin_action.get("tool") != "search_dotnet_metadata":
+        return None
+    origin_family_id = origin_action.get("query_family_id")
+    origin_family = next(
+        (
+            family
+            for family in families
+            if isinstance(family, dict)
+            and family.get("family_id") == origin_family_id
+        ),
+        None,
+    )
+    selected_question_ids = selected_family.get("question_ids")
+    origin_question_ids = (
+        origin_family.get("question_ids")
+        if isinstance(origin_family, dict)
+        else None
+    )
+    if (
+        not isinstance(selected_question_ids, list)
+        or not isinstance(origin_question_ids, list)
+        or not selected_question_ids
+        or set(selected_question_ids) != set(origin_question_ids)
+    ):
+        return None
+    return observation.observation_id
 
 
 def _validate_action_against_frozen_plan(

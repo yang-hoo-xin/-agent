@@ -36,6 +36,7 @@ from src.mod_agent.evidence.discovery_contract import (
     evidence_discovery_search_plan_schema,
 )
 from src.mod_agent.evidence.discovery_loop import (
+    _resolve_action_from_frozen_plan,
     _resolve_model_search_plan_action,
     _validate_finish,
     _validate_supplemental_search,
@@ -1901,6 +1902,220 @@ def test_supplemental_family_reports_exact_binding_failures() -> None:
         )
 
 
+def test_supplemental_family_binds_the_only_pending_same_question_observation() -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    plan["search_plan"]["query_families"].append(
+        {
+            "family_id": "guard-family",
+            "queries": ["guard"],
+            "evidence_need": "Find guard metadata.",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    actual = _validated_actual_from_plan(plan)
+    first_action = {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": "current-interop",
+        "arguments": _metadata_arguments("movement", limit_per_kind=10),
+        "evidence_need": "Which current method exposes movement?",
+        "derived_from_observation_ids": [],
+        "query_family_id": "request-derived-behavior",
+    }
+    observations = [
+        ToolObservation(
+            observation_id="obs-001",
+            tool="search_dotnet_metadata",
+            source_id="current-interop",
+            summary="The initial family was searched.",
+            data={"methods": [], "types": [], "fields": []},
+        )
+    ]
+
+    resolved = _resolve_action_from_frozen_plan(
+        _family_selection("guard-family"),
+        actions=[first_action],
+        observations=observations,
+        agent_discovery=actual,
+    )
+
+    assert resolved["derived_from_observation_ids"] == ["obs-001"]
+    _validate_supplemental_search(
+        resolved,
+        actions=[first_action],
+        observations=observations,
+        agent_discovery=actual,
+    )
+
+
+def test_supplemental_family_does_not_bind_ambiguous_pending_observations() -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    plan["search_plan"]["query_families"].append(
+        {
+            "family_id": "guard-family",
+            "queries": ["guard"],
+            "evidence_need": "Find guard metadata.",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    actual = _validated_actual_from_plan(plan)
+    actions = [
+        {
+            "action": "use_tool",
+            "tool": "search_dotnet_metadata",
+            "source_id": "current-interop",
+            "arguments": _metadata_arguments("movement", limit_per_kind=10),
+            "evidence_need": "Which current method exposes movement?",
+            "derived_from_observation_ids": [],
+            "query_family_id": "request-derived-behavior",
+        },
+        {
+            "action": "use_tool",
+            "tool": "search_dotnet_metadata",
+            "source_id": "current-interop",
+            "arguments": _metadata_arguments("movement-detail", limit_per_kind=10),
+            "evidence_need": "Which current method exposes movement?",
+            "derived_from_observation_ids": [],
+            "query_family_id": "movement-detail-family",
+        },
+    ]
+    observations = [
+        ToolObservation(
+            observation_id=f"obs-{index:03d}",
+            tool="search_dotnet_metadata",
+            source_id="current-interop",
+            summary="A family was searched.",
+            data={"methods": [], "types": [], "fields": []},
+        )
+        for index in (1, 2)
+    ]
+
+    resolved = _resolve_action_from_frozen_plan(
+        _family_selection("guard-family"),
+        actions=actions,
+        observations=observations,
+        agent_discovery=actual,
+    )
+
+    assert resolved["derived_from_observation_ids"] == []
+
+
+def test_supplemental_family_does_not_bind_a_different_question() -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    projection = plan["requirement_projection"]
+    search_plan = plan["search_plan"]
+    projection["planning_blocking_questions"].append(
+        {"requirement_id": "req-output", "question": "Which method renders output?"}
+    )
+    search_plan["engineering_questions"].append(
+        {
+            "question_id": "question-output",
+            "question": "Which method renders output?",
+            "requirement_ids": ["req-output"],
+        }
+    )
+    search_plan["query_families"].append(
+        {
+            "family_id": "output-family",
+            "queries": ["overlay"],
+            "evidence_need": "Find output metadata.",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-output"],
+        }
+    )
+    actual = _validated_actual_from_plan(plan)
+    first_action = {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": "current-interop",
+        "arguments": _metadata_arguments("movement", limit_per_kind=10),
+        "evidence_need": "Which current method exposes movement?",
+        "derived_from_observation_ids": [],
+        "query_family_id": "request-derived-behavior",
+    }
+    observations = [
+        ToolObservation(
+            observation_id="obs-001",
+            tool="search_dotnet_metadata",
+            source_id="current-interop",
+            summary="The initial family was searched.",
+            data={"methods": [], "types": [], "fields": []},
+        )
+    ]
+
+    resolved = _resolve_action_from_frozen_plan(
+        _family_selection("output-family"),
+        actions=[first_action],
+        observations=observations,
+        agent_discovery=actual,
+    )
+
+    assert resolved["derived_from_observation_ids"] == []
+
+
+def test_supplemental_family_does_not_rebind_a_consumed_observation() -> None:
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need="Which current method exposes movement?",
+    )
+    plan["search_plan"]["query_families"].append(
+        {
+            "family_id": "guard-family",
+            "queries": ["guard"],
+            "evidence_need": "Find guard metadata.",
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    actual = _validated_actual_from_plan(plan)
+    consumed_action = {
+        "action": "use_tool",
+        "tool": "search_dotnet_metadata",
+        "source_id": "current-interop",
+        "arguments": _metadata_arguments("movement", limit_per_kind=10),
+        "evidence_need": "Which current method exposes movement?",
+        "derived_from_observation_ids": ["obs-001"],
+        "query_family_id": "request-derived-behavior",
+    }
+    observations = [
+        ToolObservation(
+            observation_id="obs-001",
+            tool="search_dotnet_metadata",
+            source_id="current-interop",
+            summary="The observation was already consumed.",
+            data={"methods": [], "types": [], "fields": []},
+        )
+    ]
+
+    resolved = _resolve_action_from_frozen_plan(
+        _family_selection("guard-family"),
+        actions=[consumed_action],
+        observations=observations,
+        agent_discovery=actual,
+    )
+
+    assert resolved["derived_from_observation_ids"] == []
+
+
 def test_supplemental_family_must_share_the_origin_engineering_question() -> None:
     plan = _actual_plan(
         behavior_goal="Find a current status observation point.",
@@ -2733,10 +2948,7 @@ def test_phase_2_nonzero_irrelevant_metadata_can_use_same_question_alternate_the
         [
             plan,
             _family_selection("request-derived-behavior"),
-            _family_selection(
-                "alternate-transition-vocabulary",
-                derived_from_observation_ids=["obs-001"],
-            ),
+            _family_selection("alternate-transition-vocabulary"),
             {
                 "action": "use_tool",
                 "tool": "inspect_method_il",
@@ -2771,6 +2983,7 @@ def test_phase_2_nonzero_irrelevant_metadata_can_use_same_question_alternate_the
     assert result.actions[1]["query_family_id"] == (
         "alternate-transition-vocabulary"
     )
+    assert result.actions[1]["derived_from_observation_ids"] == ["obs-001"]
     assert result.actions[2]["arguments"] == {
         "candidate_ref": "candidate_obs_002"
     }
