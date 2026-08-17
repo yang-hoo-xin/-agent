@@ -11,7 +11,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.libs.llm import LLMFactory, OllamaLLM
-from src.mod_agent.build import BuildCommandResult
+from src.mod_agent.bindings import BindingResolver
+from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.execution import (
     ExactDiffApprovalRejectedError,
     ExactTextPatchApplier,
@@ -28,6 +29,7 @@ from src.mod_agent.local_entry import (
     _assert_no_absolute_local_paths,
     _assert_ollama_model_identity_stable,
     _bind_objective_failure_to_single_changed_file,
+    _canonicalize_run_local_build_diagnostic_paths,
     _build_run_local_il_inspector,
     _create_nuget_isolated_build_profile,
     _external_evidence_items,
@@ -893,6 +895,66 @@ def test_nuget_isolated_profile_supports_standard_dotnet_project(
         "--no-restore",
     )
     assert profile.to_dict()["bepinex_dir"] is None
+
+
+def test_run_local_build_diagnostics_project_only_bound_target_paths(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    target_root = run_root / "generated_mods" / "Inspector"
+    target_file = target_root / "Program.cs"
+    outside_file = tmp_path / "outside" / "Other.cs"
+    target_file.parent.mkdir(parents=True)
+    outside_file.parent.mkdir(parents=True)
+    target_file.write_text("class Program {}\n", encoding="utf-8")
+    outside_file.write_text("class Other {}\n", encoding="utf-8")
+    profile = BuildProfile(
+        profile_id="standard_dotnet",
+        build_system="dotnet",
+        working_directory=str(target_root),
+        command=("dotnet", "build"),
+        timeout_seconds=120,
+    )
+    result = BuildAdapter().from_supplied_output(
+        feature_id="feature_001",
+        profile=profile,
+        exit_code=1,
+        stderr=(
+            f"{target_file}(21,3): error CS0103: target failure\n"
+            f"{outside_file}(4,2): error CS0103: outside failure"
+        ),
+    )
+
+    projected = _canonicalize_run_local_build_diagnostic_paths(
+        result,
+        run_root=run_root,
+        isolated_target_root=target_root,
+    )
+
+    assert projected.diagnostics[0].file == (
+        "generated_mods/Inspector/Program.cs"
+    )
+    assert projected.diagnostics[1].file == str(outside_file)
+    resolver = BindingResolver(
+        binding_registry={
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "canonical_target_path": (
+                        "generated_mods/Inspector/Program.cs"
+                    ),
+                }
+            ]
+        }
+    )
+    assert resolver.resolve_edit_binding_for_path(
+        str(projected.diagnostics[0].file),
+        allowed_binding_ids={"edit_binding_001"},
+    ) == ("edit_binding_001", None)
+    assert resolver.resolve_edit_binding_for_path(
+        str(projected.diagnostics[1].file),
+        allowed_binding_ids={"edit_binding_001"},
+    ) == (None, "unresolved")
 
 
 def test_nuget_isolated_runner_restores_then_builds_with_same_profile(

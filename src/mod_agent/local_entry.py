@@ -1278,6 +1278,47 @@ def _bind_objective_failure_to_single_changed_file(
     )
 
 
+def _canonicalize_run_local_build_diagnostic_paths(
+    result: BuildResult,
+    *,
+    run_root: Path,
+    isolated_target_root: Path,
+) -> BuildResult:
+    """Project proven run-local target paths back to canonical workspace paths."""
+
+    root = run_root.resolve()
+    target = isolated_target_root.resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise LocalEntryError(
+            "Run-local build target must remain inside the isolated run root."
+        ) from exc
+
+    def project(diagnostic: Any) -> Any:
+        raw_file = diagnostic.file
+        if not isinstance(raw_file, str) or not raw_file:
+            return diagnostic
+        raw_path = Path(raw_file)
+        if not raw_path.is_absolute():
+            return diagnostic
+        resolved = raw_path.resolve()
+        try:
+            resolved.relative_to(target)
+        except ValueError:
+            return diagnostic
+        return replace(
+            diagnostic,
+            file=resolved.relative_to(root).as_posix(),
+        )
+
+    return replace(
+        result,
+        diagnostics=tuple(project(item) for item in result.diagnostics),
+        warnings=tuple(project(item) for item in result.warnings),
+    )
+
+
 def _repair_history_fact_constraints(
     *,
     patch_proposal: Mapping[str, Any],
@@ -4538,12 +4579,17 @@ def run_local_request(
                 duration_ms=duration_ms,
             )
 
-        return BuildAdapter().run_local(
+        build_result = BuildAdapter().run_local(
             feature_id=feature_id,
             profile=profile,
             command_runner=command_runner,
             allow_execution=True,
             input_execution_mode=input_execution_mode,
+        )
+        return _canonicalize_run_local_build_diagnostic_paths(
+            build_result,
+            run_root=run_root,
+            isolated_target_root=target_copy,
         )
 
     direct_stagger_admission = runtime_admission.get("stagger_acceptance")
