@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from typing import Any, Callable
 
 from .discovery_contract import (
@@ -118,6 +119,7 @@ class EvidenceDiscoverySpecialist:
         self._source_query_revision: dict[str, object] | None = None
         self._source_literal_bindings: list[dict[str, object]] = []
         self._source_to_il_grounding: list[dict[str, object]] = []
+        self._source_grounded_family_ids: set[str] = set()
         self._completed_observations: list[dict[str, object]] = []
 
     @property
@@ -150,6 +152,7 @@ class EvidenceDiscoverySpecialist:
         self._source_query_revision = None
         self._source_literal_bindings = []
         self._source_to_il_grounding = []
+        self._source_grounded_family_ids = set()
         self._completed_observations = []
         self._runtime_diagnostics["failure_stage"] = "run_initialization"
         try:
@@ -426,6 +429,9 @@ class EvidenceDiscoverySpecialist:
                             "source_evidence_refs"
                         ]
                     ),
+                )
+                self._source_grounded_family_ids.add(
+                    str(self._source_query_revision["family_id"])
                 )
                 if not any(
                     item["evidence_refs"]
@@ -785,6 +791,141 @@ class EvidenceDiscoverySpecialist:
             self._runtime_diagnostics["failure_stage"] = "action_validation"
             il_source_grounding: dict[str, object] | None = None
             if self._agent_discovery is not None:
+                selected_family_id = raw_action.get("family_id")
+                if (
+                    self.source_evidence_retriever is not None
+                    and raw_action.get("action") == "use_tool"
+                    and raw_action.get("tool") == "search_dotnet_metadata"
+                    and isinstance(selected_family_id, str)
+                    and selected_family_id not in self._source_grounded_family_ids
+                ):
+                    preflight_action = _resolve_action_from_frozen_plan(
+                        raw_action,
+                        actions=actions,
+                        observations=observations,
+                        agent_discovery=self._agent_discovery,
+                    )
+                    _validate_tool_action(
+                        preflight_action,
+                        sources=sources,
+                        observations_by_id=observations_by_id,
+                        candidate_origins=candidate_origins,
+                    )
+                    _validate_action_against_frozen_plan(
+                        preflight_action,
+                        actions=actions,
+                        observations=observations,
+                        agent_discovery=self._agent_discovery,
+                    )
+                    self._runtime_diagnostics["failure_stage"] = (
+                        "supplemental_source_vocabulary_discovery"
+                    )
+                    supplemental_queries = _source_query_inputs(
+                        natural_language_request=request.natural_language_request,
+                        agent_discovery=self._agent_discovery,
+                        family_id=selected_family_id,
+                    )
+                    supplemental_pack = self.source_evidence_retriever(
+                        supplemental_queries
+                    )
+                    selection_inventory = _source_identifier_selection_inventory(
+                        supplemental_pack
+                    )
+                    if not selection_inventory:
+                        raise ValueError("SOURCE_IDENTIFIER_INVENTORY_EMPTY")
+                    supplemental_messages = (
+                        initial_messages[0],
+                        initial_messages[1],
+                        {
+                            "role": "assistant",
+                            "content": {
+                                "message_type": "frozen_actual_plan",
+                                "agent_discovery": self._agent_discovery,
+                            },
+                        },
+                        {
+                            "role": "user",
+                            "content": {
+                                "message_type": "source_evidence_observation",
+                                "required_next_action": "source_identifier_selection",
+                                "selected_query_family_id": selected_family_id,
+                                "observed_identifier_inventory": (
+                                    _source_identifier_selection_model_view(
+                                        selection_inventory
+                                    )
+                                ),
+                                "instruction": (
+                                    "Return only one to four selection_ids for listed "
+                                    "observed identifiers relevant to the selected frozen "
+                                    "family's engineering question. Do not return a family_id, "
+                                    "identifier, metadata literal, query text, evidence ref, "
+                                    "Requirement Projection, or Search Plan."
+                                ),
+                            },
+                        },
+                    )
+                    discovery_message_bytes_by_turn.append(
+                        _json_size(supplemental_messages)
+                    )
+                    self._runtime_diagnostics["failure_stage"] = (
+                        "supplemental_source_identifier_selection"
+                    )
+                    supplemental_selection = self.model.complete(
+                        supplemental_messages
+                    )
+                    self._planning_model_steps_used += 1
+                    self._agent_discovery, supplemental_revision = (
+                        _validated_source_identifier_selection_from_raw(
+                            supplemental_selection,
+                            frozen_agent_discovery=self._agent_discovery,
+                            selection_inventory=selection_inventory,
+                            sources=sources,
+                            family_id=selected_family_id,
+                        )
+                    )
+                    prompt_contract["agent_discovery_sha256"] = _json_sha256(
+                        self._agent_discovery
+                    )
+                    self._source_query_revision = supplemental_revision
+                    self._source_queries = _merge_source_queries(
+                        self._source_queries,
+                        supplemental_queries,
+                    )
+                    self._source_focus_queries = tuple(
+                        dict.fromkeys(
+                            (
+                                *self._source_focus_queries,
+                                *(
+                                    str(item["query"])
+                                    for item in supplemental_queries
+                                ),
+                            )
+                        )
+                    )
+                    self._source_evidence_pack = _merge_source_evidence_packs(
+                        self._source_evidence_pack,
+                        supplemental_pack,
+                    )
+                    supplemental_bindings = _source_metadata_literal_bindings(
+                        agent_discovery=self._agent_discovery,
+                        pack=supplemental_pack,
+                        family_id=selected_family_id,
+                        evidence_refs=tuple(
+                            str(item)
+                            for item in supplemental_revision[
+                                "source_evidence_refs"
+                            ]
+                        ),
+                    )
+                    if not supplemental_bindings or not any(
+                        item["evidence_refs"] for item in supplemental_bindings
+                    ):
+                        self._runtime_diagnostics["failure_stage"] = (
+                            "source_to_metadata_grounding"
+                        )
+                        raise ValueError("SOURCE_TO_METADATA_GROUNDING_FAILURE")
+                    self._source_literal_bindings.extend(supplemental_bindings)
+                    self._source_grounded_family_ids.add(selected_family_id)
                 try:
                     action = _resolve_action_from_frozen_plan(
                         raw_action,
@@ -1447,6 +1588,7 @@ def _source_query_inputs(
     *,
     natural_language_request: str,
     agent_discovery: dict[str, object],
+    family_id: str | None = None,
 ) -> tuple[dict[str, str], ...]:
     projection = agent_discovery.get("requirement_projection")
     search_plan = agent_discovery.get("search_plan")
@@ -1454,8 +1596,37 @@ def _source_query_inputs(
         raise ValueError("SOURCE_QUERY_CONTEXT_INVALID")
     focus = search_plan.get("initial_focus_question_id")
     questions = search_plan.get("engineering_questions")
-    if not isinstance(focus, str) or not isinstance(questions, list):
+    families = search_plan.get("query_families")
+    if (
+        not isinstance(focus, str)
+        or not isinstance(questions, list)
+        or not isinstance(families, list)
+    ):
         raise ValueError("SOURCE_QUERY_FOCUS_INVALID")
+    selected_family = next(
+        (
+            family
+            for family in families
+            if isinstance(family, dict) and family.get("family_id") == family_id
+        ),
+        None,
+    ) if family_id is not None else None
+    if family_id is not None and not isinstance(selected_family, dict):
+        raise ValueError("SOURCE_QUERY_FAMILY_UNKNOWN")
+    question_ids = (
+        list(selected_family.get("question_ids", []))
+        if isinstance(selected_family, dict)
+        else [focus]
+    )
+    selected_questions = [
+        item.get("question")
+        for item in questions
+        if isinstance(item, dict) and item.get("question_id") in question_ids
+    ]
+    if not selected_questions or any(
+        not isinstance(item, str) or not item.strip() for item in selected_questions
+    ):
+        raise ValueError("SOURCE_QUERY_QUESTION_UNKNOWN")
     focus_question = next(
         (
             item.get("question")
@@ -1465,13 +1636,23 @@ def _source_query_inputs(
         None,
     )
     raw_inputs: list[tuple[str, object]] = []
-    raw_inputs.extend(
-        ("initial_focus_query_family", query)
-        for query in _initial_focus_query_terms(agent_discovery)
-    )
+    if isinstance(selected_family, dict):
+        raw_inputs.extend(
+            ("selected_query_family", query)
+            for query in selected_family.get("queries", [])
+        )
+        raw_inputs.extend(
+            ("selected_engineering_question", question)
+            for question in selected_questions
+        )
+    else:
+        raw_inputs.extend(
+            ("initial_focus_query_family", query)
+            for query in _initial_focus_query_terms(agent_discovery)
+        )
+        raw_inputs.append(("initial_focus_question", focus_question))
     raw_inputs.extend(
         (
-            ("initial_focus_question", focus_question),
             ("natural_language_request", natural_language_request),
             (
                 "requirement_projection.behavior_goal",
@@ -1494,7 +1675,7 @@ def _source_query_inputs(
             {
                 "query_id": (
                     f"source_query_{len(result) + 1:02d}_"
-                    f"{hashlib.sha256(query.encode('utf-8')).hexdigest()[:10]}"
+                    f"{hashlib.sha256((query if family_id is None else family_id + chr(0) + query).encode('utf-8')).hexdigest()[:10]}"
                 ),
                 "origin": origin,
                 "query": query,
@@ -1505,6 +1686,100 @@ def _source_query_inputs(
     if len(result) > 24:
         raise ValueError("SOURCE_QUERY_SET_BUDGET_EXCEEDED")
     return tuple(result)
+
+
+def _merge_source_queries(
+    existing: tuple[dict[str, str], ...],
+    additional: tuple[dict[str, str], ...],
+) -> tuple[dict[str, str], ...]:
+    merged: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in (*existing, *additional):
+        query_id = str(item["query_id"])
+        if query_id in seen:
+            continue
+        merged.append(dict(item))
+        seen.add(query_id)
+    return tuple(merged)
+
+
+def _merge_source_evidence_packs(
+    existing: EvidencePack | None,
+    additional: EvidencePack,
+) -> EvidencePack:
+    if existing is None:
+        return additional
+    items = _unique_evidence_items((*existing.items, *additional.items))
+    left_budget = dict(existing.budget_summary)
+    right_budget = dict(additional.budget_summary)
+    left_query_count = int(left_budget.get("query_count", 0))
+    right_execution = [
+        {
+            **dict(item),
+            "query_index": int(item.get("query_index", 0)) + left_query_count,
+        }
+        for item in right_budget.get("source_query_execution", [])
+        if isinstance(item, dict)
+    ]
+    left_expansion = left_budget.get("bounded_identifier_reference_expansion", {})
+    right_expansion = right_budget.get("bounded_identifier_reference_expansion", {})
+    left_expansion = left_expansion if isinstance(left_expansion, dict) else {}
+    right_expansion = right_expansion if isinstance(right_expansion, dict) else {}
+    merged_budget = {
+        **left_budget,
+        "source_query_execution": [
+            *list(left_budget.get("source_query_execution", [])),
+            *right_execution,
+        ],
+        "query_count": left_query_count + int(right_budget.get("query_count", 0)),
+        "max_items": int(left_budget.get("max_items", 0))
+        + int(right_budget.get("max_items", 0)),
+        "combined_max_items": int(left_budget.get("combined_max_items", 0))
+        + int(right_budget.get("combined_max_items", 0)),
+        "admitted_item_count": len(items),
+        "observed_identifier_extraction": [
+            *list(left_budget.get("observed_identifier_extraction", [])),
+            *list(right_budget.get("observed_identifier_extraction", [])),
+        ],
+        "bounded_identifier_reference_expansion": {
+            "performed": bool(left_expansion.get("performed"))
+            or bool(right_expansion.get("performed")),
+            "query_lane_execution": [
+                *list(left_expansion.get("query_lane_execution", [])),
+                *list(right_expansion.get("query_lane_execution", [])),
+            ],
+            "admitted_evidence_refs": list(
+                dict.fromkeys(
+                    [
+                        *list(left_expansion.get("admitted_evidence_refs", [])),
+                        *list(right_expansion.get("admitted_evidence_refs", [])),
+                    ]
+                )
+            ),
+            "expansion_kind": "exact_identifier_reference_and_type_lookup",
+            "expansion_depth": max(
+                int(left_expansion.get("expansion_depth", 0)),
+                int(right_expansion.get("expansion_depth", 0)),
+            ),
+        },
+    }
+    timing = dict(existing.timing)
+    for key, value in additional.timing.items():
+        timing[key] = round(float(timing.get(key, 0.0)) + float(value), 3)
+    return replace(
+        existing,
+        readiness="partial" if items else "insufficient",
+        items=items,
+        excluded=tuple((*existing.excluded, *additional.excluded)),
+        retrieval_methods_used=tuple(
+            dict.fromkeys(
+                (*existing.retrieval_methods_used, *additional.retrieval_methods_used)
+            )
+        ),
+        disabled_modes={**existing.disabled_modes, **additional.disabled_modes},
+        timing=timing,
+        budget_summary=merged_budget,
+    )
 
 
 def _source_identifier_selection_inventory(
@@ -1574,7 +1849,6 @@ def _source_metadata_literal_bindings(
         if (
             not isinstance(family, dict)
             or family.get("family_id") != family_id
-            or focus not in family.get("question_ids", [])
         ):
             continue
         queries = family.get("queries")
@@ -2902,6 +3176,7 @@ def _validated_source_identifier_selection_from_raw(
     frozen_agent_discovery: dict[str, object],
     selection_inventory: list[dict[str, object]],
     sources: dict[str, EvidenceDiscoverySource],
+    family_id: str | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     try:
         selection = json.loads(raw)
@@ -2937,8 +3212,25 @@ def _validated_source_identifier_selection_from_raw(
     search_plan = revised.get("search_plan")
     if not isinstance(search_plan, dict):
         raise ValueError("SOURCE_IDENTIFIER_SELECTION_SEARCH_PLAN_INVALID")
-    family = _initial_focus_metadata_family(revised)
-    family_id = str(family["family_id"])
+    if family_id is None:
+        family = _initial_focus_metadata_family(revised)
+    else:
+        families = search_plan.get("query_families")
+        if not isinstance(families, list):
+            raise ValueError("SOURCE_IDENTIFIER_SELECTION_SEARCH_PLAN_INVALID")
+        family = next(
+            (
+                item
+                for item in families
+                if isinstance(item, dict)
+                and item.get("family_id") == family_id
+                and item.get("tool") == "search_dotnet_metadata"
+            ),
+            None,
+        )
+        if not isinstance(family, dict):
+            raise ValueError("SOURCE_IDENTIFIER_SELECTION_FAMILY_MISSING")
+    resolved_family_id = str(family["family_id"])
     queries = list(
         dict.fromkeys(
             str(item["observed_identifier"]) for item in selected_records
@@ -2957,7 +3249,7 @@ def _validated_source_identifier_selection_from_raw(
     validate_agent_discovery_actual(revised)
     _validate_plan_against_sources(revised, sources=sources)
     return revised, {
-        "family_id": family_id,
+        "family_id": resolved_family_id,
         "queries": list(queries),
         "source_evidence_refs": list(evidence_refs),
     }

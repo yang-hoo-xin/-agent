@@ -1481,10 +1481,7 @@ def test_lane_coverage_binds_only_executed_family_questions_and_roundtrips(
                     "evidence_need": "Verify the observed method.",
                     "derived_from_observation_ids": ["obs-001"],
                 },
-                _family_selection(
-                    "secondary-family",
-                    derived_from_observation_ids=["obs-002"],
-                ),
+                _family_selection("secondary-family"),
                 _finish_after_observed_il(),
             ]
         ),
@@ -2836,6 +2833,140 @@ def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
         "method_ref": "candidate_obs_001",
         "method_symbol": "TerminalFlow.FinishAuthentication",
     }
+
+
+def test_supplemental_family_reuses_source_identifier_selection_before_metadata(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current method exposes the initial event?"
+    secondary_question = (
+        "Which current method exposes the downstream integration boundary?"
+    )
+    plan = _actual_plan(
+        behavior_goal="Observe an event and its downstream integration boundary.",
+        queries=["initial event"],
+        evidence_need=evidence_need,
+    )
+    _add_secondary_planning_question(plan)
+    followup_finish = _finish_after_observed_il()
+    followup_finish["unresolved_questions"] = [secondary_question]
+    model = _ScriptedModel(
+        [
+            plan,
+            _source_identifier_selection("InitialSignal"),
+            _family_selection("request-derived-behavior"),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the observed initial method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            followup_finish,
+            _family_selection("secondary-integration"),
+            _source_identifier_selection("FollowupSignal"),
+        ]
+    )
+    captured_queries: list[tuple[dict[str, str], ...]] = []
+
+    def source_retriever(
+        queries: tuple[dict[str, str], ...],
+    ) -> EvidencePack:
+        captured_queries.append(queries)
+        identifier = "InitialSignal" if len(captured_queries) == 1 else "FollowupSignal"
+        evidence_id = "source_initial" if len(captured_queries) == 1 else "source_followup"
+        return EvidencePack(
+            query="bounded source query set",
+            readiness="partial",
+            can_generate_patch=False,
+            items=(
+                EvidenceItem(
+                    evidence_id=evidence_id,
+                    source_type="decompiled_api",
+                    source_path=f"{identifier}.cs",
+                    symbol=identifier,
+                    span={"start_line": 1, "end_line": 1},
+                    retrieval_method="symbol_exact",
+                    score=1.0,
+                    claim_supported=f"The source declares {identifier}.",
+                    excerpt=f"public void {identifier}()",
+                    source_hash=("B" if len(captured_queries) == 1 else "C") * 64,
+                    authority="mod_agent_deterministic",
+                    source_authority="supporting",
+                ),
+            ),
+            budget_summary={
+                "source_query_execution": [],
+                "query_count": len(queries),
+                "max_items": 36,
+                "combined_max_items": 36,
+                "admitted_item_count": 1,
+                "observed_identifier_extraction": [],
+                "bounded_identifier_reference_expansion": {
+                    "performed": False,
+                    "query_lane_execution": [],
+                    "admitted_evidence_refs": [],
+                    "expansion_kind": "exact_identifier_reference_and_type_lookup",
+                    "expansion_depth": 0,
+                },
+            },
+        )
+
+    executor = _SourceGroundedObservedToolExecutor()
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+        source_evidence_retriever=source_retriever,
+    ).discover(
+        replace(
+            _request(tmp_path, include_second_source=False),
+            natural_language_request=(
+                "When a terminal finishes authentication, briefly pulse nearby "
+                "corridor lights."
+            ),
+            require_actual_planning=True,
+            max_tool_calls=3,
+            max_model_steps=4,
+        )
+    )
+
+    assert len(captured_queries) == 2
+    assert {item["origin"] for item in captured_queries[1]} >= {
+        "selected_query_family",
+        "selected_engineering_question",
+        "natural_language_request",
+    }
+    supplemental_source_view = model.calls[6][-1]["content"]
+    assert isinstance(supplemental_source_view, dict)
+    assert supplemental_source_view["selected_query_family_id"] == (
+        "secondary-integration"
+    )
+    assert [action.get("query_family_id") for action in executor.actions] == [
+        "request-derived-behavior",
+        None,
+        "secondary-integration",
+    ]
+    assert executor.actions[2]["arguments"]["queries"] == ["FollowupSignal"]
+    families = result.agent_discovery["search_plan"]["query_families"]
+    assert next(
+        family for family in families if family["family_id"] == "secondary-integration"
+    )["queries"] == ["FollowupSignal"]
+    assert {item.evidence_id for item in result.pack.items} >= {
+        "source_initial",
+        "source_followup",
+    }
+    followup_binding = next(
+        item
+        for item in result.pack.budget_summary["source_discovery"][
+            "metadata_literal_bindings"
+        ]
+        if item["query_family_id"] == "secondary-integration"
+        and item["metadata_literal"] == "FollowupSignal"
+    )
+    assert followup_binding["evidence_refs"] == ["source_followup"]
+    payload = result.pack.to_artifact_payload()
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
 
 
 @pytest.mark.parametrize(
@@ -7265,6 +7396,82 @@ def test_agent_turn_model_maps_native_tool_call_and_bound_observation() -> None:
     assert client.requests[1].tool_results[0].call_id == "call-test-001"
     assert client.requests[1].tool_result_insert_index == 1
     assert model.usage_records[1]["total_tokens"] == 27
+
+
+def test_agent_turn_source_identifier_selection_preserves_pending_tool_result_binding() -> None:
+    client = _AgentTurnClient()
+    client.responses.insert(
+        1,
+        AgentTurnResponse(
+            provider=client.provider,
+            model=client.model,
+            content=json.dumps(
+                {
+                    "action": "select_observed_identifiers",
+                    "selection_ids": ["s01"],
+                }
+            ),
+            stop_reason="stop",
+            request_id="request-source-selection-001",
+            usage=AgentUsage(input_tokens=12, output_tokens=4),
+        ),
+    )
+    model = EvidenceDiscoveryAgentModel(
+        client,
+        disclosure=EvidenceDiscoveryDisclosure(
+            approved=True,
+            approval_id="approval-agent-turn-source-selection-001",
+            destination={"provider": client.provider, "model": client.model},
+            approved_data_classes=EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
+        ),
+    )
+
+    model.complete(
+        (
+            {"role": "system", "content": {"contract": "v2"}},
+            {"role": "user", "content": {"required_next_action": "use_tool"}},
+        )
+    )
+    selection = json.loads(
+        model.complete(
+            (
+                {"role": "system", "content": {"contract": "v2"}},
+                {
+                    "role": "user",
+                    "content": {
+                        "required_next_action": "source_identifier_selection",
+                        "observed_identifier_inventory": [
+                            {
+                                "selection_id": "s01",
+                                "observed_identifier": "ObservedSignal",
+                            }
+                        ],
+                    },
+                },
+            )
+        )
+    )
+    finish = json.loads(
+        model.complete(
+            (
+                {"role": "system", "content": {"contract": "v2"}},
+                {"role": "tool", "content": {"observation_id": "obs-001"}},
+                {"role": "user", "content": {"required_next_action": "finish"}},
+            )
+        )
+    )
+
+    assert selection == {
+        "action": "select_observed_identifiers",
+        "selection_ids": ["s01"],
+    }
+    assert finish["action"] == "finish"
+    assert client.requests[1].tools == ()
+    assert client.requests[1].tool_results == ()
+    assert client.requests[2].tool_results[0].call_id == "call-test-001"
+    assert client.requests[2].provider_state == {
+        "tool_calls": [{"id": "call-test-001"}]
+    }
 
 
 def test_agent_turn_required_tool_action_uses_existing_native_tool_contract() -> None:

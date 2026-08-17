@@ -197,6 +197,7 @@ class EvidenceDiscoveryAgentModel:
 
     def complete(self, messages: tuple[dict[str, object], ...]) -> str:
         self._runtime_stage = "model_request_construction"
+        pending_response_before_turn = self._pending_response
         agent_messages: list[AgentMessage] = []
         latest_observation: object | None = None
         tool_result_insert_index: int | None = None
@@ -368,7 +369,14 @@ class EvidenceDiscoveryAgentModel:
             self._pending_response = response
             self._runtime_stage = "adapter_action_accepted"
             return normalized_output
-        self._pending_response = None
+        if (
+            force_source_identifier_selection
+            and latest_observation is None
+            and pending_response_before_turn is not None
+        ):
+            self._pending_response = pending_response_before_turn
+        else:
+            self._pending_response = None
         self._runtime_stage = "adapter_finish_extraction"
         if not response.content or not response.content.strip():
             raise ValueError("EVIDENCE_MODEL_EMPTY_RESPONSE")
