@@ -785,12 +785,78 @@ class EvidenceDiscoverySpecialist:
             self._runtime_diagnostics["failure_stage"] = "action_validation"
             il_source_grounding: dict[str, object] | None = None
             if self._agent_discovery is not None:
-                action = _resolve_action_from_frozen_plan(
-                    raw_action,
-                    actions=actions,
-                    observations=observations,
-                    agent_discovery=self._agent_discovery,
-                )
+                try:
+                    action = _resolve_action_from_frozen_plan(
+                        raw_action,
+                        actions=actions,
+                        observations=observations,
+                        agent_discovery=self._agent_discovery,
+                    )
+                except ValueError as exc:
+                    error = str(exc)
+                    if error != "QUERY_FAMILY_ALREADY_EXECUTED":
+                        raise
+                    model_action_attempts.append(
+                        _model_action_attempt(
+                            model_step=model_step,
+                            action=raw_action,
+                            status="rejected",
+                            validation_error=error,
+                        )
+                    )
+                    if repeated_action_correction_used:
+                        return self._budget_result(
+                            request=request,
+                            actions=actions,
+                            observations=observations,
+                            candidate_origins=candidate_origins,
+                            reason=(
+                                "The single executed-family correction opportunity "
+                                "was exhausted before the model finished."
+                            ),
+                            prompt_contract=prompt_contract,
+                            model_steps_used=model_steps_used,
+                            total_observation_bytes=total_observation_bytes,
+                            discovery_message_bytes_by_turn=(
+                                discovery_message_bytes_by_turn
+                            ),
+                            model_action_attempts=model_action_attempts,
+                        )
+                    repeated_action_correction_used = True
+                    allowed_unexecuted_query_families = (
+                        _unexecuted_query_family_views(
+                            agent_discovery=self._agent_discovery,
+                            actions=actions,
+                        )
+                    )
+                    if not allowed_unexecuted_query_families:
+                        return self._budget_result(
+                            request=request,
+                            actions=actions,
+                            observations=observations,
+                            candidate_origins=candidate_origins,
+                            reason="No unexecuted frozen query family remains.",
+                            prompt_contract=prompt_contract,
+                            model_steps_used=model_steps_used,
+                            total_observation_bytes=total_observation_bytes,
+                            discovery_message_bytes_by_turn=(
+                                discovery_message_bytes_by_turn
+                            ),
+                            model_action_attempts=model_action_attempts,
+                        )
+                    tool_action_validation_error = {
+                        "error_code": error,
+                        "rejected_action_signature_sha256": _json_sha256(raw_action),
+                        "required_change": (
+                            "Select exactly one family_id from "
+                            "allowed_unexecuted_query_families."
+                        ),
+                        "finish_allowed": False,
+                        "allowed_unexecuted_query_families": (
+                            allowed_unexecuted_query_families
+                        ),
+                    }
+                    continue
                 if action != raw_action:
                     resolved_action = action
             _validate_tool_action(

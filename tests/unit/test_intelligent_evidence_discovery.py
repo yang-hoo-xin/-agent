@@ -3804,26 +3804,52 @@ def test_actual_zero_result_without_frozen_alternate_can_stop(
     )
 
 
-def test_phase_2_supplemental_search_rejects_already_executed_family_with_new_tuning(
+def test_phase_2_executed_family_gets_one_correction_to_unexecuted_family(
     tmp_path: Path,
 ) -> None:
+    class _SecondMetadataZeroExecutor(_ObservedToolExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.metadata_calls = 0
+
+        def execute(self, **kwargs) -> ToolObservation:
+            action = kwargs["action"]
+            if action["tool"] != "search_dotnet_metadata":
+                return super().execute(**kwargs)
+            self.metadata_calls += 1
+            if self.metadata_calls == 1:
+                return super().execute(**kwargs)
+            source = kwargs["source"]
+            observation_id = kwargs["observation_id"]
+            self.actions.append(action)
+            return ToolObservation(
+                observation_id=observation_id,
+                tool="search_dotnet_metadata",
+                source_id=source.source_id,
+                summary="The alternate frozen family returned no methods.",
+                data={"methods": [], "types": [], "fields": []},
+            )
+
     evidence_need = "Which current managed method exposes movement?"
     plan = _actual_plan(
         behavior_goal="Find and verify a current movement method.",
         queries=["movement"],
         evidence_need=evidence_need,
     )
+    plan["search_plan"]["query_families"].append(
+        {
+            "family_id": "guard-family",
+            "queries": ["guard"],
+            "evidence_need": evidence_need,
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
     model = _ScriptedModel(
         [
             plan,
-            {
-                "action": "use_tool",
-                "tool": "search_dotnet_metadata",
-                "source_id": "current-interop",
-                "arguments": _metadata_arguments("movement"),
-                "evidence_need": evidence_need,
-                "derived_from_observation_ids": [],
-            },
+            _family_selection("request-derived-behavior"),
             {
                 "action": "use_tool",
                 "tool": "inspect_method_il",
@@ -3832,32 +3858,97 @@ def test_phase_2_supplemental_search_rejects_already_executed_family_with_new_tu
                 "evidence_need": "Verify the observed movement method.",
                 "derived_from_observation_ids": ["obs-001"],
             },
+            _family_selection("request-derived-behavior"),
+            _family_selection("guard-family"),
             {
-                "action": "use_tool",
-                "tool": "search_dotnet_metadata",
-                "source_id": "current-interop",
-                "family_id": "request-derived-behavior",
-                "derived_from_observation_ids": ["obs-002"],
+                "action": "finish",
+                "decision": "needs_more_evidence",
+                "evidence_conclusions": [],
+                "unresolved_questions": [evidence_need],
+                "missing_capabilities": [
+                    "No additional current managed method was observed."
+                ],
             },
         ]
     )
-    executor = _ObservedToolExecutor()
+    executor = _SecondMetadataZeroExecutor()
     specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
 
-    with pytest.raises(
-        ValueError,
-        match="QUERY_FAMILY_ALREADY_EXECUTED",
-    ):
-        specialist.discover(
-            replace(
-                _request(tmp_path),
-                natural_language_request="Find and verify a current movement method.",
-                require_actual_planning=True,
-            )
+    result = specialist.discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request="Find and verify a current movement method.",
+            require_actual_planning=True,
+            max_tool_calls=3,
+            max_model_steps=5,
         )
+    )
 
-    assert len(executor.actions) == 2
-    assert specialist.runtime_diagnostics["failure_stage"] == "action_validation"
+    assert [action.get("query_family_id") for action in result.actions] == [
+        "request-derived-behavior",
+        None,
+        "guard-family",
+    ]
+    rejected = next(
+        attempt
+        for attempt in result.pack.model_action_trace
+        if attempt.get("validation_error") == "QUERY_FAMILY_ALREADY_EXECUTED"
+    )
+    assert rejected["status"] == "rejected"
+    correction = next(
+        message["content"]
+        for message in model.calls[4]
+        if isinstance(message.get("content"), dict)
+        and message["content"].get("error_code")
+        == "QUERY_FAMILY_ALREADY_EXECUTED"
+    )
+    assert correction["allowed_unexecuted_query_families"] == [
+        plan["search_plan"]["query_families"][1]
+    ]
+
+
+def test_phase_2_executed_family_repeated_after_correction_stops(
+    tmp_path: Path,
+) -> None:
+    evidence_need = "Which current managed method exposes movement?"
+    plan = _actual_plan(
+        behavior_goal="Find and verify a current movement method.",
+        queries=["movement"],
+        evidence_need=evidence_need,
+    )
+    plan["search_plan"]["query_families"].append(
+        {
+            "family_id": "guard-family",
+            "queries": ["guard"],
+            "evidence_need": evidence_need,
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    repeated = _family_selection("request-derived-behavior")
+    model = _ScriptedModel([plan, repeated, repeated, repeated])
+    executor = _ObservedToolExecutor()
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+    ).discover(
+        replace(
+            _request(tmp_path),
+            require_actual_planning=True,
+            max_tool_calls=3,
+            max_model_steps=3,
+        )
+    )
+
+    assert len(executor.actions) == 1
+    assert result.run_status == "budget_exhausted"
+    assert [
+        attempt.get("validation_error")
+        for attempt in result.pack.model_action_trace
+        if attempt["status"] == "rejected"
+    ] == ["QUERY_FAMILY_ALREADY_EXECUTED", "QUERY_FAMILY_ALREADY_EXECUTED"]
 
 
 def test_phase_2_type_and_field_hits_do_not_enable_exact_il(

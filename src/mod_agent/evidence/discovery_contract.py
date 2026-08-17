@@ -224,7 +224,11 @@ class EvidenceDiscoveryAgentModel:
             if (
                 isinstance(content, dict)
                 and content.get("message_type") == "tool_action_validation_error"
-                and content.get("error_code") == "OPEN_REQUIREMENT_FOLLOWUP_REQUIRED"
+                and content.get("error_code")
+                in {
+                    "OPEN_REQUIREMENT_FOLLOWUP_REQUIRED",
+                    "QUERY_FAMILY_ALREADY_EXECUTED",
+                }
             ):
                 force_family_selection = True
             if isinstance(content, dict) and content.get("required_next_action") == "plan":
