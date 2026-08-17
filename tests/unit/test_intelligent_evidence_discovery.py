@@ -2627,7 +2627,10 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
         == {
             "selection_id",
             "observed_identifier",
+            "extraction_kind",
             "source_path",
+            "source_paths",
+            "source_evidence_count",
             "source_fact",
         }
         for item in inventory
@@ -2645,6 +2648,9 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
     assert enemy_reaction_view["source_fact"] == (
         "public class EnemyReaction { public void NotifyReaction() {} }"
     )
+    assert enemy_reaction_view["extraction_kind"] == "identity_field"
+    assert enemy_reaction_view["source_paths"] == ["EnemyReaction.cs"]
+    assert enemy_reaction_view["source_evidence_count"] >= 1
     assert pack.agent_discovery["search_plan"]["query_families"][0]["queries"] == [
         "EnemyReaction"
     ]

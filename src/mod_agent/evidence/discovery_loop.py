@@ -1812,11 +1812,22 @@ def _source_identifier_selection_model_view(
         {
             "selection_id": item["selection_id"],
             "observed_identifier": item["observed_identifier"],
+            "extraction_kind": item["extraction_kind"],
             "source_path": (
                 item["source_paths"][0]
                 if isinstance(item.get("source_paths"), list)
                 and item["source_paths"]
                 else None
+            ),
+            "source_paths": (
+                list(item["source_paths"][:3])
+                if isinstance(item.get("source_paths"), list)
+                else []
+            ),
+            "source_evidence_count": (
+                len(item["source_evidence_refs"])
+                if isinstance(item.get("source_evidence_refs"), list)
+                else 0
             ),
             "source_fact": (
                 item["source_fact_views"][0]
