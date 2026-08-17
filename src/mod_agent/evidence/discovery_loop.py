@@ -2051,6 +2051,8 @@ def _build_turn_messages(
         method_comparison = _method_focus_comparison(
             pending_observation,
             agent_discovery=agent_discovery,
+            actions=actions,
+            observations=observations,
         )
         if method_comparison is not None:
             messages.append({"role": "user", "content": method_comparison})
@@ -2181,6 +2183,8 @@ def _method_focus_comparison(
     observation: ToolObservation,
     *,
     agent_discovery: dict[str, object] | None,
+    actions: list[dict[str, object]],
+    observations: list[ToolObservation],
 ) -> dict[str, object] | None:
     """Expose observed method shape beside the frozen initial-focus question."""
 
@@ -2203,6 +2207,44 @@ def _method_focus_comparison(
     )
     if not isinstance(focus_question, str) or not focus_question:
         return None
+    if (
+        not actions
+        or len(actions) != len(observations)
+        or observations[-1].observation_id != observation.observation_id
+    ):
+        return None
+    current_action = actions[-1]
+    family_id = current_action.get("query_family_id")
+    families = search_plan.get("query_families")
+    current_family = next(
+        (
+            item
+            for item in families
+            if isinstance(item, dict) and item.get("family_id") == family_id
+        ),
+        None,
+    ) if isinstance(families, list) and isinstance(family_id, str) else None
+    prior_metadata_observations: dict[
+        tuple[str, str, str], list[str]
+    ] = {}
+    inspection_observations: dict[tuple[str, str, str], list[str]] = {}
+    for prior in observations[:-1]:
+        if prior.tool == "search_dotnet_metadata":
+            prior_methods = prior.data.get("methods")
+            if not isinstance(prior_methods, list):
+                continue
+            for raw in prior_methods:
+                identity = _method_comparison_identity(prior.source_id, raw)
+                if identity is not None:
+                    prior_metadata_observations.setdefault(identity, []).append(
+                        prior.observation_id
+                    )
+        elif prior.tool == "inspect_method_il":
+            identity = _method_comparison_identity(prior.source_id, prior.data)
+            if identity is not None:
+                inspection_observations.setdefault(identity, []).append(
+                    prior.observation_id
+                )
     methods: list[dict[str, object]] = []
     raw_methods = observation.data.get("methods")
     if not isinstance(raw_methods, list):
@@ -2222,6 +2264,17 @@ def _method_focus_comparison(
             method_kind = "property_accessor"
         else:
             method_kind = "ordinary_method"
+        identity = _method_comparison_identity(observation.source_id, raw)
+        inspected_in = inspection_observations.get(identity, []) if identity else []
+        previously_observed_in = (
+            prior_metadata_observations.get(identity, []) if identity else []
+        )
+        if inspected_in:
+            verification_state = "already_inspected"
+        elif previously_observed_in:
+            verification_state = "previously_observed_uninspected"
+        else:
+            verification_state = "new_uninspected"
         methods.append(
             {
                 "candidate_ref": raw["candidate_ref"],
@@ -2229,6 +2282,9 @@ def _method_focus_comparison(
                 "matched_queries": list(raw.get("matched_queries") or []),
                 "has_method_body": raw.get("has_method_body"),
                 "method_kind": method_kind,
+                "verification_state": verification_state,
+                "previous_metadata_observation_ids": list(previously_observed_in),
+                "inspection_observation_ids": list(inspected_in),
             }
         )
     if not methods:
@@ -2238,16 +2294,44 @@ def _method_focus_comparison(
         "initial_focus_question_id": focus_id,
         "initial_focus_question": focus_question,
         "metadata_observation_id": observation.observation_id,
+        "query_family_id": family_id,
+        "family_question_ids": (
+            list(current_family.get("question_ids") or [])
+            if isinstance(current_family, dict)
+            else []
+        ),
+        "evidence_need": (
+            current_family.get("evidence_need")
+            if isinstance(current_family, dict)
+            else current_action.get("evidence_need")
+        ),
         "methods": methods,
         "instruction": (
             "Compare each observed symbol and matched_queries with the exact initial "
-            "focus question before selecting inspect_method_il. Prefer an ordinary "
-            "behavior method that directly addresses the focus. A constructor or "
-            "property accessor is structural evidence unless the focus explicitly "
-            "asks about construction or property access. Use only one listed "
-            "candidate_ref and bind it to metadata_observation_id."
+            "focus question and evidence_need before selecting inspect_method_il. "
+            "Do not reinspect a method marked already_inspected. Prefer a new_uninspected "
+            "ordinary behavior method that directly addresses the focus; a "
+            "previously_observed_uninspected method remains available when it supplies "
+            "new evidence. A constructor or property accessor is structural evidence "
+            "unless the focus explicitly asks about construction or property access. "
+            "Use only one listed candidate_ref and bind it to metadata_observation_id. "
+            "When none addresses the open question, choose an unexecuted frozen family "
+            "or finish with grounded missing evidence."
         ),
     }
+
+
+def _method_comparison_identity(
+    source_id: str,
+    raw: object,
+) -> tuple[str, str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+    symbol = raw.get("symbol")
+    metadata_token = raw.get("metadata_token")
+    if not isinstance(symbol, str) or not isinstance(metadata_token, str):
+        return None
+    return source_id, symbol, metadata_token
 
 
 def _resolve_finish_fact_handles(

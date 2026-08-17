@@ -4903,8 +4903,39 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
 
 
 def test_metadata_method_view_compares_observed_methods_with_initial_focus() -> None:
-    observation = ToolObservation(
+    earlier_metadata = ToolObservation(
         observation_id="obs-001",
+        tool="search_dotnet_metadata",
+        source_id="current-interop",
+        summary="An earlier method was observed.",
+        data={
+            "methods": [
+                {
+                    "candidate_ref": "ref-earlier",
+                    "symbol": "Observed.Reaction.ActivateState",
+                    "metadata_token": "0x06000002",
+                },
+                {
+                    "candidate_ref": "ref-unchecked",
+                    "symbol": "Observed.Reaction.Enter",
+                    "metadata_token": "0x06000003",
+                },
+            ]
+        },
+    )
+    inspection = ToolObservation(
+        observation_id="obs-002",
+        tool="inspect_method_il",
+        source_id="current-interop",
+        summary="Exact IL was read.",
+        data={
+            "candidate_ref": "ref-earlier",
+            "symbol": "Observed.Reaction.ActivateState",
+            "metadata_token": "0x06000002",
+        },
+    )
+    observation = ToolObservation(
+        observation_id="obs-003",
         tool="search_dotnet_metadata",
         source_id="current-interop",
         summary="Two methods were observed.",
@@ -4913,13 +4944,22 @@ def test_metadata_method_view_compares_observed_methods_with_initial_focus() -> 
                 {
                     "candidate_ref": "ref-constructor",
                     "symbol": "Observed.Reaction..ctor",
+                    "metadata_token": "0x06000001",
                     "matched_queries": ["Reaction"],
                     "has_method_body": True,
                 },
                 {
                     "candidate_ref": "ref-behavior",
                     "symbol": "Observed.Reaction.ActivateState",
+                    "metadata_token": "0x06000002",
                     "matched_queries": ["Reaction", "ActivateState"],
+                    "has_method_body": True,
+                },
+                {
+                    "candidate_ref": "ref-unchecked-now",
+                    "symbol": "Observed.Reaction.Enter",
+                    "metadata_token": "0x06000003",
+                    "matched_queries": ["Reaction"],
                     "has_method_body": True,
                 },
             ]
@@ -4934,6 +4974,18 @@ def test_metadata_method_view_compares_observed_methods_with_initial_focus() -> 
     comparison = _method_focus_comparison(
         observation,
         agent_discovery=agent_discovery,
+        actions=[
+            {
+                "tool": "search_dotnet_metadata",
+                "query_family_id": "request-derived-behavior",
+            },
+            {"tool": "inspect_method_il"},
+            {
+                "tool": "search_dotnet_metadata",
+                "query_family_id": "request-derived-behavior",
+            },
+        ],
+        observations=[earlier_metadata, inspection, observation],
     )
 
     assert comparison is not None
@@ -4941,12 +4993,27 @@ def test_metadata_method_view_compares_observed_methods_with_initial_focus() -> 
     assert comparison["initial_focus_question"] == (
         "Which current method observes the requested state transition?"
     )
-    assert comparison["metadata_observation_id"] == "obs-001"
+    assert comparison["metadata_observation_id"] == "obs-003"
+    assert comparison["query_family_id"] == "request-derived-behavior"
+    assert comparison["family_question_ids"] == ["question-primary"]
+    assert comparison["evidence_need"] == (
+        "Which current method observes the requested state transition?"
+    )
     assert [item["method_kind"] for item in comparison["methods"]] == [
         "constructor",
         "ordinary_method",
+        "ordinary_method",
     ]
     assert comparison["methods"][1]["candidate_ref"] == "ref-behavior"
+    assert [item["verification_state"] for item in comparison["methods"]] == [
+        "new_uninspected",
+        "already_inspected",
+        "previously_observed_uninspected",
+    ]
+    assert comparison["methods"][1]["inspection_observation_ids"] == ["obs-002"]
+    assert comparison["methods"][2]["previous_metadata_observation_ids"] == [
+        "obs-001"
+    ]
 
 
 def test_finish_fact_handle_expands_to_frozen_canonical_fact(tmp_path: Path) -> None:
