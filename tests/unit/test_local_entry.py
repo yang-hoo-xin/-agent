@@ -861,6 +861,40 @@ def test_nuget_isolated_profile_binds_explicit_run_local_inputs(
     ).hexdigest()
 
 
+def test_nuget_isolated_profile_supports_standard_dotnet_project(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    project = run_root / "generated_mods" / "Inspector"
+    project.mkdir(parents=True)
+    config = project / "nuget.config"
+    config.write_text("<configuration />", encoding="utf-8")
+
+    profile = _create_nuget_isolated_build_profile(
+        run_root=run_root,
+        working_directory=project,
+        config_file=config,
+        bepinex_dir=None,
+        timeout_seconds=120,
+    )
+
+    assert profile.bepinex_dir is None
+    assert profile.restore_command == (
+        "dotnet",
+        "restore",
+        "--configfile",
+        str(profile.config_file),
+        "--packages",
+        str(profile.packages_path),
+    )
+    assert profile.build_command == (
+        "dotnet",
+        "build",
+        "--no-restore",
+    )
+    assert profile.to_dict()["bepinex_dir"] is None
+
+
 def test_nuget_isolated_runner_restores_then_builds_with_same_profile(
     tmp_path: Path,
 ) -> None:

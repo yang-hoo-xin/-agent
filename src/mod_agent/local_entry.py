@@ -976,7 +976,7 @@ class NuGetIsolatedBuildProfile:
     appdata_path: Path
     user_config_file: Path
     additional_user_config_path: Path
-    bepinex_dir: Path
+    bepinex_dir: Path | None
     timeout_seconds: int
     restore_command: tuple[str, ...]
     build_command: tuple[str, ...]
@@ -1010,7 +1010,9 @@ class NuGetIsolatedBuildProfile:
             "user_config_source_sha256": hashlib.sha256(
                 self.config_file.read_bytes()
             ).hexdigest(),
-            "bepinex_dir": str(self.bepinex_dir),
+            "bepinex_dir": (
+                str(self.bepinex_dir) if self.bepinex_dir is not None else None
+            ),
             "timeout_seconds": self.timeout_seconds,
             "restore_command": list(self.restore_command),
             "build_command": list(self.build_command),
@@ -1089,24 +1091,29 @@ def _create_nuget_isolated_build_profile(
     run_root: Path,
     working_directory: Path,
     config_file: Path,
-    bepinex_dir: Path,
+    bepinex_dir: Path | None,
     timeout_seconds: int,
 ) -> NuGetIsolatedBuildProfile:
     root = run_root.resolve()
     working = working_directory.resolve()
     config = config_file.resolve()
-    bepinex = bepinex_dir.resolve()
+    bepinex = bepinex_dir.resolve() if bepinex_dir is not None else None
     for label, path in (
         ("working_directory", working),
         ("config_file", config),
-        ("bepinex_dir", bepinex),
     ):
         _require_run_local_build_path(root=root, path=path, label=label)
+    if bepinex is not None:
+        _require_run_local_build_path(
+            root=root,
+            path=bepinex,
+            label="bepinex_dir",
+        )
     if not working.is_dir():
         raise LocalEntryError("NuGet-isolated build working directory is missing.")
     if not config.is_file():
         raise LocalEntryError("NuGet-isolated build config file is missing.")
-    if not bepinex.is_dir():
+    if bepinex is not None and not bepinex.is_dir():
         raise LocalEntryError("NuGet-isolated build BepInEx directory is missing.")
     if timeout_seconds <= 0:
         raise LocalEntryError("NuGet-isolated build timeout must be positive.")
@@ -1119,7 +1126,9 @@ def _create_nuget_isolated_build_profile(
     appdata = root / "build_environment" / "appdata"
     user_config = appdata / "NuGet" / "NuGet.Config"
     additional_user_config = appdata / "NuGet" / "config"
-    bepinex_property = f"-p:BepInExDir={bepinex}"
+    bepinex_arguments = (
+        (f"-p:BepInExDir={bepinex}",) if bepinex is not None else ()
+    )
     return NuGetIsolatedBuildProfile(
         profile_id="v2_codegen_real_local_dotnet_nuget_isolated",
         run_root=root,
@@ -1141,13 +1150,13 @@ def _create_nuget_isolated_build_profile(
             str(config),
             "--packages",
             str(packages),
-            bepinex_property,
+            *bepinex_arguments,
         ),
         build_command=(
             "dotnet",
             "build",
             "--no-restore",
-            bepinex_property,
+            *bepinex_arguments,
         ),
     )
 
@@ -3447,9 +3456,12 @@ def run_local_request(
     source_project = source_projects[0]
     assembly_name = _run_pre_graph_step(
         failure_stage="baseline_profile",
-        action=lambda: _project_text_property(
-            source_project,
-            property_name="AssemblyName",
+        action=lambda: (
+            _optional_project_text_property(
+                source_project,
+                property_name="AssemblyName",
+            )
+            or source_project.stem
         ),
         run_root=run_root,
         run_id=run_id,
@@ -3457,9 +3469,9 @@ def run_local_request(
         source_revision_binding=source_revision_binding,
         model_admission=model_admission,
     )
-    source_bepinex_dir = _run_pre_graph_step(
+    source_bepinex_value = _run_pre_graph_step(
         failure_stage="baseline_profile",
-        action=lambda: _resolve_project_path_property(
+        action=lambda: _optional_project_text_property(
             source_project,
             property_name="BepInExDir",
         ),
@@ -3469,7 +3481,16 @@ def run_local_request(
         source_revision_binding=source_revision_binding,
         model_admission=model_admission,
     )
-    if not source_bepinex_dir.is_dir():
+    source_bepinex_dir = (
+        Path(source_bepinex_value.replace("\\", os.sep))
+        if source_bepinex_value is not None
+        else None
+    )
+    if source_bepinex_dir is not None and not source_bepinex_dir.is_absolute():
+        source_bepinex_dir = (source_project.parent / source_bepinex_dir).resolve()
+    elif source_bepinex_dir is not None:
+        source_bepinex_dir = source_bepinex_dir.resolve()
+    if source_bepinex_dir is not None and not source_bepinex_dir.is_dir():
         error = LocalEntryError(f"Resolved BepInExDir is missing: {source_bepinex_dir}")
         _persist_pre_graph_failure(
             run_root=run_root,
@@ -3481,17 +3502,27 @@ def run_local_request(
             model_admission=model_admission,
         )
         raise error
-    isolated_bepinex_dir = run_root / "build_dependencies" / "BepInEx"
-    isolated_bepinex_dir.parent.mkdir(parents=True)
-    _run_pre_graph_step(
-        failure_stage="build_dependency_preparation",
-        action=lambda: shutil.copytree(source_bepinex_dir, isolated_bepinex_dir),
-        run_root=run_root,
-        run_id=run_id,
-        request_id=request_id,
-        source_revision_binding=source_revision_binding,
-        model_admission=model_admission,
+    isolated_bepinex_dir: Path | None = None
+    if source_bepinex_dir is not None:
+        isolated_bepinex_dir = run_root / "build_dependencies" / "BepInEx"
+        isolated_bepinex_dir.parent.mkdir(parents=True)
+        _run_pre_graph_step(
+            failure_stage="build_dependency_preparation",
+            action=lambda: shutil.copytree(source_bepinex_dir, isolated_bepinex_dir),
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+        )
+    isolated_nuget_config = (
+        b'<?xml version="1.0" encoding="utf-8"?>\n'
+        b"<configuration><packageSources><clear /></packageSources></configuration>\n"
     )
+    for copied_project_root in (target_copy, baseline_copy):
+        copied_config = copied_project_root / "nuget.config"
+        if not copied_config.exists():
+            copied_config.write_bytes(isolated_nuget_config)
     nuget_build_profile = _run_pre_graph_step(
         failure_stage="baseline_profile",
         action=lambda: _create_nuget_isolated_build_profile(
@@ -3571,7 +3602,23 @@ def run_local_request(
     )
     baseline_stdout.write_text(baseline.stdout, encoding="utf-8")
     baseline_stderr.write_text(baseline.stderr, encoding="utf-8")
-    expected_artifact = f"bin/Debug/{assembly_name}.dll"
+    target_framework = _optional_project_text_property(
+        source_project,
+        property_name="TargetFramework",
+    )
+    append_target_framework = _optional_project_text_property(
+        source_project,
+        property_name="AppendTargetFrameworkToOutputPath",
+    )
+    append_target_framework_directory = (
+        target_framework is not None
+        and append_target_framework != "false"
+    )
+    expected_artifact = (
+        f"bin/Debug/{target_framework}/{assembly_name}.dll"
+        if append_target_framework_directory
+        else f"bin/Debug/{assembly_name}.dll"
+    )
     if run_gtfo_runtime:
         admitted_destination = Path(
             str(runtime_admission["plugin_deployment"]["destination_path"])
@@ -4589,9 +4636,17 @@ def run_local_request(
         "runtime_admission": runtime_admission,
         "assembly_name": assembly_name,
         "build_dependency": {
-            "source": str(source_bepinex_dir),
-            "isolated_copy": str(isolated_bepinex_dir),
-            "build_uses_isolated_copy": True,
+            "source": (
+                str(source_bepinex_dir)
+                if source_bepinex_dir is not None
+                else None
+            ),
+            "isolated_copy": (
+                str(isolated_bepinex_dir)
+                if isolated_bepinex_dir is not None
+                else None
+            ),
+            "build_uses_isolated_copy": isolated_bepinex_dir is not None,
         },
         "nuget_isolated_build_profile": nuget_build_profile.to_dict(),
         "compiled_artifact_inspection_profile": (
@@ -10709,6 +10764,26 @@ def _resolve_project_path_property(project_file: Path, *, property_name: str) ->
         )
     )
     return value.resolve() if value.is_absolute() else (project_file.parent / value).resolve()
+
+
+def _optional_project_text_property(
+    project_file: Path,
+    *,
+    property_name: str,
+) -> str | None:
+    root = ET.parse(project_file).getroot()
+    values = [
+        item.text.strip()
+        for item in root.iter(property_name)
+        if isinstance(item.text, str) and item.text.strip()
+    ]
+    if not values:
+        return None
+    if len(values) != 1:
+        raise LocalEntryError(
+            f"Project file must define at most one non-empty {property_name}."
+        )
+    return values[0]
 
 
 def _project_text_property(project_file: Path, *, property_name: str) -> str:
