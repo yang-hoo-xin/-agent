@@ -1423,6 +1423,12 @@ def _source_identifier_selection_model_view(
                 and item["source_paths"]
                 else None
             ),
+            "source_fact": (
+                item["source_fact_views"][0]
+                if isinstance(item.get("source_fact_views"), list)
+                and item["source_fact_views"]
+                else None
+            ),
         }
         for item in inventory
     ]

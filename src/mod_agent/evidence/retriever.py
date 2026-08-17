@@ -658,6 +658,7 @@ class DeterministicEvidenceRetriever:
                     "score": score,
                     "source_evidence_refs": [],
                     "source_paths": [],
+                    "source_fact_views": [],
                 },
             )
             if score > int(record["score"]):
@@ -665,12 +666,23 @@ class DeterministicEvidenceRetriever:
                 record["extraction_kind"] = extraction_kind
             evidence_refs = record["source_evidence_refs"]
             source_paths = record["source_paths"]
-            if not isinstance(evidence_refs, list) or not isinstance(source_paths, list):
+            source_fact_views = record["source_fact_views"]
+            if (
+                not isinstance(evidence_refs, list)
+                or not isinstance(source_paths, list)
+                or not isinstance(source_fact_views, list)
+            ):
                 raise RuntimeError("Observed identifier inventory record is invalid.")
             if item.evidence_id not in evidence_refs:
                 evidence_refs.append(item.evidence_id)
             if item.source_path not in source_paths:
                 source_paths.append(item.source_path)
+            source_fact = cls._bounded_identifier_source_fact(
+                item.excerpt,
+                identifier=normalized,
+            )
+            if source_fact and source_fact not in source_fact_views:
+                source_fact_views.append(source_fact)
 
         for item in items:
             for value in (
@@ -736,9 +748,30 @@ class DeterministicEvidenceRetriever:
                 "extraction_kind": str(record["extraction_kind"]),
                 "source_evidence_refs": list(record["source_evidence_refs"]),
                 "source_paths": list(record["source_paths"]),
+                "source_fact_views": list(record["source_fact_views"]),
             }
             for record in ranked[:max_identifiers]
         ]
+
+    @staticmethod
+    def _bounded_identifier_source_fact(
+        excerpt: str,
+        *,
+        identifier: str,
+        max_characters: int = 280,
+    ) -> str:
+        """Return a bounded actual-source view around an observed identifier."""
+
+        normalized = " ".join(excerpt.split())
+        if len(normalized) <= max_characters:
+            return normalized
+        position = normalized.casefold().find(identifier.casefold())
+        if position < 0:
+            return normalized[:max_characters]
+        start = max(0, position - (max_characters // 3))
+        end = min(len(normalized), start + max_characters)
+        start = max(0, end - max_characters)
+        return normalized[start:end]
 
     @classmethod
     def _identifier_forms(cls, identifier: str) -> tuple[tuple[str, str], ...]:

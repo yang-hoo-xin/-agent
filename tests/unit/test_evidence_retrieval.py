@@ -647,6 +647,9 @@ def test_model_selection_inventory_prioritizes_observed_dotted_method_identity()
             "extraction_kind": "source_excerpt",
             "source_evidence_refs": ["source_terminal_callback"],
             "source_paths": ["TerminalFlow.cs"],
+            "source_fact_views": [
+                "authenticationEvents.MarkAuthenticationComplete();"
+            ],
         }
     ]
 

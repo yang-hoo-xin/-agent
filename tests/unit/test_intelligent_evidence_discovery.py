@@ -2464,14 +2464,27 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
     inventory = source_observation["observed_identifier_inventory"]
     assert len(inventory) <= 64
     assert all(
-        set(item) == {"selection_id", "observed_identifier", "source_path"}
+        set(item)
+        == {
+            "selection_id",
+            "observed_identifier",
+            "source_path",
+            "source_fact",
+        }
         for item in inventory
     )
     assert "source_evidence_refs" not in json.dumps(inventory)
-    assert "excerpt" not in json.dumps(inventory)
     assert any(
         item["observed_identifier"] == "EnemyReaction"
         for item in inventory
+    )
+    enemy_reaction_view = next(
+        item
+        for item in inventory
+        if item["observed_identifier"] == "EnemyReaction"
+    )
+    assert enemy_reaction_view["source_fact"] == (
+        "public class EnemyReaction { public void NotifyReaction() {} }"
     )
     assert pack.agent_discovery["search_plan"]["query_families"][0]["queries"] == [
         "EnemyReaction"
