@@ -213,7 +213,7 @@ class EvidenceDiscoverySpecialist:
                             "Implementation hints are investigation_lead values, not facts or decisions.",
                             "planning_blocking_questions are engineering requirements that authorized actual evidence must answer before implementation planning; they are not user ambiguities or expected missing facts.",
                             "A ready projection states at least one engineering requirement for actual evidence to answer. Deterministic code assigns stable identities after this turn.",
-                            "For a request where an observable event or state X leads to a downstream effect Y, keep observability of X planning-blocking and defer presentation or implementation of Y, the X-to-Y system connection, deduplication, boundary regression, and final Runtime correctness.",
+                            "For a request where an observable event or state X leads to a downstream effect Y, planning_blocking_questions must ask only how X is observed and how the stated actor, input, and target relate to X. Defer presentation or implementation of Y, the X-to-Y system connection, deduplication, boundary regression, and final Runtime correctness. A question about attaching, displaying, playing, rendering, or implementing Y is not a planning blocker for this first slice.",
                             "Do not include a final Hook identity, Golden, expected evidence, historical answer, or prior output.",
                             "Do not produce engineering_questions, source roles, lanes, query families, tools, or search terms in this turn.",
                             "planning_status is advisory; deterministic validation decides whether this projection is meaningful.",
@@ -494,6 +494,7 @@ class EvidenceDiscoverySpecialist:
         finish_correction_used = False
         tool_action_validation_error: dict[str, object] | None = None
         zero_result_recovery_correction_used = False
+        open_requirement_followup_correction_used = False
         repeated_action_correction_used = False
         executed_tool_action_signatures: set[str] = set()
 
@@ -550,6 +551,59 @@ class EvidenceDiscoverySpecialist:
                     model_action_attempts=model_action_attempts,
                 )
             if action["action"] == "finish":
+                open_requirement_followup_families = (
+                    _unexecuted_query_family_views_for_unresolved_requirements(
+                        finish=action,
+                        agent_discovery=self._agent_discovery,
+                        actions=actions,
+                    )
+                    if self._agent_discovery is not None
+                    and action.get("decision") == "needs_more_evidence"
+                    and len(actions) < request.max_tool_calls
+                    else []
+                )
+                if open_requirement_followup_families:
+                    model_action_attempts.append(
+                        _model_action_attempt(
+                            model_step=model_step,
+                            action=action,
+                            status="rejected",
+                            validation_error="OPEN_REQUIREMENT_FOLLOWUP_REQUIRED",
+                        )
+                    )
+                    if open_requirement_followup_correction_used:
+                        return self._budget_result(
+                            request=request,
+                            actions=actions,
+                            observations=observations,
+                            candidate_origins=candidate_origins,
+                            reason=(
+                                "The bounded open-requirement follow-up opportunity "
+                                "was not used for a frozen query family."
+                            ),
+                            prompt_contract=prompt_contract,
+                            model_steps_used=model_steps_used,
+                            total_observation_bytes=total_observation_bytes,
+                            discovery_message_bytes_by_turn=(
+                                discovery_message_bytes_by_turn
+                            ),
+                            model_action_attempts=model_action_attempts,
+                        )
+                    open_requirement_followup_correction_used = True
+                    tool_action_validation_error = {
+                        "error_code": "OPEN_REQUIREMENT_FOLLOWUP_REQUIRED",
+                        "rejected_action_signature_sha256": _json_sha256(action),
+                        "required_change": (
+                            "Select exactly one family_id from "
+                            "allowed_unexecuted_query_families. Deterministic code "
+                            "expands its frozen tool, queries, source, and evidence need."
+                        ),
+                        "finish_allowed": False,
+                        "allowed_unexecuted_query_families": (
+                            open_requirement_followup_families
+                        ),
+                    }
+                    continue
                 zero_result_recovery_required = _zero_result_recovery_required(
                     actions=actions,
                     observations=observations,
@@ -1715,6 +1769,16 @@ def _build_turn_messages(
         )
     remaining_tool_calls = request.max_tool_calls - len(actions)
     acceptance_progress = _acceptance_progress(observations)
+    available_unexecuted_query_families = (
+        _unexecuted_query_family_views(
+            agent_discovery=agent_discovery,
+            actions=actions,
+        )
+        if agent_discovery is not None
+        and acceptance_progress["progress"]["inspect_method_il_observation_ids"]
+        and remaining_tool_calls > 0
+        else []
+    )
     messages.append(
         {
             "role": "user",
@@ -1728,6 +1792,15 @@ def _build_turn_messages(
                 "remaining_acceptance_requirements": acceptance_progress[
                     "remaining_requirements"
                 ],
+                **(
+                    {
+                        "available_unexecuted_query_families": (
+                            available_unexecuted_query_families
+                        )
+                    }
+                    if available_unexecuted_query_families
+                    else {}
+                ),
                 "required_next_action": (
                     "finish"
                     if remaining_tool_calls == 0 or finish_validation_error is not None
@@ -3276,6 +3349,75 @@ def _unexecuted_query_family_views(
                 and {str(value) for value in family["question_ids"]}
                 == required_question_ids
             )
+        )
+    ]
+
+
+def _unexecuted_query_family_views_for_unresolved_requirements(
+    *,
+    finish: dict[str, object],
+    agent_discovery: dict[str, object],
+    actions: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    projection = agent_discovery.get("requirement_projection")
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(projection, dict) or not isinstance(search_plan, dict):
+        return []
+    blockers = projection.get("planning_blocking_questions")
+    questions = search_plan.get("engineering_questions")
+    if not isinstance(blockers, list) or not isinstance(questions, list):
+        return []
+    unresolved_text = {
+        value.casefold()
+        for value in finish.get("unresolved_questions", [])
+        if isinstance(value, str)
+    }
+    unresolved_requirement_ids = {
+        str(blocker["requirement_id"])
+        for blocker in blockers
+        if isinstance(blocker, dict)
+        and isinstance(blocker.get("requirement_id"), str)
+        and isinstance(blocker.get("question"), str)
+        and blocker["question"].casefold() in unresolved_text
+    }
+    conclusions = finish.get("evidence_conclusions")
+    if isinstance(conclusions, list):
+        for conclusion in conclusions:
+            if not isinstance(conclusion, dict) or conclusion.get("relationship") not in {
+                "missing",
+                "conflict",
+            }:
+                continue
+            requirement_ids = conclusion.get("requirement_ids")
+            if isinstance(requirement_ids, list):
+                unresolved_requirement_ids.update(
+                    str(value) for value in requirement_ids if isinstance(value, str)
+                )
+    if not unresolved_requirement_ids:
+        return []
+    unresolved_question_ids = {
+        str(question["question_id"])
+        for question in questions
+        if isinstance(question, dict)
+        and isinstance(question.get("question_id"), str)
+        and isinstance(question.get("requirement_ids"), list)
+        and unresolved_requirement_ids.intersection(
+            str(value)
+            for value in question["requirement_ids"]
+            if isinstance(value, str)
+        )
+    }
+    return [
+        family
+        for family in _unexecuted_query_family_views(
+            agent_discovery=agent_discovery,
+            actions=actions,
+        )
+        if isinstance(family.get("question_ids"), list)
+        and unresolved_question_ids.intersection(
+            str(value)
+            for value in family["question_ids"]
+            if isinstance(value, str)
         )
     ]
 

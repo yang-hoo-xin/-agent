@@ -2032,6 +2032,168 @@ def test_supplemental_family_does_not_bind_ambiguous_pending_observations() -> N
     assert resolved["derived_from_observation_ids"] == []
 
 
+def test_strict_roundtrip_proves_supplemental_observation_binding(
+    tmp_path: Path,
+) -> None:
+    class _SecondMetadataZeroExecutor(_ObservedToolExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.metadata_calls = 0
+
+        def execute(self, **kwargs) -> ToolObservation:
+            action = kwargs["action"]
+            if action["tool"] != "search_dotnet_metadata":
+                return super().execute(**kwargs)
+            self.metadata_calls += 1
+            if self.metadata_calls == 1:
+                return super().execute(**kwargs)
+            source = kwargs["source"]
+            observation_id = kwargs["observation_id"]
+            self.actions.append(action)
+            return ToolObservation(
+                observation_id=observation_id,
+                tool="search_dotnet_metadata",
+                source_id=source.source_id,
+                summary="The bounded metadata search returned no methods.",
+                data={"methods": [], "types": [], "fields": []},
+            )
+
+    evidence_need = "Which current method exposes movement?"
+    plan = _actual_plan(
+        behavior_goal="Find a current movement observation point.",
+        queries=["movement"],
+        evidence_need=evidence_need,
+    )
+    plan["search_plan"]["query_families"].append(
+        {
+            "family_id": "guard-family",
+            "queries": ["guard"],
+            "evidence_need": evidence_need,
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-primary"],
+        }
+    )
+    result = EvidenceDiscoverySpecialist(
+        model=_ScriptedModel(
+            [
+                plan,
+                _family_selection("request-derived-behavior"),
+                {
+                    "action": "use_tool",
+                    "tool": "inspect_method_il",
+                    "source_id": "current-interop",
+                    "arguments": {"candidate_ref": "candidate_obs_001"},
+                    "evidence_need": evidence_need,
+                    "derived_from_observation_ids": ["obs-001"],
+                },
+                _family_selection("guard-family"),
+                {
+                    "action": "finish",
+                    "decision": "needs_more_evidence",
+                    "evidence_conclusions": [],
+                    "unresolved_questions": [evidence_need],
+                    "missing_capabilities": [
+                        "No current managed method was observed."
+                    ],
+                },
+            ]
+        ),
+        tool_executor=_SecondMetadataZeroExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            require_actual_planning=True,
+            max_tool_calls=3,
+            max_model_steps=4,
+        )
+    )
+    payload = result.pack.to_artifact_payload()
+    followup_attempt = next(
+        attempt
+        for attempt in payload["model_action_trace"]
+        if attempt["action"].get("family_id") == "guard-family"
+    )
+    assert followup_attempt["action"]["derived_from_observation_ids"] == []
+    assert followup_attempt["resolved_action"][
+        "derived_from_observation_ids"
+    ] == ["obs-002"]
+
+    ArtifactTypeRegistry().validate_write(
+        artifact_type="evidence_pack",
+        status="success",
+        payload=payload,
+    )
+    store = ArtifactStore(tmp_path / "supplemental-binding-store")
+    feature_id = "feature-supplemental-binding"
+    feature_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="feature_spec",
+        payload=_strict_roundtrip_feature_payload(feature_id),
+    )
+    evidence_ref = store.write(
+        feature_id=feature_id,
+        artifact_type="evidence_pack",
+        payload=payload,
+        upstream_refs=[feature_ref],
+    )
+    committed = store.read(evidence_ref)["data"]
+    assert EvidencePack.from_artifact_payload(committed).to_artifact_payload() == payload
+
+    for invalid_derivation in ([], ["obs-001"], ["obs-missing"]):
+        tampered = deepcopy(payload)
+        tampered_attempt = next(
+            attempt
+            for attempt in tampered["model_action_trace"]
+            if attempt["action"].get("family_id") == "guard-family"
+        )
+        tampered_attempt["resolved_action"][
+            "derived_from_observation_ids"
+        ] = invalid_derivation
+        tampered_attempt["resolved_action_sha256"] = hashlib.sha256(
+            json.dumps(
+                tampered_attempt["resolved_action"],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        with pytest.raises(
+            ArtifactRegistryError,
+            match="Invalid semantic EvidencePack",
+        ):
+            ArtifactTypeRegistry().validate_write(
+                artifact_type="evidence_pack",
+                status="success",
+                payload=tampered,
+            )
+
+    ambiguous = deepcopy(payload)
+    first_il_attempt = next(
+        attempt
+        for attempt in ambiguous["model_action_trace"]
+        if attempt["action"].get("tool") == "inspect_method_il"
+    )
+    first_il_attempt["action"]["derived_from_observation_ids"] = []
+    first_il_attempt["action_sha256"] = hashlib.sha256(
+        json.dumps(
+            first_il_attempt["action"],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(
+        ArtifactRegistryError,
+        match="Invalid semantic EvidencePack",
+    ):
+        ArtifactTypeRegistry().validate_write(
+            artifact_type="evidence_pack",
+            status="success",
+            payload=ambiguous,
+        )
+
+
 def test_supplemental_family_does_not_bind_a_different_question() -> None:
     plan = _actual_plan(
         behavior_goal="Find a current movement observation point.",
@@ -3126,6 +3288,10 @@ def test_phase_2_negative_il_can_select_frozen_followup_and_verify_latest_method
         evidence_need=evidence_need,
     )
     _add_secondary_planning_question(plan)
+    early_finish = _finish_after_observed_il()
+    early_finish["unresolved_questions"] = [
+        "WHICH CURRENT METHOD EXPOSES THE DOWNSTREAM INTEGRATION BOUNDARY?"
+    ]
     finish = _finish_after_observed_il()
     finish["evidence_conclusions"][0]["observation_ids"] = ["obs-004"]
     model = _ScriptedModel(
@@ -3140,6 +3306,7 @@ def test_phase_2_negative_il_can_select_frozen_followup_and_verify_latest_method
                 "evidence_need": "Verify whether the input-side method closes the focus.",
                 "derived_from_observation_ids": ["obs-001"],
             },
+            early_finish,
             _family_selection("secondary-integration"),
             {
                 "action": "use_tool",
@@ -3164,7 +3331,7 @@ def test_phase_2_negative_il_can_select_frozen_followup_and_verify_latest_method
             ),
             require_actual_planning=True,
             max_tool_calls=4,
-            max_model_steps=5,
+            max_model_steps=6,
         )
     )
 
@@ -3178,6 +3345,40 @@ def test_phase_2_negative_il_can_select_frozen_followup_and_verify_latest_method
     assert result.actions[2]["derived_from_observation_ids"] == ["obs-002"]
     assert result.actions[3]["derived_from_observation_ids"] == ["obs-003"]
     assert result.pack.budget_summary["tool_calls_used"] == 4
+    assert result.pack.model_action_trace[2]["status"] == "rejected"
+    assert result.pack.model_action_trace[2]["validation_error"] == (
+        "OPEN_REQUIREMENT_FOLLOWUP_REQUIRED"
+    )
+    followup_budget_state = next(
+        item["content"]
+        for item in model.calls[4]
+        if isinstance(item.get("content"), dict)
+        and item["content"].get("message_type") == "budget_state"
+    )
+    assert followup_budget_state["available_unexecuted_query_families"] == [
+        {
+            "family_id": "secondary-integration",
+            "queries": ["integration"],
+            "evidence_need": (
+                "Which current method exposes the downstream integration boundary?"
+            ),
+            "source_ids": ["current-interop"],
+            "tool": "search_dotnet_metadata",
+            "question_ids": ["question-secondary"],
+        }
+    ]
+    followup_correction = next(
+        item["content"]
+        for item in model.calls[4]
+        if isinstance(item.get("content"), dict)
+        and item["content"].get("message_type")
+        == "tool_action_validation_error"
+    )
+    assert followup_correction["finish_allowed"] is False
+    assert followup_correction["allowed_unexecuted_query_families"] == (
+        followup_budget_state["available_unexecuted_query_families"]
+    )
+
 
 
 def test_phase_2_second_zero_method_search_rejects_third_metadata(
@@ -4020,6 +4221,8 @@ def test_actual_planning_prompt_keeps_scope_without_global_alternate_requirement
     serialized = json.dumps(rules, ensure_ascii=False)
     assert "at least one engineering requirement" in serialized
     assert "observable event or state X" in serialized
+    assert "stated actor, input, and target relate to X" in serialized
+    assert "implementing Y is not a planning blocker" in serialized
     assert "Deterministic code assigns stable identities" in serialized
     assert "one vocabulary-distinct alternate family" not in serialized
     assert "not a universal Search Plan schema minimum" not in serialized
@@ -6953,6 +7156,7 @@ def test_agent_turn_model_maps_native_tool_call_and_bound_observation() -> None:
         "derived_from_observation_ids": [],
     }
     assert second["action"] == "finish"
+    assert client.requests[0].tool_choice == "auto"
     assert client.requests[1].tools == ()
     assert client.requests[1].tool_choice == "none"
     response_format = client.requests[1].response_format
@@ -6970,6 +7174,78 @@ def test_agent_turn_model_maps_native_tool_call_and_bound_observation() -> None:
     assert client.requests[1].tool_results[0].call_id == "call-test-001"
     assert client.requests[1].tool_result_insert_index == 1
     assert model.usage_records[1]["total_tokens"] == 27
+
+
+def test_agent_turn_required_tool_action_uses_existing_native_tool_contract() -> None:
+    client = _AgentTurnClient()
+    model = EvidenceDiscoveryAgentModel(
+        client,
+        disclosure=EvidenceDiscoveryDisclosure(
+            approved=True,
+            approval_id="approval-agent-turn-required-tool-001",
+            destination={"provider": client.provider, "model": client.model},
+            approved_data_classes=EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
+        ),
+    )
+
+    action = json.loads(
+        model.complete(
+            (
+                {"role": "system", "content": {"contract": "v2"}},
+                {"role": "user", "content": {"required_next_action": "use_tool"}},
+            )
+        )
+    )
+
+    assert action["action"] == "use_tool"
+    assert client.requests[0].tools
+    assert client.requests[0].tool_choice == "required"
+    assert client.requests[0].response_format is None
+
+
+def test_agent_turn_open_requirement_followup_exposes_only_frozen_family_tool() -> None:
+    client = _AgentTurnClient()
+    model = EvidenceDiscoveryAgentModel(
+        client,
+        disclosure=EvidenceDiscoveryDisclosure(
+            approved=True,
+            approval_id="approval-agent-turn-followup-tool-001",
+            destination={"provider": client.provider, "model": client.model},
+            approved_data_classes=EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
+        ),
+    )
+
+    model.complete(
+        (
+            {"role": "system", "content": {"contract": "v2"}},
+            {
+                "role": "user",
+                "content": {
+                    "message_type": "frozen_actual_plan",
+                    "agent_discovery": {},
+                },
+            },
+            {
+                "role": "user",
+                "content": {
+                    "message_type": "tool_action_validation_error",
+                    "error_code": "OPEN_REQUIREMENT_FOLLOWUP_REQUIRED",
+                },
+            },
+            {"role": "user", "content": {"required_next_action": "use_tool"}},
+        )
+    )
+
+    assert client.requests[0].tool_choice == "required"
+    assert [tool.name for tool in client.requests[0].tools] == [
+        "search_dotnet_metadata"
+    ]
+    metadata_tool = client.requests[0].tools[0]
+    assert set(metadata_tool.parameters["properties"]) == {
+        "source_id",
+        "family_id",
+    }
+    assert metadata_tool.parameters["required"] == ["source_id", "family_id"]
 
 
 def test_agent_turn_actual_plan_exposes_only_stable_family_selection() -> None:
@@ -6993,7 +7269,6 @@ def test_agent_turn_actual_plan_exposes_only_stable_family_selection() -> None:
                         arguments={
                             "source_id": "current-interop",
                             "family_id": "request-derived-behavior",
-                            "derived_from_observation_ids": [],
                         },
                     ),
                 ),
@@ -7036,15 +7311,64 @@ def test_agent_turn_actual_plan_exposes_only_stable_family_selection() -> None:
     assert set(metadata_tool.parameters["properties"]) == {
         "source_id",
         "family_id",
-        "derived_from_observation_ids",
     }
-    assert metadata_tool.parameters["required"] == [
-        "source_id",
-        "derived_from_observation_ids",
-        "family_id",
-    ]
+    assert metadata_tool.parameters["required"] == ["source_id", "family_id"]
     assert "literal-substring OR union" in metadata_tool.description
     assert "Broad terms expand" in metadata_tool.description
+
+
+def test_agent_turn_family_selection_rejects_provider_observation_identity() -> None:
+    class _LeakingObservationIdentityClient:
+        provider = "test_agent_turn"
+        model = "test-agent-model"
+
+        def complete_turn(self, request):
+            return AgentTurnResponse(
+                provider=self.provider,
+                model=self.model,
+                content=None,
+                tool_calls=(
+                    AgentToolCall(
+                        call_id="call-family-stale-observation-001",
+                        name="search_dotnet_metadata",
+                        arguments={
+                            "source_id": "current-interop",
+                            "family_id": "request-derived-behavior",
+                            "derived_from_observation_ids": ["obs-stale"],
+                        },
+                    ),
+                ),
+                stop_reason="tool_calls",
+                request_id="request-family-stale-observation-001",
+                usage=AgentUsage(input_tokens=10, output_tokens=5),
+            )
+
+    client = _LeakingObservationIdentityClient()
+    model = EvidenceDiscoveryAgentModel(
+        client,
+        local_execution=EvidenceDiscoveryLocalExecution(
+            endpoint="http://127.0.0.1:11434",
+            provider=client.provider,
+            model=client.model,
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="QUERY_FAMILY_SELECTION_ARGUMENTS_INVALID",
+    ):
+        model.complete(
+            (
+                {"role": "system", "content": {"contract": "v2"}},
+                {
+                    "role": "user",
+                    "content": {
+                        "message_type": "frozen_actual_plan",
+                        "agent_discovery": {},
+                    },
+                },
+            )
+        )
 
 
 def test_agent_turn_model_preserves_provider_and_adapter_tool_names_on_rejection() -> None:

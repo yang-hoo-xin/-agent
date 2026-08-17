@@ -201,6 +201,8 @@ class EvidenceDiscoveryAgentModel:
         latest_observation: object | None = None
         tool_result_insert_index: int | None = None
         force_finish = False
+        force_tool = False
+        force_family_selection = False
         force_plan = False
         force_requirement_projection = False
         force_search_plan = False
@@ -217,6 +219,14 @@ class EvidenceDiscoveryAgentModel:
                 raise ValueError("EVIDENCE_MODEL_MESSAGE_ROLE_INVALID")
             if isinstance(content, dict) and content.get("required_next_action") == "finish":
                 force_finish = True
+            if isinstance(content, dict) and content.get("required_next_action") == "use_tool":
+                force_tool = True
+            if (
+                isinstance(content, dict)
+                and content.get("message_type") == "tool_action_validation_error"
+                and content.get("error_code") == "OPEN_REQUIREMENT_FOLLOWUP_REQUIRED"
+            ):
+                force_family_selection = True
             if isinstance(content, dict) and content.get("required_next_action") == "plan":
                 force_plan = True
             if (
@@ -271,6 +281,10 @@ class EvidenceDiscoveryAgentModel:
                 or force_source_identifier_selection
                 else _discovery_tool_definitions(
                     require_family_selection=actual_planning_run
+                )[:1]
+                if force_family_selection
+                else _discovery_tool_definitions(
+                    require_family_selection=actual_planning_run
                 )
             ),
             tool_choice=(
@@ -280,6 +294,8 @@ class EvidenceDiscoveryAgentModel:
                 or force_requirement_projection
                 or force_search_plan
                 or force_source_identifier_selection
+                else "required"
+                if force_tool
                 else "auto"
             ),
             parallel_tool_calls=False,
@@ -1961,9 +1977,6 @@ def _discovery_tool_definitions(
     if require_family_selection:
         metadata_properties = {
             "source_id": common_properties["source_id"],
-            "derived_from_observation_ids": common_properties[
-                "derived_from_observation_ids"
-            ],
             "family_id": {
                 "type": "string",
                 "minLength": 1,
@@ -1975,7 +1988,6 @@ def _discovery_tool_definitions(
         }
         metadata_required = [
             "source_id",
-            "derived_from_observation_ids",
             "family_id",
         ]
         metadata_description = (
@@ -2207,6 +2219,7 @@ def _action_from_tool_call(
     raw_arguments: dict[str, object],
 ) -> dict[str, object]:
     arguments = dict(raw_arguments)
+    derived_was_provided = "derived_from_observation_ids" in arguments
     source_id = arguments.pop("source_id", None)
     evidence_need = arguments.pop("evidence_need", None)
     derived = arguments.pop("derived_from_observation_ids", None)
@@ -2214,14 +2227,14 @@ def _action_from_tool_call(
     if name not in EVIDENCE_DISCOVERY_TOOLS:
         raise ValueError("UNKNOWN_EVIDENCE_TOOL")
     if name == "search_dotnet_metadata" and family_id is not None:
-        if arguments or evidence_need is not None:
+        if arguments or evidence_need is not None or derived_was_provided:
             raise ValueError("QUERY_FAMILY_SELECTION_ARGUMENTS_INVALID")
         return {
             "action": "use_tool",
             "tool": name,
             "source_id": source_id,
             "family_id": family_id,
-            "derived_from_observation_ids": derived,
+            "derived_from_observation_ids": [],
         }
     return {
         "action": "use_tool",

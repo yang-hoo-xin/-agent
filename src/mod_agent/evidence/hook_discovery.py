@@ -516,6 +516,78 @@ def _families_for_resolved_action(
     ]
 
 
+def _expected_family_selection_derivation(
+    *,
+    selected_family: Mapping[str, Any],
+    families: list[Any],
+    accepted_actions: list[Mapping[str, Any]],
+    observation_rows: list[Mapping[str, Any]],
+) -> list[str]:
+    """Recompute the one deterministic observation binding for a family selection."""
+
+    if not accepted_actions:
+        return []
+    completed_observations = observation_rows[: len(accepted_actions)]
+    if len(completed_observations) != len(accepted_actions):
+        raise HookDiscoverySemanticsError(
+            "Family selection does not follow completed observations."
+        )
+    consumed_observation_ids = {
+        str(observation_id)
+        for action in accepted_actions
+        for observation_id in action.get("derived_from_observation_ids", [])
+        if isinstance(observation_id, str)
+    }
+    pending = [
+        (index, observation)
+        for index, observation in enumerate(completed_observations)
+        if observation.get("observation_id") not in consumed_observation_ids
+    ]
+    if len(pending) != 1 or pending[0][0] != len(completed_observations) - 1:
+        raise HookDiscoverySemanticsError(
+            "Family selection observation binding is not uniquely provable."
+        )
+    origin_index, observation = pending[0]
+    observation_id = observation.get("observation_id")
+    if not isinstance(observation_id, str) or not observation_id:
+        raise HookDiscoverySemanticsError(
+            "Family selection observation binding is invalid."
+        )
+    origin_action = accepted_actions[origin_index]
+    if origin_action.get("tool") == "inspect_method_il":
+        return [observation_id]
+    if origin_action.get("tool") != "search_dotnet_metadata":
+        raise HookDiscoverySemanticsError(
+            "Family selection observation origin is unsupported."
+        )
+    origin_family_id = origin_action.get("query_family_id")
+    origin_family = next(
+        (
+            family
+            for family in families
+            if isinstance(family, Mapping)
+            and family.get("family_id") == origin_family_id
+        ),
+        None,
+    )
+    selected_question_ids = selected_family.get("question_ids")
+    origin_question_ids = (
+        origin_family.get("question_ids")
+        if isinstance(origin_family, Mapping)
+        else None
+    )
+    if (
+        not isinstance(selected_question_ids, list)
+        or not selected_question_ids
+        or not isinstance(origin_question_ids, list)
+        or set(selected_question_ids) != set(origin_question_ids)
+    ):
+        raise HookDiscoverySemanticsError(
+            "Family selection observation does not bind the same engineering question."
+        )
+    return [observation_id]
+
+
 def _relationship_trace(
     *,
     requirement_id: str,
@@ -1213,6 +1285,7 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
     family_ids = {
         str(value["family_id"]) for value in search_plan["query_families"]
     }
+    families = list(search_plan["query_families"])
     accepted_actions: list[Mapping[str, Any]] = []
     for attempt in pack.model_action_trace:
         allowed_attempt_fields = {
@@ -1278,6 +1351,20 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
                 if isinstance(resolved_action, Mapping)
                 else None
             )
+            selected_families = [
+                family
+                for family in families
+                if isinstance(family, Mapping)
+                and family.get("family_id") == raw_family_id
+            ]
+            matched_families = (
+                _families_for_resolved_action(
+                    action=resolved_action,
+                    families=families,
+                )
+                if isinstance(resolved_action, Mapping)
+                else []
+            )
             if (
                 set(action)
                 != {
@@ -1291,6 +1378,7 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
                 or action.get("tool") != "search_dotnet_metadata"
                 or not isinstance(raw_family_id, str)
                 or not raw_family_id
+                or action.get("derived_from_observation_ids") != []
                 or not isinstance(resolved_action, Mapping)
                 or set(resolved_action)
                 != {
@@ -1305,17 +1393,28 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
                 or resolved_action.get("action") != action.get("action")
                 or resolved_action.get("tool") != action.get("tool")
                 or resolved_action.get("source_id") != action.get("source_id")
-                or resolved_action.get("derived_from_observation_ids")
-                != action.get("derived_from_observation_ids")
                 or resolved_action.get("query_family_id") != raw_family_id
                 or not isinstance(resolved_arguments, Mapping)
                 or set(resolved_arguments)
                 != {"queries", "result_kinds", "limit_per_kind"}
                 or resolved_arguments.get("result_kinds") != ["methods"]
                 or resolved_arguments.get("limit_per_kind") != 10
+                or len(selected_families) != 1
+                or len(matched_families) != 1
+                or matched_families[0].get("family_id") != raw_family_id
             ):
                 raise HookDiscoverySemanticsError(
                     "Model family selection and resolved action topology differ."
+                )
+            expected_derived = _expected_family_selection_derivation(
+                selected_family=selected_families[0],
+                families=families,
+                accepted_actions=accepted_actions,
+                observation_rows=observation_rows,
+            )
+            if resolved_action.get("derived_from_observation_ids") != expected_derived:
+                raise HookDiscoverySemanticsError(
+                    "Resolved family selection observation binding is invalid."
                 )
         elif has_resolved_action:
             _validate_resolved_finish_fact_handles(
@@ -1336,7 +1435,6 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
         }
         for value in search_plan["engineering_questions"]
     }
-    families = list(search_plan["query_families"])
     trace_binding: dict[str, dict[str, set[Any]]] = {}
     for index, (action, observation) in enumerate(
         zip(accepted_actions, observation_rows), 1

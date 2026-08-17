@@ -287,6 +287,11 @@ class OllamaChatAgentAdapter:
 
     def complete_turn(self, request: AgentTurnRequest) -> AgentTurnResponse:
         messages = [_chat_message(item) for item in request.messages]
+        required_single_tool = (
+            request.tool_choice == "required"
+            and len(request.tools) == 1
+            and request.response_format is None
+        )
         if request.tool_results:
             state = request.provider_state
             if not isinstance(state, dict) or not isinstance(state.get("tool_calls"), list):
@@ -326,6 +331,8 @@ class OllamaChatAgentAdapter:
             payload["tools"] = [_chat_tool(tool) for tool in request.tools]
         if request.response_format is not None:
             payload["format"] = request.response_format.schema
+        elif required_single_tool:
+            payload["format"] = request.tools[0].parameters
         request_started = time.perf_counter()
         data = self._send(
             f"{self.base_url}/api/chat",
@@ -339,6 +346,15 @@ class OllamaChatAgentAdapter:
         raw_tool_calls = message.get("tool_calls") or []
         if not isinstance(raw_tool_calls, list):
             raise AgentTurnProviderError("OLLAMA_CHAT_TOOL_CALLS_INVALID")
+        if not raw_tool_calls and required_single_tool:
+            raw_tool_calls = [
+                {
+                    "function": {
+                        "name": request.tools[0].name,
+                        "arguments": _parse_arguments(message.get("content")),
+                    }
+                }
+            ]
         tool_calls = tuple(_parse_ollama_tool_call(item) for item in raw_tool_calls)
         return AgentTurnResponse(
             provider=self.provider,

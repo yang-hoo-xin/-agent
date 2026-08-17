@@ -366,6 +366,92 @@ def test_ollama_adapter_uses_native_tools_and_local_usage() -> None:
     assert response.provider_diagnostic["first_token_duration_available"] is False
 
 
+def test_ollama_adapter_recovers_required_single_tool_from_structured_content() -> None:
+    captured: list[dict[str, object]] = []
+
+    def send(url, payload, headers):
+        captured.append(payload)
+        return {
+            "model": "qwen3:4b-instruct",
+            "done": True,
+            "done_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": '{"source_id":"r8-modules"}',
+            },
+        }
+
+    adapter = OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434",
+        model="qwen3:4b-instruct",
+        max_output_tokens=2048,
+        request_sender=send,
+    )
+    response = adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content={"goal": "select tool"}),),
+            tools=(_tool(),),
+            tool_choice="required",
+        )
+    )
+
+    assert captured[0]["tools"][0]["function"]["name"] == "search_dotnet_metadata"
+    assert captured[0]["format"] == _tool().parameters
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].name == "search_dotnet_metadata"
+    assert response.tool_calls[0].arguments == {"source_id": "r8-modules"}
+    assert response.provider_state == {
+        "content": '{"source_id":"r8-modules"}',
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "search_dotnet_metadata",
+                    "arguments": {"source_id": "r8-modules"},
+                }
+            }
+        ],
+    }
+
+
+def test_ollama_adapter_does_not_force_format_for_auto_tool_choice() -> None:
+    captured: list[dict[str, object]] = []
+
+    def send(url, payload, headers):
+        captured.append(payload)
+        return {
+            "model": "qwen3:4b-instruct",
+            "done": True,
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "search_dotnet_metadata",
+                            "arguments": {"source_id": "r8-modules"},
+                        }
+                    }
+                ],
+            },
+        }
+
+    adapter = OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434",
+        model="qwen3:4b-instruct",
+        max_output_tokens=2048,
+        request_sender=send,
+    )
+    adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content={"goal": "select tool"}),),
+            tools=(_tool(),),
+            tool_choice="auto",
+        )
+    )
+
+    assert "format" not in captured[0]
+
+
 def test_ollama_adapter_replays_native_tool_exchange_and_forces_schema() -> None:
     captured: list[dict[str, object]] = []
 
