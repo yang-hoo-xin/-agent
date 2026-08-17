@@ -401,6 +401,47 @@ def _enclosing_csharp_method(
     return None
 
 
+def _csharp_method_source_spans(lines: list[str]) -> tuple[dict[str, object], ...]:
+    """Return non-overlapping complete C# method source spans."""
+
+    spans: list[dict[str, object]] = []
+    occupied_through = 0
+    for index, line in enumerate(lines):
+        if index + 1 <= occupied_through:
+            continue
+        match = _CSHARP_METHOD_RE.fullmatch(line.strip())
+        if match is None or "=>" in line:
+            continue
+        depth = 0
+        entered_body = False
+        lexical_state = "code"
+        end_line: int | None = None
+        for body_index in range(index, len(lines)):
+            brace_delta, lexical_state = _csharp_brace_delta(
+                lines[body_index],
+                initial_state=lexical_state,
+            )
+            depth += brace_delta
+            if depth > 0:
+                entered_body = True
+            elif entered_body:
+                end_line = body_index + 1
+                break
+        if end_line is None:
+            continue
+        start_line = index + 1
+        spans.append(
+            {
+                "method_name": match.group("method_name"),
+                "start_line": start_line,
+                "end_line": end_line,
+                "source_text": "".join(lines[index:end_line]),
+            }
+        )
+        occupied_through = end_line
+    return tuple(spans)
+
+
 def _nearest_csharp_type(lines: list[str], *, before_line: int) -> str | None:
     for index in range(min(before_line, len(lines)) - 1, -1, -1):
         match = _CSHARP_TYPE_RE.match(lines[index].strip())

@@ -11,7 +11,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.libs.llm import LLMFactory, OllamaLLM
-from src.mod_agent.execution import ExactDiffApprovalRejectedError
+from src.mod_agent.build import BuildCommandResult
+from src.mod_agent.execution import (
+    ExactDiffApprovalRejectedError,
+    ExactTextPatchApplier,
+    PatchApplyError,
+)
+from src.mod_agent.proposal import PatchGenerationError
 from src.mod_agent.local_entry import (
     EXACT_DIFF_REJECTION_TOKEN,
     LOCAL_DIAGNOSTIC_CONTENT_FILENAME,
@@ -21,25 +27,34 @@ from src.mod_agent.local_entry import (
     NuGetIsolatedBuildExecution,
     _assert_no_absolute_local_paths,
     _assert_ollama_model_identity_stable,
+    _bind_objective_failure_to_single_changed_file,
     _build_run_local_il_inspector,
     _create_nuget_isolated_build_profile,
     _external_evidence_items,
     _local_model_admission_record,
     _local_no_external_disclosure_record,
+    _implementation_with_runtime_repair_bindings,
+    _materialize_repair_span_change,
+    _objective_verification_source_views,
     _persist_graph_terminal_failure,
     _persist_graph_terminal_result,
     _persist_local_failure_diagnostics,
     _project_text_property,
+    _repair_review_context,
     _read_exact_diff_approval,
     _read_ollama_server_version,
+    _repair_history_fact_constraints,
+    _repair_span_response_schema,
     _remove_generated_build_directory,
     _resolve_project_path_property,
     _runtime_admission_record,
     _runtime_continuation_backup_report,
     _runtime_observation_retry_output_report,
     _runtime_profile_preflight_record,
+    _runtime_repair_spans,
     _runtime_verification_chain,
     _run_nuget_isolated_build,
+    _run_nuget_isolated_verification_command,
     _sanitized_endpoint_url,
     _select_ollama_model_identity,
     _source_disclosure_record,
@@ -886,6 +901,421 @@ def test_nuget_isolated_runner_restores_then_builds_with_same_profile(
         assert Path(path).is_dir()
     assert profile.user_config_file.read_bytes() == profile.config_file.read_bytes()
     assert profile.additional_user_config_path.is_dir()
+
+
+def test_nuget_isolated_verification_command_uses_bound_workspace_and_environment(
+    tmp_path: Path,
+) -> None:
+    profile = _nuget_isolated_profile(tmp_path)
+    command = (
+        "dotnet",
+        "run",
+        "--project",
+        "RetryLedgerApp.csproj",
+        "--no-restore",
+    )
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def run(selected, **kwargs):
+        calls.append((selected, kwargs))
+        return subprocess.CompletedProcess(
+            selected,
+            3,
+            stdout="",
+            stderr="RetryLedger.cs(1,1): error IA0001: objective failed",
+        )
+
+    result = _run_nuget_isolated_verification_command(
+        profile,
+        command,
+        command_runner=run,
+    )
+
+    assert result.exit_code == 3
+    assert result.stderr == (
+        "RetryLedger.cs(1,1): error IA0001: objective failed"
+    )
+    assert len(calls) == 1
+    selected, kwargs = calls[0]
+    assert selected == command
+    assert kwargs["cwd"] == profile.working_directory
+    assert kwargs["timeout"] == profile.timeout_seconds
+    assert kwargs["check"] is False
+    environment = kwargs["env"]
+    assert isinstance(environment, dict)
+    for key, value in profile.environment.items():
+        assert environment[key] == value
+
+
+def test_objective_failure_binds_to_only_dry_run_changed_file() -> None:
+    result = _bind_objective_failure_to_single_changed_file(
+        BuildCommandResult(
+            exit_code=1,
+            stderr="OBJECTIVE_FAILED total=19 operations=op-1,op-2",
+            duration_ms=8,
+        ),
+        ("generated_mods/source/RetryLedger.cs",),
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == (
+        "generated_mods/source/RetryLedger.cs(1,1): error IA0001: "
+        "Objective verification failed with exit code 1. Observation: "
+        "OBJECTIVE_FAILED total=19 operations=op-1,op-2"
+    )
+    assert result.duration_ms == 8
+
+
+def test_objective_failure_does_not_infer_ambiguous_changed_file() -> None:
+    original = BuildCommandResult(exit_code=1, stderr="OBJECTIVE_FAILED")
+
+    assert _bind_objective_failure_to_single_changed_file(
+        original,
+        ("one.cs", "two.cs"),
+    ) is original
+
+
+def test_repair_history_facts_exclude_historical_editable_text() -> None:
+    old_text = "historical-before-text"
+    old_replacement = "historical-after-text"
+    constraints = _repair_history_fact_constraints(
+        patch_proposal={
+            "diff_intent": [
+                {
+                    "change_id": "chg_001",
+                    "edit_binding_id": "edit_binding_001",
+                    "operation": "minimal_evidence_bound_change",
+                    "rationale": "historical rationale",
+                    "patch": {
+                        "before_text": old_text,
+                        "after_text": old_replacement,
+                    },
+                }
+            ]
+        },
+        patch_proposal_hash="patch-hash",
+        build_result={
+            "exit_code": 1,
+            "diagnostics": [
+                {
+                    "code": "IA0001",
+                    "message": "objective failed",
+                    "error_class": "unknown",
+                }
+            ],
+        },
+        build_result_hash="build-hash",
+        run_id="run-001",
+        request_id="request-001",
+    )
+
+    rendered = "\n".join(constraints)
+    assert old_text not in rendered
+    assert old_replacement not in rendered
+    assert "historical rationale" not in rendered
+    prefix = "Non-editable prior execution facts: "
+    facts = json.loads(constraints[2][len(prefix) :])
+    assert facts == {
+        "committed_artifacts": {
+            "build_result": "build-hash",
+            "patch_proposal": "patch-hash",
+        },
+        "objective_transition": {
+            "after_prior_patch": {
+                "diagnostics": [
+                    {
+                        "code": "IA0001",
+                        "error_class": "unknown",
+                        "message": "objective failed",
+                    }
+                ],
+                "exit_code": 1,
+            },
+            "before_prior_patch": "unavailable_in_current_run",
+        },
+        "prior_change_scope": [
+            {
+                "change_id": "chg_001",
+                "edit_binding_id": "edit_binding_001",
+                "operation": "minimal_evidence_bound_change",
+            }
+        ],
+        "run_identity": {
+            "request_id": "request-001",
+            "run_id": "run-001",
+        },
+    }
+
+
+def test_runtime_repair_spans_are_unique_current_source_handles() -> None:
+    live_text = (
+        "public void Record()\n"
+        "{\n"
+        "    if (retry)\n"
+        "    {\n"
+        "        Total += amount;\n"
+        "        return;\n"
+        "    }\n"
+        "    Total += amount;\n"
+        "}\n"
+    )
+
+    spans = _runtime_repair_spans(live_text, source_hash="live-hash")
+
+    assert len(spans) == 1
+    assert spans[0].selection_id == "s01"
+    assert spans[0].source_hash == "live-hash"
+    assert spans[0].method_name == "Record"
+    assert spans[0].start_line == 1
+    assert spans[0].end_line == 9
+    assert spans[0].before_text == live_text
+    assert spans[0].before_text.count("Total += amount;") == 2
+    assert "{" in spans[0].before_text and "}" in spans[0].before_text
+    schema = _repair_span_response_schema(spans)
+    assert set(schema["properties"]) == {
+        "selection_id",
+        "replacement_text",
+        "rationale",
+    }
+    assert "before_text" not in schema["properties"]
+
+
+def test_repair_span_materialization_restores_current_before_text() -> None:
+    live_text = (
+        "public void Record()\n"
+        "{\n"
+        "    Total += amount;\n"
+        "    return;\n"
+        "}\n"
+    )
+    spans = _runtime_repair_spans(live_text, source_hash="live-hash")
+    selected = next(span for span in spans if "Total += amount;" in span.before_text)
+
+    change = _materialize_repair_span_change(
+        json.dumps(
+            {
+                "selection_id": selected.selection_id,
+                "replacement_text": (
+                    "public void Record()\n"
+                    "{\n"
+                    "    return;\n"
+                    "}\n"
+                ),
+                "rationale": "Use the objective failure to change retry behavior.",
+            }
+        ),
+        spans=spans,
+        required_change={
+            "change_id": "repair_build_0",
+            "edit_binding_id": "edit_binding_001",
+        },
+        expected_validation=("behavior evidence observed",),
+    )
+
+    assert change["patch"]["before_text"] == selected.before_text
+    assert change["patch"]["after_text"] == (
+        "public void Record()\n"
+        "{\n"
+        "    return;\n"
+        "}\n"
+    )
+    assert change["edit_binding_id"] == "edit_binding_001"
+    assert change["expected_validation"] == ["behavior evidence observed"]
+
+    with pytest.raises(PatchGenerationError, match="must change"):
+        _materialize_repair_span_change(
+            json.dumps(
+                {
+                    "selection_id": selected.selection_id,
+                    "replacement_text": selected.before_text,
+                    "rationale": "No change.",
+                }
+            ),
+            spans=spans,
+            required_change={
+                "change_id": "repair_build_0",
+                "edit_binding_id": "edit_binding_001",
+            },
+            expected_validation=(),
+        )
+
+
+def test_repair_review_context_binds_current_evidence_without_changing_path() -> None:
+    live_text = "public void Record()\n{\n    Total += amount;\n}\n"
+    live_hash = hashlib.sha256(live_text.encode("utf-8")).hexdigest()
+    implementation = {
+        "feature_id": "feature-001",
+        "binding_registry": {
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "old-evidence",
+                    "canonical_target_path": "generated_mods/RetryLedger.cs",
+                    "source_hash": "old-hash",
+                    "target_span": {"start_line": 1, "end_line": 4},
+                }
+            ]
+        },
+    }
+    evidence_pack = {
+        "feature_id": "feature-001",
+        "items": [{"evidence_id": "old-evidence", "excerpt": "old source"}],
+    }
+    runtime_binding = {
+        "binding_id": "edit_binding_001",
+        "evidence_id": "repair-live",
+        "canonical_target_path": "generated_mods/RetryLedger.cs",
+        "source_hash": live_hash,
+        "target_span": {"start_line": 1, "end_line": 4},
+    }
+    runtime_evidence = {
+        "evidence_id": "repair-live",
+        "source_path": "generated_mods/RetryLedger.cs",
+        "source_hash": live_hash,
+        "file_hash": live_hash,
+        "doc_hash": live_hash,
+        "excerpt": live_text,
+    }
+
+    projected_implementation, projected_evidence = _repair_review_context(
+        implementation,
+        evidence_pack,
+        runtime_bindings=(runtime_binding,),
+        runtime_evidence=(runtime_evidence,),
+    )
+
+    projected_binding = projected_implementation["binding_registry"][
+        "edit_bindings"
+    ][0]
+    assert projected_binding == runtime_binding
+    assert projected_evidence["items"][-1] == runtime_evidence
+    assert projected_evidence["items"][0]["evidence_id"] == "old-evidence"
+    assert implementation["binding_registry"]["edit_bindings"][0][
+        "evidence_id"
+    ] == "old-evidence"
+
+    with pytest.raises(LocalEntryError, match="cannot change an edit binding path"):
+        _repair_review_context(
+            implementation,
+            evidence_pack,
+            runtime_bindings=(
+                {**runtime_binding, "canonical_target_path": "generated_mods/Other.cs"},
+            ),
+            runtime_evidence=(runtime_evidence,),
+        )
+
+
+def test_objective_verification_source_views_are_bounded_current_sources(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "Program.cs").write_text(
+        "var actual = ledger.Total;\nif (actual != 12) return 1;\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "RetryLedger.cs").write_text(
+        "public sealed class RetryLedger {}\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "obj" / "Generated.cs"
+    generated.parent.mkdir()
+    generated.write_text("generated", encoding="utf-8")
+
+    views = _objective_verification_source_views(tmp_path)
+
+    assert [view["source_path"] for view in views] == [
+        "Program.cs",
+        "RetryLedger.cs",
+    ]
+    assert "actual != 12" in views[0]["source_text"]
+    assert all(len(view["source_sha256"]) == 64 for view in views)
+
+
+def test_runtime_repair_binding_revision_authorizes_current_live_span(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "RetryLedger.cs"
+    target.write_text("initial line\ncurrent repair line\n", encoding="utf-8")
+    original_plan = {
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "canonical_target_path": "RetryLedger.cs",
+                    "source_hash": "original-hash",
+                    "target_span": {"start_line": 1, "end_line": 1},
+                }
+            ],
+            "supporting_bindings": [],
+        }
+    }
+    proposal = {
+        "proposal_id": "repair-proposal",
+        "diff_intent": [
+            {
+                "change_id": "repair_build_0",
+                "edit_binding_id": "edit_binding_001",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "current repair line",
+                    "after_text": "repaired current line",
+                    "expected_occurrences": 1,
+                },
+            }
+        ],
+    }
+    review = {"allowed_next_stage": "dry_run_apply", "decision": "approve_dry_run"}
+    applier = ExactTextPatchApplier()
+
+    with pytest.raises(PatchApplyError, match="outside edit binding target_span"):
+        applier.run(
+            workspace_root=tmp_path,
+            proposal=proposal,
+            implementation_plan=original_plan,
+            review=review,
+            allow_write=False,
+        )
+
+    revised_plan = _implementation_with_runtime_repair_bindings(
+        original_plan,
+        runtime_bindings=(
+            {
+                "binding_id": "edit_binding_001",
+                "canonical_target_path": "RetryLedger.cs",
+                "source_hash": hashlib.sha256(target.read_bytes()).hexdigest(),
+                "target_span": {"start_line": 1, "end_line": 2},
+            },
+        ),
+    )
+    result = applier.run(
+        workspace_root=tmp_path,
+        proposal=proposal,
+        implementation_plan=revised_plan,
+        review=review,
+        allow_write=False,
+    )
+
+    assert result["execution_mode"] == "dry_run"
+    span_check = next(
+        item
+        for item in result["static_checks"]
+        if item["check_id"] == "binding_target_span"
+    )
+    assert span_check["bound_end_line"] == 2
+    assert span_check["observed_start_line"] == 2
+
+    with pytest.raises(LocalEntryError, match="cannot change an edit binding path"):
+        _implementation_with_runtime_repair_bindings(
+            original_plan,
+            runtime_bindings=(
+                {
+                    "binding_id": "edit_binding_001",
+                    "canonical_target_path": "Other.cs",
+                    "source_hash": "current-hash",
+                    "target_span": {"start_line": 1, "end_line": 2},
+                },
+            ),
+        )
 
 
 def test_nuget_isolated_runner_rejects_run_local_user_config_drift(

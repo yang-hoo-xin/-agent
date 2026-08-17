@@ -590,6 +590,7 @@ def test_public_product_executor_runs_real_graph_and_strict_store_chain(
         "mod_planning_brief",
         "feature_spec",
         "evidence_pack",
+        "implementation_plan",
         "blocked_report",
     ]
     assert all(
@@ -1074,6 +1075,43 @@ def test_public_product_executor_preserves_repair_attempt_prefixes(
     assert [item.repair_attempt for item in repair_attempts] == [1]
     assert result.store_attempts[-1].artifact_role == "workflow_checkpoint"
     assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
+
+
+def test_product_repair_review_uses_ephemeral_review_context_only_on_repair(
+    tmp_path: Path,
+) -> None:
+    request, store = _request(tmp_path)
+    Path(request.isolated_target_root, "Plugin.cs").write_text(
+        "public void Load() {}\n", encoding="utf-8"
+    )
+    request_values = request.to_dict()
+    request_values["isolated_source_snapshot_sha256"] = source_snapshot_sha256(
+        source_snapshot(Path(request.isolated_target_root))
+    )
+    request = ProductExecutionRequestV1.from_dict(request_values)
+    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 0])
+    review_context_calls: list[str] = []
+
+    def proposal_review_context_factory(state, implementation, evidence_pack):
+        review_context_calls.append(str(state["current_stage"]))
+        return implementation, evidence_pack
+
+    adapters = replace(
+        adapters,
+        proposal_review_context_factory=proposal_review_context_factory,
+    )
+
+    result = execute_product_execution(
+        preflight_product_execution(request, adapters, store), adapters, store
+    )
+
+    assert result.execution_disposition == "succeeded"
+    assert review_context_calls == ["patch_proposal"]
+    assert [
+        item.repair_attempt
+        for item in result.store_attempts
+        if item.artifact_role == "proposal_review"
+    ] == [0, 1]
 
 
 def test_public_product_executor_returns_repair_budget_exhaustion_result(

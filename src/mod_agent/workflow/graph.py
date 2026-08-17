@@ -148,6 +148,10 @@ EvidencePackFactory = Callable[[ModAgentState, dict[str, Any]], EvidencePack]
 PatchChangeFactory = Callable[
     [ModAgentState, dict[str, Any], dict[str, Any]], tuple[dict[str, Any], ...]
 ]
+ProposalReviewContextFactory = Callable[
+    [ModAgentState, dict[str, Any], dict[str, Any]],
+    tuple[dict[str, Any], dict[str, Any]],
+]
 PatchExecutionFactory = Callable[
     [dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]
 ]
@@ -397,6 +401,7 @@ def build_graph(
     use_default_proposal_git_binding: bool = True,
     evidence_pack_factory: EvidencePackFactory | None = None,
     patch_change_factory: PatchChangeFactory | None = None,
+    proposal_review_context_factory: ProposalReviewContextFactory | None = None,
     proposal_source_snippet_char_limit: int = 6000,
     proposal_critic: ProposalCritic | None = None,
     critic_requirement: CriticRequirement = "not_required",
@@ -780,6 +785,7 @@ def build_graph(
                 require_executable_patch=patch_change_factory is not None,
                 proposal_critic=proposal_critic,
                 critic_requirement=critic_requirement,
+                proposal_review_context_factory=proposal_review_context_factory,
             ),
         ),
     )
@@ -1571,6 +1577,7 @@ def _run_review_proposal(
     require_executable_patch: bool = False,
     proposal_critic: ProposalCritic | None = None,
     critic_requirement: CriticRequirement = "not_required",
+    proposal_review_context_factory: ProposalReviewContextFactory | None = None,
 ) -> ModAgentState:
     proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
     implementation_plan = _read_artifact_data(
@@ -1585,6 +1592,19 @@ def _run_review_proposal(
         if "repair_plan" in state["artifacts"]
         else None
     )
+    if repair_plan is not None and proposal_review_context_factory is not None:
+        implementation_plan, evidence_pack = proposal_review_context_factory(
+            state,
+            implementation_plan,
+            evidence_pack,
+        )
+        if not isinstance(implementation_plan, dict) or not isinstance(
+            evidence_pack, dict
+        ):
+            raise TypeError(
+                "Proposal review context factory must return implementation and "
+                "evidence dictionaries."
+            )
     proposal_ref = _artifact_ref_from_state(state, "patch_proposal")
     critic_payload: dict[str, Any] | None = None
     critic_ref: ArtifactRef | None = None

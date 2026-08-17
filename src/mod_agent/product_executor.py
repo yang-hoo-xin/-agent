@@ -356,6 +356,7 @@ class ProductExecutionAdaptersV1:
     runtime_evidence_factory: Callable[..., Any] | None
     compiled_artifact_verifier: Callable[..., Any] | None
     source_change_verifier: Callable[..., Any] | None
+    proposal_review_context_factory: Callable[..., Any] | None = None
 
     def validate_for(self, request: ProductExecutionRequestV1) -> None:
         required = (
@@ -378,6 +379,14 @@ class ProductExecutionAdaptersV1:
                     f"Product adapter {field} must be callable or null.",
                     side_effects_may_have_started=False,
                 )
+        if self.proposal_review_context_factory is not None and not callable(
+            self.proposal_review_context_factory
+        ):
+            raise ProductExecutionContractError(
+                "Product adapter proposal_review_context_factory must be callable "
+                "or null.",
+                side_effects_may_have_started=False,
+            )
         runtime_required = request.requested_completion_scope == "runtime_workflow"
         if runtime_required is not callable(self.runtime_evidence_factory):
             raise _ProductExecutionAdmissionError(
@@ -1135,11 +1144,13 @@ def execute_product_execution(
         runtime_evidence_factory=recorder.wrap_effect(effect_role="runtime", node_name="collect_runtime_evidence", factory=adapters.runtime_evidence_factory),
         compiled_artifact_verifier=adapters.compiled_artifact_verifier,
         source_change_verifier=adapters.source_change_verifier,
+        proposal_review_context_factory=adapters.proposal_review_context_factory,
     )
     graph = build_graph(
         recorder,
         evidence_pack_factory=wrapped.evidence_pack_factory,
         patch_change_factory=wrapped.patch_change_factory,
+        proposal_review_context_factory=wrapped.proposal_review_context_factory,
         dry_run_factory=wrapped.dry_run_factory,
         isolated_apply_factory=wrapped.isolated_apply_factory,
         build_result_factory=wrapped.build_result_factory,
