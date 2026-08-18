@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-07-31
+Last updated: 2026-08-16
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -10,9 +10,43 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001
-selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio feedback
+current_queue: CODING-AGENT-V0-INTERNAL-ALPHA-001
+selected_product_request: compose one observation-driven Coding Agent vertical slice using the existing RAG/ER and delivery modules
 ```
+
+```text
+task_id: CODING-AGENT-V0-INTERNAL-ALPHA-001
+status: active_repository_repair_span_inventory
+target_worktree: rag_capability_mainline
+target_head_at_selection: c48b5e82fe3eed524d5c9f868980748136e28bfd
+current_dependencies:
+  - expose the exact diagnostic-bound Program.cs live-source region to the existing Repair Patch owner
+  - preserve the no-op and exact edit-binding rejection gates
+  - execute the second Review/Dry-run/isolated Apply/Build-Test for repository run 91e54459
+ordered_delivery:
+  - repository issue -> EvidencePack -> Implementation Plan -> PatchProposal -> Review/Dry-run -> Build/Test
+  - 14 compiler diagnostics -> exact edit_binding_001 aggregation -> different Repair Patch -> second Build/Test
+  - BetterHitFeedback/WallCrawler Hidden-Golden and minimal Eval close RAG-1A
+  - RAG-1B makes the same Evidence executor available through the unique public entry
+forbidden_expansion:
+  - second Agent framework or StateGraph
+  - new EvidencePack version without a current consumer
+  - new Trace platform, Dashboard, long-term memory, broad MCP tools, Skills, or subagents as prerequisites
+  - BetterHitFeedback or WallCrawler fixed answers in the generic Runner
+completion_authority:
+  - docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
+  - docs/ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT.md
+```
+
+The selected task is measured by real stage progression and one
+observation-driven repair. Test count, new error codes, schema growth, or
+documentation volume do not substitute for those results.
+
+### 1.1 Prior BetterHitFeedback Product Slice Record
+
+The record below preserves the prior selected GTFO product slice and its exact
+evidence. It is not the current queue and must not be supplied as expected truth
+to the current RAG/ER actual path.
 
 ```text
 task_id: GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001

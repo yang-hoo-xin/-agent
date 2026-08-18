@@ -1,28 +1,49 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-07-31
+Last updated: 2026-08-16
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
 ```text
-current_queue: GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001
-current_documentation_task: None
-selected_product_request: BetterHitFeedback stagger-confirmed yellow-X and audio feedback
-stagger_feature_spec_status: operator_guided_feature_spec_complete
-stagger_evidence_status: sufficient_7_supported_implementation_plan_created
-most_recent_evidence_run: sfe2_467fd878
-stagger_implementation_plan_status: repaired_build_and_two_mode_runtime_complete_formal_runtime_materialization_blocked
-local_proposal_provider_status: real_4b_patch_rejected_no_model_marker_contract_repair_built_isolated
-phase_2b_execution_status: real_two_mode_runtime_verified_selected_slice_complete
-most_recent_completed_capability: STAGGER-M1-BOUNDED-GTFO-HARNESS-OUTPUT-ISOLATION-001
-v2_c_evaluation_state: core_complete (single real-run evidence)
+current_product_milestone: CODING-AGENT-V0
+current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
+current_dependency: REPOSITORY-REPAIR-SPAN-INVENTORY
+current_worktree: rag_capability_mainline
+current_branch: codex/rag-capability-mainline
+current_head: abd3d6a
+current_wip: documentation-only WIP, no staged files
+latest_repository_run: 91e54459
+latest_repository_run_report_sha256: D4A671C1E84CC4A5B98832F7C9B78DCA829C2344CFAC3271BD74BC87D1183B1E
+latest_repository_stage: repair_span_inventory_binding
+latest_repository_failure: repair_span_inventory_does_not_cover_bound_diagnostics
+latest_repository_build_diagnostics: 14 diagnostics grouped under edit_binding_001
+next_capability_step: expose diagnostic-bound live-source span, generate Repair Patch, and execute second Build/Test
+rag_1a_status: incomplete
+rag_1b_status: not_started
+coding_agent_v0_internal_alpha_status: in_progress_repository_repair_not_revalidated
 ```
 
-`GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001` is the selected second real GTFO
-product slice. It requires one yellow X at the weapon-hit position, one short
+The detailed current target and exact non-completion boundaries are in
+`docs/CODING_AGENT_V0_INTERNAL_ALPHA.md` and
+`docs/ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT.md`.
+
+The 2026-08-16 code-asset audit in
+`docs/CODING_AGENT_V0_INTERNAL_ALPHA.md` records 106,384 production-source
+lines: 33,817 directly reusable, 31,148 requiring integration or ownership
+correction, and 41,419 deferred from the first internal-alpha loop. These are
+file-responsibility classifications, not executed-line coverage or deletion
+authority.
+
+The Stagger M1 and Harness material below remains valid bounded historical and
+verified product evidence where its hashes and runs are cited. It is not the
+current implementation selection and must not be used as RAG actual input or
+as proof that Coding Agent v0 is complete.
+
+`GTFO-BETTERHITFEEDBACK-STAGGER-FEEDBACK-001` was the selected second real GTFO
+product slice for the bounded history recorded below. It requires one yellow X at the weapon-hit position, one short
 sound, and one exact `STAGGER_FEEDBACK_SHOWN` marker only when the local
 player's hit actually produces an enemy hit reaction. `General.Enabled=false`
 must produce none of those effects. The task has completed its bounded

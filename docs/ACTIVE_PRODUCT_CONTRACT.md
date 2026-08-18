@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-07-31
+Last updated: 2026-08-16
 
 ## 1. Product
 
@@ -38,7 +38,53 @@ authorization or evidence is unresolved or blocked; it is not delivery success.
 Evaluation, schemas, policies, dashboards, MCP, and retrieval mechanisms serve
 this chain. They are not independent product lines.
 
+### 1.1 Current Development Selection
+
+The current product milestone is **Coding Agent v0**. The first integrated
+delivery is **Coding Agent v0 internal alpha**, which composes the existing
+RAG/ER, Planning, Proposal, Review/Dry-run, Build/Test, Repair, Graph, and
+ArtifactStore modules. It does not create a second Agent framework or a second
+workflow.
+
+The immediate dependency is the existing Repair span inventory for repository
+run `91e54459`. The actual-only inspector issue reached EvidencePack,
+Implementation Plan, first Patch, Review/Dry-run, isolated Apply, and a real
+failed Build. Fourteen compiler diagnostics resolve to exact
+`edit_binding_001`, but the provider-facing inventory exposes only unrelated
+helper-method spans and omits the diagnostic-bound live-source region. The
+existing no-op replacement gate correctly stopped before a second Apply or
+Build. This is a Repair input-representation failure, not an EvidencePack,
+ArtifactStore, diagnostic aggregation, or BuildResult integrity failure.
+
+Current execution order:
+
+```text
+diagnostic-bound live-source span inventory
+-> different Repair Patch
+-> second Review / Dry-run / isolated Apply / Build-Test
+-> repository objective result or explicit first failure
+-> BetterHitFeedback and WallCrawler Hidden-Golden plus minimal Eval
+-> RAG-1A checkpoint
+-> RAG-1B public entry adoption
+-> Coding Agent v0 public alpha
+```
+
+The detailed integration target is
+`docs/CODING_AGENT_V0_INTERNAL_ALPHA.md`. RAG/ER boundaries remain in
+`docs/ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT.md`. Neither document
+claims that RAG-1A, RAG-1B, or Coding Agent v0 is complete.
+
+Three non-ancestor worktree heads require semantic reconciliation before v0
+integration: `9bce437`, `9a237b7`, and `c000021`. Only `9bce437` contains a
+substantial code change: one 29-file controlled-delivery hardening commit.
+These commits must not be merged or discarded solely because they are outside
+the current ancestry.
+
 ## 2. Current Verified Capability
+
+The remainder of this section records previously verified bounded product and
+Harness facts. It is not the current implementation queue and does not prove
+the current RAG/ER or Coding Agent v0 milestone.
 
 The current branch combines one narrow real request-to-build run against an
 externally produced, read-only BetterHitFeedback target with focused
