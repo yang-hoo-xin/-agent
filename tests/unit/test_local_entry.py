@@ -54,6 +54,7 @@ from src.mod_agent.local_entry import (
     _runtime_observation_retry_output_report,
     _runtime_profile_preflight_record,
     _runtime_repair_spans,
+    _runtime_source_diagnostic_lines,
     _runtime_verification_chain,
     _run_nuget_isolated_build,
     _run_nuget_isolated_verification_command,
@@ -1174,6 +1175,59 @@ def test_runtime_repair_spans_are_unique_current_source_handles() -> None:
         "rationale",
     }
     assert "before_text" not in schema["properties"]
+
+
+def test_runtime_source_diagnostic_lines_uses_exact_source_path_match() -> None:
+    working_root = Path("work/root")
+    source_path = working_root / "Program.cs"
+    diagnostics = (
+        {"file": "src/Program.cs", "line": "8"},
+        {"file": "other/Program.cs", "line": "13"},
+        {"file": "WORK/ROOT/Program.cs", "line": "21"},
+        {"file": "Program.cs", "line": "34"},
+    )
+
+    observed = _runtime_source_diagnostic_lines(
+        diagnostics,
+        source_path=source_path,
+        working_root=working_root,
+    )
+
+    assert observed == (34,)
+
+
+def test_runtime_repair_spans_include_missing_bound_diagnostics() -> None:
+    live_text = (
+        "using System;\n"
+        "using System.Text;\n"
+        "using System.Linq;\n"
+        "\n"
+        "public class Worker\n"
+        "{\n"
+        "    public int Compute()\n"
+        "    {\n"
+        "        return 1;\n"
+        "    }\n"
+        "}\n"
+    )
+    line_count = len(live_text.splitlines())
+    spans = _runtime_repair_spans(
+        live_text,
+        source_hash="live-hash",
+        diagnostic_lines=(1, 2, 3, 4),
+    )
+    diagnostic_spans = [span for span in spans if span.method_name == "diagnostic_bound_region"]
+    assert diagnostic_spans
+    assert len(diagnostic_spans) == 1
+    assert diagnostic_spans[0].start_line == 1
+    assert diagnostic_spans[0].end_line == 4
+    assert diagnostic_spans[0].before_text == "".join(
+        live_text.splitlines(keepends=True)[:4]
+    )
+    method_span = next(span for span in spans if span.method_name == "Compute")
+    assert method_span.start_line > diagnostic_spans[0].end_line
+    assert diagnostic_spans[0].selection_id == "s01"
+    assert diagnostic_spans[0].end_line <= line_count
 
 
 def test_repair_span_materialization_restores_current_before_text() -> None:

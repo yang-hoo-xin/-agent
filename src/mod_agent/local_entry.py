@@ -1401,18 +1401,108 @@ class _RuntimeRepairSpan:
         }
 
 
+def _runtime_source_diagnostic_lines(
+    diagnostics: tuple[Mapping[str, Any], ...] | None,
+    *,
+    source_path: Path,
+    working_root: Path,
+) -> tuple[int, ...]:
+    if not diagnostics:
+        return ()
+    try:
+        canonical_source = source_path.resolve()
+    except OSError:
+        return ()
+    canonical_source_norm = canonical_source.as_posix().casefold()
+    result: list[int] = []
+    for item in diagnostics:
+        if not isinstance(item, Mapping):
+            continue
+        raw_file = item.get("file")
+        if not isinstance(raw_file, str):
+            continue
+        try:
+            raw_line = int(item.get("line"))
+        except (TypeError, ValueError):
+            continue
+        if raw_line < 1:
+            continue
+        try:
+            diag_path = Path(raw_file)
+            resolved_diag_path = (
+                diag_path if diag_path.is_absolute() else working_root / diag_path
+            ).resolve()
+        except OSError:
+            continue
+        if resolved_diag_path.as_posix().casefold() == canonical_source_norm:
+            result.append(raw_line)
+    return tuple(sorted(set(result)))
+
+
 def _runtime_repair_spans(
     live_text: str,
     *,
     source_hash: str,
     max_spans: int = 24,
+    diagnostic_lines: tuple[int, ...] = (),
 ) -> tuple[_RuntimeRepairSpan, ...]:
     """Create bounded, non-overlapping complete-method repair handles."""
 
     if not live_text or max_spans < 1:
         return ()
     lines = live_text.splitlines(keepends=True)
-    spans = _csharp_method_source_spans(lines)[:max_spans]
+    source_spans = [
+        {
+            "start_line": int(item["start_line"]),
+            "end_line": int(item["end_line"]),
+            "method_name": str(item["method_name"]),
+            "source_text": str(item["source_text"]),
+        }
+        for item in _csharp_method_source_spans(lines)
+    ]
+    if diagnostic_lines:
+        missing_diagnostics = []
+        for line in diagnostic_lines:
+            candidate = int(line)
+            if not 1 <= candidate <= len(lines):
+                continue
+            for span in source_spans:
+                if span["start_line"] <= candidate <= span["end_line"]:
+                    break
+            else:
+                missing_diagnostics.append(candidate)
+        if missing_diagnostics:
+            diagnostic_segments: list[tuple[int, int]] = [
+                (min(missing_diagnostics), max(missing_diagnostics))
+            ]
+            for source_span in sorted(source_spans, key=lambda item: item["start_line"]):
+                span_start = source_span["start_line"]
+                span_end = source_span["end_line"]
+                remaining_segments: list[tuple[int, int]] = []
+                for segment_start, segment_end in diagnostic_segments:
+                    if segment_end < span_start or segment_start > span_end:
+                        remaining_segments.append((segment_start, segment_end))
+                        continue
+                    if segment_start < span_start:
+                        remaining_segments.append((segment_start, span_start - 1))
+                    if segment_end > span_end:
+                        remaining_segments.append((span_end + 1, segment_end))
+                diagnostic_segments = remaining_segments
+            for segment_start, segment_end in sorted(diagnostic_segments):
+                if segment_start > segment_end:
+                    continue
+                source_spans.append(
+                    {
+                        "start_line": segment_start,
+                        "end_line": segment_end,
+                        "method_name": "diagnostic_bound_region",
+                        "source_text": "".join(
+                            lines[segment_start - 1 : segment_end]
+                        ),
+                    }
+                )
+    spans = sorted(source_spans, key=lambda item: item["start_line"])
+    spans = spans[:max_spans]
     return tuple(
         _RuntimeRepairSpan(
             selection_id=f"s{index:02d}",
@@ -4008,9 +4098,21 @@ def run_local_request(
                 live_text = live_path.read_text(encoding="utf-8")
                 live_hash = hashlib.sha256(live_path.read_bytes()).hexdigest()
                 if len(allowed_repair_bindings) == 1:
+                    diagnostics_for_spans: tuple[Mapping[str, Any], ...] | None = None
+                    if repair_observation is not None:
+                        current_diagnostics = repair_observation.get("diagnostics")
+                        if isinstance(current_diagnostics, list):
+                            diagnostics_for_spans = tuple(current_diagnostics)
+                        elif isinstance(current_diagnostics, tuple):
+                            diagnostics_for_spans = current_diagnostics
                     repair_spans = _runtime_repair_spans(
                         live_text,
                         source_hash=live_hash,
+                        diagnostic_lines=_runtime_source_diagnostic_lines(
+                            diagnostics_for_spans,
+                            source_path=live_path,
+                            working_root=run_root,
+                        ),
                     )
                 repair_evidence_id = f"repair_live_{live_hash[:16]}"
                 prior = evidence_by_id.get(str(binding.get("evidence_id") or ""), {})
