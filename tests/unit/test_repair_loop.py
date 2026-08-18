@@ -11,6 +11,8 @@ from src.mod_agent.bindings import (
     resolve_runtime_diagnosis_binding,
 )
 from src.mod_agent.build import BuildAdapter, BuildProfile, BuildResult
+from src.mod_agent.evidence import EvidenceItem, EvidencePack
+from src.mod_agent.evidence.models import DETERMINISTIC_EVIDENCE_AUTHORITY
 from src.mod_agent.knowledge import (
     IncrementalIndexer,
     KnowledgeDatabase,
@@ -223,6 +225,35 @@ def test_build_diagnostics_for_different_bindings_remain_separate() -> None:
         len(change["failure_evidence_refs"])
         for change in payload["minimal_changes"]
     ] == [1, 1]
+
+
+def _single_load_evidence_pack_factory(source_path: str):
+    """Keep legacy repair-route fixtures bound to one exact edit target."""
+
+    def _factory(_state, _feature) -> EvidencePack:
+        return EvidencePack(
+            query="make Load enable diagnostics",
+            readiness="sufficient",
+            can_generate_patch=True,
+            items=(
+                EvidenceItem(
+                    evidence_id="evidence_load_symbol_001",
+                    source_type="target_source",
+                    source_path=source_path,
+                    symbol="Load",
+                    span={"start_line": 3, "end_line": 3},
+                    retrieval_method="symbol_exact",
+                    score=1.0,
+                    claim_supported="Symbol Load exists in Plugin.cs.",
+                    excerpt="public void Load()",
+                    source_hash="a" * 64,
+                    authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
+                ),
+            ),
+            retrieval_methods_used=("symbol_exact",),
+        )
+
+    return _factory
 
 
 def test_retry_budget_exhaustion_blocks_repair_loop() -> None:
@@ -1575,6 +1606,7 @@ def test_graph_repair_reuses_plan_validation_before_second_build_failure(
     graph = build_graph(
         store,
         knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        evidence_pack_factory=_single_load_evidence_pack_factory(diagnostic_file),
         build_result_factory=build_result_factory,
         proposal_git_binding_factory=_proposal_git_binding,
     )
@@ -1680,6 +1712,7 @@ def test_graph_records_subsequent_repair_proposal_review_failure_owner(
     graph = build_graph(
         store,
         knowledge_database=_knowledge_with_load_symbol(tmp_path),
+        evidence_pack_factory=_single_load_evidence_pack_factory(diagnostic_file),
         build_result_factory=build_result_factory,
         proposal_git_binding_factory=_proposal_git_binding,
         patch_change_factory=patch_change_factory,
