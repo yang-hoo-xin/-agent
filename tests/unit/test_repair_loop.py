@@ -123,6 +123,108 @@ def test_failed_build_creates_evidence_bound_repair_plan() -> None:
     ]
 
 
+def test_build_diagnostics_for_one_binding_create_one_repair_change() -> None:
+    build_result = _failed_build_result(
+        "feature_001",
+        diagnostic_file="mods/BetterHitFeedback/Plugin.cs",
+    ).to_artifact_payload()
+    diagnostic = dict(build_result["diagnostics"][0])
+    build_result["diagnostics"] = [
+        {
+            **diagnostic,
+            "line": index + 1,
+            "message": f"compiler failure {index}",
+        }
+        for index in range(14)
+    ]
+
+    payload = RepairPlanner(retry_budget=2).from_build_failure(
+        build_result=build_result,
+        build_result_ref="artifacts/features/feature_001/build_result.json",
+        retry_count=0,
+        target_behavior="make Load enable diagnostics",
+        proposal_context_pack=_proposal_context_pack(),
+        implementation_plan=_implementation_plan_payload(),
+    ).to_artifact_payload()
+
+    assert len(payload["minimal_changes"]) == 1
+    change = payload["minimal_changes"][0]
+    assert change["edit_binding_id"] == "edit_binding_001"
+    assert change["failure_evidence_refs"] == [
+        (
+            "build_diag:"
+            f"{index}:CS0246:mods/BetterHitFeedback/Plugin.cs:{index + 1}"
+        )
+        for index in range(14)
+    ]
+    assert payload["evidence_refs"] == [
+        "artifacts/features/feature_001/build_result.json",
+        *change["failure_evidence_refs"],
+    ]
+    assert payload["allowed_next_stage"] == "generate_patch_proposal"
+    assert payload["blockers"] == []
+
+
+def test_build_diagnostics_for_different_bindings_remain_separate() -> None:
+    first_path = "mods/First/Plugin.cs"
+    second_path = "mods/Second/Plugin.cs"
+    build_result = _failed_build_result(
+        "feature_001",
+        diagnostic_file=first_path,
+    ).to_artifact_payload()
+    first = dict(build_result["diagnostics"][0])
+    build_result["diagnostics"] = [
+        first,
+        {
+            **first,
+            "file": second_path,
+            "line": 24,
+            "message": "second binding failure",
+        },
+    ]
+    implementation_plan = {
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "canonical_target_path": first_path,
+                },
+                {
+                    "binding_id": "edit_binding_002",
+                    "canonical_target_path": second_path,
+                },
+            ],
+            "supporting_bindings": [],
+        }
+    }
+    proposal_context = {
+        **_proposal_context_pack(first_path),
+        "files": [first_path, second_path],
+        "allowed_edit_binding_ids": [
+            "edit_binding_001",
+            "edit_binding_002",
+        ],
+    }
+
+    payload = RepairPlanner(retry_budget=2).from_build_failure(
+        build_result=build_result,
+        build_result_ref="artifacts/features/feature_001/build_result.json",
+        retry_count=0,
+        proposal_context_pack=proposal_context,
+        implementation_plan=implementation_plan,
+    ).to_artifact_payload()
+
+    assert [
+        change["edit_binding_id"] for change in payload["minimal_changes"]
+    ] == ["edit_binding_001", "edit_binding_002"]
+    assert [
+        len(change["failure_evidence_refs"])
+        for change in payload["minimal_changes"]
+    ] == [1, 1]
+
+
 def test_retry_budget_exhaustion_blocks_repair_loop() -> None:
     build_result = _failed_build_result("feature_001").to_artifact_payload()
 

@@ -776,15 +776,19 @@ class RepairPlanner:
 
     @staticmethod
     def _diagnostic_refs(build_result: dict[str, Any]) -> tuple[str, ...]:
-        refs = []
+        refs: list[str] = []
         for index, diagnostic in enumerate(build_result.get("diagnostics", [])):
             if not isinstance(diagnostic, dict):
                 continue
-            code = diagnostic.get("code") or "unknown"
-            file_name = diagnostic.get("file") or "unknown_file"
-            line = diagnostic.get("line") or "unknown_line"
-            refs.append(f"build_diag:{index}:{code}:{file_name}:{line}")
+            refs.append(RepairPlanner._diagnostic_ref(index, diagnostic))
         return tuple(refs)
+
+    @staticmethod
+    def _diagnostic_ref(index: int, diagnostic: dict[str, Any]) -> str:
+        code = diagnostic.get("code") or "unknown"
+        file_name = diagnostic.get("file") or "unknown_file"
+        line = diagnostic.get("line") or "unknown_line"
+        return f"build_diag:{index}:{code}:{file_name}:{line}"
 
     @staticmethod
     def _minimal_build_changes(
@@ -793,7 +797,7 @@ class RepairPlanner:
         resolver: BindingResolver,
         allowed_binding_ids: set[str],
     ) -> tuple[dict[str, Any], ...]:
-        changes = []
+        grouped: dict[str, dict[str, Any]] = {}
         diagnostics = list(build_result.get("diagnostics", []))
         for index, diagnostic in enumerate(diagnostics):
             if not isinstance(diagnostic, dict):
@@ -807,19 +811,31 @@ class RepairPlanner:
             )
             if error is not None or binding_id is None:
                 continue
-            changes.append(
+            group = grouped.setdefault(
+                binding_id,
                 {
-                    "change_id": f"repair_build_{index}",
-                    "edit_binding_id": binding_id,
-                    "intent": (
-                        "Repair the compiler diagnostic using the referenced "
-                        "failure evidence."
-                    ),
-                    "failure_code": diagnostic.get("code"),
-                    "failure_message": diagnostic.get("message"),
-                }
+                    "first_index": index,
+                    "first_diagnostic": diagnostic,
+                    "failure_evidence_refs": [],
+                },
             )
-        return tuple(changes)
+            group["failure_evidence_refs"].append(
+                RepairPlanner._diagnostic_ref(index, diagnostic)
+            )
+        return tuple(
+            {
+                "change_id": f"repair_build_{group['first_index']}",
+                "edit_binding_id": binding_id,
+                "intent": (
+                    "Repair the compiler diagnostics for this exact edit binding "
+                    "using the referenced failure evidence."
+                ),
+                "failure_code": group["first_diagnostic"].get("code"),
+                "failure_message": group["first_diagnostic"].get("message"),
+                "failure_evidence_refs": list(group["failure_evidence_refs"]),
+            }
+            for binding_id, group in grouped.items()
+        )
 
     @staticmethod
     def _minimal_runtime_changes(
