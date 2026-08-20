@@ -1338,14 +1338,6 @@ def _repair_history_fact_constraints(
         for item in patch_proposal.get("diff_intent") or []
         if isinstance(item, Mapping)
     ]
-    diagnostics = [
-        {
-            key: item.get(key)
-            for key in ("code", "message", "error_class")
-        }
-        for item in build_result.get("diagnostics") or []
-        if isinstance(item, Mapping)
-    ]
     facts = {
         "run_identity": {
             "run_id": run_id,
@@ -1360,7 +1352,6 @@ def _repair_history_fact_constraints(
             "before_prior_patch": "unavailable_in_current_run",
             "after_prior_patch": {
                 "exit_code": build_result.get("exit_code"),
-                "diagnostics": diagnostics,
             },
         },
     }
@@ -1378,6 +1369,33 @@ def _repair_history_fact_constraints(
         "Non-editable prior execution facts: "
         + json.dumps(facts, ensure_ascii=False, sort_keys=True),
     )
+
+
+def _repair_provider_constraints(
+    *,
+    base_constraints: list[str],
+    diagnostics: list[dict[str, Any]],
+    history_constraints: tuple[str, ...],
+) -> list[str]:
+    """Project one provider-facing copy of each Repair diagnostic message."""
+
+    projected = [str(item) for item in base_constraints]
+    projected.append(
+        "Use the supplied objective verification diagnostics to produce a "
+        "different repair; do not repeat the prior failed behavior."
+    )
+    seen_messages: set[str] = set()
+    for item in diagnostics:
+        raw_message = item.get("message")
+        if not raw_message:
+            continue
+        message = str(raw_message)
+        if message in seen_messages:
+            continue
+        seen_messages.add(message)
+        projected.append(message)
+    projected.extend(history_constraints)
+    return projected
 
 
 @dataclass(frozen=True)
@@ -4177,16 +4195,11 @@ def run_local_request(
             str(item) for item in implementation.get("side_effect_boundaries") or []
         ]
         if repair_observation is not None:
-            side_effect_boundaries.append(
-                "Use the supplied objective verification diagnostics to produce a "
-                "different repair; do not repeat the prior failed behavior."
+            side_effect_boundaries = _repair_provider_constraints(
+                base_constraints=side_effect_boundaries,
+                diagnostics=repair_observation["diagnostics"],
+                history_constraints=repair_history_constraints,
             )
-            side_effect_boundaries.extend(
-                str(item.get("message"))
-                for item in repair_observation["diagnostics"]
-                if item.get("message")
-            )
-            side_effect_boundaries.extend(repair_history_constraints)
         model_input = {
             "request": state["user_request"],
             "evidence": external_evidence,

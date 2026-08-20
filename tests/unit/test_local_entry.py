@@ -46,6 +46,7 @@ from src.mod_agent.local_entry import (
     _read_exact_diff_approval,
     _read_ollama_server_version,
     _repair_history_fact_constraints,
+    _repair_provider_constraints,
     _repair_span_response_schema,
     _remove_generated_build_directory,
     _resolve_project_path_property,
@@ -1119,13 +1120,6 @@ def test_repair_history_facts_exclude_historical_editable_text() -> None:
         },
         "objective_transition": {
             "after_prior_patch": {
-                "diagnostics": [
-                    {
-                        "code": "IA0001",
-                        "error_class": "unknown",
-                        "message": "objective failed",
-                    }
-                ],
                 "exit_code": 1,
             },
             "before_prior_patch": "unavailable_in_current_run",
@@ -1142,6 +1136,30 @@ def test_repair_history_facts_exclude_historical_editable_text() -> None:
             "run_id": "run-001",
         },
     }
+
+
+def test_repair_provider_constraints_deduplicate_diagnostic_messages() -> None:
+    constraints = _repair_provider_constraints(
+        base_constraints=["base constraint"],
+        diagnostics=[
+            {"message": "same diagnostic", "line": 10},
+            {"message": "same diagnostic", "line": 20},
+            {"message": "different diagnostic", "line": 30},
+            {"message": None, "line": 40},
+        ],
+        history_constraints=("history fact",),
+    )
+
+    assert constraints == [
+        "base constraint",
+        (
+            "Use the supplied objective verification diagnostics to produce a "
+            "different repair; do not repeat the prior failed behavior."
+        ),
+        "same diagnostic",
+        "different diagnostic",
+        "history fact",
+    ]
 
 
 def test_runtime_repair_spans_are_unique_current_source_handles() -> None:
