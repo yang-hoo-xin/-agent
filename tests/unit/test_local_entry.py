@@ -45,6 +45,7 @@ from src.mod_agent.local_entry import (
     _repair_review_context,
     _read_exact_diff_approval,
     _read_ollama_server_version,
+    _read_utf8_source_snapshot,
     _repair_history_fact_constraints,
     _repair_provider_constraints,
     _repair_span_response_schema,
@@ -1308,8 +1309,41 @@ def test_repair_span_materialization_restores_current_before_text() -> None:
         )
 
 
+def test_read_utf8_source_snapshot_preserves_exact_mixed_line_endings(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "Mixed.cs"
+    source_bytes = (
+        "public void Record()\r\n"
+        "{\n"
+        "    Console.WriteLine(\"修复\");\r\n"
+        "}\n"
+    ).encode("utf-8")
+    source_path.write_bytes(source_bytes)
+
+    live_text, live_hash = _read_utf8_source_snapshot(source_path)
+
+    assert live_text.encode("utf-8") == source_bytes
+    assert live_text.count("\r\n") == 2
+    assert live_text.count("\n") == 4
+    assert "修复" in live_text
+    assert live_hash == hashlib.sha256(source_bytes).hexdigest()
+
+
+def test_read_utf8_source_snapshot_rejects_invalid_utf8_without_extra_writes(
+    tmp_path: Path,
+) -> None:
+    source_path = tmp_path / "Invalid.cs"
+    source_path.write_bytes(b"valid prefix\n\xff")
+
+    with pytest.raises(UnicodeDecodeError):
+        _read_utf8_source_snapshot(source_path)
+
+    assert list(tmp_path.iterdir()) == [source_path]
+
+
 def test_repair_review_context_binds_current_evidence_without_changing_path() -> None:
-    live_text = "public void Record()\n{\n    Total += amount;\n}\n"
+    live_text = "public void Record()\r\n{\n    // 修复\r\n    Total += amount;\n}\r\n"
     live_hash = hashlib.sha256(live_text.encode("utf-8")).hexdigest()
     implementation = {
         "feature_id": "feature-001",
@@ -1361,6 +1395,26 @@ def test_repair_review_context_binds_current_evidence_without_changing_path() ->
     assert implementation["binding_registry"]["edit_bindings"][0][
         "evidence_id"
     ] == "old-evidence"
+
+    with pytest.raises(LocalEntryError, match="excerpt does not match its source hash"):
+        _repair_review_context(
+            implementation,
+            evidence_pack,
+            runtime_bindings=(runtime_binding,),
+            runtime_evidence=(
+                {**runtime_evidence, "excerpt": live_text + "// drift\n"},
+            ),
+        )
+
+    with pytest.raises(LocalEntryError, match="current source binding"):
+        _repair_review_context(
+            implementation,
+            evidence_pack,
+            runtime_bindings=(
+                {**runtime_binding, "source_hash": "0" * 64},
+            ),
+            runtime_evidence=(runtime_evidence,),
+        )
 
     with pytest.raises(LocalEntryError, match="cannot change an edit binding path"):
         _repair_review_context(

@@ -1783,6 +1783,16 @@ def _repair_review_context(
     return projected_implementation, projected_evidence_pack
 
 
+def _read_utf8_source_snapshot(source_path: Path) -> tuple[str, str]:
+    """Read one raw source snapshot and derive its exact text and byte hash."""
+
+    source_bytes = source_path.read_bytes()
+    return (
+        source_bytes.decode("utf-8"),
+        hashlib.sha256(source_bytes).hexdigest(),
+    )
+
+
 class _MaterializedRepairPatchLLM:
     """Feed a deterministically materialized repair through the existing validator."""
 
@@ -4136,8 +4146,7 @@ def run_local_request(
                     raise LocalEntryError(
                         "Repair edit binding target is missing from the isolated workspace."
                     )
-                live_text = live_path.read_text(encoding="utf-8")
-                live_hash = hashlib.sha256(live_path.read_bytes()).hexdigest()
+                live_text, live_hash = _read_utf8_source_snapshot(live_path)
                 if len(allowed_repair_bindings) == 1:
                     diagnostics_for_spans: tuple[Mapping[str, Any], ...] | None = None
                     if repair_observation is not None:
