@@ -35,12 +35,14 @@ from src.mod_agent.local_entry import (
     _external_evidence_items,
     _local_model_admission_record,
     _local_no_external_disclosure_record,
+    _local_patch_generation_correction_allowed,
     _implementation_with_runtime_repair_bindings,
     _materialize_repair_span_change,
     _objective_verification_source_views,
     _persist_graph_terminal_failure,
     _persist_graph_terminal_result,
     _persist_local_failure_diagnostics,
+    _patch_generation_calls_remaining,
     _project_text_property,
     _repair_review_context,
     _read_exact_diff_approval,
@@ -2282,6 +2284,71 @@ def test_local_run_rejects_invalid_repair_ollama_timeout(timeout: float) -> None
             repair_ollama_model="qwen3.6:27b",
             repair_ollama_timeout_seconds=timeout,
             ollama_context_window=32768,
+        )
+
+
+def test_patch_generation_role_budgets_preserve_both_repair_attempts(
+    tmp_path: Path,
+) -> None:
+    assert _patch_generation_calls_remaining(
+        "repair",
+        initial_patch_call_count=1,
+        repair_call_count=0,
+    ) == 2
+    assert _patch_generation_calls_remaining(
+        "repair",
+        initial_patch_call_count=2,
+        repair_call_count=0,
+    ) == 2
+    assert _patch_generation_calls_remaining(
+        "repair",
+        initial_patch_call_count=2,
+        repair_call_count=1,
+    ) == 1
+    assert _local_patch_generation_correction_allowed(
+        "initial_patch",
+        initial_patch_call_count=1,
+    ) is True
+    assert _local_patch_generation_correction_allowed(
+        "initial_patch",
+        initial_patch_call_count=2,
+    ) is False
+    assert _local_patch_generation_correction_allowed(
+        "repair",
+        initial_patch_call_count=1,
+    ) is False
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_patch_generation_role_budgets_reject_extra_provider_calls() -> None:
+    with pytest.raises(
+        LocalEntryError,
+        match="LOCAL_PATCH_GENERATION_CALL_BUDGET_EXHAUSTED",
+    ):
+        _patch_generation_calls_remaining(
+            "initial_patch",
+            initial_patch_call_count=2,
+            repair_call_count=0,
+        )
+
+    with pytest.raises(
+        LocalEntryError,
+        match="LOCAL_PATCH_GENERATION_CALL_BUDGET_EXHAUSTED",
+    ):
+        _patch_generation_calls_remaining(
+            "repair",
+            initial_patch_call_count=2,
+            repair_call_count=2,
+        )
+
+    with pytest.raises(
+        LocalEntryError,
+        match="LOCAL_PATCH_GENERATION_CALL_COUNT_INVALID",
+    ):
+        _patch_generation_calls_remaining(
+            "repair",
+            initial_patch_call_count=0,
+            repair_call_count=-1,
         )
 
 

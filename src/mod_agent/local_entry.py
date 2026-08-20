@@ -362,8 +362,46 @@ def _rejected_execution_result_from_preflight(
 LOCAL_DIAGNOSTIC_CONTENT_MAX_BYTES = 262_144
 LOCAL_DIAGNOSTIC_CONTENT_FILENAME = "patch_generation_failure_message_content.txt"
 EXACT_DIFF_REJECTION_TOKEN = "REJECTED_BY_USER"
+_INITIAL_PATCH_GENERATION_CALL_BUDGET = 2
+_REPAIR_PATCH_GENERATION_CALL_BUDGET = 2
 OllamaModelIdentityReader = Callable[[str, str], dict[str, Any]]
 OllamaServerVersionReader = Callable[[str], str]
+
+
+def _patch_generation_calls_remaining(
+    model_role: str,
+    *,
+    initial_patch_call_count: int,
+    repair_call_count: int,
+) -> int:
+    """Return the current role's bounded provider calls before this invocation."""
+
+    if initial_patch_call_count < 0 or repair_call_count < 0:
+        raise LocalEntryError("LOCAL_PATCH_GENERATION_CALL_COUNT_INVALID")
+    if model_role == "initial_patch":
+        remaining = _INITIAL_PATCH_GENERATION_CALL_BUDGET - initial_patch_call_count
+    elif model_role == "repair":
+        remaining = _REPAIR_PATCH_GENERATION_CALL_BUDGET - repair_call_count
+    else:
+        raise LocalEntryError("LOCAL_PATCH_GENERATION_MODEL_ROLE_INVALID")
+    if remaining <= 0:
+        raise LocalEntryError("LOCAL_PATCH_GENERATION_CALL_BUDGET_EXHAUSTED")
+    return remaining
+
+
+def _local_patch_generation_correction_allowed(
+    model_role: str,
+    *,
+    initial_patch_call_count: int,
+) -> bool:
+    """Reserve one local provider call for each bounded RepairPlan attempt."""
+
+    return (
+        model_role == "initial_patch"
+        and initial_patch_call_count < _INITIAL_PATCH_GENERATION_CALL_BUDGET
+    )
+
+
 @dataclass(frozen=True)
 class _EditAuthorityReviewAdmission:
     store: ArtifactStore
@@ -3903,7 +3941,8 @@ def run_local_request(
     external_model_input_audit: dict[str, Any] | None = None
     local_model_input_audit: dict[str, Any] | None = None
     model_call_count = 0
-    max_patch_generation_calls = 3
+    initial_patch_model_call_count = 0
+    repair_model_call_count = 0
 
     def evidence_factory(state: dict[str, Any], _: dict[str, Any]):
         evidence_pack = evidence_provider.collect(
@@ -4292,13 +4331,21 @@ def run_local_request(
             )
             external_model_input_audit = model_input_audit
         def record_local_provider_request(provider_request: dict[str, Any]) -> None:
+            nonlocal initial_patch_model_call_count
             nonlocal local_model_input_audit, model_call_count
+            nonlocal repair_model_call_count
             if not local_ollama:
                 raise LocalEntryError(
                     "Local provider request recorder cannot be used externally."
                 )
-            if model_call_count >= max_patch_generation_calls:
-                raise LocalEntryError("LOCAL_PATCH_GENERATION_CALL_BUDGET_EXHAUSTED")
+            model_role = (
+                "repair" if repair_observation is not None else "initial_patch"
+            )
+            remaining_call_budget = _patch_generation_calls_remaining(
+                model_role,
+                initial_patch_call_count=initial_patch_model_call_count,
+                repair_call_count=repair_model_call_count,
+            )
             if local_ollama_server_version is None or selected_model_identity is None:
                 raise LocalEntryError("Local Ollama environment binding is missing.")
             attempt = {
@@ -4307,15 +4354,13 @@ def run_local_request(
                 "run_id": run_id,
                 "request_id": state["request_id"],
                 "model_call_count": model_call_count,
-                "remaining_call_budget": max_patch_generation_calls - model_call_count,
+                "remaining_call_budget": remaining_call_budget,
                 "output_budget": ollama_max_output_tokens,
                 "context_window": ollama_context_window,
                 "model_context_limit": selected_model_context_limit,
                 "ollama_server_version": local_ollama_server_version,
                 "model_identity": dict(selected_model_identity),
-                "model_role": (
-                    "repair" if repair_observation is not None else "initial_patch"
-                ),
+                "model_role": model_role,
                 "source_revision_binding": dict(source_revision_binding or {}),
                 "source_snapshot_sha256": initial_source_snapshot_sha256,
                 "generation_input_binding": {
@@ -4371,6 +4416,10 @@ def run_local_request(
             )
             local_model_input_audit = attempt
             model_call_count += 1
+            if model_role == "initial_patch":
+                initial_patch_model_call_count += 1
+            else:
+                repair_model_call_count += 1
 
         def enforce_post_response_model_binding(_: Any) -> None:
             if selected_model_identity is None or selected_model is None:
@@ -4511,13 +4560,24 @@ def run_local_request(
         try:
             generated = generate_patch(generation_constraints)
         except PatchGenerationError as exc:
+            model_role = (
+                "repair" if repair_observation is not None else "initial_patch"
+            )
+            correction_allowed = (
+                _local_patch_generation_correction_allowed(
+                    model_role,
+                    initial_patch_call_count=initial_patch_model_call_count,
+                )
+                if local_ollama
+                else True
+            )
             failure_record = {
                 "failure_type": type(exc).__name__,
                 "failure_message": str(exc),
                 "diagnostic_content": getattr(exc, "diagnostic_content", None),
                 "diagnostics": dict(getattr(exc, "diagnostics", {}) or {}),
                 "model_call_count_after_failure": model_call_count,
-                "correction_allowed": model_call_count < max_patch_generation_calls,
+                "correction_allowed": correction_allowed,
             }
             failure_path = (
                 run_root
@@ -4533,23 +4593,13 @@ def run_local_request(
                 + "\n",
                 encoding="utf-8",
             )
-            if model_call_count >= max_patch_generation_calls:
+            if not correction_allowed:
                 raise
             correction_constraint = (
-                (
-                    "The previous runtime span response failed deterministic patch "
-                    f"validation: {exc}. Return one corrected response using only the "
-                    "same selection_id, replacement_text, and rationale fields and the "
-                    "same current-source span inventory. Do not repeat the invalid "
-                    "replacement."
-                )
-                if repair_observation is not None and local_ollama
-                else (
-                    "The previous response failed deterministic patch validation: "
-                    f"{exc}. Return one corrected response using the same schema, "
-                    "required change units, evidence, and edit bindings. Do not "
-                    "repeat the invalid patch."
-                )
+                "The previous response failed deterministic patch validation: "
+                f"{exc}. Return one corrected response using the same schema, "
+                "required change units, evidence, and edit bindings. Do not "
+                "repeat the invalid patch."
             )
             generated = generate_patch(
                 [
