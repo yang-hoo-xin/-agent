@@ -65,6 +65,7 @@ from src.mod_agent.local_entry import (
     _sanitized_endpoint_url,
     _select_ollama_model_identity,
     _source_disclosure_record,
+    _unique_repair_diagnostics,
     _verify_bepin_plugin_identity,
     _verify_exact_snapshot_change,
     _verify_final_compiled_artifact_if_built,
@@ -1162,6 +1163,33 @@ def test_repair_provider_constraints_deduplicate_diagnostic_messages() -> None:
         "same diagnostic",
         "different diagnostic",
         "history fact",
+    ]
+
+
+def test_unique_repair_diagnostics_removes_only_exact_duplicates() -> None:
+    first = {
+        "file": "generated_mods/source/Program.cs",
+        "line": 20,
+        "column": 22,
+        "code": "CS0103",
+        "severity": "error",
+        "message": "当前上下文中不存在名称 assemblyPath",
+        "error_class": "unknown",
+    }
+    different_line = {**first, "line": 22, "column": 77}
+    different_message = {**first, "message": "当前上下文中不存在名称 peReader"}
+    diagnostics = [first, dict(first), different_line, different_message, dict(first)]
+
+    projected = _unique_repair_diagnostics(diagnostics)
+
+    assert projected == [first, different_line, different_message]
+    assert projected[0] is not first
+    assert diagnostics == [
+        first,
+        dict(first),
+        different_line,
+        different_message,
+        dict(first),
     ]
 
 

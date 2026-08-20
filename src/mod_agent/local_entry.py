@@ -1410,6 +1410,27 @@ def _repair_history_fact_constraints(
     )
 
 
+def _unique_repair_diagnostics(
+    diagnostics: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep one provider-facing copy of each exact current Build diagnostic."""
+
+    projected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in diagnostics:
+        identity = json.dumps(
+            item,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        projected.append(dict(item))
+    return projected
+
+
 def _repair_provider_constraints(
     *,
     base_constraints: list[str],
@@ -4089,22 +4110,24 @@ def run_local_request(
                 run_id=run_id,
                 request_id=str(state["request_id"]),
             )
-            repair_diagnostics = [
-                {
-                    key: item.get(key)
-                    for key in (
-                        "file",
-                        "line",
-                        "column",
-                        "code",
-                        "severity",
-                        "message",
-                        "error_class",
-                    )
-                }
-                for item in build_observation.get("diagnostics") or []
-                if isinstance(item, dict)
-            ]
+            repair_diagnostics = _unique_repair_diagnostics(
+                [
+                    {
+                        key: item.get(key)
+                        for key in (
+                            "file",
+                            "line",
+                            "column",
+                            "code",
+                            "severity",
+                            "message",
+                            "error_class",
+                        )
+                    }
+                    for item in build_observation.get("diagnostics") or []
+                    if isinstance(item, dict)
+                ]
+            )
             objective_failed = any(
                 item.get("code") == "IA0001" for item in repair_diagnostics
             )
