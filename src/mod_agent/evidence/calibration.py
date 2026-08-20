@@ -13,8 +13,9 @@ import json
 import hashlib
 import tempfile
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.knowledge import (
     IncrementalIndexer,
     KnowledgeDatabase,
@@ -32,6 +33,9 @@ from .discovery_contract import (
 )
 from .discovery_loop import EvidenceDiscoverySpecialist
 
+if TYPE_CHECKING:
+    from src.mod_agent.evaluation.hidden_golden import CommittedCalibrationActual
+
 PHASE_1_DIAGNOSTIC_COMPARISON_STATUS = (
     "phase_1_diagnostic_noncomparable_due_to_request_byte_identity_drift"
 )
@@ -48,6 +52,8 @@ def run_better_hit_feedback_calibration(
     model: EvidenceDiscoveryModel | None = None,
     tool_executor: EvidenceDiscoveryToolExecutor | None = None,
     sources: tuple[EvidenceDiscoverySource, ...] = (),
+    run_id: str | None = None,
+    request_id: str | None = None,
 ) -> EvidencePack:
     """Run BHF actual retrieval with no answer-bearing technical inputs."""
 
@@ -79,6 +85,8 @@ def run_better_hit_feedback_calibration(
                 dependencies=discovery,
                 source_retriever=retriever,
                 source_ids=("r8_modules_source",),
+                run_id=run_id,
+                request_id=request_id,
             )
         return retriever.retrieve(
             _actual_only_request(request=request, max_items=30),
@@ -92,6 +100,8 @@ def run_wall_crawler_calibration(
     model: EvidenceDiscoveryModel | None = None,
     tool_executor: EvidenceDiscoveryToolExecutor | None = None,
     sources: tuple[EvidenceDiscoverySource, ...] = (),
+    run_id: str | None = None,
+    request_id: str | None = None,
 ) -> EvidencePack:
     """Run WallCrawler actual retrieval with no expected-gap inputs."""
 
@@ -135,10 +145,92 @@ def run_wall_crawler_calibration(
                 dependencies=discovery,
                 source_retriever=retriever,
                 source_ids=("r8_modules_source", "r8_datablocks"),
+                run_id=run_id,
+                request_id=request_id,
             )
         return retriever.retrieve(
             _actual_only_request(request=request, max_items=50),
         )
+
+
+def commit_better_hit_feedback_calibration_actual(
+    *,
+    case_root: str | Path,
+    r8_root: str | Path,
+    store: ArtifactStore,
+    feature_spec_ref: ArtifactRef,
+    run_id: str,
+    request_id: str,
+    model: EvidenceDiscoveryModel | None = None,
+    tool_executor: EvidenceDiscoveryToolExecutor | None = None,
+    sources: tuple[EvidenceDiscoverySource, ...] = (),
+) -> "CommittedCalibrationActual":
+    """Bind the BHF adapter to the shared committed-actual owner."""
+
+    from src.mod_agent.evaluation.hidden_golden import (
+        commit_manifest_bound_calibration_actual,
+    )
+
+    def execute(*, r8_root: Path, request: str) -> EvidencePack:
+        return run_better_hit_feedback_calibration(
+            r8_root=r8_root,
+            request=request,
+            model=model,
+            tool_executor=tool_executor,
+            sources=sources,
+            run_id=run_id,
+            request_id=request_id,
+        )
+
+    return commit_manifest_bound_calibration_actual(
+        case_root=case_root,
+        corpus_root=r8_root,
+        store=store,
+        feature_spec_ref=feature_spec_ref,
+        run_id=run_id,
+        request_id=request_id,
+        executor=execute,
+    )
+
+
+def commit_wall_crawler_calibration_actual(
+    *,
+    case_root: str | Path,
+    r8_root: str | Path,
+    store: ArtifactStore,
+    feature_spec_ref: ArtifactRef,
+    run_id: str,
+    request_id: str,
+    model: EvidenceDiscoveryModel | None = None,
+    tool_executor: EvidenceDiscoveryToolExecutor | None = None,
+    sources: tuple[EvidenceDiscoverySource, ...] = (),
+) -> "CommittedCalibrationActual":
+    """Bind the WallCrawler adapter to the shared committed-actual owner."""
+
+    from src.mod_agent.evaluation.hidden_golden import (
+        commit_manifest_bound_calibration_actual,
+    )
+
+    def execute(*, r8_root: Path, request: str) -> EvidencePack:
+        return run_wall_crawler_calibration(
+            r8_root=r8_root,
+            request=request,
+            model=model,
+            tool_executor=tool_executor,
+            sources=sources,
+            run_id=run_id,
+            request_id=request_id,
+        )
+
+    return commit_manifest_bound_calibration_actual(
+        case_root=case_root,
+        corpus_root=r8_root,
+        store=store,
+        feature_spec_ref=feature_spec_ref,
+        run_id=run_id,
+        request_id=request_id,
+        executor=execute,
+    )
 
 
 def _actual_only_request(*, request: str, max_items: int) -> EvidenceRequest:
@@ -189,6 +281,8 @@ def _run_phase_2_discovery(
     ],
     source_retriever: DeterministicEvidenceRetriever,
     source_ids: tuple[str, ...],
+    run_id: str | None,
+    request_id: str | None,
 ) -> EvidencePack:
     normalized = request.strip()
     if not normalized:
@@ -197,6 +291,8 @@ def _run_phase_2_discovery(
         )
     model, tool_executor, sources = dependencies
     request_digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    bound_run_id = run_id or f"phase-2-discovery-{request_digest[:16]}"
+    bound_request_id = request_id or f"actual-request-{request_digest[16:32]}"
 
     retrieve_source_evidence = _source_evidence_retrieval_callback(
         source_retriever=source_retriever,
@@ -209,8 +305,8 @@ def _run_phase_2_discovery(
         source_evidence_retriever=retrieve_source_evidence,
     ).discover(
         EvidenceDiscoveryRequest(
-            run_id=f"phase-2-discovery-{request_digest[:16]}",
-            request_id=f"actual-request-{request_digest[16:32]}",
+            run_id=bound_run_id,
+            request_id=bound_request_id,
             natural_language_request=normalized,
             sources=sources,
             max_tool_calls=4,

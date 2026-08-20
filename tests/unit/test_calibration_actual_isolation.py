@@ -12,6 +12,8 @@ from src.mod_agent.evidence.calibration import (
     ActualExecutionIsolationError,
     PHASE_1_DIAGNOSTIC_COMPARISON_STATUS,
     calibration_summary,
+    commit_better_hit_feedback_calibration_actual,
+    commit_wall_crawler_calibration_actual,
     run_better_hit_feedback_calibration,
     run_wall_crawler_calibration,
 )
@@ -165,3 +167,76 @@ def test_phase_2_calibration_dependencies_are_all_or_none(tmp_path: Path) -> Non
             request="Observe a gameplay reaction.",
             model=_UnusedModel(),
         )
+
+
+def test_case_wrappers_delegate_to_one_shared_committed_actual_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    runner_calls: list[dict[str, object]] = []
+    committed = object()
+
+    def shared_owner(**kwargs: object) -> object:
+        calls.append(kwargs)
+        return committed
+
+    monkeypatch.setattr(
+        "src.mod_agent.evaluation.hidden_golden."
+        "commit_manifest_bound_calibration_actual",
+        shared_owner,
+    )
+    def fake_runner(**kwargs: object) -> EvidencePack:
+        runner_calls.append(kwargs)
+        return EvidencePack.empty(
+            query=str(kwargs["request"]),
+            reason="synthetic wrapper identity check",
+        )
+
+    monkeypatch.setattr(
+        "src.mod_agent.evidence.calibration."
+        "run_better_hit_feedback_calibration",
+        fake_runner,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.evidence.calibration.run_wall_crawler_calibration",
+        fake_runner,
+    )
+    store = object()
+    feature_ref = object()
+    for wrapper in (
+        commit_better_hit_feedback_calibration_actual,
+        commit_wall_crawler_calibration_actual,
+    ):
+        result = wrapper(
+            case_root="case-root",
+            r8_root="r8-root",
+            store=store,  # type: ignore[arg-type]
+            feature_spec_ref=feature_ref,  # type: ignore[arg-type]
+            run_id="run-synthetic",
+            request_id="request-synthetic",
+        )
+        assert result is committed
+
+    assert len(calls) == 2
+    for call in calls:
+        assert call["case_root"] == "case-root"
+        assert call["corpus_root"] == "r8-root"
+        assert call["store"] is store
+        assert call["feature_spec_ref"] is feature_ref
+        assert call["run_id"] == "run-synthetic"
+        assert call["request_id"] == "request-synthetic"
+        assert callable(call["executor"])
+        call["executor"](r8_root=Path("r8-root"), request="safe request")
+    assert len(runner_calls) == 2
+    for call in runner_calls:
+        assert call["request"] == "safe request"
+        assert call["run_id"] == "run-synthetic"
+        assert call["request_id"] == "request-synthetic"
+    for wrapper in (
+        commit_better_hit_feedback_calibration_actual,
+        commit_wall_crawler_calibration_actual,
+    ):
+        source = inspect.getsource(wrapper)
+        assert "ArtifactStore(" not in source
+        assert ".write(" not in source
+        assert "target_mod" not in source

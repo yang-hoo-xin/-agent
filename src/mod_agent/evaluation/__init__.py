@@ -29,9 +29,11 @@ from .arm_a import (
 )
 from .gate import build_transition_eval_gate_report
 from .hidden_golden import (
+    CommittedCalibrationActual,
     HIDDEN_GOLDEN_CALIBRATION_EVAL_VERSION,
     HiddenGoldenActualInput,
     HiddenGoldenCalibrationError,
+    commit_manifest_bound_calibration_actual,
     evaluate_committed_hidden_golden,
     load_hidden_golden_actual_input,
 )
@@ -75,8 +77,10 @@ __all__ = [
     "VersionedObservations",
     "build_transition_eval_gate_report",
     "HIDDEN_GOLDEN_CALIBRATION_EVAL_VERSION",
+    "CommittedCalibrationActual",
     "HiddenGoldenActualInput",
     "HiddenGoldenCalibrationError",
+    "commit_manifest_bound_calibration_actual",
     "evaluate_committed_hidden_golden",
     "load_hidden_golden_actual_input",
     "compare_reports",

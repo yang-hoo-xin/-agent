@@ -30,6 +30,8 @@ from .discovery import (
 from .gtfo_r8 import GTFOR8EvidenceProvider, R8EvidenceError
 from .calibration import (
     calibration_summary,
+    commit_better_hit_feedback_calibration_actual,
+    commit_wall_crawler_calibration_actual,
     run_better_hit_feedback_calibration,
     run_wall_crawler_calibration,
 )
@@ -77,6 +79,8 @@ __all__ = [
     "MetadataSearchRunner",
     "GTFOR8EvidenceProvider",
     "calibration_summary",
+    "commit_better_hit_feedback_calibration_actual",
+    "commit_wall_crawler_calibration_actual",
     "run_better_hit_feedback_calibration",
     "run_wall_crawler_calibration",
     "LocalAssemblyEvidenceToolExecutor",
