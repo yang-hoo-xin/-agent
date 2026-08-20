@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-16
+Last updated: 2026-08-20
 
 ## 1. Product
 
@@ -46,24 +46,23 @@ RAG/ER, Planning, Proposal, Review/Dry-run, Build/Test, Repair, Graph, and
 ArtifactStore modules. It does not create a second Agent framework or a second
 workflow.
 
-The immediate dependency is the existing Repair span inventory for repository
-run `91e54459`. The actual-only inspector issue reached EvidencePack,
-Implementation Plan, first Patch, Review/Dry-run, isolated Apply, and a real
-failed Build. Fourteen compiler diagnostics resolve to exact
-`edit_binding_001`, but the provider-facing inventory exposes only unrelated
-helper-method spans and omits the diagnostic-bound live-source region. The
-existing no-op replacement gate correctly stopped before a second Apply or
-Build. This is a Repair input-representation failure, not an EvidencePack,
-ArtifactStore, diagnostic aggregation, or BuildResult integrity failure.
+The repository actual-only `r8_il_inspector` issue now has an explicit
+unresolved result. Checkpoint `e436434` and run `32e29415` prove that the
+existing workflow reaches local Repair generation and ProposalReview with a
+replaceable local provider, while the deterministic Dry-run structural gate
+rejects the generated Repair Patch before Repair Apply because it contains an
+unmatched closing brace. Earlier bounded runs reached Repair Apply and a second
+real Build but retained the same `assemblyPath`/`peReader` compiler failure.
+The repository objective did not pass, `source_revision_binding` remains empty,
+and further r8 retries, model changes, manual Patch repair, or Workflow changes
+are not authorized.
 
 Current execution order:
 
 ```text
-diagnostic-bound live-source span inventory
--> different Repair Patch
--> second Review / Dry-run / isolated Apply / Build-Test
--> repository objective result or explicit first failure
--> BetterHitFeedback and WallCrawler Hidden-Golden plus minimal Eval
+repository explicit unresolved result recorded
+-> user review and explicit next-slice selection
+-> BetterHitFeedback and WallCrawler Hidden-Golden plus minimal Eval, if selected
 -> RAG-1A checkpoint
 -> RAG-1B public entry adoption
 -> Coding Agent v0 public alpha

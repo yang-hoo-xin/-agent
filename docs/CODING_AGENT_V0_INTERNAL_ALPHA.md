@@ -2,18 +2,18 @@
 
 ```yaml
 document_status: current_implementation_target
-document_version: 2026-08-17-big-goal-reframe
+document_version: 2026-08-20-r8-explicit-unresolved
 completion_claim: none
 implementation_authority: current_user_selected_documentation_scope
 created_at: 2026-08-16
 target_worktree: rag_capability_mainline
 target_branch: codex/rag-capability-mainline
 target_head_at_audit: c48b5e82fe3eed524d5c9f868980748136e28bfd
-current_checkpoint_at_last_sync: 6f6918772662715abaf726dfe8a331f5aee7407d
+current_checkpoint_at_last_sync: e436434dc894df87339b2f3a6767f34477989426
 product_milestone: coding_agent_v0
 first_integrated_delivery: coding_agent_v0_internal_alpha
-active_work_package: actual_only_vertical_slice_repair
-current_product_stage: repair_span_inventory_binding
+active_work_package: none_pending_user_selection
+current_product_stage: explicit_unresolved_repository_result
 rag_1a_role: internal_evidence_capability
 rag_1b_role: public_entry_adoption
 ```
@@ -573,7 +573,7 @@ source observation
 
 ## 5. 当前实际任务、产品阶段和第一失败层
 
-> 本节是 2026-08-17 当前同步快照。推进页完成下一个工作包时必须更新本节或给出取代它的 `PROJECT_STATE`/运行报告身份；不得让历史 BHF、旧 HEAD 或旧 WIP 覆盖当前 actual-only 任务。
+> 本节是 2026-08-20 repository explicit-unresolved 同步快照。它是本次 r8 运行详细事实的唯一文档主记录；其他权威文档只保留摘要和本节引用。
 
 ### 5.1 当前实际大任务
 
@@ -585,9 +585,9 @@ prefilled_target_file: false
 prefilled_patch_answer: false
 golden_or_annotation_visible: false
 source_workspace: C:/Users/10160/.codex/visualizations/2026/08/11/019ff15f-9eac-7b13-aad5-faffde4b36b7/rag_capability_mainline/scripts/r8_il_inspector
-isolated_workspace: C:/Users/10160/.codex/visualizations/2026/08/11/019ff15f-9eac-7b13-aad5-faffde4b36b7/r/internal_alpha_repo_issue/runs/91e54459/generated_mods/r8_il_inspector
-current_checkpoint: abd3d6a
-current_worktree_code_wip: "none; documentation WIP remains independent"
+isolated_workspace: C:/Users/10160/.codex/visualizations/2026/08/11/019ff15f-9eac-7b13-aad5-faffde4b36b7/r/internal_alpha_repo_issue/runs/32e29415/generated_mods/r8_il_inspector
+current_checkpoint: e436434dc894df87339b2f3a6767f34477989426
+current_worktree_code_wip: "none; four user documentation changes remain independent"
 current_wip_staged: 0
 current_wip_committed: true
 ```
@@ -608,51 +608,67 @@ plan:
   implementation_plan_blocking: false
 patch:
   first_patch_proposal_created: true
+  repair_attempt_1_patch_created: true
 dry_run:
-  passed: true
+  initial_passed: true
+  repair_attempt_1_passed: false
 apply:
-  isolated_apply_performed: true
-  modified_files: 1
+  initial_isolated_apply_performed: true
+  repair_attempt_1_isolated_apply_performed: false
 build_test:
   baseline_compilation: passed
-  first_repair_compilation: failed
-  compiler_diagnostic_count: 14
+  initial_patch_compilation: failed
+  initial_compiler_diagnostic_count: 14
+  final_run_repair_build_reached: false
 repair:
   failure_observation_consumed: true
   exact_edit_binding_grouped: true
   grouped_change_count: 1
-  executable_second_patch_created: false
+  repair_patch_created: true
+  repair_review_decision: approve_dry_run
+  repair_dry_run_structural_gate: rejected
 revalidation:
-  reached: false
+  earlier_bounded_runs_reached_second_apply_build: true
+  repository_objective_passed: false
 final_result:
   completed: false
+  classification: explicit_unresolved_repository_result
 ```
 
-基线 `dotnet restore`、`dotnet build --no-restore` 和目标 DLL 验证通过。首次 Patch 经 Review、Dry-run 和隔离 Apply 后产生 14 条 C# 编译器诊断；这些诊断全部确定性解析到同一 `edit_binding_001`，RepairPlan 保留 BuildResult 引用和 14 条逐项诊断引用，并允许进入 Repair Patch 生成。该结果证明 repository smoke 已进入真实 Repair，但没有完成第二次验证。
+基线 `dotnet restore`、`dotnet build --no-restore` 和目标 DLL 验证通过。首次 Patch 经 Review、Dry-run 和隔离 Apply 后产生 14 条 C# 编译器诊断；这些诊断全部确定性解析到同一 `edit_binding_001`。最终 run `32e29415` 的 Repair provider 请求通过 context admission 并返回完整 structured response，Repair PatchProposal 与 approving ProposalReview 均已提交；现有 Dry-run C# structural gate 随后在任何 Repair Apply/Build 前拒绝 unmatched closing brace。
 
-本次标准 .NET 项目使用 `v2_codegen_real_local_dotnet_nuget_isolated`：NuGet packages、HTTP/plugin cache、scratch、`APPDATA` 和生成的 `nuget.config` 均位于 run root；restore 成功后使用 `dotnet build --no-restore`。该 profile 只证明 run-local NuGet 配置与可写缓存隔离，不声明完全 hermetic，也不把 `dotnet` 子进程当作 OS sandbox。Repository smoke 当前状态为 `repair_failed_before_second_build`，不是通过。
+早期有界 runs `30716fd2` 与 `94aa1450` 已真实到达 Repair Apply 和第二 Build，但生成动作没有恢复缺失声明，Build 仍以同类 `assemblyPath`/`peReader` `CS0103` 失败。跨 run 的同一模型/config 又分别出现 Review source representation、无效 Build 修复和 structural-invalid Dry-run 结果；继续完整 rerun只会增加抽样，不提供新的 owner 证据。标准 .NET profile 仍只证明 run-local NuGet 配置与可写缓存隔离，不声明完全 hermetic，也不把 `dotnet` 子进程当作 OS sandbox。
 
 ### 5.3 当前第一物理失败层
 
 ```yaml
-current_product_stage: repair_span_inventory_binding
-first_physical_failure: repair_span_inventory_does_not_cover_bound_diagnostics
-responsible_subsystem: existing_repair_span_inventory_owner
+current_product_stage: explicit_unresolved_repository_result
+claimed_completion: false
+completion_level: explicit_unresolved_repository_result
+new_stage_crossed: false
+first_physical_failure: repair_attempt1_patch_structurally_invalid
+terminal_failure: dry_run_apply_execution/unmatched_closing_brace
+responsible_subsystem: repair_model_output_semantic_structural_quality
+capability_advanced_platform: true
+capability_advanced_product: false
 failure_observation_consumed: true
-repair_changed_action: false
+repair_changed_action: true
 repair_revalidation_completed: false
+repository_objective_passed: false
+source_revision_binding: missing
+r8_continue_authorized: false
 ```
 
-Repair 模型已消费聚合后的客观编译诊断，但 provider-facing span inventory 只包含 `Program.cs` 第 573–839 行的 12 个 helper-method span；14 条诊断实际位于第 20–229 行，inventory 没有覆盖其已绑定编辑位置。模型明确报告该不一致，随后原样返回无关 `s01`；现有确定性补丁校验以 `Repair replacement_text must change the selected live-source span.` 正确拒绝。没有执行第二次 Review、Dry-run、Apply 或 Build/Test。下一工作包只修现有 span inventory owner，使诊断绑定位置在 live-source、非重叠、可编辑视图中可见；不放宽 no-op 校验。
+当前 first physical failure 是 Repair attempt 1 的模型输出结构无效；ProposalReview 返回 `approve_dry_run`，但 Dry-run 以 `unmatched '}' at character 2141` 正确拒绝，因此不是 Dry-run gate 故障。repository objective 未通过，internal alpha 完成门中的 supported-task pass、verified repair 和 repair revalidation 仍为 false。最终 verdict 禁止继续 r8 run、切模型、手工修 Patch、增加 correction、修改 Review/Dry-run/Graph/continuation 或提高 budget/context。
 
-运行身份：
+最终运行身份：
 
-- Work Package A checkpoint：`1eac07a2ebc7a25b3e860d05f062a29a50af35fb`；test-only closure checkpoint：`abd3d6a`；
-- `run_result.json` SHA256：`D4A671C1E84CC4A5B98832F7C9B78DCA829C2344CFAC3271BD74BC87D1183B1E`；
-- `RepairPlan` file SHA256：`7A2955E314BD0CDCAE7F3CE5D509929FF851D5F77BB96C1602D393824C9D7D3D`；
-- Work Package A focused：`5 passed`；test-only closure 将两条旧 Graph 路径显式绑定到一个绝对 source path 的单一 EvidenceItem，未修改生产语义；完整 `test_repair_loop.py` 为 `29 passed`。
+- checkpoint：`e436434dc894df87339b2f3a6767f34477989426`；
+- run：`32e29415`；`run_result.json` SHA256：`B7B3F473F8DA8E2500DA67E496DC389B8B9BB5109D8056F49FC170CEB2ED7AD9`；
+- Repair PatchProposal：`7ea98cdaae92ead43248a448d81ded4e8ae392fbc1c5d7718238d90d51828253`；ProposalReview：`c06e12d276f2be52526499528c4d3e1e5ea41c500407c36bc5549f7df38f37b3`；
+- exact diagnostic projection focused：`3 passed`；完整 `test_local_entry.py`：`90 passed`；`test_repair_loop.py`：`29 passed`。
 
-交接前无模型核对确认：Isolated Apply 的 `after_sha256`、当前 live `Program.cs` SHA256 和 12 个 runtime span 的 `source_hash` 均为 `685FC666256851810DD01AD5A2AF128894AA5777D20466C128D21B54CA820146`；12/12 span 的 1-based 行范围与当前 live source 逐行一致，编译器诊断同样指向该文件的 1-based 行 20、26、28、34、112、188、229。因此当前 owner 是 span inventory 覆盖，不是 revision 或坐标映射。
+canonical `Program.cs` SHA256 保持 `C8B7B706DC771BC4955131691EFABEB4137B056E1428BBF6301263112220CAFB`，`r8_il_inspector.csproj` 保持 `0AB60D5BB742EFA934D1C145A4B840DA8220ED8AC3522E8F81F10D40CC19E62A`。`source_revision_binding` 仍为空，`workflow_checkpoint_ref` 仍为 `null`。这些事实限制声明为一个 .NET repository task 的 explicit unresolved result，不证明通用 Coding Agent 完成。
 
 ### 5.4 当前明确不做
 
@@ -739,15 +755,13 @@ Coding Agent v0 是上位产品里程碑，v0 internal alpha 是第一集成交�
 - BHF 的冻结 annotation 与 hash 不变，评分差异由版本化 Case 评分投影表达；
 - BHF Hidden-Golden 不能授予 Patch 权限，也不作为 internal alpha 正向修改任务。
 
-### 8.3 当前活动工作包：repository Repair span→Revalidation
+### 8.3 Repository explicit-unresolved 结果与下一选择边界
 
-- 当前任务及物理状态只读 §5；Issue、EvidencePack、非阻断 Plan、首次 Patch、Dry-run、隔离 Apply 和首次 Build/Test 已真实完成；
-- 只修改现有 Repair span inventory owner，使已由 `edit_binding_001` 证明的诊断位置进入完整、当前、非重叠的 live-source 编辑视图；
-- 继续由现有 Repair Patch owner 产生与首次不同且可执行的受限 Patch；
-- 继续使用同一任务、同一隔离工作区、同一成功命令和既有 Runner；
-- 完成第二次 Review/Dry-run、隔离 Apply、Build/Test 和客观结果记录；
-- 若第二次客观测试仍失败，保存第一物理原因并停止，不在同一工作包跨层修改 RAG、Golden、Trace、控制面或模型选择；
-- 达到 objective 通过后形成代码 checkpoint，再使用现有仓库真实小型 Issue 做第二层复核。
+- 当前任务详细事实只读 §5；repository objective 未通过，但合同要求的 explicit-failure 分支已形成可核验终止记录；
+- 不再继续 r8 run、模型抽样、手工 Patch 修复或 Workflow/continuation 扩展；
+- Coding Agent v0 internal alpha 仍未完成，不把平台 gate 正确拒绝无效动作提升为 supported-task success；
+- 下一 eligible slice 仍是 BetterHitFeedback Hidden-Golden、WallCrawler 负向 actual 与最小关系 Eval，但必须由用户显式选择后才进入 active queue；
+- 在用户选择前不自动启动 RAG-1A、RAG-1B、Eval 扩张、Trace、MCP、Memory 或最终资产收口。
 
 ### 8.4 工作包 3：关闭 RAG-1A
 
