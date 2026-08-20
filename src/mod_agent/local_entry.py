@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import shutil
@@ -3280,6 +3281,7 @@ def run_local_request(
     ollama_base_url: str = "http://127.0.0.1:11434",
     ollama_model: str | None = None,
     repair_ollama_model: str | None = None,
+    repair_ollama_timeout_seconds: float | None = None,
     ollama_max_output_tokens: int = 4096,
     ollama_context_window: int | None = None,
     ollama_model_identity_reader: OllamaModelIdentityReader | None = None,
@@ -3310,6 +3312,20 @@ def run_local_request(
         raise LocalEntryError(
             "A Repair Ollama model can only be selected for local Ollama execution."
         )
+    if repair_ollama_timeout_seconds is not None:
+        if repair_ollama_model is None:
+            raise LocalEntryError(
+                "A Repair Ollama timeout requires an explicit Repair Ollama model."
+            )
+        if (
+            isinstance(repair_ollama_timeout_seconds, bool)
+            or not isinstance(repair_ollama_timeout_seconds, (int, float))
+            or not math.isfinite(float(repair_ollama_timeout_seconds))
+            or repair_ollama_timeout_seconds <= 0
+        ):
+            raise LocalEntryError(
+                "Repair Ollama timeout seconds must be a positive finite number."
+            )
     if objective_verification_command is not None and (
         not objective_verification_command
         or not all(
@@ -3434,10 +3450,17 @@ def run_local_request(
                 ),
             )
             try:
+                repair_llm_options: dict[str, Any] = {
+                    "base_url": llm_base_url,
+                    "context_window": ollama_context_window,
+                }
+                if repair_ollama_timeout_seconds is not None:
+                    repair_llm_options["timeout"] = float(
+                        repair_ollama_timeout_seconds
+                    )
                 repair_llm = LLMFactory.create(
                     repair_settings,
-                    base_url=llm_base_url,
-                    context_window=ollama_context_window,
+                    **repair_llm_options,
                 )
             except Exception as exc:
                 raise LocalEntryError(

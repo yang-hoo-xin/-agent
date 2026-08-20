@@ -2140,6 +2140,97 @@ def test_local_run_selects_ollama_without_api_key_or_external_disclosure(
     assert not (tmp_path / "runs").exists()
 
 
+def test_local_run_applies_timeout_only_to_repair_ollama_role(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[dict[str, object]] = []
+
+    def create(settings, **kwargs):
+        llm = OllamaLLM(settings, **kwargs)
+        created.append(
+            {
+                "model": settings.llm.model,
+                "kwargs": kwargs,
+                "timeout": llm.timeout,
+            }
+        )
+        return llm
+
+    def identity(_base_url: str, model: str) -> dict[str, object]:
+        return {
+            **_ollama_identity(),
+            "name": model,
+            "model": model,
+        }
+
+    monkeypatch.setattr(LLMFactory, "create", staticmethod(create))
+
+    with pytest.raises(LocalEntryError, match="Target project"):
+        run_local_request(
+            description="change a local source file",
+            target_project=tmp_path / "missing-target",
+            workspace_base=tmp_path / "runs",
+            settings_path=Path("config/settings.yaml"),
+            confirm_isolated_write=True,
+            allow_build=True,
+            allow_source_disclosure=False,
+            diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
+            local_ollama=True,
+            ollama_base_url="http://127.0.0.1:11434",
+            ollama_model="qwen3:4b-instruct",
+            repair_ollama_model="qwen3.6:27b",
+            repair_ollama_timeout_seconds=600.0,
+            ollama_context_window=32768,
+            ollama_model_identity_reader=identity,
+            ollama_server_version_reader=lambda *_: "0.32.1",
+        )
+
+    assert created == [
+        {
+            "model": "qwen3:4b-instruct",
+            "kwargs": {
+                "base_url": "http://127.0.0.1:11434",
+                "context_window": 32768,
+            },
+            "timeout": 120.0,
+        },
+        {
+            "model": "qwen3.6:27b",
+            "kwargs": {
+                "base_url": "http://127.0.0.1:11434",
+                "context_window": 32768,
+                "timeout": 600.0,
+            },
+            "timeout": 600.0,
+        },
+    ]
+    assert not (tmp_path / "runs").exists()
+
+
+@pytest.mark.parametrize("timeout", [True, 0.0, -1.0, float("inf"), float("nan")])
+def test_local_run_rejects_invalid_repair_ollama_timeout(timeout: float) -> None:
+    with pytest.raises(
+        LocalEntryError,
+        match="Repair Ollama timeout seconds must be a positive finite number",
+    ):
+        run_local_request(
+            description="change a local source file",
+            target_project=Path("missing-target"),
+            workspace_base=Path("missing-runs"),
+            settings_path=Path("missing-settings.yaml"),
+            confirm_isolated_write=True,
+            allow_build=True,
+            allow_source_disclosure=False,
+            diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
+            local_ollama=True,
+            ollama_model="qwen3:4b-instruct",
+            repair_ollama_model="qwen3.6:27b",
+            repair_ollama_timeout_seconds=timeout,
+            ollama_context_window=32768,
+        )
+
+
 def test_local_run_rejects_external_disclosure_boundary_mix(
     tmp_path: Path,
 ) -> None:
