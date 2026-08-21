@@ -181,7 +181,7 @@ def test_case_wrappers_delegate_to_one_shared_committed_actual_owner(
         return committed
 
     monkeypatch.setattr(
-        "src.mod_agent.evaluation.hidden_golden."
+        "src.mod_agent.evidence.calibration."
         "commit_manifest_bound_calibration_actual",
         shared_owner,
     )
@@ -203,6 +203,7 @@ def test_case_wrappers_delegate_to_one_shared_committed_actual_owner(
     )
     store = object()
     feature_ref = object()
+    snapshot_resolver = lambda _root, _allowlist: "snapshot-synthetic"
     for wrapper in (
         commit_better_hit_feedback_calibration_actual,
         commit_wall_crawler_calibration_actual,
@@ -214,6 +215,7 @@ def test_case_wrappers_delegate_to_one_shared_committed_actual_owner(
             feature_spec_ref=feature_ref,  # type: ignore[arg-type]
             run_id="run-synthetic",
             request_id="request-synthetic",
+            corpus_snapshot_resolver=snapshot_resolver,
         )
         assert result is committed
 
@@ -225,8 +227,14 @@ def test_case_wrappers_delegate_to_one_shared_committed_actual_owner(
         assert call["feature_spec_ref"] is feature_ref
         assert call["run_id"] == "run-synthetic"
         assert call["request_id"] == "request-synthetic"
+        assert call["corpus_snapshot_resolver"] is snapshot_resolver
         assert callable(call["executor"])
-        call["executor"](r8_root=Path("r8-root"), request="safe request")
+        call["executor"](
+            r8_root=Path("r8-root"),
+            request="safe request",
+            run_id="run-synthetic",
+            request_id="request-synthetic",
+        )
     assert len(runner_calls) == 2
     for call in runner_calls:
         assert call["request"] == "safe request"
@@ -240,3 +248,9 @@ def test_case_wrappers_delegate_to_one_shared_committed_actual_owner(
         assert "ArtifactStore(" not in source
         assert ".write(" not in source
         assert "target_mod" not in source
+
+
+def test_actual_owner_does_not_import_evaluation_hidden_golden() -> None:
+    source = Path(inspect.getsourcefile(run_better_hit_feedback_calibration) or "")
+    text = source.read_text(encoding="utf-8")
+    assert "src.mod_agent.evaluation" not in text

@@ -1,19 +1,22 @@
-"""Expected-truth isolation for the two Hook Discovery calibration fixtures.
+"""Expected-side comparison for the two Hook Discovery calibration fixtures.
 
-This module is deliberately not a discovery runner.  It binds the natural-language
-request and allowlisted corpus before actual execution, then reads a frozen technical
-annotation only after an EvidencePack has been committed and strictly rehydrated.
+This module is deliberately not a discovery runner.  It consumes a manifest-bound
+actual identity only after Evidence-side execution, Store commit, and strict semantic
+rehydration, then reads the frozen technical annotation for comparison.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, replace
-from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Mapping
+from pathlib import Path
+from typing import Any, Mapping
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.evidence.calibration import (
+    HiddenGoldenActualInput,
+    HiddenGoldenCalibrationError,
+)
 from src.mod_agent.evidence.models import EvidencePack
 
 HIDDEN_GOLDEN_CALIBRATION_EVAL_VERSION = "hidden_golden_calibration_eval_v1"
@@ -37,245 +40,6 @@ _FULL_IDENTITY_FIELDS = (
     "metadata_token",
     "signature_blob",
 )
-
-
-class HiddenGoldenCalibrationError(ValueError):
-    """Raised when actual/expected isolation or identity binding is invalid."""
-
-
-@dataclass(frozen=True)
-class HiddenGoldenActualInput:
-    """Manifest-bound input that is safe to expose to actual discovery."""
-
-    case_identity: str
-    request_text: str
-    request_sha256: str
-    declared_corpus_snapshot_sha256: str
-    observed_corpus_snapshot_sha256: str | None
-    source_allowlist: tuple[str, ...]
-    excluded_source_classes: tuple[str, ...]
-
-
-@dataclass(frozen=True)
-class CommittedCalibrationActual:
-    """Strictly rehydrated actual identity ready for expected-side evaluation."""
-
-    store: ArtifactStore
-    actual_ref: ArtifactRef
-    actual_input: HiddenGoldenActualInput
-    feature_spec_ref: ArtifactRef
-    run_id: str
-    request_id: str
-    evidence_pack: EvidencePack
-
-
-def load_hidden_golden_actual_input(
-    case_root: str | Path,
-    *,
-    corpus_root: str | Path | None = None,
-) -> HiddenGoldenActualInput:
-    """Load only manifest/request facts; never open the annotation."""
-
-    root = Path(case_root)
-    manifest = _load_object(root / "corpus_manifest.json")
-    case_identity = _required_string(manifest, "case_identity")
-    request_spec = _required_object(manifest, "request")
-    request_ref = _required_string(request_spec, "ref")
-    request_ref_path = PurePosixPath(request_ref)
-    if (
-        request_ref_path.name != "request.txt"
-        or request_ref_path.parent.name != root.name
-    ):
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_REQUEST_REF_INVALID")
-    request_bytes = _canonical_request_bytes((root / "request.txt").read_bytes())
-    request_sha256 = _sha256(request_bytes)
-    if request_sha256 != _required_string(request_spec, "sha256"):
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_REQUEST_HASH_MISMATCH")
-    try:
-        request_text = request_bytes.decode("utf-8").rstrip("\n")
-    except UnicodeDecodeError as exc:
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_REQUEST_NOT_UTF8") from exc
-    if not request_text.strip():
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_REQUEST_EMPTY")
-
-    scope = _required_object(manifest, "actual_retrieval_scope")
-    if scope.get("mode") != "allowlist_only":
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_SOURCE_SCOPE_NOT_ALLOWLIST")
-    source_allowlist = _string_tuple(scope, "search_root_allowlist")
-    excluded = _string_tuple(scope, "excluded_source_classes")
-    if "technical_annotation" not in excluded or "prior_agent_or_rag_outputs" not in excluded:
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_EXPECTED_EXCLUSION_MISSING")
-    snapshot = _required_object(manifest, "canonical_corpus_snapshot")
-    snapshot_allowlist = _string_tuple(snapshot, "search_root_allowlist")
-    if snapshot_allowlist != source_allowlist:
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_CORPUS_ALLOWLIST_MISMATCH")
-
-    declared_snapshot = _required_string(snapshot, "corpus_snapshot_sha256")
-    observed_snapshot: str | None = None
-    if corpus_root is not None:
-        from .arm_a import RunManifestCollector
-
-        observed_snapshot = RunManifestCollector(corpus_root).canonical_corpus_snapshot(
-            source_allowlist
-        ).corpus_snapshot_sha256
-        if observed_snapshot != declared_snapshot:
-            raise HiddenGoldenCalibrationError(
-                "HIDDEN_GOLDEN_CORPUS_SNAPSHOT_MISMATCH"
-            )
-
-    return HiddenGoldenActualInput(
-        case_identity=case_identity,
-        request_text=request_text,
-        request_sha256=request_sha256,
-        declared_corpus_snapshot_sha256=declared_snapshot,
-        observed_corpus_snapshot_sha256=observed_snapshot,
-        source_allowlist=source_allowlist,
-        excluded_source_classes=excluded,
-    )
-
-
-def commit_manifest_bound_calibration_actual(
-    *,
-    case_root: str | Path,
-    corpus_root: str | Path,
-    store: ArtifactStore,
-    feature_spec_ref: ArtifactRef,
-    run_id: str,
-    request_id: str,
-    executor: Callable[..., EvidencePack],
-) -> CommittedCalibrationActual:
-    """Execute and commit one manifest-bound actual without expected-side inputs."""
-
-    actual_input = load_hidden_golden_actual_input(
-        case_root,
-        corpus_root=corpus_root,
-    )
-    if (
-        actual_input.observed_corpus_snapshot_sha256 is None
-        or actual_input.observed_corpus_snapshot_sha256
-        != actual_input.declared_corpus_snapshot_sha256
-    ):
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_CORPUS_SNAPSHOT_NOT_BOUND"
-        )
-    if not isinstance(run_id, str) or not run_id.strip():
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_RUN_ID_INVALID")
-    if not isinstance(request_id, str) or not request_id.strip():
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_REQUEST_ID_INVALID")
-    if not callable(executor):
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_EXECUTOR_INVALID")
-    if feature_spec_ref.artifact_type != "feature_spec":
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_FEATURE_SPEC_REF_TYPE_INVALID"
-        )
-
-    feature_envelope = store.read(feature_spec_ref)
-    feature_payload = feature_envelope.get("data")
-    if (
-        not isinstance(feature_payload, dict)
-        or feature_payload.get("user_request") != actual_input.request_text
-        or feature_payload.get("target_behavior") != actual_input.request_text
-    ):
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_FEATURE_REQUEST_MISMATCH"
-        )
-
-    pack = executor(
-        r8_root=Path(corpus_root).resolve(),
-        request=actual_input.request_text,
-    )
-    if not isinstance(pack, EvidencePack):
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_EXECUTOR_RESULT_INVALID"
-        )
-    if pack.query != actual_input.request_text:
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_ACTUAL_REQUEST_MISMATCH"
-        )
-    existing_run_id = pack.provenance_validation.get("run_id")
-    if existing_run_id is not None and existing_run_id != run_id:
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_ACTUAL_RUN_ID_MISMATCH"
-        )
-    manifest_binding = {
-        "case_identity": actual_input.case_identity,
-        "request_sha256": actual_input.request_sha256,
-        "declared_corpus_snapshot_sha256": (
-            actual_input.declared_corpus_snapshot_sha256
-        ),
-        "observed_corpus_snapshot_sha256": (
-            actual_input.observed_corpus_snapshot_sha256
-        ),
-        "source_allowlist": list(actual_input.source_allowlist),
-    }
-    existing_manifest_binding = pack.provenance_validation.get(
-        "manifest_bound_actual"
-    )
-    if (
-        existing_manifest_binding is not None
-        and existing_manifest_binding != manifest_binding
-    ):
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_ACTUAL_MANIFEST_BINDING_MISMATCH"
-        )
-    pack = replace(
-        pack,
-        provenance_validation={
-            **pack.provenance_validation,
-            "run_id": run_id,
-            "request_id": request_id,
-            "manifest_bound_actual": manifest_binding,
-        },
-    )
-    payload = pack.to_artifact_payload()
-    if not EvidencePack.requires_strict_semantic_rehydrate(payload):
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_ACTUAL_NOT_SEMANTIC"
-        )
-    try:
-        EvidencePack.from_artifact_payload(payload)
-    except ValueError as exc:
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_ACTUAL_REHYDRATE_FAILED"
-        ) from exc
-
-    actual_ref = store.write(
-        feature_id=feature_spec_ref.feature_id,
-        artifact_type="evidence_pack",
-        payload=payload,
-        status="success" if pack.can_generate_patch else "blocked",
-        upstream_refs=[feature_spec_ref],
-    )
-    envelope = store.read(actual_ref)
-    committed_payload = envelope.get("data")
-    if not isinstance(committed_payload, dict):
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_COMMITTED_ACTUAL_PAYLOAD_INVALID"
-        )
-    if not EvidencePack.requires_strict_semantic_rehydrate(committed_payload):
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_COMMITTED_ACTUAL_NOT_SEMANTIC"
-        )
-    try:
-        committed_pack = EvidencePack.from_artifact_payload(committed_payload)
-    except ValueError as exc:
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_COMMITTED_ACTUAL_REHYDRATE_FAILED"
-        ) from exc
-    if committed_pack.query != actual_input.request_text:
-        raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_COMMITTED_ACTUAL_REQUEST_MISMATCH"
-        )
-
-    return CommittedCalibrationActual(
-        store=store,
-        actual_ref=actual_ref,
-        actual_input=actual_input,
-        feature_spec_ref=feature_spec_ref,
-        run_id=run_id,
-        request_id=request_id,
-        evidence_pack=committed_pack,
-    )
 
 
 def evaluate_committed_hidden_golden(
@@ -477,13 +241,6 @@ def _identity_key(value: Mapping[str, str]) -> tuple[str, ...]:
     return tuple(value[field] for field in _FULL_IDENTITY_FIELDS)
 
 
-def _canonical_request_bytes(raw: bytes) -> bytes:
-    canonical = raw.replace(b"\r\n", b"\n")
-    if b"\r" in canonical:
-        raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_REQUEST_LINE_ENDING_INVALID")
-    return canonical
-
-
 def _load_object(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -492,29 +249,6 @@ def _load_object(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_JSON_OBJECT_REQUIRED")
     return value
-
-
-def _required_object(value: Mapping[str, Any], field: str) -> dict[str, Any]:
-    result = value.get(field)
-    if not isinstance(result, dict):
-        raise HiddenGoldenCalibrationError(f"HIDDEN_GOLDEN_{field.upper()}_INVALID")
-    return result
-
-
-def _required_string(value: Mapping[str, Any], field: str) -> str:
-    result = value.get(field)
-    if not isinstance(result, str) or not result:
-        raise HiddenGoldenCalibrationError(f"HIDDEN_GOLDEN_{field.upper()}_INVALID")
-    return result
-
-
-def _string_tuple(value: Mapping[str, Any], field: str) -> tuple[str, ...]:
-    result = value.get(field)
-    if not isinstance(result, list) or not all(
-        isinstance(item, str) and item for item in result
-    ):
-        raise HiddenGoldenCalibrationError(f"HIDDEN_GOLDEN_{field.upper()}_INVALID")
-    return tuple(result)
 
 
 def _canonical_sha256(value: Mapping[str, Any]) -> str:

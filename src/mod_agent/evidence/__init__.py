@@ -29,9 +29,14 @@ from .discovery import (
 )
 from .gtfo_r8 import GTFOR8EvidenceProvider, R8EvidenceError
 from .calibration import (
+    CommittedCalibrationActual,
+    HiddenGoldenActualInput,
+    HiddenGoldenCalibrationError,
     calibration_summary,
     commit_better_hit_feedback_calibration_actual,
+    commit_manifest_bound_calibration_actual,
     commit_wall_crawler_calibration_actual,
+    load_hidden_golden_actual_input,
     run_better_hit_feedback_calibration,
     run_wall_crawler_calibration,
 )
@@ -78,9 +83,14 @@ __all__ = [
     "EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES",
     "MetadataSearchRunner",
     "GTFOR8EvidenceProvider",
+    "CommittedCalibrationActual",
+    "HiddenGoldenActualInput",
+    "HiddenGoldenCalibrationError",
     "calibration_summary",
     "commit_better_hit_feedback_calibration_actual",
+    "commit_manifest_bound_calibration_actual",
     "commit_wall_crawler_calibration_actual",
+    "load_hidden_golden_actual_input",
     "run_better_hit_feedback_calibration",
     "run_wall_crawler_calibration",
     "LocalAssemblyEvidenceToolExecutor",

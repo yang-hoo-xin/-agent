@@ -1168,6 +1168,13 @@ class EvidenceDiscoverySpecialist:
                 "agent_discovery_sha256": _json_sha256(agent_discovery),
                 "raw_prompt_persisted": False,
             },
+            model_identity=_model_identity(self.model),
+            provenance_validation={
+                "run_id": request.run_id,
+                "request_id": request.request_id,
+                "target_code_executed": False,
+                "model_disclosure": _model_disclosure_record(self.model),
+            },
             input_audit=input_audit,
             message=str(state["message"]),
         )
@@ -1464,6 +1471,7 @@ class EvidenceDiscoverySpecialist:
             model_identity=_model_identity(self.model),
             provenance_validation={
                 "run_id": request.run_id,
+                "request_id": request.request_id,
                 "all_method_inspections_derived_from_observations": (
                     method_inspection_provenance_valid
                 ),

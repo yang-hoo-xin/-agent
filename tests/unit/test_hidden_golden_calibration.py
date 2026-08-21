@@ -4,16 +4,18 @@ import hashlib
 import inspect
 import json
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+import src.mod_agent.evaluation.hidden_golden as hidden_golden_module
 from src.mod_agent.artifacts import ArtifactStore
-from src.mod_agent.evaluation.hidden_golden import (
+from src.mod_agent.evaluation.hidden_golden import evaluate_committed_hidden_golden
+from src.mod_agent.evidence.calibration import (
     CommittedCalibrationActual,
     HiddenGoldenCalibrationError,
     commit_manifest_bound_calibration_actual,
-    evaluate_committed_hidden_golden,
     load_hidden_golden_actual_input,
 )
 from src.mod_agent.evidence.models import (
@@ -37,6 +39,7 @@ def _feature_payload(
     feature_id: str,
     *,
     request: str = "Find an observed current method.",
+    contamination_sentinel: str | None = None,
 ) -> dict[str, object]:
     return {
         "node_name": "draft_feature_spec",
@@ -48,15 +51,25 @@ def _feature_payload(
         "non_goals": [],
         "target_mod": None,
         "risk_level": "medium",
-        "acceptance_criteria": [],
-        "evidence_requirements": [],
+        "acceptance_criteria": (
+            [contamination_sentinel] if contamination_sentinel else []
+        ),
+        "evidence_requirements": (
+            [contamination_sentinel] if contamination_sentinel else []
+        ),
         "runtime_verification_plan": [],
         "blocked": False,
         "blockers": [],
     }
 
 
-def _semantic_pack(query: str):
+def _semantic_pack(
+    query: str,
+    *,
+    run_id: str = "run-synthetic",
+    request_id: str = "request-synthetic",
+    model_identity: dict[str, object] | None = None,
+) -> EvidencePack:
     item = EvidenceItem(
         evidence_id="ev-observed-method",
         source_type="decompiled_api",
@@ -78,7 +91,7 @@ def _semantic_pack(query: str):
         authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
         source_authority="authoritative",
     )
-    return EvidenceReadinessClassifier().classify(
+    pack = EvidenceReadinessClassifier().classify(
         request=EvidenceRequest(
             query=query,
             hook_requirement={
@@ -108,6 +121,24 @@ def _semantic_pack(query: str):
                 "failure": None,
             },
         ),
+    )
+    return replace(
+        pack,
+        model_identity=(
+            model_identity
+            if model_identity is not None
+            else {
+                "execution_kind": "local_agent_turn_adapter",
+                "provider": "synthetic-local-provider",
+                "model": "synthetic-local-model",
+                "endpoint": "http://127.0.0.1:11434",
+            }
+        ),
+        provenance_validation={
+            **pack.provenance_validation,
+            "run_id": run_id,
+            "request_id": request_id,
+        },
     )
 
 
@@ -186,6 +217,17 @@ def _actual_input_root(tmp_path: Path, *, request: str) -> Path:
     return root
 
 
+def _corpus_snapshot_resolver(
+    corpus_root: Path,
+    source_allowlist: tuple[str, ...],
+) -> str:
+    from src.mod_agent.evaluation.arm_a import RunManifestCollector
+
+    return RunManifestCollector(corpus_root).canonical_corpus_snapshot(
+        source_allowlist
+    ).corpus_snapshot_sha256
+
+
 def _commit_pack(tmp_path: Path, *, query: str):
     store = ArtifactStore(tmp_path / "artifacts")
     feature_id = "feature-hidden-golden"
@@ -203,28 +245,73 @@ def _commit_pack(tmp_path: Path, *, query: str):
     return store, actual_ref
 
 
-def _feature_store(tmp_path: Path, *, request: str):
+def _feature_store(
+    tmp_path: Path,
+    *,
+    request: str,
+    contamination_sentinel: str | None = None,
+):
     store = ArtifactStore(tmp_path / "artifacts")
     feature_id = "feature-hidden-golden"
     feature_ref = store.write(
         feature_id=feature_id,
         artifact_type="feature_spec",
-        payload=_feature_payload(feature_id, request=request),
+        payload=_feature_payload(
+            feature_id,
+            request=request,
+            contamination_sentinel=contamination_sentinel,
+        ),
     )
     return store, feature_ref
 
 
 def test_manifest_bound_actual_commits_reads_and_strictly_rehydrates(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     request = "Find an observed current method."
+    contamination_sentinel = "EXPECTED_SIDE_SENTINEL_MUST_NOT_REACH_ACTUAL"
     root = _actual_input_root(tmp_path, request=request)
-    store, feature_ref = _feature_store(tmp_path, request=request)
+    store, feature_ref = _feature_store(
+        tmp_path,
+        request=request,
+        contamination_sentinel=contamination_sentinel,
+    )
     executor_calls: list[dict[str, object]] = []
+    events: list[str] = []
+    original_read = store.read
+    original_write = store.write
 
-    def executor(*, r8_root: Path, request: str) -> EvidencePack:
-        executor_calls.append({"r8_root": r8_root, "request": request})
-        return _semantic_pack(request)
+    def recording_read(ref):
+        events.append(f"read:{ref.artifact_type}")
+        return original_read(ref)
+
+    def recording_write(**kwargs):
+        events.append(f"write:{kwargs['artifact_type']}")
+        return original_write(**kwargs)
+
+    monkeypatch.setattr(store, "read", recording_read)
+    monkeypatch.setattr(store, "write", recording_write)
+
+    def executor(
+        *,
+        r8_root: Path,
+        request: str,
+        run_id: str,
+        request_id: str,
+    ) -> EvidencePack:
+        events.append("executor:start")
+        executor_calls.append(
+            {
+                "r8_root": r8_root,
+                "request": request,
+                "run_id": run_id,
+                "request_id": request_id,
+            }
+        )
+        pack = _semantic_pack(request, run_id=run_id, request_id=request_id)
+        events.append("executor:finished")
+        return pack
 
     committed = commit_manifest_bound_calibration_actual(
         case_root=root,
@@ -233,11 +320,19 @@ def test_manifest_bound_actual_commits_reads_and_strictly_rehydrates(
         feature_spec_ref=feature_ref,
         run_id="run-synthetic",
         request_id="request-synthetic",
+        corpus_snapshot_resolver=_corpus_snapshot_resolver,
         executor=executor,
     )
 
     assert isinstance(committed, CommittedCalibrationActual)
-    assert executor_calls == [{"r8_root": root.resolve(), "request": request}]
+    assert executor_calls == [
+        {
+            "r8_root": root.resolve(),
+            "request": request,
+            "run_id": "run-synthetic",
+            "request_id": "request-synthetic",
+        }
+    ]
     assert committed.store is store
     assert committed.actual_ref.artifact_type == "evidence_pack"
     assert committed.actual_input.request_text == request
@@ -249,6 +344,8 @@ def test_manifest_bound_actual_commits_reads_and_strictly_rehydrates(
     assert EvidencePack.requires_strict_semantic_rehydrate(payload) is True
     assert EvidencePack.from_artifact_payload(payload) == committed.evidence_pack
     assert committed.evidence_pack.query == request
+    assert events.index("executor:finished") < events.index("read:feature_spec")
+    assert events.index("read:feature_spec") < events.index("write:evidence_pack")
     assert payload["provenance_validation"]["run_id"] == "run-synthetic"
     assert payload["provenance_validation"]["request_id"] == "request-synthetic"
     assert payload["provenance_validation"]["manifest_bound_actual"] == {
@@ -262,7 +359,9 @@ def test_manifest_bound_actual_commits_reads_and_strictly_rehydrates(
         ),
         "source_allowlist": list(committed.actual_input.source_allowlist),
     }
-    assert "annotation.json" not in json.dumps(payload, ensure_ascii=False)
+    serialized_payload = json.dumps(payload, ensure_ascii=False)
+    assert "annotation.json" not in serialized_payload
+    assert contamination_sentinel not in serialized_payload
 
 
 def test_manifest_bound_actual_snapshot_mismatch_stops_before_executor_and_write(
@@ -294,6 +393,7 @@ def test_manifest_bound_actual_snapshot_mismatch_stops_before_executor_and_write
             feature_spec_ref=feature_ref,
             run_id="run-synthetic",
             request_id="request-synthetic",
+            corpus_snapshot_resolver=_corpus_snapshot_resolver,
             executor=executor,
         )
 
@@ -326,13 +426,14 @@ def test_manifest_bound_actual_requires_expected_source_exclusions(
             feature_spec_ref=feature_ref,
             run_id="run-synthetic",
             request_id="request-synthetic",
+            corpus_snapshot_resolver=_corpus_snapshot_resolver,
             executor=lambda **_: _semantic_pack(request),
         )
 
     assert store.list_feature_artifacts(feature_ref.feature_id) == before_refs
 
 
-def test_manifest_bound_actual_rejects_feature_request_drift_before_executor(
+def test_manifest_bound_actual_rejects_feature_request_drift_after_executor_without_write(
     tmp_path: Path,
 ) -> None:
     request = "Find an observed current method."
@@ -357,10 +458,11 @@ def test_manifest_bound_actual_rejects_feature_request_drift_before_executor(
             feature_spec_ref=feature_ref,
             run_id="run-synthetic",
             request_id="request-synthetic",
+            corpus_snapshot_resolver=_corpus_snapshot_resolver,
             executor=executor,
         )
 
-    assert executor_called is False
+    assert executor_called is True
     assert store.list_feature_artifacts(feature_ref.feature_id) == before_refs
 
 
@@ -383,13 +485,172 @@ def test_manifest_bound_actual_rejects_non_semantic_pack_before_write(
             feature_spec_ref=feature_ref,
             run_id="run-synthetic",
             request_id="request-synthetic",
-            executor=lambda **_: EvidencePack.empty(
-                query=request,
-                reason="synthetic non-semantic result",
+            corpus_snapshot_resolver=_corpus_snapshot_resolver,
+            executor=lambda **_: replace(
+                EvidencePack.empty(
+                    query=request,
+                    reason="synthetic non-semantic result",
+                ),
+                model_identity={
+                    "execution_kind": "local_agent_turn_adapter",
+                    "provider": "synthetic-local-provider",
+                    "model": "synthetic-local-model",
+                    "endpoint": "http://127.0.0.1:11434",
+                },
+                provenance_validation={
+                    "run_id": "run-synthetic",
+                    "request_id": "request-synthetic",
+                },
             ),
         )
 
     assert store.list_feature_artifacts(feature_ref.feature_id) == before_refs
+
+
+@pytest.mark.parametrize(
+    ("provenance_validation", "error"),
+    (
+        (
+            {"request_id": "request-synthetic"},
+            "HIDDEN_GOLDEN_ACTUAL_RUN_ID_MISMATCH",
+        ),
+        (
+            {"run_id": "different-run", "request_id": "request-synthetic"},
+            "HIDDEN_GOLDEN_ACTUAL_RUN_ID_MISMATCH",
+        ),
+        (
+            {"run_id": "run-synthetic"},
+            "HIDDEN_GOLDEN_ACTUAL_REQUEST_ID_MISMATCH",
+        ),
+        (
+            {"run_id": "run-synthetic", "request_id": "different-request"},
+            "HIDDEN_GOLDEN_ACTUAL_REQUEST_ID_MISMATCH",
+        ),
+    ),
+)
+def test_manifest_bound_actual_rejects_missing_or_conflicting_execution_identity(
+    tmp_path: Path,
+    provenance_validation: dict[str, object],
+    error: str,
+) -> None:
+    request = "Find an observed current method."
+    root = _actual_input_root(tmp_path, request=request)
+    store, feature_ref = _feature_store(tmp_path, request=request)
+    before_refs = store.list_feature_artifacts(feature_ref.feature_id)
+    pack = replace(
+        _semantic_pack(request),
+        provenance_validation=provenance_validation,
+    )
+
+    with pytest.raises(HiddenGoldenCalibrationError, match=error):
+        commit_manifest_bound_calibration_actual(
+            case_root=root,
+            corpus_root=root,
+            store=store,
+            feature_spec_ref=feature_ref,
+            run_id="run-synthetic",
+            request_id="request-synthetic",
+            corpus_snapshot_resolver=_corpus_snapshot_resolver,
+            executor=lambda **_: pack,
+        )
+
+    assert store.list_feature_artifacts(feature_ref.feature_id) == before_refs
+
+
+@pytest.mark.parametrize(
+    ("model_identity", "error"),
+    (
+        (
+            {
+                "execution_kind": "injected_local_or_test",
+                "provider": None,
+                "model": None,
+            },
+            "HIDDEN_GOLDEN_ACTUAL_TEST_MODEL_IDENTITY_FORBIDDEN",
+        ),
+        (
+            {
+                "execution_kind": "local_agent_turn_adapter",
+                "provider": "synthetic-local-provider",
+                "model": "synthetic-local-model",
+                "endpoint": "",
+            },
+            "HIDDEN_GOLDEN_ACTUAL_MODEL_IDENTITY_INCOMPLETE",
+        ),
+        (
+            {
+                "execution_kind": "external_agent_turn_adapter",
+                "provider": "synthetic-external-provider",
+                "model": "synthetic-external-model",
+                "approval_id": "",
+            },
+            "HIDDEN_GOLDEN_ACTUAL_MODEL_IDENTITY_INCOMPLETE",
+        ),
+        (
+            {"execution_kind": "unknown"},
+            "HIDDEN_GOLDEN_ACTUAL_MODEL_EXECUTION_KIND_INVALID",
+        ),
+    ),
+)
+def test_manifest_bound_actual_rejects_invalid_real_model_identity(
+    tmp_path: Path,
+    model_identity: dict[str, object],
+    error: str,
+) -> None:
+    request = "Find an observed current method."
+    root = _actual_input_root(tmp_path, request=request)
+    store, feature_ref = _feature_store(tmp_path, request=request)
+    before_refs = store.list_feature_artifacts(feature_ref.feature_id)
+
+    with pytest.raises(HiddenGoldenCalibrationError, match=error):
+        commit_manifest_bound_calibration_actual(
+            case_root=root,
+            corpus_root=root,
+            store=store,
+            feature_spec_ref=feature_ref,
+            run_id="run-synthetic",
+            request_id="request-synthetic",
+            corpus_snapshot_resolver=_corpus_snapshot_resolver,
+            executor=lambda **_: _semantic_pack(
+                request,
+                model_identity=model_identity,
+            ),
+        )
+
+    assert store.list_feature_artifacts(feature_ref.feature_id) == before_refs
+
+
+def test_manifest_bound_actual_accepts_external_identity_without_endpoint(
+    tmp_path: Path,
+) -> None:
+    request = "Find an observed current method."
+    root = _actual_input_root(tmp_path, request=request)
+    store, feature_ref = _feature_store(tmp_path, request=request)
+    committed = commit_manifest_bound_calibration_actual(
+        case_root=root,
+        corpus_root=root,
+        store=store,
+        feature_spec_ref=feature_ref,
+        run_id="run-synthetic",
+        request_id="request-synthetic",
+        corpus_snapshot_resolver=_corpus_snapshot_resolver,
+        executor=lambda **_: _semantic_pack(
+            request,
+            model_identity={
+                "execution_kind": "external_agent_turn_adapter",
+                "provider": "synthetic-external-provider",
+                "model": "synthetic-external-model",
+                "approval_id": "approval-synthetic",
+            },
+        ),
+    )
+
+    assert committed.evidence_pack.model_identity == {
+        "execution_kind": "external_agent_turn_adapter",
+        "provider": "synthetic-external-provider",
+        "model": "synthetic-external-model",
+        "approval_id": "approval-synthetic",
+    }
 
 
 def test_manifest_bound_actual_rejects_tampered_readback(
@@ -421,6 +682,7 @@ def test_manifest_bound_actual_rejects_tampered_readback(
             feature_spec_ref=feature_ref,
             run_id="run-synthetic",
             request_id="request-synthetic",
+            corpus_snapshot_resolver=_corpus_snapshot_resolver,
             executor=lambda **_: _semantic_pack(request),
         )
 
@@ -444,11 +706,23 @@ def test_manifest_bound_actual_signature_has_no_expected_side_inputs() -> None:
     assert "WallCrawler" not in source
 
 
+def test_hidden_golden_module_has_no_actual_executor_or_store_write_owner() -> None:
+    source = inspect.getsource(hidden_golden_module)
+    assert "def load_hidden_golden_actual_input" not in source
+    assert "def commit_manifest_bound_calibration_actual" not in source
+    assert "executor(" not in source
+    assert ".write(" not in source
+
+
 def test_hidden_golden_reads_expected_only_after_committed_actual_binding(
     tmp_path: Path,
 ) -> None:
     root = _actual_input_root(tmp_path, request="Find an observed current method.")
-    actual_input = load_hidden_golden_actual_input(root, corpus_root=root)
+    actual_input = load_hidden_golden_actual_input(
+        root,
+        corpus_root=root,
+        corpus_snapshot_resolver=_corpus_snapshot_resolver,
+    )
     annotation_path = root / "annotation.json"
     annotation_path.write_text("not-json", encoding="utf-8")
     store, actual_ref = _commit_pack(tmp_path, query="different request")
@@ -470,7 +744,11 @@ def test_hidden_golden_minimal_comparison_uses_committed_strict_actual(
 ) -> None:
     request = "Find an observed current method."
     root = _actual_input_root(tmp_path, request=request)
-    actual_input = load_hidden_golden_actual_input(root, corpus_root=root)
+    actual_input = load_hidden_golden_actual_input(
+        root,
+        corpus_root=root,
+        corpus_snapshot_resolver=_corpus_snapshot_resolver,
+    )
     annotation_path = root / "annotation.json"
     annotation_path.write_text(json.dumps(_annotation()), encoding="utf-8")
     store, actual_ref = _commit_pack(tmp_path, query=request)
@@ -502,7 +780,11 @@ def test_hidden_golden_minimal_comparison_uses_committed_strict_actual(
 def test_hidden_golden_rejects_annotation_hash_tampering(tmp_path: Path) -> None:
     request = "Find an observed current method."
     root = _actual_input_root(tmp_path, request=request)
-    actual_input = load_hidden_golden_actual_input(root, corpus_root=root)
+    actual_input = load_hidden_golden_actual_input(
+        root,
+        corpus_root=root,
+        corpus_snapshot_resolver=_corpus_snapshot_resolver,
+    )
     annotation = deepcopy(_annotation())
     annotation["judgment_payload"]["expected_control_action"] = "block"
     annotation_path = root / "annotation.json"
@@ -534,7 +816,11 @@ def test_hidden_golden_rejects_corpus_snapshot_drift(tmp_path: Path) -> None:
         HiddenGoldenCalibrationError,
         match="HIDDEN_GOLDEN_CORPUS_SNAPSHOT_MISMATCH",
     ):
-        load_hidden_golden_actual_input(root, corpus_root=root)
+        load_hidden_golden_actual_input(
+            root,
+            corpus_root=root,
+            corpus_snapshot_resolver=_corpus_snapshot_resolver,
+        )
 
 
 @pytest.mark.parametrize("case_name", ["better_hit_feedback", "wall_crawler"])

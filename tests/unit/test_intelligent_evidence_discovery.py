@@ -787,9 +787,9 @@ def test_v2_agent_search_plan_strict_roundtrip_preserves_bytes_and_hash(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     hash_before = hashlib.sha256(canonical_before).hexdigest()
-    assert len(canonical_before) == 12_085
+    assert len(canonical_before) == 12_138
     assert hash_before == (
-        "5f46b112623609c3274f66298bbec071137c7d0d202a8a2d04605082550fb349"
+        "c24a82a9b51951df0dfa6e34c7ff13d6907bcb9c9666e6e190c8c6e3b9fedd91"
     )
 
     ArtifactTypeRegistry().validate_write(
@@ -849,9 +849,9 @@ def test_v3_agent_search_plan_strict_roundtrip_preserves_bytes_and_hash(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     hash_before = hashlib.sha256(canonical_before).hexdigest()
-    assert len(canonical_before) == 12_157
+    assert len(canonical_before) == 12_210
     assert hash_before == (
-        "d58b92570daefe67cd4ade09608db986bfe49135661b14d260fa115966a1c473"
+        "b9c7b39265eddf16f0fa97a0ba78237941e4d3db63ac7cf3e62fd7dfdca70614"
     )
 
     ArtifactTypeRegistry().validate_write(
@@ -4207,6 +4207,21 @@ def test_phase_2_planning_failures_stop_before_tool_execution(
     payload = result.pack.to_artifact_payload()
     assert "hook_discovery" not in payload
     assert payload["agent_discovery"]["planning_status"] == planning_status
+    assert payload["provenance_validation"]["run_id"] == (
+        "run-wallcrawler-intelligent-evidence-test"
+    )
+    assert payload["provenance_validation"]["request_id"] == (
+        "wallcrawler-intelligent-evidence-test"
+    )
+    assert payload["provenance_validation"]["model_disclosure"] == {
+        "approved": False,
+        "reason": "Injected local/test model; no external disclosure occurred.",
+    }
+    assert payload["model_identity"] == {
+        "execution_kind": "injected_local_or_test",
+        "provider": None,
+        "model": None,
+    }
     assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
 
     store = ArtifactStore(tmp_path / f"early-termination-{planning_status}")
@@ -6493,6 +6508,12 @@ def test_method_origin_provenance_survives_finish_correction_exhaustion(
     assert result.pack.provenance_validation[
         "all_method_inspections_derived_from_observations"
     ] is True
+    assert result.pack.provenance_validation["run_id"] == (
+        "run-wallcrawler-intelligent-evidence-test"
+    )
+    assert result.pack.provenance_validation["request_id"] == (
+        "wallcrawler-intelligent-evidence-test"
+    )
     assert result.intelligence_transfer["followup_selection_by_platform"] is False
     assert result.pack.model_action_trace[2]["validation_error"] == (
         "DISCOVERY_FINISH_SHAPE_INVALID"
