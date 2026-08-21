@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import replace
 from typing import Any, Callable
 
@@ -36,6 +37,48 @@ from .hook_discovery import (
     evidence_pack_state_from_hook_discovery,
 )
 from .retriever import DeterministicEvidenceRetriever
+
+
+_MAX_CODE_VOCABULARY_LEADS_PER_FAMILY = 4
+_MAX_SOURCE_QUERY_INPUTS = 24
+_CODE_VOCABULARY_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]*")
+_CODE_VOCABULARY_COMPONENT_RE = re.compile(
+    r"[A-Z]+(?=[A-Z][a-z]|\d|$)|[A-Z]?[a-z]+|[A-Z]+|\d+"
+)
+_CODE_VOCABULARY_STOPWORDS = frozenset(
+    {
+        "after",
+        "also",
+        "before",
+        "behavior",
+        "current",
+        "does",
+        "exact",
+        "expose",
+        "exposes",
+        "find",
+        "from",
+        "goal",
+        "identify",
+        "into",
+        "managed",
+        "method",
+        "methods",
+        "observe",
+        "observed",
+        "required",
+        "should",
+        "source",
+        "that",
+        "their",
+        "this",
+        "when",
+        "where",
+        "which",
+        "with",
+        "without",
+    }
+)
 
 
 class IntelligentEvidencePackFactory:
@@ -1691,9 +1734,125 @@ def _source_query_inputs(
         )
     if not result:
         raise ValueError("SOURCE_QUERY_GENERATION_FAILURE")
-    if len(result) > 24:
+    selected_families = (
+        [selected_family]
+        if isinstance(selected_family, dict)
+        else [
+            family
+            for family in families
+            if isinstance(family, dict)
+            and focus in family.get("question_ids", [])
+        ]
+    )
+    projection_lead_texts: list[object] = [
+        projection.get("trigger"),
+        projection.get("actor"),
+        projection.get("target"),
+        *(
+            hint.get("text")
+            for hint in projection.get("implementation_hints", [])
+            if isinstance(hint, dict)
+        ),
+        *(
+            question.get("question")
+            for question in projection.get("planning_blocking_questions", [])
+            if isinstance(question, dict)
+        ),
+        *selected_questions,
+        projection.get("behavior_goal"),
+        natural_language_request,
+    ]
+    for family in selected_families:
+        family_id_value = family.get("family_id")
+        family_queries = family.get("queries")
+        if (
+            not isinstance(family_id_value, str)
+            or not family_id_value
+            or not isinstance(family_queries, list)
+        ):
+            raise ValueError("SOURCE_QUERY_FAMILY_INVALID")
+        existing_queries = {
+            str(query).strip().casefold()
+            for query in family_queries
+            if isinstance(query, str) and query.strip()
+        }
+        leads = _bounded_code_vocabulary_leads(
+            texts=(
+                *projection_lead_texts,
+                family.get("evidence_need"),
+                *family_queries,
+            ),
+            existing_queries=existing_queries,
+        )
+        for lead in leads:
+            key = lead.casefold()
+            if key in seen:
+                continue
+            if len(result) >= _MAX_SOURCE_QUERY_INPUTS:
+                raise ValueError("SOURCE_QUERY_VOCABULARY_BUDGET_EXCEEDED")
+            seen.add(key)
+            result.append(
+                {
+                    "query_id": (
+                        f"source_vocabulary_{len(result) + 1:02d}_"
+                        f"{_source_vocabulary_lead_digest(family_id_value, lead)}"
+                    ),
+                    "origin": "bounded_code_vocabulary_lead:" + family_id_value,
+                    "query": lead,
+                }
+            )
+    if len(result) > _MAX_SOURCE_QUERY_INPUTS:
         raise ValueError("SOURCE_QUERY_SET_BUDGET_EXCEEDED")
     return tuple(result)
+
+
+def _bounded_code_vocabulary_leads(
+    *,
+    texts: tuple[object, ...],
+    existing_queries: set[str],
+) -> tuple[str, ...]:
+    """Derive retrieval-only leads that require later source/tool grounding."""
+
+    leads: list[str] = []
+    seen: set[str] = set(existing_queries)
+
+    def admit(value: str) -> bool:
+        normalized = value.strip("._-")
+        key = normalized.casefold()
+        if len(normalized) < 4 or key in _CODE_VOCABULARY_STOPWORDS:
+            return False
+        if key not in seen:
+            if len(leads) >= _MAX_CODE_VOCABULARY_LEADS_PER_FAMILY:
+                return False
+            seen.add(key)
+            leads.append(normalized)
+        return True
+
+    for text in texts:
+        if not isinstance(text, str):
+            continue
+        for raw_token in _CODE_VOCABULARY_TOKEN_RE.findall(text):
+            components = _CODE_VOCABULARY_COMPONENT_RE.findall(
+                raw_token.replace(".", "_").replace("-", "_")
+            )
+            for component in components:
+                if not admit(component):
+                    continue
+                lowered = component.casefold()
+                if lowered.endswith("ion") and len(lowered) > 6:
+                    admit(lowered[:-3])
+                elif lowered.endswith("ing") and len(lowered) > 6:
+                    admit(lowered[:-3])
+                elif lowered.endswith("ed") and len(lowered) > 5:
+                    admit(lowered[:-2])
+                if len(leads) >= _MAX_CODE_VOCABULARY_LEADS_PER_FAMILY:
+                    return tuple(leads)
+    return tuple(leads)
+
+
+def _source_vocabulary_lead_digest(family_id: str, lead: str) -> str:
+    value = (family_id + chr(0) + lead).encode("utf-8")
+    return hashlib.sha256(value).hexdigest()[:10]
 
 
 def _merge_source_queries(

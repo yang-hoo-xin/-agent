@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import inspect
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -36,10 +37,12 @@ from src.mod_agent.evidence.discovery_contract import (
     evidence_discovery_search_plan_schema,
 )
 from src.mod_agent.evidence.discovery_loop import (
+    _bounded_code_vocabulary_leads,
     _method_focus_comparison,
     _resolve_finish_fact_handles,
     _resolve_action_from_frozen_plan,
     _resolve_model_search_plan_action,
+    _source_query_inputs,
     _validate_finish,
     _validate_supplemental_search,
 )
@@ -2704,13 +2707,71 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
     }
 
 
+def test_code_vocabulary_expansion_is_generic_bounded_and_fail_closed() -> None:
+    plan = _actual_plan(
+        behavior_goal="Pulse corridor lights after terminal authentication completion.",
+        queries=["TerminalLoginSequence"],
+        evidence_need=(
+            "Which method confirms terminal authentication completion?"
+        ),
+    )
+
+    queries = _source_query_inputs(
+        natural_language_request=(
+            "Pulse corridor lights after terminal authentication completes."
+        ),
+        agent_discovery=plan,
+    )
+    leads = [
+        item["query"]
+        for item in queries
+        if item["origin"].startswith("bounded_code_vocabulary_lead:")
+    ]
+
+    assert 0 < len(leads) <= 4
+    assert "authentication" in {value.casefold() for value in leads}
+    source = (
+        inspect.getsource(_source_query_inputs)
+        + inspect.getsource(_bounded_code_vocabulary_leads)
+    )
+    assert "BetterHitFeedback" not in source
+    assert "ES_Hitreact" not in source
+    assert "ActivateState" not in source
+
+    search_plan = plan["search_plan"]
+    assert isinstance(search_plan, dict)
+    base_family = search_plan["query_families"][0]
+    search_plan["query_families"] = [
+        {
+            **base_family,
+            "family_id": f"family-{family_index}",
+            "queries": [
+                f"UnrelatedSymbol{family_index}{query_index}"
+                for query_index in range(5)
+            ],
+        }
+        for family_index in range(4)
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="SOURCE_QUERY_VOCABULARY_BUDGET_EXCEEDED",
+    ):
+        _source_query_inputs(
+            natural_language_request=(
+                "Pulse corridor lights after terminal authentication completes."
+            ),
+            agent_discovery=plan,
+        )
+
+
 def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
     tmp_path: Path,
 ) -> None:
     evidence_need = "Which managed method reports terminal authentication completion?"
     plan = _actual_plan(
         behavior_goal="Observe terminal authentication completion.",
-        queries=["authentication complete"],
+        queries=["TerminalLoginSequence"],
         evidence_need=evidence_need,
     )
     plan["search_plan"]["query_families"].append(
@@ -2756,6 +2817,21 @@ def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
         queries: tuple[dict[str, str], ...],
     ) -> EvidencePack:
         captured_queries.append(queries)
+        vocabulary_leads = [
+            item["query"]
+            for item in queries
+            if item["origin"].startswith("bounded_code_vocabulary_lead:")
+        ]
+        leads_by_family: dict[str, list[str]] = {}
+        for item in queries:
+            if not item["origin"].startswith("bounded_code_vocabulary_lead:"):
+                continue
+            family_id = item["origin"].split(":", 1)[1]
+            leads_by_family.setdefault(family_id, []).append(item["query"])
+        assert all(len(values) <= 4 for values in leads_by_family.values())
+        assert "authentication" in {
+            value.casefold() for value in vocabulary_leads
+        }
         return EvidencePack(
             query="bounded source query set",
             readiness="partial",
@@ -2807,6 +2883,10 @@ def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
         "initial_focus_question",
         "initial_focus_query_family",
     }
+    assert any(
+        item["origin"].startswith("bounded_code_vocabulary_lead:")
+        for item in captured_queries[0]
+    )
     source_discovery = result.pack.budget_summary["source_discovery"]
     assert result.agent_discovery["search_plan"]["query_families"] == [
         {
