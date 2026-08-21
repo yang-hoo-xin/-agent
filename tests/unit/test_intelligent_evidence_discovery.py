@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import hashlib
-import inspect
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -37,7 +36,7 @@ from src.mod_agent.evidence.discovery_contract import (
     evidence_discovery_search_plan_schema,
 )
 from src.mod_agent.evidence.discovery_loop import (
-    _bounded_code_vocabulary_leads,
+    _normalize_family_query_leads,
     _method_focus_comparison,
     _resolve_finish_fact_handles,
     _resolve_action_from_frozen_plan,
@@ -65,7 +64,13 @@ from src.libs.llm import (
     ChatResponse,
     Message,
 )
-from src.mod_agent.knowledge import SourceDefinition
+from src.mod_agent.knowledge import (
+    IncrementalIndexer,
+    KnowledgeDatabase,
+    SourceDefinition,
+    SourceRegistry,
+)
+from src.mod_agent.evidence.retriever import DeterministicEvidenceRetriever
 from src.mod_agent.intelligent_evidence_only import (
     _failed_run_diagnostics,
     _post_run_acceptance,
@@ -2707,62 +2712,28 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
     }
 
 
-def test_code_vocabulary_expansion_is_generic_bounded_and_fail_closed() -> None:
-    plan = _actual_plan(
-        behavior_goal="Pulse corridor lights after terminal authentication completion.",
-        queries=["TerminalLoginSequence"],
-        evidence_need=(
-            "Which method confirms terminal authentication completion?"
-        ),
+def test_family_query_normalization_deduplicates_roots_and_bounds_leads() -> None:
+    retained, dropped = _normalize_family_query_leads(
+        [
+            "  Shooting  ",
+            "shoot",
+            "FinishAuthentication",
+            "AuthenticationCompleted",
+            "TerminalStateChanged",
+            "OverflowVocabulary",
+        ]
     )
 
-    queries = _source_query_inputs(
-        natural_language_request=(
-            "Pulse corridor lights after terminal authentication completes."
-        ),
-        agent_discovery=plan,
-    )
-    leads = [
-        item["query"]
-        for item in queries
-        if item["origin"].startswith("bounded_code_vocabulary_lead:")
+    assert retained == [
+        "Shooting",
+        "FinishAuthentication",
+        "AuthenticationCompleted",
+        "TerminalStateChanged",
     ]
-
-    assert 0 < len(leads) <= 4
-    assert "authentication" in {value.casefold() for value in leads}
-    source = (
-        inspect.getsource(_source_query_inputs)
-        + inspect.getsource(_bounded_code_vocabulary_leads)
-    )
-    assert "BetterHitFeedback" not in source
-    assert "ES_Hitreact" not in source
-    assert "ActivateState" not in source
-
-    search_plan = plan["search_plan"]
-    assert isinstance(search_plan, dict)
-    base_family = search_plan["query_families"][0]
-    search_plan["query_families"] = [
-        {
-            **base_family,
-            "family_id": f"family-{family_index}",
-            "queries": [
-                f"UnrelatedSymbol{family_index}{query_index}"
-                for query_index in range(5)
-            ],
-        }
-        for family_index in range(4)
+    assert dropped == [
+        {"query": "shoot", "reason": "duplicate_lexical_root"},
+        {"query": "OverflowVocabulary", "reason": "family_budget_exceeded"},
     ]
-
-    with pytest.raises(
-        ValueError,
-        match="SOURCE_QUERY_VOCABULARY_BUDGET_EXCEEDED",
-    ):
-        _source_query_inputs(
-            natural_language_request=(
-                "Pulse corridor lights after terminal authentication completes."
-            ),
-            agent_discovery=plan,
-        )
 
 
 def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
@@ -2771,13 +2742,13 @@ def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
     evidence_need = "Which managed method reports terminal authentication completion?"
     plan = _actual_plan(
         behavior_goal="Observe terminal authentication completion.",
-        queries=["TerminalLoginSequence"],
+        queries=["FinishAuthentication", "AuthenticationFinished"],
         evidence_need=evidence_need,
     )
     plan["search_plan"]["query_families"].append(
         {
             "family_id": "authentication-alternate",
-            "queries": ["auth complete"],
+            "queries": ["CompleteAuthentication", "authentication complete"],
             "evidence_need": "Which alternate symbol reports authentication completion?",
             "source_ids": ["current-interop"],
             "tool": "search_dotnet_metadata",
@@ -2812,51 +2783,45 @@ def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
         ]
     )
     captured_queries: list[tuple[dict[str, str], ...]] = []
+    source_root = tmp_path / "source-corpus"
+    source_root.mkdir()
+    (source_root / "TerminalFlow.cs").write_text(
+        "public sealed class TerminalFlow {\n"
+        "    public void FinishAuthentication() { CommitSuccess(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (source_root / "TerminalPrompt.cs").write_text(
+        "public sealed class TerminalPrompt {\n"
+        "    public void ShowPasswordHint() { RenderHint(); }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    database = KnowledgeDatabase(tmp_path / "knowledge.db")
+    registry = SourceRegistry(database)
+    registry.register(
+        SourceDefinition(
+            source_id="terminal-source",
+            source_type="decompiled_api",
+            root_path=source_root,
+            metadata={"evidence_authority": "supporting"},
+            allowed_extensions=frozenset({".cs"}),
+        )
+    )
+    indexer = IncrementalIndexer(database=database, source_registry=registry)
+    assert indexer.index_source("terminal-source").failed_files == 0
+    indexer.build_retrieval_snapshot("terminal-source")
+    real_retriever = DeterministicEvidenceRetriever(database)
 
     def source_retriever(
         queries: tuple[dict[str, str], ...],
     ) -> EvidencePack:
         captured_queries.append(queries)
-        vocabulary_leads = [
-            item["query"]
-            for item in queries
-            if item["origin"].startswith("bounded_code_vocabulary_lead:")
-        ]
-        leads_by_family: dict[str, list[str]] = {}
-        for item in queries:
-            if not item["origin"].startswith("bounded_code_vocabulary_lead:"):
-                continue
-            family_id = item["origin"].split(":", 1)[1]
-            leads_by_family.setdefault(family_id, []).append(item["query"])
-        assert all(len(values) <= 4 for values in leads_by_family.values())
-        assert "authentication" in {
-            value.casefold() for value in vocabulary_leads
-        }
-        return EvidencePack(
-            query="bounded source query set",
-            readiness="partial",
-            can_generate_patch=False,
-            items=(
-                EvidenceItem(
-                    evidence_id="source_terminal_finish",
-                    source_type="decompiled_api",
-                    source_path="TerminalFlow.cs",
-                    symbol="FinishAuthentication",
-                    span={"start_line": 12, "end_line": 12},
-                    retrieval_method="symbol_exact",
-                    score=1.0,
-                    claim_supported="The source declares FinishAuthentication.",
-                    excerpt="public void FinishAuthentication()",
-                    source_hash="B" * 64,
-                    declaring_type="TerminalFlow",
-                    method_name="FinishAuthentication",
-                    parameter_types=(),
-                    return_type="System.Void",
-                    authority="mod_agent_deterministic",
-                    source_authority="supporting",
-                ),
-            ),
-            budget_summary={"source_query_execution": []},
+        return real_retriever.retrieve_query_set(
+            queries=queries,
+            source_ids=("terminal-source",),
+            per_query_lane_max_items=3,
+            max_items=36,
         )
 
     result = EvidenceDiscoverySpecialist(
@@ -2883,8 +2848,12 @@ def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
         "initial_focus_question",
         "initial_focus_query_family",
     }
-    assert any(
+    assert not any(
         item["origin"].startswith("bounded_code_vocabulary_lead:")
+        for item in captured_queries[0]
+    )
+    assert any(
+        item["query"] == "FinishAuthentication"
         for item in captured_queries[0]
     )
     source_discovery = result.pack.budget_summary["source_discovery"]
@@ -2899,7 +2868,7 @@ def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
         },
         {
             "family_id": "authentication-alternate",
-            "queries": ["auth complete"],
+            "queries": ["CompleteAuthentication", "authentication complete"],
             "evidence_need": "Which alternate symbol reports authentication completion?",
             "source_ids": ["current-interop"],
             "tool": "search_dotnet_metadata",
@@ -2908,17 +2877,24 @@ def test_source_grounded_discovery_preserves_semantics_and_binds_literal(
     ]
     binding = source_discovery["metadata_literal_bindings"][0]
     assert binding["metadata_literal"] == "FinishAuthentication"
-    assert binding["evidence_refs"] == ["source_terminal_finish"]
-    assert source_discovery["source_grounded_discovery"] is True
-    assert source_discovery["metadata_to_il_grounding"][0] == {
-        "initial_focus_question_id": "question-primary",
-        "metadata_observation_id": "obs-001",
-        "query_family_id": "request-derived-behavior",
-        "matched_queries": ["FinishAuthentication"],
-        "source_evidence_refs": ["source_terminal_finish"],
-        "method_ref": "candidate_obs_001",
-        "method_symbol": "TerminalFlow.FinishAuthentication",
+    terminal_evidence_ids = {
+        item.evidence_id
+        for item in result.pack.items
+        if Path(item.source_path).name == "TerminalFlow.cs"
     }
+    assert terminal_evidence_ids
+    assert set(binding["evidence_refs"]).issubset(terminal_evidence_ids)
+    assert source_discovery["source_grounded_discovery"] is True
+    grounding = source_discovery["metadata_to_il_grounding"][0]
+    assert grounding["initial_focus_question_id"] == "question-primary"
+    assert grounding["metadata_observation_id"] == "obs-001"
+    assert grounding["query_family_id"] == "request-derived-behavior"
+    assert grounding["matched_queries"] == ["FinishAuthentication"]
+    assert set(grounding["source_evidence_refs"]).issubset(
+        terminal_evidence_ids
+    )
+    assert grounding["method_ref"] == "candidate_obs_001"
+    assert grounding["method_symbol"] == "TerminalFlow.FinishAuthentication"
 
 
 def test_supplemental_family_reuses_source_identifier_selection_before_metadata(
@@ -4711,6 +4687,12 @@ def test_requirement_projection_and_search_plan_use_bounded_schema_views(
         }
     ]
     assert "search_plan" not in frozen_message
+    planning_rules = " ".join(frozen_message["rules"])
+    assert "two to four distinct code-shaped technical vocabulary variants" in (
+        planning_rules
+    )
+    assert "These leads are not facts or authority" in planning_rules
+    assert "multiple inflections of the same lexical root" in planning_rules
 
 
 def test_model_search_plan_resolves_registry_authority_and_metadata_tool(
@@ -4805,6 +4787,18 @@ def test_model_search_plan_resolves_registry_authority_and_metadata_tool(
         "FinishAuthentication"
     ]
     assert quality_findings == [
+        {
+            "code": "QUERY_FAMILY_LEADS_NORMALIZED",
+            "investigation_index": 1,
+            "model_family_index": 1,
+            "retained_queries": ["Terminal", "Authentication"],
+            "dropped_queries": [
+                {
+                    "query": "Terminal",
+                    "reason": "duplicate_lexical_root",
+                }
+            ],
+        },
         {
             "code": "DUPLICATE_QUERY_FAMILY_DISPATCH_COLLAPSED",
             "investigation_index": 1,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import replace
 from typing import Any, Callable
 
@@ -37,48 +36,6 @@ from .hook_discovery import (
     evidence_pack_state_from_hook_discovery,
 )
 from .retriever import DeterministicEvidenceRetriever
-
-
-_MAX_CODE_VOCABULARY_LEADS_PER_FAMILY = 4
-_MAX_SOURCE_QUERY_INPUTS = 24
-_CODE_VOCABULARY_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]*")
-_CODE_VOCABULARY_COMPONENT_RE = re.compile(
-    r"[A-Z]+(?=[A-Z][a-z]|\d|$)|[A-Z]?[a-z]+|[A-Z]+|\d+"
-)
-_CODE_VOCABULARY_STOPWORDS = frozenset(
-    {
-        "after",
-        "also",
-        "before",
-        "behavior",
-        "current",
-        "does",
-        "exact",
-        "expose",
-        "exposes",
-        "find",
-        "from",
-        "goal",
-        "identify",
-        "into",
-        "managed",
-        "method",
-        "methods",
-        "observe",
-        "observed",
-        "required",
-        "should",
-        "source",
-        "that",
-        "their",
-        "this",
-        "when",
-        "where",
-        "which",
-        "with",
-        "without",
-    }
-)
 
 
 class IntelligentEvidencePackFactory:
@@ -356,7 +313,7 @@ class EvidenceDiscoverySpecialist:
                                     "Return only a Search Plan for the frozen Requirement Projection; do not repeat or revise the projection.",
                                     "Return investigations in the same order as the frozen planning_blocking_questions. Each investigation states one engineering question, its allowed source_ids, and its nested query families.",
                                     "Set initial_focus=true on exactly one investigation. Deterministic code assigns requirement, question, lane, and family identities and expands all cross-object references.",
-                                    "Queries in one family are a case-insensitive OR union of literal managed-symbol substrings. Use at most eight distinct short symbol fragments or established engineering terms per family.",
+                                    "Queries in one family are investigation leads and a case-insensitive OR union of literal managed-symbol substrings. For that family's engineering_question and evidence_need, return two to four distinct code-shaped technical vocabulary variants that source may use for the event, state, type, or method. Do not return standalone actor nouns, generic action verbs, behavioral sentences, or multiple inflections of the same lexical root. These leads are not facts or authority and must be validated by source observation and metadata/IL tools.",
                                     "Select only registered source_id values. Deterministic code owns Registry authority and fixes metadata search as the open-discovery tool; do not return source roles or tool names.",
                                     "Do not return schema versions, identities, lanes, tools, source roles, or cross-object references.",
                                     "Do not include a Hook identity, Golden, expected evidence, historical answer, annotation, or prior output.",
@@ -1734,125 +1691,9 @@ def _source_query_inputs(
         )
     if not result:
         raise ValueError("SOURCE_QUERY_GENERATION_FAILURE")
-    selected_families = (
-        [selected_family]
-        if isinstance(selected_family, dict)
-        else [
-            family
-            for family in families
-            if isinstance(family, dict)
-            and focus in family.get("question_ids", [])
-        ]
-    )
-    projection_lead_texts: list[object] = [
-        projection.get("trigger"),
-        projection.get("actor"),
-        projection.get("target"),
-        *(
-            hint.get("text")
-            for hint in projection.get("implementation_hints", [])
-            if isinstance(hint, dict)
-        ),
-        *(
-            question.get("question")
-            for question in projection.get("planning_blocking_questions", [])
-            if isinstance(question, dict)
-        ),
-        *selected_questions,
-        projection.get("behavior_goal"),
-        natural_language_request,
-    ]
-    for family in selected_families:
-        family_id_value = family.get("family_id")
-        family_queries = family.get("queries")
-        if (
-            not isinstance(family_id_value, str)
-            or not family_id_value
-            or not isinstance(family_queries, list)
-        ):
-            raise ValueError("SOURCE_QUERY_FAMILY_INVALID")
-        existing_queries = {
-            str(query).strip().casefold()
-            for query in family_queries
-            if isinstance(query, str) and query.strip()
-        }
-        leads = _bounded_code_vocabulary_leads(
-            texts=(
-                *projection_lead_texts,
-                family.get("evidence_need"),
-                *family_queries,
-            ),
-            existing_queries=existing_queries,
-        )
-        for lead in leads:
-            key = lead.casefold()
-            if key in seen:
-                continue
-            if len(result) >= _MAX_SOURCE_QUERY_INPUTS:
-                raise ValueError("SOURCE_QUERY_VOCABULARY_BUDGET_EXCEEDED")
-            seen.add(key)
-            result.append(
-                {
-                    "query_id": (
-                        f"source_vocabulary_{len(result) + 1:02d}_"
-                        f"{_source_vocabulary_lead_digest(family_id_value, lead)}"
-                    ),
-                    "origin": "bounded_code_vocabulary_lead:" + family_id_value,
-                    "query": lead,
-                }
-            )
-    if len(result) > _MAX_SOURCE_QUERY_INPUTS:
+    if len(result) > 24:
         raise ValueError("SOURCE_QUERY_SET_BUDGET_EXCEEDED")
     return tuple(result)
-
-
-def _bounded_code_vocabulary_leads(
-    *,
-    texts: tuple[object, ...],
-    existing_queries: set[str],
-) -> tuple[str, ...]:
-    """Derive retrieval-only leads that require later source/tool grounding."""
-
-    leads: list[str] = []
-    seen: set[str] = set(existing_queries)
-
-    def admit(value: str) -> bool:
-        normalized = value.strip("._-")
-        key = normalized.casefold()
-        if len(normalized) < 4 or key in _CODE_VOCABULARY_STOPWORDS:
-            return False
-        if key not in seen:
-            if len(leads) >= _MAX_CODE_VOCABULARY_LEADS_PER_FAMILY:
-                return False
-            seen.add(key)
-            leads.append(normalized)
-        return True
-
-    for text in texts:
-        if not isinstance(text, str):
-            continue
-        for raw_token in _CODE_VOCABULARY_TOKEN_RE.findall(text):
-            components = _CODE_VOCABULARY_COMPONENT_RE.findall(
-                raw_token.replace(".", "_").replace("-", "_")
-            )
-            for component in components:
-                if not admit(component):
-                    continue
-                lowered = component.casefold()
-                if lowered.endswith("ion") and len(lowered) > 6:
-                    admit(lowered[:-3])
-                elif lowered.endswith("ing") and len(lowered) > 6:
-                    admit(lowered[:-3])
-                elif lowered.endswith("ed") and len(lowered) > 5:
-                    admit(lowered[:-2])
-                if len(leads) >= _MAX_CODE_VOCABULARY_LEADS_PER_FAMILY:
-                    return tuple(leads)
-    return tuple(leads)
-
-
-def _source_vocabulary_lead_digest(family_id: str, lead: str) -> str:
-    value = (family_id + chr(0) + lead).encode("utf-8")
-    return hashlib.sha256(value).hexdigest()[:10]
 
 
 def _merge_source_queries(
@@ -3070,6 +2911,60 @@ def _parse_search_plan_action(raw: str) -> dict[str, object]:
     return action
 
 
+def _normalize_family_query_leads(
+    values: list[object],
+) -> tuple[list[str], list[dict[str, str]]]:
+    """Normalize model-owned family leads without generating semantic synonyms."""
+
+    retained: list[str] = []
+    dropped: list[dict[str, str]] = []
+    seen_roots: set[tuple[str, ...]] = set()
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("MODEL_SEARCH_PLAN_QUERY_INVALID")
+        normalized = " ".join(value.strip().split())
+        root_key = _family_query_lexical_root(normalized)
+        if not root_key:
+            raise ValueError("MODEL_SEARCH_PLAN_QUERY_INVALID")
+        if root_key in seen_roots:
+            dropped.append({"query": normalized, "reason": "duplicate_lexical_root"})
+            continue
+        if len(retained) >= 4:
+            dropped.append({"query": normalized, "reason": "family_budget_exceeded"})
+            continue
+        seen_roots.add(root_key)
+        retained.append(normalized)
+    if not retained:
+        raise ValueError("MODEL_SEARCH_PLAN_QUERY_FAMILY_INVALID")
+    return retained, dropped
+
+
+def _family_query_lexical_root(value: str) -> tuple[str, ...]:
+    tokens: list[str] = []
+    current: list[str] = []
+    for character in value.casefold():
+        if character.isalnum():
+            current.append(character)
+        elif current:
+            tokens.append("".join(current))
+            current = []
+    if current:
+        tokens.append("".join(current))
+    roots: list[str] = []
+    for token in tokens:
+        root = token
+        if root.endswith("ing") and len(root) > 5:
+            root = root[:-3]
+        elif root.endswith("ed") and len(root) > 4:
+            root = root[:-2]
+        elif root.endswith("es") and len(root) > 4:
+            root = root[:-2]
+        elif root.endswith("s") and len(root) > 3:
+            root = root[:-1]
+        roots.append(root)
+    return tuple(roots)
+
+
 def _resolve_model_search_plan_action(
     action: dict[str, object],
     *,
@@ -3198,15 +3093,19 @@ def _resolve_model_search_plan_action(
                 or not isinstance(queries, list)
             ):
                 raise ValueError("MODEL_SEARCH_PLAN_QUERY_FAMILY_INVALID")
-            normalized_queries: list[str] = []
-            for query in queries:
-                if not isinstance(query, str) or not query.strip():
-                    raise ValueError("MODEL_SEARCH_PLAN_QUERY_INVALID")
-                normalized = query.strip()
-                if normalized not in normalized_queries:
-                    normalized_queries.append(normalized)
-            if not normalized_queries:
-                raise ValueError("MODEL_SEARCH_PLAN_QUERY_FAMILY_INVALID")
+            normalized_queries, dropped_queries = _normalize_family_query_leads(
+                queries
+            )
+            if dropped_queries and quality_findings is not None:
+                quality_findings.append(
+                    {
+                        "code": "QUERY_FAMILY_LEADS_NORMALIZED",
+                        "investigation_index": question_index,
+                        "model_family_index": model_family_index,
+                        "retained_queries": list(normalized_queries),
+                        "dropped_queries": dropped_queries,
+                    }
+                )
             resolved_family: dict[str, object] = {
                 "family_id": "",
                 "queries": normalized_queries,
