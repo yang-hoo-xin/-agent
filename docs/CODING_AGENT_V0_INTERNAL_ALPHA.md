@@ -2,18 +2,18 @@
 
 ```yaml
 document_status: current_implementation_target
-document_version: 2026-08-20-r8-explicit-unresolved
+document_version: 2026-08-21-bhf-explicit-unresolved
 completion_claim: none
 implementation_authority: current_user_selected_documentation_scope
 created_at: 2026-08-16
 target_worktree: rag_capability_mainline
 target_branch: codex/rag-capability-mainline
-target_head_at_audit: c48b5e82fe3eed524d5c9f868980748136e28bfd
-current_checkpoint_at_last_sync: e436434dc894df87339b2f3a6767f34477989426
+target_head_at_audit: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
+current_checkpoint_at_last_sync: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
 product_milestone: coding_agent_v0
 first_integrated_delivery: coding_agent_v0_internal_alpha
-active_work_package: none_pending_user_selection
-current_product_stage: explicit_unresolved_repository_result
+active_work_package: wallcrawler_negative_calibration_selected_pending_authorization
+current_product_stage: bhf_positive_calibration_explicit_unresolved
 rag_1a_role: internal_evidence_capability
 rag_1b_role: public_entry_adoption
 ```
@@ -749,8 +749,13 @@ Coding Agent v0 是上位产品里程碑，v0 internal alpha 是第一集成交�
 
 ### 8.2 已冻结的校准输入：BHF EvidencePack 与方向评测
 
-- BHF 已证明相关 source、当前 metadata/IL、EvidencePack commit/read/strict rehydrate 和负向 Planning 消费；
-- 当前结果保持 `insufficient/block`，不强行制造可信正向 EvidencePack；
+- BHF 已证明真实 local model/tool actual、source retrieval、metadata/IL、EvidencePack commit/read/strict rehydrate 与 expected-side comparison 路径可达；
+- run002 与 run004 在不同 Search Plan/query 轨迹下均以 `max_model_steps=5`、3 次物理工具调用、第三 required lane 未执行和 `budget_exhausted` 结束，构成稳定失败模式，不是稳定成功；
+- run004 committed EvidencePack hash 为 `b554e02190af1117b4b552072eea0404ae4271927b803619db9447c89764e9b1`，其 actual 为 `insufficient/block` 且没有 Hook identity；
+- run004 只读 comparison 为 `sufficiency_matches=false`、`control_action_matches=false`、`acceptable_hook_identity_set_matches=false`、`forbidden_hook_identity_hits=[]`；BHF 决定性方向失败是 acceptable identity 缺失，而不是 sufficiency/control action 诊断值；
+- 当前最终声明固定为 `failed_explicit_unresolved_for_current_model_and_strategy`。现有 leads 与调度检查了无关 `Enemies.EB_ChargedAttack_Pouncer.ActivateState`，没有形成可信 `Hitreact` 类型桥；
+- 当前预算在理想 3 metadata + 1 relevant IL + 1 finish 路径下刚好可容纳，尚无物理证据支持扩大预算；
+- 不再继续 BHF prompt、validator、correction、budget、provider、Dense 或稳定性重复运行。Dense provider 探索已以 `reject_dense_currently` 结束，不作为 BHF 方向补偿；
 - BHF 只评发现方向、当前物理身份、禁止方向规避和 expected-truth 隔离；`sufficiency` 与 `control_action` 保留为诊断，不作为 BHF 方向通过条件；
 - BHF 的冻结 annotation 与 hash 不变，评分差异由版本化 Case 评分投影表达；
 - BHF Hidden-Golden 不能授予 Patch 权限，也不作为 internal alpha 正向修改任务。
@@ -760,8 +765,8 @@ Coding Agent v0 是上位产品里程碑，v0 internal alpha 是第一集成交�
 - 当前任务详细事实只读 §5；repository objective 未通过，但合同要求的 explicit-failure 分支已形成可核验终止记录；
 - 不再继续 r8 run、模型抽样、手工 Patch 修复或 Workflow/continuation 扩展；
 - Coding Agent v0 internal alpha 仍未完成，不把平台 gate 正确拒绝无效动作提升为 supported-task success；
-- 下一 eligible slice 仍是 BetterHitFeedback Hidden-Golden、WallCrawler 负向 actual 与最小关系 Eval，但必须由用户显式选择后才进入 active queue；
-- 在用户选择前不自动启动 RAG-1A、RAG-1B、Eval 扩张、Trace、MCP、Memory 或最终资产收口。
+- 用户已选择把 BHF explicit unresolved 写入权威状态并转向 WallCrawler 负向校准；WallCrawler actual 仍需单独的有界运行授权，本次状态同步不授权执行；
+- 下一顺序固定为 WallCrawler 负向 actual/expected-side comparison，再对冻结的 BHF/WC 结果做最小关系 Eval；不自动启动 RAG-1B、完整 Trace/Eval engineering area、MCP、Memory 或最终资产收口。
 
 ### 8.4 工作包 3：关闭 RAG-1A
 

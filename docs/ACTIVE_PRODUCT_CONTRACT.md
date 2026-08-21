@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-20
+Last updated: 2026-08-21
 
 ## 1. Product
 
@@ -57,12 +57,27 @@ The repository objective did not pass, `source_revision_binding` remains empty,
 and further r8 retries, model changes, manual Patch repair, or Workflow changes
 are not authorized.
 
+The BetterHitFeedback positive calibration now also has an explicit unresolved
+result for the current `qwen3:4b-instruct` model and Search Planning strategy.
+Bounded run002 and run004 each committed a real EvidencePack after local model
+and tool execution, but both ended `budget_exhausted`, `insufficient`, and
+`block` without the acceptable `ES_Hitreact.ActivateState` identity. The run004
+EvidencePack hash is
+`b554e02190af1117b4b552072eea0404ae4271927b803619db9447c89764e9b1`;
+its read-only expected-side comparison again reported
+`acceptable_hook_identity_set_matches=false`. The stable failure owner is the
+current model's Search Planning/candidate disambiguation, not ArtifactStore,
+provider transport, context admission, Retriever execution, metadata/IL, or a
+proven budget incompatibility. No further BHF prompt, validator, correction,
+budget, provider, Dense, or repeatability tuning is authorized.
+
 Current execution order:
 
 ```text
 repository explicit unresolved result recorded
--> user review and explicit next-slice selection
--> BetterHitFeedback and WallCrawler Hidden-Golden plus minimal Eval, if selected
+-> BHF positive calibration explicit unresolved recorded
+-> WallCrawler negative actual and expected-side comparison, pending bounded run authorization
+-> minimal relation Eval over the frozen BHF/WC outcomes
 -> RAG-1A checkpoint
 -> RAG-1B public entry adoption
 -> Coding Agent v0 public alpha

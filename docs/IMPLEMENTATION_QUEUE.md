@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-08-20
+Last updated: 2026-08-21
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -10,26 +10,30 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: NONE-PENDING-USER-SELECTION
-selected_product_request: none
+current_queue: RAG-1A-WALLCRAWLER-NEGATIVE-CALIBRATION-001
+selected_product_request: WallCrawler negative actual and expected-side comparison
+queue_status: selected_pending_bounded_run_authorization
 ```
 
 ```text
-last_task: CODING-AGENT-V0-INTERNAL-ALPHA-001
-last_task_status: explicit_unresolved_repository_result
-last_checkpoint: e436434dc894df87339b2f3a6767f34477989426
-last_run: 32e29415
-last_failure: repair_attempt1_patch_structurally_invalid
-r8_continue_authorized: false
-next_eligible_slice: BetterHitFeedback/WallCrawler Hidden-Golden plus minimal Eval
-activation_required: explicit user selection
+last_task: RAG-1A-BHF-POSITIVE-CALIBRATION-001
+last_task_status: failed_explicit_unresolved_for_current_model_and_strategy
+last_checkpoint: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
+last_run: run004
+last_failure: acceptable_hook_identity_set_matches=false
+bhf_continue_authorized: false
+retrieval_provider_exploration: closed
+next_eligible_slice: WallCrawler negative actual and expected-side comparison
+activation_required: explicit bounded run authorization
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
-The repository task satisfied the contract's explicit-failure branch but did
-not pass its objective or complete Coding Agent v0 internal alpha. No new task
-is active until the user selects it. Detailed evidence and non-completion
-boundaries are recorded once in `docs/CODING_AGENT_V0_INTERNAL_ALPHA.md` §5.
+The repository task and BHF positive calibration each satisfied an explicit
+unresolved branch without completing Coding Agent v0 internal alpha or RAG-1A.
+The user selected the WallCrawler negative calibration as the next product
+slice, but no actual run is authorized by this queue update. Detailed BHF
+evidence and claim boundaries are recorded once in
+`docs/CODING_AGENT_V0_INTERNAL_ALPHA.md` §8.2.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 
