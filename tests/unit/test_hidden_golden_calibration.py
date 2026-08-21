@@ -14,6 +14,7 @@ from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.evaluation.hidden_golden import evaluate_committed_hidden_golden
 from src.mod_agent.evidence.calibration import (
     CommittedCalibrationActual,
+    HiddenGoldenActualInput,
     HiddenGoldenCalibrationError,
     commit_manifest_bound_calibration_actual,
     load_hidden_golden_actual_input,
@@ -228,7 +229,30 @@ def _corpus_snapshot_resolver(
     ).corpus_snapshot_sha256
 
 
-def _commit_pack(tmp_path: Path, *, query: str):
+def _actual_manifest_binding(
+    actual_input: HiddenGoldenActualInput,
+) -> dict[str, object]:
+    return {
+        "case_identity": actual_input.case_identity,
+        "request_sha256": actual_input.request_sha256,
+        "declared_corpus_snapshot_sha256": (
+            actual_input.declared_corpus_snapshot_sha256
+        ),
+        "observed_corpus_snapshot_sha256": (
+            actual_input.observed_corpus_snapshot_sha256
+        ),
+        "source_allowlist": list(actual_input.source_allowlist),
+    }
+
+
+def _commit_pack(
+    tmp_path: Path,
+    *,
+    query: str,
+    actual_input: HiddenGoldenActualInput,
+    manifest_binding: object | None = None,
+    include_manifest_binding: bool = True,
+):
     store = ArtifactStore(tmp_path / "artifacts")
     feature_id = "feature-hidden-golden"
     feature_ref = store.write(
@@ -236,10 +260,19 @@ def _commit_pack(tmp_path: Path, *, query: str):
         artifact_type="feature_spec",
         payload=_feature_payload(feature_id),
     )
+    pack = _semantic_pack(query)
+    provenance_validation = dict(pack.provenance_validation)
+    if include_manifest_binding:
+        provenance_validation["manifest_bound_actual"] = (
+            _actual_manifest_binding(actual_input)
+            if manifest_binding is None
+            else manifest_binding
+        )
+    pack = replace(pack, provenance_validation=provenance_validation)
     actual_ref = store.write(
         feature_id=feature_id,
         artifact_type="evidence_pack",
-        payload=_semantic_pack(query).to_artifact_payload(),
+        payload=pack.to_artifact_payload(),
         upstream_refs=[feature_ref],
     )
     return store, actual_ref
@@ -725,7 +758,11 @@ def test_hidden_golden_reads_expected_only_after_committed_actual_binding(
     )
     annotation_path = root / "annotation.json"
     annotation_path.write_text("not-json", encoding="utf-8")
-    store, actual_ref = _commit_pack(tmp_path, query="different request")
+    store, actual_ref = _commit_pack(
+        tmp_path,
+        query="different request",
+        actual_input=actual_input,
+    )
 
     with pytest.raises(
         HiddenGoldenCalibrationError,
@@ -737,6 +774,75 @@ def test_hidden_golden_reads_expected_only_after_committed_actual_binding(
             actual_input=actual_input,
             annotation_path=annotation_path,
         )
+
+
+@pytest.mark.parametrize(
+    "binding_change",
+    (
+        "missing",
+        "wrong_shape",
+        "case_identity",
+        "request_sha256",
+        "declared_corpus_snapshot_sha256",
+        "observed_corpus_snapshot_sha256",
+        "source_allowlist",
+    ),
+)
+def test_hidden_golden_rejects_manifest_binding_before_annotation_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    binding_change: str,
+) -> None:
+    request = "Find an observed current method."
+    root = _actual_input_root(tmp_path, request=request)
+    actual_input = load_hidden_golden_actual_input(
+        root,
+        corpus_root=root,
+        corpus_snapshot_resolver=_corpus_snapshot_resolver,
+    )
+    annotation_path = root / "annotation.json"
+    annotation_path.write_text("not-json", encoding="utf-8")
+    binding: object = _actual_manifest_binding(actual_input)
+    include_binding = binding_change != "missing"
+    if binding_change == "wrong_shape":
+        binding = []
+    elif binding_change not in {"missing", "wrong_shape"}:
+        assert isinstance(binding, dict)
+        binding[binding_change] = (
+            ["Datablocks"]
+            if binding_change == "source_allowlist"
+            else "tampered"
+        )
+    store, actual_ref = _commit_pack(
+        tmp_path,
+        query=request,
+        actual_input=actual_input,
+        manifest_binding=binding,
+        include_manifest_binding=include_binding,
+    )
+    original_read_text = Path.read_text
+    annotation_read = False
+
+    def recording_read_text(path: Path, *args: object, **kwargs: object) -> str:
+        nonlocal annotation_read
+        if path.resolve() == annotation_path.resolve():
+            annotation_read = True
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", recording_read_text)
+
+    with pytest.raises(
+        HiddenGoldenCalibrationError,
+        match="HIDDEN_GOLDEN_ACTUAL_MANIFEST_BINDING_MISMATCH",
+    ):
+        evaluate_committed_hidden_golden(
+            store=store,
+            actual_ref=actual_ref,
+            actual_input=actual_input,
+            annotation_path=annotation_path,
+        )
+
+    assert annotation_read is False
 
 
 def test_hidden_golden_minimal_comparison_uses_committed_strict_actual(
@@ -751,7 +857,11 @@ def test_hidden_golden_minimal_comparison_uses_committed_strict_actual(
     )
     annotation_path = root / "annotation.json"
     annotation_path.write_text(json.dumps(_annotation()), encoding="utf-8")
-    store, actual_ref = _commit_pack(tmp_path, query=request)
+    store, actual_ref = _commit_pack(
+        tmp_path,
+        query=request,
+        actual_input=actual_input,
+    )
 
     report = evaluate_committed_hidden_golden(
         store=store,
@@ -789,7 +899,11 @@ def test_hidden_golden_rejects_annotation_hash_tampering(tmp_path: Path) -> None
     annotation["judgment_payload"]["expected_control_action"] = "block"
     annotation_path = root / "annotation.json"
     annotation_path.write_text(json.dumps(annotation), encoding="utf-8")
-    store, actual_ref = _commit_pack(tmp_path, query=request)
+    store, actual_ref = _commit_pack(
+        tmp_path,
+        query=request,
+        actual_input=actual_input,
+    )
 
     with pytest.raises(
         HiddenGoldenCalibrationError,

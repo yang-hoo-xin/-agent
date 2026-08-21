@@ -74,6 +74,7 @@ def evaluate_committed_hidden_golden(
         raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_ACTUAL_REHYDRATE_FAILED") from exc
     if pack.query != actual_input.request_text:
         raise HiddenGoldenCalibrationError("HIDDEN_GOLDEN_ACTUAL_REQUEST_MISMATCH")
+    _validate_actual_manifest_binding(pack, actual_input)
     actual_payload_sha256 = _canonical_sha256(payload)
 
     # Expected truth becomes visible only after actual is immutable and rebound.
@@ -140,6 +141,27 @@ def evaluate_committed_hidden_golden(
             "patch_apply_build_or_runtime_authority",
         ],
     }
+
+
+def _validate_actual_manifest_binding(
+    pack: EvidencePack,
+    actual_input: HiddenGoldenActualInput,
+) -> None:
+    expected = {
+        "case_identity": actual_input.case_identity,
+        "request_sha256": actual_input.request_sha256,
+        "declared_corpus_snapshot_sha256": (
+            actual_input.declared_corpus_snapshot_sha256
+        ),
+        "observed_corpus_snapshot_sha256": (
+            actual_input.observed_corpus_snapshot_sha256
+        ),
+        "source_allowlist": list(actual_input.source_allowlist),
+    }
+    if pack.provenance_validation.get("manifest_bound_actual") != expected:
+        raise HiddenGoldenCalibrationError(
+            "HIDDEN_GOLDEN_ACTUAL_MANIFEST_BINDING_MISMATCH"
+        )
 
 
 def _validated_expected(
