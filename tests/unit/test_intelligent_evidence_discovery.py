@@ -4695,6 +4695,148 @@ def test_requirement_projection_and_search_plan_use_bounded_schema_views(
     assert "multiple inflections of the same lexical root" in planning_rules
 
 
+def _two_requirement_split_planning_responses() -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]:
+    full_plan = _actual_plan(
+        behavior_goal="Observe authentication completion and audit publication.",
+        queries=["FinishAuthentication", "AuthenticationCompleted"],
+        evidence_need="Which current method completes authentication?",
+    )
+    _add_secondary_planning_question(full_plan)
+    projection = deepcopy(full_plan["requirement_projection"])
+    projection.pop("schema_version")
+    projection["planning_blocking_questions"] = [
+        item["question"]
+        for item in projection["planning_blocking_questions"]
+    ]
+    projection_response = {
+        "action": "project_requirements",
+        "planning_status": "ready",
+        "requirement_projection": projection,
+    }
+    first_investigation = {
+        "engineering_question": (
+            "Which current method completes authentication?"
+        ),
+        "initial_focus": True,
+        "source_ids": ["current-interop"],
+        "query_families": [
+            {
+                "queries": [
+                    "FinishAuthentication",
+                    "AuthenticationCompleted",
+                ],
+                "evidence_need": (
+                    "Which current method completes authentication?"
+                ),
+            }
+        ],
+    }
+    incomplete_search = {
+        "action": "plan_search",
+        "planning_status": "ready",
+        "search_plan": {
+            "investigations": [first_investigation],
+            "initial_stop_condition": "Stop after both requirements close.",
+            "initial_expand_condition": "Expand only after an observed gap.",
+        },
+    }
+    corrected_search = deepcopy(incomplete_search)
+    corrected_search["search_plan"]["investigations"].append(
+        {
+            "engineering_question": (
+                "Which current method publishes the downstream audit record?"
+            ),
+            "initial_focus": False,
+            "source_ids": ["current-interop"],
+            "query_families": [
+                {
+                    "queries": ["PublishAuditRecord", "AuditRecordCommitted"],
+                    "evidence_need": (
+                        "Which current method publishes the audit record?"
+                    ),
+                }
+            ],
+        }
+    )
+    return projection_response, incomplete_search, corrected_search
+
+
+def test_search_plan_count_mismatch_allows_one_structure_correction(
+    tmp_path: Path,
+) -> None:
+    projection, incomplete, corrected = _two_requirement_split_planning_responses()
+    finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [],
+        "unresolved_questions": ["Current source observations are still required."],
+        "missing_capabilities": [],
+    }
+    model = _ScriptedModel([projection, incomplete, corrected, finish])
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+
+    result = specialist.discover(
+        replace(_request(tmp_path), require_actual_planning=True)
+    )
+
+    assert len(model.calls) == 4
+    assert executor.actions == []
+    assert result.agent_discovery is not None
+    assert len(result.agent_discovery["search_plan"]["engineering_questions"]) == 2
+    assert result.pack.budget_summary["planning_model_steps_used"] == 3
+    diagnostics = specialist.runtime_diagnostics
+    assert diagnostics["search_plan_correction_used"] is True
+    assert diagnostics["search_plan_required_investigation_count"] == 2
+    assert diagnostics["search_plan_returned_investigation_count"] == 1
+    correction = model.calls[2][-1]["content"]
+    assert correction["message_type"] == "search_plan_structure_correction"
+    assert correction["error_code"] == (
+        "MODEL_SEARCH_PLAN_REQUIREMENT_COVERAGE_INVALID"
+    )
+    assert correction["required_investigation_count"] == 2
+    assert correction["returned_investigation_count"] == 1
+    assert correction["required_search_plan_schema"] == (
+        evidence_discovery_search_plan_schema()
+    )
+    serialized = json.dumps(correction, ensure_ascii=False)
+    assert "BetterHitFeedback" not in serialized
+    assert "ES_Hitreact" not in serialized
+    assert "ActivateState" not in serialized
+    assert "frozen_judgment_hash" not in serialized
+    assert "acceptable_hook_full_identities" not in serialized
+
+
+def test_search_plan_second_count_mismatch_fails_without_another_correction(
+    tmp_path: Path,
+) -> None:
+    projection, incomplete, _ = _two_requirement_split_planning_responses()
+    model = _ScriptedModel([projection, incomplete, deepcopy(incomplete)])
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+
+    with pytest.raises(
+        ValueError,
+        match="MODEL_SEARCH_PLAN_REQUIREMENT_COVERAGE_INVALID",
+    ):
+        specialist.discover(
+            replace(_request(tmp_path), require_actual_planning=True)
+        )
+
+    assert len(model.calls) == 3
+    assert executor.actions == []
+    diagnostics = specialist.runtime_diagnostics
+    assert diagnostics["search_plan_correction_used"] is True
+    assert diagnostics["search_plan_required_investigation_count"] == 2
+    assert diagnostics["search_plan_returned_investigation_count"] == 1
+    assert diagnostics["dispatch_started"] == 0
+    assert diagnostics["tool_execution_completed"] == 0
+
+
 def test_model_search_plan_resolves_registry_authority_and_metadata_tool(
     tmp_path: Path,
 ) -> None:

@@ -25,6 +25,7 @@ from .discovery_contract import (
     evidence_discovery_finish_decision_constraints,
     evidence_discovery_finish_schema,
     evidence_discovery_planning_schema,
+    evidence_discovery_search_plan_schema,
     normalize_agent_discovery_planning_actual,
     observed_conclusion_matches_bound_fact,
     validate_agent_discovery_actual,
@@ -329,12 +330,94 @@ class EvidenceDiscoverySpecialist:
                     ]
                     if not isinstance(planning_quality_findings, list):
                         raise RuntimeError("PLANNING_QUALITY_FINDINGS_INVALID")
-                    search_action = _resolve_model_search_plan_action(
-                        _parse_search_plan_action(raw_search_plan),
-                        frozen_projection=frozen_projection,
-                        sources=sources,
-                        quality_findings=planning_quality_findings,
-                    )
+                    try:
+                        parsed_search_action = _parse_search_plan_action(
+                            raw_search_plan
+                        )
+                        search_action = _resolve_model_search_plan_action(
+                            parsed_search_action,
+                            frozen_projection=frozen_projection,
+                            sources=sources,
+                            quality_findings=planning_quality_findings,
+                        )
+                    except ValueError as exc:
+                        if not _is_correctable_search_plan_structure_error(exc):
+                            raise
+                        rejected_search_action = _structured_search_plan_output(
+                            raw_search_plan
+                        )
+                        if rejected_search_action is None:
+                            raise
+                        required_count = _required_investigation_count(
+                            frozen_projection
+                        )
+                        returned_count = _returned_investigation_count(
+                            rejected_search_action
+                        )
+                        self._runtime_diagnostics[
+                            "search_plan_required_investigation_count"
+                        ] = required_count
+                        self._runtime_diagnostics[
+                            "search_plan_returned_investigation_count"
+                        ] = returned_count
+                        self._runtime_diagnostics[
+                            "search_plan_correction_used"
+                        ] = True
+                        correction_messages = (
+                            *planning_messages,
+                            {
+                                "role": "assistant",
+                                "content": {
+                                    "message_type": "rejected_search_plan",
+                                    "structured_output": rejected_search_action,
+                                },
+                            },
+                            {
+                                "role": "user",
+                                "content": {
+                                    "message_type": (
+                                        "search_plan_structure_correction"
+                                    ),
+                                    "required_next_action": "plan_search",
+                                    "frozen_requirement_projection": (
+                                        frozen_projection
+                                    ),
+                                    "frozen_requirement_projection_sha256": (
+                                        _json_sha256(frozen_projection)
+                                    ),
+                                    "error_code": (
+                                        _symbolic_discovery_failure_code(exc)
+                                    ),
+                                    "required_investigation_count": required_count,
+                                    "returned_investigation_count": returned_count,
+                                    "required_search_plan_schema": (
+                                        evidence_discovery_search_plan_schema()
+                                    ),
+                                    "instruction": (
+                                        "Return one corrected Search Plan. Emit exactly "
+                                        "one investigation for each frozen requirement, "
+                                        "in the same order. Preserve registered source_ids "
+                                        "and keep two to four family-specific code-shaped "
+                                        "technical vocabulary leads per query family. Do "
+                                        "not add a Hook identity, Golden, expected fact, "
+                                        "historical answer, or prior output."
+                                    ),
+                                },
+                            },
+                        )
+                        corrected_raw_search_plan = self.model.complete(
+                            correction_messages
+                        )
+                        self._planning_model_steps_used = 3
+                        corrected_search_action = _parse_search_plan_action(
+                            corrected_raw_search_plan
+                        )
+                        search_action = _resolve_model_search_plan_action(
+                            corrected_search_action,
+                            frozen_projection=frozen_projection,
+                            sources=sources,
+                            quality_findings=planning_quality_findings,
+                        )
                     raw_plan = json.dumps(
                         {
                             "action": "plan",
@@ -2751,6 +2834,9 @@ def _new_runtime_diagnostics() -> dict[str, object]:
         "symbolic_failure_code": "none",
         "correction_attempted": False,
         "correction_unavailable_reason": "none",
+        "search_plan_correction_used": False,
+        "search_plan_required_investigation_count": None,
+        "search_plan_returned_investigation_count": None,
         "planning_quality_findings": [],
     }
 
@@ -2909,6 +2995,52 @@ def _parse_search_plan_action(raw: str) -> dict[str, object]:
     }:
         raise ValueError("SEARCH_PLAN_STATUS_INVALID")
     return action
+
+
+def _structured_search_plan_output(raw: str) -> dict[str, object] | None:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return dict(value) if isinstance(value, dict) else None
+
+
+def _is_correctable_search_plan_structure_error(exc: ValueError) -> bool:
+    return str(exc) in {
+        "SEARCH_PLAN_ACTION_TYPE_INVALID",
+        "SEARCH_PLAN_ACTION_SHAPE_INVALID",
+        "SEARCH_PLAN_STATUS_INVALID",
+        "MODEL_SEARCH_PLAN_SHAPE_INVALID",
+        "MODEL_SEARCH_PLAN_COLLECTION_INVALID",
+        "MODEL_SEARCH_PLAN_REQUIREMENT_COVERAGE_INVALID",
+        "MODEL_SEARCH_PLAN_INVESTIGATION_SHAPE_INVALID",
+        "MODEL_SEARCH_PLAN_ENGINEERING_QUESTION_INVALID",
+        "MODEL_SEARCH_PLAN_INITIAL_FOCUS_INVALID",
+        "MODEL_SEARCH_PLAN_SOURCE_IDS_INVALID",
+        "MODEL_SEARCH_PLAN_QUERY_FAMILIES_INVALID",
+        "MODEL_SEARCH_PLAN_QUERY_FAMILY_SHAPE_INVALID",
+        "MODEL_SEARCH_PLAN_QUERY_FAMILY_INVALID",
+        "MODEL_SEARCH_PLAN_QUERY_INVALID",
+    }
+
+
+def _required_investigation_count(
+    frozen_projection: dict[str, object],
+) -> int:
+    requirements = frozen_projection.get("planning_blocking_questions")
+    if not isinstance(requirements, list):
+        raise ValueError("FROZEN_PLANNING_REQUIREMENTS_INVALID")
+    return len(requirements)
+
+
+def _returned_investigation_count(search_action: dict[str, object]) -> int | None:
+    search_plan = search_action.get("search_plan")
+    investigations = (
+        search_plan.get("investigations")
+        if isinstance(search_plan, dict)
+        else None
+    )
+    return len(investigations) if isinstance(investigations, list) else None
 
 
 def _normalize_family_query_leads(
