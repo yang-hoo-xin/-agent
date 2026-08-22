@@ -341,6 +341,7 @@ def test_ollama_adapter_uses_native_tools_and_local_usage() -> None:
         )
     )
 
+    assert len(captured) == 1
     url, payload, headers = captured[0]
     assert url == "http://127.0.0.1:11434/api/chat"
     assert payload["stream"] is False
@@ -364,6 +365,150 @@ def test_ollama_adapter_uses_native_tools_and_local_usage() -> None:
     assert response.provider_diagnostic["ollama_eval_duration_ns"] == 2_000_000_000
     assert response.provider_diagnostic["tokens_per_second"] == 8.5
     assert response.provider_diagnostic["first_token_duration_available"] is False
+    projected_body_bytes = len(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    assert response.provider_diagnostic["context_admission"] == {
+        "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
+        "exact_prompt_tokens_available_pre_call": False,
+        "provider_body_utf8_bytes": projected_body_bytes,
+        "configured_num_ctx": 32768,
+        "num_predict": 2048,
+        "conservative_required_context": projected_body_bytes + 2048,
+        "admitted": True,
+    }
+
+
+def test_ollama_adapter_blocks_oversized_payload_before_sender() -> None:
+    calls: list[dict[str, object]] = []
+
+    adapter = OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434",
+        model="qwen3:4b-instruct",
+        max_output_tokens=64,
+        context_window=128,
+        request_sender=lambda _url, payload, _headers: calls.append(payload) or {},
+    )
+
+    with pytest.raises(AgentTurnProviderError) as exc_info:
+        adapter.complete_turn(
+            AgentTurnRequest(
+                messages=(AgentMessage(role="user", content="x" * 512),),
+            )
+        )
+
+    assert calls == []
+    assert exc_info.value.diagnostic["failure_boundary"] == "provider_request_gate"
+    assert exc_info.value.diagnostic["failure_classification"] == (
+        "provider_request_context_budget_exceeded"
+    )
+    admission = exc_info.value.diagnostic["context_admission"]
+    assert admission["configured_num_ctx"] == 128
+    assert admission["num_predict"] == 64
+    assert admission["admitted"] is False
+
+
+def test_ollama_adapter_context_admission_counts_unicode_utf8() -> None:
+    captured: list[dict[str, object]] = []
+
+    def send(_url, payload, _headers):
+        captured.append(payload)
+        return {
+            "model": "qwen3:4b-instruct",
+            "done": True,
+            "done_reason": "stop",
+            "message": {"role": "assistant", "content": "完成"},
+        }
+
+    adapter = OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434",
+        model="qwen3:4b-instruct",
+        max_output_tokens=64,
+        context_window=4096,
+        request_sender=send,
+    )
+    response = adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content="墙面😀" * 100),),
+        )
+    )
+
+    expected_bytes = len(
+        json.dumps(
+            captured[0],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    admission = response.provider_diagnostic["context_admission"]
+    assert admission["provider_body_utf8_bytes"] == expected_bytes
+    assert admission["conservative_required_context"] == expected_bytes + 64
+    assert admission["admitted"] is True
+
+
+def test_ollama_adapter_admits_final_tools_format_and_tool_replay_payload() -> None:
+    captured: list[dict[str, object]] = []
+
+    def send(_url, payload, _headers):
+        captured.append(payload)
+        return {
+            "model": "qwen3:4b-instruct",
+            "done": True,
+            "done_reason": "stop",
+            "message": {"role": "assistant", "content": '{"action":"finish"}'},
+        }
+
+    prior_tool_call = {
+        "function": {
+            "name": "search_dotnet_metadata",
+            "arguments": {"source_id": "r8-modules"},
+        }
+    }
+    adapter = OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434",
+        model="qwen3:4b-instruct",
+        max_output_tokens=64,
+        context_window=4096,
+        request_sender=send,
+    )
+    response = adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content={"goal": "finish"}),),
+            tools=(_tool(),),
+            response_format=_format(),
+            tool_results=(
+                AgentToolResult(
+                    call_id="ollama-call-local",
+                    name="search_dotnet_metadata",
+                    output={"observation_id": "obs-001", "relation_ids": ["r1"]},
+                ),
+            ),
+            provider_state={"content": "", "tool_calls": [prior_tool_call]},
+        )
+    )
+
+    payload = captured[0]
+    assert "tools" in payload
+    assert payload["format"] == _format().schema
+    assert payload["messages"][-2]["tool_calls"] == [prior_tool_call]
+    assert payload["messages"][-1]["tool_name"] == "search_dotnet_metadata"
+    expected_bytes = len(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
+    assert response.provider_diagnostic["context_admission"][
+        "provider_body_utf8_bytes"
+    ] == expected_bytes
 
 
 def test_ollama_adapter_recovers_required_single_tool_from_structured_content() -> None:
@@ -411,6 +556,16 @@ def test_ollama_adapter_recovers_required_single_tool_from_structured_content() 
             }
         ],
     }
+    assert response.provider_diagnostic["context_admission"][
+        "provider_body_utf8_bytes"
+    ] == len(
+        json.dumps(
+            captured[0],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
 
 
 def test_ollama_adapter_does_not_force_format_for_auto_tool_choice() -> None:
@@ -441,7 +596,7 @@ def test_ollama_adapter_does_not_force_format_for_auto_tool_choice() -> None:
         max_output_tokens=2048,
         request_sender=send,
     )
-    adapter.complete_turn(
+    response = adapter.complete_turn(
         AgentTurnRequest(
             messages=(AgentMessage(role="user", content={"goal": "select tool"}),),
             tools=(_tool(),),
@@ -450,6 +605,22 @@ def test_ollama_adapter_does_not_force_format_for_auto_tool_choice() -> None:
     )
 
     assert "format" not in captured[0]
+    assert response.provider_diagnostic["context_admission"] == {
+        "mode": "context_admission_unavailable_not_configured_v1",
+        "exact_prompt_tokens_available_pre_call": False,
+        "provider_body_utf8_bytes": len(
+            json.dumps(
+                captured[0],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ),
+        "configured_num_ctx": None,
+        "num_predict": 2048,
+        "conservative_required_context": None,
+        "admitted": None,
+    }
 
 
 def test_ollama_adapter_replays_native_tool_exchange_and_forces_schema() -> None:

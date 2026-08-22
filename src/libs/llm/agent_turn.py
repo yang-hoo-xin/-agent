@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Protocol
 from urllib.parse import urlsplit
 
+from src.libs.llm.ollama_llm import build_ollama_context_admission
+
 
 @dataclass(frozen=True)
 class AgentMessage:
@@ -333,6 +335,25 @@ class OllamaChatAgentAdapter:
             payload["format"] = request.response_format.schema
         elif required_single_tool:
             payload["format"] = request.tools[0].parameters
+        context_admission = build_ollama_context_admission(
+            payload=payload,
+            configured_num_ctx=self.context_window,
+            num_predict=self.max_output_tokens,
+        )
+        if (
+            self.context_window is not None
+            and context_admission["admitted"] is not True
+        ):
+            raise AgentTurnProviderError(
+                "Ollama Agent request exceeds the configured pre-call context budget.",
+                diagnostic={
+                    "failure_boundary": "provider_request_gate",
+                    "failure_classification": (
+                        "provider_request_context_budget_exceeded"
+                    ),
+                    "context_admission": context_admission,
+                },
+            )
         request_started = time.perf_counter()
         data = self._send(
             f"{self.base_url}/api/chat",
@@ -379,6 +400,7 @@ class OllamaChatAgentAdapter:
                 seed=self.seed,
                 client_elapsed_seconds=client_elapsed_seconds,
                 tool_calls=tool_calls,
+                context_admission=context_admission,
             ),
             raw_response=data,
         )
@@ -783,6 +805,7 @@ def _ollama_provider_diagnostic(
     seed: int,
     client_elapsed_seconds: float,
     tool_calls: tuple[AgentToolCall, ...],
+    context_admission: dict[str, Any],
 ) -> dict[str, object]:
     """Retain bounded native timing facts without treating them as evidence."""
 
@@ -803,6 +826,7 @@ def _ollama_provider_diagnostic(
         "configured_temperature": temperature,
         "configured_seed": seed,
         "configured_max_output_tokens": max_output_tokens,
+        "context_admission": dict(context_admission),
         "client_total_duration_seconds": client_elapsed_seconds,
         "ollama_total_duration_ns": _int_value(data.get("total_duration")),
         "ollama_load_duration_ns": _int_value(data.get("load_duration")),

@@ -16,6 +16,64 @@ from typing import Any, Dict, List, Optional
 from src.libs.llm.base_llm import BaseLLM, ChatResponse, Message
 
 
+def ollama_provider_body_utf8_policy_projection(
+    payload: Mapping[str, Any],
+) -> bytes:
+    """Return the stable UTF-8 policy projection used for context admission."""
+
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def build_ollama_context_admission(
+    *,
+    payload: Mapping[str, Any],
+    configured_num_ctx: int | None,
+    num_predict: int,
+) -> dict[str, Any]:
+    """Project configured or explicitly unavailable pre-call admission."""
+
+    if (
+        isinstance(num_predict, bool)
+        or not isinstance(num_predict, int)
+        or num_predict <= 0
+    ):
+        raise ValueError("Ollama context admission budgets must be positive integers.")
+    provider_body_utf8_bytes = len(
+        ollama_provider_body_utf8_policy_projection(payload)
+    )
+    if configured_num_ctx is None:
+        return {
+            "mode": "context_admission_unavailable_not_configured_v1",
+            "exact_prompt_tokens_available_pre_call": False,
+            "provider_body_utf8_bytes": provider_body_utf8_bytes,
+            "configured_num_ctx": None,
+            "num_predict": num_predict,
+            "conservative_required_context": None,
+            "admitted": None,
+        }
+    if (
+        isinstance(configured_num_ctx, bool)
+        or not isinstance(configured_num_ctx, int)
+        or configured_num_ctx <= 0
+    ):
+        raise ValueError("Ollama context admission budgets must be positive integers.")
+    conservative_required_context = provider_body_utf8_bytes + num_predict
+    return {
+        "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
+        "exact_prompt_tokens_available_pre_call": False,
+        "provider_body_utf8_bytes": provider_body_utf8_bytes,
+        "configured_num_ctx": configured_num_ctx,
+        "num_predict": num_predict,
+        "conservative_required_context": conservative_required_context,
+        "admitted": conservative_required_context <= configured_num_ctx,
+    }
+
+
 def _context_request_identity_sha256(payload: Mapping[str, Any]) -> str:
     """Bind a structured request while allowing only num_ctx to change."""
 
@@ -301,12 +359,9 @@ class OllamaLLM(BaseLLM):
         if response_format is not None:
             payload["think"] = False
             payload["format"] = response_format
-            frozen_request_bytes = json.dumps(
-                payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
+            frozen_request_bytes = ollama_provider_body_utf8_policy_projection(
+                payload
+            )
             if provider_request_recorder is None:
                 raise OllamaLLMError(
                     "[Ollama] Structured patch generation requires a durable "
@@ -335,22 +390,13 @@ class OllamaLLM(BaseLLM):
                     )
                 provider_body_utf8_bytes = len(frozen_request_bytes)
                 if self.observed_prompt_tokens is None:
-                    conservative_required_context = (
-                        provider_body_utf8_bytes + max_tokens
+                    context_admission = (
+                        build_ollama_context_admission(
+                            payload=payload,
+                            configured_num_ctx=context_window,
+                            num_predict=max_tokens,
+                        )
                     )
-                    context_admission = {
-                        "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
-                        "exact_prompt_tokens_available_pre_call": False,
-                        "provider_body_utf8_bytes": provider_body_utf8_bytes,
-                        "configured_num_ctx": context_window,
-                        "num_predict": max_tokens,
-                        "conservative_required_context": (
-                            conservative_required_context
-                        ),
-                        "admitted": (
-                            conservative_required_context <= context_window
-                        ),
-                    }
                 else:
                     observed_identity = _context_request_identity_sha256(payload)
                     if observed_identity != self.observed_prompt_identity_sha256:
