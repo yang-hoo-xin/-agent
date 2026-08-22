@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-08-20
+Last updated: 2026-08-22
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -10,10 +10,10 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ```text
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
-current_dependency: USER-REVIEW-AFTER-R8-EXPLICIT-UNRESOLVED
+current_dependency: WALLCRAWLER-NEGATIVE-CALIBRATION-SELECTED-PENDING-AUTHORIZATION
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
-current_product_code_checkpoint: e436434dc894df87339b2f3a6767f34477989426
+current_product_code_checkpoint: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
 current_wip: four independent user documentation changes, no staged files
 latest_repository_run: 32e29415
 latest_repository_run_report_sha256: B7B3F473F8DA8E2500DA67E496DC389B8B9BB5109D8056F49FC170CEB2ED7AD9
@@ -22,10 +22,14 @@ latest_repository_failure: repair_attempt1_patch_structurally_invalid
 latest_repository_terminal: dry_run_apply_execution/unmatched_closing_brace
 latest_repository_build_diagnostics: initial Repair observation retained 14 CS0103 diagnostics; final Repair Patch stopped before Repair Apply/Build
 source_revision_binding_status: missing
-next_capability_step: wait for explicit user selection; do not continue r8 or auto-start BHF/WC
+latest_bhf_calibration_status: failed_explicit_unresolved_for_current_model_and_strategy
+latest_bhf_evidence_pack: b554e02190af1117b4b552072eea0404ae4271927b803619db9447c89764e9b1
+retrieval_strategy_decision: reject_dense_currently
+wallcrawler_selection_status: selected_pending_bounded_run_authorization
+next_capability_step: wait for explicit WallCrawler bounded run authorization; do not auto-start actual
 rag_1a_status: incomplete
 rag_1b_status: not_started
-coding_agent_v0_internal_alpha_status: incomplete_explicit_unresolved_repository_result
+coding_agent_v0_internal_alpha_status: incomplete_repository_and_bhf_explicit_unresolved
 all_source_inventory_at_2026_08_16: completed
 current_inventory_is_fresh: false
 final_asset_reconciliation_required: true

@@ -728,12 +728,11 @@ canonical `Program.cs` SHA256 保持 `C8B7B706DC771BC4955131691EFABEB4137B056E14
 Coding Agent v0 是上位产品里程碑，v0 internal alpha 是第一集成交付，RAG/ER 是内部证据子系统。它们不是并列项目。
 
 ```text
-当前 repository actual-only 任务：修复 diagnostic-bound span inventory
-→ Repair Patch 生成
-→ 第二次 Review / Dry-run / 隔离 Apply / Build/Test
-→ repository objective 通过或保存新的第一物理失败
-→ 最小失败闭环工程加速验证
-→ BHF Hidden-Golden + WallCrawler 负向 actual + 最小关系 Eval
+r8 repository objective explicit unresolved 已记录
+→ BHF positive calibration explicit unresolved 已记录
+→ 当前：WallCrawler negative calibration 已选择，等待有界 actual 授权
+→ WallCrawler 负向 actual 与 expected-side comparison
+→ 冻结 BHF/WC 结果的最小关系 Eval
 → RAG-1A checkpoint
 → RAG-1B：唯一公共入口采用同一 Evidence executor
 → Coding Agent v0 public alpha
@@ -755,7 +754,7 @@ Coding Agent v0 是上位产品里程碑，v0 internal alpha 是第一集成交�
 - run004 只读 comparison 为 `sufficiency_matches=false`、`control_action_matches=false`、`acceptable_hook_identity_set_matches=false`、`forbidden_hook_identity_hits=[]`；BHF 决定性方向失败是 acceptable identity 缺失，而不是 sufficiency/control action 诊断值；
 - 当前最终声明固定为 `failed_explicit_unresolved_for_current_model_and_strategy`。现有 leads 与调度检查了无关 `Enemies.EB_ChargedAttack_Pouncer.ActivateState`，没有形成可信 `Hitreact` 类型桥；
 - 当前预算在理想 3 metadata + 1 relevant IL + 1 finish 路径下刚好可容纳，尚无物理证据支持扩大预算；
-- 不再继续 BHF prompt、validator、correction、budget、provider、Dense 或稳定性重复运行。Dense provider 探索已以 `reject_dense_currently` 结束，不作为 BHF 方向补偿；
+- 不再继续 BHF prompt、validator、correction、budget、provider、Dense 或稳定性重复运行。Dense provider 探索已以 `reject_dense_currently` 结束，不作为 BHF 方向补偿；详细决定绑定 `artifacts/retrieval_experiments/bge_m3_full_r8_ab_20260821_001/decision_record.json`，SHA256=`7404f84661f7fdc3051e9047b3c3ab8d83fce4772fa9c2686ad1ad29b2b688e7`；第一物理失败记录为同目录 `failure_record.json`，SHA256=`e8c69f52ddeb6cf9436520e34c7f9091820082c341a70224b6195d5cece3a860`；
 - BHF 只评发现方向、当前物理身份、禁止方向规避和 expected-truth 隔离；`sufficiency` 与 `control_action` 保留为诊断，不作为 BHF 方向通过条件；
 - BHF 的冻结 annotation 与 hash 不变，评分差异由版本化 Case 评分投影表达；
 - BHF Hidden-Golden 不能授予 Patch 权限，也不作为 internal alpha 正向修改任务。
