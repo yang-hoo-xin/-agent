@@ -42,6 +42,14 @@ from .hook_discovery import (
 from .retriever import DeterministicEvidenceRetriever
 
 
+class RequirementProjectionCorrectionError(ValueError):
+    """A bounded second projection failure with immutable attempt diagnostics."""
+
+    def __init__(self, code: str, *, diagnostic: dict[str, object]) -> None:
+        super().__init__(code)
+        self.diagnostic = dict(diagnostic)
+
+
 class IntelligentEvidencePackFactory:
     """Invoke discovery inside the graph evidence node and retain its audit result."""
 
@@ -230,7 +238,7 @@ class EvidenceDiscoverySpecialist:
                 },
             )
             raw_projection_or_legacy_plan = self.model.complete(planning_messages)
-            self._planning_model_steps_used = 1
+            self._planning_model_steps_used += 1
             try:
                 first_action = json.loads(raw_projection_or_legacy_plan)
             except json.JSONDecodeError:
@@ -275,15 +283,135 @@ class EvidenceDiscoverySpecialist:
                         },
                     )
                     corrected_raw_plan = self.model.complete(correction_messages)
-                    self._planning_model_steps_used = 2
+                    self._planning_model_steps_used += 1
                     agent_discovery = _validated_actual_plan_from_raw(
                         corrected_raw_plan,
                         sources=sources,
                     )
             else:
-                projection_action = _parse_requirement_projection_action(
-                    raw_projection_or_legacy_plan,
-                    natural_language_request=request.natural_language_request,
+                projection_attempts: list[dict[str, object]] = []
+                try:
+                    projection_action = _parse_requirement_projection_action(
+                        raw_projection_or_legacy_plan,
+                        natural_language_request=request.natural_language_request,
+                    )
+                except ValueError as exc:
+                    first_error = _symbolic_discovery_failure_code(exc)
+                    projection_attempts.append(
+                        _requirement_projection_attempt_record(
+                            raw_projection_or_legacy_plan,
+                            attempt_index=1,
+                            status="rejected",
+                            error_code=first_error,
+                        )
+                    )
+                    _set_requirement_projection_attempt_diagnostics(
+                        self._runtime_diagnostics,
+                        projection_attempts,
+                    )
+                    if first_error != "MODEL_RELATION_REQUIREMENT_COVERAGE_INVALID":
+                        raise
+                    correction_messages = (
+                        *planning_messages,
+                        {
+                            "role": "user",
+                            "content": {
+                                "message_type": (
+                                    "requirement_projection_structure_correction"
+                                ),
+                                "required_next_action": "project_requirements",
+                                "error_code": first_error,
+                                "rejected_structured_output_sha256": (
+                                    projection_attempts[0][
+                                        "structured_output_sha256"
+                                    ]
+                                ),
+                                "requirement_count": projection_attempts[0][
+                                    "requirement_count"
+                                ],
+                                "relation_count": projection_attempts[0][
+                                    "relation_count"
+                                ],
+                                "covered_requirement_indexes": (
+                                    projection_attempts[0][
+                                        "covered_requirement_indexes"
+                                    ]
+                                ),
+                                "missing_requirement_indexes": (
+                                    projection_attempts[0][
+                                        "missing_requirement_indexes"
+                                    ]
+                                ),
+                                "rules": [
+                                    "Return one complete corrected Requirement Projection.",
+                                    "Keep one to four first-slice evidence-bearing planning questions.",
+                                    "Move presentation, implementation, or Runtime-only questions to deferred_planning_or_runtime_questions instead of creating placeholder relations.",
+                                    "Preserve the user's stated semantics and constraints.",
+                                    "Return one to sixteen relations and cover every retained planning question with at least one valid parent_requirement_indexes reference.",
+                                    "Return no answer-bearing evaluation, hidden reference, historical output, or prior run content.",
+                                ],
+                                "instruction": (
+                                    "Rebuild the full projection structurally; do not "
+                                    "patch or repeat the rejected output."
+                                ),
+                            },
+                        },
+                    )
+                    corrected_raw_projection = self.model.complete(
+                        correction_messages
+                    )
+                    self._planning_model_steps_used += 1
+                    try:
+                        projection_action = _parse_requirement_projection_action(
+                            corrected_raw_projection,
+                            natural_language_request=(
+                                request.natural_language_request
+                            ),
+                        )
+                    except ValueError as correction_exc:
+                        second_error = _symbolic_discovery_failure_code(
+                            correction_exc
+                        )
+                        projection_attempts.append(
+                            _requirement_projection_attempt_record(
+                                corrected_raw_projection,
+                                attempt_index=2,
+                                status="rejected",
+                                error_code=second_error,
+                            )
+                        )
+                        _set_requirement_projection_attempt_diagnostics(
+                            self._runtime_diagnostics,
+                            projection_attempts,
+                        )
+                        raise RequirementProjectionCorrectionError(
+                            second_error,
+                            diagnostic=(
+                                _requirement_projection_attempt_diagnostic(
+                                    projection_attempts
+                                )
+                            ),
+                        ) from correction_exc
+                    projection_attempts.append(
+                        _requirement_projection_attempt_record(
+                            corrected_raw_projection,
+                            attempt_index=2,
+                            status="accepted",
+                            error_code=None,
+                        )
+                    )
+                else:
+                    projection_attempts.append(
+                        _requirement_projection_attempt_record(
+                            raw_projection_or_legacy_plan,
+                            attempt_index=1,
+                            status="accepted",
+                            error_code=None,
+                        )
+                    )
+                _set_requirement_projection_attempt_diagnostics(
+                    self._runtime_diagnostics,
+                    projection_attempts,
                 )
                 frozen_projection = projection_action["requirement_projection"]
                 if projection_action["planning_status"] == "requirement_projection_insufficient":
@@ -329,7 +457,7 @@ class EvidenceDiscoverySpecialist:
                         },
                     )
                     raw_search_plan = self.model.complete(planning_messages)
-                    self._planning_model_steps_used = 2
+                    self._planning_model_steps_used += 1
                     planning_quality_findings = self._runtime_diagnostics[
                         "planning_quality_findings"
                     ]
@@ -413,7 +541,7 @@ class EvidenceDiscoverySpecialist:
                         corrected_raw_search_plan = self.model.complete(
                             correction_messages
                         )
-                        self._planning_model_steps_used = 3
+                        self._planning_model_steps_used += 1
                         corrected_search_action = _parse_search_plan_action(
                             corrected_raw_search_plan
                         )
@@ -1288,6 +1416,13 @@ class EvidenceDiscoverySpecialist:
             blockers=state["blockers"],
             missing_evidence=state["missing_evidence"],
             run_status=status,
+            budget_summary={
+                "planning_model_steps_used": self._planning_model_steps_used,
+                "total_model_steps_used": self._planning_model_steps_used,
+                **_requirement_projection_budget_facts(
+                    self._runtime_diagnostics
+                ),
+            },
             agent_discovery=agent_discovery,
             prompt_contract={
                 "version": AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION,
@@ -1528,6 +1663,9 @@ class EvidenceDiscoverySpecialist:
                         "planning_model_steps_used": self._planning_model_steps_used,
                         "total_model_steps_used": (
                             model_steps_used + self._planning_model_steps_used
+                        ),
+                        **_requirement_projection_budget_facts(
+                            self._runtime_diagnostics
                         ),
                     }
                     if request.require_actual_planning
@@ -2939,6 +3077,11 @@ def _new_runtime_diagnostics() -> dict[str, object]:
         "search_plan_correction_used": False,
         "search_plan_required_investigation_count": None,
         "search_plan_returned_investigation_count": None,
+        "requirement_projection_attempts": [],
+        "initial_projection_success": None,
+        "projection_recovery_attempted": False,
+        "projection_recovery_success": False,
+        "projection_attempt_count": 0,
         "planning_quality_findings": [],
         "plan_budget_required_tool_calls": None,
         "plan_budget_required_model_steps": None,
@@ -3205,6 +3348,120 @@ def _parse_requirement_projection_action(
         require_meaningful=action["planning_status"] == "ready",
     )
     return {**action, "requirement_projection": materialized_projection}
+
+
+def _requirement_projection_attempt_record(
+    raw: str,
+    *,
+    attempt_index: int,
+    status: str,
+    error_code: str | None,
+) -> dict[str, object]:
+    """Record structural projection facts without persisting model output text."""
+
+    try:
+        action = json.loads(raw)
+    except json.JSONDecodeError:
+        action = None
+    projection = (
+        action.get("requirement_projection")
+        if isinstance(action, dict)
+        else None
+    )
+    questions = (
+        projection.get("planning_blocking_questions")
+        if isinstance(projection, dict)
+        else None
+    )
+    relations = (
+        projection.get("relation_definitions")
+        if isinstance(projection, dict)
+        else None
+    )
+    requirement_count = len(questions) if isinstance(questions, list) else 0
+    relation_count = len(relations) if isinstance(relations, list) else 0
+    relation_rows = relations if isinstance(relations, list) else []
+    covered_requirement_indexes = sorted(
+        {
+            int(index)
+            for relation in relation_rows
+            if isinstance(relation, dict)
+            and isinstance(relation.get("parent_requirement_indexes"), list)
+            for index in relation["parent_requirement_indexes"]
+            if (
+                not isinstance(index, bool)
+                and isinstance(index, int)
+                and 1 <= index <= requirement_count
+            )
+        }
+    )
+    return {
+        "attempt_index": attempt_index,
+        "structured_output_sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        "status": status,
+        "error_code": error_code,
+        "requirement_count": requirement_count,
+        "relation_count": relation_count,
+        "covered_requirement_indexes": covered_requirement_indexes,
+        "missing_requirement_indexes": sorted(
+            set(range(1, requirement_count + 1))
+            - set(covered_requirement_indexes)
+        ),
+    }
+
+
+def _set_requirement_projection_attempt_diagnostics(
+    diagnostics: dict[str, object],
+    attempts: list[dict[str, object]],
+) -> None:
+    """Publish one immutable attempt sequence through existing diagnostic state."""
+
+    initial_success = bool(attempts and attempts[0]["status"] == "accepted")
+    recovery_attempted = len(attempts) > 1
+    diagnostics.update(
+        {
+            "requirement_projection_attempts": [dict(item) for item in attempts],
+            "initial_projection_success": initial_success,
+            "projection_recovery_attempted": recovery_attempted,
+            "projection_recovery_success": bool(
+                recovery_attempted and attempts[-1]["status"] == "accepted"
+            ),
+            "projection_attempt_count": len(attempts),
+        }
+    )
+
+
+def _requirement_projection_attempt_diagnostic(
+    attempts: list[dict[str, object]],
+) -> dict[str, object]:
+    diagnostic: dict[str, object] = {}
+    _set_requirement_projection_attempt_diagnostics(diagnostic, attempts)
+    return diagnostic
+
+
+def _requirement_projection_budget_facts(
+    diagnostics: dict[str, object],
+) -> dict[str, object]:
+    attempts = diagnostics.get("requirement_projection_attempts")
+    if not isinstance(attempts, list) or not attempts:
+        return {}
+    return {
+        "requirement_projection_attempts": [
+            dict(item) for item in attempts if isinstance(item, dict)
+        ],
+        "initial_projection_success": diagnostics.get(
+            "initial_projection_success"
+        ),
+        "projection_recovery_attempted": diagnostics.get(
+            "projection_recovery_attempted"
+        ),
+        "projection_recovery_success": diagnostics.get(
+            "projection_recovery_success"
+        ),
+        "projection_attempt_count": diagnostics.get(
+            "projection_attempt_count"
+        ),
+    }
 
 
 def _parse_search_plan_action(raw: str) -> dict[str, object]:

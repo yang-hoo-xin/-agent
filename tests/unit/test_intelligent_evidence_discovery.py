@@ -68,6 +68,7 @@ from src.libs.llm import (
     BaseLLM,
     ChatResponse,
     Message,
+    OllamaChatAgentAdapter,
 )
 from src.mod_agent.knowledge import (
     IncrementalIndexer,
@@ -4806,6 +4807,401 @@ def _relation_projection_action(
         },
     }
     return request, action
+
+
+def _projection_coverage_recovery_responses(
+    request_text: str,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]:
+    evidence_question = "Which current observation establishes the transition?"
+    deferred_question = "How should the final Runtime presentation appear?"
+    rejected = {
+        "action": "project_requirements",
+        "planning_status": "ready",
+        "requirement_projection": {
+            "behavior_goal": request_text,
+            "trigger": None,
+            "actor": None,
+            "target": None,
+            "hard_constraints": [],
+            "forbidden_outcomes": [],
+            "implementation_hints": [],
+            "acceptance_signals": [],
+            "planning_blocking_questions": [
+                evidence_question,
+                deferred_question,
+            ],
+            "relation_definitions": [
+                {
+                    "parent_requirement_indexes": [1],
+                    "meaning": "Current evidence establishes the transition.",
+                    "investigation_question": evidence_question,
+                }
+            ],
+            "deferred_planning_or_runtime_questions": [],
+        },
+    }
+    corrected = deepcopy(rejected)
+    corrected_projection = corrected["requirement_projection"]
+    assert isinstance(corrected_projection, dict)
+    corrected_projection["planning_blocking_questions"] = [evidence_question]
+    corrected_projection["deferred_planning_or_runtime_questions"] = [
+        deferred_question
+    ]
+    materialized = _parse_requirement_projection_action(
+        json.dumps(corrected),
+        natural_language_request=request_text,
+    )["requirement_projection"]
+    relation_id = str(
+        materialized["relation_contract"]["relations"][0]["relation_id"]
+    )
+    search = {
+        "action": "plan_search",
+        "planning_status": "ready",
+        "search_plan": {
+            "investigations": [
+                {
+                    "engineering_question": evidence_question,
+                    "initial_focus": True,
+                    "source_ids": ["current-interop"],
+                    "query_families": [
+                        {
+                            "queries": ["ObservedTransition", "TransitionState"],
+                            "evidence_need": evidence_question,
+                            "relation_indexes": [1],
+                        }
+                    ],
+                }
+            ],
+            "initial_stop_condition": "Stop after exact transition evidence.",
+            "initial_expand_condition": "Expand only from an observed gap.",
+        },
+    }
+    finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [
+            {
+                "claim": (
+                    "Observed method body metadata for Observed.Type.Move: "
+                    "metadata_token=0x06000001; rva=123; has_method_body=true; "
+                    "instruction_count=1; instructions_truncated=false."
+                ),
+                "claim_status": "observed",
+                "observation_ids": ["obs-002"],
+                "limitations": [],
+                "requirement_ids": ["requirement-001"],
+                "relation_ids": [relation_id],
+                "relationship": "support",
+            }
+        ],
+        "unresolved_questions": ["Runtime verification remains deferred."],
+        "missing_capabilities": [],
+    }
+    return rejected, corrected, search, finish
+
+
+def test_projection_missing_coverage_allows_one_audited_recovery(
+    tmp_path: Path,
+) -> None:
+    request_text = "Observe one transition while deferring final presentation."
+    rejected, corrected, search, finish = (
+        _projection_coverage_recovery_responses(request_text)
+    )
+    model = _ScriptedModel(
+        [
+            rejected,
+            corrected,
+            search,
+            _family_selection("family-001-001"),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Inspect the observed transition method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            finish,
+        ]
+    )
+    executor = _ObservedToolExecutor()
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request=request_text,
+            require_actual_planning=True,
+            max_tool_calls=2,
+            max_model_steps=3,
+        )
+    )
+
+    attempts = result.pack.budget_summary["requirement_projection_attempts"]
+    assert attempts[0] == {
+        "attempt_index": 1,
+        "structured_output_sha256": attempts[0]["structured_output_sha256"],
+        "status": "rejected",
+        "error_code": "MODEL_RELATION_REQUIREMENT_COVERAGE_INVALID",
+        "requirement_count": 2,
+        "relation_count": 1,
+        "covered_requirement_indexes": [1],
+        "missing_requirement_indexes": [2],
+    }
+    assert attempts[1] == {
+        "attempt_index": 2,
+        "structured_output_sha256": attempts[1]["structured_output_sha256"],
+        "status": "accepted",
+        "error_code": None,
+        "requirement_count": 1,
+        "relation_count": 1,
+        "covered_requirement_indexes": [1],
+        "missing_requirement_indexes": [],
+    }
+    assert attempts[0]["structured_output_sha256"] != attempts[1][
+        "structured_output_sha256"
+    ]
+    assert result.pack.budget_summary["initial_projection_success"] is False
+    assert result.pack.budget_summary["projection_recovery_attempted"] is True
+    assert result.pack.budget_summary["projection_recovery_success"] is True
+    assert result.pack.budget_summary["projection_attempt_count"] == 2
+    assert result.pack.budget_summary["planning_model_steps_used"] == 3
+    assert len(executor.actions) == 2
+    correction = model.calls[1][-1]["content"]
+    assert correction["message_type"] == (
+        "requirement_projection_structure_correction"
+    )
+    assert "structured_output" not in correction
+    assert correction["missing_requirement_indexes"] == [2]
+    correction_text = json.dumps(correction, ensure_ascii=False)
+    for forbidden in (
+        "WallCrawler",
+        "GTFO",
+        "Expected",
+        "Golden",
+        "annotation",
+        "prior actual",
+    ):
+        assert forbidden not in correction_text
+    assert result.agent_discovery["requirement_projection"][
+        "deferred_planning_or_runtime_questions"
+    ] == ["How should the final Runtime presentation appear?"]
+
+
+def test_projection_second_missing_coverage_fails_with_two_attempt_diagnostic(
+    tmp_path: Path,
+) -> None:
+    request_text = "Observe one bounded transition."
+    rejected, _, _, _ = _projection_coverage_recovery_responses(request_text)
+    second_rejected = deepcopy(rejected)
+    second_projection = second_rejected["requirement_projection"]
+    assert isinstance(second_projection, dict)
+    second_projection["behavior_goal"] = request_text + " Corrected output."
+    model = _ScriptedModel([rejected, second_rejected])
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+    )
+    request = replace(
+        _request(tmp_path),
+        natural_language_request=request_text,
+        require_actual_planning=True,
+    )
+    factory = IntelligentEvidencePackFactory(
+        specialist=specialist,
+        sources=request.sources,
+        max_tool_calls=request.max_tool_calls,
+        max_model_steps=request.max_model_steps,
+        require_actual_planning=True,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="MODEL_RELATION_REQUIREMENT_COVERAGE_INVALID",
+    ) as raised:
+        specialist.discover(request)
+
+    assert len(model.calls) == 2
+    assert executor.actions == []
+    diagnostic = raised.value.diagnostic
+    assert diagnostic["projection_attempt_count"] == 2
+    assert diagnostic["initial_projection_success"] is False
+    assert diagnostic["projection_recovery_attempted"] is True
+    assert diagnostic["projection_recovery_success"] is False
+    assert [item["status"] for item in diagnostic["requirement_projection_attempts"]] == [
+        "rejected",
+        "rejected",
+    ]
+    assert all(
+        item["error_code"] == "MODEL_RELATION_REQUIREMENT_COVERAGE_INVALID"
+        for item in diagnostic["requirement_projection_attempts"]
+    )
+    persisted = _failed_run_diagnostics(
+        evidence_factory=factory,
+        error=raised.value,
+    )
+    assert persisted["requirement_projection_attempts"] == diagnostic[
+        "requirement_projection_attempts"
+    ]
+    assert persisted["projection_attempt_count"] == 2
+    assert persisted["projection_recovery_success"] is False
+    assert persisted["tool_execution_completed"] == 0
+
+
+def test_projection_noncoverage_error_does_not_receive_correction(
+    tmp_path: Path,
+) -> None:
+    request_text = "Observe one bounded transition."
+    rejected, corrected, _, _ = _projection_coverage_recovery_responses(
+        request_text
+    )
+    rejected["requirement_projection"]["relation_definitions"] = []
+    model = _ScriptedModel([rejected, corrected])
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+    )
+
+    with pytest.raises(ValueError, match="MODEL_RELATION_DEFINITIONS_REQUIRED"):
+        specialist.discover(
+            replace(
+                _request(tmp_path),
+                natural_language_request=request_text,
+                require_actual_planning=True,
+            )
+        )
+
+    assert len(model.calls) == 1
+    assert executor.actions == []
+    diagnostics = specialist.runtime_diagnostics
+    assert diagnostics["projection_attempt_count"] == 1
+    assert diagnostics["projection_recovery_attempted"] is False
+
+
+def test_projection_recovery_composes_with_search_plan_correction_steps(
+    tmp_path: Path,
+) -> None:
+    projection, incomplete, corrected_search = (
+        _two_requirement_split_planning_responses()
+    )
+    rejected_projection = deepcopy(projection)
+    raw_projection = rejected_projection["requirement_projection"]
+    assert isinstance(raw_projection, dict)
+    for relation in raw_projection["relation_definitions"]:
+        relation["parent_requirement_indexes"] = [1]
+    finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [],
+        "unresolved_questions": ["Current source observations are still required."],
+        "missing_capabilities": [],
+    }
+    model = _ScriptedModel(
+        [
+            rejected_projection,
+            projection,
+            incomplete,
+            corrected_search,
+            finish,
+        ]
+    )
+    executor = _ObservedToolExecutor()
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+
+    assert len(model.calls) == 5
+    assert executor.actions == []
+    assert result.pack.budget_summary["planning_model_steps_used"] == 4
+    assert result.pack.budget_summary["projection_attempt_count"] == 2
+    assert result.pack.budget_summary["projection_recovery_success"] is True
+    assert result.pack.budget_summary["total_model_steps_used"] == 5
+    assert result.agent_discovery is not None
+
+
+def test_projection_correction_each_provider_call_retains_context_admission(
+    tmp_path: Path,
+) -> None:
+    request_text = "Observe one bounded transition."
+    rejected, _, _, _ = _projection_coverage_recovery_responses(request_text)
+    insufficient = deepcopy(rejected)
+    insufficient["planning_status"] = "requirement_projection_insufficient"
+    insufficient_projection = insufficient["requirement_projection"]
+    assert isinstance(insufficient_projection, dict)
+    insufficient_projection["planning_blocking_questions"] = []
+    insufficient_projection["relation_definitions"] = []
+    insufficient_projection["deferred_planning_or_runtime_questions"] = [
+        "The request remains deferred."
+    ]
+    responses = [rejected, insufficient]
+    payloads: list[dict[str, object]] = []
+
+    def send(_url, payload, _headers):
+        payloads.append(payload)
+        response = responses.pop(0)
+        return {
+            "model": "qwen3:4b-instruct",
+            "done": True,
+            "done_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": json.dumps(response, ensure_ascii=False),
+            },
+            "prompt_eval_count": 1,
+            "eval_count": 1,
+        }
+
+    client = OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434",
+        model="qwen3:4b-instruct",
+        max_output_tokens=4096,
+        context_window=32768,
+        request_sender=send,
+    )
+    model = EvidenceDiscoveryAgentModel(
+        client,
+        local_execution=EvidenceDiscoveryLocalExecution(
+            endpoint="http://127.0.0.1:11434",
+            provider=client.provider,
+            model=client.model,
+        ),
+    )
+    executor = _ObservedToolExecutor()
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=executor,
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request=request_text,
+            require_actual_planning=True,
+        )
+    )
+
+    assert result.run_status == "requirement_projection_insufficient"
+    assert len(payloads) == 2
+    assert executor.actions == []
+    assert all(
+        payload["format"] == evidence_discovery_requirement_projection_schema()
+        for payload in payloads
+    )
+    assert all(
+        record["context_admission"]["admitted"] is True
+        for record in model.provider_turn_records
+    )
+    assert result.pack.budget_summary["planning_model_steps_used"] == 2
+    assert result.pack.budget_summary["projection_attempt_count"] == 2
 
 
 def test_request_side_relation_identity_supports_required_cardinalities() -> None:

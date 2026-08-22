@@ -986,7 +986,7 @@ def _failed_run_diagnostics(
         symbolic_failure_code = "AGENT_TURN_PROVIDER_ERROR"
     elif symbolic_failure_code in {"", "none"}:
         symbolic_failure_code = _evidence_run_failure_code(error)
-    return {
+    diagnostics = {
         "schema_version": "evidence_run_failure_diagnostics_v1",
         "provider_tool_calls": int(snapshot.get("provider_tool_calls", 0)),
         "adapter_accepted_actions": int(
@@ -1010,6 +1010,41 @@ def _failed_run_diagnostics(
         ),
         "traceback": _sanitized_traceback(error),
     }
+    projection_diagnostic = getattr(error, "diagnostic", None)
+    if not isinstance(projection_diagnostic, dict):
+        projection_diagnostic = {
+            key: snapshot.get(key)
+            for key in (
+                "requirement_projection_attempts",
+                "initial_projection_success",
+                "projection_recovery_attempted",
+                "projection_recovery_success",
+                "projection_attempt_count",
+            )
+            if key in snapshot
+        }
+    attempts = projection_diagnostic.get("requirement_projection_attempts")
+    if isinstance(attempts, list) and attempts:
+        diagnostics.update(
+            {
+                "requirement_projection_attempts": [
+                    dict(item) for item in attempts if isinstance(item, dict)
+                ],
+                "initial_projection_success": projection_diagnostic.get(
+                    "initial_projection_success"
+                ),
+                "projection_recovery_attempted": projection_diagnostic.get(
+                    "projection_recovery_attempted"
+                ),
+                "projection_recovery_success": projection_diagnostic.get(
+                    "projection_recovery_success"
+                ),
+                "projection_attempt_count": projection_diagnostic.get(
+                    "projection_attempt_count"
+                ),
+            }
+        )
+    return diagnostics
 
 
 def _sanitized_traceback(error: BaseException) -> dict[str, object]:
