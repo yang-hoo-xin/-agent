@@ -1,0 +1,91 @@
+{
+  "report_version": "bhf_case_reliability_v1",
+  "report_role": "expected_side_quick_reliability_audit",
+  "created_on": "2026-08-22",
+  "case_identity": "better_hit_feedback_positive_calibration",
+  "verdict": "valid_with_limitations",
+  "agent_behavior": "failed_explicit_unresolved_for_current_model_and_strategy",
+  "input_binding": {
+    "product_code_checkpoint": "e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b",
+    "run_id": "bhf_actual_20260821_004",
+    "evidence_pack_artifact_hash": "b554e02190af1117b4b552072eea0404ae4271927b803619db9447c89764e9b1",
+    "evidence_pack_envelope_sha256": "5d5914a5b9054a606fdeb1fad9cf9eb77d99dc04b5f4da88ba54e0066c2ab4e3",
+    "annotation_file_sha256": "bb18dd01b3d09c6c3d0a6a34081d389c24ebf9c4d378eb5d602a56b5c6a85503",
+    "frozen_judgment_hash": "C43DA97715FF4408FF1687EBB7B4756B2F5FED8D3EBF1ADF78A53EED8F1507A1",
+    "corpus_manifest_file_sha256": "af5d0fbfdf9ed66076beb44ef0835259827a6b9ccac28e332549445ab5988035",
+    "corpus_snapshot_sha256": "sha256:40ed82c420c7192f64c539cc983c40aae7e1a8fe221e0c2cd0e31964ace26ba2",
+    "request_sha256": "975612665FF3779774E09D189D1C7877E31E34B5E924C07D0E1CD2050E005187"
+  },
+  "generic_comparison": {
+    "sufficiency_matches": false,
+    "control_action_matches": false,
+    "acceptable_hook_identity_set_matches": false,
+    "forbidden_hook_identity_hits": [],
+    "decisive_direction_signal": "acceptable_hook_identity_set_matches",
+    "unscored_expected_fields": [
+      "required_evidence",
+      "forbidden_evidence",
+      "required_missing_evidence"
+    ]
+  },
+  "actual_observation": {
+    "readiness": "insufficient",
+    "control_action": "block",
+    "hook_identity_count": 0,
+    "run_status": "budget_exhausted",
+    "required_lanes_completed": 2,
+    "required_lanes_total": 3,
+    "tool_calls": 3,
+    "relevant_il_inspections": 0,
+    "only_inspected_method": "Enemies.EB_ChargedAttack_Pouncer.ActivateState",
+    "verified_findings_count": 0
+  },
+  "eight_dimension_check": {
+    "identity_and_freshness": {
+      "status": "pass",
+      "basis": "Request, corpus, current interop identity, actual Artifact, and frozen expected identity are hash-bound."
+    },
+    "decidability": {
+      "status": "pass",
+      "basis": "The direction claim is decidable by one acceptable current full method identity and explicit forbidden identities."
+    },
+    "source_coverage": {
+      "status": "pass_with_limitations",
+      "basis": "The expected record binds current API/IL plus bounded Runtime support, but the evaluated actual completed only two of three planned lanes."
+    },
+    "expected_grounding": {
+      "status": "pass_with_limitations",
+      "basis": "The expected direction is current-identity-bound but reference-assisted and carries bounded historical/Runtime support."
+    },
+    "expected_actual_isolation": {
+      "status": "pass",
+      "basis": "The actual was committed without annotation/Golden input and was rebound before expected-side comparison."
+    },
+    "comparator_validity": {
+      "status": "pass_with_limitations",
+      "basis": "The full-identity direction check distinguishes this failure, while narrative relation requirements remain unscored."
+    },
+    "discriminative_power": {
+      "status": "pass_with_limitations",
+      "basis": "The missing acceptable identity is a meaningful direction failure; sufficiency/control diagnostics alone are not decisive."
+    },
+    "feasible_reference_path": {
+      "status": "pass_with_limitations",
+      "basis": "The ideal three searches, one relevant IL inspection, and one finish fit exactly within five model steps and four tool calls, with no scheduling margin."
+    }
+  },
+  "limitations": [
+    "calibration-informed and reference-assisted, not blind or held-out",
+    "cross-language and domain vocabulary gap",
+    "narrative relation fields are not scored by the generic comparator"
+  ],
+  "claim_boundary": {
+    "bhf_status_changed": false,
+    "obs_001_reopened": false,
+    "rag_1a_passed": false,
+    "model_calls": 0,
+    "actual_runs": 0,
+    "reliability_review_runs": 1,
+    "trace_eval_scope": "one quick reliability audit over frozen assets; not the complete Trace/Eval engineering area"
+  }
+}

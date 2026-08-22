@@ -2,7 +2,7 @@
 
 ```yaml
 document_status: current_implementation_target
-document_version: 2026-08-21-bhf-explicit-unresolved
+document_version: 2026-08-22-rag-1a-explicit-unresolved
 completion_claim: none
 implementation_authority: current_user_selected_documentation_scope
 created_at: 2026-08-16
@@ -12,8 +12,8 @@ target_head_at_audit: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
 current_checkpoint_at_last_sync: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
 product_milestone: coding_agent_v0
 first_integrated_delivery: coding_agent_v0_internal_alpha
-active_work_package: wallcrawler_negative_calibration_selected_pending_authorization
-current_product_stage: bhf_positive_calibration_explicit_unresolved
+active_work_package: none_pending_user_selection_after_rag_1a_explicit_unresolved
+current_product_stage: rag_1a_calibration_explicit_unresolved
 rag_1a_role: internal_evidence_capability
 rag_1b_role: public_entry_adoption
 ```
@@ -730,10 +730,9 @@ Coding Agent v0 是上位产品里程碑，v0 internal alpha 是第一集成交�
 ```text
 r8 repository objective explicit unresolved 已记录
 → BHF positive calibration explicit unresolved 已记录
-→ 当前：WallCrawler negative calibration 已选择，等待有界 actual 授权
-→ WallCrawler 负向 actual 与 expected-side comparison
-→ 冻结 BHF/WC 结果的最小关系 Eval
-→ RAG-1A checkpoint
+→ WallCrawler 负向 actual 与 expected-side comparison 已完成，但 Case 对当前协议无效
+→ 冻结 BHF/WC 结果的最小关系 Eval 已完成
+→ 当前：RAG-1A explicit unresolved，等待用户选择 WallCrawler Case/budget 修复或 simple actual-only success
 → Internal Alpha completion checkpoint
 → RAG-1B：唯一公共入口采用同一 Evidence executor + Operational Readiness work
 → ENTRY-001/OPS-001/TOOL-001/REPORT-001/REC-001 全部关闭或形成验证边界
@@ -761,20 +760,23 @@ r8 repository objective explicit unresolved 已记录
 - BHF 的冻结 annotation 与 hash 不变，评分差异由版本化 Case 评分投影表达；
 - BHF Hidden-Golden 不能授予 Patch 权限，也不作为 internal alpha 正向修改任务。
 
-### 8.3 Repository explicit-unresolved 结果与下一选择边界
+### 8.3 Repository 与 calibration explicit-unresolved 结果
 
 - 当前任务详细事实只读 §5；repository objective 未通过，但合同要求的 explicit-failure 分支已形成可核验终止记录；
 - 不再继续 r8 run、模型抽样、手工 Patch 修复或 Workflow/continuation 扩展；
 - Coding Agent v0 internal alpha 仍未完成，不把平台 gate 正确拒绝无效动作提升为 supported-task success；
-- 用户已选择把 BHF explicit unresolved 写入权威状态并转向 WallCrawler 负向校准；WallCrawler actual 仍需单独的有界运行授权，本次状态同步不授权执行；
-- 下一顺序固定为 WallCrawler 负向 actual/expected-side comparison，再对冻结的 BHF/WC 结果做最小关系 Eval；不自动启动 RAG-1B、完整 Trace/Eval engineering area、MCP、Memory 或最终资产收口。
+- WallCrawler run002 committed EvidencePack hash 为 `4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704`，但只完成 2/4 required lanes，唯一 IL 是无关的 `CellMenu.CM_MapZoneGUIItem..ctor`，`verified_findings=[]`，并以 `budget_exhausted` 停止；
+- generic comparison 的三项 match 不能把这个 incomplete budget stop 与 evidence-grounded block 区分；WallCrawler Case Reliability 为 `invalid_for_agent_evaluation_for_current_protocol`，Agent behavior 为 `inconclusive`；
+- BHF 快速可靠性复检为 `valid_with_limitations`，不改变其 current-model/current-strategy explicit unresolved，也不重开 `OBS-001`；
+- 详细审计与输入 hash 只记录在 `docs/audits/rag_1a_calibration_outcome_20260822_001/`；不自动重跑 WallCrawler、扩大 budget、修改 Golden 或启动 RAG-1B。
 
-### 8.4 工作包 3：关闭 RAG-1A
+### 8.4 RAG-1A outcome checkpoint
 
-- BHF committed actual 按方向评分投影与 Hidden-Golden 比较；
-- WallCrawler 从自然语言和允许来源生成负向 actual；
-- 最小关系级 Eval 比较充分性、控制动作、完整 Hook 身份、禁止 Hook 和失败归因；
-- 形成 RAG-1A checkpoint，停止无消费者驱动的 EvidencePack 扩张。
+- BHF committed actual 的方向结果为 fail，Case Reliability 为 `valid_with_limitations`；
+- WallCrawler committed actual 不能形成负向能力结论，Case Reliability 为 `invalid_for_agent_evaluation_for_current_protocol`；
+- 最小关系级 Eval 已把 lane coverage、required/missing relations、完整 Hook identity、禁止 identity、相关 IL 与 budget terminal 一并计入；
+- RAG-1A outcome 为 `explicit_unresolved`，不是 pass；outcome report SHA256 为 `7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B`；
+- 当前没有已授权执行工作。用户下一步只在有界 WallCrawler Case/budget 修复与 simple actual-only success task 之间选择。
 
 ### 8.5 工作包 4：RAG-1B 和 v0 public alpha
 

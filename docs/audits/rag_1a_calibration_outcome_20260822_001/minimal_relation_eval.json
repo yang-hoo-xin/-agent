@@ -1,0 +1,81 @@
+{
+  "eval_version": "rag_1a_minimal_relation_eval_v1",
+  "eval_role": "expected_side_two_case_relation_audit",
+  "created_on": "2026-08-22",
+  "product_eval_runs": 0,
+  "expected_side_scoring_runs": 1,
+  "model_calls": 0,
+  "actual_runs": 0,
+  "cases": {
+    "better_hit_feedback_positive_calibration": {
+      "actual_artifact_hash": "b554e02190af1117b4b552072eea0404ae4271927b803619db9447c89764e9b1",
+      "case_reliability": "valid_with_limitations",
+      "agent_behavior": "failed_explicit_unresolved_for_current_model_and_strategy",
+      "coverage": {
+        "required_lanes_completed": 2,
+        "required_lanes_total": 3,
+        "coverage_complete": false,
+        "terminal": "budget_exhausted"
+      },
+      "relation_observation": {
+        "expected_required_evidence_count": 6,
+        "verified_required_relation_count": 0,
+        "expected_required_missing_evidence_count": 0,
+        "verified_missing_relation_count": 0,
+        "expected_acceptable_full_identity_count": 1,
+        "observed_acceptable_full_identity_count": 0,
+        "expected_forbidden_full_identity_count": 2,
+        "observed_forbidden_full_identity_hit_count": 0,
+        "relevant_il_inspection_count": 0,
+        "verified_findings_count": 0
+      },
+      "direction_result": "fail",
+      "reason": "The acceptable current full identity is absent; the only inspected ActivateState belongs to an unrelated declaring type."
+    },
+    "wall_crawler_insufficient_evidence_calibration": {
+      "actual_artifact_hash": "4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704",
+      "case_reliability": "invalid_for_agent_evaluation_for_current_protocol",
+      "agent_behavior": "inconclusive",
+      "coverage": {
+        "required_lanes_completed": 2,
+        "required_lanes_total": 4,
+        "coverage_complete": false,
+        "terminal": "budget_exhausted"
+      },
+      "relation_observation": {
+        "expected_required_evidence_count": 8,
+        "verified_required_relation_count": 0,
+        "expected_required_missing_evidence_count": 8,
+        "verified_missing_relation_count": 0,
+        "missing_relation_disposition": "unassessable_due_incomplete_coverage",
+        "expected_acceptable_full_identity_count": 0,
+        "observed_acceptable_full_identity_count": 0,
+        "expected_forbidden_full_identity_count": 3,
+        "observed_forbidden_full_identity_hit_count": 0,
+        "forbidden_identity_disposition": "not_evaluated_because_expected_methods_were_not_observed_or_inspected",
+        "relevant_il_inspection_count": 0,
+        "verified_findings_count": 0
+      },
+      "direction_result": "inconclusive",
+      "reason": "Generic insufficient/block matches do not distinguish a grounded negative conclusion from an incomplete deterministic budget stop."
+    }
+  },
+  "aggregate": {
+    "minimal_relation_eval_completed": true,
+    "rag_1a_outcome": "explicit_unresolved",
+    "rag_1a_passed": false,
+    "decisive_facts": [
+      "BHF failed its acceptable full-identity direction check.",
+      "WallCrawler is invalid for Agent evaluation under the current comparator and five/four execution protocol.",
+      "Neither frozen actual contains a relevant verified IL-grounded relation finding."
+    ],
+    "does_not_authorize": [
+      "WallCrawler rerun",
+      "budget increase",
+      "Golden modification",
+      "RAG-1B adoption",
+      "Public Alpha claim"
+    ],
+    "trace_eval_scope": "minimal two-case relation audit only; unified trace, monitoring, 50-case evaluation, promotion gates, OTel, and Langfuse remain incomplete"
+  }
+}

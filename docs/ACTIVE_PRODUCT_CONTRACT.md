@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-21
+Last updated: 2026-08-22
 
 ## 1. Product
 
@@ -71,16 +71,35 @@ provider transport, context admission, Retriever execution, metadata/IL, or a
 proven budget incompatibility. No further BHF prompt, validator, correction,
 budget, provider, Dense, or repeatability tuning is authorized.
 
+The bounded WallCrawler run002 then committed EvidencePack
+`4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704`
+after two metadata searches and one IL inspection, but completed only two of
+four required lanes and ended `budget_exhausted`, `insufficient`, and `block`
+with no verified finding or Hook identity. The generic expected-side comparison
+matched insufficiency, control action, and the empty acceptable identity set,
+while leaving required, forbidden, and required-missing relations unscored.
+The Case Reliability verdict is therefore
+`invalid_for_agent_evaluation_for_current_protocol`, and Agent behavior is
+inconclusive rather than a WallCrawler negative-capability pass.
+
+The minimal two-Case relation Eval is complete over the frozen BHF and
+WallCrawler results. BHF remains `valid_with_limitations` as a Case and
+explicitly unresolved for the current model/strategy; WallCrawler remains
+invalid under the current comparator and five-model-step/four-tool-call
+protocol. RAG-1A therefore ends `explicit_unresolved`, not passed. Detailed
+hash-bound evidence is recorded in
+`docs/audits/rag_1a_calibration_outcome_20260822_001/rag_1a_outcome.json`,
+SHA256=`7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B`.
+
 Current execution order:
 
 ```text
 repository explicit unresolved result recorded
 -> BHF positive calibration explicit unresolved recorded
--> WallCrawler negative actual and expected-side comparison, pending bounded run authorization
--> minimal relation Eval over the frozen BHF/WC outcomes
--> RAG-1A checkpoint
--> RAG-1B public entry adoption
--> Coding Agent v0 public alpha
+-> WallCrawler actual/comparison completed; Case invalid and Agent behavior inconclusive
+-> minimal relation Eval completed
+-> RAG-1A explicit unresolved recorded
+-> wait for explicit user selection: bounded WallCrawler Case/budget repair or a simple actual-only success task
 ```
 
 The detailed integration target is

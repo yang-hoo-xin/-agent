@@ -10,7 +10,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ```text
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
-current_dependency: WALLCRAWLER-NEGATIVE-CALIBRATION-SELECTED-PENDING-AUTHORIZATION
+current_dependency: USER-SELECTION-AFTER-RAG-1A-EXPLICIT-UNRESOLVED
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
@@ -25,11 +25,17 @@ source_revision_binding_status: missing
 latest_bhf_calibration_status: failed_explicit_unresolved_for_current_model_and_strategy
 latest_bhf_evidence_pack: b554e02190af1117b4b552072eea0404ae4271927b803619db9447c89764e9b1
 retrieval_strategy_decision: reject_dense_currently
-wallcrawler_selection_status: selected_pending_bounded_run_authorization
-next_capability_step: wait for explicit WallCrawler bounded run authorization; do not auto-start actual
-rag_1a_status: incomplete
+latest_wallcrawler_run: wallcrawler_actual_20260822_002
+latest_wallcrawler_evidence_pack: 4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704
+wallcrawler_case_reliability: invalid_for_agent_evaluation_for_current_protocol
+wallcrawler_agent_behavior: inconclusive
+minimal_relation_eval_status: completed
+rag_1a_outcome_report: docs/audits/rag_1a_calibration_outcome_20260822_001/rag_1a_outcome.json
+rag_1a_outcome_report_sha256: 7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B
+next_capability_step: wait for explicit user selection between bounded WallCrawler Case/budget repair and a simple actual-only success task
+rag_1a_status: explicit_unresolved
 rag_1b_status: not_started
-coding_agent_v0_internal_alpha_status: incomplete_repository_and_bhf_explicit_unresolved
+coding_agent_v0_internal_alpha_status: incomplete_repository_bhf_and_rag_1a_explicit_unresolved
 all_source_inventory_at_2026_08_16: completed
 current_inventory_is_fresh: false
 final_asset_reconciliation_required: true

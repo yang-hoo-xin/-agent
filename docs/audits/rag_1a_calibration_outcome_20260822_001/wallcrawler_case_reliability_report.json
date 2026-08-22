@@ -1,0 +1,94 @@
+{
+  "report_version": "wallcrawler_case_reliability_v1",
+  "report_role": "expected_side_calibration_audit",
+  "created_on": "2026-08-22",
+  "case_identity": "wall_crawler_insufficient_evidence_calibration",
+  "verdict": "invalid_for_agent_evaluation_for_current_protocol",
+  "agent_behavior": "inconclusive",
+  "input_binding": {
+    "product_code_checkpoint": "e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b",
+    "execution_worktree_head": "01cca38e14b4c0ec256a6a6aa120697494dfe096",
+    "run_id": "wallcrawler_actual_20260822_002",
+    "evidence_pack_artifact_hash": "4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704",
+    "evidence_pack_envelope_sha256": "686aeb1bc005d6a0e5b60b126405ea5bc9517464c42f522b3b9e26e23569b993",
+    "annotation_file_sha256": "db1cfc20f20e44969b42ea445e2587b82dc7769e7a746e51edf5b8f4802b4b55",
+    "frozen_judgment_hash": "FD57B8971AD642E8471AB047E261EEFA407EEE5A94FF6448F97731F53894F7B7",
+    "corpus_manifest_file_sha256": "c169026443bf39a218f5fae86bbc18cdc4e58d02fa963eaa9853efff59f9f080",
+    "corpus_snapshot_sha256": "sha256:40ed82c420c7192f64c539cc983c40aae7e1a8fe221e0c2cd0e31964ace26ba2",
+    "request_sha256": "B60BF872F06F8772B5D558629A1179A5D3E7C5E8CC463CEA33514596088B6F0A"
+  },
+  "generic_comparison": {
+    "sufficiency_matches": true,
+    "control_action_matches": true,
+    "acceptable_hook_identity_set_matches": true,
+    "forbidden_hook_identity_hits": [],
+    "overall_pass_field_present": false,
+    "unscored_expected_fields": [
+      "required_evidence",
+      "forbidden_evidence",
+      "required_missing_evidence"
+    ]
+  },
+  "actual_observation": {
+    "readiness": "insufficient",
+    "control_action": "block",
+    "hook_identity_count": 0,
+    "run_status": "budget_exhausted",
+    "required_lanes_completed": 2,
+    "required_lanes_total": 4,
+    "tool_calls": 3,
+    "metadata_searches": 2,
+    "il_inspections": 1,
+    "relevant_il_inspections": 0,
+    "only_inspected_method": "CellMenu.CM_MapZoneGUIItem..ctor",
+    "verified_findings_count": 0,
+    "lanes_not_searched": [
+      "lane-003",
+      "lane-004"
+    ]
+  },
+  "eight_dimension_check": {
+    "identity_and_freshness": {
+      "status": "pass",
+      "basis": "Manifest-bound actual rebinds case, request, declared and observed corpus snapshot, and source allowlist."
+    },
+    "decidability": {
+      "status": "pass",
+      "basis": "The frozen judgment defines insufficient/block, required relations, missing relations, and forbidden full identities."
+    },
+    "source_coverage": {
+      "status": "fail",
+      "basis": "Only two of four required lanes executed; wall/ceiling behavior and prone-locomotion lanes were not searched."
+    },
+    "expected_grounding": {
+      "status": "pass",
+      "basis": "The annotation is frozen, hash-bound, and includes exact forbidden assembly/MVID/method identities plus narrative relation requirements."
+    },
+    "expected_actual_isolation": {
+      "status": "pass",
+      "basis": "The actual was committed before expected-side access and its manifest binding was revalidated before annotation comparison."
+    },
+    "comparator_validity": {
+      "status": "fail",
+      "basis": "The generic comparator leaves required, forbidden, and required-missing narrative evidence unscored."
+    },
+    "discriminative_power": {
+      "status": "fail",
+      "basis": "An incomplete budget stop with no verified finding mechanically matches insufficient, block, and an empty acceptable identity set."
+    },
+    "feasible_reference_path": {
+      "status": "fail",
+      "basis": "Four required lane searches plus one relevant IL inspection plus final finish require at least six model steps and five tool calls, exceeding configured five/four."
+    }
+  },
+  "claim_boundary": {
+    "wallcrawler_negative_capability_passed": false,
+    "rag_1a_passed": false,
+    "golden_modified": false,
+    "actual_modified": false,
+    "model_calls": 0,
+    "actual_runs": 0,
+    "comparison_runs_recorded": 1,
+    "trace_eval_scope": "one local expected-side audit sample; not the complete Trace/Eval engineering area"
+  }
+}

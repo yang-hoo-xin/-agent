@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-08-21
+Last updated: 2026-08-22
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -10,30 +10,35 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: RAG-1A-WALLCRAWLER-NEGATIVE-CALIBRATION-001
-selected_product_request: WallCrawler negative actual and expected-side comparison
-queue_status: selected_pending_bounded_run_authorization
+current_queue: NONE-PENDING-USER-SELECTION
+selected_product_request: none
+queue_status: no_authorized_execution
 ```
 
 ```text
-last_task: RAG-1A-BHF-POSITIVE-CALIBRATION-001
-last_task_status: failed_explicit_unresolved_for_current_model_and_strategy
-last_checkpoint: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
-last_run: run004
-last_failure: acceptable_hook_identity_set_matches=false
+last_task: RAG-1A-WALLCRAWLER-NEGATIVE-CALIBRATION-001
+last_task_status: case_invalid_agent_behavior_inconclusive
+last_product_code_checkpoint: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
+last_run: wallcrawler_actual_20260822_002
+last_evidence_pack: 4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704
+last_outcome: RAG-1A explicit_unresolved
+last_outcome_report: docs/audits/rag_1a_calibration_outcome_20260822_001/rag_1a_outcome.json
+last_outcome_report_sha256: 7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B
+wallcrawler_rerun_authorized: false
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: WallCrawler negative actual and expected-side comparison
-activation_required: explicit bounded run authorization
+next_eligible_slice: user-selected bounded WallCrawler Case/budget repair or simple actual-only success task
+activation_required: explicit user selection and bounded authorization
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
 The repository task and BHF positive calibration each satisfied an explicit
-unresolved branch without completing Coding Agent v0 internal alpha or RAG-1A.
-The user selected the WallCrawler negative calibration as the next product
-slice, but no actual run is authorized by this queue update. Detailed BHF
-evidence and claim boundaries are recorded once in
-`docs/CODING_AGENT_V0_INTERNAL_ALPHA.md` §8.2.
+unresolved branch. WallCrawler run002 committed a real EvidencePack, but its
+Case Reliability verdict is invalid under the current comparator and execution
+budget protocol, so Agent behavior is inconclusive. The frozen two-Case minimal
+relation Eval records RAG-1A as explicit unresolved. No repair, rerun, simple
+actual-only task, RAG-1B work, or Operational Readiness work is selected by this
+queue update.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

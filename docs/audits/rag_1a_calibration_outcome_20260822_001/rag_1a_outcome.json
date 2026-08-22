@@ -1,0 +1,68 @@
+{
+  "outcome_version": "rag_1a_calibration_outcome_v1",
+  "created_on": "2026-08-22",
+  "outcome": "explicit_unresolved",
+  "claimed_completion": false,
+  "new_stage_crossed": false,
+  "capability_advanced": false,
+  "rag_1a_passed": false,
+  "internal_alpha_completed": false,
+  "inputs": {
+    "product_code_checkpoint": "e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b",
+    "documentation_base_checkpoint": "ad7f94d0d398bb0fa2969daca64a4f225213e0ea",
+    "better_hit_feedback_actual_artifact_hash": "b554e02190af1117b4b552072eea0404ae4271927b803619db9447c89764e9b1",
+    "wallcrawler_actual_artifact_hash": "4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704"
+  },
+  "evidence_assets": {
+    "wallcrawler_case_reliability_report": {
+      "path": "docs/audits/rag_1a_calibration_outcome_20260822_001/wallcrawler_case_reliability_report.json",
+      "sha256": "699bd7590a4f9fcd05a5f32fb7e3efb747f0e33b8e5db2a24c6bc89a59c370db"
+    },
+    "bhf_case_reliability_report": {
+      "path": "docs/audits/rag_1a_calibration_outcome_20260822_001/bhf_case_reliability_report.json",
+      "sha256": "a0d2cde43aa79a18cb16a7eddc83b0e3d517878d73881761d2119138303eaa9f"
+    },
+    "minimal_relation_eval": {
+      "path": "docs/audits/rag_1a_calibration_outcome_20260822_001/minimal_relation_eval.json",
+      "sha256": "b5dcb407ba379c53cd3d347e7977d6aa1f1da665966ded5af6e39b2f4d91b305"
+    }
+  },
+  "case_outcomes": {
+    "better_hit_feedback": {
+      "case_reliability": "valid_with_limitations",
+      "agent_behavior": "failed_explicit_unresolved_for_current_model_and_strategy",
+      "direction_result": "fail"
+    },
+    "wallcrawler": {
+      "case_reliability": "invalid_for_agent_evaluation_for_current_protocol",
+      "agent_behavior": "inconclusive",
+      "direction_result": "inconclusive"
+    }
+  },
+  "first_physical_blocker": "wallcrawler_negative_protocol_cannot_distinguish_grounded_block_from_incomplete_budget_stop",
+  "responsible_subsystem": "Calibration Case/Eval protocol and bounded Discovery budget contract",
+  "issue_register": {
+    "added": [
+      "CASE-001"
+    ],
+    "reopened": [],
+    "not_reopened": [
+      "OBS-001"
+    ]
+  },
+  "allowed_next_decision": "user selects bounded WallCrawler case/budget repair or a simple actual-only success task",
+  "forbidden_automatic_actions": [
+    "rerun WallCrawler",
+    "increase Discovery budget",
+    "modify Golden",
+    "start RAG-1B",
+    "claim WallCrawler negative capability",
+    "claim RAG-1A completion"
+  ],
+  "execution_counts_for_this_outcome_package": {
+    "model_calls": 0,
+    "actual_runs": 0,
+    "expected_side_relation_scoring_runs": 1,
+    "source_code_changes": 0
+  }
+}
