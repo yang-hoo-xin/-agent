@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from .models import DETERMINISTIC_EVIDENCE_AUTHORITY, EvidenceItem
@@ -1237,6 +1238,19 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
     projection = agent.get("requirement_projection")
     if not isinstance(search_plan, Mapping) or not isinstance(projection, Mapping):
         raise HookDiscoverySemanticsError("Agent discovery plan is invalid.")
+    relation_contract = projection.get("relation_contract")
+    relation_by_id: dict[str, Mapping[str, Any]] = {}
+    if isinstance(relation_contract, Mapping):
+        relation_rows = relation_contract.get("relations")
+        if not isinstance(relation_rows, list):
+            raise HookDiscoverySemanticsError(
+                "Request relation contract relations are invalid."
+            )
+        relation_by_id = {
+            str(value["relation_id"]): value
+            for value in relation_rows
+            if isinstance(value, Mapping) and value.get("relation_id")
+        }
     observation_rows = list(pack.observation_trace)
     summary_rows = list(pack.tool_trace_summary)
     observation_ids = [str(value.get("observation_id")) for value in observation_rows]
@@ -1247,15 +1261,18 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
     if len(summary_rows) != len(observation_rows):
         raise HookDiscoverySemanticsError("Observation summaries are incomplete.")
     for trace, summary in zip(observation_rows, summary_rows):
+        relation_trace_fields = {"relation_ids"} if relation_by_id else set()
         if set(trace) != {
             "observation_id",
             "tool",
             "source_id",
             "observation_sha256",
             "model_payload_bytes",
-        }:
+        } | relation_trace_fields:
             raise HookDiscoverySemanticsError("Observation trace shape is invalid.")
-        if set(summary) != {"observation_id", "tool", "source_id", "summary"}:
+        if set(summary) != {
+            "observation_id", "tool", "source_id", "summary"
+        } | relation_trace_fields:
             raise HookDiscoverySemanticsError("Tool trace summary shape is invalid.")
         if any(
             trace.get(key) != summary.get(key)
@@ -1273,24 +1290,23 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
             trace.get("model_payload_bytes"), bool
         ) or trace["model_payload_bytes"] < 0:
             raise HookDiscoverySemanticsError("Observation byte count is invalid.")
+        if relation_by_id:
+            relation_ids = trace.get("relation_ids")
+            if (
+                not isinstance(relation_ids, list)
+                or not relation_ids
+                or len(relation_ids) != len(set(relation_ids))
+                or any(value not in relation_by_id for value in relation_ids)
+                or summary.get("relation_ids") != relation_ids
+            ):
+                raise HookDiscoverySemanticsError(
+                    "Observation trace relation binding is invalid."
+                )
 
     requirement_ids = {
         str(value["requirement_id"])
         for value in projection["planning_blocking_questions"]
     }
-    relation_contract = projection.get("relation_contract")
-    relation_by_id: dict[str, Mapping[str, Any]] = {}
-    if isinstance(relation_contract, Mapping):
-        relation_rows = relation_contract.get("relations")
-        if not isinstance(relation_rows, list):
-            raise HookDiscoverySemanticsError(
-                "Request relation contract relations are invalid."
-            )
-        relation_by_id = {
-            str(value["relation_id"]): value
-            for value in relation_rows
-            if isinstance(value, Mapping) and value.get("relation_id")
-        }
     question_ids = {
         str(value["question_id"])
         for value in search_plan["engineering_questions"]
@@ -1402,7 +1418,7 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
                     "evidence_need",
                     "derived_from_observation_ids",
                     "query_family_id",
-                }
+                } | ({"relation_ids"} if relation_by_id else set())
                 or resolved_action.get("action") != action.get("action")
                 or resolved_action.get("tool") != action.get("tool")
                 or resolved_action.get("source_id") != action.get("source_id")
@@ -1415,6 +1431,11 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
                 or len(selected_families) != 1
                 or len(matched_families) != 1
                 or matched_families[0].get("family_id") != raw_family_id
+                or (
+                    relation_by_id
+                    and resolved_action.get("relation_ids")
+                    != matched_families[0].get("relation_ids")
+                )
             ):
                 raise HookDiscoverySemanticsError(
                     "Model family selection and resolved action topology differ."
@@ -1428,6 +1449,24 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
             if resolved_action.get("derived_from_observation_ids") != expected_derived:
                 raise HookDiscoverySemanticsError(
                     "Resolved family selection observation binding is invalid."
+                )
+        elif (
+            has_resolved_action
+            and action.get("action") == "use_tool"
+            and relation_by_id
+        ):
+            if (
+                not isinstance(resolved_action, Mapping)
+                or set(resolved_action) != set(action) | {"relation_ids"}
+                or any(
+                    resolved_action.get(field) != action.get(field)
+                    for field in action
+                )
+                or not isinstance(resolved_action.get("relation_ids"), list)
+                or not resolved_action["relation_ids"]
+            ):
+                raise HookDiscoverySemanticsError(
+                    "Resolved tool action relation binding is invalid."
                 )
         elif has_resolved_action:
             _validate_resolved_finish_fact_handles(
@@ -1449,6 +1488,14 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
         for value in search_plan["engineering_questions"]
     }
     trace_binding: dict[str, dict[str, set[Any]]] = {}
+    raw_candidate_trace = pack.provenance_validation.get("candidate_binding_trace")
+    candidate_origin_by_il_observation = {
+        str(row["il_observation_id"]): str(row["metadata_observation_id"])
+        for row in raw_candidate_trace or []
+        if isinstance(row, Mapping)
+        and isinstance(row.get("il_observation_id"), str)
+        and isinstance(row.get("metadata_observation_id"), str)
+    }
     for index, (action, observation) in enumerate(
         zip(accepted_actions, observation_rows), 1
     ):
@@ -1466,6 +1513,15 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
         ) != observation.get("source_id"):
             raise HookDiscoverySemanticsError("Action/observation identity drifted.")
         matched_families: list[Mapping[str, Any]] = []
+        action_relation_ids = action.get("relation_ids")
+        observation_relation_ids = observation.get("relation_ids")
+        if relation_by_id and (
+            not isinstance(action_relation_ids, list)
+            or action_relation_ids != observation_relation_ids
+        ):
+            raise HookDiscoverySemanticsError(
+                "Action/observation relation binding drifted."
+            )
         if action.get("tool") == "search_dotnet_metadata":
             arguments = action.get("arguments")
             if not isinstance(arguments, Mapping):
@@ -1484,6 +1540,12 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
             ):
                 raise HookDiscoverySemanticsError(
                     "First metadata trace must bind the frozen initial focus."
+                )
+            if relation_by_id and action_relation_ids != matched_families[0].get(
+                "relation_ids"
+            ):
+                raise HookDiscoverySemanticsError(
+                    "Metadata action relation binding drifted from its frozen family."
                 )
         derived = action.get("derived_from_observation_ids")
         if not isinstance(derived, list) or any(
@@ -1511,12 +1573,24 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
             family_binding.update(parent["family_ids"])
             requirement_binding.update(parent["requirement_ids"])
             action_binding.update(parent["action_indexes"])
+        if relation_by_id and action.get("tool") == "inspect_method_il":
+            origin_observation_id = candidate_origin_by_il_observation.get(
+                str(observation["observation_id"])
+            )
+            origin = trace_binding.get(str(origin_observation_id))
+            if origin is None or action_relation_ids != sorted(
+                str(value) for value in origin["relation_ids"]
+            ):
+                raise HookDiscoverySemanticsError(
+                    "IL action relation binding drifted from metadata origin."
+                )
         trace_binding[str(observation["observation_id"])] = {
             "question_ids": question_binding,
             "direct_question_ids": direct_question_binding,
             "family_ids": family_binding,
             "requirement_ids": requirement_binding,
             "action_indexes": action_binding,
+            "relation_ids": set(action_relation_ids or []),
         }
     planned_lanes = search_plan["planned_lanes"]
     coverage = pack.hook_discovery["lane_coverage"]
@@ -1637,6 +1711,15 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
                     "Evidence conclusion observation ref is invalid."
                 )
     if relation_by_id:
+        action_by_observation_id = {
+            str(observation["observation_id"]): action
+            for action, observation in zip(accepted_actions, observation_rows)
+        }
+        facts_by_observation_id: dict[str, list[Mapping[str, Any]]] = {}
+        for fact in pack.observation_fact_catalog:
+            facts_by_observation_id.setdefault(
+                str(fact.get("observation_id")), []
+            ).append(fact)
         for conclusion in pack.evidence_conclusions:
             relation_refs = conclusion.get("relation_ids")
             requirement_refs = conclusion.get("requirement_ids")
@@ -1647,8 +1730,11 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
                 or len(relation_refs) != len(set(relation_refs))
                 or any(value not in relation_by_id for value in relation_refs)
                 or not isinstance(requirement_refs, list)
+                or not requirement_refs
+                or len(requirement_refs) != len(set(requirement_refs))
                 or not isinstance(observation_refs, list)
                 or not observation_refs
+                or len(observation_refs) != len(set(observation_refs))
             ):
                 raise HookDiscoverySemanticsError(
                     "Evidence conclusion relation ref is invalid."
@@ -1664,6 +1750,152 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
                 raise HookDiscoverySemanticsError(
                     "Evidence conclusion relation parent binding drifted."
                 )
+            observed_relation_ids = {
+                relation_id
+                for observation_id in observation_refs
+                for relation_id in observation_by_id[str(observation_id)][
+                    "relation_ids"
+                ]
+            }
+            if not set(relation_refs).issubset(observed_relation_ids):
+                raise HookDiscoverySemanticsError(
+                    "Evidence conclusion observation relation binding drifted."
+                )
+            relationship = conclusion.get("relationship")
+            if relationship in {"support", "conflict"}:
+                _validate_persisted_relation_fact_disposition(
+                    conclusion=conclusion,
+                    observation_by_id=observation_by_id,
+                    facts_by_observation_id=facts_by_observation_id,
+                    relationships=pack.hook_discovery["evidence_relationships"],
+                )
+            elif relationship == "missing":
+                _validate_persisted_relation_missing_disposition(
+                    conclusion=conclusion,
+                    conclusions=pack.evidence_conclusions,
+                    observation_by_id=observation_by_id,
+                    facts_by_observation_id=facts_by_observation_id,
+                    action_by_observation_id=action_by_observation_id,
+                    families=families,
+                )
+
+
+def _validate_persisted_relation_fact_disposition(
+    *,
+    conclusion: Mapping[str, Any],
+    observation_by_id: Mapping[str, Mapping[str, Any]],
+    facts_by_observation_id: Mapping[str, list[Mapping[str, Any]]],
+    relationships: list[dict[str, Any]],
+) -> None:
+    """Recompute one relation-specific canonical authoritative fact binding."""
+
+    relation_ids = conclusion["relation_ids"]
+    observation_ids = conclusion["observation_ids"]
+    if (
+        conclusion.get("claim_status") != "observed"
+        or len(relation_ids) != 1
+        or len(observation_ids) != 1
+    ):
+        raise HookDiscoverySemanticsError(
+            "Relation support/conflict canonical fact binding is invalid."
+        )
+    observation_id = str(observation_ids[0])
+    if observation_by_id[observation_id]["relation_ids"] != relation_ids:
+        raise HookDiscoverySemanticsError(
+            "Relation support/conflict is not relation-specific."
+        )
+    matching_facts = [
+        fact
+        for fact in facts_by_observation_id.get(observation_id, [])
+        if fact.get("canonical_claim") == conclusion.get("claim")
+    ]
+    if len(matching_facts) != 1:
+        raise HookDiscoverySemanticsError(
+            "Relation support/conflict canonical fact binding is invalid."
+        )
+    for requirement_id in conclusion["requirement_ids"]:
+        matching_relationships = [
+            row
+            for row in relationships
+            if row.get("requirement_id") == requirement_id
+            and row.get("relationship") == conclusion.get("relationship")
+            and observation_id in row.get("observation_ids", [])
+            and row.get("decisive_evidence_ids")
+        ]
+        if len(matching_relationships) != 1:
+            raise HookDiscoverySemanticsError(
+                "Relation support/conflict authoritative fact binding is invalid."
+            )
+
+
+def _validate_persisted_relation_missing_disposition(
+    *,
+    conclusion: Mapping[str, Any],
+    conclusions: tuple[dict[str, Any], ...],
+    observation_by_id: Mapping[str, Mapping[str, Any]],
+    facts_by_observation_id: Mapping[str, list[Mapping[str, Any]]],
+    action_by_observation_id: Mapping[str, Mapping[str, Any]],
+    families: list[Any],
+) -> None:
+    """Recompute bounded zero-result coverage for a persisted missing relation."""
+
+    relation_ids = conclusion["relation_ids"]
+    observation_ids = conclusion["observation_ids"]
+    if (
+        conclusion.get("claim_status") != "inferred"
+        or not conclusion.get("limitations")
+        or any(
+            isinstance(other, Mapping)
+            and other is not conclusion
+            and other.get("relationship") in {"support", "conflict"}
+            and set(other.get("relation_ids") or []).intersection(relation_ids)
+            for other in conclusions
+        )
+    ):
+        raise HookDiscoverySemanticsError(
+            "Persisted missing relation disposition is invalid."
+        )
+    for observation_id in observation_ids:
+        observation = observation_by_id[str(observation_id)]
+        metadata_facts = [
+            fact
+            for fact in facts_by_observation_id.get(str(observation_id), [])
+            if fact.get("fact_type") == "metadata_search_result"
+        ]
+        if (
+            observation.get("tool") != "search_dotnet_metadata"
+            or len(metadata_facts) != 1
+            or not _bounded_metadata_absence(
+                SimpleNamespace(
+                    tool="search_dotnet_metadata",
+                    data=dict(metadata_facts[0]["value"]),
+                )
+            )
+        ):
+            raise HookDiscoverySemanticsError(
+                "Persisted missing relation lacks bounded metadata absence."
+            )
+    required_family_ids = {
+        str(family["family_id"])
+        for family in families
+        if isinstance(family, Mapping)
+        and set(family.get("relation_ids") or []).intersection(relation_ids)
+    }
+    executed_family_observations = {
+        str(action["query_family_id"]): observation_id
+        for observation_id, action in action_by_observation_id.items()
+        if action.get("tool") == "search_dotnet_metadata"
+        and isinstance(action.get("query_family_id"), str)
+    }
+    if required_family_ids != set(executed_family_observations).intersection(
+        required_family_ids
+    ) or any(
+        executed_family_observations[family_id] not in observation_ids
+        for family_id in required_family_ids
+    ):
+        raise HookDiscoverySemanticsError(
+            "Persisted missing relation family coverage is incomplete."
+        )
 
 
 def _admit_items(

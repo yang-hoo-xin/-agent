@@ -37,6 +37,8 @@ from src.mod_agent.evidence.discovery_contract import (
     validate_requirement_projection_actual,
 )
 from src.mod_agent.evidence.discovery_loop import (
+    _bind_action_relation_ids,
+    _bind_observation_relation_ids,
     discovery_plan_budget_feasibility,
     _normalize_family_query_leads,
     _method_focus_comparison,
@@ -4915,7 +4917,15 @@ def test_one_conclusion_can_bind_multiple_frozen_relation_identities() -> None:
         tool="search_dotnet_metadata",
         source_id="current-interop",
         summary="Bounded search completed.",
-        data={"methods": []},
+        data={
+            "assemblies_discovered": 1,
+            "managed_assemblies_searched": 1,
+            "unreadable_or_non_managed_assemblies": 0,
+            "results_truncated": False,
+            "returned_counts": {"methods": 0, "types": 0, "fields": 0},
+            "matched_counts": {"methods": 0, "types": 0, "fields": 0},
+        },
+        relation_ids=tuple(relation_ids),
     )
 
     _validate_finish(
@@ -5022,6 +5032,376 @@ def test_relation_disposition_requires_observation_grounding(
         )
 
 
+def test_relation_lineage_rejects_self_asserted_and_cross_bound_ids(
+    tmp_path: Path,
+) -> None:
+    request, projection_action = _relation_projection_action()
+    projection = _parse_requirement_projection_action(
+        json.dumps(projection_action),
+        natural_language_request=request,
+    )["requirement_projection"]
+    relation_ids = [
+        str(row["relation_id"])
+        for row in projection["relation_contract"]["relations"]
+    ]
+    agent_discovery = {"requirement_projection": projection}
+    raw_il_action = {
+        "action": "use_tool",
+        "tool": "inspect_method_il",
+        "source_id": "current-interop",
+        "arguments": {"candidate_ref": "candidate_obs_001"},
+        "evidence_need": "Inspect the exact observed method.",
+        "derived_from_observation_ids": ["obs-001"],
+    }
+    origin = ToolObservation(
+        observation_id="obs-001",
+        tool="search_dotnet_metadata",
+        source_id="current-interop",
+        summary="One method observed.",
+        data={"methods": []},
+        relation_ids=(relation_ids[0],),
+    )
+
+    resolved = _bind_action_relation_ids(
+        raw_il_action,
+        raw_action=raw_il_action,
+        observations_by_id={"obs-001": origin},
+        candidate_origins={"candidate_obs_001": ("obs-001", "current-interop")},
+        agent_discovery=agent_discovery,
+    )
+    assert resolved["relation_ids"] == [relation_ids[0]]
+
+    asserted_action = {**raw_il_action, "relation_ids": [relation_ids[1]]}
+    with pytest.raises(ValueError, match="MODEL_TOOL_ACTION_RELATION_IDS_FORBIDDEN"):
+        _bind_action_relation_ids(
+            asserted_action,
+            raw_action=asserted_action,
+            observations_by_id={"obs-001": origin},
+            candidate_origins={
+                "candidate_obs_001": ("obs-001", "current-interop")
+            },
+            agent_discovery=agent_discovery,
+        )
+
+    source = _request(tmp_path).sources[0]
+    asserted_observation = _ObservedToolExecutor().execute(
+        action={
+            "action": "use_tool",
+            "tool": "search_dotnet_metadata",
+            "source_id": source.source_id,
+            "arguments": _metadata_arguments("ObservedTransition"),
+            "evidence_need": "Observe one transition method.",
+            "derived_from_observation_ids": [],
+            "query_family_id": "family-001-001",
+            "relation_ids": [relation_ids[0]],
+        },
+        source=source,
+        observation_id="obs-self-asserted",
+    )
+    asserted_observation = replace(
+        asserted_observation,
+        relation_ids=(relation_ids[1],),
+    )
+    with pytest.raises(
+        ValueError,
+        match="TOOL_OBSERVATION_SELF_ASSERTED_RELATION_IDS",
+    ):
+        _bind_observation_relation_ids(
+            asserted_observation,
+            action={"relation_ids": [relation_ids[0]]},
+            agent_discovery=agent_discovery,
+        )
+
+
+def test_shared_multi_relation_observation_cannot_assert_relation_support(
+    tmp_path: Path,
+) -> None:
+    request, projection_action = _relation_projection_action()
+    projection = _parse_requirement_projection_action(
+        json.dumps(projection_action),
+        natural_language_request=request,
+    )["requirement_projection"]
+    relation_ids = [
+        str(row["relation_id"])
+        for row in projection["relation_contract"]["relations"]
+    ]
+    source = _request(tmp_path).sources[0]
+    observation = _ObservedToolExecutor().execute(
+        action={
+            "tool": "inspect_method_il",
+            "arguments": {"candidate_ref": "candidate_obs_001"},
+        },
+        source=source,
+        observation_id="obs-shared",
+    )
+    observation = replace(
+        observation,
+        relation_ids=(relation_ids[0], relation_ids[1]),
+    )
+    canonical_claim = next(
+        fact["canonical_claim"]
+        for fact in observation.supported_facts()
+        if fact["fact_type"] == "method_body_metadata"
+    )
+    finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [
+            {
+                "claim": canonical_claim,
+                "claim_status": "observed",
+                "observation_ids": ["obs-shared"],
+                "limitations": [],
+                "requirement_ids": ["requirement-001"],
+                "relation_ids": [relation_ids[0]],
+                "relationship": "support",
+            }
+        ],
+        "unresolved_questions": ["The second relation remains unresolved."],
+        "missing_capabilities": [],
+    }
+
+    with pytest.raises(ValueError, match="RELATION_FACT_SPECIFIC_BINDING_REQUIRED"):
+        _validate_finish(
+            finish,
+            {"obs-shared": observation},
+            agent_discovery={"requirement_projection": projection},
+        )
+
+
+def _bounded_relation_observation(
+    observation_id: str,
+    relation_id: str,
+) -> ToolObservation:
+    zero_counts = {"methods": 0, "types": 0, "fields": 0}
+    return ToolObservation(
+        observation_id=observation_id,
+        tool="search_dotnet_metadata",
+        source_id="current-interop",
+        summary="Complete bounded metadata search returned zero matches.",
+        data={
+            "queries": [observation_id],
+            "assemblies_discovered": 1,
+            "managed_assemblies_searched": 1,
+            "unreadable_or_non_managed_assemblies": 0,
+            "results_truncated": False,
+            "truncated_by_kind": {
+                "methods": False,
+                "types": False,
+                "fields": False,
+            },
+            "matched_counts": dict(zero_counts),
+            "matched_query_counts": {observation_id: dict(zero_counts)},
+            "returned_counts": dict(zero_counts),
+            "returned_query_counts": {observation_id: dict(zero_counts)},
+        },
+        relation_ids=(relation_id,),
+    )
+
+
+def test_bounded_missing_relation_roundtrips_strict_lineage(tmp_path: Path) -> None:
+    request_text = "Investigate one bounded absent transition relation."
+    _, projection_action = _relation_projection_action(request=request_text)
+    raw_projection = projection_action["requirement_projection"]
+    raw_projection["planning_blocking_questions"] = [
+        raw_projection["planning_blocking_questions"][0]
+    ]
+    raw_projection["relation_definitions"] = [
+        raw_projection["relation_definitions"][0]
+    ]
+    materialized = _parse_requirement_projection_action(
+        json.dumps(projection_action),
+        natural_language_request=request_text,
+    )["requirement_projection"]
+    relation_id = str(
+        materialized["relation_contract"]["relations"][0]["relation_id"]
+    )
+    question = raw_projection["planning_blocking_questions"][0]
+    search_response = {
+        "action": "plan_search",
+        "planning_status": "ready",
+        "search_plan": {
+            "investigations": [
+                {
+                    "engineering_question": question,
+                    "initial_focus": True,
+                    "source_ids": ["current-interop"],
+                    "query_families": [
+                        {
+                            "queries": ["AbsentTransition"],
+                            "evidence_need": "Search one exact transition spelling.",
+                            "relation_indexes": [1],
+                        },
+                        {
+                            "queries": ["MissingTransitionState"],
+                            "evidence_need": "Search one alternate transition spelling.",
+                            "relation_indexes": [1],
+                        },
+                    ],
+                }
+            ],
+            "initial_stop_condition": "Stop after bounded relation coverage.",
+            "initial_expand_condition": "Use only the second frozen family.",
+        },
+    }
+    finish = _relation_bound_finish(
+        materialized,
+        relation_ids=[relation_id],
+        observation_ids=["obs-001", "obs-002"],
+    )
+
+    class _BoundedZeroExecutor:
+        def execute(self, **kwargs: object) -> ToolObservation:
+            action = kwargs["action"]
+            assert isinstance(action, dict)
+            arguments = action["arguments"]
+            assert isinstance(arguments, dict)
+            queries = list(arguments["queries"])
+            observation = _bounded_relation_observation(
+                str(kwargs["observation_id"]),
+                "executor_must_not_assert_relation",
+            )
+            data = dict(observation.data)
+            data["queries"] = queries
+            zero_counts = {"methods": 0, "types": 0, "fields": 0}
+            data["matched_query_counts"] = {
+                query: dict(zero_counts) for query in queries
+            }
+            data["returned_query_counts"] = {
+                query: dict(zero_counts) for query in queries
+            }
+            return replace(observation, data=data, relation_ids=())
+
+    result = EvidenceDiscoverySpecialist(
+        model=_ScriptedModel(
+            [
+                projection_action,
+                search_response,
+                _family_selection("family-001-001"),
+                _family_selection("family-001-002"),
+                finish,
+            ]
+        ),
+        tool_executor=_BoundedZeroExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request=request_text,
+            require_actual_planning=True,
+            max_tool_calls=2,
+            max_model_steps=3,
+        )
+    )
+    payload = result.pack.to_artifact_payload()
+
+    assert result.run_status == "completed"
+    assert result.pack.evidence_conclusions[0]["relationship"] == "missing"
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+
+
+@pytest.mark.parametrize(
+    "mutation,expected_error",
+    [
+        ("incomplete_family", "RELATION_MISSING_FAMILY_COVERAGE_INVALID"),
+        ("unreadable", "RELATION_MISSING_BOUNDED_ABSENCE_REQUIRED"),
+        ("truncated", "RELATION_MISSING_BOUNDED_ABSENCE_REQUIRED"),
+        ("returned", "RELATION_MISSING_BOUNDED_ABSENCE_REQUIRED"),
+        ("il", "RELATION_MISSING_BOUNDED_ABSENCE_REQUIRED"),
+        ("support_conflict", "RELATION_MISSING_FACT_CONFLICT"),
+    ],
+)
+def test_relation_missing_requires_complete_bounded_zero_coverage(
+    mutation: str,
+    expected_error: str,
+) -> None:
+    request_text = "Investigate one bounded missing relation."
+    _, projection_action = _relation_projection_action(request=request_text)
+    raw_projection = projection_action["requirement_projection"]
+    raw_projection["planning_blocking_questions"] = [
+        raw_projection["planning_blocking_questions"][0]
+    ]
+    raw_projection["relation_definitions"] = [
+        raw_projection["relation_definitions"][0]
+    ]
+    projection = _parse_requirement_projection_action(
+        json.dumps(projection_action),
+        natural_language_request=request_text,
+    )["requirement_projection"]
+    relation_id = str(projection["relation_contract"]["relations"][0]["relation_id"])
+    families = [
+        {
+            "family_id": "family-001-001",
+            "relation_ids": [relation_id],
+        },
+        {
+            "family_id": "family-001-002",
+            "relation_ids": [relation_id],
+        },
+    ]
+    observations = {
+        "obs-001": _bounded_relation_observation("obs-001", relation_id),
+        "obs-002": _bounded_relation_observation("obs-002", relation_id),
+    }
+    actions = [
+        {
+            "tool": "search_dotnet_metadata",
+            "query_family_id": family["family_id"],
+        }
+        for family in families
+    ]
+    finish = _relation_bound_finish(
+        projection,
+        relation_ids=[relation_id],
+        observation_ids=["obs-001", "obs-002"],
+    )
+    agent_discovery = {
+        "requirement_projection": projection,
+        "search_plan": {"query_families": families},
+    }
+    _validate_finish(
+        finish,
+        observations,
+        agent_discovery=agent_discovery,
+        actions=actions,
+    )
+    if mutation == "incomplete_family":
+        actions.pop()
+    elif mutation == "unreadable":
+        data = dict(observations["obs-002"].data)
+        data["unreadable_or_non_managed_assemblies"] = 1
+        observations["obs-002"] = replace(observations["obs-002"], data=data)
+    elif mutation == "truncated":
+        data = dict(observations["obs-002"].data)
+        data["results_truncated"] = True
+        observations["obs-002"] = replace(observations["obs-002"], data=data)
+    elif mutation == "returned":
+        data = deepcopy(observations["obs-002"].data)
+        data["returned_counts"]["methods"] = 1
+        observations["obs-002"] = replace(observations["obs-002"], data=data)
+    elif mutation == "il":
+        observations["obs-002"] = replace(
+            observations["obs-002"],
+            tool="inspect_method_il",
+        )
+    else:
+        finish["evidence_conclusions"].append(
+            {
+                **finish["evidence_conclusions"][0],
+                "claim": "Conflicting fact.",
+                "claim_status": "observed",
+                "relationship": "conflict",
+            }
+        )
+
+    with pytest.raises(ValueError, match=expected_error):
+        _validate_finish(
+            finish,
+            observations,
+            agent_discovery=agent_discovery,
+            actions=actions,
+        )
+
+
 def test_relation_bound_evidence_pack_roundtrips_and_rejects_dangling_ref(
     tmp_path: Path,
 ) -> None:
@@ -5056,6 +5436,7 @@ def test_relation_bound_evidence_pack_roundtrips_and_rejects_dangling_ref(
                         {
                             "queries": ["ObservedTransition", "TransitionState"],
                             "evidence_need": "Find one current transition method.",
+                            "relation_indexes": [1],
                         }
                     ],
                 }
@@ -5069,10 +5450,14 @@ def test_relation_bound_evidence_pack_roundtrips_and_rejects_dangling_ref(
         "decision": "needs_more_evidence",
         "evidence_conclusions": [
             {
-                "claim": "The inspected method supports the frozen transition relation.",
-                "claim_status": "inferred",
+                "claim": (
+                    "Observed method body metadata for Observed.Type.Move: "
+                    "metadata_token=0x06000001; rva=123; has_method_body=true; "
+                    "instruction_count=1; instructions_truncated=false."
+                ),
+                "claim_status": "observed",
                 "observation_ids": ["obs-002"],
-                "limitations": ["Runtime behavior remains unverified."],
+                "limitations": [],
                 "requirement_ids": ["requirement-001"],
                 "relation_ids": [relation_id],
                 "relationship": "support",
@@ -5112,11 +5497,49 @@ def test_relation_bound_evidence_pack_roundtrips_and_rejects_dangling_ref(
     )
     payload = result.pack.to_artifact_payload()
 
+    family = payload["agent_discovery"]["search_plan"]["query_families"][0]
+    assert family["relation_ids"] == [relation_id]
+    accepted_tools = [
+        attempt
+        for attempt in payload["model_action_trace"]
+        if attempt["status"] == "accepted"
+        and attempt["action"]["action"] == "use_tool"
+    ]
+    assert [
+        attempt["resolved_action"]["relation_ids"]
+        for attempt in accepted_tools
+    ] == [[relation_id], [relation_id]]
+    assert [row["relation_ids"] for row in payload["observation_trace"]] == [
+        [relation_id],
+        [relation_id],
+    ]
+    assert [row["relation_ids"] for row in payload["tool_trace_summary"]] == [
+        [relation_id],
+        [relation_id],
+    ]
     assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
     drifted = deepcopy(payload)
     drifted["evidence_conclusions"][0]["relation_ids"] = ["relation_unknown"]
     with pytest.raises(ValueError, match="Evidence conclusion relation ref is invalid"):
         EvidencePack.from_artifact_payload(drifted)
+
+    drifted_origin = deepcopy(payload)
+    il_attempt = [
+        attempt
+        for attempt in drifted_origin["model_action_trace"]
+        if attempt.get("resolved_action", {}).get("tool") == "inspect_method_il"
+    ][0]
+    il_attempt["resolved_action"]["relation_ids"] = ["relation_unknown"]
+    il_attempt["resolved_action_sha256"] = hashlib.sha256(
+        json.dumps(
+            il_attempt["resolved_action"],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(ValueError, match="relation binding"):
+        EvidencePack.from_artifact_payload(drifted_origin)
 
 
 def _two_requirement_split_planning_responses() -> tuple[
@@ -5173,6 +5596,7 @@ def _two_requirement_split_planning_responses() -> tuple[
                 "evidence_need": (
                     "Which current method completes authentication?"
                 ),
+                "relation_indexes": [1, 3],
             }
         ],
     }
@@ -5199,6 +5623,7 @@ def _two_requirement_split_planning_responses() -> tuple[
                     "evidence_need": (
                         "Which current method publishes the audit record?"
                     ),
+                    "relation_indexes": [2, 3],
                 }
             ],
         }
@@ -5256,6 +5681,7 @@ def _four_requirement_search_plan_responses() -> tuple[
                                 f"TechnicalMethod{index}",
                             ],
                             "evidence_need": question,
+                            "relation_indexes": [index],
                         }
                     ],
                 }

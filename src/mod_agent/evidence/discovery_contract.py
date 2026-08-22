@@ -658,17 +658,21 @@ class ToolObservation:
     summary: str
     data: dict[str, object]
     evidence_items: tuple[EvidenceItem, ...] = ()
+    relation_ids: tuple[str, ...] = ()
 
     def identity_view(self) -> dict[str, object]:
         """Return the fact-independent payload used for durable identity binding."""
 
-        return {
+        view = {
             "observation_id": self.observation_id,
             "tool": self.tool,
             "source_id": self.source_id,
             "summary": self.summary,
             "data": _without_control_only_method_ids(self.data),
         }
+        if self.relation_ids:
+            view["relation_ids"] = list(self.relation_ids)
+        return view
 
     def identity_sha256(self) -> str:
         """Hash the observation payload without recursively including fact rows."""
@@ -747,6 +751,15 @@ def _supported_observation_facts(
             ):
                 value["matched_query_counts"] = dict(matched_query_counts)
                 value["returned_query_counts"] = dict(returned_query_counts)
+            assembly_coverage_fields = (
+                "assemblies_discovered",
+                "managed_assemblies_searched",
+                "unreadable_or_non_managed_assemblies",
+            )
+            if all(isinstance(data.get(field), int) for field in assembly_coverage_fields):
+                value.update(
+                    {field: int(data[field]) for field in assembly_coverage_fields}
+                )
             canonical_claim = _canonical_claim_for_persisted_fact(
                 fact_type="metadata_search_result",
                 subject=observation.source_id,
@@ -1026,9 +1039,15 @@ def _canonical_claim_for_persisted_fact(
             "matched_query_counts",
             "returned_query_counts",
         }
+        bounded_absence_fields = current_fields | {
+            "assemblies_discovered",
+            "managed_assemblies_searched",
+            "unreadable_or_non_managed_assemblies",
+        }
         if frozenset(value) not in {
             frozenset(legacy_fields),
             frozenset(current_fields),
+            frozenset(bounded_absence_fields),
         }:
             return None
         queries = value.get("queries")
@@ -1058,12 +1077,29 @@ def _canonical_claim_for_persisted_fact(
             returned_query_counts, dict
         ):
             return None
+        coverage_claim = ""
+        if set(value) == bounded_absence_fields:
+            discovered = value.get("assemblies_discovered")
+            searched = value.get("managed_assemblies_searched")
+            unreadable = value.get("unreadable_or_non_managed_assemblies")
+            if any(
+                isinstance(item, bool) or not isinstance(item, int) or item < 0
+                for item in (discovered, searched, unreadable)
+            ):
+                return None
+            coverage_claim = (
+                f" assemblies_discovered={discovered};"
+                f" managed_assemblies_searched={searched};"
+                " unreadable_or_non_managed_assemblies="
+                f"{unreadable};"
+            )
         return (
             "Observed metadata search result: "
             f"matched_counts={_canonical_json(matched_counts)}; "
             f"matched_query_counts={_canonical_json(matched_query_counts)}; "
             f"returned_counts={_canonical_json(returned_counts)}; "
             f"returned_query_counts={_canonical_json(returned_query_counts)}; "
+            f"{coverage_claim}"
             "results_truncated="
             f"{str(value['results_truncated']).lower()}."
         )
@@ -1233,6 +1269,49 @@ def validate_agent_discovery_actual(value: dict[str, object]) -> None:
         for family in search_plan["query_families"]
         for value in family["question_ids"]
     }
+    relation_contract = projection.get("relation_contract")
+    if isinstance(relation_contract, dict):
+        relation_rows = relation_contract.get("relations")
+        if not isinstance(relation_rows, list):
+            raise ValueError("REQUEST_RELATION_CONTRACT_SHAPE_INVALID")
+        relation_by_id = {
+            str(row["relation_id"]): row
+            for row in relation_rows
+            if isinstance(row, dict) and row.get("relation_id")
+        }
+        relation_ids_covered: set[str] = set()
+        question_requirements = {
+            str(question["question_id"]): set(question["requirement_ids"])
+            for question in search_plan["engineering_questions"]
+        }
+        for family in search_plan["query_families"]:
+            family_relation_ids = family.get("relation_ids")
+            if (
+                not isinstance(family_relation_ids, list)
+                or not family_relation_ids
+                or any(value not in relation_by_id for value in family_relation_ids)
+            ):
+                raise ValueError("SEARCH_PLAN_QUERY_FAMILY_RELATION_INVALID")
+            investigation_requirement_ids = {
+                requirement_id
+                for question_id in family["question_ids"]
+                for requirement_id in question_requirements[str(question_id)]
+            }
+            for relation_id in family_relation_ids:
+                parent_ids = set(
+                    relation_by_id[str(relation_id)]["parent_requirement_ids"]
+                )
+                if not investigation_requirement_ids.issubset(parent_ids):
+                    raise ValueError(
+                        "SEARCH_PLAN_QUERY_FAMILY_RELATION_PARENT_MISMATCH"
+                    )
+            relation_ids_covered.update(str(value) for value in family_relation_ids)
+        if relation_ids_covered != set(relation_by_id):
+            raise ValueError("SEARCH_PLAN_RELATION_COVERAGE_INVALID")
+    elif any(
+        "relation_ids" in family for family in search_plan["query_families"]
+    ):
+        raise ValueError("SEARCH_PLAN_RELATION_WITHOUT_CONTRACT")
     search_plan_version = search_plan.get("schema_version")
     if search_plan_version == SEARCH_PLAN_SCHEMA_VERSION:
         initial_focus_question_id = str(
@@ -1568,6 +1647,13 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
                                 "engineering_questions."
                             ),
                         },
+                        "relation_ids": {
+                            **nonempty_string_array,
+                            "description": (
+                                "Only relation_id values frozen in the request-side "
+                                "relation contract."
+                            ),
+                        },
                     },
                     "required": ["lane", "tool", "source_ids", "question_ids"],
                     "additionalProperties": False,
@@ -1894,19 +1980,25 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
                 raise ValueError("SEARCH_PLAN_LANE_BINDING_AMBIGUOUS")
             lane_binding_keys.add(lane_binding_key)
     family_ids: list[str] = []
-    dispatch_keys: set[tuple[str, str, tuple[str, ...], str]] = set()
+    dispatch_keys: set[
+        tuple[str, str, tuple[str, ...], str, tuple[str, ...]]
+    ] = set()
     for item in families:
+        family_fields = {
+            "family_id",
+            "queries",
+            "evidence_need",
+            "source_ids",
+            "tool",
+            "question_ids",
+        }
+        allowed_family_shapes = {
+            frozenset(family_fields),
+            frozenset((*family_fields, "relation_ids")),
+        }
         if (
             not isinstance(item, dict)
-            or set(item)
-            != {
-                "family_id",
-                "queries",
-                "evidence_need",
-                "source_ids",
-                "tool",
-                "question_ids",
-            }
+            or frozenset(item) not in allowed_family_shapes
             or not _nonempty_string(item.get("family_id"))
             or not _nonempty_string(item.get("evidence_need"))
             or item.get("tool") != "search_dotnet_metadata"
@@ -1915,6 +2007,10 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
         _validate_string_array(item.get("queries"), "queries", allow_empty=False)
         _validate_string_array(item.get("source_ids"), "source_ids", allow_empty=False)
         _validate_string_array(item.get("question_ids"), "question_ids", allow_empty=False)
+        if "relation_ids" in item:
+            _validate_string_array(
+                item.get("relation_ids"), "relation_ids", allow_empty=False
+            )
         if any(value not in question_ids for value in item["question_ids"]):
             raise ValueError("SEARCH_PLAN_QUERY_FAMILY_QUESTION_UNKNOWN")
         family_id = str(item["family_id"])
@@ -1938,7 +2034,7 @@ def _validate_search_plan(value: dict[str, object], *, require_queries: bool) ->
 
 def _search_plan_family_dispatch_identities(
     family: dict[str, object],
-) -> frozenset[tuple[str, str, tuple[str, ...], str]]:
+) -> frozenset[tuple[str, str, tuple[str, ...], str, tuple[str, ...]]]:
     """Return the exact physical dispatch identities used by plan validation."""
 
     return frozenset(
@@ -1947,6 +2043,7 @@ def _search_plan_family_dispatch_identities(
             str(source_id),
             tuple(str(query) for query in family["queries"]),
             str(family["evidence_need"]),
+            tuple(sorted(str(value) for value in family.get("relation_ids", []))),
         )
         for source_id in family["source_ids"]
     )
@@ -2062,8 +2159,14 @@ def evidence_discovery_search_plan_schema() -> dict[str, object]:
         "properties": {
             "queries": {**string_array, "maxItems": 8},
             "evidence_need": {"type": "string", "minLength": 1},
+            "relation_indexes": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": {"type": "integer", "minimum": 1, "maximum": 16},
+            },
         },
-        "required": ["queries", "evidence_need"],
+        "required": ["queries", "evidence_need", "relation_indexes"],
         "additionalProperties": False,
     }
     investigation = {

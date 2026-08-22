@@ -35,6 +35,7 @@ from .discovery_contract import (
 )
 from .models import EvidenceItem, EvidencePack, missing_evidence_from_blockers
 from .hook_discovery import (
+    _bounded_metadata_absence,
     build_agent_discovery_semantics,
     evidence_pack_state_from_hook_discovery,
 )
@@ -802,6 +803,7 @@ class EvidenceDiscoverySpecialist:
                         action,
                         observations_by_id,
                         agent_discovery=self._agent_discovery,
+                        actions=actions,
                     )
                 except ValueError as exc:
                     error = str(exc)
@@ -1111,6 +1113,15 @@ class EvidenceDiscoverySpecialist:
                     continue
                 if action != raw_action:
                     resolved_action = action
+                action = _bind_action_relation_ids(
+                    action,
+                    raw_action=raw_action,
+                    observations_by_id=observations_by_id,
+                    candidate_origins=candidate_origins,
+                    agent_discovery=self._agent_discovery,
+                )
+                if action != raw_action:
+                    resolved_action = action
             _validate_tool_action(
                 action,
                 sources=sources,
@@ -1202,6 +1213,11 @@ class EvidenceDiscoverySpecialist:
             self._runtime_diagnostics["observation_created"] = int(
                 self._runtime_diagnostics["observation_created"]
             ) + 1
+            observation = _bind_observation_relation_ids(
+                observation,
+                action=action,
+                agent_discovery=self._agent_discovery,
+            )
             self._runtime_diagnostics["failure_stage"] = "observation_validation"
             _validate_observation(observation, action=action)
             self._runtime_diagnostics["failure_stage"] = "observation_projection"
@@ -1545,6 +1561,11 @@ class EvidenceDiscoverySpecialist:
                     "tool": observation.tool,
                     "source_id": observation.source_id,
                     "summary": observation.summary,
+                    **(
+                        {"relation_ids": list(observation.relation_ids)}
+                        if observation.relation_ids
+                        else {}
+                    ),
                 }
                 for observation in observations
             ),
@@ -1574,6 +1595,11 @@ class EvidenceDiscoverySpecialist:
                             ensure_ascii=False,
                             separators=(",", ":"),
                         ).encode("utf-8")
+                    ),
+                    **(
+                        {"relation_ids": list(observation.relation_ids)}
+                        if observation.relation_ids
+                        else {}
                     ),
                 }
                 for observation in observations
@@ -2760,6 +2786,11 @@ def _compact_step(
         "derived_from_observation_ids": list(
             action.get("derived_from_observation_ids") or []
         ),
+        **(
+            {"relation_ids": list(observation.relation_ids)}
+            if observation.relation_ids
+            else {}
+        ),
         "observation_id": observation.observation_id,
         "observation_summary": observation.summary,
     }
@@ -3333,6 +3364,17 @@ def _resolve_model_search_plan_action(
     if len(investigations) != len(requirements) or not investigations:
         raise ValueError("MODEL_SEARCH_PLAN_REQUIREMENT_COVERAGE_INVALID")
 
+    relation_contract = frozen_projection.get("relation_contract")
+    relation_rows = (
+        relation_contract.get("relations")
+        if isinstance(relation_contract, dict)
+        else None
+    )
+    relation_contract_present = isinstance(relation_rows, list) and bool(
+        relation_rows
+    )
+    relation_ids_covered: set[str] = set()
+
     selected_source_ids: list[str] = []
 
     def resolve_source_ids(value: object) -> list[str]:
@@ -3405,13 +3447,16 @@ def _resolve_model_search_plan_action(
             }
         )
         retained_dispatch_identities: dict[
-            frozenset[tuple[str, str, tuple[str, ...], str]], str
+            frozenset[
+                tuple[str, str, tuple[str, ...], str, tuple[str, ...]]
+            ],
+            str,
         ] = {}
         for model_family_index, family in enumerate(model_families, start=1):
-            if not isinstance(family, dict) or set(family) != {
-                "queries",
-                "evidence_need",
-            }:
+            expected_family_fields = {"queries", "evidence_need"}
+            if relation_contract_present:
+                expected_family_fields.add("relation_indexes")
+            if not isinstance(family, dict) or set(family) != expected_family_fields:
                 raise ValueError("MODEL_SEARCH_PLAN_QUERY_FAMILY_SHAPE_INVALID")
             evidence_need = family.get("evidence_need")
             queries = family.get("queries")
@@ -3424,6 +3469,37 @@ def _resolve_model_search_plan_action(
             normalized_queries, dropped_queries = _normalize_family_query_leads(
                 queries
             )
+            resolved_relation_ids: list[str] = []
+            if relation_contract_present:
+                relation_indexes = family.get("relation_indexes")
+                if (
+                    not isinstance(relation_indexes, list)
+                    or not relation_indexes
+                    or len(relation_indexes) != len(set(relation_indexes))
+                    or any(
+                        isinstance(index, bool)
+                        or not isinstance(index, int)
+                        or not 1 <= index <= len(relation_rows)
+                        for index in relation_indexes
+                    )
+                ):
+                    raise ValueError("MODEL_SEARCH_PLAN_RELATION_INDEX_INVALID")
+                selected_relations = [
+                    relation_rows[int(index) - 1] for index in relation_indexes
+                ]
+                if any(
+                    requirement_id
+                    not in relation["parent_requirement_ids"]
+                    for relation in selected_relations
+                ):
+                    raise ValueError(
+                        "MODEL_SEARCH_PLAN_RELATION_PARENT_MISMATCH"
+                    )
+                resolved_relation_ids = sorted(
+                    str(relation["relation_id"])
+                    for relation in selected_relations
+                )
+                relation_ids_covered.update(resolved_relation_ids)
             if dropped_queries and quality_findings is not None:
                 quality_findings.append(
                     {
@@ -3441,6 +3517,11 @@ def _resolve_model_search_plan_action(
                 "source_ids": list(source_ids),
                 "question_ids": [question_id],
                 "tool": "search_dotnet_metadata",
+                **(
+                    {"relation_ids": resolved_relation_ids}
+                    if relation_contract_present
+                    else {}
+                ),
             }
             dispatch_identities = _search_plan_family_dispatch_identities(
                 resolved_family
@@ -3468,6 +3549,7 @@ def _resolve_model_search_plan_action(
                                     source_id,
                                     queries,
                                     dispatch_evidence_need,
+                                    relation_ids,
                                 ) in sorted(dispatch_identities)
                             ],
                         }
@@ -3480,6 +3562,10 @@ def _resolve_model_search_plan_action(
             resolved_family["family_id"] = retained_family_id
             retained_dispatch_identities[dispatch_identities] = retained_family_id
             resolved_families.append(resolved_family)
+    if relation_contract_present and relation_ids_covered != {
+        str(relation["relation_id"]) for relation in relation_rows
+    }:
+        raise ValueError("MODEL_SEARCH_PLAN_RELATION_COVERAGE_INVALID")
     if initial_focus_question_id is None:
         raise ValueError("MODEL_SEARCH_PLAN_INITIAL_FOCUS_INVALID")
 
@@ -3862,6 +3948,48 @@ def _resolve_action_from_frozen_plan(
         "evidence_need": evidence_need,
         "derived_from_observation_ids": derived_from_observation_ids,
         "query_family_id": family_id,
+        **(
+            {"relation_ids": sorted(str(value) for value in family["relation_ids"])}
+            if isinstance(family.get("relation_ids"), list)
+            else {}
+        ),
+    }
+
+
+def _bind_action_relation_ids(
+    action: dict[str, object],
+    *,
+    raw_action: dict[str, object],
+    observations_by_id: dict[str, ToolObservation],
+    candidate_origins: dict[str, tuple[str, str]],
+    agent_discovery: dict[str, object],
+) -> dict[str, object]:
+    """Bind relation refs from frozen family or metadata origin, never model input."""
+
+    if not _relation_binding_required(agent_discovery):
+        return action
+    if "relation_ids" in raw_action:
+        raise ValueError("MODEL_TOOL_ACTION_RELATION_IDS_FORBIDDEN")
+    if action.get("tool") == "search_dotnet_metadata":
+        relation_ids = action.get("relation_ids")
+        if not isinstance(relation_ids, list) or not relation_ids:
+            raise ValueError("METADATA_ACTION_RELATION_BINDING_MISSING")
+        return action
+    if action.get("tool") != "inspect_method_il":
+        raise ValueError("TOOL_ACTION_RELATION_BINDING_UNSUPPORTED")
+    arguments = action.get("arguments")
+    reference = (
+        arguments.get("candidate_ref") if isinstance(arguments, dict) else None
+    )
+    origin = candidate_origins.get(str(reference or ""))
+    if origin is None:
+        raise ValueError("UNVERIFIED_CANDIDATE_REFERENCE")
+    origin_observation = observations_by_id.get(origin[0])
+    if origin_observation is None or not origin_observation.relation_ids:
+        raise ValueError("IL_ACTION_RELATION_ORIGIN_MISSING")
+    return {
+        **action,
+        "relation_ids": list(origin_observation.relation_ids),
     }
 
 
@@ -4310,13 +4438,27 @@ def _validate_tool_action(
         "derived_from_observation_ids",
     }
     tool = str(action.get("tool") or "")
-    allowed_shapes = {frozenset(required_fields)}
+    allowed_shapes = {
+        frozenset(required_fields),
+        frozenset(required_fields | {"relation_ids"}),
+    }
     if tool == "search_dotnet_metadata":
         allowed_shapes.add(frozenset(required_fields | {"query_family_id"}))
+        allowed_shapes.add(
+            frozenset(required_fields | {"query_family_id", "relation_ids"})
+        )
     if frozenset(action) not in allowed_shapes:
         raise ValueError("TOOL_ACTION_SHAPE_INVALID")
     if not str(action.get("evidence_need") or "").strip():
         raise ValueError("TOOL_EVIDENCE_NEED_INVALID")
+    relation_ids = action.get("relation_ids")
+    if relation_ids is not None and (
+        not isinstance(relation_ids, list)
+        or not relation_ids
+        or len(relation_ids) != len(set(relation_ids))
+        or any(not isinstance(value, str) or not value for value in relation_ids)
+    ):
+        raise ValueError("TOOL_ACTION_RELATION_IDS_INVALID")
     source_id = str(action.get("source_id") or "")
     if source_id not in sources:
         raise ValueError("UNAUTHORIZED_SOURCE_REFERENCE")
@@ -4387,6 +4529,32 @@ def _validate_observation(
         raise ValueError("TOOL_OBSERVATION_SOURCE_MISMATCH")
     if not observation.observation_id or not observation.summary:
         raise ValueError("TOOL_OBSERVATION_IDENTITY_INVALID")
+    if tuple(action.get("relation_ids") or ()) != observation.relation_ids:
+        raise ValueError("TOOL_OBSERVATION_RELATION_BINDING_MISMATCH")
+
+
+def _bind_observation_relation_ids(
+    observation: ToolObservation,
+    *,
+    action: dict[str, object],
+    agent_discovery: dict[str, object] | None,
+) -> ToolObservation:
+    """Write only the Specialist-resolved action lineage onto an observation."""
+
+    if observation.relation_ids:
+        raise ValueError("TOOL_OBSERVATION_SELF_ASSERTED_RELATION_IDS")
+    relation_ids = action.get("relation_ids")
+    if not _relation_binding_required(agent_discovery):
+        if relation_ids is not None:
+            raise ValueError("TOOL_ACTION_RELATION_WITHOUT_CONTRACT")
+        return observation
+    if (
+        not isinstance(relation_ids, list)
+        or not relation_ids
+        or len(relation_ids) != len(set(relation_ids))
+    ):
+        raise ValueError("TOOL_ACTION_RELATION_BINDING_MISSING")
+    return replace(observation, relation_ids=tuple(str(value) for value in relation_ids))
 
 
 def _validate_finish(
@@ -4394,6 +4562,7 @@ def _validate_finish(
     observations_by_id: dict[str, ToolObservation],
     *,
     agent_discovery: dict[str, object] | None = None,
+    actions: list[dict[str, object]] | None = None,
 ) -> None:
     if set(finish) != {
         "action",
@@ -4519,6 +4688,26 @@ def _validate_finish(
                 observation_refs = conclusion.get("observation_ids")
                 if not isinstance(observation_refs, list) or not observation_refs:
                     raise ValueError("EVIDENCE_CONCLUSION_RELATION_GROUNDING_REQUIRED")
+                observed_relation_ids = {
+                    relation_id
+                    for observation_id in observation_refs
+                    for relation_id in observations_by_id[observation_id].relation_ids
+                }
+                if not set(relation_refs).issubset(observed_relation_ids):
+                    raise ValueError("EVIDENCE_CONCLUSION_RELATION_OBSERVATION_MISMATCH")
+                if relationship in {"support", "conflict"}:
+                    _validate_relation_fact_disposition(
+                        conclusion=conclusion,
+                        observations_by_id=observations_by_id,
+                    )
+                else:
+                    _validate_relation_missing_disposition(
+                        conclusion=conclusion,
+                        conclusions=conclusions,
+                        observations_by_id=observations_by_id,
+                        agent_discovery=agent_discovery,
+                        actions=actions,
+                    )
     inspection_observation_ids = {
         observation_id
         for observation_id, observation in observations_by_id.items()
@@ -4571,6 +4760,99 @@ def _validate_finish(
         )
         if matching_fact_count != 1:
             raise ValueError("OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH")
+
+
+def _validate_relation_fact_disposition(
+    *,
+    conclusion: dict[str, object],
+    observations_by_id: dict[str, ToolObservation],
+) -> None:
+    """Require one relation-specific canonical fact from authoritative evidence."""
+
+    relation_ids = conclusion["relation_ids"]
+    observation_ids = conclusion["observation_ids"]
+    if (
+        conclusion.get("claim_status") != "observed"
+        or not isinstance(relation_ids, list)
+        or len(relation_ids) != 1
+        or not isinstance(observation_ids, list)
+        or len(observation_ids) != 1
+    ):
+        raise ValueError("RELATION_FACT_CANONICAL_BINDING_REQUIRED")
+    observation = observations_by_id[str(observation_ids[0])]
+    if observation.relation_ids != tuple(relation_ids):
+        raise ValueError("RELATION_FACT_SPECIFIC_BINDING_REQUIRED")
+    if not any(
+        item.source_authority == "authoritative"
+        for item in observation.evidence_items
+    ):
+        raise ValueError("RELATION_FACT_AUTHORITATIVE_EVIDENCE_REQUIRED")
+
+
+def _validate_relation_missing_disposition(
+    *,
+    conclusion: dict[str, object],
+    conclusions: list[object],
+    observations_by_id: dict[str, ToolObservation],
+    agent_discovery: dict[str, object],
+    actions: list[dict[str, object]] | None,
+) -> None:
+    """Accept missing only after every frozen family has a bounded zero result."""
+
+    relation_ids = conclusion["relation_ids"]
+    observation_ids = conclusion["observation_ids"]
+    limitations = conclusion.get("limitations")
+    if (
+        conclusion.get("claim_status") != "inferred"
+        or not isinstance(limitations, list)
+        or not limitations
+    ):
+        raise ValueError("RELATION_MISSING_INFERENCE_REQUIRED")
+    cited_observations = [
+        observations_by_id[str(observation_id)]
+        for observation_id in observation_ids
+    ]
+    if any(
+        observation.tool != "search_dotnet_metadata"
+        or not _bounded_metadata_absence(observation)
+        for observation in cited_observations
+    ):
+        raise ValueError("RELATION_MISSING_BOUNDED_ABSENCE_REQUIRED")
+    if any(
+        isinstance(other, dict)
+        and other is not conclusion
+        and other.get("relationship") in {"support", "conflict"}
+        and set(other.get("relation_ids") or []).intersection(relation_ids)
+        for other in conclusions
+    ):
+        raise ValueError("RELATION_MISSING_FACT_CONFLICT")
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(search_plan, dict):
+        return
+    families = search_plan.get("query_families")
+    if not isinstance(families, list) or actions is None:
+        raise ValueError("RELATION_MISSING_FAMILY_COVERAGE_INVALID")
+    required_family_ids = {
+        str(family["family_id"])
+        for family in families
+        if isinstance(family, dict)
+        and set(family.get("relation_ids") or []).intersection(relation_ids)
+    }
+    executed = {
+        str(action["query_family_id"]): observations_by_id[observation_id]
+        for action, observation_id in zip(actions, observations_by_id)
+        if action.get("tool") == "search_dotnet_metadata"
+        and isinstance(action.get("query_family_id"), str)
+    }
+    if required_family_ids != set(executed).intersection(required_family_ids):
+        raise ValueError("RELATION_MISSING_FAMILY_COVERAGE_INVALID")
+    cited_ids = {observation.observation_id for observation in cited_observations}
+    if any(
+        executed[family_id].observation_id not in cited_ids
+        or not _bounded_metadata_absence(executed[family_id])
+        for family_id in required_family_ids
+    ):
+        raise ValueError("RELATION_MISSING_FAMILY_COVERAGE_INVALID")
 
 
 def _input_audit(request: EvidenceDiscoveryRequest) -> dict[str, int]:
