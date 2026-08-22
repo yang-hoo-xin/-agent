@@ -30,7 +30,7 @@ EVIDENCE_DISCOVERY_TOOLS = frozenset(
 )
 EVIDENCE_DISCOVERY_RESULT_KINDS = frozenset({"methods", "types", "fields"})
 EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION = "evidence_discovery_prompt_v9"
-AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v7"
+AGENT_DISCOVERY_PROMPT_CONTRACT_VERSION = "agent_evidence_discovery_prompt_v8"
 AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSIONS = frozenset(
     {
         "agent_evidence_discovery_prompt_v2",
@@ -38,10 +38,12 @@ AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSIONS = frozenset(
         "agent_evidence_discovery_prompt_v4",
         "agent_evidence_discovery_prompt_v5",
         "agent_evidence_discovery_prompt_v6",
+        "agent_evidence_discovery_prompt_v7",
     }
 )
 AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION = "agent_evidence_discovery_actual_v2"
 REQUIREMENT_PROJECTION_SCHEMA_VERSION = "hook_requirement_projection_v2"
+REQUEST_RELATION_CONTRACT_VERSION = "request_relation_identity_v1"
 SEARCH_PLAN_SCHEMA_VERSION = "hook_discovery_search_plan_v4"
 _SEARCH_PLAN_SCHEMA_VERSION_V2 = "hook_discovery_search_plan_v2"
 _SEARCH_PLAN_SCHEMA_VERSION_V3 = "hook_discovery_search_plan_v3"
@@ -54,6 +56,30 @@ EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES = (
     "source_registry_model_views",
     "tool_observation_metadata_and_il",
 )
+
+
+def request_relation_identity(
+    *,
+    request_sha256: str,
+    projection_sha256: str,
+    relation_index: int,
+) -> str:
+    """Derive one stable request-side relation identity without expected facts."""
+
+    payload = {
+        "request_sha256": request_sha256,
+        "projection_sha256": projection_sha256,
+        "relation_index": relation_index,
+        "schema_version": REQUEST_RELATION_CONTRACT_VERSION,
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return f"relation_{digest[:16]}"
 
 
 class EvidenceDiscoveryModel(Protocol):
@@ -209,6 +235,7 @@ class EvidenceDiscoveryAgentModel:
         force_search_plan = False
         force_source_identifier_selection = False
         actual_planning_run = False
+        relation_binding_run = False
         for item in messages:
             role = str(item.get("role") or "")
             content = item.get("content")
@@ -255,6 +282,16 @@ class EvidenceDiscoveryAgentModel:
                 and content.get("message_type") == "frozen_actual_plan"
             ):
                 actual_planning_run = True
+                frozen_actual = content.get("agent_discovery")
+                frozen_projection = (
+                    frozen_actual.get("requirement_projection")
+                    if isinstance(frozen_actual, dict)
+                    else None
+                )
+                relation_binding_run = bool(
+                    isinstance(frozen_projection, dict)
+                    and isinstance(frozen_projection.get("relation_contract"), dict)
+                )
             if isinstance(content, dict) and content.get("message_type") == "finish_validation_error":
                 force_finish = True
             agent_messages.append(AgentMessage(role=role, content=content))
@@ -314,7 +351,8 @@ class EvidenceDiscoveryAgentModel:
                 else _planning_response_format()
                 if force_plan
                 else _finish_response_format(
-                    require_requirement_binding=actual_planning_run
+                    require_requirement_binding=actual_planning_run,
+                    require_relation_binding=relation_binding_run,
                 )
                 if force_finish
                 else None
@@ -1361,6 +1399,59 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
         "required": ["question_id", "question", "requirement_ids"],
         "additionalProperties": False,
     }
+    relation_definition = {
+        "type": "object",
+        "properties": {
+            "relation_id": {"type": "string", "minLength": 1},
+            "parent_requirement_ids": nonempty_string_array,
+            "meaning": {"type": "string", "minLength": 1},
+            "investigation_question": {"type": "string", "minLength": 1},
+            "provenance": {
+                "type": "object",
+                "properties": {
+                    "relation_index": {"type": "integer", "minimum": 1},
+                },
+                "required": ["relation_index"],
+                "additionalProperties": False,
+            },
+        },
+        "required": [
+            "relation_id",
+            "parent_requirement_ids",
+            "meaning",
+            "investigation_question",
+            "provenance",
+        ],
+        "additionalProperties": False,
+    }
+    relation_contract = {
+        "type": "object",
+        "properties": {
+            "schema_version": {
+                "type": "string",
+                "const": REQUEST_RELATION_CONTRACT_VERSION,
+            },
+            "request_sha256": {"type": "string", "minLength": 64, "maxLength": 64},
+            "projection_sha256": {
+                "type": "string",
+                "minLength": 64,
+                "maxLength": 64,
+            },
+            "relations": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": relation_definition,
+            },
+        },
+        "required": [
+            "schema_version",
+            "request_sha256",
+            "projection_sha256",
+            "relations",
+        ],
+        "additionalProperties": False,
+    }
     projection = {
         "type": "object",
         "properties": {
@@ -1400,6 +1491,7 @@ def evidence_discovery_planning_schema() -> dict[str, object]:
                     "one trigger or observation direction."
                 ),
             },
+            "relation_contract": relation_contract,
             "deferred_planning_or_runtime_questions": {
                 **string_array,
                 "maxItems": 8,
@@ -1583,7 +1675,10 @@ def _validate_requirement_projection(
         "planning_blocking_questions",
         "deferred_planning_or_runtime_questions",
     }
-    if set(value) != required:
+    if frozenset(value) not in {
+        frozenset(required),
+        frozenset((*required, "relation_contract")),
+    }:
         raise ValueError("REQUIREMENT_PROJECTION_SHAPE_INVALID")
     if value.get("schema_version") != REQUIREMENT_PROJECTION_SCHEMA_VERSION:
         raise ValueError("REQUIREMENT_PROJECTION_VERSION_INVALID")
@@ -1613,6 +1708,12 @@ def _validate_requirement_projection(
         requirement_ids.append(str(question["requirement_id"]))
     if len(requirement_ids) != len(set(requirement_ids)):
         raise ValueError("PLANNING_REQUIREMENT_ID_DUPLICATE")
+    relation_contract = value.get("relation_contract")
+    if relation_contract is not None:
+        _validate_request_relation_contract(
+            relation_contract,
+            requirement_ids=set(requirement_ids),
+        )
     hints = value.get("implementation_hints")
     if not isinstance(hints, list):
         raise ValueError("IMPLEMENTATION_HINTS_INVALID")
@@ -1629,6 +1730,70 @@ def _validate_requirement_projection(
         or not value.get("planning_blocking_questions")
     ):
         raise ValueError("REQUIREMENT_PROJECTION_NOT_MEANINGFUL")
+
+
+def _validate_request_relation_contract(
+    value: object,
+    *,
+    requirement_ids: set[str],
+) -> None:
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "request_sha256",
+        "projection_sha256",
+        "relations",
+    }:
+        raise ValueError("REQUEST_RELATION_CONTRACT_SHAPE_INVALID")
+    if value.get("schema_version") != REQUEST_RELATION_CONTRACT_VERSION:
+        raise ValueError("REQUEST_RELATION_CONTRACT_VERSION_INVALID")
+    request_sha256 = value.get("request_sha256")
+    projection_sha256 = value.get("projection_sha256")
+    if any(
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        for digest in (request_sha256, projection_sha256)
+    ):
+        raise ValueError("REQUEST_RELATION_PROVENANCE_INVALID")
+    relations = value.get("relations")
+    if not isinstance(relations, list) or not 1 <= len(relations) <= 16:
+        raise ValueError("REQUEST_RELATION_DEFINITIONS_INVALID")
+    relation_ids: set[str] = set()
+    covered_requirement_ids: set[str] = set()
+    for expected_index, relation in enumerate(relations, 1):
+        if not isinstance(relation, dict) or set(relation) != {
+            "relation_id",
+            "parent_requirement_ids",
+            "meaning",
+            "investigation_question",
+            "provenance",
+        }:
+            raise ValueError("REQUEST_RELATION_DEFINITION_SHAPE_INVALID")
+        parent_ids = relation.get("parent_requirement_ids")
+        provenance = relation.get("provenance")
+        if (
+            not isinstance(parent_ids, list)
+            or not parent_ids
+            or len(parent_ids) != len(set(parent_ids))
+            or any(parent not in requirement_ids for parent in parent_ids)
+            or not _nonempty_string(relation.get("meaning"))
+            or not _nonempty_string(relation.get("investigation_question"))
+            or not isinstance(provenance, dict)
+            or provenance != {"relation_index": expected_index}
+        ):
+            raise ValueError("REQUEST_RELATION_DEFINITION_INVALID")
+        relation_id = relation.get("relation_id")
+        expected_relation_id = request_relation_identity(
+            request_sha256=str(request_sha256),
+            projection_sha256=str(projection_sha256),
+            relation_index=expected_index,
+        )
+        if relation_id != expected_relation_id or relation_id in relation_ids:
+            raise ValueError("REQUEST_RELATION_IDENTITY_INVALID")
+        relation_ids.add(str(relation_id))
+        covered_requirement_ids.update(str(parent) for parent in parent_ids)
+    if covered_requirement_ids != requirement_ids:
+        raise ValueError("REQUEST_RELATION_REQUIREMENT_COVERAGE_INVALID")
 
 
 def validate_requirement_projection_actual(
@@ -1823,7 +1988,7 @@ def evidence_discovery_requirement_projection_schema() -> dict[str, object]:
         "properties": {
             key: value
             for key, value in persistent_projection["properties"].items()
-            if key != "schema_version"
+            if key not in {"schema_version", "relation_contract"}
         },
         "required": [
             key for key in persistent_projection["required"] if key != "schema_version"
@@ -1839,6 +2004,36 @@ def evidence_discovery_requirement_projection_schema() -> dict[str, object]:
             "planning. Deterministic code assigns their identities."
         ),
     }
+    model_projection["properties"]["relation_definitions"] = {
+        "type": "array",
+        "minItems": 0,
+        "maxItems": 16,
+        "items": {
+            "type": "object",
+            "properties": {
+                "parent_requirement_indexes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "items": {"type": "integer", "minimum": 1, "maximum": 4},
+                },
+                "meaning": {"type": "string", "minLength": 1},
+                "investigation_question": {"type": "string", "minLength": 1},
+            },
+            "required": [
+                "parent_requirement_indexes",
+                "meaning",
+                "investigation_question",
+            ],
+            "additionalProperties": False,
+        },
+        "description": (
+            "Request-derived investigation relations only. Parent indexes are 1-based "
+            "positions in planning_blocking_questions. Do not include expected status, "
+            "pass/fail, Golden facts, paths, symbols, or Hook answers."
+        ),
+    }
+    model_projection["required"].append("relation_definitions")
     return {
         "type": "object",
         "properties": {
@@ -2090,7 +2285,9 @@ def _discovery_tool_definitions(
 
 
 def evidence_discovery_finish_schema(
-    *, require_requirement_binding: bool = False
+    *,
+    require_requirement_binding: bool = False,
+    require_relation_binding: bool = False,
 ) -> dict[str, object]:
     """Return the exact model-facing schema enforced for a discovery finish."""
     conclusion = {
@@ -2113,6 +2310,11 @@ def evidence_discovery_finish_schema(
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
             },
+            "relation_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "minLength": 1},
+            },
             "relationship": {
                 "type": "string",
                 "enum": ["support", "conflict", "missing"],
@@ -2124,7 +2326,11 @@ def evidence_discovery_finish_schema(
             "observation_ids",
             "limitations",
             *(
-                ["requirement_ids", "relationship"]
+                [
+                    "requirement_ids",
+                    *(["relation_ids"] if require_relation_binding else []),
+                    "relationship",
+                ]
                 if require_requirement_binding
                 else []
             ),
@@ -2183,13 +2389,16 @@ def evidence_discovery_finish_decision_constraints() -> dict[str, object]:
 
 
 def _finish_response_format(
-    *, require_requirement_binding: bool = False
+    *,
+    require_requirement_binding: bool = False,
+    require_relation_binding: bool = False,
 ) -> AgentResponseFormat:
     return AgentResponseFormat(
         name="evidence_discovery_finish",
         description="Final grounded evidence decision for the bounded discovery run.",
         schema=evidence_discovery_finish_schema(
-            require_requirement_binding=require_requirement_binding
+            require_requirement_binding=require_requirement_binding,
+            require_relation_binding=require_relation_binding,
         ),
     )
 

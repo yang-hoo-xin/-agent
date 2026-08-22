@@ -189,6 +189,8 @@ def _reliability_pack(
     max_model_steps: int,
     run_status: str,
     cover_requirements: bool,
+    relation_parent_indexes: list[list[int]] | None = None,
+    include_relation_contract: bool = True,
 ) -> EvidencePack:
     pack = _semantic_pack("Evaluate one bounded calibration actual.")
     requirement_ids = [
@@ -226,17 +228,42 @@ def _reliability_pack(
     ]
     hook_discovery = dict(pack.hook_discovery or {})
     hook_discovery["lane_coverage"] = lane_coverage
+    relation_parent_indexes = relation_parent_indexes or [
+        [index] for index in range(1, planned_lane_count + 1)
+    ]
+    relation_definitions = [
+        {
+            "relation_id": f"relation-{index:03d}",
+            "parent_requirement_ids": [
+                f"requirement-{parent_index:03d}"
+                for parent_index in parent_indexes
+            ],
+            "meaning": f"Bounded relation meaning {index}.",
+            "investigation_question": f"How is relation {index} established?",
+            "provenance": {"relation_index": index},
+        }
+        for index, parent_indexes in enumerate(relation_parent_indexes, 1)
+    ]
     conclusions = (
-        tuple(
+        (
             {
-                "claim": f"Requirement disposition {requirement_id}.",
-                "claim_status": "unknown",
-                "observation_ids": [],
-                "limitations": [],
-                "requirement_ids": [requirement_id],
+                "claim": "All frozen negative relations were investigated.",
+                "claim_status": "inferred",
+                "observation_ids": ["obs-absence"],
+                "limitations": ["Synthetic missing-relation fixture."],
+                "requirement_ids": requirement_ids,
+                **(
+                    {
+                        "relation_ids": [
+                            str(relation["relation_id"])
+                            for relation in relation_definitions
+                        ]
+                    }
+                    if include_relation_contract
+                    else {}
+                ),
                 "relationship": "missing",
-            }
-            for requirement_id in requirement_ids
+            },
         )
         if cover_requirements
         else ()
@@ -257,7 +284,19 @@ def _reliability_pack(
                         "question": f"Question for {requirement_id}?",
                     }
                     for requirement_id in requirement_ids
-                ]
+                ],
+                **(
+                    {
+                        "relation_contract": {
+                            "schema_version": "request_relation_identity_v1",
+                            "request_sha256": "a" * 64,
+                            "projection_sha256": "b" * 64,
+                            "relations": relation_definitions,
+                        }
+                    }
+                    if include_relation_contract
+                    else {}
+                ),
             },
             "search_plan": {"planned_lanes": planned_lanes},
         },
@@ -283,6 +322,7 @@ def _reliability_pack(
 def _negative_expected(
     *,
     requirement_count: int = 4,
+    relation_count: int | None = None,
     include_rubric: bool = True,
 ) -> dict[str, object]:
     expected: dict[str, object] = {
@@ -295,15 +335,15 @@ def _negative_expected(
         "expected_control_action": "block",
     }
     if include_rubric:
+        relation_count = relation_count or requirement_count
         expected["structured_relation_rubric"] = {
             "schema_version": "hidden_golden_relation_rubric_v1",
             "required_relations": [
                 {
                     "relation_id": f"relation-{index:03d}",
-                    "requirement_id": f"requirement-{index:03d}",
                     "relationship": "missing",
                 }
-                for index in range(1, requirement_count + 1)
+                for index in range(1, relation_count + 1)
             ],
             "forbidden_relations": [],
         }
@@ -1102,6 +1142,39 @@ def test_reliability_gate_marks_completed_negative_actual_evaluable() -> None:
     }
 
 
+def test_one_requirement_three_same_status_relations_score_independently() -> None:
+    report = _calibration_reliability_gate(
+        pack=_reliability_pack(
+            planned_lane_count=1,
+            disposed_lane_count=1,
+            max_tool_calls=2,
+            max_model_steps=3,
+            run_status="completed",
+            cover_requirements=True,
+            relation_parent_indexes=[[1], [1], [1]],
+        ),
+        expected=_negative_expected(
+            requirement_count=1,
+            relation_count=3,
+        ),
+        generic_comparison={
+            "sufficiency_matches": True,
+            "control_action_matches": True,
+            "acceptable_hook_identity_set_matches": True,
+            "forbidden_hook_identity_hits": [],
+        },
+    )
+
+    assert report["capability_verdict"] == "pass"
+    results = report["structured_relation_score"]["required_relation_results"]
+    assert [row["relation_id"] for row in results] == [
+        "relation-001",
+        "relation-002",
+        "relation-003",
+    ]
+    assert all(row["matched"] is True for row in results)
+
+
 def test_reliability_gate_does_not_upgrade_bhf_shaped_failure() -> None:
     expected = _annotation()["judgment_payload"]
     assert isinstance(expected, dict)
@@ -1173,6 +1246,33 @@ def test_complete_negative_without_structured_mapping_is_inconclusive() -> None:
     ]
 
 
+def test_old_relationless_actual_remains_readable_and_inconclusive() -> None:
+    report = _calibration_reliability_gate(
+        pack=_reliability_pack(
+            planned_lane_count=2,
+            disposed_lane_count=2,
+            max_tool_calls=3,
+            max_model_steps=4,
+            run_status="completed",
+            cover_requirements=True,
+            include_relation_contract=False,
+        ),
+        expected=_negative_expected(requirement_count=2),
+        generic_comparison={
+            "sufficiency_matches": True,
+            "control_action_matches": True,
+            "acceptable_hook_identity_set_matches": True,
+            "forbidden_hook_identity_hits": [],
+        },
+    )
+
+    assert report["capability_verdict"] == "inconclusive"
+    assert report["negative_capability_pass"] is False
+    assert report["structured_relation_score"]["reason_code"] == (
+        "ACTUAL_RELATION_IDENTITY_CONTRACT_MISSING"
+    )
+
+
 def test_forbidden_structured_relation_produces_fail() -> None:
     pack = _reliability_pack(
         planned_lane_count=2,
@@ -1189,9 +1289,10 @@ def test_forbidden_structured_relation_produces_fail() -> None:
             {
                 "claim": "Observed a forbidden support relationship.",
                 "claim_status": "observed",
-                "observation_ids": [],
+                "observation_ids": ["obs-support"],
                 "limitations": [],
                 "requirement_ids": ["requirement-001"],
+                "relation_ids": ["relation-001"],
                 "relationship": "support",
             },
         ),
@@ -1201,8 +1302,7 @@ def test_forbidden_structured_relation_produces_fail() -> None:
     assert isinstance(rubric, dict)
     rubric["forbidden_relations"] = [
         {
-            "relation_id": "forbidden-relation-001",
-            "requirement_id": "requirement-001",
+            "relation_id": "relation-001",
             "relationship": "support",
         }
     ]
@@ -1248,15 +1348,15 @@ def test_forbidden_full_identity_produces_fail() -> None:
     assert "FORBIDDEN_IDENTITY_HIT" in report["failure_reason_codes"]
 
 
-def test_structured_relation_requirement_identity_drift_fails_closed() -> None:
+def test_structured_relation_identity_drift_fails_closed() -> None:
     expected = _negative_expected(requirement_count=2)
     rubric = expected["structured_relation_rubric"]
     assert isinstance(rubric, dict)
-    rubric["required_relations"][0]["requirement_id"] = "requirement-unknown"
+    rubric["required_relations"][0]["relation_id"] = "relation-unknown"
 
     with pytest.raises(
         HiddenGoldenCalibrationError,
-        match="HIDDEN_GOLDEN_RELATION_REQUIREMENT_IDENTITY_MISMATCH",
+        match="HIDDEN_GOLDEN_RELATION_IDENTITY_MISMATCH",
     ):
         _calibration_reliability_gate(
             pack=_reliability_pack(
@@ -1282,8 +1382,17 @@ def test_reliability_aggregation_excludes_inconclusive_from_success_rate() -> No
         [
             {"capability_verdict": "pass"},
             {"capability_verdict": "fail"},
-            {"capability_verdict": "inconclusive"},
-            {"capability_verdict": "inconclusive"},
+            {
+                "capability_verdict": "inconclusive",
+                "reason_codes": ["RELATION_MAPPING_MISSING"],
+            },
+            {
+                "capability_verdict": "inconclusive",
+                "reason_codes": [
+                    "RELATION_MAPPING_MISSING",
+                    "RUN_INCOMPLETE",
+                ],
+            },
         ]
     )
 
@@ -1292,11 +1401,38 @@ def test_reliability_aggregation_excludes_inconclusive_from_success_rate() -> No
         "pass_count": 1,
         "fail_count": 1,
         "inconclusive_count": 2,
+        "inconclusive_reason_counts": {
+            "RELATION_MAPPING_MISSING": 2,
+            "RUN_INCOMPLETE": 1,
+        },
         "scored_count": 2,
-        "success_rate": 0.5,
-        "success_rate_numerator": 1,
-        "success_rate_denominator": 2,
+        "evaluable_rate": 0.5,
+        "all_run_pass_rate": 0.25,
+        "conditional_scored_success_rate": 0.5,
+        "zero_total_rate_policy": "null",
         "inconclusive_excluded_from_success_rate": True,
+        "promotion_rate_policy": (
+            "consume evaluable_rate and all_run_pass_rate; never use "
+            "conditional_scored_success_rate alone"
+        ),
+    }
+
+    assert hidden_golden_module._aggregate_calibration_verdicts([]) == {
+        "total_count": 0,
+        "pass_count": 0,
+        "fail_count": 0,
+        "inconclusive_count": 0,
+        "inconclusive_reason_counts": {},
+        "scored_count": 0,
+        "evaluable_rate": None,
+        "all_run_pass_rate": None,
+        "conditional_scored_success_rate": None,
+        "zero_total_rate_policy": "null",
+        "inconclusive_excluded_from_success_rate": True,
+        "promotion_rate_policy": (
+            "consume evaluable_rate and all_run_pass_rate; never use "
+            "conditional_scored_success_rate alone"
+        ),
     }
 
 
@@ -1309,7 +1445,6 @@ def test_structured_relation_rubric_is_bound_by_frozen_judgment_hash() -> None:
         "required_relations": [
             {
                 "relation_id": "relation-observed-method",
-                "requirement_id": "req-observed-method",
                 "relationship": "support",
             }
         ],

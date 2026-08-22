@@ -34,11 +34,13 @@ from src.mod_agent.evidence.discovery_contract import (
     evidence_discovery_planning_schema,
     evidence_discovery_requirement_projection_schema,
     evidence_discovery_search_plan_schema,
+    validate_requirement_projection_actual,
 )
 from src.mod_agent.evidence.discovery_loop import (
     discovery_plan_budget_feasibility,
     _normalize_family_query_leads,
     _method_focus_comparison,
+    _parse_requirement_projection_action,
     _resolve_finish_fact_handles,
     _resolve_action_from_frozen_plan,
     _resolve_model_search_plan_action,
@@ -1694,6 +1696,10 @@ def test_actual_planning_finish_schema_requires_requirement_relationships() -> N
     actual_required = evidence_discovery_finish_schema(
         require_requirement_binding=True
     )["properties"]["evidence_conclusions"]["items"]["required"]
+    relation_required = evidence_discovery_finish_schema(
+        require_requirement_binding=True,
+        require_relation_binding=True,
+    )["properties"]["evidence_conclusions"]["items"]["required"]
 
     assert legacy_required == [
         "claim",
@@ -1704,6 +1710,12 @@ def test_actual_planning_finish_schema_requires_requirement_relationships() -> N
     assert actual_required == [
         *legacy_required,
         "requirement_ids",
+        "relationship",
+    ]
+    assert relation_required == [
+        *legacy_required,
+        "requirement_ids",
+        "relation_ids",
         "relationship",
     ]
 
@@ -2633,7 +2645,7 @@ def test_phase_2_calibration_adapter_uses_injected_actual_dependencies(
 
     assert pack.agent_discovery is not None
     assert pack.prompt_contract["actual_planning_required"] is True
-    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v7"
+    assert pack.prompt_contract["version"] == "agent_evidence_discovery_prompt_v8"
     source_observation = model.calls[1][-1]["content"]
     assert isinstance(source_observation, dict)
     assert source_observation["message_type"] == "source_evidence_observation"
@@ -4353,7 +4365,7 @@ def test_phase_2c_agent_only_early_termination_prompt_versions_are_closed() -> N
 
     for version in (
         "agent_evidence_discovery_prompt_v1",
-        "agent_evidence_discovery_prompt_v8",
+        "agent_evidence_discovery_prompt_v9",
     ):
         versioned = deepcopy(payload)
         versioned["prompt_contract"]["version"] = version
@@ -4639,6 +4651,13 @@ def test_requirement_projection_and_search_plan_use_bounded_schema_views(
             "planning_blocking_questions"
         ]
     ]
+    projection_response["requirement_projection"]["relation_definitions"] = [
+        {
+            "parent_requirement_indexes": [1],
+            "meaning": "Authentication completion observation identity.",
+            "investigation_question": "Which observation establishes completion?",
+        }
+    ]
     search_response = {
         "action": "plan_search",
         "planning_status": "search_planning_insufficient",
@@ -4697,6 +4716,21 @@ def test_requirement_projection_and_search_plan_use_bounded_schema_views(
     assert "requirement_id" not in json.dumps(projection_format.schema)
     assert "question_id" not in json.dumps(search_format.schema)
     assert "family_id" not in json.dumps(search_format.schema)
+    projection_schema_text = json.dumps(
+        projection_format.schema,
+        ensure_ascii=False,
+    ).lower()
+    assert "relation_definitions" in projection_schema_text
+    assert "relation_contract" not in projection_schema_text
+    for answer_field in (
+        "expected_relationship",
+        "expected_sufficiency",
+        "expected_control_action",
+        "target_symbol",
+        "target_path",
+        "hook_identity",
+    ):
+        assert answer_field not in projection_schema_text
     frozen_message = client.requests[1].messages[-1].content
     assert frozen_message["message_type"] == "frozen_requirement_projection"
     assert frozen_message["requirement_projection"]["planning_blocking_questions"] == [
@@ -4707,6 +4741,14 @@ def test_requirement_projection_and_search_plan_use_bounded_schema_views(
             ][0]["question"],
         }
     ]
+    relation_contract = frozen_message["requirement_projection"][
+        "relation_contract"
+    ]
+    assert relation_contract["schema_version"] == "request_relation_identity_v1"
+    assert len(relation_contract["relations"]) == 1
+    assert relation_contract["relations"][0]["parent_requirement_ids"] == [
+        "requirement-001"
+    ]
     assert "search_plan" not in frozen_message
     planning_rules = " ".join(frozen_message["rules"])
     assert "two to four distinct code-shaped technical vocabulary variants" in (
@@ -4714,6 +4756,367 @@ def test_requirement_projection_and_search_plan_use_bounded_schema_views(
     )
     assert "These leads are not facts or authority" in planning_rules
     assert "multiple inflections of the same lexical root" in planning_rules
+
+
+def _relation_projection_action(
+    *,
+    request: str = "Investigate two request-derived engineering requirements.",
+) -> tuple[str, dict[str, object]]:
+    action = {
+        "action": "project_requirements",
+        "planning_status": "ready",
+        "requirement_projection": {
+            "behavior_goal": "Investigate two bounded engineering relations.",
+            "trigger": None,
+            "actor": None,
+            "target": None,
+            "hard_constraints": [],
+            "forbidden_outcomes": [],
+            "implementation_hints": [],
+            "acceptance_signals": [],
+            "planning_blocking_questions": [
+                "Which current observation establishes requirement one?",
+                "Which current observation establishes requirement two?",
+            ],
+            "relation_definitions": [
+                {
+                    "parent_requirement_indexes": [1],
+                    "meaning": "First independent relation for requirement one.",
+                    "investigation_question": "How is relation one established?",
+                },
+                {
+                    "parent_requirement_indexes": [1],
+                    "meaning": "Second independent relation for requirement one.",
+                    "investigation_question": "How is relation two established?",
+                },
+                {
+                    "parent_requirement_indexes": [1],
+                    "meaning": "Third independent relation for requirement one.",
+                    "investigation_question": "How is relation three established?",
+                },
+                {
+                    "parent_requirement_indexes": [1, 2],
+                    "meaning": "One relation shared by both requirements.",
+                    "investigation_question": "How is the shared relation established?",
+                },
+            ],
+            "deferred_planning_or_runtime_questions": [],
+        },
+    }
+    return request, action
+
+
+def test_request_side_relation_identity_supports_required_cardinalities() -> None:
+    request, action = _relation_projection_action()
+    parsed = _parse_requirement_projection_action(
+        json.dumps(action),
+        natural_language_request=request,
+    )
+    projection = parsed["requirement_projection"]
+    assert isinstance(projection, dict)
+    validate_requirement_projection_actual(projection, require_meaningful=True)
+    contract = projection["relation_contract"]
+    relations = contract["relations"]
+
+    assert len(relations) == 4
+    assert len({row["relation_id"] for row in relations}) == 4
+    assert [row["parent_requirement_ids"] for row in relations[:3]] == [
+        ["requirement-001"],
+        ["requirement-001"],
+        ["requirement-001"],
+    ]
+    assert relations[3]["parent_requirement_ids"] == [
+        "requirement-001",
+        "requirement-002",
+    ]
+    assert [row["provenance"] for row in relations] == [
+        {"relation_index": 1},
+        {"relation_index": 2},
+        {"relation_index": 3},
+        {"relation_index": 4},
+    ]
+    serialized = json.dumps(contract, ensure_ascii=False)
+    for answer_field in (
+        "expected_relationship",
+        "expected_sufficiency",
+        "expected_control_action",
+        "golden",
+        "target_symbol",
+        "target_path",
+        "hook_identity",
+    ):
+        assert answer_field not in serialized.lower()
+
+    duplicate = deepcopy(projection)
+    duplicate_relations = duplicate["relation_contract"]["relations"]
+    duplicate_relations[1]["relation_id"] = duplicate_relations[0]["relation_id"]
+    with pytest.raises(ValueError, match="REQUEST_RELATION_IDENTITY_INVALID"):
+        validate_requirement_projection_actual(
+            duplicate,
+            require_meaningful=True,
+        )
+
+
+def _relation_bound_finish(
+    projection: dict[str, object],
+    *,
+    relation_ids: list[str],
+    relationship: str = "missing",
+    observation_ids: list[str] | None = None,
+) -> dict[str, object]:
+    relation_contract = projection["relation_contract"]
+    assert isinstance(relation_contract, dict)
+    relation_by_id = {
+        str(row["relation_id"]): row
+        for row in relation_contract["relations"]
+    }
+    requirement_ids = sorted(
+        {
+            str(parent)
+            for relation_id in relation_ids
+            if relation_id in relation_by_id
+            for parent in relation_by_id[relation_id]["parent_requirement_ids"]
+        }
+    )
+    return {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [
+            {
+                "claim": "Bounded relation disposition from one frozen observation.",
+                "claim_status": "inferred",
+                "observation_ids": list(
+                    ["obs-relation"] if observation_ids is None else observation_ids
+                ),
+                "limitations": ["Synthetic relation binding test."],
+                "requirement_ids": requirement_ids,
+                "relation_ids": relation_ids,
+                "relationship": relationship,
+            }
+        ],
+        "unresolved_questions": ["Runtime behavior remains unresolved."],
+        "missing_capabilities": [],
+    }
+
+
+def test_one_conclusion_can_bind_multiple_frozen_relation_identities() -> None:
+    request, action = _relation_projection_action()
+    parsed = _parse_requirement_projection_action(
+        json.dumps(action),
+        natural_language_request=request,
+    )
+    projection = parsed["requirement_projection"]
+    assert isinstance(projection, dict)
+    relations = projection["relation_contract"]["relations"]
+    relation_ids = [str(row["relation_id"]) for row in relations]
+    finish = _relation_bound_finish(projection, relation_ids=relation_ids)
+    observation = ToolObservation(
+        observation_id="obs-relation",
+        tool="search_dotnet_metadata",
+        source_id="current-interop",
+        summary="Bounded search completed.",
+        data={"methods": []},
+    )
+
+    _validate_finish(
+        finish,
+        {observation.observation_id: observation},
+        agent_discovery={"requirement_projection": projection},
+    )
+
+    conclusion = finish["evidence_conclusions"][0]
+    assert conclusion["relation_ids"] == relation_ids
+    assert conclusion["requirement_ids"] == [
+        "requirement-001",
+        "requirement-002",
+    ]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["empty", "duplicate", "unknown", "cross_projection"],
+)
+def test_relation_foreign_keys_fail_closed(mutation: str) -> None:
+    request, action = _relation_projection_action()
+    parsed = _parse_requirement_projection_action(
+        json.dumps(action),
+        natural_language_request=request,
+    )
+    projection = parsed["requirement_projection"]
+    assert isinstance(projection, dict)
+    relation_ids = [
+        str(row["relation_id"])
+        for row in projection["relation_contract"]["relations"]
+    ]
+    if mutation == "empty":
+        selected_ids: list[str] = []
+    elif mutation == "duplicate":
+        selected_ids = [relation_ids[0], relation_ids[0]]
+    elif mutation == "unknown":
+        selected_ids = ["relation_unknown"]
+    else:
+        other_request, other_action = _relation_projection_action(
+            request="A different frozen request identity."
+        )
+        other = _parse_requirement_projection_action(
+            json.dumps(other_action),
+            natural_language_request=other_request,
+        )
+        selected_ids = [
+            str(
+                other["requirement_projection"]["relation_contract"]["relations"][0][
+                    "relation_id"
+                ]
+            )
+        ]
+    finish = _relation_bound_finish(projection, relation_ids=selected_ids)
+    finish["evidence_conclusions"][0]["requirement_ids"] = ["requirement-001"]
+    observation = ToolObservation(
+        observation_id="obs-relation",
+        tool="search_dotnet_metadata",
+        source_id="current-interop",
+        summary="Bounded search completed.",
+        data={"methods": []},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="EVIDENCE_CONCLUSION_RELATION_BINDING_INVALID",
+    ):
+        _validate_finish(
+            finish,
+            {observation.observation_id: observation},
+            agent_discovery={"requirement_projection": projection},
+        )
+
+
+@pytest.mark.parametrize("relationship", ["support", "conflict", "missing"])
+def test_relation_disposition_requires_observation_grounding(
+    relationship: str,
+) -> None:
+    request, action = _relation_projection_action()
+    parsed = _parse_requirement_projection_action(
+        json.dumps(action),
+        natural_language_request=request,
+    )
+    projection = parsed["requirement_projection"]
+    assert isinstance(projection, dict)
+    relation_id = str(
+        projection["relation_contract"]["relations"][0]["relation_id"]
+    )
+    finish = _relation_bound_finish(
+        projection,
+        relation_ids=[relation_id],
+        relationship=relationship,
+        observation_ids=[],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="EVIDENCE_CONCLUSION_RELATION_GROUNDING_REQUIRED",
+    ):
+        _validate_finish(
+            finish,
+            {},
+            agent_discovery={"requirement_projection": projection},
+        )
+
+
+def test_relation_bound_evidence_pack_roundtrips_and_rejects_dangling_ref(
+    tmp_path: Path,
+) -> None:
+    request_text = "Investigate one request-derived transition relation."
+    _, projection_action = _relation_projection_action(request=request_text)
+    raw_projection = projection_action["requirement_projection"]
+    raw_projection["planning_blocking_questions"] = [
+        raw_projection["planning_blocking_questions"][0]
+    ]
+    raw_projection["relation_definitions"] = [
+        raw_projection["relation_definitions"][0]
+    ]
+    materialized = _parse_requirement_projection_action(
+        json.dumps(projection_action),
+        natural_language_request=request_text,
+    )["requirement_projection"]
+    relation_id = str(
+        materialized["relation_contract"]["relations"][0]["relation_id"]
+    )
+    search_response = {
+        "action": "plan_search",
+        "planning_status": "ready",
+        "search_plan": {
+            "investigations": [
+                {
+                    "engineering_question": raw_projection[
+                        "planning_blocking_questions"
+                    ][0],
+                    "initial_focus": True,
+                    "source_ids": ["current-interop"],
+                    "query_families": [
+                        {
+                            "queries": ["ObservedTransition", "TransitionState"],
+                            "evidence_need": "Find one current transition method.",
+                        }
+                    ],
+                }
+            ],
+            "initial_stop_condition": "Stop after exact relation grounding.",
+            "initial_expand_condition": "Expand only after an observed gap.",
+        },
+    }
+    finish = {
+        "action": "finish",
+        "decision": "needs_more_evidence",
+        "evidence_conclusions": [
+            {
+                "claim": "The inspected method supports the frozen transition relation.",
+                "claim_status": "inferred",
+                "observation_ids": ["obs-002"],
+                "limitations": ["Runtime behavior remains unverified."],
+                "requirement_ids": ["requirement-001"],
+                "relation_ids": [relation_id],
+                "relationship": "support",
+            }
+        ],
+        "unresolved_questions": ["Runtime behavior remains unresolved."],
+        "missing_capabilities": [],
+    }
+    model = _ScriptedModel(
+        [
+            projection_action,
+            search_response,
+            _family_selection("family-001-001"),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Inspect the observed transition method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            finish,
+        ]
+    )
+
+    result = EvidenceDiscoverySpecialist(
+        model=model,
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request=request_text,
+            require_actual_planning=True,
+            max_tool_calls=2,
+            max_model_steps=3,
+        )
+    )
+    payload = result.pack.to_artifact_payload()
+
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+    drifted = deepcopy(payload)
+    drifted["evidence_conclusions"][0]["relation_ids"] = ["relation_unknown"]
+    with pytest.raises(ValueError, match="Evidence conclusion relation ref is invalid"):
+        EvidencePack.from_artifact_payload(drifted)
 
 
 def _two_requirement_split_planning_responses() -> tuple[
@@ -4732,6 +5135,23 @@ def _two_requirement_split_planning_responses() -> tuple[
     projection["planning_blocking_questions"] = [
         item["question"]
         for item in projection["planning_blocking_questions"]
+    ]
+    projection["relation_definitions"] = [
+        {
+            "parent_requirement_indexes": [1],
+            "meaning": "Authentication completion relation.",
+            "investigation_question": "Which observation establishes completion?",
+        },
+        {
+            "parent_requirement_indexes": [2],
+            "meaning": "Audit publication relation.",
+            "investigation_question": "Which observation establishes publication?",
+        },
+        {
+            "parent_requirement_indexes": [1, 2],
+            "meaning": "Completion-to-publication boundary relation.",
+            "investigation_question": "How are completion and publication connected?",
+        },
     ]
     projection_response = {
         "action": "project_requirements",
@@ -4809,6 +5229,14 @@ def _four_requirement_search_plan_responses() -> tuple[
             "implementation_hints": [],
             "acceptance_signals": [],
             "planning_blocking_questions": questions,
+            "relation_definitions": [
+                {
+                    "parent_requirement_indexes": [index],
+                    "meaning": f"Bounded surface relation {index}.",
+                    "investigation_question": question,
+                }
+                for index, question in enumerate(questions, 1)
+            ],
             "deferred_planning_or_runtime_questions": [],
         },
     }
@@ -5274,7 +5702,7 @@ def test_two_step_discovery_is_selected_by_model_and_derived_from_observation(
     assert result.pack.budget_summary["total_discovery_message_bytes"] == sum(
         result.pack.budget_summary["discovery_message_bytes_by_turn"]
     )
-    assert result.pack.budget_summary["total_discovery_message_bytes"] < 18_000
+    assert result.pack.budget_summary["total_discovery_message_bytes"] < 18_500
 
 
 def test_metadata_method_view_compares_observed_methods_with_initial_focus() -> None:
@@ -6055,7 +6483,7 @@ def test_repeated_method_context_is_deduplicated_and_byte_accounted(
     assert final_compact["observed_method_catalog"] == []
     assert len(final_compact["inspection_catalog"]) == 1
     assert final_compact_bytes < 2_700
-    assert result.pack.budget_summary["total_discovery_message_bytes"] < 50_000
+    assert result.pack.budget_summary["total_discovery_message_bytes"] < 52_000
     assert result.pack.budget_summary["total_discovery_message_bytes"] == sum(
         result.pack.budget_summary["discovery_message_bytes_by_turn"]
     )

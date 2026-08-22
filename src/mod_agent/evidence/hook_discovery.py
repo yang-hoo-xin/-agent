@@ -1278,6 +1278,19 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
         str(value["requirement_id"])
         for value in projection["planning_blocking_questions"]
     }
+    relation_contract = projection.get("relation_contract")
+    relation_by_id: dict[str, Mapping[str, Any]] = {}
+    if isinstance(relation_contract, Mapping):
+        relation_rows = relation_contract.get("relations")
+        if not isinstance(relation_rows, list):
+            raise HookDiscoverySemanticsError(
+                "Request relation contract relations are invalid."
+            )
+        relation_by_id = {
+            str(value["relation_id"]): value
+            for value in relation_rows
+            if isinstance(value, Mapping) and value.get("relation_id")
+        }
     question_ids = {
         str(value["question_id"])
         for value in search_plan["engineering_questions"]
@@ -1622,6 +1635,34 @@ def _validate_agent_trace_refs(pack: "EvidencePack") -> None:
             if not isinstance(refs, list) or not set(refs).issubset(observation_ids):
                 raise HookDiscoverySemanticsError(
                     "Evidence conclusion observation ref is invalid."
+                )
+    if relation_by_id:
+        for conclusion in pack.evidence_conclusions:
+            relation_refs = conclusion.get("relation_ids")
+            requirement_refs = conclusion.get("requirement_ids")
+            observation_refs = conclusion.get("observation_ids")
+            if (
+                not isinstance(relation_refs, list)
+                or not relation_refs
+                or len(relation_refs) != len(set(relation_refs))
+                or any(value not in relation_by_id for value in relation_refs)
+                or not isinstance(requirement_refs, list)
+                or not isinstance(observation_refs, list)
+                or not observation_refs
+            ):
+                raise HookDiscoverySemanticsError(
+                    "Evidence conclusion relation ref is invalid."
+                )
+            expected_parent_ids = {
+                str(parent)
+                for relation_id in relation_refs
+                for parent in relation_by_id[str(relation_id)][
+                    "parent_requirement_ids"
+                ]
+            }
+            if set(requirement_refs) != expected_parent_ids:
+                raise HookDiscoverySemanticsError(
+                    "Evidence conclusion relation parent binding drifted."
                 )
 
 

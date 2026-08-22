@@ -235,11 +235,12 @@ def _calibration_reliability_gate(
         if isinstance(row, dict) and row.get("requirement_id")
     }
     covered_requirement_ids: set[str] = set()
-    actual_relationships_by_requirement: dict[str, set[str]] = {}
+    actual_relationships_by_relation: dict[str, set[str]] = {}
     actual_observation_refs_by_binding: dict[tuple[str, str], set[str]] = {}
     for conclusion in pack.evidence_conclusions:
         relationship = conclusion.get("relationship")
         refs = conclusion.get("requirement_ids")
+        relation_refs = conclusion.get("relation_ids")
         observation_refs = conclusion.get("observation_ids")
         if relationship not in _RELATIONSHIP_VALUES:
             continue
@@ -248,11 +249,15 @@ def _calibration_reliability_gate(
                 if not isinstance(value, str) or not value:
                     continue
                 covered_requirement_ids.add(value)
-                actual_relationships_by_requirement.setdefault(value, set()).add(
-                    str(relationship)
-                )
+        if isinstance(relation_refs, list):
+            for relation_id in relation_refs:
+                if not isinstance(relation_id, str) or not relation_id:
+                    continue
+                actual_relationships_by_relation.setdefault(
+                    relation_id, set()
+                ).add(str(relationship))
                 actual_observation_refs_by_binding.setdefault(
-                    (value, str(relationship)), set()
+                    (relation_id, str(relationship)), set()
                 ).update(
                     str(item)
                     for item in observation_refs or []
@@ -278,8 +283,8 @@ def _calibration_reliability_gate(
 
     relation_score = _score_structured_relations(
         expected=expected,
-        requirement_ids=requirement_ids,
-        actual_relationships_by_requirement=actual_relationships_by_requirement,
+        projection=projection,
+        actual_relationships_by_relation=actual_relationships_by_relation,
         actual_observation_refs_by_binding=actual_observation_refs_by_binding,
     )
     if relation_score["status"] != "scored":
@@ -386,8 +391,8 @@ def _calibration_reliability_gate(
 def _score_structured_relations(
     *,
     expected: Mapping[str, Any],
-    requirement_ids: set[str],
-    actual_relationships_by_requirement: Mapping[str, set[str]],
+    projection: object,
+    actual_relationships_by_relation: Mapping[str, set[str]],
     actual_observation_refs_by_binding: Mapping[tuple[str, str], set[str]],
 ) -> dict[str, Any]:
     rubric = expected.get("structured_relation_rubric")
@@ -399,35 +404,60 @@ def _score_structured_relations(
             "required_relation_results": [],
             "forbidden_hits": [],
             "unexpected_actual_relations": [],
-            "missing_requirement_mappings": sorted(requirement_ids),
+            "missing_relation_mappings": [],
         }
     if not isinstance(rubric, dict):
         raise HiddenGoldenCalibrationError(
             "HIDDEN_GOLDEN_RELATION_RUBRIC_SHAPE_INVALID"
         )
+    relation_contract = (
+        projection.get("relation_contract")
+        if isinstance(projection, dict)
+        else None
+    )
+    relation_definitions = (
+        relation_contract.get("relations")
+        if isinstance(relation_contract, dict)
+        else None
+    )
+    if not isinstance(relation_definitions, list) or not relation_definitions:
+        return {
+            "status": "unscored",
+            "reason_code": "ACTUAL_RELATION_IDENTITY_CONTRACT_MISSING",
+            "matches": False,
+            "required_relation_results": [],
+            "forbidden_hits": [],
+            "unexpected_actual_relations": [],
+            "missing_relation_mappings": [],
+        }
+    relation_by_id = {
+        str(row["relation_id"]): row
+        for row in relation_definitions
+        if isinstance(row, dict) and row.get("relation_id")
+    }
     required_rows = rubric["required_relations"]
     forbidden_rows = rubric["forbidden_relations"]
-    required_expected_requirement_ids = {
-        str(row["requirement_id"])
+    required_expected_relation_ids = {
+        str(row["relation_id"])
         for row in required_rows
         if isinstance(row, dict)
     }
-    all_expected_requirement_ids = {
-        str(row["requirement_id"])
+    all_expected_relation_ids = {
+        str(row["relation_id"])
         for row in (*required_rows, *forbidden_rows)
         if isinstance(row, dict)
     }
-    unknown_requirement_ids = sorted(
-        all_expected_requirement_ids - requirement_ids
+    unknown_relation_ids = sorted(
+        all_expected_relation_ids - set(relation_by_id)
     )
-    if unknown_requirement_ids:
+    if unknown_relation_ids:
         raise HiddenGoldenCalibrationError(
-            "HIDDEN_GOLDEN_RELATION_REQUIREMENT_IDENTITY_MISMATCH"
+            "HIDDEN_GOLDEN_RELATION_IDENTITY_MISMATCH"
         )
-    missing_requirement_mappings = sorted(
-        requirement_ids - required_expected_requirement_ids
+    missing_relation_mappings = sorted(
+        set(relation_by_id) - required_expected_relation_ids
     )
-    if missing_requirement_mappings:
+    if missing_relation_mappings:
         return {
             "status": "unscored",
             "reason_code": "EXPECTED_STRUCTURED_RELATION_MAPPING_INCOMPLETE",
@@ -435,48 +465,48 @@ def _score_structured_relations(
             "required_relation_results": [],
             "forbidden_hits": [],
             "unexpected_actual_relations": [],
-            "missing_requirement_mappings": missing_requirement_mappings,
+            "missing_relation_mappings": missing_relation_mappings,
         }
 
     expected_bindings = {
-        (str(row["requirement_id"]), str(row["relationship"]))
+        (str(row["relation_id"]), str(row["relationship"]))
         for row in required_rows
         if isinstance(row, dict)
     }
     actual_bindings = {
-        (requirement_id, relationship)
-        for requirement_id, relationships in actual_relationships_by_requirement.items()
-        if requirement_id in requirement_ids
+        (relation_id, relationship)
+        for relation_id, relationships in actual_relationships_by_relation.items()
+        if relation_id in relation_by_id
         for relationship in relationships
     }
     required_relation_results = [
         {
             "relation_id": str(row["relation_id"]),
-            "requirement_id": str(row["requirement_id"]),
+            "parent_requirement_ids": list(
+                relation_by_id[str(row["relation_id"])][
+                    "parent_requirement_ids"
+                ]
+            ),
             "expected_relationship": str(row["relationship"]),
             "actual_observation_refs": sorted(
                 actual_observation_refs_by_binding.get(
                     (
-                        str(row["requirement_id"]),
+                        str(row["relation_id"]),
                         str(row["relationship"]),
                     ),
                     set(),
                 )
             ),
-            "grounding_required": str(row["relationship"])
-            in {"support", "conflict"},
+            "grounding_required": True,
             "matched": bool(
                 str(row["relationship"])
-                in actual_relationships_by_requirement.get(
-                    str(row["requirement_id"]), set()
+                in actual_relationships_by_relation.get(
+                    str(row["relation_id"]), set()
                 )
-                and (
-                    str(row["relationship"]) == "missing"
-                    or actual_observation_refs_by_binding.get(
-                        (
-                            str(row["requirement_id"]),
-                            str(row["relationship"]),
-                        )
+                and actual_observation_refs_by_binding.get(
+                    (
+                        str(row["relation_id"]),
+                        str(row["relationship"]),
                     )
                 )
             ),
@@ -487,12 +517,11 @@ def _score_structured_relations(
     forbidden_hits = [
         {
             "relation_id": str(row["relation_id"]),
-            "requirement_id": str(row["requirement_id"]),
             "relationship": str(row["relationship"]),
             "actual_observation_refs": sorted(
                 actual_observation_refs_by_binding.get(
                     (
-                        str(row["requirement_id"]),
+                        str(row["relation_id"]),
                         str(row["relationship"]),
                     ),
                     set(),
@@ -502,21 +531,21 @@ def _score_structured_relations(
         for row in forbidden_rows
         if isinstance(row, dict)
         and str(row["relationship"])
-        in actual_relationships_by_requirement.get(
-            str(row["requirement_id"]), set()
+        in actual_relationships_by_relation.get(
+            str(row["relation_id"]), set()
         )
     ]
     unexpected_actual_relations = [
         {
-            "requirement_id": requirement_id,
+            "relation_id": relation_id,
             "relationship": relationship,
             "actual_observation_refs": sorted(
                 actual_observation_refs_by_binding.get(
-                    (requirement_id, relationship), set()
+                    (relation_id, relationship), set()
                 )
             ),
         }
-        for requirement_id, relationship in sorted(
+        for relation_id, relationship in sorted(
             actual_bindings - expected_bindings
         )
     ]
@@ -532,7 +561,7 @@ def _score_structured_relations(
         "required_relation_results": required_relation_results,
         "forbidden_hits": forbidden_hits,
         "unexpected_actual_relations": unexpected_actual_relations,
-        "missing_requirement_mappings": [],
+        "missing_relation_mappings": [],
     }
 
 
@@ -540,6 +569,7 @@ def _aggregate_calibration_verdicts(
     reports: list[Mapping[str, Any]],
 ) -> dict[str, Any]:
     counts = {"pass": 0, "fail": 0, "inconclusive": 0}
+    inconclusive_reason_counts: dict[str, int] = {}
     for report in reports:
         reliability = report.get("reliability", report)
         if not isinstance(reliability, Mapping):
@@ -552,19 +582,41 @@ def _aggregate_calibration_verdicts(
                 "HIDDEN_GOLDEN_CAPABILITY_VERDICT_INVALID"
             )
         counts[str(verdict)] += 1
+        if verdict == "inconclusive":
+            reasons = reliability.get("reason_codes")
+            normalized_reasons = (
+                sorted({str(value) for value in reasons if isinstance(value, str)})
+                if isinstance(reasons, list) and reasons
+                else ["UNSPECIFIED_INCONCLUSIVE"]
+            )
+            for reason in normalized_reasons:
+                inconclusive_reason_counts[reason] = (
+                    inconclusive_reason_counts.get(reason, 0) + 1
+                )
     scored_count = counts["pass"] + counts["fail"]
+    total_count = len(reports)
     return {
-        "total_count": len(reports),
+        "total_count": total_count,
         "pass_count": counts["pass"],
         "fail_count": counts["fail"],
         "inconclusive_count": counts["inconclusive"],
+        "inconclusive_reason_counts": inconclusive_reason_counts,
         "scored_count": scored_count,
-        "success_rate": (
+        "evaluable_rate": (
+            scored_count / total_count if total_count else None
+        ),
+        "all_run_pass_rate": (
+            counts["pass"] / total_count if total_count else None
+        ),
+        "conditional_scored_success_rate": (
             counts["pass"] / scored_count if scored_count else None
         ),
-        "success_rate_numerator": counts["pass"],
-        "success_rate_denominator": scored_count,
+        "zero_total_rate_policy": "null",
         "inconclusive_excluded_from_success_rate": True,
+        "promotion_rate_policy": (
+            "consume evaluable_rate and all_run_pass_rate; never use "
+            "conditional_scored_success_rate alone"
+        ),
     }
 
 
@@ -641,7 +693,6 @@ def _validate_structured_relation_rubric(value: object) -> None:
         raise HiddenGoldenCalibrationError(
             "HIDDEN_GOLDEN_RELATION_RUBRIC_VERSION_INVALID"
         )
-    relation_ids: set[str] = set()
     relation_bindings: set[tuple[str, str]] = set()
     for field in ("required_relations", "forbidden_relations"):
         rows = value.get(field)
@@ -652,31 +703,26 @@ def _validate_structured_relation_rubric(value: object) -> None:
         for row in rows:
             if not isinstance(row, dict) or set(row) != {
                 "relation_id",
-                "requirement_id",
                 "relationship",
             }:
                 raise HiddenGoldenCalibrationError(
                     "HIDDEN_GOLDEN_RELATION_RUBRIC_ROW_INVALID"
                 )
             relation_id = row.get("relation_id")
-            requirement_id = row.get("requirement_id")
             relationship = row.get("relationship")
             if (
                 not isinstance(relation_id, str)
                 or not relation_id.strip()
-                or not isinstance(requirement_id, str)
-                or not requirement_id.strip()
                 or relationship not in _RELATIONSHIP_VALUES
             ):
                 raise HiddenGoldenCalibrationError(
                     "HIDDEN_GOLDEN_RELATION_RUBRIC_IDENTITY_INVALID"
                 )
-            binding = (requirement_id, str(relationship))
-            if relation_id in relation_ids or binding in relation_bindings:
+            binding = (relation_id, str(relationship))
+            if binding in relation_bindings:
                 raise HiddenGoldenCalibrationError(
                     "HIDDEN_GOLDEN_RELATION_RUBRIC_DUPLICATE"
                 )
-            relation_ids.add(relation_id)
             relation_bindings.add(binding)
 
 

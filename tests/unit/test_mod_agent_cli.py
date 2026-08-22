@@ -350,7 +350,6 @@ class _CliInjectedAgentAdapter:
                         arguments={
                             "source_id": "cli-source",
                             "family_id": "movement-behavior",
-                            "derived_from_observation_ids": [],
                         },
                     ),
                 ),

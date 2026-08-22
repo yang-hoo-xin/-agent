@@ -13,6 +13,7 @@ from .discovery_contract import (
     EVIDENCE_DISCOVERY_PROMPT_CONTRACT_VERSION,
     EVIDENCE_DISCOVERY_RESULT_KINDS,
     REQUIREMENT_PROJECTION_SCHEMA_VERSION,
+    REQUEST_RELATION_CONTRACT_VERSION,
     SEARCH_PLAN_SCHEMA_VERSION,
     _search_plan_family_dispatch_identities,
     EvidenceDiscoveryModel,
@@ -28,6 +29,7 @@ from .discovery_contract import (
     evidence_discovery_search_plan_schema,
     normalize_agent_discovery_planning_actual,
     observed_conclusion_matches_bound_fact,
+    request_relation_identity,
     validate_agent_discovery_actual,
     validate_requirement_projection_actual,
 )
@@ -217,6 +219,7 @@ class EvidenceDiscoverySpecialist:
                             "Implementation hints are investigation_lead values, not facts or decisions.",
                             "planning_blocking_questions are engineering requirements that authorized actual evidence must answer before implementation planning; they are not user ambiguities or expected missing facts.",
                             "A ready projection states at least one engineering requirement for actual evidence to answer. Deterministic code assigns stable identities after this turn.",
+                            "For a ready projection, return one to sixteen request-derived relation_definitions. Each has 1-based parent_requirement_indexes, one bounded investigation meaning, and one investigation_question. Multiple relations may share a requirement and one relation may reference multiple requirements. Do not assign identities; deterministic code freezes them before evidence execution.",
                             "For a request where an observable event or state X leads to a downstream effect Y, planning_blocking_questions must ask only how X is observed and how the stated actor, input, and target relate to X. Defer presentation or implementation of Y, the X-to-Y system connection, deduplication, boundary regression, and final Runtime correctness. A question about attaching, displaying, playing, rendering, or implementing Y is not a planning blocker for this first slice.",
                             "Do not include a final Hook identity, Golden, expected evidence, historical answer, or prior output.",
                             "Do not produce engineering_questions, source roles, lanes, query families, tools, or search terms in this turn.",
@@ -278,7 +281,8 @@ class EvidenceDiscoverySpecialist:
                     )
             else:
                 projection_action = _parse_requirement_projection_action(
-                    raw_projection_or_legacy_plan
+                    raw_projection_or_legacy_plan,
+                    natural_language_request=request.natural_language_request,
                 )
                 frozen_projection = projection_action["requirement_projection"]
                 if projection_action["planning_status"] == "requirement_projection_insufficient":
@@ -570,6 +574,9 @@ class EvidenceDiscoverySpecialist:
                             "select another family only if the frozen plan already contains "
                             "one not-yet-executed family bound to that same question; "
                             "otherwise stop without inventing or rewriting a family_id."
+                            " Every finish conclusion must cite one or more relation_ids "
+                            "from the frozen request relation contract; deterministic "
+                            "validation binds those ids to their parent requirements."
                         ),
                     },
                 },
@@ -2183,7 +2190,10 @@ def _build_turn_messages(
                         "conflicting_evidence",
                     ],
                     "required_finish_schema": evidence_discovery_finish_schema(
-                        require_requirement_binding=request.require_actual_planning
+                        require_requirement_binding=request.require_actual_planning,
+                        require_relation_binding=_relation_binding_required(
+                            agent_discovery
+                        ),
                     ),
                     "decision_constraints": (
                         evidence_discovery_finish_decision_constraints()
@@ -2191,6 +2201,9 @@ def _build_turn_messages(
                     "repair_focus": _finish_validation_repair_focus(
                         finish_validation_error,
                         require_requirement_binding=request.require_actual_planning,
+                        require_relation_binding=_relation_binding_required(
+                            agent_discovery
+                        ),
                     ),
                     "available_inspection_observation_ids": (
                         _inspection_observation_ids(observations)
@@ -2621,6 +2634,7 @@ def _finish_validation_repair_focus(
     error_code: str,
     *,
     require_requirement_binding: bool = False,
+    require_relation_binding: bool = False,
 ) -> dict[str, object]:
     if error_code == "DISCOVERY_DECISION_INVALID":
         return {
@@ -2648,6 +2662,9 @@ def _finish_validation_repair_focus(
                     "relationship": "support | conflict | missing",
                 }
             )
+        if require_relation_binding:
+            required_keys.insert(-1, "relation_ids")
+            field_types["relation_ids"] = "array of frozen request relation ids"
         return {
             "field": "evidence_conclusions[]",
             "required_keys": required_keys,
@@ -2669,6 +2686,25 @@ def _finish_validation_repair_focus(
                 "For the frozen actual plan, add non-empty requirement_ids drawn "
                 "exactly from planning_blocking_questions and set relationship to "
                 "support, conflict, or missing."
+            ),
+        }
+    if error_code == "EVIDENCE_CONCLUSION_RELATION_BINDING_INVALID":
+        return {
+            "field": "evidence_conclusions[].relation_ids",
+            "requirement": (
+                "Cite one or more exact relation_ids from the frozen request relation "
+                "contract. requirement_ids must equal the union of those relations' "
+                "parent_requirement_ids. Do not infer ids from text."
+            ),
+        }
+    if error_code == "EVIDENCE_CONCLUSION_RELATION_GROUNDING_REQUIRED":
+        return {
+            "field": "evidence_conclusions[].observation_ids",
+            "requirement": (
+                "Every relation-bound support, conflict, or missing conclusion must "
+                "cite at least one frozen observation. A missing relationship requires "
+                "a bounded searched-absence observation; empty observation_ids never "
+                "prove absence."
             ),
         }
     if error_code == "OBSERVED_CONCLUSION_CANONICAL_FACT_MISMATCH":
@@ -2695,6 +2731,20 @@ def _finish_validation_repair_focus(
         "field": "finish",
         "requirement": "Match required_finish_schema exactly.",
     }
+
+
+def _relation_binding_required(
+    agent_discovery: dict[str, object] | None,
+) -> bool:
+    projection = (
+        agent_discovery.get("requirement_projection")
+        if isinstance(agent_discovery, dict)
+        else None
+    )
+    return bool(
+        isinstance(projection, dict)
+        and isinstance(projection.get("relation_contract"), dict)
+    )
 
 
 def _compact_step(
@@ -2992,7 +3042,11 @@ def _parse_planning_action(raw: str) -> dict[str, object]:
     return action
 
 
-def _parse_requirement_projection_action(raw: str) -> dict[str, object]:
+def _parse_requirement_projection_action(
+    raw: str,
+    *,
+    natural_language_request: str,
+) -> dict[str, object]:
     try:
         action = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -3019,6 +3073,7 @@ def _parse_requirement_projection_action(raw: str) -> dict[str, object]:
         "implementation_hints",
         "acceptance_signals",
         "planning_blocking_questions",
+        "relation_definitions",
         "deferred_planning_or_runtime_questions",
     }
     if set(projection) != required_projection_fields:
@@ -3029,8 +3084,70 @@ def _parse_requirement_projection_action(raw: str) -> dict[str, object]:
         for question in question_texts
     ):
         raise ValueError("MODEL_PLANNING_BLOCKING_QUESTIONS_INVALID")
+    model_relations = projection.get("relation_definitions")
+    if not isinstance(model_relations, list):
+        raise ValueError("MODEL_RELATION_DEFINITIONS_INVALID")
+    if action["planning_status"] == "ready" and not model_relations:
+        raise ValueError("MODEL_RELATION_DEFINITIONS_REQUIRED")
+    if len(model_relations) > 16:
+        raise ValueError("MODEL_RELATION_DEFINITION_BUDGET_EXCEEDED")
+    request_sha256 = hashlib.sha256(
+        natural_language_request.strip().encode("utf-8")
+    ).hexdigest()
+    projection_sha256 = _json_sha256(projection)
+    materialized_relations: list[dict[str, object]] = []
+    covered_requirement_indexes: set[int] = set()
+    for relation_index, relation in enumerate(model_relations, 1):
+        if not isinstance(relation, dict) or set(relation) != {
+            "parent_requirement_indexes",
+            "meaning",
+            "investigation_question",
+        }:
+            raise ValueError("MODEL_RELATION_DEFINITION_SHAPE_INVALID")
+        parent_indexes = relation.get("parent_requirement_indexes")
+        if (
+            not isinstance(parent_indexes, list)
+            or not parent_indexes
+            or len(parent_indexes) != len(set(parent_indexes))
+            or any(
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or not 1 <= index <= len(question_texts)
+                for index in parent_indexes
+            )
+            or not isinstance(relation.get("meaning"), str)
+            or not str(relation["meaning"]).strip()
+            or not isinstance(relation.get("investigation_question"), str)
+            or not str(relation["investigation_question"]).strip()
+        ):
+            raise ValueError("MODEL_RELATION_DEFINITION_INVALID")
+        covered_requirement_indexes.update(int(index) for index in parent_indexes)
+        materialized_relations.append(
+            {
+                "relation_id": request_relation_identity(
+                    request_sha256=request_sha256,
+                    projection_sha256=projection_sha256,
+                    relation_index=relation_index,
+                ),
+                "parent_requirement_ids": [
+                    f"requirement-{int(index):03d}" for index in parent_indexes
+                ],
+                "meaning": str(relation["meaning"]).strip(),
+                "investigation_question": str(
+                    relation["investigation_question"]
+                ).strip(),
+                "provenance": {"relation_index": relation_index},
+            }
+        )
+    if action["planning_status"] == "ready" and covered_requirement_indexes != set(
+        range(1, len(question_texts) + 1)
+    ):
+        raise ValueError("MODEL_RELATION_REQUIREMENT_COVERAGE_INVALID")
+    persistent_projection = {
+        key: value for key, value in projection.items() if key != "relation_definitions"
+    }
     materialized_projection = {
-        **projection,
+        **persistent_projection,
         "schema_version": REQUIREMENT_PROJECTION_SCHEMA_VERSION,
         "planning_blocking_questions": [
             {
@@ -3039,6 +3156,18 @@ def _parse_requirement_projection_action(raw: str) -> dict[str, object]:
             }
             for index, question in enumerate(question_texts, start=1)
         ],
+        **(
+            {
+                "relation_contract": {
+                    "schema_version": REQUEST_RELATION_CONTRACT_VERSION,
+                    "request_sha256": request_sha256,
+                    "projection_sha256": projection_sha256,
+                    "relations": materialized_relations,
+                }
+            }
+            if materialized_relations
+            else {}
+        ),
     }
     validate_requirement_projection_actual(
         materialized_projection,
@@ -4294,10 +4423,17 @@ def _validate_finish(
             "claim", "claim_status", "observation_ids", "limitations"
         }
         planning_fields = {"requirement_ids", "relationship"}
+        relation_fields = {"relation_ids"}
+        relation_binding_required = _relation_binding_required(agent_discovery)
+        allowed_shapes = {
+            frozenset(base_fields),
+            frozenset(base_fields | planning_fields),
+        }
+        if relation_binding_required:
+            allowed_shapes = {frozenset(base_fields | planning_fields | relation_fields)}
         if (
             not isinstance(conclusion, dict)
-            or frozenset(conclusion)
-            not in {frozenset(base_fields), frozenset(base_fields | planning_fields)}
+            or frozenset(conclusion) not in allowed_shapes
         ):
             raise ValueError("EVIDENCE_CONCLUSION_SHAPE_INVALID")
         if not str(conclusion.get("claim") or "").strip():
@@ -4317,6 +4453,8 @@ def _validate_finish(
             raise ValueError("EVIDENCE_CONCLUSION_FIELDS_INVALID")
         if len(refs) != len(set(refs)):
             raise ValueError("DUPLICATE_CONCLUSION_OBSERVATION_REFERENCE")
+        if relation_binding_required and not refs:
+            raise ValueError("EVIDENCE_CONCLUSION_RELATION_GROUNDING_REQUIRED")
         if status in {"observed", "inferred"} and (
             not refs or any(ref not in observations_by_id for ref in refs)
         ):
@@ -4347,6 +4485,40 @@ def _validate_finish(
                 or relationship not in {"support", "conflict", "missing"}
             ):
                 raise ValueError("EVIDENCE_CONCLUSION_REQUIREMENT_BINDING_INVALID")
+            if relation_binding_required:
+                relation_contract = projection.get("relation_contract")
+                relation_definitions = (
+                    relation_contract.get("relations")
+                    if isinstance(relation_contract, dict)
+                    else None
+                )
+                if not isinstance(relation_definitions, list):
+                    raise ValueError("REQUEST_RELATION_CONTRACT_SHAPE_INVALID")
+                relation_by_id = {
+                    str(item["relation_id"]): item
+                    for item in relation_definitions
+                    if isinstance(item, dict) and item.get("relation_id")
+                }
+                relation_refs = conclusion.get("relation_ids")
+                if (
+                    not isinstance(relation_refs, list)
+                    or not relation_refs
+                    or len(relation_refs) != len(set(relation_refs))
+                    or any(value not in relation_by_id for value in relation_refs)
+                ):
+                    raise ValueError("EVIDENCE_CONCLUSION_RELATION_BINDING_INVALID")
+                parent_requirement_ids = {
+                    str(parent)
+                    for relation_id in relation_refs
+                    for parent in relation_by_id[str(relation_id)][
+                        "parent_requirement_ids"
+                    ]
+                }
+                if set(refs) != parent_requirement_ids:
+                    raise ValueError("EVIDENCE_CONCLUSION_RELATION_BINDING_INVALID")
+                observation_refs = conclusion.get("observation_ids")
+                if not isinstance(observation_refs, list) or not observation_refs:
+                    raise ValueError("EVIDENCE_CONCLUSION_RELATION_GROUNDING_REQUIRED")
     inspection_observation_ids = {
         observation_id
         for observation_id, observation in observations_by_id.items()
@@ -4535,7 +4707,10 @@ def _system_contract() -> dict[str, object]:
                     ),
                     (
                         "For an actual frozen plan, every conclusion names exact "
-                        "requirement_ids and one support, conflict, or missing relationship."
+                        "requirement_ids, frozen relation_ids, and one support, conflict, "
+                        "or missing relationship. A missing relation cites a bounded "
+                        "searched-absence observation; empty observation_ids never prove "
+                        "absence."
                     ),
                 ],
             },
