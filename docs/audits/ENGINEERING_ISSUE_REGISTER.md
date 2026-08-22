@@ -176,15 +176,15 @@ title: Ollama service default context was insufficient for a bounded discovery t
 scope: local Agent-turn execution with qwen3:4b-instruct
 owner: run-level Ollama context configuration
 evidence_level: real_run
-severity: S2
-decision_priority: P3
-status: mitigated_for_current_scope
+severity: S1
+decision_priority: P0
+status: active
 first_seen: 2026-08-21 BHF run001
-latest_evidence: 6553 input tokens exceeded the service-default 4096 context; run002 and later bounded runs sent options.num_ctx=16384
-current_effect: no current context admission blocker when the explicit 16384 run setting is used
-workaround: use the existing finite run-level context_window setting without changing product defaults
+latest_evidence: Wall relation-aware actual wall_relation_actual_20260822_001 reached model_call_count=2 and then stopped before HTTP at provider_request_gate because provider_body_utf8_bytes 12977 plus num_predict 4096 required 17073 under provider_body_utf8_proxy_plus_output_budget_v1, exceeding explicit num_ctx 16384; expected_reads=0 and no EvidencePack was committed
+current_effect: the relation-aware Wall actual is blocked before its second Provider HTTP call; explicit run-level num_ctx 16384 is no longer sufficient for the current request shape
+workaround: preserve the failed attempt and use only the separately authorized run-level num_ctx 32768 attempt with the same model, Prompt, Schema, output budget, and per-call admission; do not change product defaults
 reopen_trigger: a new authorized run fails context admission with an explicit, model-supported context setting
-next_action: freeze request/input/output/context facts before considering any change
+next_action: execute one separately authorized Wall attempt at run-level num_ctx 32768; if any call is rejected, freeze that exact stage/body/admission and stop without another automatic context increase
 last_reviewed: 2026-08-22
 ```
 
@@ -378,13 +378,15 @@ owner: existing Runner/attempt policy; no model gateway or recovery platform
 evidence_level: real_run
 severity: S1
 decision_priority: P2
-status: deferred
+status: observed
 first_seen: long BHF and WallCrawler runs relied on bounded no-retry protocol and manual waiting
-latest_evidence: immutable attempts and fail-closed stops preserve truth, but no unified cancellation/resume/fallback policy exists
-current_effect: calibration correctness remains safe, but Public Alpha cannot promise graceful operational recovery
-workaround: fail closed, preserve immutable attempts, and require explicit new authorization
+latest_evidence: Wall relation-aware actual wall_relation_actual_20260822_001 was rejected before its second Provider HTTP call at the per-call context gate and required an explicit user-authorized new attempt at run-level num_ctx 32768; the original failure remains preserved and no silent retry or model switch occurred
+current_effect: the current calibration path demonstrates fail-closed detection and manual policy-driven fallback, but the Runner still lacks a productized recovery policy and Public Alpha cannot promise graceful operational recovery
+workaround: fail closed, preserve immutable attempts, classify the failure, and require explicit new-attempt authorization; the current 32768 attempt is one bounded manual fallback instance, not an automatic recovery platform
 reopen_trigger: Internal Alpha completion checkpoint, or a real transient provider/tool failure requiring user-visible recovery
-next_action: after Internal Alpha, add the minimum policy to the existing Runner/attempt owner
+trigger_state: satisfied_by_wall_relation_actual_20260822_001_provider_admission_reject
+implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
+next_action: keep the immediate recovery manual and bounded; after Internal Alpha, add the minimum policy to the existing Runner/attempt owner using this failure as the first context-admission recovery sample
 last_reviewed: 2026-08-22
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
