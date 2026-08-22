@@ -354,16 +354,19 @@ severity: S2
 decision_priority: P2
 status: observed
 first_seen: WallCrawler run001 post-commit ArtifactRef.to_dict missing
-latest_evidence: read-only Store projection confirmed the committed FeatureSpec and failure-attempt hashes after the console projection failed
-current_effect: Store truth survives, but a user-facing terminal/report can fail after a successful commit
-workaround: explicit field projection followed by Store readback
+latest_evidence: read-only Store projection confirmed the committed FeatureSpec and failure-attempt hashes after the Wall run001 console projection failed; Wall relation-aware run003 then stopped before its third Provider HTTP call with no EvidencePack, while the sealed launcher emitted only AgentTurnProviderError context admission and did not project the Specialist's in-memory Requirement Projection Attempt Trace
+current_effect: Store truth survives after committed results, but reporting is not yet uniform across post-commit and pre-Artifact failures; an early Provider/Planning stop can lose bounded Specialist attempt diagnostics even when the failure itself is correctly reported
+workaround: use explicit field projection and Store readback for committed results; for current pre-Artifact calibration failures preserve the Provider diagnostic and manually retain the known control-flow limitation without rerunning solely to reconstruct Trace
 reopen_trigger: an independent report/console/UI projection failure, or the Internal Alpha completion checkpoint
-next_action: define one reporting serializer/projection after Internal Alpha without changing Artifact schemas
+trigger_state: satisfied_by_wall_relation_actual_run003_pre_artifact_trace_gap
+implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
+next_action: define one stable reporting/failure-receipt projection after Internal Alpha that consumes committed Artifact facts when present and bounded in-memory runtime diagnostics when failure occurs before an Artifact, without changing Artifact schemas
 last_reviewed: 2026-08-22
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - one stable serializer/projection for ArtifactRef, attempt, and result
   - report failure cannot hide a committed business result
+  - a pre-Artifact Provider or Planning failure preserves bounded stage, owner, admission, and Projection Attempt diagnostics without raw prompt, reasoning, or expected-side content
   - focused tests plus one real-run projection
   - no second Artifact schema
 ```
