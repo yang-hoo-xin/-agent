@@ -66,6 +66,21 @@ Allowed values are:
 | `checkpoint_and_tests` | Current source checkpoint plus focused executable tests |
 | `mechanical_replay` | Deterministic reconstruction or identity replay without a model call |
 
+### 2.5 Optional Stage-Gate Fields
+
+Operational issues may add:
+
+- `required_before_stage`: the product stage that cannot be authorized until
+  the issue meets its minimum boundary;
+- `minimum_acceptance`: a bounded list of observable facts required to close
+  the issue or record a verified mitigation boundary.
+
+These fields do not put an issue in the Implementation Queue. An Internal Alpha
+completion checkpoint reopens every entry whose `required_before_stage` is
+Coding Agent v0 public alpha, raises its decision priority to `P1`, and creates
+one bounded Operational Readiness work package. Implementation still requires
+current user authority.
+
 ## 3. Event-Triggered Review Protocol
 
 Review this register only after one of these events:
@@ -251,6 +266,148 @@ workaround: preserve the explicit unresolved result and do not hand-edit the mod
 reopen_trigger: the user explicitly reselects r8, or an independent repository task shows the same Repair output failure
 next_action: none in the current selected product slice
 last_reviewed: 2026-08-22
+```
+
+### OPS-001
+
+```yaml
+issue_id: OPS-001
+title: Unified Runner lifecycle projection, stage/run deadlines, and event heartbeat are incomplete
+scope: Coding Agent Runner operational visibility
+owner: existing Runner/Workflow runtime projection; not a second state machine
+evidence_level: real_run
+severity: S1
+decision_priority: P2
+status: deferred
+first_seen: BHF and WallCrawler local actuals required chat polling while only per-provider timeout was available
+latest_evidence: WallCrawler run002 remained a single bounded process with no machine-readable stage heartbeat until terminal Artifact receipt
+current_effect: does not block WallCrawler or Internal Alpha evidence, but blocks Public Alpha operational readiness
+workaround: bounded attempts, per-call timeout, manual polling, and terminal Artifact/failure receipt
+reopen_trigger: Internal Alpha completion checkpoint, or any run exceeds explainable duration or has no machine-readable terminal progress
+next_action: after Internal Alpha, project lifecycle state from existing LangGraph state plus ArtifactStore/attempt facts
+last_reviewed: 2026-08-22
+required_before_stage: Coding Agent v0 public alpha
+minimum_acceptance:
+  - stable CREATED/PREFLIGHTING/EXECUTING/WAITING_PROVIDER/SUCCEEDED/FAILED/CANCELLED/EXPIRED states mapped from existing facts
+  - event-driven heartbeat on stage change, model response, tool completion, and Artifact commit
+  - stage and overall deadlines derived from measured runs
+  - queryable current owner, remaining budgets, and terminal receipt
+  - no new durable business truth outside ArtifactStore
+```
+
+### TOOL-001
+
+```yaml
+issue_id: TOOL-001
+title: Fresh execution contexts do not reliably bind required metadata/IL tool artifacts
+scope: fresh worktree and expected-isolated Runner tool packaging
+owner: tool manifest, resolver, and preflight
+evidence_level: real_run
+severity: S1
+decision_priority: P2
+status: mitigated_for_current_scope
+first_seen: WallCrawler run001 METADATA_IL_INSPECTOR_ARTIFACT_MISSING
+latest_evidence: WallCrawler run002 bound external inspector SHA256 552949586FB6F072AF5ACA0910D552FB6A5D0BF936E25B74FAA8CDDCF4D1A2A1, passed target_code_executed=false canary, and committed EvidencePack 4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704
+current_effect: current WallCrawler scope recovered with one exact external tool, while generalized fresh-context readiness remains unproven
+workaround: explicitly bind and validate the approved external inspector path/hash before model execution
+reopen_trigger: any fresh execution context cannot resolve and validate an approved tool manifest
+next_action: after Internal Alpha, add tool-manifest resolution and fresh-context preflight without requiring untracked bin output in every checkout
+last_reviewed: 2026-08-22
+required_before_stage: Coding Agent v0 public alpha
+minimum_acceptance:
+  - logical tool role, name, version, runtime, and source-or-build identity
+  - resolver returns the exact path and hash
+  - preflight proves availability, runtime compatibility, and a read-only canary
+  - one fresh-context proof without path guessing
+  - no requirement that an untracked bin artifact exists in every checkout
+```
+
+### REPORT-001
+
+```yaml
+issue_id: REPORT-001
+title: Reporting projection can fail after committed business Artifact success
+scope: console, UI, or local trace projection of Artifact refs and failure receipts
+owner: stable reporting projection, separate from the ArtifactStore business object
+evidence_level: real_run
+severity: S2
+decision_priority: P2
+status: observed
+first_seen: WallCrawler run001 post-commit ArtifactRef.to_dict missing
+latest_evidence: read-only Store projection confirmed the committed FeatureSpec and failure-attempt hashes after the console projection failed
+current_effect: Store truth survives, but a user-facing terminal/report can fail after a successful commit
+workaround: explicit field projection followed by Store readback
+reopen_trigger: an independent report/console/UI projection failure, or the Internal Alpha completion checkpoint
+next_action: define one reporting serializer/projection after Internal Alpha without changing Artifact schemas
+last_reviewed: 2026-08-22
+required_before_stage: Coding Agent v0 public alpha
+minimum_acceptance:
+  - one stable serializer/projection for ArtifactRef, attempt, and result
+  - report failure cannot hide a committed business result
+  - focused tests plus one real-run projection
+  - no second Artifact schema
+```
+
+### REC-001
+
+```yaml
+issue_id: REC-001
+title: Minimal graceful cancellation, checkpoint resume, and policy-driven fallback are not productized
+scope: Public Alpha Runner recovery boundary
+owner: existing Runner/attempt policy; no model gateway or recovery platform
+evidence_level: real_run
+severity: S1
+decision_priority: P2
+status: deferred
+first_seen: long BHF and WallCrawler runs relied on bounded no-retry protocol and manual waiting
+latest_evidence: immutable attempts and fail-closed stops preserve truth, but no unified cancellation/resume/fallback policy exists
+current_effect: calibration correctness remains safe, but Public Alpha cannot promise graceful operational recovery
+workaround: fail closed, preserve immutable attempts, and require explicit new authorization
+reopen_trigger: Internal Alpha completion checkpoint, or a real transient provider/tool failure requiring user-visible recovery
+next_action: after Internal Alpha, add the minimum policy to the existing Runner/attempt owner
+last_reviewed: 2026-08-22
+required_before_stage: Coding Agent v0 public alpha
+minimum_acceptance:
+  - deterministic versus transient error classification
+  - cooperative CANCEL_REQUESTED to safe point to CANCELLED transition
+  - resume only from committed Artifact/checkpoint with fresh identity checks
+  - fallback creates a new attempt and preserves the original failure
+  - no silent model or tool switch
+  - at least one bounded retry policy for an explicitly retryable technical failure
+  - full circuit breaker, model gateway, and distributed resume are not required
+```
+
+### ENTRY-001
+
+```yaml
+issue_id: ENTRY-001
+title: Public product execution lacks one unique Runner/owner entrypoint
+scope: RAG-1B and Coding Agent v0 Public Alpha
+owner: public Runner adoption and workflow entry ownership
+evidence_level: checkpoint_and_tests
+severity: S1
+decision_priority: P2
+status: deferred
+first_seen: inventory records run-request, evidence-request, intelligent-evidence-request, and direct Graph/internal entry paths
+latest_evidence: current internal and calibration paths remain bounded but do not prove one public lifecycle, route authority, Store truth, and final result projection
+current_effect: internal diagnostics can run, but Public Alpha cannot claim one product execution owner
+workaround: keep current internal-alpha/calibration paths explicitly bounded and non-public
+reopen_trigger: Internal Alpha completion checkpoint or RAG-1B activation
+next_action: during RAG-1B, inventory every public, CLI, API, and MCP entry and make each delegate or explicitly exit product authority
+last_reviewed: 2026-08-22
+required_before_stage: Coding Agent v0 public alpha
+minimum_acceptance:
+  - exactly one public product entry invokes the same Agent Runner
+  - one Runner owns run lifecycle and invokes the existing single StateGraph
+  - conditional edges remain final route authority
+  - ArtifactStore remains the sole durable business-output truth
+  - Evidence sufficiency has one existing semantic owner
+  - Plan/Patch/Review/Apply/Build/Repair contracts remain unchanged across entry adapters
+  - evidence-request, intelligent-evidence-request, and diagnostic paths either delegate or are explicitly non-product with no Store, route, or final-result authority
+  - no entry constructs a second Graph, interprets completion independently, writes duplicate business Artifacts, or bypasses Approval/Binding
+  - public result correlates request, run, tool, observation, Artifact, Plan, Patch, Build, repair, and final result
+  - focused entry-delegation tests
+  - one real actual-only task completes through the unique public entry before a Public Alpha claim
 ```
 
 ## 5. Document Relationships

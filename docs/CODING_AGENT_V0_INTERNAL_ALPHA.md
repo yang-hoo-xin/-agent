@@ -734,8 +734,10 @@ r8 repository objective explicit unresolved 已记录
 → WallCrawler 负向 actual 与 expected-side comparison
 → 冻结 BHF/WC 结果的最小关系 Eval
 → RAG-1A checkpoint
-→ RAG-1B：唯一公共入口采用同一 Evidence executor
-→ Coding Agent v0 public alpha
+→ Internal Alpha completion checkpoint
+→ RAG-1B：唯一公共入口采用同一 Evidence executor + Operational Readiness work
+→ ENTRY-001/OPS-001/TOOL-001/REPORT-001/REC-001 全部关闭或形成验证边界
+→ 才可运行或声明 Coding Agent v0 public alpha
 → 根据真实失败成熟化 Trace、Eval、Harness 和运行内 Memory
 → 多任务证据成立后再讨论长期 Memory、MCP 扩展、Skills 和子智能体
 ```
@@ -780,6 +782,31 @@ r8 repository objective explicit unresolved 已记录
 - `evidence-request`、`intelligent-evidence-request` 只保留为明确的基线/诊断入口或退出；
 - 旧入口不再直接建 Graph、写 Store、解释充分性或生成第二套结果；
 - 公共输出保持 EvidencePack、Plan、Patch、Build/Test 和终态关联。
+
+RAG-1B/public entry implementation 可以在 Internal Alpha completion 后继续，
+但它本身不授权 Public Alpha 运行或声明。Public Alpha 之前必须形成独立的
+Operational Readiness checkpoint：
+
+- `ENTRY-001` 证明唯一公共产品入口委托同一 Runner、现有单一 StateGraph、
+  ArtifactStore 与既有 Evidence/Plan/Patch/Review/Apply/Build/Repair owner；
+- `OPS-001` 证明既有运行事实可以投影为可查询 lifecycle、heartbeat、stage/run
+  deadlines、当前 owner、剩余预算和 terminal receipt；
+- `TOOL-001` 证明 fresh execution context 可以从批准的 tool manifest 解析并
+  验证 exact tool artifact，而不是猜路径或要求每个 checkout 包含 untracked bin；
+- `REPORT-001` 证明 reporting failure 不会隐藏已提交的业务 Artifact；
+- `REC-001` 证明最小 cancellation、checkpoint resume 与显式 fallback policy
+  存在且不会静默切换 model/tool。
+
+每项必须满足 `docs/audits/ENGINEERING_ISSUE_REGISTER.md` 中的
+`minimum_acceptance`，并且 register status 为 `closed`，或由 Operational
+Readiness checkpoint 明确记录 `mitigated_with_verified_boundary` 及其验证证据，
+才可请求 Public Alpha 授权。Internal diagnostic functions 和兼容 CLI 不要求
+删除；它们必须委托唯一 Runner，或明确标记为 non-product baseline/diagnostic，
+且不拥有独立 Store、route 或 final-result authority。
+
+这个 gate 不是 WallCrawler/RAG-1A 前置，也不是完整 Trace/Eval engineering
+area、Kubernetes、OTel、Langfuse、模型网关或分布式恢复项目。本次只登记完成
+门，不授权实现 Operational Readiness。
 
 ### 8.6 Internal alpha 之后的连续开发顺序
 
