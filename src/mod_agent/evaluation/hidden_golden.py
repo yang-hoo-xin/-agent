@@ -17,9 +17,12 @@ from src.mod_agent.evidence.calibration import (
     HiddenGoldenActualInput,
     HiddenGoldenCalibrationError,
 )
+from src.mod_agent.evidence.discovery_loop import (
+    discovery_plan_budget_feasibility,
+)
 from src.mod_agent.evidence.models import EvidencePack
 
-HIDDEN_GOLDEN_CALIBRATION_EVAL_VERSION = "hidden_golden_calibration_eval_v1"
+HIDDEN_GOLDEN_CALIBRATION_EVAL_VERSION = "hidden_golden_calibration_eval_v2"
 _TECHNICAL_REVIEW_AUTHORITY = (
     "independently_model_reviewed_technical_calibration_annotation"
 )
@@ -91,6 +94,19 @@ def evaluate_committed_hidden_golden(
     actual_keys = {_identity_key(value) for value in actual_identities}
     acceptable_keys = {_identity_key(value) for value in acceptable_identities}
     forbidden_hits = sorted(actual_keys & {_identity_key(value) for value in forbidden_identities})
+    comparison = {
+        "sufficiency_matches": actual_sufficiency
+        == expected["expected_sufficiency"],
+        "control_action_matches": actual_action
+        == expected["expected_control_action"],
+        "acceptable_hook_identity_set_matches": actual_keys == acceptable_keys,
+        "forbidden_hook_identity_hits": [list(value) for value in forbidden_hits],
+    }
+    reliability = _calibration_reliability_gate(
+        pack=pack,
+        expected=expected,
+        generic_comparison=comparison,
+    )
 
     return {
         "protocol_version": HIDDEN_GOLDEN_CALIBRATION_EVAL_VERSION,
@@ -116,14 +132,8 @@ def evaluate_committed_hidden_golden(
             "acceptable_hook_full_identities": acceptable_identities,
             "forbidden_hook_full_identities": forbidden_identities,
         },
-        "comparison": {
-            "sufficiency_matches": actual_sufficiency
-            == expected["expected_sufficiency"],
-            "control_action_matches": actual_action
-            == expected["expected_control_action"],
-            "acceptable_hook_identity_set_matches": actual_keys == acceptable_keys,
-            "forbidden_hook_identity_hits": [list(value) for value in forbidden_hits],
-        },
+        "comparison": comparison,
+        "reliability": reliability,
         "unscored_expected_fields": [
             "required_evidence",
             "forbidden_evidence",
@@ -140,6 +150,200 @@ def evaluate_committed_hidden_golden(
             "promotion",
             "patch_apply_build_or_runtime_authority",
         ],
+    }
+
+
+def _calibration_reliability_gate(
+    *,
+    pack: EvidencePack,
+    expected: Mapping[str, Any],
+    generic_comparison: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Separate actual evaluability from the generic expected comparison."""
+
+    reason_codes: list[str] = []
+    agent_discovery = pack.agent_discovery
+    search_plan = (
+        agent_discovery.get("search_plan")
+        if isinstance(agent_discovery, dict)
+        else None
+    )
+    planned_lanes = (
+        search_plan.get("planned_lanes")
+        if isinstance(search_plan, dict)
+        else None
+    )
+    if not isinstance(planned_lanes, list):
+        planned_lanes = []
+        reason_codes.append("ACTUAL_SEARCH_PLAN_MISSING")
+
+    hook_discovery = pack.hook_discovery
+    lane_coverage = (
+        hook_discovery.get("lane_coverage")
+        if isinstance(hook_discovery, dict)
+        else None
+    )
+    if not isinstance(lane_coverage, list):
+        lane_coverage = []
+        reason_codes.append("ACTUAL_LANE_COVERAGE_MISSING")
+    disposition_by_lane = {
+        str(row.get("lane")): str(row.get("status"))
+        for row in lane_coverage
+        if isinstance(row, dict) and row.get("lane")
+    }
+    disposed_statuses = {"searched_with_results", "searched_and_absent"}
+    planned_lane_ids = [
+        str(row.get("lane"))
+        for row in planned_lanes
+        if isinstance(row, dict) and row.get("lane")
+    ]
+    undisposed_lanes = [
+        lane
+        for lane in planned_lane_ids
+        if disposition_by_lane.get(lane) not in disposed_statuses
+    ]
+    if undisposed_lanes:
+        reason_codes.append("PLANNED_LANE_UNDISPOSED")
+    if any(
+        str(value).startswith("required_lane_incomplete:")
+        for value in (
+            *pack.gaps,
+            *(item.get("message", "") for item in pack.blockers),
+        )
+    ):
+        reason_codes.append("REQUIRED_LANE_INCOMPLETE")
+
+    projection = (
+        agent_discovery.get("requirement_projection")
+        if isinstance(agent_discovery, dict)
+        else None
+    )
+    raw_requirements = (
+        projection.get("planning_blocking_questions")
+        if isinstance(projection, dict)
+        else None
+    )
+    requirement_ids = {
+        str(row.get("requirement_id"))
+        for row in raw_requirements or []
+        if isinstance(row, dict) and row.get("requirement_id")
+    }
+    covered_requirement_ids: set[str] = set()
+    for conclusion in pack.evidence_conclusions:
+        relationship = conclusion.get("relationship")
+        refs = conclusion.get("requirement_ids")
+        if relationship not in {"support", "conflict", "missing"}:
+            continue
+        if isinstance(refs, list):
+            covered_requirement_ids.update(
+                str(value) for value in refs if isinstance(value, str) and value
+            )
+    uncovered_requirement_ids = sorted(
+        requirement_ids - covered_requirement_ids
+    )
+    if uncovered_requirement_ids:
+        reason_codes.append("REQUIREMENT_RELATION_UNCOVERED")
+
+    plan_budget: dict[str, object] | None = None
+    if isinstance(agent_discovery, dict) and planned_lanes:
+        plan_budget = discovery_plan_budget_feasibility(
+            agent_discovery=agent_discovery,
+            max_tool_calls=int(pack.budget_summary.get("max_tool_calls", 0)),
+            max_model_steps=int(pack.budget_summary.get("max_model_steps", 0)),
+        )
+        if not plan_budget["feasible"]:
+            reason_codes.append("DISCOVERY_PLAN_BUDGET_INFEASIBLE")
+    if pack.run_status == "budget_exhausted":
+        reason_codes.append("ACTUAL_RUN_BUDGET_EXHAUSTED")
+
+    blocking_reason_codes = list(dict.fromkeys(reason_codes))
+    agent_behavior_evaluable = not blocking_reason_codes
+    acceptable = expected.get("acceptable_hook_full_identities")
+    has_acceptable_identity_direction = isinstance(acceptable, list) and bool(
+        acceptable
+    )
+    if (
+        not has_acceptable_identity_direction
+        and plan_budget is not None
+        and not plan_budget["feasible"]
+    ):
+        validity = "invalid_for_agent_evaluation_for_current_protocol"
+    else:
+        validity = "valid_with_limitations"
+
+    generic_matches = bool(
+        generic_comparison.get("sufficiency_matches") is True
+        and generic_comparison.get("control_action_matches") is True
+        and generic_comparison.get("acceptable_hook_identity_set_matches") is True
+        and generic_comparison.get("forbidden_hook_identity_hits") == []
+    )
+    negative_shape = bool(
+        expected.get("expected_sufficiency") == "insufficient"
+        and expected.get("expected_control_action") == "block"
+        and acceptable == []
+    )
+    if validity == "invalid_for_agent_evaluation_for_current_protocol":
+        agent_behavior_outcome = "inconclusive"
+    elif not agent_behavior_evaluable and has_acceptable_identity_direction:
+        agent_behavior_outcome = "explicit_unresolved"
+    elif not agent_behavior_evaluable:
+        agent_behavior_outcome = "inconclusive"
+    elif generic_matches and negative_shape:
+        agent_behavior_outcome = "evaluable_negative_comparison"
+    elif generic_matches:
+        agent_behavior_outcome = "evaluable_generic_comparison"
+    else:
+        agent_behavior_outcome = "evaluable_comparison_mismatch"
+
+    unscored_expected_fields = [
+        field
+        for field in (
+            "required_evidence",
+            "forbidden_evidence",
+            "required_missing_evidence",
+        )
+        if isinstance(expected.get(field), list) and expected.get(field)
+    ]
+    negative_capability_pass = bool(
+        agent_behavior_evaluable
+        and generic_matches
+        and negative_shape
+        and not unscored_expected_fields
+    )
+    return {
+        "protocol_version": "calibration_reliability_gate_v1",
+        "case_validity": validity,
+        "agent_behavior_evaluable": agent_behavior_evaluable,
+        "agent_behavior_outcome": agent_behavior_outcome,
+        "negative_capability_pass": negative_capability_pass,
+        "reason_codes": blocking_reason_codes,
+        "identity_and_isolation_hard_gates": {
+            "artifact_type": "passed",
+            "strict_semantic_rehydrate": "passed",
+            "request_binding": "passed",
+            "manifest_binding": "passed",
+            "expected_hash_and_isolation": "passed",
+        },
+        "coverage": {
+            "planned_lane_count": len(planned_lane_ids),
+            "disposed_lane_count": len(planned_lane_ids) - len(undisposed_lanes),
+            "undisposed_lanes": undisposed_lanes,
+            "coverage_complete": not undisposed_lanes and bool(planned_lane_ids),
+        },
+        "budget_feasibility": plan_budget,
+        "actual_relation_coverage": {
+            "required_requirement_ids": sorted(requirement_ids),
+            "covered_requirement_ids": sorted(covered_requirement_ids),
+            "uncovered_requirement_ids": uncovered_requirement_ids,
+            "complete": not uncovered_requirement_ids and bool(requirement_ids),
+        },
+        "expected_relation_scoreability": {
+            "structured_mapping_available": False,
+            "unscored_fields": unscored_expected_fields,
+            "text_matching_used": False,
+        },
+        "generic_comparison_retained": True,
+        "generic_comparison_matches": generic_matches,
     }
 
 

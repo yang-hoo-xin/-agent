@@ -437,6 +437,27 @@ class EvidenceDiscoverySpecialist:
                     request=request,
                     agent_discovery=agent_discovery,
                 )
+            self._runtime_diagnostics["failure_stage"] = "plan_budget_feasibility"
+            plan_budget = discovery_plan_budget_feasibility(
+                agent_discovery=agent_discovery,
+                max_tool_calls=request.max_tool_calls,
+                max_model_steps=request.max_model_steps,
+            )
+            self._runtime_diagnostics.update(
+                {
+                    "plan_budget_required_tool_calls": plan_budget[
+                        "required_tool_calls"
+                    ],
+                    "plan_budget_required_model_steps": plan_budget[
+                        "required_model_steps"
+                    ],
+                    "plan_budget_configured_tool_calls": request.max_tool_calls,
+                    "plan_budget_configured_model_steps": request.max_model_steps,
+                    "plan_budget_feasible": plan_budget["feasible"],
+                }
+            )
+            if not plan_budget["feasible"]:
+                raise ValueError("DISCOVERY_PLAN_BUDGET_INFEASIBLE")
             if self.source_evidence_retriever is not None:
                 self._runtime_diagnostics["failure_stage"] = "source_vocabulary_discovery"
                 self._source_focus_queries = _initial_focus_query_terms(
@@ -2838,6 +2859,52 @@ def _new_runtime_diagnostics() -> dict[str, object]:
         "search_plan_required_investigation_count": None,
         "search_plan_returned_investigation_count": None,
         "planning_quality_findings": [],
+        "plan_budget_required_tool_calls": None,
+        "plan_budget_required_model_steps": None,
+        "plan_budget_configured_tool_calls": None,
+        "plan_budget_configured_model_steps": None,
+        "plan_budget_feasible": None,
+    }
+
+
+def discovery_plan_budget_feasibility(
+    *,
+    agent_discovery: dict[str, object],
+    max_tool_calls: int,
+    max_model_steps: int,
+) -> dict[str, object]:
+    """Project the minimum frozen-plan execution topology before dispatch."""
+
+    search_plan = agent_discovery.get("search_plan")
+    if not isinstance(search_plan, dict):
+        raise ValueError("DISCOVERY_PLAN_BUDGET_SEARCH_PLAN_MISSING")
+    planned_lanes = search_plan.get("planned_lanes")
+    if not isinstance(planned_lanes, list) or not planned_lanes:
+        raise ValueError("DISCOVERY_PLAN_BUDGET_LANES_MISSING")
+    tools = [
+        str(lane.get("tool") or "")
+        for lane in planned_lanes
+        if isinstance(lane, dict)
+    ]
+    if len(tools) != len(planned_lanes) or any(not tool for tool in tools):
+        raise ValueError("DISCOVERY_PLAN_BUDGET_LANE_TOOL_INVALID")
+    requires_il_verification = (
+        "search_dotnet_metadata" in tools and "inspect_method_il" not in tools
+    )
+    required_tool_calls = len(planned_lanes) + int(requires_il_verification)
+    required_model_steps = required_tool_calls + 1
+    return {
+        "planned_lane_count": len(planned_lanes),
+        "additional_il_verification_calls": int(requires_il_verification),
+        "final_finish_steps": 1,
+        "required_tool_calls": required_tool_calls,
+        "required_model_steps": required_model_steps,
+        "configured_tool_calls": max_tool_calls,
+        "configured_model_steps": max_model_steps,
+        "feasible": (
+            max_tool_calls >= required_tool_calls
+            and max_model_steps >= required_model_steps
+        ),
     }
 
 

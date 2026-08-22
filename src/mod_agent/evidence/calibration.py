@@ -344,6 +344,8 @@ def run_better_hit_feedback_calibration(
                 source_ids=("r8_modules_source",),
                 run_id=run_id,
                 request_id=request_id,
+                max_tool_calls=4,
+                max_model_steps=5,
             )
         return retriever.retrieve(
             _actual_only_request(request=request, max_items=30),
@@ -404,6 +406,8 @@ def run_wall_crawler_calibration(
                 source_ids=("r8_modules_source", "r8_datablocks"),
                 run_id=run_id,
                 request_id=request_id,
+                max_tool_calls=5,
+                max_model_steps=6,
             )
         return retriever.retrieve(
             _actual_only_request(request=request, max_items=50),
@@ -548,6 +552,8 @@ def _run_phase_2_discovery(
     source_ids: tuple[str, ...],
     run_id: str | None,
     request_id: str | None,
+    max_tool_calls: int,
+    max_model_steps: int,
 ) -> EvidencePack:
     normalized = request.strip()
     if not normalized:
@@ -574,8 +580,8 @@ def _run_phase_2_discovery(
             request_id=bound_request_id,
             natural_language_request=normalized,
             sources=sources,
-            max_tool_calls=4,
-            max_model_steps=5,
+            max_tool_calls=max_tool_calls,
+            max_model_steps=max_model_steps,
             require_actual_planning=True,
         )
     )

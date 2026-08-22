@@ -169,6 +169,46 @@ def test_phase_2_calibration_dependencies_are_all_or_none(tmp_path: Path) -> Non
         )
 
 
+def test_calibration_adapters_keep_case_budgets_explicit_and_separate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _r8_root(tmp_path)
+    calls: list[dict[str, object]] = []
+
+    def fake_phase_2_discovery(**kwargs: object) -> EvidencePack:
+        calls.append(kwargs)
+        return EvidencePack.empty(
+            query=str(kwargs["request"]),
+            reason="Budget binding inspection only.",
+        )
+
+    monkeypatch.setattr(
+        "src.mod_agent.evidence.calibration._run_phase_2_discovery",
+        fake_phase_2_discovery,
+    )
+    dependencies = {
+        "model": _UnusedModel(),
+        "tool_executor": object(),
+        "sources": (object(),),
+    }
+    run_better_hit_feedback_calibration(
+        r8_root=root,
+        request="Observe one bounded reaction.",
+        **dependencies,  # type: ignore[arg-type]
+    )
+    run_wall_crawler_calibration(
+        r8_root=root,
+        request="Investigate bounded surface locomotion.",
+        **dependencies,  # type: ignore[arg-type]
+    )
+
+    assert [
+        (call["max_tool_calls"], call["max_model_steps"])
+        for call in calls
+    ] == [(4, 5), (5, 6)]
+
+
 def test_case_wrappers_delegate_to_one_shared_committed_actual_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -11,7 +11,10 @@ import pytest
 
 import src.mod_agent.evaluation.hidden_golden as hidden_golden_module
 from src.mod_agent.artifacts import ArtifactStore
-from src.mod_agent.evaluation.hidden_golden import evaluate_committed_hidden_golden
+from src.mod_agent.evaluation.hidden_golden import (
+    _calibration_reliability_gate,
+    evaluate_committed_hidden_golden,
+)
 from src.mod_agent.evidence.calibration import (
     CommittedCalibrationActual,
     HiddenGoldenActualInput,
@@ -175,6 +178,117 @@ def _annotation() -> dict[str, object]:
         ),
         "proposed_judgment_hash": digest,
         "frozen_judgment_hash": digest,
+    }
+
+
+def _reliability_pack(
+    *,
+    planned_lane_count: int,
+    disposed_lane_count: int,
+    max_tool_calls: int,
+    max_model_steps: int,
+    run_status: str,
+    cover_requirements: bool,
+) -> EvidencePack:
+    pack = _semantic_pack("Evaluate one bounded calibration actual.")
+    requirement_ids = [
+        f"requirement-{index:03d}"
+        for index in range(1, planned_lane_count + 1)
+    ]
+    planned_lanes = [
+        {
+            "lane": f"lane-{index:03d}",
+            "tool": "search_dotnet_metadata",
+            "source_ids": ["current-interop"],
+            "question_ids": [f"question-{index:03d}"],
+        }
+        for index in range(1, planned_lane_count + 1)
+    ]
+    lane_coverage = [
+        {
+            "lane": lane["lane"],
+            "status": (
+                "searched_and_absent"
+                if index <= disposed_lane_count
+                else "not_searched"
+            ),
+            "hit_count": 0,
+            "scope": {
+                "tool": "search_dotnet_metadata",
+                "source_ids": (
+                    ["current-interop"] if index <= disposed_lane_count else []
+                ),
+                "action_count": 1 if index <= disposed_lane_count else 0,
+            },
+            "failure": None,
+        }
+        for index, lane in enumerate(planned_lanes, 1)
+    ]
+    hook_discovery = dict(pack.hook_discovery or {})
+    hook_discovery["lane_coverage"] = lane_coverage
+    conclusions = (
+        tuple(
+            {
+                "claim": f"Requirement disposition {requirement_id}.",
+                "claim_status": "unknown",
+                "observation_ids": [],
+                "limitations": [],
+                "requirement_ids": [requirement_id],
+                "relationship": "missing",
+            }
+            for requirement_id in requirement_ids
+        )
+        if cover_requirements
+        else ()
+    )
+    incomplete = [
+        f"required_lane_incomplete:lane-{index:03d}"
+        for index in range(disposed_lane_count + 1, planned_lane_count + 1)
+    ]
+    return replace(
+        pack,
+        agent_discovery={
+            "schema_version": "agent_discovery_actual_v1",
+            "planning_status": "ready",
+            "requirement_projection": {
+                "planning_blocking_questions": [
+                    {
+                        "requirement_id": requirement_id,
+                        "question": f"Question for {requirement_id}?",
+                    }
+                    for requirement_id in requirement_ids
+                ]
+            },
+            "search_plan": {"planned_lanes": planned_lanes},
+        },
+        hook_discovery=hook_discovery,
+        evidence_conclusions=conclusions,
+        budget_summary={
+            "max_tool_calls": max_tool_calls,
+            "max_model_steps": max_model_steps,
+        },
+        run_status=run_status,
+        gaps=tuple(incomplete),
+        blockers=tuple(
+            {
+                "code": "HOOK_DISCOVERY_PLANNING_BLOCKED",
+                "message": value,
+                "needed_evidence": [value],
+            }
+            for value in incomplete
+        ),
+    )
+
+
+def _negative_expected() -> dict[str, object]:
+    return {
+        "required_evidence": ["One structured negative relation."],
+        "forbidden_evidence": [],
+        "acceptable_hook_full_identities": [],
+        "forbidden_hook_full_identities": [],
+        "required_missing_evidence": ["One absent implementation relation."],
+        "expected_sufficiency": "insufficient",
+        "expected_control_action": "block",
     }
 
 
@@ -885,6 +999,127 @@ def test_hidden_golden_minimal_comparison_uses_committed_strict_actual(
         "forbidden_evidence",
         "required_missing_evidence",
     ]
+    assert report["reliability"]["generic_comparison_retained"] is True
+    assert set(
+        report["reliability"]["identity_and_isolation_hard_gates"].values()
+    ) == {"passed"}
+
+
+def test_reliability_gate_rejects_incomplete_budget_stop_as_negative_pass() -> None:
+    report = _calibration_reliability_gate(
+        pack=_reliability_pack(
+            planned_lane_count=4,
+            disposed_lane_count=2,
+            max_tool_calls=4,
+            max_model_steps=5,
+            run_status="budget_exhausted",
+            cover_requirements=False,
+        ),
+        expected=_negative_expected(),
+        generic_comparison={
+            "sufficiency_matches": True,
+            "control_action_matches": True,
+            "acceptable_hook_identity_set_matches": True,
+            "forbidden_hook_identity_hits": [],
+        },
+    )
+
+    assert report["case_validity"] == (
+        "invalid_for_agent_evaluation_for_current_protocol"
+    )
+    assert report["agent_behavior_evaluable"] is False
+    assert report["agent_behavior_outcome"] == "inconclusive"
+    assert report["negative_capability_pass"] is False
+    assert report["coverage"] == {
+        "planned_lane_count": 4,
+        "disposed_lane_count": 2,
+        "undisposed_lanes": ["lane-003", "lane-004"],
+        "coverage_complete": False,
+    }
+    assert report["budget_feasibility"]["required_tool_calls"] == 5
+    assert report["budget_feasibility"]["required_model_steps"] == 6
+    assert set(report["reason_codes"]) == {
+        "PLANNED_LANE_UNDISPOSED",
+        "REQUIRED_LANE_INCOMPLETE",
+        "REQUIREMENT_RELATION_UNCOVERED",
+        "DISCOVERY_PLAN_BUDGET_INFEASIBLE",
+        "ACTUAL_RUN_BUDGET_EXHAUSTED",
+    }
+
+
+def test_reliability_gate_marks_completed_negative_actual_evaluable() -> None:
+    report = _calibration_reliability_gate(
+        pack=_reliability_pack(
+            planned_lane_count=4,
+            disposed_lane_count=4,
+            max_tool_calls=5,
+            max_model_steps=6,
+            run_status="completed",
+            cover_requirements=True,
+        ),
+        expected=_negative_expected(),
+        generic_comparison={
+            "sufficiency_matches": True,
+            "control_action_matches": True,
+            "acceptable_hook_identity_set_matches": True,
+            "forbidden_hook_identity_hits": [],
+        },
+    )
+
+    assert report["case_validity"] == "valid_with_limitations"
+    assert report["agent_behavior_evaluable"] is True
+    assert report["agent_behavior_outcome"] == (
+        "evaluable_negative_comparison"
+    )
+    assert report["coverage"]["coverage_complete"] is True
+    assert report["actual_relation_coverage"]["complete"] is True
+    assert report["budget_feasibility"]["feasible"] is True
+    assert report["negative_capability_pass"] is False
+    assert report["expected_relation_scoreability"] == {
+        "structured_mapping_available": False,
+        "unscored_fields": [
+            "required_evidence",
+            "required_missing_evidence",
+        ],
+        "text_matching_used": False,
+    }
+
+
+def test_reliability_gate_keeps_bhf_shaped_failure_explicit_unresolved() -> None:
+    expected = _annotation()["judgment_payload"]
+    assert isinstance(expected, dict)
+    report = _calibration_reliability_gate(
+        pack=_reliability_pack(
+            planned_lane_count=3,
+            disposed_lane_count=2,
+            max_tool_calls=4,
+            max_model_steps=5,
+            run_status="budget_exhausted",
+            cover_requirements=False,
+        ),
+        expected=expected,
+        generic_comparison={
+            "sufficiency_matches": False,
+            "control_action_matches": False,
+            "acceptable_hook_identity_set_matches": False,
+            "forbidden_hook_identity_hits": [],
+        },
+    )
+
+    assert report["case_validity"] == "valid_with_limitations"
+    assert report["agent_behavior_evaluable"] is False
+    assert report["agent_behavior_outcome"] == "explicit_unresolved"
+    assert report["negative_capability_pass"] is False
+    assert report["budget_feasibility"] == {
+        "planned_lane_count": 3,
+        "additional_il_verification_calls": 1,
+        "final_finish_steps": 1,
+        "required_tool_calls": 4,
+        "required_model_steps": 5,
+        "configured_tool_calls": 4,
+        "configured_model_steps": 5,
+        "feasible": True,
+    }
 
 
 def test_hidden_golden_rejects_annotation_hash_tampering(tmp_path: Path) -> None:

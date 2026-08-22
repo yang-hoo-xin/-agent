@@ -36,6 +36,7 @@ from src.mod_agent.evidence.discovery_contract import (
     evidence_discovery_search_plan_schema,
 )
 from src.mod_agent.evidence.discovery_loop import (
+    discovery_plan_budget_feasibility,
     _normalize_family_query_leads,
     _method_focus_comparison,
     _resolve_finish_fact_handles,
@@ -1491,10 +1492,18 @@ def test_lane_coverage_binds_only_executed_family_questions_and_roundtrips(
                 },
                 _family_selection("secondary-family"),
                 _finish_after_observed_il(),
+                _finish_after_observed_il(),
             ]
         ),
         tool_executor=_ObservedToolExecutor(),
-    ).discover(replace(_request(tmp_path), require_actual_planning=True))
+    ).discover(
+        replace(
+            _request(tmp_path),
+            require_actual_planning=True,
+            max_tool_calls=4,
+            max_model_steps=5,
+        )
+    )
 
     coverage = result.pack.hook_discovery["lane_coverage"]
     assert [
@@ -4497,7 +4506,19 @@ def test_actual_planning_prompt_keeps_scope_without_global_alternate_requirement
         evidence_need="Which current method exposes the status transition?",
     )
     model = _ScriptedModel(
-        [plan, _family_selection("request-derived-behavior")]
+        [
+            plan,
+            _family_selection("request-derived-behavior"),
+            {
+                "action": "use_tool",
+                "tool": "inspect_method_il",
+                "source_id": "current-interop",
+                "arguments": {"candidate_ref": "candidate_obs_001"},
+                "evidence_need": "Verify the observed method.",
+                "derived_from_observation_ids": ["obs-001"],
+            },
+            _finish_after_observed_il(),
+        ]
     )
 
     EvidenceDiscoverySpecialist(
@@ -4510,8 +4531,8 @@ def test_actual_planning_prompt_keeps_scope_without_global_alternate_requirement
                 "When a temporary status transition starts, record its observation point."
             ),
             require_actual_planning=True,
-            max_tool_calls=1,
-            max_model_steps=1,
+            max_tool_calls=2,
+            max_model_steps=3,
         )
     )
 
@@ -4763,6 +4784,129 @@ def _two_requirement_split_planning_responses() -> tuple[
         }
     )
     return projection_response, incomplete_search, corrected_search
+
+
+def _four_requirement_search_plan_responses() -> tuple[
+    dict[str, object],
+    dict[str, object],
+]:
+    questions = [
+        "Which method loads an area configuration?",
+        "Which method observes surface-relative orientation?",
+        "Which method controls arbitrary-surface locomotion?",
+        "Which method identifies prone locomotion support?",
+    ]
+    projection = {
+        "action": "project_requirements",
+        "planning_status": "ready",
+        "requirement_projection": {
+            "behavior_goal": "Investigate bounded arbitrary-surface locomotion.",
+            "trigger": None,
+            "actor": "configured enemy",
+            "target": "wall or ceiling surface",
+            "hard_constraints": [],
+            "forbidden_outcomes": [],
+            "implementation_hints": [],
+            "acceptance_signals": [],
+            "planning_blocking_questions": questions,
+            "deferred_planning_or_runtime_questions": [],
+        },
+    }
+    search = {
+        "action": "plan_search",
+        "planning_status": "ready",
+        "search_plan": {
+            "investigations": [
+                {
+                    "engineering_question": question,
+                    "initial_focus": index == 1,
+                    "source_ids": ["current-interop"],
+                    "query_families": [
+                        {
+                            "queries": [
+                                f"TechnicalType{index}",
+                                f"TechnicalMethod{index}",
+                            ],
+                            "evidence_need": question,
+                        }
+                    ],
+                }
+                for index, question in enumerate(questions, 1)
+            ],
+            "initial_stop_condition": "Stop after every requirement is disposed.",
+            "initial_expand_condition": "Expand only from an observed gap.",
+        },
+    }
+    return projection, search
+
+
+def test_frozen_plan_budget_infeasibility_stops_before_tool_dispatch(
+    tmp_path: Path,
+) -> None:
+    projection, search = _four_requirement_search_plan_responses()
+    model = _ScriptedModel([projection, search])
+    executor = _ObservedToolExecutor()
+    specialist = EvidenceDiscoverySpecialist(model=model, tool_executor=executor)
+
+    with pytest.raises(ValueError, match="DISCOVERY_PLAN_BUDGET_INFEASIBLE"):
+        specialist.discover(
+            replace(
+                _request(tmp_path),
+                require_actual_planning=True,
+                max_tool_calls=4,
+                max_model_steps=5,
+            )
+        )
+
+    assert len(model.calls) == 2
+    assert executor.actions == []
+    diagnostics = specialist.runtime_diagnostics
+    assert diagnostics["failure_stage"] == "plan_budget_feasibility"
+    assert diagnostics["symbolic_failure_code"] == (
+        "DISCOVERY_PLAN_BUDGET_INFEASIBLE"
+    )
+    assert diagnostics["dispatch_started"] == 0
+    assert diagnostics["tool_execution_completed"] == 0
+    assert diagnostics["plan_budget_required_tool_calls"] == 5
+    assert diagnostics["plan_budget_required_model_steps"] == 6
+    assert diagnostics["plan_budget_configured_tool_calls"] == 4
+    assert diagnostics["plan_budget_configured_model_steps"] == 5
+    assert diagnostics["plan_budget_feasible"] is False
+
+    assert specialist._agent_discovery is not None
+    feasible = discovery_plan_budget_feasibility(
+        agent_discovery=specialist._agent_discovery,
+        max_tool_calls=5,
+        max_model_steps=6,
+    )
+    assert feasible == {
+        "planned_lane_count": 4,
+        "additional_il_verification_calls": 1,
+        "final_finish_steps": 1,
+        "required_tool_calls": 5,
+        "required_model_steps": 6,
+        "configured_tool_calls": 5,
+        "configured_model_steps": 6,
+        "feasible": True,
+    }
+
+
+def test_actual_planning_budget_remains_bounded_at_five_tools(
+    tmp_path: Path,
+) -> None:
+    request = _request(tmp_path)
+    accepted = replace(
+        request,
+        require_actual_planning=True,
+        max_tool_calls=5,
+        max_model_steps=6,
+    )
+    assert accepted.max_tool_calls == 5
+    with pytest.raises(
+        ValueError,
+        match="FIRST_HOOK_DISCOVERY_TOOL_BUDGET_EXCEEDS_FIVE",
+    ):
+        replace(accepted, max_tool_calls=6)
 
 
 def test_search_plan_count_mismatch_allows_one_structure_correction(
