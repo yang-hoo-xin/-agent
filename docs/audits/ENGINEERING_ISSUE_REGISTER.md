@@ -272,19 +272,19 @@ last_reviewed: 2026-08-22
 
 ```yaml
 issue_id: CASE-001
-title: WallCrawler negative calibration comparator and execution budget cannot distinguish evidence-grounded block from incomplete budget stop
-scope: WallCrawler negative calibration and minimal relation Eval
-owner: Calibration Case/Eval protocol plus bounded Discovery budget contract
+title: WallCrawler negative calibration comparator cannot distinguish evidence-grounded block from incomplete budget stop
+scope: WallCrawler negative calibration reliability and minimal relation Eval
+owner: existing expected-side Calibration Reliability/Eval owner in the formal hidden_golden comparator
 evidence_level: real_run_and_comparison
 severity: S1
 decision_priority: P0
 status: active
 first_seen: WallCrawler run002
-latest_evidence: EvidencePack 4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704; generic comparison matched insufficiency, block, and empty acceptable identities while only 2/4 lanes completed, verified_findings was empty, and minimum reference topology 6/5 exceeded configured 5/4; RAG-1A outcome report SHA256 7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B
+latest_evidence: EvidencePack 4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704; generic comparison matched insufficiency, block, and empty acceptable identities while only 2/4 lanes completed and verified_findings was empty; checkpoint 0001a86 adds a tested shared verdict gate but structured expected-relation scoreability remains unimplemented; RAG-1A outcome report SHA256 7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B
 current_effect: WallCrawler cannot currently evaluate Agent negative capability; RAG-1A is explicit unresolved rather than passed
 workaround: none; preserve actual and comparison as inconclusive evidence
-reopen_trigger: current active until a minimal relation Eval and Case protocol decision selects bounded repair or explicit unresolved
-next_action: wait for user selection between bounded WallCrawler Case/budget repair and a simple actual-only success task
+reopen_trigger: current active until structured relation scoreability and the formal comparator can distinguish a grounded negative conclusion from incomplete execution
+next_action: wait for an explicit user decision on structured relation scoreability; do not infer a negative capability pass from generic comparison
 last_reviewed: 2026-08-22
 ```
 
