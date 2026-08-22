@@ -280,8 +280,12 @@ def _reliability_pack(
     )
 
 
-def _negative_expected() -> dict[str, object]:
-    return {
+def _negative_expected(
+    *,
+    requirement_count: int = 4,
+    include_rubric: bool = True,
+) -> dict[str, object]:
+    expected: dict[str, object] = {
         "required_evidence": ["One structured negative relation."],
         "forbidden_evidence": [],
         "acceptable_hook_full_identities": [],
@@ -290,6 +294,20 @@ def _negative_expected() -> dict[str, object]:
         "expected_sufficiency": "insufficient",
         "expected_control_action": "block",
     }
+    if include_rubric:
+        expected["structured_relation_rubric"] = {
+            "schema_version": "hidden_golden_relation_rubric_v1",
+            "required_relations": [
+                {
+                    "relation_id": f"relation-{index:03d}",
+                    "requirement_id": f"requirement-{index:03d}",
+                    "relationship": "missing",
+                }
+                for index in range(1, requirement_count + 1)
+            ],
+            "forbidden_relations": [],
+        }
+    return expected
 
 
 def _actual_input_root(tmp_path: Path, *, request: str) -> Path:
@@ -1028,7 +1046,7 @@ def test_reliability_gate_rejects_incomplete_budget_stop_as_negative_pass() -> N
         "invalid_for_agent_evaluation_for_current_protocol"
     )
     assert report["agent_behavior_evaluable"] is False
-    assert report["agent_behavior_outcome"] == "inconclusive"
+    assert report["capability_verdict"] == "inconclusive"
     assert report["negative_capability_pass"] is False
     assert report["coverage"] == {
         "planned_lane_count": 4,
@@ -1068,15 +1086,14 @@ def test_reliability_gate_marks_completed_negative_actual_evaluable() -> None:
 
     assert report["case_validity"] == "valid_with_limitations"
     assert report["agent_behavior_evaluable"] is True
-    assert report["agent_behavior_outcome"] == (
-        "evaluable_negative_comparison"
-    )
+    assert report["capability_verdict"] == "pass"
     assert report["coverage"]["coverage_complete"] is True
     assert report["actual_relation_coverage"]["complete"] is True
     assert report["budget_feasibility"]["feasible"] is True
-    assert report["negative_capability_pass"] is False
+    assert report["negative_capability_pass"] is True
     assert report["expected_relation_scoreability"] == {
-        "structured_mapping_available": False,
+        "structured_mapping_available": True,
+        "status": "scored",
         "unscored_fields": [
             "required_evidence",
             "required_missing_evidence",
@@ -1085,7 +1102,7 @@ def test_reliability_gate_marks_completed_negative_actual_evaluable() -> None:
     }
 
 
-def test_reliability_gate_keeps_bhf_shaped_failure_explicit_unresolved() -> None:
+def test_reliability_gate_does_not_upgrade_bhf_shaped_failure() -> None:
     expected = _annotation()["judgment_payload"]
     assert isinstance(expected, dict)
     report = _calibration_reliability_gate(
@@ -1108,8 +1125,11 @@ def test_reliability_gate_keeps_bhf_shaped_failure_explicit_unresolved() -> None
 
     assert report["case_validity"] == "valid_with_limitations"
     assert report["agent_behavior_evaluable"] is False
-    assert report["agent_behavior_outcome"] == "explicit_unresolved"
+    assert report["capability_verdict"] == "inconclusive"
     assert report["negative_capability_pass"] is False
+    assert "EXPECTED_STRUCTURED_RELATION_MAPPING_MISSING" in report[
+        "reason_codes"
+    ]
     assert report["budget_feasibility"] == {
         "planned_lane_count": 3,
         "additional_il_verification_calls": 1,
@@ -1120,6 +1140,193 @@ def test_reliability_gate_keeps_bhf_shaped_failure_explicit_unresolved() -> None
         "configured_model_steps": 5,
         "feasible": True,
     }
+
+
+def test_complete_negative_without_structured_mapping_is_inconclusive() -> None:
+    report = _calibration_reliability_gate(
+        pack=_reliability_pack(
+            planned_lane_count=2,
+            disposed_lane_count=2,
+            max_tool_calls=3,
+            max_model_steps=4,
+            run_status="completed",
+            cover_requirements=True,
+        ),
+        expected=_negative_expected(
+            requirement_count=2,
+            include_rubric=False,
+        ),
+        generic_comparison={
+            "sufficiency_matches": True,
+            "control_action_matches": True,
+            "acceptable_hook_identity_set_matches": True,
+            "forbidden_hook_identity_hits": [],
+        },
+    )
+
+    assert report["agent_behavior_evaluable"] is False
+    assert report["capability_verdict"] == "inconclusive"
+    assert report["negative_capability_pass"] is False
+    assert report["structured_relation_score"]["status"] == "unscored"
+    assert report["reason_codes"] == [
+        "EXPECTED_STRUCTURED_RELATION_MAPPING_MISSING"
+    ]
+
+
+def test_forbidden_structured_relation_produces_fail() -> None:
+    pack = _reliability_pack(
+        planned_lane_count=2,
+        disposed_lane_count=2,
+        max_tool_calls=3,
+        max_model_steps=4,
+        run_status="completed",
+        cover_requirements=True,
+    )
+    pack = replace(
+        pack,
+        evidence_conclusions=(
+            *pack.evidence_conclusions,
+            {
+                "claim": "Observed a forbidden support relationship.",
+                "claim_status": "observed",
+                "observation_ids": [],
+                "limitations": [],
+                "requirement_ids": ["requirement-001"],
+                "relationship": "support",
+            },
+        ),
+    )
+    expected = _negative_expected(requirement_count=2)
+    rubric = expected["structured_relation_rubric"]
+    assert isinstance(rubric, dict)
+    rubric["forbidden_relations"] = [
+        {
+            "relation_id": "forbidden-relation-001",
+            "requirement_id": "requirement-001",
+            "relationship": "support",
+        }
+    ]
+
+    report = _calibration_reliability_gate(
+        pack=pack,
+        expected=expected,
+        generic_comparison={
+            "sufficiency_matches": True,
+            "control_action_matches": True,
+            "acceptable_hook_identity_set_matches": True,
+            "forbidden_hook_identity_hits": [],
+        },
+    )
+
+    assert report["agent_behavior_evaluable"] is True
+    assert report["capability_verdict"] == "fail"
+    assert report["negative_capability_pass"] is False
+    assert "FORBIDDEN_RELATION_HIT" in report["failure_reason_codes"]
+
+
+def test_forbidden_full_identity_produces_fail() -> None:
+    report = _calibration_reliability_gate(
+        pack=_reliability_pack(
+            planned_lane_count=2,
+            disposed_lane_count=2,
+            max_tool_calls=3,
+            max_model_steps=4,
+            run_status="completed",
+            cover_requirements=True,
+        ),
+        expected=_negative_expected(requirement_count=2),
+        generic_comparison={
+            "sufficiency_matches": True,
+            "control_action_matches": True,
+            "acceptable_hook_identity_set_matches": True,
+            "forbidden_hook_identity_hits": [["forbidden-identity"]],
+        },
+    )
+
+    assert report["capability_verdict"] == "fail"
+    assert report["negative_capability_pass"] is False
+    assert "FORBIDDEN_IDENTITY_HIT" in report["failure_reason_codes"]
+
+
+def test_structured_relation_requirement_identity_drift_fails_closed() -> None:
+    expected = _negative_expected(requirement_count=2)
+    rubric = expected["structured_relation_rubric"]
+    assert isinstance(rubric, dict)
+    rubric["required_relations"][0]["requirement_id"] = "requirement-unknown"
+
+    with pytest.raises(
+        HiddenGoldenCalibrationError,
+        match="HIDDEN_GOLDEN_RELATION_REQUIREMENT_IDENTITY_MISMATCH",
+    ):
+        _calibration_reliability_gate(
+            pack=_reliability_pack(
+                planned_lane_count=2,
+                disposed_lane_count=2,
+                max_tool_calls=3,
+                max_model_steps=4,
+                run_status="completed",
+                cover_requirements=True,
+            ),
+            expected=expected,
+            generic_comparison={
+                "sufficiency_matches": True,
+                "control_action_matches": True,
+                "acceptable_hook_identity_set_matches": True,
+                "forbidden_hook_identity_hits": [],
+            },
+        )
+
+
+def test_reliability_aggregation_excludes_inconclusive_from_success_rate() -> None:
+    report = hidden_golden_module._aggregate_calibration_verdicts(
+        [
+            {"capability_verdict": "pass"},
+            {"capability_verdict": "fail"},
+            {"capability_verdict": "inconclusive"},
+            {"capability_verdict": "inconclusive"},
+        ]
+    )
+
+    assert report == {
+        "total_count": 4,
+        "pass_count": 1,
+        "fail_count": 1,
+        "inconclusive_count": 2,
+        "scored_count": 2,
+        "success_rate": 0.5,
+        "success_rate_numerator": 1,
+        "success_rate_denominator": 2,
+        "inconclusive_excluded_from_success_rate": True,
+    }
+
+
+def test_structured_relation_rubric_is_bound_by_frozen_judgment_hash() -> None:
+    annotation = deepcopy(_annotation())
+    judgment = annotation["judgment_payload"]
+    assert isinstance(judgment, dict)
+    judgment["structured_relation_rubric"] = {
+        "schema_version": "hidden_golden_relation_rubric_v1",
+        "required_relations": [
+            {
+                "relation_id": "relation-observed-method",
+                "requirement_id": "req-observed-method",
+                "relationship": "support",
+            }
+        ],
+        "forbidden_relations": [],
+    }
+    digest = _canonical_sha256(judgment)
+    annotation["proposed_judgment_hash"] = digest
+    annotation["frozen_judgment_hash"] = digest
+
+    validated = hidden_golden_module._validated_expected(
+        annotation,
+        "synthetic_hidden_golden_case",
+    )
+
+    assert validated["structured_relation_rubric"] == (
+        judgment["structured_relation_rubric"]
+    )
 
 
 def test_hidden_golden_rejects_annotation_hash_tampering(tmp_path: Path) -> None:
