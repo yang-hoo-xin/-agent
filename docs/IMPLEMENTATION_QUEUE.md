@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-08-22
+Last updated: 2026-08-23
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -10,35 +10,38 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: NONE-PENDING-USER-SELECTION
+current_queue: NONE-PENDING-ACTUAL-ONLY-TASK-SELECTION
 selected_product_request: none
-queue_status: no_authorized_execution
+queue_status: pending_task_selection_and_reliability_preflight
 ```
 
 ```text
-last_task: RAG-1A-WALLCRAWLER-NEGATIVE-CALIBRATION-001
-last_task_status: case_invalid_agent_behavior_inconclusive
-last_product_code_checkpoint: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
-last_run: wallcrawler_actual_20260822_002
-last_evidence_pack: 4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704
-last_outcome: RAG-1A explicit_unresolved
+last_task: RAG-1A-WALL-RELATION-AWARE-CALIBRATION
+last_task_status: explicit_unresolved_before_artifact_commit
+last_product_code_checkpoint: 8c5509e7af3bd8d285a412165583441cdc0788b4
+last_run: wall_relation_actual_20260822_004
+last_evidence_pack: none
+last_failure: provider_response_read_timeout_on_model_call_7
+last_outcome: RAG-1A relation-aware explicit_unresolved
 last_outcome_report: docs/audits/rag_1a_calibration_outcome_20260822_001/rag_1a_outcome.json
 last_outcome_report_sha256: 7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B
 wallcrawler_rerun_authorized: false
+wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: user-selected bounded WallCrawler Case/budget repair or simple actual-only success task
-activation_required: explicit user selection and bounded authorization
+next_eligible_slice: simple actual-only real task Task/Case Reliability preflight
+activation_required: explicit task selection and bounded preflight authorization
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
-The repository task and BHF positive calibration each satisfied an explicit
-unresolved branch. WallCrawler run002 committed a real EvidencePack, but its
-Case Reliability verdict is invalid under the current comparator and execution
-budget protocol, so Agent behavior is inconclusive. The frozen two-Case minimal
-relation Eval records RAG-1A as explicit unresolved. No repair, rerun, simple
-actual-only task, RAG-1B work, or Operational Readiness work is selected by this
-queue update.
+The repository task, BHF positive calibration, and both old and relation-aware
+Wall calibration routes now have explicit unresolved outcomes. Relation-aware
+Wall run004 crossed Provider admission, Requirement Projection and correction,
+Search Plan, and two model-selected actions before a seventh Provider response
+timed out; no EvidencePack or comparison formed. Wall, BHF, Dense, context,
+timeout, and provider tuning are not current queue items. The next selected
+direction is one simple actual-only real task, but the exact task and its
+Task/Case Reliability preflight remain pending explicit selection.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

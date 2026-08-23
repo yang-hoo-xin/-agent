@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-22
+Last updated: 2026-08-23
 
 ## 1. Product
 
@@ -91,6 +91,21 @@ hash-bound evidence is recorded in
 `docs/audits/rag_1a_calibration_outcome_20260822_001/rag_1a_outcome.json`,
 SHA256=`7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B`.
 
+The relation-aware calibration follow-up then formed deterministic platform
+checkpoints for Case reliability, request-side Relation identity,
+Relation-to-Observation lineage, bounded missing, strict rehydrate, per-call
+Ollama context admission, and one bounded Requirement Projection correction.
+The latest product-code checkpoint is `8c5509e`. Four expected-isolated Wall
+attempts crossed progressively later boundaries; final run004 used run-level
+`num_ctx=65536`, completed seven model-call attempts, accepted two model tool
+actions, and entered the Tool/Observation control loop before the seventh
+Provider response exceeded the 180-second read timeout. It did not commit an
+EvidencePack, read expected-side data, or execute comparison. This proves one
+partial real control flow, not a committed relation trajectory or stable
+capability. The relation-aware Wall route is now
+`explicit_unresolved_before_artifact_commit`; no further Wall context, timeout,
+Prompt, provider, model, or repeatability work is selected.
+
 Current execution order:
 
 ```text
@@ -99,7 +114,10 @@ repository explicit unresolved result recorded
 -> WallCrawler actual/comparison completed; Case invalid and Agent behavior inconclusive
 -> minimal relation Eval completed
 -> RAG-1A explicit unresolved recorded
--> wait for explicit user selection: bounded WallCrawler Case/budget repair or a simple actual-only success task
+-> relation-aware Wall partial trajectory recorded as explicit unresolved before Artifact commit
+-> current: select and preflight one simple actual-only real task
+-> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
+-> Coding Agent v0 internal alpha checkpoint
 ```
 
 The detailed integration target is

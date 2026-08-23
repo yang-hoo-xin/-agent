@@ -2,18 +2,18 @@
 
 ```yaml
 document_status: current_implementation_target
-document_version: 2026-08-22-rag-1a-explicit-unresolved
+document_version: 2026-08-23-rag-1a-relation-aware-explicit-unresolved
 completion_claim: none
 implementation_authority: current_user_selected_documentation_scope
 created_at: 2026-08-16
 target_worktree: rag_capability_mainline
 target_branch: codex/rag-capability-mainline
-target_head_at_audit: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
-current_checkpoint_at_last_sync: e7b84f14e0c600f41e583f1b9019d8dd64ac2d5b
+target_head_at_audit: 8c5509e7af3bd8d285a412165583441cdc0788b4
+current_checkpoint_at_last_sync: 8c5509e7af3bd8d285a412165583441cdc0788b4
 product_milestone: coding_agent_v0
 first_integrated_delivery: coding_agent_v0_internal_alpha
-active_work_package: none_pending_user_selection_after_rag_1a_explicit_unresolved
-current_product_stage: rag_1a_calibration_explicit_unresolved
+active_work_package: none_pending_simple_actual_only_task_selection_and_reliability_preflight
+current_product_stage: coding_agent_v0_internal_alpha_actual_only_selection
 rag_1a_role: internal_evidence_capability
 rag_1b_role: public_entry_adoption
 ```
@@ -732,7 +732,10 @@ r8 repository objective explicit unresolved 已记录
 → BHF positive calibration explicit unresolved 已记录
 → WallCrawler 负向 actual 与 expected-side comparison 已完成，但 Case 对当前协议无效
 → 冻结 BHF/WC 结果的最小关系 Eval 已完成
-→ 当前：RAG-1A explicit unresolved，等待用户选择 WallCrawler Case/budget 修复或 simple actual-only success
+→ Relation-aware Evidence/Trace/Eval 基础已形成确定性 checkpoint
+→ Wall relation-aware run004 形成部分真实轨迹，但在 EvidencePack 前 Provider timeout，记录 explicit unresolved
+→ 当前：选择 simple actual-only 真实任务并完成 Task/Case Reliability preflight
+→ 一条 Build/Test 成功 + 一次 Failure → Different Repair → Revalidation
 → Internal Alpha completion checkpoint
 → RAG-1B：唯一公共入口采用同一 Evidence executor + Operational Readiness work
 → ENTRY-001/OPS-001/TOOL-001/REPORT-001/REC-001 全部关闭或形成验证边界
@@ -776,7 +779,24 @@ r8 repository objective explicit unresolved 已记录
 - WallCrawler committed actual 不能形成负向能力结论，Case Reliability 为 `invalid_for_agent_evaluation_for_current_protocol`；
 - 最小关系级 Eval 已把 lane coverage、required/missing relations、完整 Hook identity、禁止 identity、相关 IL 与 budget terminal 一并计入；
 - RAG-1A outcome 为 `explicit_unresolved`，不是 pass；outcome report SHA256 为 `7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B`；
-- 当前没有已授权执行工作。用户下一步只在有界 WallCrawler Case/budget 修复与 simple actual-only success task 之间选择。
+- 当前没有已授权 actual-only 执行工作；Wall/BHF 路线均已冻结，下一步只选择一条 simple actual-only 真实任务并先完成独立 Task/Case Reliability preflight。
+
+Relation-aware follow-up did not change the frozen old RAG-1A comparison. It
+formed product-code checkpoints `dc93e39` for deterministic
+Relation-to-Observation lineage, `a40a65c` for per-call Ollama admission, and
+`8c5509e` for one bounded Requirement Projection correction with distinct
+Attempt Trace. Four expected-isolated Wall attempts then established later
+boundaries without reading expected data. Final run004 at run-level
+`num_ctx=65536` made seven model-call attempts, accepted two model tool actions,
+and entered the Tool/Observation control loop before the seventh Provider
+response timed out after 180 seconds. No relation-aware EvidencePack or
+comparison exists, so the result is
+`explicit_unresolved_before_artifact_commit`, not a negative-capability verdict
+or stability result. Wall context escalation, timeout tuning, Prompt changes,
+provider/model switching, and additional Wall repeats are closed for the
+current route. BHF remains `valid_with_limitations` plus current-model/current-
+strategy explicit unresolved; it is not automatically rerun under the new
+relation protocol.
 
 ### 8.5 工作包 4：RAG-1B 和 v0 public alpha
 

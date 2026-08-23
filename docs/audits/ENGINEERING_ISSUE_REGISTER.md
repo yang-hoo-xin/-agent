@@ -176,15 +176,15 @@ title: Ollama service default context was insufficient for a bounded discovery t
 scope: local Agent-turn execution with qwen3:4b-instruct
 owner: run-level Ollama context configuration
 evidence_level: real_run
-severity: S1
-decision_priority: P0
-status: active
+severity: S2
+decision_priority: P3
+status: mitigated_for_current_scope
 first_seen: 2026-08-21 BHF run001
-latest_evidence: Wall relation-aware actual wall_relation_actual_20260822_001 reached model_call_count=2 and then stopped before HTTP at provider_request_gate because provider_body_utf8_bytes 12977 plus num_predict 4096 required 17073 under provider_body_utf8_proxy_plus_output_budget_v1, exceeding explicit num_ctx 16384; expected_reads=0 and no EvidencePack was committed
-current_effect: the relation-aware Wall actual is blocked before its second Provider HTTP call; explicit run-level num_ctx 16384 is no longer sufficient for the current request shape
-workaround: preserve the failed attempt and use only the separately authorized run-level num_ctx 32768 attempt with the same model, Prompt, Schema, output budget, and per-call admission; do not change product defaults
+latest_evidence: Wall relation-aware run001 and run003 were rejected before HTTP at explicit num_ctx 16384 and 32768 respectively; final run004 used run-level num_ctx 65536, passed per-call admission through seven model-call attempts, and stopped instead on Provider response timeout rather than context admission
+current_effect: context admission is not the latest first blocker for the closed Wall route; 65536 is only a bounded run-level observation and does not change product defaults or prove every future request fits
+workaround: preserve per-call admission and the run-level identities; do not continue Wall context escalation or promote 65536 to a product default
 reopen_trigger: a new authorized run fails context admission with an explicit, model-supported context setting
-next_action: execute one separately authorized Wall attempt at run-level num_ctx 32768; if any call is rejected, freeze that exact stage/body/admission and stop without another automatic context increase
+next_action: none in the current Wall route; reopen only on a new selected product task that fails the existing per-call admission under an explicit model-supported setting
 last_reviewed: 2026-08-22
 ```
 
@@ -276,15 +276,15 @@ title: WallCrawler negative calibration comparator cannot distinguish evidence-g
 scope: WallCrawler negative calibration reliability and minimal relation Eval
 owner: existing expected-side Calibration Reliability/Eval owner in the formal hidden_golden comparator
 evidence_level: real_run_and_comparison
-severity: S1
-decision_priority: P0
-status: active
+severity: S2
+decision_priority: P3
+status: explicit_unresolved
 first_seen: WallCrawler run002
-latest_evidence: EvidencePack 4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704; generic comparison matched insufficiency, block, and empty acceptable identities while only 2/4 lanes completed and verified_findings was empty; checkpoint 0001a86 adds a tested shared verdict gate but structured expected-relation scoreability remains unimplemented; RAG-1A outcome report SHA256 7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B
-current_effect: WallCrawler cannot currently evaluate Agent negative capability; RAG-1A is explicit unresolved rather than passed
-workaround: none; preserve actual and comparison as inconclusive evidence
-reopen_trigger: current active until structured relation scoreability and the formal comparator can distinguish a grounded negative conclusion from incomplete execution
-next_action: wait for an explicit user decision on structured relation scoreability; do not infer a negative capability pass from generic comparison
+latest_evidence: old run002 EvidencePack 4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704 remains inconclusive under the old protocol; deterministic checkpoints now implement shared reliability, structured relation scoring, request-side Relation identity, Relation-to-Observation lineage, bounded missing, and strict rehydrate, but relation-aware run004 stopped before Artifact commit after seven model-call attempts and two accepted model actions because the seventh Provider response timed out
+current_effect: neither the old nor relation-aware Wall route proves negative capability; RAG-1A relation-aware remains explicit unresolved and no current Wall work is selected
+workaround: preserve old comparison and new partial control-flow facts without constructing an EvidencePack or verdict after failure
+reopen_trigger: after Internal Alpha, an explicitly authorized model/runtime role can complete the relation-aware protocol, or an independent task reproduces the same need to distinguish grounded negative evidence from incomplete execution
+next_action: none in the current Wall route; proceed to a simple actual-only product task
 last_reviewed: 2026-08-22
 ```
 
@@ -298,12 +298,14 @@ owner: existing Runner/Workflow runtime projection; not a second state machine
 evidence_level: real_run
 severity: S1
 decision_priority: P2
-status: deferred
+status: observed
 first_seen: BHF and WallCrawler local actuals required chat polling while only per-provider timeout was available
-latest_evidence: WallCrawler run002 remained a single bounded process with no machine-readable stage heartbeat until terminal Artifact receipt
-current_effect: does not block WallCrawler or Internal Alpha evidence, but blocks Public Alpha operational readiness
+latest_evidence: WallCrawler run002 remained a single bounded process with no machine-readable stage heartbeat until terminal Artifact receipt; relation-aware run004 then ran for about 24 minutes, made seven model-call attempts and two accepted actions, and exposed no machine-readable intermediate lifecycle receipt before its final timeout report
+current_effect: current manual polling does not invalidate Internal Alpha evidence, but core stability cannot be measured reliably and Public Alpha operational readiness remains blocked
 workaround: bounded attempts, per-call timeout, manual polling, and terminal Artifact/failure receipt
-reopen_trigger: Internal Alpha completion checkpoint, or any run exceeds explainable duration or has no machine-readable terminal progress
+reopen_trigger: satisfied by run004 duration/progress opacity; implementation remains scheduled after Internal Alpha and before core stability/public alpha
+trigger_state: satisfied_by_wall_relation_actual_run004_long_run_without_heartbeat
+implementation_timing: after Internal Alpha and before Core Stability Validation
 next_action: after Internal Alpha, project lifecycle state from existing LangGraph state plus ArtifactStore/attempt facts
 last_reviewed: 2026-08-22
 required_before_stage: Coding Agent v0 public alpha
@@ -354,11 +356,11 @@ severity: S2
 decision_priority: P2
 status: observed
 first_seen: WallCrawler run001 post-commit ArtifactRef.to_dict missing
-latest_evidence: read-only Store projection confirmed the committed FeatureSpec and failure-attempt hashes after the Wall run001 console projection failed; Wall relation-aware run003 then stopped before its third Provider HTTP call with no EvidencePack, while the sealed launcher emitted only AgentTurnProviderError context admission and did not project the Specialist's in-memory Requirement Projection Attempt Trace
+latest_evidence: read-only Store projection confirmed the committed FeatureSpec and failure-attempt hashes after the Wall run001 console projection failed; Wall relation-aware run003 and run004 then stopped before EvidencePack commit, while their sealed launchers emitted Provider failure JSON but did not project the Specialist's in-memory Projection Attempt or partial Action/Observation Trace
 current_effect: Store truth survives after committed results, but reporting is not yet uniform across post-commit and pre-Artifact failures; an early Provider/Planning stop can lose bounded Specialist attempt diagnostics even when the failure itself is correctly reported
 workaround: use explicit field projection and Store readback for committed results; for current pre-Artifact calibration failures preserve the Provider diagnostic and manually retain the known control-flow limitation without rerunning solely to reconstruct Trace
 reopen_trigger: an independent report/console/UI projection failure, or the Internal Alpha completion checkpoint
-trigger_state: satisfied_by_wall_relation_actual_run003_pre_artifact_trace_gap
+trigger_state: satisfied_by_wall_relation_actual_runs003_004_pre_artifact_trace_gap
 implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
 next_action: define one stable reporting/failure-receipt projection after Internal Alpha that consumes committed Artifact facts when present and bounded in-memory runtime diagnostics when failure occurs before an Artifact, without changing Artifact schemas
 last_reviewed: 2026-08-22
@@ -383,11 +385,11 @@ severity: S1
 decision_priority: P2
 status: observed
 first_seen: long BHF and WallCrawler runs relied on bounded no-retry protocol and manual waiting
-latest_evidence: Wall relation-aware actual wall_relation_actual_20260822_001 was rejected before its second Provider HTTP call at the per-call context gate and required an explicit user-authorized new attempt at run-level num_ctx 32768; the original failure remains preserved and no silent retry or model switch occurred
-current_effect: the current calibration path demonstrates fail-closed detection and manual policy-driven fallback, but the Runner still lacks a productized recovery policy and Public Alpha cannot promise graceful operational recovery
+latest_evidence: relation-aware Wall runs used explicit new-attempt identities after context admission rejects at 16384 and 32768; final run004 at 65536 crossed into the Action/Observation loop and then stopped on a seventh-call 180-second Provider read timeout without retry, model switch, or overwrite of prior failures
+current_effect: the calibration path demonstrates fail-closed detection and bounded manual fallback for context and timeout samples, but the Runner still lacks productized classification, resume, cancellation, and recovery policy
 workaround: fail closed, preserve immutable attempts, classify the failure, and require explicit new-attempt authorization; the current 32768 attempt is one bounded manual fallback instance, not an automatic recovery platform
 reopen_trigger: Internal Alpha completion checkpoint, or a real transient provider/tool failure requiring user-visible recovery
-trigger_state: satisfied_by_wall_relation_actual_20260822_001_provider_admission_reject
+trigger_state: satisfied_by_wall_relation_actual_context_rejects_and_run004_provider_timeout
 implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
 next_action: keep the immediate recovery manual and bounded; after Internal Alpha, add the minimum policy to the existing Runner/attempt owner using this failure as the first context-admission recovery sample
 last_reviewed: 2026-08-22
