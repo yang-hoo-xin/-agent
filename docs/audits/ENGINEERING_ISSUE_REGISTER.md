@@ -447,7 +447,251 @@ minimum_acceptance:
   - one real actual-only task completes through the unique public entry before a Public Alpha claim
 ```
 
-## 5. Document Relationships
+## 5. Public Alpha Advanced Robustness Trigger Catalog
+
+This catalog is not part of `Registered Issues`. Its entries are conditional
+capability directions, not observations that a physical problem has occurred,
+not claims that a capability exists, and not execution authority. Entries use
+`capability_key`, never `issue_id`. Grouping by an expected owner family does
+not authorize a shared implementation owner: activation must relocate the
+current physical owner, and distinct owners require distinct Issues.
+
+```yaml
+catalog_key: public_alpha_activation_triggered_advanced_robustness_backlog
+status: conditional_trigger
+activation_trigger: Public Alpha readiness/entry activation plus explicit user selection
+current_queue: false
+internal_alpha_blocker: false
+minimum_public_alpha_blocker: false
+promotion_rule: Only a real risk audit performed at activation time may promote an entry into the minimum Public Alpha blocking boundary; activation first relocates the current physical owner, then creates a new single-owner Issue only when the observed risk requires implementation.
+```
+
+The existing `ENTRY-001`, `OPS-001`, `TOOL-001`, `REPORT-001`, and `REC-001`
+`minimum_acceptance` lists remain the minimum Operational Readiness boundary
+before Public Alpha. This catalog does not expand, replace, weaken, or complete
+those hard gates.
+
+### 5.1 Provider And Tool Resilience
+
+#### Bounded Exponential Backoff Plus Jitter
+
+```yaml
+capability_key: provider_tool_bounded_exponential_backoff_jitter
+expected_owner_family: existing Runner attempt policy and the exact provider or tool transport owner
+real_activation_signal: repeated explicitly retryable transient failures after Public Alpha activation where immediate bounded retry causes synchronized load or unstable recovery
+expected_benefit: spreads bounded retry pressure and reduces synchronized transient-failure amplification
+cost_and_risk: adds latency, timing nondeterminism, retry-budget tuning, and a risk of replaying work outside its valid identity window
+degradation_boundary: never retries non-idempotent or high-risk side effects automatically; exhausted or ineligible work stops with the original failure and a terminal receipt
+separate_issue_on_activation: true
+```
+
+#### Full Circuit Breaker
+
+This is the single catalog entry for both “full Circuit Breaker” and any
+“complete circuit-breaker platform” wording; they must not become duplicates.
+
+```yaml
+capability_key: provider_tool_full_circuit_breaker
+expected_owner_family: existing Runner attempt policy plus the exact failing provider or tool transport owner
+real_activation_signal: repeated current failures show that bounded attempts continue reaching a known-unhealthy dependency and materially worsen availability or cost
+expected_benefit: stops calls to a demonstrably unhealthy dependency and exposes an explicit open, half-open, and closed recovery boundary
+cost_and_risk: requires durable health-window semantics, concurrency control, reset policy, observability, and protection against stale or cross-tenant health state
+degradation_boundary: an open breaker grants no fallback authority and cannot convert unavailable evidence or execution into success
+separate_issue_on_activation: true
+```
+
+#### Tool Gateway
+
+```yaml
+capability_key: provider_tool_gateway
+expected_owner_family: existing tool manifest, resolver, preflight, and tool invocation boundary
+real_activation_signal: Public Alpha exposes repeated cross-tool policy, identity, isolation, quota, or observability failures that cannot be represented by current tool instances and preflight
+expected_benefit: centralizes verified tool identity, invocation policy, receipts, quotas, and isolation without giving tools route authority
+cost_and_risk: creates a critical dependency and possible bottleneck, expands policy surface, and can obscure exact tool ownership if introduced without physical failures
+degradation_boundary: gateway failure blocks or reduces the operation to an explicitly authorized read-only mode; it never fabricates a tool result or bypasses tool-specific validation
+separate_issue_on_activation: true
+```
+
+#### Model Gateway
+
+```yaml
+capability_key: provider_model_gateway
+expected_owner_family: existing model admission, disclosure, provider adapter, and attempt-policy boundary
+real_activation_signal: Public Alpha shows repeated cross-model admission, capability-profile, quota, disclosure, or receipt failures that cannot be handled by current exact provider adapters
+expected_benefit: provides one audited model admission and receipt boundary while retaining exact provider and attempt identities
+cost_and_risk: concentrates routing and disclosure risk, may conceal provider-specific behavior, and can become a second workflow authority
+degradation_boundary: gateway unavailability or uncertainty blocks model execution or reduces it to an explicitly authorized lower-permission mode; no silent provider or model switch is allowed
+separate_issue_on_activation: true
+```
+
+### 5.2 Model Quality Resilience
+
+#### Prevalidated Fallback Model Routing
+
+```yaml
+capability_key: model_prevalidated_fallback_routing
+expected_owner_family: existing Runner attempt policy, model admission, and capability-profile validation owners
+real_activation_signal: a repeated model-specific failure has a prevalidated alternate capability profile and a current user-selected fallback policy after Public Alpha activation
+expected_benefit: permits bounded continuation after a classified model failure without erasing the original failure or widening authority
+cost_and_risk: model outputs are not behaviorally interchangeable; routing can change quality, cost, latency, disclosure, and safety assumptions
+degradation_boundary: fallback creates a new attempt, preserves the original failure, revalidates identity and disclosure, lowers permissions, and emits an auditable receipt; it never occurs silently
+separate_issue_on_activation: true
+```
+
+#### Business-Quality Monitoring
+
+```yaml
+capability_key: model_business_quality_monitoring
+expected_owner_family: existing product Eval and acceptance owners for the selected business capability
+real_activation_signal: Public Alpha traffic provides outcome-bound quality observations whose deterioration is not visible through transport or schema success
+expected_benefit: detects product-relevant quality loss separately from provider availability and syntactic validity
+cost_and_risk: requires reviewed outcome definitions, delayed labels, sampling controls, privacy boundaries, and protection against metric gaming
+degradation_boundary: monitoring is advisory until a reviewed policy binds it; weak or missing labels cannot block, route, or claim model quality automatically
+separate_issue_on_activation: true
+```
+
+#### Model Drift Alerting
+
+```yaml
+capability_key: model_drift_alerting
+expected_owner_family: existing model identity, capability-profile, and product Eval observation owners
+real_activation_signal: a bound model, provider revision, or observed outcome distribution changes beyond a reviewed threshold after Public Alpha activation
+expected_benefit: makes model or outcome drift visible before it silently changes product behavior
+cost_and_risk: drift signals can be noisy, seasonal, data-sensitive, or unrelated to product quality and require version-aware baselines
+degradation_boundary: an alert does not authorize fallback, prompt changes, threshold changes, or policy learning; uncertain drift remains an investigation signal
+separate_issue_on_activation: true
+```
+
+#### Capability-Profile-Based Model Weighting Or Deprioritization
+
+```yaml
+capability_key: model_capability_profile_weighting_deprioritization
+expected_owner_family: existing reviewed capability-profile registry and Runner model-selection policy owner
+real_activation_signal: multiple prevalidated models are explicitly authorized and real Public Alpha outcomes show stable task-specific capability differences
+expected_benefit: prefers models whose verified capability profiles fit the current bounded task while deprioritizing repeatedly weak profiles
+cost_and_risk: weighting can become opaque adaptive routing, overfit sparse observations, or create self-reinforcing traffic bias
+degradation_boundary: weights cannot grant new permissions, bypass exact model admission, or use an unvalidated profile; ambiguous profiles require explicit selection or manual escalation
+separate_issue_on_activation: true
+```
+
+### 5.3 Capability Degradation
+
+#### Cache-Backed Degradation
+
+```yaml
+capability_key: degradation_cache_backed
+expected_owner_family: existing read-model, evidence freshness, and cache identity owners for the affected capability
+real_activation_signal: Public Alpha availability requirements justify serving a previously verified bounded result when its source, scope, age, and invalidation conditions remain inspectable
+expected_benefit: preserves limited read availability during a transient dependency failure
+cost_and_risk: stale data can mislead planning, conceal dependency failure, or cross identity and authorization boundaries
+degradation_boundary: cached data is labeled stale or cached with source identity and age; it never appears as fresh, current, complete, or sufficient evidence without revalidation
+separate_issue_on_activation: true
+```
+
+#### Partial-Result Degradation
+
+```yaml
+capability_key: degradation_partial_result
+expected_owner_family: existing result projection and sufficiency owner for the affected capability
+real_activation_signal: a real Public Alpha operation can safely expose independently valid completed subsets while other declared subsets fail or remain unavailable
+expected_benefit: returns inspectable useful work instead of discarding every valid subset
+cost_and_risk: consumers may treat partial output as complete, combine incompatible subsets, or miss the failed coverage boundary
+degradation_boundary: every partial result declares missing scope, failed owners, freshness, and non-authority; partial results cannot masquerade as complete Evidence or authorize writes
+separate_issue_on_activation: true
+```
+
+#### Read-Only, Draft, Or Manual-Escalation Degradation
+
+```yaml
+capability_key: degradation_read_only_draft_manual_escalation
+expected_owner_family: existing permission, approval, and operation-risk policy owners
+real_activation_signal: Public Alpha encounters a classified degraded or fallback state where observation or drafting remains useful but normal write authority is not defensible
+expected_benefit: preserves bounded assistance while preventing uncertain dependencies from performing high-risk actions
+cost_and_risk: creates more user-visible states, handoff work, and possible confusion between drafts and approved changes
+degradation_boundary: high-risk writes default to read-only, draft, or manual approval; degraded output never inherits normal Apply, Build, Runtime, or external side-effect authority
+separate_issue_on_activation: true
+```
+
+### 5.4 Distributed Continuity
+
+Distributed resume and distributed recovery share a capability family but are
+not synonyms. Resume continues unfinished work from a durable checkpoint after
+current identity and permission validation. Recovery reconstructs auditable
+execution ownership and a terminal state after host, process, or worker
+ownership is lost; it is not simple resume.
+
+#### Distributed Resume
+
+```yaml
+capability_key: continuity_distributed_resume
+expected_owner_family: existing Runner checkpoint continuation and immutable Artifact identity owners
+real_activation_signal: Public Alpha deployment requires an unfinished authorized run to continue on another admitted worker from a durable checkpoint
+expected_benefit: continues bounded work without replaying completed stages or losing immutable lineage
+cost_and_risk: stale checkpoints, identity drift, double execution, split ownership, and cross-worker permission mismatch can corrupt the run
+degradation_boundary: resume requires durable checkpoint ownership, fresh identity and permission validation, and an idempotent side-effect boundary; otherwise it remains blocked
+separate_issue_on_activation: true
+```
+
+#### Distributed Recovery
+
+```yaml
+capability_key: continuity_distributed_recovery
+expected_owner_family: existing Runner lifecycle, lease or ownership, checkpoint, and terminal-receipt owners
+real_activation_signal: a real Public Alpha host, process, or worker loss leaves execution ownership or terminal state unresolved across machines
+expected_benefit: reconstructs one auditable current owner and reaches a truthful terminal or resumable state after ownership loss
+cost_and_risk: duplicate ownership, lost leases, partial side effects, stale observations, and ambiguous terminal state require distributed coordination
+degradation_boundary: recovery cannot assume that checkpoint continuation is safe; it must reconcile durable ownership and side effects before resume, retry, or terminalization
+separate_issue_on_activation: true
+```
+
+#### Durable Checkpoint Ownership
+
+```yaml
+capability_key: continuity_durable_checkpoint_ownership
+expected_owner_family: existing ArtifactStore checkpoint identity and Runner ownership projection
+real_activation_signal: Public Alpha distributed execution demonstrates that process-local checkpoint ownership cannot establish one current continuation authority
+expected_benefit: binds each durable checkpoint to one inspectable run, revision, owner or lease, and continuation boundary
+cost_and_risk: ownership metadata can become stale, create lock contention, or form a second business-truth store if separated from existing durable facts
+degradation_boundary: an unowned, multiply owned, stale, or identity-mismatched checkpoint cannot authorize resume or recovery
+separate_issue_on_activation: true
+```
+
+#### Idempotent Side-Effect Boundary
+
+```yaml
+capability_key: continuity_idempotent_side_effect_boundary
+expected_owner_family: existing operation-specific approval, Apply, Build, Runtime, and external side-effect owners
+real_activation_signal: Public Alpha continuity or retry scenarios expose a real risk of duplicating an already-started side effect after ownership loss
+expected_benefit: makes retry, resume, and recovery distinguish completed, absent, and safely replayable side effects
+cost_and_risk: requires operation-specific idempotency keys, receipts, reconciliation, and compensation boundaries that cannot be generalized without evidence
+degradation_boundary: unknown or non-idempotent side effects block automatic retry, resume, backoff replay, and recovery; high-risk continuation requires manual approval
+separate_issue_on_activation: true
+```
+
+### 5.5 Safety Invariants And Non-Activation Boundary
+
+- Backup-model routing must never occur silently.
+- Fallback may use only a prevalidated capability profile. It must create a new
+  attempt, preserve the original failure, lower permissions, and produce an
+  auditable receipt.
+- High-risk writes in fallback or degraded mode default to read-only, draft, or
+  manual approval.
+- Backoff and jitter must never automatically replay non-idempotent or
+  high-risk side effects.
+- Cache-backed and partial results must never appear as fresh, current,
+  complete, or sufficient Evidence.
+- Distributed continuity requires durable checkpoint ownership, fresh identity
+  validation, and an idempotent side-effect boundary.
+
+This catalog is only the
+`public_alpha_activation_triggered_advanced_robustness_backlog`. It does not
+enter the current P1 Queue, does not block Internal Alpha, and does not
+automatically become a minimum Public Alpha hard gate. Documentation is not
+implementation: no advanced robustness direction in this catalog is claimed
+implemented or complete. Semantic/vector Retrieval, Dense, RRF, and reranking
+are not activated by this catalog.
+
+## 6. Document Relationships
 
 - `docs/ACTIVE_PRODUCT_CONTRACT.md` keeps only the current product selection and
   permission boundary; it does not copy this table.
