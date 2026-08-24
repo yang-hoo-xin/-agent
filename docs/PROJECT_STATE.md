@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-08-23
+Last updated: 2026-08-24
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -10,10 +10,10 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ```text
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
-current_dependency: ACCURATE-CROSSHAIR-FRESH-ACTUAL-PENDING-AUTHORIZATION
+current_dependency: ACCURATE-CROSSHAIR-ACTUAL-OUTCOME-PENDING-USER-DECISION
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
-current_product_code_checkpoint: 8c5509e7af3bd8d285a412165583441cdc0788b4
+current_product_code_checkpoint: 609afa3704b9c604b26514ea9854246b52ede3d6
 current_wip: four independent user documentation changes, no staged files
 latest_repository_run: 32e29415
 latest_repository_run_report_sha256: B7B3F473F8DA8E2500DA67E496DC389B8B9BB5109D8056F49FC170CEB2ED7AD9
@@ -22,6 +22,7 @@ latest_repository_failure: repair_attempt1_patch_structurally_invalid
 latest_repository_terminal: dry_run_apply_execution/unmatched_closing_brace
 latest_repository_build_diagnostics: initial Repair observation retained 14 CS0103 diagnostics; final Repair Patch stopped before Repair Apply/Build
 source_revision_binding_status: missing
+accurate_crosshair_source_revision_binding_status: verified_product_source_revision_binding_v2
 latest_bhf_calibration_status: failed_explicit_unresolved_for_current_model_and_strategy
 latest_bhf_evidence_pack: b554e02190af1117b4b552072eea0404ae4271927b803619db9447c89764e9b1
 retrieval_strategy_decision: reject_dense_currently
@@ -41,7 +42,14 @@ task_reliability_preflight: eligible_for_fresh_actual
 task_reliability_report: docs/audits/ACCURATE_CROSSHAIR_SPREAD_TOGGLE_PREFLIGHT_20260824.json
 task_reliability_report_sha256: 36AAD0A655D05A530143094B376C69BB899C4922E0C2364FDF846446415C9849
 accurate_crosshair_actual_authorized: false
-next_capability_step: wait for explicit creation and authorization of one fresh expected-isolated AccurateCrosshair actual task
+latest_accurate_crosshair_run: 8d26e4e5
+latest_accurate_crosshair_status: partial_before_patch_artifact
+latest_accurate_crosshair_evidence_pack: 80d2142723db71c43887ebb94a7603e6473aaf729b12ba5b2db147d495387a2b
+latest_accurate_crosshair_physical_exception: generate_patch_proposal_execution/required_validation_marker_missing
+latest_accurate_crosshair_semantic_failure: rg_live_lexical_match_promoted_to_patch_authoritative_sufficiency_without_request_relation_coverage
+latest_accurate_crosshair_outcome_report: docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json
+latest_accurate_crosshair_outcome_report_sha256: 58EB4B83B49477740CDCDCB3C3E4128A4D5A7560F98CF0AE5B4F6BD1687FBA92
+next_capability_step: user chooses bounded Evidence/Retrieval sufficiency owner correction or AccurateCrosshair explicit unresolved and another task
 rag_1a_status: explicit_unresolved
 rag_1a_relation_aware_status: explicit_unresolved_before_artifact_commit
 rag_1b_status: not_started

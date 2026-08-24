@@ -1,7 +1,7 @@
 # Engineering Issue Register
 
 Status: lightweight observation register
-Last reviewed: 2026-08-22
+Last reviewed: 2026-08-24
 
 ## 1. Purpose And Authority Boundary
 
@@ -127,6 +127,14 @@ reopen_trigger: an explicitly authorized model-role evaluation, or an independen
 next_action: none in the current BHF route
 last_reviewed: 2026-08-22
 ```
+
+Reopen review on 2026-08-24 did not map AccurateCrosshair run `8d26e4e5`
+to `OBS-001`. The symptom again involved source disambiguation, but the current
+owner is deterministic `RgLiveEvidenceProvider.collect` Evidence sufficiency,
+not model-driven EvidenceDiscovery Search Planning/action selection. The new
+failure signature remains unassigned pending user ID/route selection; its
+detailed evidence is recorded only in
+`docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json`.
 
 ### OBS-002
 

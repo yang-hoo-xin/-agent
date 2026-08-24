@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-08-23
+Last updated: 2026-08-24
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -12,37 +12,35 @@ Completed, frozen, review, and superseded records belong in
 ```text
 current_queue: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: reliability_preflight_complete_pending_fresh_actual_authorization
+queue_status: fresh_actual_failed_pending_bounded_owner_or_explicit_unresolved_decision
 ```
 
 ```text
-last_task: RAG-1A-WALL-RELATION-AWARE-CALIBRATION
-last_task_status: explicit_unresolved_before_artifact_commit
-last_product_code_checkpoint: 8c5509e7af3bd8d285a412165583441cdc0788b4
-last_run: wall_relation_actual_20260822_004
-last_evidence_pack: none
-last_failure: provider_response_read_timeout_on_model_call_7
-last_outcome: RAG-1A relation-aware explicit_unresolved
-last_outcome_report: docs/audits/rag_1a_calibration_outcome_20260822_001/rag_1a_outcome.json
-last_outcome_report_sha256: 7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B
+last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
+last_task_status: partial_before_patch_artifact
+last_product_code_checkpoint: 609afa3704b9c604b26514ea9854246b52ede3d6
+last_run: 8d26e4e5
+last_evidence_pack: 80d2142723db71c43887ebb94a7603e6473aaf729b12ba5b2db147d495387a2b
+last_failure: rg_live_lexical_match_promoted_to_patch_authoritative_sufficiency_without_request_relation_coverage
+last_outcome: actual_only success false; changed-product Build/Test and Repair not reached
+last_outcome_report: docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json
+last_outcome_report_sha256: 58EB4B83B49477740CDCDCB3C3E4128A4D5A7560F98CF0AE5B4F6BD1687FBA92
 wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: one fresh expected-isolated AccurateCrosshair actual
-activation_required: explicit fresh-task creation plus bounded actual/model authorization
+next_eligible_slice: bounded Evidence/Retrieval sufficiency owner correction, or AccurateCrosshair explicit unresolved and another task
+activation_required: explicit user selection; no rerun or source/model/marker change is currently authorized
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
-The repository task, BHF positive calibration, and both old and relation-aware
-Wall calibration routes now have explicit unresolved outcomes. Relation-aware
-Wall run004 crossed Provider admission, Requirement Projection and correction,
-Search Plan, and two model-selected actions before a seventh Provider response
-timed out; no EvidencePack or comparison formed. Wall, BHF, Dense, context,
-timeout, and provider tuning are not current queue items. The selected task is
-now the AccurateCrosshair spread toggle. Its Task/Case Reliability preflight is
-eligible and hash-bound, but no actual, model call, or game execution is
-authorized by this queue update.
+The AccurateCrosshair fresh run `8d26e4e5` committed planning through
+ImplementationPlan, then stopped before Patch Artifact creation. The first
+exception was deterministic validation-marker rejection, while the earlier
+product failure was a lexical `RgLiveEvidenceProvider` item incorrectly
+promoted to patch-authoritative sufficiency and bound to unrelated first-shot
+behavior. No rerun or repair is selected. Detailed evidence exists only in the
+outcome report above.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

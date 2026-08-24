@@ -2,18 +2,18 @@
 
 ```yaml
 document_status: current_implementation_target
-document_version: 2026-08-23-rag-1a-relation-aware-explicit-unresolved
+document_version: 2026-08-24-accurate-crosshair-actual-partial
 completion_claim: none
 implementation_authority: current_user_selected_documentation_scope
 created_at: 2026-08-16
 target_worktree: rag_capability_mainline
 target_branch: codex/rag-capability-mainline
-target_head_at_audit: 8c5509e7af3bd8d285a412165583441cdc0788b4
-current_checkpoint_at_last_sync: 8c5509e7af3bd8d285a412165583441cdc0788b4
+target_head_at_audit: 609afa3704b9c604b26514ea9854246b52ede3d6
+current_checkpoint_at_last_sync: 609afa3704b9c604b26514ea9854246b52ede3d6
 product_milestone: coding_agent_v0
 first_integrated_delivery: coding_agent_v0_internal_alpha
-active_work_package: accurate_crosshair_reliability_preflight_complete_pending_fresh_actual
-current_product_stage: coding_agent_v0_internal_alpha_actual_only_preflight_complete
+active_work_package: accurate_crosshair_actual_outcome_pending_user_decision
+current_product_stage: coding_agent_v0_internal_alpha_actual_only_partial_before_patch
 rag_1a_role: internal_evidence_capability
 rag_1b_role: public_entry_adoption
 ```
@@ -734,7 +734,8 @@ r8 repository objective explicit unresolved 已记录
 → 冻结 BHF/WC 结果的最小关系 Eval 已完成
 → Relation-aware Evidence/Trace/Eval 基础已形成确定性 checkpoint
 → Wall relation-aware run004 形成部分真实轨迹，但在 EvidencePack 前 Provider timeout，记录 explicit unresolved
-→ AccurateCrosshair Task Reliability preflight 已通过；当前等待 fresh actual 单独授权
+→ AccurateCrosshair fresh actual run 8d26e4e5 在错误 Evidence/Edit binding 后、Patch Artifact 前停止
+→ 用户决定有界修 Evidence/Retrieval sufficiency owner，或记录 explicit unresolved 并转下一任务
 → 一条 Build/Test 成功 + 一次 Failure → Different Repair → Revalidation
 → Internal Alpha completion checkpoint
 → RAG-1B：唯一公共入口采用同一 Evidence executor + Operational Readiness work
@@ -779,7 +780,7 @@ r8 repository objective explicit unresolved 已记录
 - WallCrawler committed actual 不能形成负向能力结论，Case Reliability 为 `invalid_for_agent_evaluation_for_current_protocol`；
 - 最小关系级 Eval 已把 lane coverage、required/missing relations、完整 Hook identity、禁止 identity、相关 IL 与 budget terminal 一并计入；
 - RAG-1A outcome 为 `explicit_unresolved`，不是 pass；outcome report SHA256 为 `7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B`；
-- 当前没有已授权 actual-only 执行工作；Wall/BHF 路线均已冻结。已选择 `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001` 并完成独立 Task Reliability preflight，结果为 `eligible_for_fresh_actual`；详细事实只记录在 `docs/audits/ACCURATE_CROSSHAIR_SPREAD_TOGGLE_PREFLIGHT_20260824.json`。下一步必须使用不含本页 Hidden Acceptance 的 fresh task，并单独授权 actual/model；本页不得执行该 actual。
+- `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001` 的独立 preflight 仍有效，但 fresh run `8d26e4e5` 只到达 ImplementationPlan：唯一 lexical Evidence 被错误提升为 patch-authoritative sufficiency，并绑定到无关 first-shot behavior；随后 Patch generation marker gate 正确拒绝输出。Patch Artifact、Review、Apply、changed-product Build/Test、Repair 和 Acceptance 均未到达。详细事实只记录在 `docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json`，SHA256=`58EB4B83B49477740CDCDCB3C3E4128A4D5A7560F98CF0AE5B4F6BD1687FBA92`。当前无重跑授权；下一步由用户在有界 Evidence/Retrieval sufficiency owner 修正与 explicit unresolved/转任务之间选择。
 
 Relation-aware follow-up did not change the frozen old RAG-1A comparison. It
 formed product-code checkpoints `dc93e39` for deterministic

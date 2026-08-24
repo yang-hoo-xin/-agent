@@ -1,0 +1,160 @@
+{
+  "report_version": "accurate_crosshair_actual_outcome_v1",
+  "task_id": "ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001",
+  "report_date": "2026-08-24",
+  "source_product_checkpoint": "609afa3704b9c604b26514ea9854246b52ede3d6",
+  "run": {
+    "run_id": "8d26e4e5",
+    "request_id": "request_8d26e4e5",
+    "feature_id": "feature_66e54ec4a116",
+    "product_execution_disposition": "partial",
+    "product_execution_runs": 1,
+    "model_calls": 2,
+    "expected_disclosed_to_model": false,
+    "expected_reads_before_product_change_freeze": 0,
+    "verifier_reads_after_change": false,
+    "verifier_read_count": 0,
+    "diff_approval_count": 0,
+    "actual_write_performed": false,
+    "runtime_executed": false
+  },
+  "public_run_evidence": {
+    "execution_receipt_path": "C:/Users/10160/Documents/Codex/2026-08-24/accurate-crosshair-expected-isolated-actual-run2/accurate_crosshair_execution_20260824_001/execution_receipt.json",
+    "execution_receipt_sha256": "10FD1DF118998042F5D806C444832BEDEB2F371299EEC0F1EB302D4C17033364",
+    "run_result_path": "C:/Users/10160/Documents/Codex/2026-08-24/accurate-crosshair-expected-isolated-actual-run2/accurate_crosshair_execution_20260824_001/runs/8d26e4e5/run_result.json",
+    "run_result_sha256": "90C4093A2120814F6CEE969DF0462945FF985B3ADB004071A3F6993109FCED65",
+    "run_manifest_path": "C:/Users/10160/Documents/Codex/2026-08-24/accurate-crosshair-expected-isolated-actual-run2/accurate_crosshair_execution_20260824_001/runs/8d26e4e5/run_manifest.json",
+    "run_manifest_sha256": "15FF118785B10BBDDC1973B8A9545C703863401E6A284A3D7C1FFB93B500E57D",
+    "private_objective_read": false
+  },
+  "source_and_environment": {
+    "baseline_revision": "d80ae700c0d426eba865faafca84bae9924dacb2",
+    "source_snapshot_sha256": "ae5304cc9ae67cd9812da51cac37ee4ac33e23fb0eac9d8436c631f78a6afcc4",
+    "source_revision_binding_version": "product_source_revision_binding_v2",
+    "pre_graph_baseline_restore_exit_code": 0,
+    "pre_graph_baseline_build_exit_code": 0,
+    "pre_graph_baseline_dll_sha256": "d7ece053e754c4cfc8e2967d39c6a82fdc92336c0837d355a58c98c5fff25fca",
+    "pre_graph_baseline_build_role": "environment health only; not changed-product Build/Test success"
+  },
+  "artifact_strict_readback": [
+    {
+      "artifact_type": "request_planning_report",
+      "artifact_hash": "c62bc2f8495fd391ad758c3b8cfde72f41b7305bfc82e39af9828089e45b90f0",
+      "artifact_ref_path": "C:/Users/10160/Documents/Codex/2026-08-24/accurate-crosshair-expected-isolated-actual-run2/accurate_crosshair_execution_20260824_001/runs/8d26e4e5/a/features/feature_66e54ec4a116/r/request_planning_report/c62bc2f8495fd391ad758c3b8cfde72f.json",
+      "file_sha256": "0b07abb1d32fcd41c68fefe252bac4495e018f279936e7992536398d23a259e4",
+      "status": "success",
+      "strict_readback": true
+    },
+    {
+      "artifact_type": "mod_planning_brief",
+      "artifact_hash": "7c65ea6c923d02ded4bb070e2d2734cf5f4de2767826d18c2baaa75a04c3f0ed",
+      "artifact_ref_path": "C:/Users/10160/Documents/Codex/2026-08-24/accurate-crosshair-expected-isolated-actual-run2/accurate_crosshair_execution_20260824_001/runs/8d26e4e5/a/features/feature_66e54ec4a116/r/mod_planning_brief/7c65ea6c923d02ded4bb070e2d2734cf.json",
+      "file_sha256": "6704f7aa4d1c772d8eb3344898e47c90d1b223018eacf98011af3400d968d66e",
+      "status": "success",
+      "strict_readback": true
+    },
+    {
+      "artifact_type": "feature_spec",
+      "artifact_hash": "0d41947347c57094b6d948446d1c19c35384a2bce65175604ec7a31f6e4dd190",
+      "artifact_ref_path": "C:/Users/10160/Documents/Codex/2026-08-24/accurate-crosshair-expected-isolated-actual-run2/accurate_crosshair_execution_20260824_001/runs/8d26e4e5/a/features/feature_66e54ec4a116/r/feature_spec/0d41947347c57094b6d948446d1c19c3.json",
+      "file_sha256": "019280cef621e84ec68276206bf8cd7d1c673f7a61d7e0a638c8708c4ae6e398",
+      "status": "success",
+      "strict_readback": true
+    },
+    {
+      "artifact_type": "evidence_pack",
+      "artifact_hash": "80d2142723db71c43887ebb94a7603e6473aaf729b12ba5b2db147d495387a2b",
+      "artifact_ref_path": "C:/Users/10160/Documents/Codex/2026-08-24/accurate-crosshair-expected-isolated-actual-run2/accurate_crosshair_execution_20260824_001/runs/8d26e4e5/a/features/feature_66e54ec4a116/r/evidence_pack/80d2142723db71c43887ebb94a7603e6.json",
+      "file_sha256": "b986675a2df3ed5c2c10d3092b94c68c7cffe49fd2b2e566bfdc4019e0c77470",
+      "status": "success",
+      "strict_readback": true
+    },
+    {
+      "artifact_type": "implementation_plan",
+      "artifact_hash": "42957d238fa5ec6d3831e5aa8803bc67c645ac792a05fad4f87221e48e748f1f",
+      "artifact_ref_path": "C:/Users/10160/Documents/Codex/2026-08-24/accurate-crosshair-expected-isolated-actual-run2/accurate_crosshair_execution_20260824_001/runs/8d26e4e5/a/features/feature_66e54ec4a116/r/implementation_plan/42957d238fa5ec6d3831e5aa8803bc67.json",
+      "file_sha256": "a9764e0499224cacb9a4a81890a3faf1193a6c3de949754d2bffe3a0c9d6c09a",
+      "status": "success",
+      "strict_readback": true
+    }
+  ],
+  "semantic_evidence": {
+    "evidence_pack_readiness": "sufficient",
+    "evidence_pack_can_generate_patch": true,
+    "evidence_item_count": 1,
+    "evidence_id": "rg_live_412d04cae02aca1f",
+    "evidence_source_path": "generated_mods/AccurateCrosshair/CrosshairPatches/FirstShotPatches.cs",
+    "evidence_symbol": "SetStoredCrosshair",
+    "evidence_claim": "Live source contains request terms near SetStoredCrosshair.",
+    "implementation_plan_blocking": false,
+    "implementation_plan_target_files": [
+      "generated_mods/AccurateCrosshair/CrosshairPatches/FirstShotPatches.cs"
+    ],
+    "implementation_plan_target_symbols": [
+      "SetStoredCrosshair"
+    ],
+    "edit_binding_id": "edit_binding_001",
+    "semantic_mismatch": "The only sufficient item and edit binding cover first-shot crosshair storage, while the request requires a new configuration value to control accurate-spread size override behavior and preserve three independent settings. Lexical request-term presence does not prove that relation."
+  },
+  "double_attribution": {
+    "first_physical_exception_boundary": {
+      "stage": "generate_patch_proposal_execution",
+      "event": "patch_generation/failed",
+      "exception": "PatchGenerationError",
+      "message": "Change 1 after_text is missing declared validation marker(s): GENERAL_SETTINGS_ACCURATE_SPREAD_ENABLED",
+      "detecting_gate": "LLMExactPatchGenerator deterministic required-validation marker validation",
+      "gate_disposition": "correct rejection; do not relax"
+    },
+    "first_semantic_product_failure": {
+      "failure_signature": "rg_live_lexical_match_promoted_to_patch_authoritative_sufficiency_without_request_relation_coverage",
+      "owner": "src/mod_agent/evidence/rg_live.py::RgLiveEvidenceProvider.collect EvidencePack sufficiency decision",
+      "downstream_consumer": "src/mod_agent/planning/implementation_plan.py::ImplementationPlanner.build",
+      "downstream_disposition": "faithfully bound the sole upstream item; not the earliest owner",
+      "effect": "The model was authorized to edit only FirstShotPatches.SetStoredCrosshair, so even a schema-valid Patch could not cover the complete requested configuration and spread-override behavior."
+    }
+  },
+  "stage_results": {
+    "patch_artifact": "not_created",
+    "review": "not_reached",
+    "dry_run": "not_reached",
+    "apply": "not_reached",
+    "changed_product_build_test": "not_reached",
+    "repair": "not_reached",
+    "acceptance": "not_reached"
+  },
+  "issue_register_decision": {
+    "reviewed_issue": "OBS-001",
+    "reopen_trigger_text_matched_at_symptom_level": true,
+    "owner_matched": false,
+    "obs_001_reopened": false,
+    "matched_issue_ids": [],
+    "reason": "OBS-001 is owned by model-driven EvidenceDiscovery Search Planning/action selection on BHF. Run 8d26e4e5 used deterministic RgLiveEvidenceProvider and failed in its sufficiency decision before ImplementationPlan binding; merging them would erase the physical owner boundary.",
+    "new_issue_needed": true,
+    "new_failure_signature": "rg_live_lexical_match_promoted_to_patch_authoritative_sufficiency_without_request_relation_coverage",
+    "new_issue_id": "pending_user_decision"
+  },
+  "outcome": {
+    "actual_only_success": false,
+    "compile_test_success": false,
+    "repair_revalidation": false,
+    "internal_alpha": false,
+    "new_stage_crossed": false,
+    "single_real_run_observed": true,
+    "stable_capability": false,
+    "product_capability_advanced": false,
+    "platform_observation_advanced": true
+  },
+  "allowed_next_decision": [
+    "authorize one bounded Evidence/Retrieval sufficiency owner correction, then separately decide whether to run a new fresh actual",
+    "record AccurateCrosshair as explicit unresolved and select another task"
+  ],
+  "not_authorized": [
+    "relax the validation marker gate",
+    "hand-edit a Patch",
+    "supply the correct file or symbol to the Agent",
+    "rerun the actual",
+    "change Prompt, model, context, or timeout",
+    "restart Dense, RRF, or reranking work",
+    "modify or execute Hidden Acceptance"
+  ]
+}

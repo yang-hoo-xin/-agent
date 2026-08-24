@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-23
+Last updated: 2026-08-24
 
 ## 1. Product
 
@@ -106,17 +106,16 @@ capability. The relation-aware Wall route is now
 `explicit_unresolved_before_artifact_commit`; no further Wall context, timeout,
 Prompt, provider, model, or repeatability work is selected.
 
-The selected simple task is now `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-Its independent Task Reliability preflight is `eligible_for_fresh_actual`:
-the byte-equal 15-file source copy is clean at isolated revision `d80ae700`,
-the isolated baseline Build completed with 0 errors and one existing CS8618
-warning, baseline/no-op/config-only implementations were rejected, and a hidden
-positive reference passed the same compiled-IL oracle. The hash-bound audit is
-`docs/audits/ACCURATE_CROSSHAIR_SPREAD_TOGGLE_PREFLIGHT_20260824.json`,
-SHA256=`36AAD0A655D05A530143094B376C69BB899C4922E0C2364FDF846446415C9849`.
-No actual, model call, game launch, or game-directory write is authorized. This
-implementation page has read the hidden oracle and is permanently excluded
-from running the future AccurateCrosshair actual.
+The selected simple task is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`. Its fresh
+run `8d26e4e5` committed RequestPlan, PlanningBrief, FeatureSpec, EvidencePack,
+and ImplementationPlan, then stopped before a Patch Artifact. The deterministic
+marker gate reported the first exception, but the earlier product failure was
+the sole lexical Evidence item being promoted to patch-authoritative
+sufficiency and bound to unrelated first-shot behavior. Changed-product
+Build/Test, Repair, Acceptance, and actual-only success were not reached. No
+rerun or correction is authorized. The detailed outcome is recorded only in
+`docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json`,
+SHA256=`58EB4B83B49477740CDCDCB3C3E4128A4D5A7560F98CF0AE5B4F6BD1687FBA92`.
 
 Current execution order:
 
@@ -127,7 +126,7 @@ repository explicit unresolved result recorded
 -> minimal relation Eval completed
 -> RAG-1A explicit unresolved recorded
 -> relation-aware Wall partial trajectory recorded as explicit unresolved before Artifact commit
--> AccurateCrosshair Task Reliability preflight eligible; fresh actual not authorized
+-> AccurateCrosshair run 8d26e4e5 partial before Patch; Evidence sufficiency owner decision pending
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint
 ```
