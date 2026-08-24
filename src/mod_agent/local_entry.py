@@ -39,7 +39,10 @@ from src.mod_agent.build import (
     BuildProfile,
     BuildResult,
 )
-from src.mod_agent.evidence import RgLiveEvidenceProvider
+from src.mod_agent.evidence import (
+    RequirementCoverageEvidenceProvider,
+    RgLiveEvidenceProvider,
+)
 from src.mod_agent.evidence.rg_live import _csharp_method_source_spans
 from src.mod_agent.edit_authority_capabilities import (
     EditAuthorityCapabilityDeclaration,
@@ -59,7 +62,6 @@ from src.mod_agent.evidence.dotnet_metadata import (
     enrich_source_evidence_with_member_accesses,
 )
 from src.mod_agent.execution import ExactDiffApprovalRejectedError, ExactTextPatchApplier
-from src.mod_agent.planning.request_planner import requested_scope_text
 from src.mod_agent.proposal import LLMExactPatchGenerator, PatchGenerationError
 from src.mod_agent.product_execution import (
     ProductExecutionContractError,
@@ -3356,6 +3358,12 @@ def run_local_request(
     ollama_model_identity_reader: OllamaModelIdentityReader | None = None,
     ollama_server_version_reader: OllamaServerVersionReader | None = None,
     objective_verification_command: tuple[str, ...] | None = None,
+    requirement_coverage_projection_factory: (
+        Callable[[Mapping[str, Any]], Mapping[str, Any]] | None
+    ) = None,
+    requirement_coverage_findings_factory: (
+        Callable[[Mapping[str, Any], Any], Mapping[str, Any]] | None
+    ) = None,
 ) -> dict[str, Any]:
     """Run one request through the existing graph against an isolated target copy."""
 
@@ -3945,6 +3953,11 @@ def run_local_request(
     generator = LLMExactPatchGenerator(llm)
     applier = ExactTextPatchApplier()
     evidence_provider = RgLiveEvidenceProvider(run_root)
+    requirement_coverage_provider = RequirementCoverageEvidenceProvider(
+        evidence_provider,
+        projection_factory=requirement_coverage_projection_factory,
+        findings_factory=requirement_coverage_findings_factory,
+    )
     member_access_resolver = (
         RunLocalMemberAccessResolver(
             inspector_path,
@@ -3965,13 +3978,13 @@ def run_local_request(
     initial_patch_model_call_count = 0
     repair_model_call_count = 0
 
-    def evidence_factory(state: dict[str, Any], _: dict[str, Any]):
-        evidence_pack = evidence_provider.collect(
-            query=requested_scope_text(state["user_request"]),
+    def evidence_factory(state: dict[str, Any], feature_data: dict[str, Any]):
+        evidence_pack = requirement_coverage_provider.collect(
+            query=str(state["user_request"]),
             search_root=f"generated_mods/{source.name}",
-            source_identity_query=state["user_request"],
+            feature_data=feature_data,
         )
-        if member_access_resolver is None:
+        if member_access_resolver is None or not evidence_pack.can_generate_patch:
             return evidence_pack
         try:
             return enrich_source_evidence_with_member_accesses(

@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from src.mod_agent.evidence.models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
     EVIDENCE_PACK_AUTHORITY,
     LEGACY_RAG_AUXILIARY_AUTHORITY,
+)
+from src.mod_agent.evidence.requirement_coverage import (
+    REQUIREMENT_COVERAGE_SCHEMA_VERSION,
 )
 from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
 
@@ -186,12 +191,93 @@ class ImplementationPlanner:
                 item["source_path"] for item in planning_items if item.get("source_path")
             )
         )
+        requirement_coverage = evidence_pack.get("requirement_coverage")
+        coverage_edit_target_ids: set[str] | None = None
+        preservation_boundaries: tuple[str, ...] = ()
+        change_related_evidence_ids: set[str] = set()
+        if requirement_coverage is not None:
+            if (
+                not isinstance(requirement_coverage, dict)
+                or requirement_coverage.get("schema_version")
+                != REQUIREMENT_COVERAGE_SCHEMA_VERSION
+                or not isinstance(
+                    requirement_coverage.get("edit_target_evidence_ids"), list
+                )
+                or not isinstance(requirement_coverage.get("requirements"), list)
+                or not isinstance(requirement_coverage.get("findings"), list)
+                or not isinstance(
+                    requirement_coverage.get("feature_spec_identity"), dict
+                )
+                or requirement_coverage["feature_spec_identity"].get("feature_id")
+                != feature_spec.feature_id
+                or requirement_coverage["feature_spec_identity"].get(
+                    "feature_spec_sha256"
+                )
+                != hashlib.sha256(
+                    json.dumps(
+                        feature_spec.to_artifact_payload(),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()
+            ):
+                return self._blocked(
+                    feature_id=feature_spec.feature_id,
+                    blockers=(
+                        {
+                            "code": "REQUIREMENT_COVERAGE_INVALID",
+                            "message": (
+                                "Implementation planning requires one valid "
+                                "requirement coverage projection."
+                            ),
+                        },
+                    ),
+                    open_questions=("Rebuild requirement coverage before planning.",),
+                    evidence_source_paths=evidence_source_paths,
+                )
+            coverage_edit_target_ids = {
+                str(value)
+                for value in requirement_coverage["edit_target_evidence_ids"]
+            }
+            requirements_by_id = {
+                str(requirement.get("requirement_id")): requirement
+                for requirement in requirement_coverage["requirements"]
+                if isinstance(requirement, dict)
+                and requirement.get("requirement_id")
+            }
+            change_requirement_ids = {
+                requirement_id
+                for requirement_id, requirement in requirements_by_id.items()
+                if requirement.get("role") == "change"
+            }
+            preservation_boundaries = tuple(
+                str(requirement["text"])
+                for requirement in requirements_by_id.values()
+                if requirement.get("role") == "preservation"
+                and isinstance(requirement.get("text"), str)
+            )
+            change_related_evidence_ids = {
+                str(evidence_id)
+                for finding in requirement_coverage["findings"]
+                if isinstance(finding, dict)
+                and finding.get("relationship") == "support"
+                and change_requirement_ids.intersection(
+                    str(value)
+                    for value in finding.get("parent_requirement_ids") or []
+                )
+                for evidence_id in finding.get("evidence_ids") or []
+            }
         editable_items = [
             item
             for item in planning_items
             if item.get("evidence_id")
             and item.get("source_path")
             and item.get("source_type") in EDITABLE_EVIDENCE_SOURCE_TYPES
+            and (
+                coverage_edit_target_ids is None
+                or str(item["evidence_id"]) in coverage_edit_target_ids
+            )
         ]
         target_files = tuple(
             dict.fromkeys(item["source_path"] for item in editable_items)
@@ -239,6 +325,12 @@ class ImplementationPlanner:
             edit_bindings=edit_bindings,
             supporting_bindings=supporting_bindings,
         )
+        change_supporting_binding_ids = tuple(
+            str(binding["binding_id"])
+            for binding in binding_registry["supporting_bindings"]
+            if str(binding.get("evidence_id") or "")
+            in change_related_evidence_ids
+        )
         hook_target_binding_id, hook_target_blocker = self._select_hook_target_binding(
             feature_spec=feature_spec,
             binding_registry=binding_registry,
@@ -255,6 +347,7 @@ class ImplementationPlanner:
                 index=index,
                 feature_spec=feature_spec,
                 hook_target_binding_id=hook_target_binding_id,
+                supporting_binding_ids=change_supporting_binding_ids,
             )
             for index, item in enumerate(editable_items, start=1)
         )
@@ -265,7 +358,9 @@ class ImplementationPlanner:
             target_symbols=target_symbols,
             evidence_refs=evidence_refs,
             proposed_changes=proposed_changes,
-            side_effect_boundaries=feature_spec.non_goals,
+            side_effect_boundaries=tuple(
+                dict.fromkeys((*feature_spec.non_goals, *preservation_boundaries))
+            ),
             test_plan=feature_spec.runtime_verification_plan,
             rollback_plan=tuple(
                 f"Rollback {change['change_id']}: {change['rollback_hint']}"
@@ -473,12 +568,13 @@ class ImplementationPlanner:
         index: int,
         feature_spec: FeatureSpec,
         hook_target_binding_id: str | None,
+        supporting_binding_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         change = {
             "change_id": f"chg_{index:03d}",
             "change_type": "modify_behavior",
             "edit_binding_id": f"edit_binding_{index:03d}",
-            "supporting_binding_ids": [],
+            "supporting_binding_ids": list(supporting_binding_ids),
             "operation": "minimal_evidence_bound_change",
             "rationale": feature_spec.target_behavior,
             "risk_tags": [feature_spec.risk_level],

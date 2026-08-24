@@ -160,6 +160,7 @@ class EvidencePack:
     intelligence_transfer: dict[str, bool] = field(default_factory=dict)
     hook_discovery: dict[str, Any] | None = None
     agent_discovery: dict[str, Any] | None = None
+    requirement_coverage: dict[str, Any] | None = None
     message: str = ""
 
     def to_artifact_payload(self) -> dict[str, Any]:
@@ -211,6 +212,8 @@ class EvidencePack:
             payload["hook_discovery"] = dict(self.hook_discovery)
         if self.agent_discovery is not None:
             payload["agent_discovery"] = dict(self.agent_discovery)
+        if self.requirement_coverage is not None:
+            payload["requirement_coverage"] = dict(self.requirement_coverage)
         return payload
 
     @staticmethod
@@ -221,6 +224,7 @@ class EvidencePack:
         return bool(
             "hook_discovery" in payload
             or "agent_discovery" in payload
+            or "requirement_coverage" in payload
             or (
                 isinstance(prompt_contract, Mapping)
                 and isinstance(
@@ -275,6 +279,7 @@ class EvidencePack:
             {"hook_discovery"},
             {"agent_discovery"},
             {"hook_discovery", "agent_discovery"},
+            {"requirement_coverage"},
         ):
             raise ValueError("EVIDENCE_PACK_SEMANTIC_PAYLOAD_SHAPE_INVALID")
         if payload.get("node_name") != "retrieve_evidence":
@@ -311,6 +316,11 @@ class EvidencePack:
         agent_discovery = payload.get("agent_discovery")
         if agent_discovery is not None and not isinstance(agent_discovery, dict):
             raise ValueError("EVIDENCE_PACK_AGENT_DISCOVERY_MUST_BE_OBJECT")
+        requirement_coverage = payload.get("requirement_coverage")
+        if requirement_coverage is not None and not isinstance(
+            requirement_coverage, dict
+        ):
+            raise ValueError("EVIDENCE_PACK_REQUIREMENT_COVERAGE_MUST_BE_OBJECT")
 
         pack = cls(
             query=_required_payload_string(payload, "query"),
@@ -356,11 +366,19 @@ class EvidencePack:
             agent_discovery=(
                 dict(agent_discovery) if isinstance(agent_discovery, dict) else None
             ),
+            requirement_coverage=(
+                dict(requirement_coverage)
+                if isinstance(requirement_coverage, dict)
+                else None
+            ),
             message=_required_payload_string(payload, "message"),
         )
 
         from .discovery_contract import validate_agent_discovery_actual
         from .hook_discovery import validate_hook_discovery_evidence_pack
+        from .requirement_coverage import (
+            validate_requirement_coverage_evidence_pack,
+        )
 
         agent_hash = pack.prompt_contract.get("agent_discovery_sha256")
         if pack.agent_discovery is not None:
@@ -379,8 +397,10 @@ class EvidencePack:
             raise ValueError("EVIDENCE_PACK_AGENT_DISCOVERY_HASH_WITHOUT_SECTION")
         if pack.hook_discovery is not None:
             validate_hook_discovery_evidence_pack(pack)
-        else:
+        elif pack.requirement_coverage is None:
             _validate_agent_discovery_early_termination_pack(pack)
+        if pack.requirement_coverage is not None:
+            validate_requirement_coverage_evidence_pack(pack)
         if pack.to_artifact_payload() != dict(payload):
             raise ValueError("EVIDENCE_PACK_SEMANTIC_ROUNDTRIP_MISMATCH")
         return pack

@@ -58,6 +58,14 @@ from .hook_discovery import (
 )
 from .retriever import DeterministicEvidenceRetriever
 from .rg_live import RgLiveEvidenceProvider
+from .requirement_coverage import (
+    REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    RequirementCoverageEvidenceProvider,
+    build_requirement_coverage_pack,
+    default_feature_requirement_projection,
+    materialize_requirement_coverage_projection,
+    validate_requirement_coverage_evidence_pack,
+)
 
 __all__ = [
     "AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION",
@@ -67,6 +75,12 @@ __all__ = [
     "DenseRetrievalReport",
     "DeterministicEvidenceRetriever",
     "RgLiveEvidenceProvider",
+    "REQUIREMENT_COVERAGE_SCHEMA_VERSION",
+    "RequirementCoverageEvidenceProvider",
+    "build_requirement_coverage_pack",
+    "default_feature_requirement_projection",
+    "materialize_requirement_coverage_projection",
+    "validate_requirement_coverage_evidence_pack",
     "DisabledDenseRetrievalProvider",
     "EvidenceItem",
     "EvidencePack",

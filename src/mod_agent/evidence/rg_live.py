@@ -12,6 +12,7 @@ from .models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
     EvidenceItem,
     EvidencePack,
+    missing_evidence_from_blockers,
 )
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
@@ -299,6 +300,106 @@ class RgLiveEvidenceProvider:
                 "rg plus live file read retained one source-authentic lexical "
                 "observation; patch authority remains blocked without explicit "
                 "requirement coverage."
+            ),
+        )
+
+    def collect_query_set(
+        self,
+        *,
+        queries: tuple[dict[str, str], ...],
+        search_root: str | Path,
+        max_items: int,
+    ) -> EvidencePack:
+        """Run every focused query independently against current live source."""
+
+        if (
+            not queries
+            or max_items < len(queries)
+            or len(queries) > 64
+        ):
+            raise ValueError("RG_LIVE_QUERY_SET_BUDGET_INVALID")
+        seen_query_ids: set[str] = set()
+        items: list[EvidenceItem] = []
+        item_ids: set[str] = set()
+        query_execution: list[dict[str, object]] = []
+        total_ms = 0.0
+        for query in queries:
+            if set(query) != {"query_id", "query", "requirement_id"} or any(
+                not isinstance(query.get(key), str) or not query[key].strip()
+                for key in ("query_id", "query", "requirement_id")
+            ):
+                raise ValueError("RG_LIVE_QUERY_SET_ENTRY_INVALID")
+            query_id = str(query["query_id"])
+            if query_id in seen_query_ids:
+                raise ValueError("RG_LIVE_QUERY_SET_ID_DUPLICATE")
+            seen_query_ids.add(query_id)
+            lane_pack = self.collect(
+                query=str(query["query"]),
+                search_root=search_root,
+            )
+            total_ms += float(lane_pack.timing.get("total_ms", 0.0))
+            lane_evidence_ids: list[str] = []
+            for item in lane_pack.items:
+                lane_evidence_ids.append(item.evidence_id)
+                if item.evidence_id not in item_ids and len(items) < max_items:
+                    items.append(item)
+                    item_ids.add(item.evidence_id)
+            query_execution.append(
+                {
+                    "query_id": query_id,
+                    "requirement_id": str(query["requirement_id"]),
+                    "query_sha256": hashlib.sha256(
+                        str(query["query"]).encode("utf-8")
+                    ).hexdigest(),
+                    "evidence_ids": lane_evidence_ids,
+                }
+            )
+        blocker = {
+            "code": "RG_LIVE_REQUIREMENT_COVERAGE_UNPROVEN",
+            "message": (
+                "Bounded live query execution does not itself establish explicit "
+                "requirement coverage."
+            ),
+            "needed_evidence": ["explicit requirement-to-evidence findings"],
+        }
+        return EvidencePack(
+            query="\n".join(str(query["query"]) for query in queries),
+            readiness="insufficient",
+            can_generate_patch=False,
+            items=tuple(items),
+            gaps=("Explicit requirement coverage findings are not yet resolved.",),
+            blockers=(blocker,),
+            retrieval_methods_used=("rg_live_query_set", "rg_live_read"),
+            missing_evidence=missing_evidence_from_blockers((blocker,)),
+            disabled_modes={
+                "bm25": "Not used by the current live-source query-set owner.",
+                "dense": "Dense retrieval is disabled for this ProductExecution path.",
+                "fusion": "Fusion is disabled for this ProductExecution path.",
+                "rerank": "Reranking is disabled for this ProductExecution path.",
+            },
+            timing={
+                "query_processing_ms": 0.0,
+                "symbol_ms": 0.0,
+                "text_ms": total_ms,
+                "bm25_ms": 0.0,
+                "dense_ms": 0.0,
+                "fusion_ms": 0.0,
+                "rerank_ms": 0.0,
+                "readiness_ms": 0.0,
+                "total_ms": total_ms,
+                "final_count": float(len(items)),
+                "excluded_count": 0.0,
+            },
+            budget_summary={
+                "query_count": len(queries),
+                "max_items": max_items,
+                "per_query_execution": query_execution,
+                "all_queries_executed": len(query_execution) == len(queries),
+                "dense_enabled": False,
+            },
+            message=(
+                "Every focused query executed against current live source; semantic "
+                "coverage remains owned by the requirement coverage projection."
             ),
         )
 

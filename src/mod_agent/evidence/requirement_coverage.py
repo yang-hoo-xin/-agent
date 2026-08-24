@@ -1,0 +1,940 @@
+"""Generic requirement-to-evidence coverage for ProductExecution planning."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Callable, Mapping
+from typing import Any
+
+from .discovery_contract import request_relation_identity
+from .models import (
+    DETERMINISTIC_EVIDENCE_AUTHORITY,
+    EvidenceItem,
+    EvidencePack,
+    missing_evidence_from_blockers,
+)
+
+REQUIREMENT_COVERAGE_SCHEMA_VERSION = "evidence_requirement_coverage_v1"
+REQUIREMENT_ROLES = frozenset(
+    {"change", "pre_patch_evidence", "preservation", "post_change_acceptance"}
+)
+REQUIREMENT_RELATIONSHIPS = frozenset({"support", "conflict", "missing"})
+REQUIREMENT_COVERAGE_DOES_NOT_GRANT = (
+    "human_approval",
+    "apply_permission",
+    "build_permission",
+    "runtime_acceptance",
+    "final_correctness",
+)
+REQUIREMENT_COVERAGE_TRUST_BOUNDARY = (
+    "model_originated_semantic_support_conflict_finding",
+    "deterministic_requirement_evidence_identity_validation",
+    "deterministic_current_source_reference_validation",
+    "deterministic_input_accounting_and_coverage_projection",
+    "deterministic_sufficiency_edit_target_patch_authority_derivation",
+)
+
+
+def default_feature_requirement_projection(
+    feature_data: Mapping[str, Any],
+) -> dict[str, object]:
+    """Project exact FeatureSpec fields without inferring evidence support."""
+
+    obligations = _input_obligations(feature_data)
+    requirements: list[dict[str, object]] = []
+    change_indexes = [
+        index
+        for index, obligation in enumerate(obligations, 1)
+        if "change" in obligation["allowed_roles"]
+    ]
+    requirements.append(
+        _projected_requirement(
+            role="change",
+            text=_required_string(feature_data, "target_behavior"),
+            input_obligation_indexes=change_indexes,
+        )
+    )
+    for index, obligation in enumerate(obligations, 1):
+        if "change" in obligation["allowed_roles"]:
+            continue
+        requirements.append(
+            _projected_requirement(
+                role=str(obligation["allowed_roles"][0]),
+                text=str(obligation["text"]),
+                input_obligation_indexes=[index],
+            )
+        )
+    if len(requirements) > 16:
+        raise ValueError("REQUIREMENT_COVERAGE_REQUIREMENT_BUDGET_EXCEEDED")
+    return {
+        "requirements": requirements,
+        "relations": [
+            {
+                "parent_requirement_indexes": [index],
+                "meaning": f"Evidence disposition for requirement {index}.",
+            }
+            for index in range(1, len(requirements) + 1)
+        ],
+        "input_dispositions": [],
+    }
+
+
+def materialize_requirement_coverage_projection(
+    *,
+    feature_data: Mapping[str, Any],
+    request: str,
+    projection: Mapping[str, Any],
+) -> dict[str, object]:
+    """Assign deterministic requirement, relation, and query identities."""
+
+    if set(projection) != {"requirements", "relations", "input_dispositions"}:
+        raise ValueError("REQUIREMENT_COVERAGE_PROJECTION_SHAPE_INVALID")
+    raw_requirements = projection.get("requirements")
+    raw_relations = projection.get("relations")
+    if (
+        not isinstance(raw_requirements, list)
+        or not 1 <= len(raw_requirements) <= 16
+        or not isinstance(raw_relations, list)
+        or not 1 <= len(raw_relations) <= 32
+    ):
+        raise ValueError("REQUIREMENT_COVERAGE_PROJECTION_BUDGET_INVALID")
+    feature_id = _required_string(feature_data, "feature_id")
+    supplied_feature_hash = feature_data.get("feature_spec_sha256")
+    feature_spec_sha256 = (
+        str(supplied_feature_hash)
+        if _hash_string(supplied_feature_hash)
+        else _json_sha256(dict(feature_data))
+    )
+    request_sha256 = hashlib.sha256(request.strip().encode("utf-8")).hexdigest()
+    input_obligations = _input_obligations(feature_data)
+    normalized_projection = _normalized_projection(
+        raw_requirements=raw_requirements,
+        raw_relations=raw_relations,
+        raw_dispositions=projection.get("input_dispositions"),
+        input_obligations=input_obligations,
+    )
+    projection_sha256 = _json_sha256(normalized_projection)
+    requirements: list[dict[str, object]] = []
+    queries: list[dict[str, str]] = []
+    for index, raw in enumerate(normalized_projection["requirements"], 1):
+        requirement_id = _stable_id(
+            "requirement",
+            feature_spec_sha256,
+            projection_sha256,
+            str(index),
+            str(raw["role"]),
+            str(raw["text"]),
+            *[str(value) for value in raw["input_obligation_indexes"]],
+        )
+        obligation_rows = [
+            input_obligations[int(value) - 1]
+            for value in raw["input_obligation_indexes"]
+        ]
+        required_before_patch = any(
+            value["required_before_patch"] is True for value in obligation_rows
+        )
+        query_ids: list[str] = []
+        for query_text in raw["query_leads"]:
+            query_id = _stable_id("query", requirement_id, str(query_text))
+            query_ids.append(query_id)
+            queries.append(
+                {
+                    "query_id": query_id,
+                    "query": str(query_text),
+                    "requirement_id": requirement_id,
+                }
+            )
+        requirements.append(
+            {
+                "requirement_id": requirement_id,
+                "role": raw["role"],
+                "text": raw["text"],
+                "required_before_patch": required_before_patch,
+                "input_obligation_ids": [
+                    value["input_obligation_id"] for value in obligation_rows
+                ],
+                "query_leads": list(raw["query_leads"]),
+                "query_ids": query_ids,
+            }
+        )
+    relations: list[dict[str, object]] = []
+    seen_relation_keys: set[tuple[tuple[int, ...], str]] = set()
+    for index, raw in enumerate(normalized_projection["relations"], 1):
+        parent_indexes = tuple(int(value) for value in raw["parent_requirement_indexes"])
+        relation_key = (parent_indexes, str(raw["meaning"]))
+        if relation_key in seen_relation_keys:
+            raise ValueError("REQUIREMENT_COVERAGE_RELATION_DUPLICATE")
+        seen_relation_keys.add(relation_key)
+        relations.append(
+            {
+                "relation_id": request_relation_identity(
+                    request_sha256=request_sha256,
+                    projection_sha256=projection_sha256,
+                    relation_index=index,
+                ),
+                "parent_requirement_ids": [
+                    requirements[parent - 1]["requirement_id"]
+                    for parent in parent_indexes
+                ],
+                "meaning": raw["meaning"],
+                "provenance": {"relation_index": index},
+            }
+        )
+    covered_requirement_ids = {
+        str(parent)
+        for relation in relations
+        for parent in relation["parent_requirement_ids"]
+    }
+    if covered_requirement_ids != {
+        str(requirement["requirement_id"]) for requirement in requirements
+    }:
+        raise ValueError("REQUIREMENT_COVERAGE_RELATION_COVERAGE_INVALID")
+    return {
+        "schema_version": REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+        "feature_spec_identity": {
+            "feature_id": feature_id,
+            "feature_spec_sha256": feature_spec_sha256,
+        },
+        "request_identity": {"request_sha256": request_sha256},
+        "projection_identity": {"projection_sha256": projection_sha256},
+        "input_obligations": input_obligations,
+        "input_dispositions": [
+            {
+                "input_obligation_id": input_obligations[
+                    int(value["input_obligation_index"]) - 1
+                ]["input_obligation_id"],
+                "disposition": value["disposition"],
+                "reason": value["reason"],
+            }
+            for value in normalized_projection["input_dispositions"]
+        ],
+        "requirements": requirements,
+        "relations": relations,
+        "queries": queries,
+    }
+
+
+def build_requirement_coverage_pack(
+    *,
+    query: str,
+    materialized_projection: Mapping[str, Any],
+    retrieved_pack: EvidencePack,
+    findings: Mapping[str, Any],
+) -> EvidencePack:
+    """Build one coverage-owned EvidencePack without model-granted authority."""
+
+    section, readiness, can_generate_patch, blockers, gaps = (
+        _resolve_requirement_coverage(
+            query=query,
+            materialized_projection=materialized_projection,
+            items=retrieved_pack.items,
+            findings=findings,
+        )
+    )
+    return EvidencePack(
+        query=query,
+        readiness=readiness,
+        can_generate_patch=can_generate_patch,
+        items=retrieved_pack.items,
+        gaps=gaps,
+        excluded=retrieved_pack.excluded,
+        blockers=blockers,
+        retrieval_methods_used=retrieved_pack.retrieval_methods_used,
+        missing_evidence=missing_evidence_from_blockers(blockers),
+        disabled_modes=dict(retrieved_pack.disabled_modes),
+        timing=dict(retrieved_pack.timing),
+        budget_summary=dict(retrieved_pack.budget_summary),
+        requirement_coverage=section,
+        message=(
+            "Current-source evidence satisfies every required pre-patch requirement."
+            if can_generate_patch
+            else "Requirement coverage is incomplete or conflicting; patch authority is blocked."
+        ),
+    )
+
+
+class RequirementCoverageEvidenceProvider:
+    """Compose injected semantic findings with deterministic live-source evidence."""
+
+    def __init__(
+        self,
+        source_provider: Any,
+        *,
+        projection_factory: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
+        findings_factory: Callable[
+            [Mapping[str, Any], EvidencePack], Mapping[str, Any]
+        ]
+        | None = None,
+    ) -> None:
+        self.source_provider = source_provider
+        self.projection_factory = projection_factory or default_feature_requirement_projection
+        self.findings_factory = findings_factory
+
+    def collect(
+        self,
+        *,
+        query: str,
+        search_root: str,
+        feature_data: Mapping[str, Any],
+    ) -> EvidencePack:
+        projection = self.projection_factory(feature_data)
+        materialized = materialize_requirement_coverage_projection(
+            feature_data=feature_data,
+            request=query,
+            projection=projection,
+        )
+        retrieved = self.source_provider.collect_query_set(
+            queries=tuple(dict(item) for item in materialized["queries"]),
+            search_root=search_root,
+            max_items=max(1, len(materialized["queries"])),
+        )
+        findings = (
+            self.findings_factory(materialized, retrieved)
+            if self.findings_factory is not None
+            else {"findings": []}
+        )
+        return build_requirement_coverage_pack(
+            query=query,
+            materialized_projection=materialized,
+            retrieved_pack=retrieved,
+            findings=findings,
+        )
+
+
+def validate_requirement_coverage_evidence_pack(pack: EvidencePack) -> None:
+    """Strictly recompute coverage semantics and top-level patch authority."""
+
+    section = pack.requirement_coverage
+    if not isinstance(section, dict):
+        raise ValueError("REQUIREMENT_COVERAGE_SECTION_REQUIRED")
+    materialized = {
+        key: section[key]
+        for key in (
+            "schema_version",
+            "feature_spec_identity",
+            "request_identity",
+            "projection_identity",
+            "input_obligations",
+            "input_dispositions",
+            "requirements",
+            "relations",
+            "queries",
+        )
+        if key in section
+    }
+    relation_index_by_id = {
+        str(relation["relation_id"]): int(
+            relation["provenance"]["relation_index"]
+        )
+        for relation in section.get("relations", [])
+        if isinstance(relation, dict)
+        and isinstance(relation.get("provenance"), dict)
+    }
+    persisted_findings = section.get("findings")
+    findings = {
+        "findings": [
+            {
+                "relation_index": relation_index_by_id.get(
+                    str(finding.get("relation_id"))
+                ),
+                "relationship": finding.get("relationship"),
+                "evidence_ids": finding.get("evidence_ids"),
+                "unresolved_gaps": finding.get("unresolved_gaps"),
+            }
+            for finding in persisted_findings or []
+            if isinstance(finding, dict)
+        ]
+        if isinstance(persisted_findings, list)
+        else None
+    }
+    rebuilt, readiness, can_generate_patch, blockers, gaps = (
+        _resolve_requirement_coverage(
+            query=pack.query,
+            materialized_projection=materialized,
+            items=pack.items,
+            findings=findings,
+        )
+    )
+    if rebuilt != section:
+        raise ValueError("REQUIREMENT_COVERAGE_SEMANTIC_DRIFT")
+    if (
+        pack.readiness != readiness
+        or pack.can_generate_patch != can_generate_patch
+        or pack.blockers != blockers
+        or pack.gaps != gaps
+    ):
+        raise ValueError("REQUIREMENT_COVERAGE_TOP_LEVEL_PROJECTION_DRIFT")
+
+
+def _resolve_requirement_coverage(
+    *,
+    query: str,
+    materialized_projection: Mapping[str, Any],
+    items: tuple[EvidenceItem, ...],
+    findings: Mapping[str, Any],
+) -> tuple[
+    dict[str, object], str, bool, tuple[dict[str, Any], ...], tuple[str, ...]
+]:
+    _validate_materialized_projection(query, materialized_projection)
+    if set(findings) != {"findings"} or not isinstance(findings["findings"], list):
+        raise ValueError("REQUIREMENT_COVERAGE_FINDINGS_SHAPE_INVALID")
+    item_by_id = {item.evidence_id: item for item in items}
+    relation_by_index = {
+        int(relation["provenance"]["relation_index"]): relation
+        for relation in materialized_projection["relations"]
+    }
+    normalized_findings: list[dict[str, object]] = []
+    seen_relation_indexes: set[int] = set()
+    for raw in findings["findings"]:
+        if not isinstance(raw, dict) or set(raw) != {
+            "relation_index",
+            "relationship",
+            "evidence_ids",
+            "unresolved_gaps",
+        }:
+            raise ValueError("REQUIREMENT_COVERAGE_FINDING_SHAPE_INVALID")
+        relation_index = raw.get("relation_index")
+        relationship = raw.get("relationship")
+        evidence_ids = raw.get("evidence_ids")
+        unresolved_gaps = raw.get("unresolved_gaps")
+        if (
+            isinstance(relation_index, bool)
+            or not isinstance(relation_index, int)
+            or relation_index not in relation_by_index
+            or relation_index in seen_relation_indexes
+            or relationship not in REQUIREMENT_RELATIONSHIPS
+            or not isinstance(evidence_ids, list)
+            or len(evidence_ids) != len(set(evidence_ids))
+            or any(value not in item_by_id for value in evidence_ids)
+            or not isinstance(unresolved_gaps, list)
+            or any(not isinstance(value, str) or not value for value in unresolved_gaps)
+            or (relationship in {"support", "conflict"} and not evidence_ids)
+        ):
+            raise ValueError("REQUIREMENT_COVERAGE_FINDING_INVALID")
+        seen_relation_indexes.add(relation_index)
+        relation = relation_by_index[relation_index]
+        normalized_findings.append(
+            {
+                "finding_id": _stable_id(
+                    "finding",
+                    str(relation["relation_id"]),
+                    str(relationship),
+                    *sorted(str(value) for value in evidence_ids),
+                ),
+                "relation_id": relation["relation_id"],
+                "parent_requirement_ids": list(relation["parent_requirement_ids"]),
+                "relationship": relationship,
+                "evidence_ids": sorted(str(value) for value in evidence_ids),
+                "unresolved_gaps": list(unresolved_gaps),
+            }
+        )
+    requirements = [dict(value) for value in materialized_projection["requirements"]]
+    required_ids = {
+        str(value["requirement_id"])
+        for value in requirements
+        if value["required_before_patch"] is True
+    }
+    authoritative_ids = {
+        item.evidence_id
+        for item in items
+        if item.authority == DETERMINISTIC_EVIDENCE_AUTHORITY
+        and bool(item.source_path)
+        and bool(item.source_hash or item.file_hash or item.doc_hash)
+    }
+    reasons: list[str] = []
+    for requirement_id in sorted(required_ids):
+        relevant = [
+            finding
+            for finding in normalized_findings
+            if requirement_id in finding["parent_requirement_ids"]
+        ]
+        support_ids = {
+            str(evidence_id)
+            for finding in relevant
+            if finding["relationship"] == "support"
+            and not finding["unresolved_gaps"]
+            for evidence_id in finding["evidence_ids"]
+            if evidence_id in authoritative_ids
+        }
+        if not support_ids:
+            reasons.append(f"required_requirement_unsupported:{requirement_id}")
+        if any(finding["relationship"] == "conflict" for finding in relevant):
+            reasons.append(f"required_requirement_conflicting:{requirement_id}")
+        if any(finding["relationship"] == "missing" for finding in relevant):
+            reasons.append(f"required_requirement_missing:{requirement_id}")
+        if any(finding["unresolved_gaps"] for finding in relevant):
+            reasons.append(f"required_requirement_unresolved:{requirement_id}")
+    change_ids = {
+        str(value["requirement_id"])
+        for value in requirements
+        if value["role"] == "change"
+    }
+    change_support_evidence_ids = {
+        str(evidence_id)
+        for finding in normalized_findings
+        if finding["relationship"] == "support"
+        and not finding["unresolved_gaps"]
+        and change_ids.intersection(finding["parent_requirement_ids"])
+        for evidence_id in finding["evidence_ids"]
+    }
+    edit_target_evidence_ids = sorted(
+        evidence_id
+        for evidence_id in change_support_evidence_ids
+        if evidence_id in item_by_id
+        and item_by_id[evidence_id].authority == DETERMINISTIC_EVIDENCE_AUTHORITY
+        and item_by_id[evidence_id].source_type == "target_source"
+        and bool(item_by_id[evidence_id].source_path)
+        and isinstance(item_by_id[evidence_id].span, dict)
+        and bool(
+            item_by_id[evidence_id].source_hash
+            or item_by_id[evidence_id].file_hash
+            or item_by_id[evidence_id].doc_hash
+        )
+    )
+    if not edit_target_evidence_ids:
+        reasons.append("change_edit_target_evidence_missing")
+    reasons = list(dict.fromkeys(reasons))
+    can_generate_patch = not reasons
+    status = "sufficient" if can_generate_patch else "insufficient"
+    blockers = tuple(
+        {
+            "code": "REQUIREMENT_COVERAGE_INSUFFICIENT",
+            "message": reason,
+            "needed_evidence": ["explicit authoritative requirement coverage"],
+        }
+        for reason in reasons
+    )
+    section = {
+        **{key: _copy_json(value) for key, value in materialized_projection.items()},
+        "findings": normalized_findings,
+        "edit_target_evidence_ids": edit_target_evidence_ids,
+        "sufficiency": {"status": status, "reasons": reasons},
+        "semantic_trust_boundary": list(REQUIREMENT_COVERAGE_TRUST_BOUNDARY),
+        "does_not_grant": list(REQUIREMENT_COVERAGE_DOES_NOT_GRANT),
+    }
+    return section, status, can_generate_patch, blockers, tuple(reasons)
+
+
+def _validate_materialized_projection(
+    query: str,
+    value: Mapping[str, Any],
+) -> None:
+    if set(value) != {
+        "schema_version",
+        "feature_spec_identity",
+        "request_identity",
+        "projection_identity",
+        "input_obligations",
+        "input_dispositions",
+        "requirements",
+        "relations",
+        "queries",
+    } or value.get("schema_version") != REQUIREMENT_COVERAGE_SCHEMA_VERSION:
+        raise ValueError("REQUIREMENT_COVERAGE_MATERIALIZED_SHAPE_INVALID")
+    feature_identity = value.get("feature_spec_identity")
+    request_identity = value.get("request_identity")
+    projection_identity = value.get("projection_identity")
+    if (
+        not isinstance(feature_identity, dict)
+        or set(feature_identity) != {"feature_id", "feature_spec_sha256"}
+        or not _hash_string(feature_identity.get("feature_spec_sha256"))
+        or not isinstance(feature_identity.get("feature_id"), str)
+        or not feature_identity["feature_id"]
+        or not isinstance(request_identity, dict)
+        or set(request_identity) != {"request_sha256"}
+        or request_identity.get("request_sha256")
+        != hashlib.sha256(query.strip().encode("utf-8")).hexdigest()
+        or not isinstance(projection_identity, dict)
+        or set(projection_identity) != {"projection_sha256"}
+        or not _hash_string(projection_identity.get("projection_sha256"))
+    ):
+        raise ValueError("REQUIREMENT_COVERAGE_IDENTITY_INVALID")
+    requirements = value.get("requirements")
+    relations = value.get("relations")
+    queries = value.get("queries")
+    input_obligations = value.get("input_obligations")
+    input_dispositions = value.get("input_dispositions")
+    if (
+        not isinstance(input_obligations, list)
+        or not input_obligations
+        or not isinstance(input_dispositions, list)
+        or not isinstance(requirements, list)
+        or not isinstance(relations, list)
+        or not isinstance(queries, list)
+    ):
+        raise ValueError("REQUIREMENT_COVERAGE_COLLECTION_INVALID")
+    normalized_projection = {
+        "requirements": [
+            {
+                "role": requirement.get("role"),
+                "text": requirement.get("text"),
+                "input_obligation_indexes": [
+                    next(
+                        index
+                        for index, obligation in enumerate(input_obligations, 1)
+                        if obligation.get("input_obligation_id") == obligation_id
+                    )
+                    for obligation_id in requirement.get(
+                        "input_obligation_ids", []
+                    )
+                ],
+                "query_leads": requirement.get("query_leads"),
+            }
+            for requirement in requirements
+            if isinstance(requirement, dict)
+        ],
+        "relations": [
+            {
+                "parent_requirement_indexes": [
+                    next(
+                        index
+                        for index, requirement in enumerate(requirements, 1)
+                        if requirement.get("requirement_id") == parent
+                    )
+                    for parent in relation.get("parent_requirement_ids", [])
+                ],
+                "meaning": relation.get("meaning"),
+            }
+            for relation in relations
+            if isinstance(relation, dict)
+        ],
+        "input_dispositions": [
+            {
+                "input_obligation_index": next(
+                    index
+                    for index, obligation in enumerate(input_obligations, 1)
+                    if obligation.get("input_obligation_id")
+                    == disposition.get("input_obligation_id")
+                ),
+                "disposition": disposition.get("disposition"),
+                "reason": disposition.get("reason"),
+            }
+            for disposition in input_dispositions
+            if isinstance(disposition, dict)
+        ],
+    }
+    if _json_sha256(normalized_projection) != projection_identity["projection_sha256"]:
+        raise ValueError("REQUIREMENT_COVERAGE_PROJECTION_HASH_INVALID")
+    rematerialized = materialize_requirement_coverage_projection(
+        feature_data={
+            "feature_id": feature_identity["feature_id"],
+            "feature_spec_sha256": feature_identity["feature_spec_sha256"],
+            "input_obligations": input_obligations,
+        },
+        request=query,
+        projection=normalized_projection,
+    )
+    rematerialized["feature_spec_identity"] = dict(feature_identity)
+    if rematerialized != dict(value):
+        raise ValueError("REQUIREMENT_COVERAGE_IDENTITY_DRIFT")
+
+
+def _normalized_projection(
+    *,
+    raw_requirements: list[Any],
+    raw_relations: list[Any],
+    raw_dispositions: object,
+    input_obligations: list[dict[str, object]],
+) -> dict[str, object]:
+    if not isinstance(raw_dispositions, list):
+        raise ValueError("REQUIREMENT_COVERAGE_INPUT_DISPOSITIONS_INVALID")
+    requirements: list[dict[str, object]] = []
+    accounted_indexes: set[int] = set()
+    for raw in raw_requirements:
+        if not isinstance(raw, dict) or set(raw) != {
+            "role",
+            "text",
+            "input_obligation_indexes",
+            "query_leads",
+        }:
+            raise ValueError("REQUIREMENT_COVERAGE_REQUIREMENT_SHAPE_INVALID")
+        role = raw.get("role")
+        text = raw.get("text")
+        obligation_indexes = raw.get("input_obligation_indexes")
+        query_leads = raw.get("query_leads")
+        if (
+            role not in REQUIREMENT_ROLES
+            or not isinstance(text, str)
+            or not text.strip()
+            or not isinstance(obligation_indexes, list)
+            or not obligation_indexes
+            or len(obligation_indexes) != len(set(obligation_indexes))
+            or any(
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or not 1 <= index <= len(input_obligations)
+                for index in obligation_indexes
+            )
+            or any(
+                role not in input_obligations[int(index) - 1]["allowed_roles"]
+                for index in obligation_indexes
+            )
+            or not isinstance(query_leads, list)
+            or not 1 <= len(query_leads) <= 4
+            or len(query_leads) != len(set(query_leads))
+            or any(not isinstance(value, str) or not value.strip() for value in query_leads)
+        ):
+            raise ValueError("REQUIREMENT_COVERAGE_REQUIREMENT_INVALID")
+        accounted_indexes.update(int(index) for index in obligation_indexes)
+        requirements.append(
+            {
+                "role": role,
+                "text": text.strip(),
+                "input_obligation_indexes": [
+                    int(value) for value in obligation_indexes
+                ],
+                "query_leads": [str(value).strip() for value in query_leads],
+            }
+        )
+    dispositions: list[dict[str, object]] = []
+    disposition_indexes: set[int] = set()
+    for raw in raw_dispositions:
+        if not isinstance(raw, dict) or set(raw) != {
+            "input_obligation_index",
+            "disposition",
+            "reason",
+        }:
+            raise ValueError("REQUIREMENT_COVERAGE_INPUT_DISPOSITION_SHAPE_INVALID")
+        index = raw.get("input_obligation_index")
+        disposition = raw.get("disposition")
+        reason = raw.get("reason")
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or not 1 <= index <= len(input_obligations)
+            or index in disposition_indexes
+            or index in accounted_indexes
+            or input_obligations[index - 1]["required_before_patch"] is True
+            or disposition != "post_change"
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            raise ValueError("REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID")
+        disposition_indexes.add(index)
+        dispositions.append(
+            {
+                "input_obligation_index": index,
+                "disposition": disposition,
+                "reason": reason.strip(),
+            }
+        )
+    if accounted_indexes | disposition_indexes != set(
+        range(1, len(input_obligations) + 1)
+    ):
+        raise ValueError("REQUIREMENT_COVERAGE_INPUT_ACCOUNTING_INCOMPLETE")
+    relations: list[dict[str, object]] = []
+    for raw in raw_relations:
+        if not isinstance(raw, dict) or set(raw) != {
+            "parent_requirement_indexes",
+            "meaning",
+        }:
+            raise ValueError("REQUIREMENT_COVERAGE_RELATION_SHAPE_INVALID")
+        parents = raw.get("parent_requirement_indexes")
+        meaning = raw.get("meaning")
+        if (
+            not isinstance(parents, list)
+            or not parents
+            or len(parents) != len(set(parents))
+            or any(
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or not 1 <= index <= len(requirements)
+                for index in parents
+            )
+            or not isinstance(meaning, str)
+            or not meaning.strip()
+        ):
+            raise ValueError("REQUIREMENT_COVERAGE_RELATION_INVALID")
+        relations.append(
+            {
+                "parent_requirement_indexes": [int(value) for value in parents],
+                "meaning": meaning.strip(),
+            }
+        )
+    return {
+        "requirements": requirements,
+        "relations": relations,
+        "input_dispositions": dispositions,
+    }
+
+
+def _projected_requirement(
+    *, role: str, text: str, input_obligation_indexes: list[int]
+) -> dict[str, object]:
+    return {
+        "role": role,
+        "text": text,
+        "input_obligation_indexes": list(input_obligation_indexes),
+        "query_leads": [text],
+    }
+
+
+def _input_obligations(
+    feature_data: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    supplied = feature_data.get("input_obligations")
+    supplied_hash = feature_data.get("feature_spec_sha256")
+    feature_hash = (
+        str(supplied_hash)
+        if _hash_string(supplied_hash)
+        else _json_sha256(dict(feature_data))
+    )
+    if supplied is not None:
+        if not isinstance(supplied, list) or not supplied:
+            raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATIONS_INVALID")
+        obligations = [_copy_json(value) for value in supplied]
+    else:
+        sources: list[tuple[str, int, str, tuple[str, ...], bool]] = [
+            (
+                "user_request",
+                0,
+                _required_string(feature_data, "user_request"),
+                ("change", "preservation"),
+                True,
+            ),
+            (
+                "target_behavior",
+                0,
+                _required_string(feature_data, "target_behavior"),
+                ("change",),
+                True,
+            ),
+        ]
+        sources.extend(
+            (
+                "evidence_requirements",
+                index,
+                text,
+                ("pre_patch_evidence",),
+                True,
+            )
+            for index, text in enumerate(
+                _string_list(feature_data, "evidence_requirements"), 1
+            )
+        )
+        sources.extend(
+            ("non_goals", index, text, ("preservation",), True)
+            for index, text in enumerate(_string_list(feature_data, "non_goals"), 1)
+        )
+        sources.extend(
+            (
+                "acceptance_criteria",
+                index,
+                text,
+                ("post_change_acceptance",),
+                False,
+            )
+            for index, text in enumerate(
+                _string_list(feature_data, "acceptance_criteria"), 1
+            )
+        )
+        sources.extend(
+            (
+                "runtime_verification_plan",
+                index,
+                text,
+                ("post_change_acceptance",),
+                False,
+            )
+            for index, text in enumerate(
+                _string_list(feature_data, "runtime_verification_plan"), 1
+            )
+        )
+        obligations = [
+            {
+                "input_obligation_id": _stable_id(
+                    "obligation", feature_hash, field, str(index), text
+                ),
+                "origin": {"field": field, "index": index},
+                "text": text,
+                "mandatory": True,
+                "allowed_roles": list(roles),
+                "required_before_patch": required_before_patch,
+            }
+            for field, index, text, roles, required_before_patch in sources
+        ]
+    for obligation in obligations:
+        if not isinstance(obligation, dict) or set(obligation) != {
+            "input_obligation_id",
+            "origin",
+            "text",
+            "mandatory",
+            "allowed_roles",
+            "required_before_patch",
+        }:
+            raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATION_SHAPE_INVALID")
+        origin = obligation.get("origin")
+        if (
+            not isinstance(origin, dict)
+            or set(origin) != {"field", "index"}
+            or not isinstance(origin.get("field"), str)
+            or isinstance(origin.get("index"), bool)
+            or not isinstance(origin.get("index"), int)
+            or not isinstance(obligation.get("text"), str)
+            or not obligation["text"]
+            or obligation.get("mandatory") is not True
+            or not isinstance(obligation.get("allowed_roles"), list)
+            or not obligation["allowed_roles"]
+            or len(obligation["allowed_roles"])
+            != len(set(obligation["allowed_roles"]))
+            or any(
+                role not in REQUIREMENT_ROLES
+                for role in obligation["allowed_roles"]
+            )
+            or not isinstance(obligation.get("required_before_patch"), bool)
+            or obligation.get("input_obligation_id")
+            != _stable_id(
+                "obligation",
+                feature_hash,
+                str(origin["field"]),
+                str(origin["index"]),
+                str(obligation["text"]),
+            )
+        ):
+            raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATION_INVALID")
+    return [dict(value) for value in obligations]
+
+
+def _required_string(value: Mapping[str, Any], key: str) -> str:
+    result = value.get(key)
+    if not isinstance(result, str) or not result.strip():
+        raise ValueError(f"REQUIREMENT_COVERAGE_{key.upper()}_INVALID")
+    return result.strip()
+
+
+def _string_list(value: Mapping[str, Any], key: str) -> list[str]:
+    raw = value.get(key)
+    if not isinstance(raw, (list, tuple)) or any(
+        not isinstance(item, str) or not item.strip() for item in raw
+    ):
+        raise ValueError(f"REQUIREMENT_COVERAGE_{key.upper()}_INVALID")
+    return [str(item).strip() for item in raw]
+
+
+def _stable_id(prefix: str, *parts: str) -> str:
+    digest = hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:20]
+    return f"{prefix}_{digest}"
+
+
+def _json_sha256(value: object) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _hash_string(value: object) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _copy_json(value: object) -> object:
+    return json.loads(json.dumps(value, ensure_ascii=False))

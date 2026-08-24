@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
+from src.mod_agent.evidence.requirement_coverage import (
+    REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+)
+
 
 @dataclass(frozen=True)
 class BindingValidationResult:
@@ -100,8 +104,50 @@ class BindingResolver:
             if isinstance(item, dict) and item.get("evidence_id")
         }
         blockers: list[dict[str, Any]] = []
+        requirement_coverage = self.evidence_pack.get("requirement_coverage")
+        coverage_edit_target_ids: set[str] | None = None
+        if requirement_coverage is not None:
+            if (
+                not isinstance(requirement_coverage, dict)
+                or requirement_coverage.get("schema_version")
+                != REQUIREMENT_COVERAGE_SCHEMA_VERSION
+                or not isinstance(
+                    requirement_coverage.get("edit_target_evidence_ids"), list
+                )
+            ):
+                blockers.append(
+                    {
+                        "code": "REQUIREMENT_COVERAGE_INVALID",
+                        "message": (
+                            "Binding validation requires one valid requirement "
+                            "coverage edit-target projection."
+                        ),
+                    }
+                )
+                coverage_edit_target_ids = set()
+            else:
+                coverage_edit_target_ids = {
+                    str(value)
+                    for value in requirement_coverage[
+                        "edit_target_evidence_ids"
+                    ]
+                }
         for binding in self.edit_bindings.values():
             evidence_id = str(binding.get("evidence_id") or "")
+            if (
+                coverage_edit_target_ids is not None
+                and evidence_id not in coverage_edit_target_ids
+            ):
+                blockers.append(
+                    _blocker(
+                        "EDIT_BINDING_OUTSIDE_REQUIREMENT_COVERAGE",
+                        (
+                            "Edit binding evidence_id is not a deterministic "
+                            "coverage-derived edit target."
+                        ),
+                        binding,
+                    )
+                )
             item = evidence_items.get(evidence_id)
             if item is None:
                 blockers.append(
