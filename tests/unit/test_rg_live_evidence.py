@@ -16,13 +16,31 @@ def test_rg_live_provider_returns_hashed_live_target_source(tmp_path: Path) -> N
         search_root="generated_mods/BetterHitFeedback",
     )
 
-    assert pack.can_generate_patch is True
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
     assert pack.retrieval_methods_used == ("rg_live_read",)
     assert pack.items[0].source_path == (
         "generated_mods/BetterHitFeedback/Patches/Behavior.cs"
     )
     assert pack.items[0].file_hash
     assert "KillMarkerColor" in pack.items[0].excerpt
+    assert pack.items[0].authority == "mod_agent_deterministic"
+    assert pack.blockers == (
+        {
+            "code": "RG_LIVE_REQUIREMENT_COVERAGE_UNPROVEN",
+            "message": (
+                "Live lexical source observations do not establish explicit, "
+                "verifiable requirement coverage."
+            ),
+            "needed_evidence": [
+                "explicit requirement-to-evidence coverage",
+            ],
+        },
+    )
+    artifact = pack.to_artifact_payload()
+    assert artifact["readiness"] == "insufficient"
+    assert artifact["can_generate_patch"] is False
+    assert artifact["authoritative_for_patch"] is False
 
 
 def test_rg_live_provider_preserves_crlf_for_raw_exact_patch_binding(
@@ -85,7 +103,7 @@ def test_rg_live_provider_honors_one_exact_requested_source_filename(
         search_root="generated_mods/BetterHitFeedback",
     )
 
-    assert pack.can_generate_patch is True
+    assert pack.can_generate_patch is False
     assert pack.items[0].source_path == "generated_mods/BetterHitFeedback/Plugin.cs"
     assert pack.items[0].method_name == "Load"
     assert "signal=PLUGIN_LOADED" in pack.items[0].excerpt
@@ -107,8 +125,65 @@ def test_rg_live_provider_preserves_exact_filename_identity_from_raw_request(
         search_root="generated_mods/BetterHitFeedback",
     )
 
-    assert pack.can_generate_patch is True
+    assert pack.can_generate_patch is False
     assert pack.items[0].source_path == "generated_mods/BetterHitFeedback/Plugin.cs"
+
+
+def test_rg_live_multiple_lexical_matches_do_not_proxy_requirement_coverage(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "generated_mods" / "Example"
+    root.mkdir(parents=True)
+    (root / "Behavior.cs").write_text(
+        "public sealed class Behavior\n"
+        "{\n"
+        "    public void ApplyMarker() { MarkerColor = Pink; }\n"
+        "    public void PreserveMarker() { MarkerColor = Original; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (root / "Secondary.cs").write_text(
+        "public sealed class Secondary { string MarkerColor = Pink; }\n",
+        encoding="utf-8",
+    )
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="marker color pink preserve original",
+        search_root="generated_mods/Example",
+    )
+
+    assert len(pack.items) == 1
+    assert pack.items[0].source_hash
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.blockers[0]["code"] == "RG_LIVE_REQUIREMENT_COVERAGE_UNPROVEN"
+
+
+def test_rg_live_preservation_observation_remains_non_authoritative(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "generated_mods" / "Example" / "Behavior.cs"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "public sealed class Behavior\n"
+        "{\n"
+        "    public void PreserveOriginalFeedback()\n"
+        "    {\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="preserve original feedback",
+        search_root="generated_mods/Example",
+    )
+
+    assert pack.items[0].method_name == "PreserveOriginalFeedback"
+    assert "PreserveOriginalFeedback" in pack.items[0].excerpt
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.to_artifact_payload()["authoritative_for_patch"] is False
 
 
 def test_rg_live_provider_blocks_duplicate_exact_requested_source_filename(

@@ -32,7 +32,11 @@ from src.mod_agent.artifacts.registry import (
 from src.mod_agent.bindings import resolve_runtime_diagnosis_binding
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.domain import DomainAdapterRegistry, build_gtfo_profile
-from src.mod_agent.evidence import EvidencePack, FakeDenseRetrievalProvider
+from src.mod_agent.evidence import (
+    EvidencePack,
+    FakeDenseRetrievalProvider,
+    RgLiveEvidenceProvider,
+)
 from src.mod_agent.execution import ExactDiffApprovalRejectedError
 from src.mod_agent.edit_authority_capabilities import (
     EditAuthorityReviewResultV1,
@@ -6501,6 +6505,56 @@ def test_clear_chinese_request_reaches_evidence_then_planning_blocks_patch(
     )["data"]
     assert implementation["blocking"] is True
     assert implementation["proposed_changes"] == []
+
+
+def test_rg_live_lexical_pack_commits_blocking_plan_without_patch_generation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "generated_mods" / "Example" / "Behavior.cs"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "public sealed class Behavior\n"
+        "{\n"
+        "    public void ApplyPinkMarker() { }\n"
+        "    public void PreserveNormalFeedback() { }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="pink marker preserve normal feedback",
+        search_root="generated_mods/Example",
+    )
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        evidence_pack_factory=lambda _state, _feature: pack,
+    )
+
+    result = graph.invoke(
+        create_initial_state(
+            run_id="run_rg_live_lexical_block",
+            request_id="req_rg_live_lexical_block",
+            user_request="Make the marker pink while preserving normal feedback.",
+            target_mod="Example",
+        )
+    )
+
+    assert result["current_stage"] == "blocked"
+    assert "evidence_pack" in result["artifacts"]
+    assert "implementation_plan" in result["artifacts"]
+    assert "patch_proposal" not in result["artifacts"]
+    evidence = store.read(_artifact_ref(store, result, "evidence_pack"))["data"]
+    implementation = store.read(
+        _artifact_ref(store, result, "implementation_plan")
+    )["data"]
+    assert evidence["items"]
+    assert evidence["readiness"] == "insufficient"
+    assert evidence["authoritative_for_patch"] is False
+    assert implementation["blocking"] is True
+    assert implementation["proposed_changes"] == []
+    assert implementation["blockers"][0]["code"] == (
+        "RG_LIVE_REQUIREMENT_COVERAGE_UNPROVEN"
+    )
 
 
 def test_vague_request_routes_to_blocked(tmp_path: Path) -> None:

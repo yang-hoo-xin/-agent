@@ -249,11 +249,32 @@ class RgLiveEvidenceProvider:
             ),
             declared_members=declared_members,
         )
+        coverage_blocker = {
+            "code": "RG_LIVE_REQUIREMENT_COVERAGE_UNPROVEN",
+            "message": (
+                "Live lexical source observations do not establish explicit, "
+                "verifiable requirement coverage."
+            ),
+            "needed_evidence": [
+                "explicit requirement-to-evidence coverage",
+            ],
+        }
         return EvidencePack(
             query=query,
-            readiness="sufficient",
-            can_generate_patch=True,
+            readiness="insufficient",
+            can_generate_patch=False,
             items=(item,),
+            gaps=(
+                "Explicit requirement coverage is not established by rg lexical matches.",
+            ),
+            blockers=(coverage_blocker,),
+            missing_evidence=(
+                {
+                    "needed_evidence": "explicit requirement-to-evidence coverage",
+                    "blocker_code": coverage_blocker["code"],
+                    "reason": coverage_blocker["message"],
+                },
+            ),
             retrieval_methods_used=("rg_live_read",),
             disabled_modes={
                 "bm25": "Not selected by the completed directional decision.",
@@ -274,7 +295,11 @@ class RgLiveEvidenceProvider:
                 "final_count": 1.0,
                 "excluded_count": 0.0,
             },
-            message="rg plus live file read produced one editable target-source excerpt.",
+            message=(
+                "rg plus live file read retained one source-authentic lexical "
+                "observation; patch authority remains blocked without explicit "
+                "requirement coverage."
+            ),
         )
 
 
