@@ -113,7 +113,7 @@ the isolated baseline Build completed with 0 errors and one existing CS8618
 warning, baseline/no-op/config-only implementations were rejected, and a hidden
 positive reference passed the same compiled-IL oracle. The hash-bound audit is
 `docs/audits/ACCURATE_CROSSHAIR_SPREAD_TOGGLE_PREFLIGHT_20260824.json`,
-SHA256=`980090588E26A465F4BAD5D334E88C8B0690668EE9A4D5899320DE9A1FADEE53`.
+SHA256=`36AAD0A655D05A530143094B376C69BB899C4922E0C2364FDF846446415C9849`.
 No actual, model call, game launch, or game-directory write is authorized. This
 implementation page has read the hidden oracle and is permanently excluded
 from running the future AccurateCrosshair actual.

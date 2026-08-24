@@ -130,6 +130,16 @@
     "unnecessary_gameplay_hook_complexity_added": false,
     "case_valid_for_claimed_scope": true
   },
+  "evidence_classification": {
+    "task_specific_acceptance_unit_tested": true,
+    "three_point_sensitivity_calibrated": true,
+    "baseline_negative_passed": true,
+    "config_only_mutant_negative_passed": true,
+    "isolated_positive_reference_passed": true,
+    "general_harness_validated": false,
+    "cross_task_reuse": false,
+    "runtime_verified": false
+  },
   "runtime_applicability": {
     "compile_test_preflight_complete": true,
     "gameplay_runtime_required_for_delivery": true,
@@ -143,8 +153,25 @@
     "The user-declared ED76 snapshot is retained but its hashing protocol was not supplied; reproducibility is instead closed by the full per-file inventory, byte-equal isolated copy, observed product snapshot hash and clean Git revision.",
     "Static Build/IL acceptance does not prove gameplay behavior after restart.",
     "The positive reference validates the oracle only and is not implementation authority.",
-    "One case cannot establish stable or general Coding Agent capability."
+    "One case cannot establish stable or general Coding Agent capability.",
+    "The calibration does not prove that multiple materially different correct implementations all pass.",
+    "The calibration does not measure false-positive or false-negative behavior over additional wrong mutations.",
+    "Fault injection for missing or stale dependencies, tampered hashes, and malformed acceptance output has not been executed.",
+    "Cross-task and cross-repository reuse has not been tested.",
+    "Independent repeated executions have not been run.",
+    "Real actual integration has not been executed.",
+    "GTFO gameplay behavior has not been verified."
   ],
+  "repair_revalidation_gate": {
+    "required_layers": [
+      "focused tests for the actual physical owner",
+      "the complete AccurateCrosshair task-specific Hidden Acceptance",
+      "real isolated Build",
+      "diff, scope, and isolation checks",
+      "regression tests adjacent to every affected shared owner"
+    ],
+    "platform_expansion_rule": "expand platform-adjacent or integration tests only when the Repair changes a shared platform owner; local failures do not require an indiscriminate full-repository run"
+  },
   "allowed_next_action": "create one fresh expected-isolated task using only the clean baseline source/request/dependency identities; do not expose this report, hidden oracle, sensitivity mutants or reference implementation",
   "forbidden_claims": [
     "feature delivered",
