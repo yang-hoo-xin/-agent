@@ -12,8 +12,8 @@ target_head_at_audit: 8c5509e7af3bd8d285a412165583441cdc0788b4
 current_checkpoint_at_last_sync: 8c5509e7af3bd8d285a412165583441cdc0788b4
 product_milestone: coding_agent_v0
 first_integrated_delivery: coding_agent_v0_internal_alpha
-active_work_package: none_pending_simple_actual_only_task_selection_and_reliability_preflight
-current_product_stage: coding_agent_v0_internal_alpha_actual_only_selection
+active_work_package: accurate_crosshair_reliability_preflight_complete_pending_fresh_actual
+current_product_stage: coding_agent_v0_internal_alpha_actual_only_preflight_complete
 rag_1a_role: internal_evidence_capability
 rag_1b_role: public_entry_adoption
 ```
@@ -734,7 +734,7 @@ r8 repository objective explicit unresolved 已记录
 → 冻结 BHF/WC 结果的最小关系 Eval 已完成
 → Relation-aware Evidence/Trace/Eval 基础已形成确定性 checkpoint
 → Wall relation-aware run004 形成部分真实轨迹，但在 EvidencePack 前 Provider timeout，记录 explicit unresolved
-→ 当前：选择 simple actual-only 真实任务并完成 Task/Case Reliability preflight
+→ AccurateCrosshair Task Reliability preflight 已通过；当前等待 fresh actual 单独授权
 → 一条 Build/Test 成功 + 一次 Failure → Different Repair → Revalidation
 → Internal Alpha completion checkpoint
 → RAG-1B：唯一公共入口采用同一 Evidence executor + Operational Readiness work
@@ -779,7 +779,7 @@ r8 repository objective explicit unresolved 已记录
 - WallCrawler committed actual 不能形成负向能力结论，Case Reliability 为 `invalid_for_agent_evaluation_for_current_protocol`；
 - 最小关系级 Eval 已把 lane coverage、required/missing relations、完整 Hook identity、禁止 identity、相关 IL 与 budget terminal 一并计入；
 - RAG-1A outcome 为 `explicit_unresolved`，不是 pass；outcome report SHA256 为 `7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B`；
-- 当前没有已授权 actual-only 执行工作；Wall/BHF 路线均已冻结，下一步只选择一条 simple actual-only 真实任务并先完成独立 Task/Case Reliability preflight。
+- 当前没有已授权 actual-only 执行工作；Wall/BHF 路线均已冻结。已选择 `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001` 并完成独立 Task Reliability preflight，结果为 `eligible_for_fresh_actual`；详细事实只记录在 `docs/audits/ACCURATE_CROSSHAIR_SPREAD_TOGGLE_PREFLIGHT_20260824.json`。下一步必须使用不含本页 Hidden Acceptance 的 fresh task，并单独授权 actual/model；本页不得执行该 actual。
 
 Relation-aware follow-up did not change the frozen old RAG-1A comparison. It
 formed product-code checkpoints `dc93e39` for deterministic

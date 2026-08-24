@@ -10,7 +10,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ```text
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
-current_dependency: SIMPLE-ACTUAL-ONLY-TASK-SELECTION-AND-RELIABILITY-PREFLIGHT
+current_dependency: ACCURATE-CROSSHAIR-FRESH-ACTUAL-PENDING-AUTHORIZATION
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: 8c5509e7af3bd8d285a412165583441cdc0788b4
@@ -36,7 +36,12 @@ wallcrawler_accepted_model_actions: 2
 minimal_relation_eval_status: completed
 rag_1a_outcome_report: docs/audits/rag_1a_calibration_outcome_20260822_001/rag_1a_outcome.json
 rag_1a_outcome_report_sha256: 7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B
-next_capability_step: select one simple actual-only real task and complete its independent Task/Case Reliability preflight
+selected_actual_only_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
+task_reliability_preflight: eligible_for_fresh_actual
+task_reliability_report: docs/audits/ACCURATE_CROSSHAIR_SPREAD_TOGGLE_PREFLIGHT_20260824.json
+task_reliability_report_sha256: 980090588E26A465F4BAD5D334E88C8B0690668EE9A4D5899320DE9A1FADEE53
+accurate_crosshair_actual_authorized: false
+next_capability_step: wait for explicit creation and authorization of one fresh expected-isolated AccurateCrosshair actual task
 rag_1a_status: explicit_unresolved
 rag_1a_relation_aware_status: explicit_unresolved_before_artifact_commit
 rag_1b_status: not_started

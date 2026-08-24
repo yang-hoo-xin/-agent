@@ -10,9 +10,9 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: NONE-PENDING-ACTUAL-ONLY-TASK-SELECTION
-selected_product_request: none
-queue_status: pending_task_selection_and_reliability_preflight
+current_queue: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
+selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
+queue_status: reliability_preflight_complete_pending_fresh_actual_authorization
 ```
 
 ```text
@@ -29,8 +29,8 @@ wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: simple actual-only real task Task/Case Reliability preflight
-activation_required: explicit task selection and bounded preflight authorization
+next_eligible_slice: one fresh expected-isolated AccurateCrosshair actual
+activation_required: explicit fresh-task creation plus bounded actual/model authorization
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
@@ -39,9 +39,10 @@ Wall calibration routes now have explicit unresolved outcomes. Relation-aware
 Wall run004 crossed Provider admission, Requirement Projection and correction,
 Search Plan, and two model-selected actions before a seventh Provider response
 timed out; no EvidencePack or comparison formed. Wall, BHF, Dense, context,
-timeout, and provider tuning are not current queue items. The next selected
-direction is one simple actual-only real task, but the exact task and its
-Task/Case Reliability preflight remain pending explicit selection.
+timeout, and provider tuning are not current queue items. The selected task is
+now the AccurateCrosshair spread toggle. Its Task/Case Reliability preflight is
+eligible and hash-bound, but no actual, model call, or game execution is
+authorized by this queue update.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

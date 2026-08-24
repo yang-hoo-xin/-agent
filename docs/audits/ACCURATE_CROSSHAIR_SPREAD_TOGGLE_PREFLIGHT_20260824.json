@@ -1,0 +1,156 @@
+{
+  "report_version": "accurate_crosshair_task_reliability_preflight_v1",
+  "task_id": "ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001",
+  "report_date": "2026-08-24",
+  "preflight_verdict": "eligible_for_fresh_actual",
+  "actual_authorized": false,
+  "model_calls": 0,
+  "game_launches": 0,
+  "game_directory_writes": 0,
+  "source_identity": {
+    "physical_root": "C:/Users/10160/Desktop/ai学习/222/AccurateCrosshair-main",
+    "declared_snapshot_sha256": "ED76BC2685CAD373F9EB75B2CD6976D4D8A7A97438B03B7B24148424E76C29FC",
+    "declared_snapshot_protocol_supplied": false,
+    "observed_product_source_snapshot_protocol": "src.mod_agent.product_executor.source_snapshot_sha256",
+    "observed_product_source_snapshot_sha256": "5b0f7c32cbbbb964d569b1e5f0319e1d7d454f54b0b07d2e34052b97ef97dcc1",
+    "file_count": 15,
+    "total_bytes": 28717,
+    "isolated_copy_byte_equal_inventory": true,
+    "baseline_git_revision": "d80ae700c0d426eba865faafca84bae9924dacb2",
+    "baseline_git_clean": true,
+    "tracked_files": [
+      {"path": ".gitattributes", "sha256": "45a7cbb7d9942ba7ffce0b20bc8dbe2d1196533bc6e4bd245871d77fb1eedfdc", "size": 2518},
+      {"path": ".gitignore", "sha256": "e5c1cda7b8f4e636044af47e4fa80ae787585ffbccf52740d14a2b29f505e5d3", "size": 119},
+      {"path": "AccurateCrosshair.sln", "sha256": "c32d7c51b85cec6656d7b5a66d4cfb5a45a80c98eef907e03b2eb868b23bfb46", "size": 1132},
+      {"path": "AccurateCrosshair/AccurateCrosshair.csproj", "sha256": "730f43eeaa5de568ffb59329139a576bacbe754bad1c598b01b438c3856d65b3", "size": 232},
+      {"path": "AccurateCrosshair/API/SpreadAPI.cs", "sha256": "126e357fa7c96309a79196bcff6a4ab6f8eb37b173bd23c3244335191890969b", "size": 941},
+      {"path": "AccurateCrosshair/Configuration.cs", "sha256": "f77ba2545051aa9fd4b31f8822fa53a47dd671a522124fc19ec2f6a3810b5601", "size": 3923},
+      {"path": "AccurateCrosshair/CrosshairPatches/FirstShotGuiPatches.cs", "sha256": "5bd44aed8728a4951588e67c66f8dfc98b4c3af93837ce2426e7f6df305785b1", "size": 3825},
+      {"path": "AccurateCrosshair/CrosshairPatches/FirstShotPatches.cs", "sha256": "1761b6e2970028fb4b1367e653522b44454ad73cef0d72bd12c79e8c86c4c9b5", "size": 2822},
+      {"path": "AccurateCrosshair/CrosshairPatches/FirstShotType.cs", "sha256": "597887a9bc3c1e762548fe11b08b4886f5f1148436bdd4195bfc61f7d36dcaf5", "size": 137},
+      {"path": "AccurateCrosshair/CrosshairPatches/PopPatches.cs", "sha256": "2f3258863d7a43ed7723cd16c44409e36c46fe3dd34f059b8322230c03ff0bbb", "size": 369},
+      {"path": "AccurateCrosshair/CrosshairPatches/RecoilPatches.cs", "sha256": "f9c89ed7117b491c2c9ccf9fa33bb62e38f5194d74ea992b0866140a0130f845", "size": 1906},
+      {"path": "AccurateCrosshair/CrosshairPatches/SpreadPatches.cs", "sha256": "2f2478edadb40bf105f182c77c3e1909d42f6e9fa39deff2ae28c4babd987a30", "size": 6355},
+      {"path": "AccurateCrosshair/Dependencies.props", "sha256": "00f524b02aa0ecc9d5d741ba94f4e6c41d6888cba9adcd8ea65db10f54ddf1ef", "size": 1535},
+      {"path": "AccurateCrosshair/Loader.cs", "sha256": "0aee66878ba7f5e7f5fb55cd85117b6ed830b899678d3bf864b4aa793750145d", "size": 1487},
+      {"path": "AccurateCrosshair/PluginDependencies/ColorCrosshairDependency.cs", "sha256": "a0ca0bf19eb29b94fecc4f7bac0654e08451e2537e9c6d3d9968a0a4a1ddf470", "size": 1416}
+    ]
+  },
+  "dependency_identity": {
+    "color_crosshair_sha256": "5E730588ED2AEE043D63AF709BA6055ABE1DA8FBAADDF68F0224A2000F43A4B3",
+    "gtfo_api_sha256": "D1C70BACB16A747365D68E4D619E3FD67292B0B4A22E1CF29ABD01C136263931",
+    "plugins_folder_isolated_copy": true,
+    "bepinex_core_and_interop_source": "read_only_game_folder",
+    "installed_accurate_crosshair_sha256": "FFFC99E2BA13AC3BBFF3A5B182C252B6CAADF23A63A8F9CADF4E1BFA34B69A89",
+    "installed_accurate_crosshair_mvid": "a8d143ab-ed11-45aa-8e3b-7d022ccc5c18",
+    "current_config_sha256": "1A77CD5110DE64F581803DBC63EEA456B7F72EEFB25D3359E78AB803CA47A254"
+  },
+  "baseline_build": {
+    "configuration": "Debug",
+    "restore_command": "dotnet restore AccurateCrosshair/AccurateCrosshair.csproj --configfile <isolated>/nuget/NuGet.Config --packages <isolated>/nuget/packages --force --no-cache with isolated PluginsFolder and BaseIntermediateOutputPath",
+    "build_command": "dotnet build AccurateCrosshair/AccurateCrosshair.csproj -c Debug --no-restore --nologo with read-only GameFolder, isolated PluginsFolder, BaseOutputPath and BaseIntermediateOutputPath",
+    "exit_code": 0,
+    "warning_count": 1,
+    "warnings": ["CS8618 Loader.Logger is an existing non-null initialization warning"],
+    "error_count": 0,
+    "dll_sha256": "DF2E339FE46BEDAFC954FEBA829CB98778E3ED4F46EFFD7E95CE6264F0AD51B2",
+    "dll_mvid": "8a8047bd-3b18-446b-8aca-23c4f4460350",
+    "initial_restore_failures": [
+      "sandbox identity could not read machine NuGet.Config before project evaluation",
+      "--configfile still traversed the inaccessible machine configuration chain inside the sandbox"
+    ],
+    "environment_recovery": "isolated NuGet.Config plus one approved host restore; build then ran --no-restore with all outputs isolated",
+    "product_failure_attributed": false
+  },
+  "baseline_feature_absence": {
+    "source_key_present": false,
+    "installed_dll_key_present": false,
+    "current_cfg_key_present": false,
+    "existing_behavior": "compiled spread prefix reads weapon HipFireSpread/AimSpread and writes the by-ref game crosshair size",
+    "baseline_acceptance_passed": false,
+    "baseline_report_sha256": "C7679DED53FA1F4E8E4C67ECCFBF4F2783D081E8728ADD3CA2AC8CD4F9B7BB07",
+    "no_op_acceptance_passed": false,
+    "no_op_identity": "same clean baseline revision and DLL"
+  },
+  "acceptance_sensitivity": {
+    "oracle_kind": "task_specific_compiled_il_and_harmony_metadata",
+    "fixed_source_filename_required": false,
+    "fixed_internal_property_name_required": false,
+    "correct_patch_text_comparison": false,
+    "config_only_mutant": {
+      "build_exit_code": 0,
+      "acceptance_passed": false,
+      "dll_sha256": "A2EF904CED8AFC46440FD1DD76DB469013E6101FE0C514CD4268DFCE2FB16DC3",
+      "report_sha256": "678993DAF68F220199C643E100402A5E1C56F978A24F8AFB70D5F9477810F8A4",
+      "decisive_failure": "configuration/default/reload exist but no behavior toggle controls the spread override"
+    },
+    "positive_reference": {
+      "role": "expected_side_oracle_sensitivity_only",
+      "included_in_future_agent_source": false,
+      "build_exit_code": 0,
+      "acceptance_passed": true,
+      "dll_sha256": "3A38D83A2622DCB381653B97B540EFB25E758A5F9F4164C993284B7CF06510BF",
+      "report_sha256": "17B653E2C3250C7A4FDB0F0FB87FBC813F0A800E3CF80AE0C31DA011C7654A73"
+    },
+    "required_semantics": [
+      "exact config key is bound in General Settings and defaults true",
+      "config reload updates the discovered boolean member",
+      "false control-flow path returns without writing accurate spread size",
+      "true control-flow path reaches the existing HipFireSpread/AimSpread by-ref override",
+      "Follow Recoil, First Shot Display Mode and Pop Enabled retain independent config-to-behavior paths",
+      "Build succeeds"
+    ]
+  },
+  "isolation": {
+    "future_agent_source_root": "workspaces/actual_only/accurate_crosshair_spread_toggle_preflight_20260824/source",
+    "hidden_acceptance_inside_future_agent_source": false,
+    "source_git_contains_only_original_15_files": true,
+    "zip_or_history_copied": false,
+    "expected_or_reference_content_in_source_git": false,
+    "dependencies_outside_source_root": true,
+    "build_outputs_outside_source_root": true,
+    "hidden_reference_outside_source_root": true,
+    "this_page_may_run_future_actual": false
+  },
+  "scope_policy": {
+    "policy": "all 15 baseline-tracked files may be proposed when evidence and review justify them",
+    "secret_file_allowlist": false,
+    "configuration_or_spread_filename_restriction": false,
+    "actual_request_must_disclose_scope": true
+  },
+  "task_case_reliability": {
+    "task_is_current_real_request": true,
+    "baseline_does_not_satisfy_request": true,
+    "no_op_rejected": true,
+    "config_only_wrong_direction_rejected": true,
+    "positive_reference_accepted": true,
+    "non_target_baseline_build_healthy": true,
+    "environment_identity_frozen": true,
+    "requires_real_localization_and_behavior_change": true,
+    "unnecessary_gameplay_hook_complexity_added": false,
+    "case_valid_for_claimed_scope": true
+  },
+  "runtime_applicability": {
+    "compile_test_preflight_complete": true,
+    "gameplay_runtime_required_for_delivery": true,
+    "gameplay_runtime_verified": false,
+    "restart_behavior_verified": false,
+    "historical_user_use_is_current_runtime_proof": false
+  },
+  "first_physical_failure": "baseline_accurate_spread_toggle_capability_absent",
+  "responsible_owner": "AccurateCrosshair product source configuration binding and spread-size override behavior",
+  "limitations": [
+    "The user-declared ED76 snapshot is retained but its hashing protocol was not supplied; reproducibility is instead closed by the full per-file inventory, byte-equal isolated copy, observed product snapshot hash and clean Git revision.",
+    "Static Build/IL acceptance does not prove gameplay behavior after restart.",
+    "The positive reference validates the oracle only and is not implementation authority.",
+    "One case cannot establish stable or general Coding Agent capability."
+  ],
+  "allowed_next_action": "create one fresh expected-isolated task using only the clean baseline source/request/dependency identities; do not expose this report, hidden oracle, sensitivity mutants or reference implementation",
+  "forbidden_claims": [
+    "feature delivered",
+    "actual success",
+    "gameplay/runtime verified",
+    "Internal Alpha complete",
+    "stable capability"
+  ]
+}

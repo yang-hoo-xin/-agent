@@ -106,6 +106,18 @@ capability. The relation-aware Wall route is now
 `explicit_unresolved_before_artifact_commit`; no further Wall context, timeout,
 Prompt, provider, model, or repeatability work is selected.
 
+The selected simple task is now `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+Its independent Task Reliability preflight is `eligible_for_fresh_actual`:
+the byte-equal 15-file source copy is clean at isolated revision `d80ae700`,
+the isolated baseline Build completed with 0 errors and one existing CS8618
+warning, baseline/no-op/config-only implementations were rejected, and a hidden
+positive reference passed the same compiled-IL oracle. The hash-bound audit is
+`docs/audits/ACCURATE_CROSSHAIR_SPREAD_TOGGLE_PREFLIGHT_20260824.json`,
+SHA256=`980090588E26A465F4BAD5D334E88C8B0690668EE9A4D5899320DE9A1FADEE53`.
+No actual, model call, game launch, or game-directory write is authorized. This
+implementation page has read the hidden oracle and is permanently excluded
+from running the future AccurateCrosshair actual.
+
 Current execution order:
 
 ```text
@@ -115,7 +127,7 @@ repository explicit unresolved result recorded
 -> minimal relation Eval completed
 -> RAG-1A explicit unresolved recorded
 -> relation-aware Wall partial trajectory recorded as explicit unresolved before Artifact commit
--> current: select and preflight one simple actual-only real task
+-> AccurateCrosshair Task Reliability preflight eligible; fresh actual not authorized
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint
 ```
