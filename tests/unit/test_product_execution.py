@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 import copy
+import hashlib
 import inspect
+import subprocess
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -25,16 +27,202 @@ from src.mod_agent.product_execution import (
     ProductExecutionResultV1,
 )
 from src.mod_agent.product_executor import (
+    LocalEntryError,
     ProductExecutionAdaptersV1,
     _bind_owner_validated_runtime_evidence_factory,
     _local_model_admission_record,
     _local_no_external_disclosure_record,
     _runtime_admission_record,
+    _verify_source_revision_binding,
     execute_product_execution,
     preflight_product_execution,
     source_snapshot,
     source_snapshot_sha256,
 )
+
+
+def _git(root: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ("git", "-C", str(root), *arguments),
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return completed.stdout.strip()
+
+
+def _nested_source_binding(tmp_path: Path) -> tuple[Path, dict[str, object]]:
+    repository = tmp_path / "repo"
+    project = repository / "App"
+    project.mkdir(parents=True)
+    (project / "App.csproj").write_text(
+        '<Project Sdk="Microsoft.NET.Sdk"></Project>\n', encoding="utf-8"
+    )
+    loader = project / "Loader.cs"
+    loader.write_text("sealed class Loader {}\n", encoding="utf-8")
+    generated = project / "obj" / "Generated.cs"
+    generated.parent.mkdir()
+    generated.write_text("sealed class Generated {}\n", encoding="utf-8")
+    _git(repository, "init")
+    _git(repository, "config", "user.name", "Product Binding Test")
+    _git(repository, "config", "user.email", "product-binding@test.local")
+    _git(repository, "add", "--all")
+    _git(repository, "commit", "-m", "baseline")
+    snapshot = source_snapshot(project)
+    loader_entry = next(item for item in snapshot if item["path"] == "Loader.cs")
+    binding: dict[str, object] = {
+        "binding_version": "product_source_revision_binding_v2",
+        "complete_snapshot_sha256": source_snapshot_sha256(snapshot),
+        "repository_head": _git(repository, "rev-parse", "HEAD"),
+        "repository_tree": _git(repository, "rev-parse", "HEAD^{tree}"),
+        "project_root": "App",
+        "project_file": "App/App.csproj",
+        "project_tree": _git(repository, "rev-parse", "HEAD:App"),
+        "primary_sources": [
+            {
+                "path": "App/Loader.cs",
+                "sha256": loader_entry["sha256"],
+            }
+        ],
+    }
+    return project, binding
+
+
+def test_legacy_root_plugin_source_binding_remains_compatible(tmp_path: Path) -> None:
+    source = tmp_path / "legacy"
+    source.mkdir()
+    plugin = source / "Plugin.cs"
+    plugin.write_text("sealed class Plugin {}\n", encoding="utf-8")
+    snapshot = source_snapshot(source)
+
+    _verify_source_revision_binding(
+        source=source,
+        snapshot=snapshot,
+        snapshot_sha256=source_snapshot_sha256(snapshot),
+        binding={
+            "complete_snapshot_sha256": source_snapshot_sha256(snapshot),
+            "plugin_cs_sha256": hashlib.sha256(plugin.read_bytes()).hexdigest(),
+            "repository_head": "legacy-head",
+            "subtree_tree": "legacy-tree",
+        },
+    )
+
+
+def test_nested_project_and_non_plugin_primary_source_bind_and_roundtrip(
+    tmp_path: Path,
+) -> None:
+    project, binding = _nested_source_binding(tmp_path)
+    snapshot = source_snapshot(project)
+
+    _verify_source_revision_binding(
+        source=project,
+        snapshot=snapshot,
+        snapshot_sha256=source_snapshot_sha256(snapshot),
+        binding=binding,
+    )
+    artifact_binding = ProductExecutionInputBindingV1.create(
+        "source_revision_binding", binding
+    )
+
+    assert ProductExecutionInputBindingV1.from_dict(
+        artifact_binding.to_dict()
+    ) == artifact_binding
+    assert binding["primary_sources"][0]["path"] == "App/Loader.cs"
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("project_missing", "project_file is absent from snapshot"),
+        ("project_escape", "project_root escapes the repository"),
+        ("source_escape", "primary_sources.path escapes the repository"),
+        ("source_missing", "primary source is absent from snapshot"),
+        ("source_hash", "primary source SHA256 changed"),
+        ("head", "repository head drifted"),
+        ("repository_tree", "repository tree drifted"),
+        ("project_tree", "project tree drifted"),
+        ("snapshot", "snapshot SHA256 does not match"),
+        ("duplicate_source", "primary source path is duplicated"),
+    ],
+)
+def test_generic_source_binding_fails_closed(
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    project, original = _nested_source_binding(tmp_path)
+    binding = copy.deepcopy(original)
+    if mutation == "project_missing":
+        binding["project_file"] = "App/Missing.csproj"
+    elif mutation == "project_escape":
+        binding["project_root"] = "../App"
+    elif mutation == "source_escape":
+        binding["primary_sources"][0]["path"] = "../Loader.cs"
+    elif mutation == "source_missing":
+        binding["primary_sources"][0] = {
+            "path": "App/obj/Generated.cs",
+            "sha256": hashlib.sha256(
+                (project / "obj" / "Generated.cs").read_bytes()
+            ).hexdigest(),
+        }
+    elif mutation == "source_hash":
+        binding["primary_sources"][0]["sha256"] = "0" * 64
+    elif mutation == "head":
+        binding["repository_head"] = "0" * 40
+    elif mutation == "repository_tree":
+        binding["repository_tree"] = "0" * 40
+    elif mutation == "project_tree":
+        binding["project_tree"] = "0" * 40
+    elif mutation == "snapshot":
+        binding["complete_snapshot_sha256"] = "0" * 64
+    else:
+        binding["primary_sources"].append(
+            copy.deepcopy(binding["primary_sources"][0])
+        )
+    snapshot = source_snapshot(project)
+
+    with pytest.raises(LocalEntryError, match=message):
+        _verify_source_revision_binding(
+            source=project,
+            snapshot=snapshot,
+            snapshot_sha256=source_snapshot_sha256(snapshot),
+            binding=binding,
+        )
+
+
+def test_multiple_projects_require_explicit_binding(tmp_path: Path) -> None:
+    source = tmp_path / "multi"
+    (source / "One").mkdir(parents=True)
+    (source / "Two").mkdir()
+    (source / "One" / "One.csproj").write_text("<Project />\n", encoding="utf-8")
+    (source / "Two" / "Two.csproj").write_text("<Project />\n", encoding="utf-8")
+    snapshot = source_snapshot(source)
+
+    with pytest.raises(
+        LocalEntryError,
+        match="Multiple source projects require an explicit source revision binding",
+    ):
+        _verify_source_revision_binding(
+            source=source,
+            snapshot=snapshot,
+            snapshot_sha256=source_snapshot_sha256(snapshot),
+            binding=None,
+        )
+
+
+def test_generic_source_binding_rejects_live_revision_drift(tmp_path: Path) -> None:
+    project, binding = _nested_source_binding(tmp_path)
+    (project / "Loader.cs").write_text("sealed class Changed {}\n", encoding="utf-8")
+    snapshot = source_snapshot(project)
+
+    with pytest.raises(LocalEntryError, match="snapshot SHA256 does not match"):
+        _verify_source_revision_binding(
+            source=project,
+            snapshot=snapshot,
+            snapshot_sha256=source_snapshot_sha256(snapshot),
+            binding=binding,
+        )
 
 
 def _request(tmp_path: Path) -> tuple[ProductExecutionRequestV1, ArtifactStore]:

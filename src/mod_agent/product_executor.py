@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -79,9 +80,26 @@ def _verify_source_revision_binding(
     source: Path,
     snapshot: list[dict[str, Any]],
     snapshot_sha256: str,
-    binding: Mapping[str, str] | None,
+    binding: Mapping[str, Any] | None,
 ) -> None:
     if binding is None:
+        projects = [
+            path
+            for path in source.rglob("*.csproj")
+            if not any(part in {"bin", "obj", ".git"} for part in path.parts)
+        ]
+        if len(projects) > 1:
+            raise LocalEntryError(
+                "Multiple source projects require an explicit source revision binding."
+            )
+        return
+    if binding.get("binding_version") == "product_source_revision_binding_v2":
+        _verify_generic_source_revision_binding(
+            source=source,
+            snapshot=snapshot,
+            snapshot_sha256=snapshot_sha256,
+            binding=binding,
+        )
         return
     if binding.get("complete_snapshot_sha256") != snapshot_sha256:
         raise LocalEntryError(
@@ -100,6 +118,176 @@ def _verify_source_revision_binding(
         raise LocalEntryError(
             "Canonical source binding requires repository_head and subtree_tree."
         )
+
+
+def _relative_binding_path(value: object, field: str) -> PurePosixPath:
+    if not isinstance(value, str) or not value or "\\" in value:
+        raise LocalEntryError(f"Source binding {field} must be a non-empty POSIX path.")
+    path = PurePosixPath(value)
+    if path.is_absolute() or any(part in {"", ".."} for part in path.parts):
+        raise LocalEntryError(f"Source binding {field} escapes the repository.")
+    if value != "." and path.as_posix() != value:
+        raise LocalEntryError(f"Source binding {field} is not normalized.")
+    return path
+
+
+def _git_text(
+    repository: Path,
+    *arguments: str,
+    allow_empty: bool = False,
+) -> str:
+    resolved_repository = repository.resolve()
+    try:
+        completed = subprocess.run(
+            (
+                "git",
+                "-c",
+                f"safe.directory={resolved_repository.as_posix()}",
+                "-C",
+                str(resolved_repository),
+                *arguments,
+            ),
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise LocalEntryError("Source revision Git query could not complete.") from exc
+    if completed.returncode != 0:
+        raise LocalEntryError(
+            "Source revision Git query failed: " + str(completed.stderr or "").strip()
+        )
+    value = str(completed.stdout or "").strip()
+    if not value and not allow_empty:
+        raise LocalEntryError("Source revision Git query returned no identity.")
+    return value
+
+
+def _repository_root_for_source(source: Path) -> Path:
+    resolved_source = source.resolve()
+    for selected in (resolved_source, *resolved_source.parents):
+        if (selected / ".git").exists():
+            repository_root = selected.resolve()
+            discovered_root = Path(
+                _git_text(repository_root, "rev-parse", "--show-toplevel")
+            ).resolve()
+            if discovered_root != repository_root:
+                raise LocalEntryError(
+                    "Source revision Git root does not match its repository marker."
+                )
+            return repository_root
+    raise LocalEntryError("Source revision binding repository root is missing.")
+
+
+def _verify_generic_source_revision_binding(
+    *,
+    source: Path,
+    snapshot: list[dict[str, Any]],
+    snapshot_sha256: str,
+    binding: Mapping[str, Any],
+) -> None:
+    required_fields = {
+        "binding_version",
+        "complete_snapshot_sha256",
+        "repository_head",
+        "repository_tree",
+        "project_root",
+        "project_file",
+        "project_tree",
+        "primary_sources",
+    }
+    if set(binding) != required_fields:
+        raise LocalEntryError("Generic source revision binding shape is invalid.")
+    if binding.get("complete_snapshot_sha256") != snapshot_sha256:
+        raise LocalEntryError(
+            "Canonical source complete snapshot SHA256 does not match binding."
+        )
+    resolved_source = source.resolve()
+    repository_root = _repository_root_for_source(resolved_source)
+    project_root = _relative_binding_path(binding.get("project_root"), "project_root")
+    project_path = (
+        repository_root
+        if project_root.as_posix() == "."
+        else (repository_root / Path(*project_root.parts)).resolve()
+    )
+    if project_path != resolved_source:
+        raise LocalEntryError(
+            "Source binding project_root does not equal the selected source root."
+        )
+    project_file = _relative_binding_path(binding.get("project_file"), "project_file")
+    project_file_path = (repository_root / Path(*project_file.parts)).resolve()
+    try:
+        project_file_relative = project_file_path.relative_to(resolved_source).as_posix()
+    except ValueError as exc:
+        raise LocalEntryError("Source binding project_file escapes project_root.") from exc
+    snapshot_by_path = {
+        str(item.get("path")): item
+        for item in snapshot
+        if isinstance(item, dict) and item.get("path")
+    }
+    if (
+        project_file_relative not in snapshot_by_path
+        or project_file_path.suffix.casefold() != ".csproj"
+        or not project_file_path.is_file()
+    ):
+        raise LocalEntryError("Source binding project_file is absent from snapshot.")
+
+    repository_head = _git_text(repository_root, "rev-parse", "HEAD")
+    repository_tree = _git_text(repository_root, "rev-parse", "HEAD^{tree}")
+    project_tree = (
+        repository_tree
+        if project_root.as_posix() == "."
+        else _git_text(repository_root, "rev-parse", f"HEAD:{project_root.as_posix()}")
+    )
+    if binding.get("repository_head") != repository_head:
+        raise LocalEntryError("Source binding repository head drifted.")
+    if binding.get("repository_tree") != repository_tree:
+        raise LocalEntryError("Source binding repository tree drifted.")
+    if binding.get("project_tree") != project_tree:
+        raise LocalEntryError("Source binding project tree drifted.")
+    if _git_text(
+        repository_root,
+        "status",
+        "--porcelain",
+        "--untracked-files=all",
+        "--",
+        project_root.as_posix(),
+        allow_empty=True,
+    ):
+        raise LocalEntryError("Source binding project subtree is not clean.")
+
+    tracked = set(
+        _git_text(repository_root, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    )
+    if project_file.as_posix() not in tracked:
+        raise LocalEntryError("Source binding project_file is not tracked at HEAD.")
+    primary_sources = binding.get("primary_sources")
+    if not isinstance(primary_sources, list) or not primary_sources:
+        raise LocalEntryError("Source binding requires at least one primary source.")
+    seen_sources: set[str] = set()
+    for item in primary_sources:
+        if not isinstance(item, Mapping) or set(item) != {"path", "sha256"}:
+            raise LocalEntryError("Source binding primary source shape is invalid.")
+        selected = _relative_binding_path(item.get("path"), "primary_sources.path")
+        selected_text = selected.as_posix()
+        if selected_text in seen_sources:
+            raise LocalEntryError("Source binding primary source path is duplicated.")
+        seen_sources.add(selected_text)
+        if selected_text not in tracked:
+            raise LocalEntryError("Source binding primary source is not tracked at HEAD.")
+        selected_path = (repository_root / Path(*selected.parts)).resolve()
+        try:
+            selected_relative = selected_path.relative_to(resolved_source).as_posix()
+        except ValueError as exc:
+            raise LocalEntryError("Source binding primary source escapes project_root.") from exc
+        snapshot_entry = snapshot_by_path.get(selected_relative)
+        if snapshot_entry is None:
+            raise LocalEntryError("Source binding primary source is absent from snapshot.")
+        if item.get("sha256") != snapshot_entry.get("sha256"):
+            raise LocalEntryError("Source binding primary source SHA256 changed.")
 
 
 def _source_disclosure_record(

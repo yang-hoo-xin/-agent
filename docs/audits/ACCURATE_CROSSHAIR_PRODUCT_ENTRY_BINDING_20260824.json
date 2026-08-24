@@ -1,0 +1,155 @@
+{
+  "report_version": "accurate_crosshair_product_entry_binding_v1",
+  "task_id": "ACCURATE-CROSSHAIR-PRODUCT-ENTRY-BINDING-001",
+  "report_date": "2026-08-24",
+  "starting_head": "7446e0d4639f413975c7218362d41dace2a53d52",
+  "claimed_completion": "generic_nested_source_binding_implemented_and_native_build_profile_feasibility_observed",
+  "new_stage_crossed": false,
+  "actual_executed": false,
+  "model_calls": 0,
+  "game_launches": 0,
+  "game_directory_writes": 0,
+  "source_binding": {
+    "owner": "src/mod_agent/product_executor.py::ProductExecutionInputBindingResolverV1",
+    "binding_contract": "ProductExecutionInputBindingV1/source_revision_binding_v1",
+    "payload_revision": "product_source_revision_binding_v2",
+    "required_fields": [
+      "binding_version",
+      "complete_snapshot_sha256",
+      "repository_head",
+      "repository_tree",
+      "project_root",
+      "project_file",
+      "project_tree",
+      "primary_sources"
+    ],
+    "repository_identity": "exact live Git HEAD and HEAD tree",
+    "project_identity": "normalized repository-relative project root, tracked csproj, and project subtree tree",
+    "source_identity": "one or more normalized repository-relative tracked primary source paths with snapshot SHA256",
+    "snapshot_identity": "complete selected project source_snapshot SHA256",
+    "isolated_repository_ownership_handling": "the exact mechanically discovered repository root is supplied only as a per-process Git safe.directory value and is rechecked with rev-parse --show-toplevel; no global Git configuration is changed",
+    "legacy_root_plugin_cs_compatible": true,
+    "domain_specific_paths_or_names": false,
+    "same_product_execution_runner": true,
+    "same_state_graph": true,
+    "fail_closed_checks": [
+      "binding shape",
+      "project and source path normalization and containment",
+      "project presence in snapshot",
+      "primary source presence in snapshot",
+      "primary source hash",
+      "duplicate primary source",
+      "repository HEAD",
+      "repository tree",
+      "project tree",
+      "project subtree cleanliness",
+      "tracked-at-HEAD identity",
+      "multiple projects without explicit binding"
+    ],
+    "accurate_crosshair_read_only_replay": {
+      "verified": true,
+      "snapshot_file_count": 13,
+      "snapshot_sha256": "AE5304CC9AE67CD9812DA51CAC37EE4AC33E23FB0EAC9D8436C631F78A6AFCC4",
+      "binding_payload_sha256": "sha256:e2ecf5d0b734df5ed50cf575119020b6d8dcfdfe065330309a24b96801d0a387",
+      "repository_head": "d80ae700c0d426eba865faafca84bae9924dacb2",
+      "repository_tree": "cd4a59f73466d54e2db4e45da3e7ebcad1cc9236",
+      "project_tree": "3e7f515fe8ba18d5c79a6936a077ca7851416ec4",
+      "project_file": "AccurateCrosshair/AccurateCrosshair.csproj",
+      "primary_source": "AccurateCrosshair/Loader.cs",
+      "primary_source_sha256": "0AEE66878BA7F5E7F5FB55CD85117B6ED830B899678D3BF864B4AA793750145D"
+    }
+  },
+  "accurate_crosshair_identity": {
+    "isolated_source_root": "workspaces/actual_only/accurate_crosshair_spread_toggle_preflight_20260824/source",
+    "baseline_revision": "d80ae700c0d426eba865faafca84bae9924dacb2",
+    "baseline_git_clean_after_experiment": true,
+    "project_root": "AccurateCrosshair",
+    "project_file": "AccurateCrosshair/AccurateCrosshair.csproj",
+    "declared_original_source_snapshot_sha256": "ED76BC2685CAD373F9EB75B2CD6976D4D8A7A97438B03B7B24148424E76C29FC"
+  },
+  "build_feasibility": {
+    "verdict": "existing_profile_compatible_with_project_native_ignored_gamefolder_environment",
+    "profile_id": "v2_codegen_real_local_dotnet_nuget_isolated",
+    "working_copy": "workspaces/actual_only/accurate_crosshair_spread_toggle_preflight_20260824/b/w/AccurateCrosshair",
+    "isolated_game_folder": "workspaces/actual_only/accurate_crosshair_spread_toggle_preflight_20260824/b/g",
+    "game_folder_props_tracked": false,
+    "dependency_file_count": 165,
+    "dependency_counts": {
+      "bepinex_core": 34,
+      "interop": 129,
+      "plugins": 2
+    },
+    "color_crosshair_sha256": "5E730588ED2AEE043D63AF709BA6055ABE1DA8FBAADDF68F0224A2000F43A4B3",
+    "gtfo_api_sha256": "D1C70BACB16A747365D68E4D619E3FD67292B0B4A22E1CF29ABD01C136263931",
+    "restore_command": [
+      "dotnet",
+      "restore",
+      "--configfile",
+      "<isolated_run_root>/n.config",
+      "--packages",
+      "<isolated_run_root>/build_environment/nuget/packages"
+    ],
+    "build_command": [
+      "dotnet",
+      "build",
+      "--no-restore"
+    ],
+    "restore_exit_code": 0,
+    "build_exit_code": 0,
+    "duration_ms": 3583,
+    "captured_warning_diagnostic_lines_including_summary_repetition": 190,
+    "captured_error_diagnostic_lines": 0,
+    "warning_class": "MSB3106 warnings for a subset of optional interop assemblies plus existing compiler warnings; Build completed",
+    "dll_path": "workspaces/actual_only/accurate_crosshair_spread_toggle_preflight_20260824/b/w/AccurateCrosshair/bin/Debug/net6/AccurateCrosshair.dll",
+    "dll_sha256": "8C0EB2B2E90B6A2A04C56C1D0AB74E5CE897FCFC1D84D60C84DE93E8CDFFD522",
+    "runtime_verified": false,
+    "initial_experiment_failures": [
+      {
+        "failure": "working directory outside run root rejected",
+        "effect": "preflight gate worked; no Build started"
+      },
+      {
+        "failure": "long isolated root could not create NuGet plugin cache because of WinError 206",
+        "effect": "no Build started"
+      },
+      {
+        "failure": "expanded GameFolder dependency paths were too long for MSBuild assembly resolution",
+        "effect": "restore passed, Build failed with MSB3106 and missing-reference compiler errors"
+      }
+    ],
+    "bounded_recovery": "mechanically copied the same read-only dependency bytes into the existing shorter ignored run root and changed only the ignored working-copy GameFolder.props; no shared Build owner or product source changed"
+  },
+  "verification": [
+    {
+      "command": "python -m pytest -q tests/unit/test_product_execution.py -k \"source_binding or nested_project or multiple_projects\"",
+      "result": "14 passed, 84 deselected"
+    },
+    {
+      "command": "python -m pytest -q tests/unit/test_product_execution.py tests/unit/test_local_entry.py::test_run_local_request_has_no_direct_graph_control_plane",
+      "result": "99 passed"
+    },
+    {
+      "command": "python -m py_compile src/mod_agent/product_executor.py tests/unit/test_product_execution.py",
+      "result": "passed"
+    },
+    {
+      "command": "read-only ProductExecution source binding replay against the isolated AccurateCrosshair nested project",
+      "result": "passed with repository HEAD/tree, project tree, complete snapshot, project file, primary source, and Artifact payload hash bound"
+    },
+    {
+      "command": "git diff --check -- src/mod_agent/product_executor.py tests/unit/test_product_execution.py",
+      "result": "passed; only Git line-ending notices"
+    }
+  ],
+  "current_first_physical_blocker": null,
+  "original_blocker_closed": "source_revision_binding_contract_requires_root_Plugin_cs",
+  "platform_capability_advanced": true,
+  "product_capability_advanced": false,
+  "sealed_fresh_actual_packet_can_now_be_prepared": true,
+  "limitations": [
+    "The Build proves compile compatibility with the existing profile and isolated dependency layout; it does not prove GTFO runtime behavior.",
+    "The binding validates caller-supplied immutable instance identities; this work did not add CLI parameters or a second launcher.",
+    "No actual, model generation, Hidden Acceptance, game launch, or game-directory write occurred.",
+    "A future actual still requires a separately sealed packet and expected-isolated execution authorization."
+  ]
+}
