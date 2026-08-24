@@ -1,0 +1,236 @@
+{
+  "report_version": "rg_live_evidence_sufficiency_owner_audit_v1",
+  "report_date": "2026-08-24",
+  "source_head": "2c5f194957ed2bd7c151d65ee48d69a6dc5ee9be",
+  "mode": "read_only_owner_audit",
+  "writes_to_production": false,
+  "model_calls": 0,
+  "actual_runs": 0,
+  "builds": 0,
+  "hidden_acceptance_reads": 0,
+  "observed_failure_source": {
+    "run_id": "8d26e4e5",
+    "outcome_audit": "docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json",
+    "failure_signature": "deterministic RgLive Evidence relevance-to-sufficiency promotion failure",
+    "issue_id": "pending_user_decision",
+    "obs_001_reopened": false
+  },
+  "first_exact_condition": {
+    "source": "src/mod_agent/evidence/rg_live.py::RgLiveEvidenceProvider.collect",
+    "condition": "After search-root containment, at least one usable ASCII token, rg exit 0 or 1, at least one parsed C# lexical match, optional exact-filename uniqueness/match, and UTF-8 decode of the single ranked file, collect constructs exactly one EvidenceItem and unconditionally returns readiness=sufficient and can_generate_patch=true.",
+    "source_refs": [
+      "src/mod_agent/evidence/rg_live.py:65",
+      "src/mod_agent/evidence/rg_live.py:281",
+      "src/mod_agent/evidence/rg_live.py:305",
+      "src/mod_agent/evidence/rg_live.py:254",
+      "src/mod_agent/evidence/rg_live.py:255"
+    ],
+    "items_greater_than_or_equal_to_one_is_effectively_sufficient": true,
+    "semantic_requirement_coverage_checked": false
+  },
+  "responsible_owner": {
+    "owner": "src/mod_agent/evidence/rg_live.py::RgLiveEvidenceProvider.collect EvidencePack sufficiency decision",
+    "why": "This is the first component that converts an authentic lexical observation into sufficient patch authority. Later planning and binding preserve the supplied identity but do not create the relevance claim.",
+    "downstream_not_owner": [
+      "src/mod_agent/planning/implementation_plan.py::ImplementationPlanner.build",
+      "src/mod_agent/bindings/resolver.py::BindingResolver.validate_registry_against_evidence",
+      "src/mod_agent/proposal/code_generator.py::LLMExactPatchGenerator required-validation marker gate"
+    ]
+  },
+  "query_flow": {
+    "entry": "src/mod_agent/local_entry.py::run_local_request evidence_factory",
+    "flow": [
+      "state.user_request",
+      "requested_scope_text(state.user_request)",
+      "RgLiveEvidenceProvider.collect(query=scope_text, source_identity_query=full request)",
+      "_query_tokens extracts unique ASCII tokens, removes a small stop-word set, and truncates to 12",
+      "rg performs a case-insensitive OR search over C# files with max-count 80",
+      "_select_file ranks total token occurrences, match count, then path, and returns one file/line"
+    ],
+    "source_refs": [
+      "src/mod_agent/local_entry.py:3947",
+      "src/mod_agent/local_entry.py:3969",
+      "src/mod_agent/local_entry.py:3970",
+      "src/mod_agent/local_entry.py:3972",
+      "src/mod_agent/planning/request_planner.py:71",
+      "src/mod_agent/evidence/rg_live.py:281",
+      "src/mod_agent/evidence/rg_live.py:305"
+    ],
+    "actual_request_tokens_first_12": [
+      "accuratecrosshair",
+      "general",
+      "settings",
+      "accurate",
+      "spread",
+      "enabled",
+      "true",
+      "false",
+      "follow",
+      "recoil",
+      "first",
+      "shot"
+    ]
+  },
+  "sufficiency_and_authority": {
+    "readiness_sufficient_condition": "successful construction of one selected lexical excerpt; no separate readiness evaluator runs",
+    "can_generate_patch_condition": "the same successful branch sets true directly",
+    "authoritative_for_patch_formation": "EvidencePack.to_artifact_payload sets authoritative_for_patch equal to can_generate_patch",
+    "pack_authority_formation": "EvidencePack.to_artifact_payload always emits mod_agent_deterministic_evidence for a structurally valid pack",
+    "item_authority_formation": "RgLiveEvidenceProvider creates the selected item with mod_agent_deterministic authority and byte hashes",
+    "source_refs": [
+      "src/mod_agent/evidence/rg_live.py:254",
+      "src/mod_agent/evidence/rg_live.py:255",
+      "src/mod_agent/evidence/models.py:15",
+      "src/mod_agent/evidence/models.py:17",
+      "src/mod_agent/evidence/models.py:179",
+      "src/mod_agent/evidence/models.py:180"
+    ]
+  },
+  "feature_spec_consumption": {
+    "target_behavior_consumed": false,
+    "evidence_requirements_consumed": false,
+    "acceptance_criteria_consumed": false,
+    "non_goals_consumed_by_retrieval": false,
+    "physical_reason": "The Graph passes feature_data into evidence_factory, but run_local_request names that parameter underscore and builds the query only from state.user_request.",
+    "feature_spec_fields_present": [
+      "target_behavior",
+      "evidence_requirements",
+      "acceptance_criteria",
+      "non_goals"
+    ],
+    "source_refs": [
+      "src/mod_agent/planning/feature_spec.py:48",
+      "src/mod_agent/planning/feature_spec.py:78",
+      "src/mod_agent/planning/models.py:101",
+      "src/mod_agent/planning/models.py:105",
+      "src/mod_agent/planning/models.py:106",
+      "src/mod_agent/local_entry.py:3968"
+    ]
+  },
+  "representation_and_information_loss": {
+    "source_authenticity": "preserved by source path, exact byte hash, excerpt, span, symbol, and deterministic item authority",
+    "lexical_relevance": "preserved only as token occurrence and the free-text claim that source contains request terms",
+    "semantic_sufficiency": "not represented or checked in the basic RgLive pack",
+    "edit_authority": "derived downstream from target_source item identity after can_generate_patch already became true",
+    "field_coupling": "can_generate_patch simultaneously controls Artifact authoritative_for_patch, so retrieval success and semantic patch authority are conflated",
+    "positive_vs_preservation_intent": "not distinguished; all retained tokens participate in one OR search and one occurrence ranking",
+    "multi_file_or_multi_fact_coverage": "not supported by collect; it returns one selected path, one line neighborhood, and one item",
+    "feature_spec_is_sufficient_for_fail_closed_relation_coverage": false,
+    "feature_spec_information_loss": "Existing fields are natural-language arrays without stable obligation identities or EvidenceItem-to-obligation references. They cannot mechanically prove that configuration creation, spread override control, true-path preservation, and independent-setting preservation are all covered.",
+    "existing_basic_evidence_pack_information_loss": "EvidenceItem.claim_supported is free text and carries no requirement_ids or relationship disposition; basic strict rehydrate checks shape/identity, not request coverage."
+  },
+  "actual_failure_mechanism": {
+    "preservation_terms_can_dominate": true,
+    "explanation": "The Chinese request is not split by requested_scope_text's English without/do-not rules. The first 12 ASCII tokens include follow, recoil, first, and shot. Raw occurrence scoring can therefore select preservation-related first-shot code instead of configuration and spread-size control evidence.",
+    "observed_result": {
+      "source_path": "generated_mods/AccurateCrosshair/CrosshairPatches/FirstShotPatches.cs",
+      "symbol": "SetStoredCrosshair",
+      "claim_supported": "Live source contains request terms near SetStoredCrosshair."
+    }
+  },
+  "direct_consumers": [
+    {
+      "consumer": "run_local_request ProductExecution evidence_factory",
+      "effect": "commits the RgLive pack through the existing Graph"
+    },
+    {
+      "consumer": "workflow graph retrieve_evidence route",
+      "effect": "uses can_generate_patch/readiness to allow ImplementationPlan"
+    },
+    {
+      "consumer": "ImplementationPlanner.build",
+      "effect": "requires sufficient, can_generate_patch, pack authority, item authority/provenance, then turns every editable target_source item into an edit binding"
+    },
+    {
+      "consumer": "BindingResolver and ProposalReviewer",
+      "effect": "verify binding-to-Evidence path/symbol/span identity but do not re-evaluate request relevance"
+    },
+    {
+      "consumer": "Patch/Apply/Repair chain",
+      "effect": "inherits the edit-binding scope and therefore cannot recover an omitted file without new Evidence"
+    }
+  ],
+  "existing_tests_depending_on_current_behavior": {
+    "direct_rg_live_tests": [
+      "tests/unit/test_rg_live_evidence.py::test_rg_live_provider_returns_hashed_live_target_source",
+      "tests/unit/test_rg_live_evidence.py::test_rg_live_provider_honors_one_exact_requested_source_filename",
+      "tests/unit/test_rg_live_evidence.py::test_rg_live_provider_preserves_exact_filename_identity_from_raw_request",
+      "tests/unit/test_rg_live_evidence.py::test_rg_live_provider_binds_enclosing_csharp_method_declaration",
+      "tests/unit/test_rg_live_evidence.py::test_rg_live_provider_binds_declared_member_types_from_containing_type"
+    ],
+    "planning_tests": [
+      "tests/unit/test_planning.py::test_implementation_plan_blocks_when_evidence_is_not_sufficient",
+      "tests/unit/test_planning.py::test_implementation_plan_binds_every_change_to_evidence",
+      "tests/unit/test_planning.py::test_implementation_plan_allows_mixed_evidence_without_editing_every_source"
+    ],
+    "regression_risk": "Changing every lexical hit to partial will alter direct RgLive success tests and every local ProductExecution path. Binding/Proposal/Apply tests should remain unchanged when a pack has already passed the new sufficiency owner."
+  },
+  "existing_search_planning_reuse": {
+    "reusable_mechanisms": [
+      "request-side Requirement Projection with stable requirement/relation identity",
+      "family-specific Search Plan query_families and evidence_need",
+      "_normalize_family_query_leads lexical normalization/deduplication/budget",
+      "_source_query_inputs provenance labels for family queries, engineering questions, natural request, behavior goal, and trigger",
+      "real source retriever plumbing tests that prove a model-proposed technical lead reaches a source symbol"
+    ],
+    "source_refs": [
+      "src/mod_agent/evidence/discovery_loop.py:106",
+      "src/mod_agent/evidence/discovery_loop.py:450",
+      "src/mod_agent/evidence/discovery_loop.py:1870",
+      "src/mod_agent/evidence/discovery_loop.py:3530",
+      "tests/unit/test_intelligent_evidence_discovery.py:4757",
+      "tests/unit/test_intelligent_evidence_discovery.py:4760"
+    ],
+    "minimal_reuse_boundary": "Reuse the existing request-obligation/query-family identities and deterministic lead normalization as inputs to the existing source-only retrieval path. Do not import the whole metadata/IL Specialist loop into ProductExecution and do not add Dense, RRF, reranking, a second Graph, or a second EvidencePack contract.",
+    "not_yet_lossless": "ProductExecution FeatureSpec does not currently carry the relation identities consumed by the Discovery contract. Bridging that representation is P1 and must not be hidden inside the P0 sufficiency fix."
+  },
+  "minimum_correction_boundary": {
+    "p0_owner": "RgLiveEvidenceProvider/EvidencePack sufficiency admission",
+    "p0_change": "Separate authentic lexical observations from semantic patch authority. A lexical hit may remain a hashed EvidenceItem, but cannot alone set sufficient/can_generate_patch/authoritative_for_patch. Fail closed when explicit request obligations are not bound to Evidence.",
+    "p1_followup": "Use existing Search Planning obligation/query-family representation to improve source recall without adding a retrieval system. Keep technical leads non-authoritative until current source observations satisfy coverage.",
+    "likely_touched_production_boundaries_if_authorized": [
+      "src/mod_agent/evidence/rg_live.py",
+      "the existing run_local_request evidence_factory handoff in src/mod_agent/local_entry.py"
+    ],
+    "must_not_modify": [
+      "LLMExactPatchGenerator validation marker gate",
+      "BindingResolver identity and containment checks",
+      "ArtifactStore or Artifact schemas",
+      "ProductExecution Runner or StateGraph routing",
+      "model, Prompt, context, provider, Repair budget",
+      "Hidden Acceptance",
+      "Dense, RRF, reranking, or the general RAG system"
+    ]
+  },
+  "required_tests_for_bounded_code_work": {
+    "negative": [
+      "A multi-obligation config/behavior/preservation request with hits only in preservation-related code remains non-authoritative and cannot reach ImplementationPlan.",
+      "One lexical hit cannot satisfy multiple explicit Evidence obligations.",
+      "Valid source hashes and target_source authority do not substitute for semantic coverage.",
+      "Preservation/invariant terms cannot outrank the positive change obligation and independently grant sufficiency.",
+      "A request requiring facts from multiple files fails closed when only one file is observed.",
+      "An exact user-supplied filename still proves only that file's lexical/source identity unless all request obligations are covered."
+    ],
+    "positive": [
+      "A single-obligation, one-file request with an explicit bound observation remains sufficient and produces the same binding identity.",
+      "A multi-file request becomes sufficient only when every explicit obligation has a bound current-source observation.",
+      "ImplementationPlanner and BindingResolver continue to accept a pack after the sufficiency owner has admitted it."
+    ],
+    "adjacent_regression": [
+      "existing RgLive CRLF/source-hash/method/member identity tests",
+      "ImplementationPlanner evidence authority/provenance tests",
+      "ProposalReviewer binding-to-Evidence drift tests",
+      "ProductExecution early blocked route and same-StateGraph tests"
+    ]
+  },
+  "priority_route": {
+    "P0": "Fix Evidence false sufficiency and patch-authority admission in the physical owner.",
+    "P1": "Improve Retrieval recall with the smallest existing Search Planning bridge; keep all leads non-authoritative until observed.",
+    "P2": "Form a code checkpoint, rebuild a sealed packet, run one separately authorized fresh actual, then require Patch/Build/Repair/Revalidation evidence.",
+    "P3": "Address Runtime delivery, cross-task generality, repeated stability, Operational Readiness, three-to-five real tasks, and later statistical Eval.",
+    "coverage_statement": "The current four-step path—owner correction, checkpoint, sealed fresh actual, and Patch/Build/Repair/Revalidation—covers P0 and parts of P1/P2 only. The route is not complete until P3 evidence is separately produced."
+  },
+  "ready_for_next_bounded_code_work": true,
+  "ready_scope": "P0 Evidence relevance-to-sufficiency separation plus focused negative/positive tests; P1 representation bridge requires its own explicit boundary if P0 exposes the documented FeatureSpec information loss.",
+  "next_action": "Await user authorization for the bounded P0 owner correction; do not rerun AccurateCrosshair automatically."
+}

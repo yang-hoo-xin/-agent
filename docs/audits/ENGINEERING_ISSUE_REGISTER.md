@@ -132,9 +132,11 @@ Reopen review on 2026-08-24 did not map AccurateCrosshair run `8d26e4e5`
 to `OBS-001`. The symptom again involved source disambiguation, but the current
 owner is deterministic `RgLiveEvidenceProvider.collect` Evidence sufficiency,
 not model-driven EvidenceDiscovery Search Planning/action selection. The new
-failure signature remains unassigned pending user ID/route selection; its
-detailed evidence is recorded only in
-`docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json`.
+failure signature, `deterministic RgLive Evidence relevance-to-sufficiency
+promotion failure`, remains unassigned pending user ID/route selection. Its run
+facts remain in `docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json`;
+the owner audit is
+`docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json`.
 
 ### OBS-002
 
@@ -308,14 +310,14 @@ severity: S1
 decision_priority: P2
 status: observed
 first_seen: BHF and WallCrawler local actuals required chat polling while only per-provider timeout was available
-latest_evidence: WallCrawler run002 remained a single bounded process with no machine-readable stage heartbeat until terminal Artifact receipt; relation-aware run004 then ran for about 24 minutes, made seven model-call attempts and two accepted actions, and exposed no machine-readable intermediate lifecycle receipt before its final timeout report
-current_effect: current manual polling does not invalidate Internal Alpha evidence, but core stability cannot be measured reliably and Public Alpha operational readiness remains blocked
+latest_evidence: AccurateCrosshair first-run collaboration took about 52 minutes while the sealed ProductExecution command took about 159 seconds; packet preparation, one zero-model projectless permission stop, execution-root correction, fresh-page execution, and strict result extraction were manually coordinated without a stage heartbeat. Detailed timing remains only in docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json
+current_effect: current manual coordination does not block the selected Evidence-owner correction or invalidate Internal Alpha evidence, but operational stability cannot be measured reliably and Public Alpha Operational Readiness remains blocked
 workaround: bounded attempts, per-call timeout, manual polling, and terminal Artifact/failure receipt
 reopen_trigger: satisfied by run004 duration/progress opacity; implementation remains scheduled after Internal Alpha and before core stability/public alpha
-trigger_state: satisfied_by_wall_relation_actual_run004_long_run_without_heartbeat
+trigger_state: satisfied_by_wall_run004_and_accurate_run8d26e4e5_without_heartbeat
 implementation_timing: after Internal Alpha and before Core Stability Validation
 next_action: after Internal Alpha, project lifecycle state from existing LangGraph state plus ArtifactStore/attempt facts
-last_reviewed: 2026-08-22
+last_reviewed: 2026-08-24
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - stable CREATED/PREFLIGHTING/EXECUTING/WAITING_PROVIDER/SUCCEEDED/FAILED/CANCELLED/EXPIRED states mapped from existing facts
@@ -364,14 +366,14 @@ severity: S2
 decision_priority: P2
 status: observed
 first_seen: WallCrawler run001 post-commit ArtifactRef.to_dict missing
-latest_evidence: read-only Store projection confirmed the committed FeatureSpec and failure-attempt hashes after the Wall run001 console projection failed; Wall relation-aware run003 and run004 then stopped before EvidencePack commit, while their sealed launchers emitted Provider failure JSON but did not project the Specialist's in-memory Projection Attempt or partial Action/Observation Trace
-current_effect: Store truth survives after committed results, but reporting is not yet uniform across post-commit and pre-Artifact failures; an early Provider/Planning stop can lose bounded Specialist attempt diagnostics even when the failure itself is correctly reported
+latest_evidence: AccurateCrosshair run 8d26e4e5 produced a 69,253-byte public execution receipt and five valid Store refs, but owner/result auditing still required bounded manual field extraction from the receipt, run_result, and strict readback. Detailed Artifact facts remain only in docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json
+current_effect: Store truth survived and was verifiable, but the terminal projection remains too large for direct owner triage; reporting is not yet uniform across permission, pre-Artifact, and committed-Artifact boundaries
 workaround: use explicit field projection and Store readback for committed results; for current pre-Artifact calibration failures preserve the Provider diagnostic and manually retain the known control-flow limitation without rerunning solely to reconstruct Trace
 reopen_trigger: an independent report/console/UI projection failure, or the Internal Alpha completion checkpoint
-trigger_state: satisfied_by_wall_relation_actual_runs003_004_pre_artifact_trace_gap
+trigger_state: satisfied_by_wall_trace_gap_and_accurate_run8d26e4e5_large_manual_projection
 implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
 next_action: define one stable reporting/failure-receipt projection after Internal Alpha that consumes committed Artifact facts when present and bounded in-memory runtime diagnostics when failure occurs before an Artifact, without changing Artifact schemas
-last_reviewed: 2026-08-22
+last_reviewed: 2026-08-24
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - one stable serializer/projection for ArtifactRef, attempt, and result
@@ -424,12 +426,12 @@ severity: S1
 decision_priority: P2
 status: deferred
 first_seen: inventory records run-request, evidence-request, intelligent-evidence-request, and direct Graph/internal entry paths
-latest_evidence: current internal and calibration paths remain bounded but do not prove one public lifecycle, route authority, Store truth, and final result projection
-current_effect: internal diagnostics can run, but Public Alpha cannot claim one product execution owner
+latest_evidence: AccurateCrosshair run 8d26e4e5 invoked the existing ProductExecution/StateGraph once and committed five Store Artifacts, but its first projectless launch stopped before Runner entry because mutable lock/state were coupled to a read-only master packet directory; a sealed external execution-root wrapper was required for the successful single run
+current_effect: one bounded internal actual used the same Runner, but the projectless handoff remains wrapper-bound and Public Alpha cannot yet claim one public lifecycle, route authority, Store truth, and terminal projection
 workaround: keep current internal-alpha/calibration paths explicitly bounded and non-public
 reopen_trigger: Internal Alpha completion checkpoint or RAG-1B activation
 next_action: during RAG-1B, inventory every public, CLI, API, and MCP entry and make each delegate or explicitly exit product authority
-last_reviewed: 2026-08-22
+last_reviewed: 2026-08-24
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - exactly one public product entry invokes the same Agent Runner

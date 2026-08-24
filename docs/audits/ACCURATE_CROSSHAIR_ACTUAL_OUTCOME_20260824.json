@@ -133,6 +133,122 @@
     "new_failure_signature": "rg_live_lexical_match_promoted_to_patch_authoritative_sufficiency_without_request_relation_coverage",
     "new_issue_id": "pending_user_decision"
   },
+  "first_run_operational_overhead": {
+    "whole_first_collaboration_minutes_approx": 52,
+    "initial_packet_preparation_minutes_approx": 26,
+    "first_projectless_permission_stop_minutes_approx": 2,
+    "first_permission_stop_model_calls": 0,
+    "first_permission_stop_attempt_consumed": false,
+    "execution_root_packet_correction_minutes_approx": 8,
+    "successful_fresh_page_total_minutes_approx": 7,
+    "sealed_product_execution_command_seconds_approx": 159,
+    "strict_result_audit_and_archive_minutes_approx": 8,
+    "timing_overlap_note": "The 159-second sealed command is contained within the successful fresh-page interval and is not additive to the approximately 52-minute collaboration total.",
+    "observed_causes": [
+      "Windows path-length handling in isolated source and dependency layouts",
+      "projectless filesystem write authority differed from the read-only master packet authority",
+      "execution lock and mutable state were initially located in the master packet directory",
+      "Python bytecode cache writes needed an explicit no-pycache boundary",
+      "Git porcelain dirty-status parsing initially removed the first status prefix",
+      "the public execution receipt was large and required manual bounded field projection",
+      "the Runner exposed no stage heartbeat during the sealed command"
+    ],
+    "issue_classes": [
+      "OPS-001",
+      "ENTRY-001",
+      "REPORT-001"
+    ],
+    "current_effect": "This overhead does not precede or replace the current Evidence-owner correction, but it is real Operational Readiness evidence that must remain tracked before Public Alpha."
+  },
+  "internal_alpha_completion_gates": {
+    "one_actual_only_build_test_success": false,
+    "one_failure_different_repair_revalidation_success": false,
+    "run_8d26e4e5_reached": [
+      "request_planning_report",
+      "mod_planning_brief",
+      "feature_spec",
+      "evidence_pack",
+      "implementation_plan",
+      "patch_generation_failure"
+    ],
+    "run_8d26e4e5_not_reached": [
+      "patch_artifact",
+      "review",
+      "dry_run",
+      "apply",
+      "changed_product_build_test",
+      "repair",
+      "revalidation",
+      "acceptance"
+    ],
+    "internal_alpha_complete": false
+  },
+  "runtime_boundary": {
+    "runtime_verified": false,
+    "gameplay_delivery_verified": false,
+    "compile_test_would_not_grant_gameplay_delivery": true,
+    "internal_alpha_gate_policy": "The current authority requires actual-only Build/Test success plus one Failure-to-Different-Repair-to-Revalidation result; this audit does not add Runtime as a new Internal Alpha hard gate.",
+    "later_delivery_boundary": "Gameplay delivery and Public Alpha claims still require separately authorized Runtime evidence where applicable."
+  },
+  "hidden_acceptance_generality": {
+    "task_specific_acceptance_unit_tested": true,
+    "three_point_sensitivity_calibrated": true,
+    "general_harness_validated": false,
+    "cross_task_reuse": false,
+    "multiple_correct_implementations": false,
+    "fault_injection": false,
+    "current_effect": "The oracle remains eligible for this task's compile/test actual, but cannot support a general Harness claim."
+  },
+  "stability_evidence_matrix": [
+    {
+      "mechanism": "source-binding v2",
+      "evidence_level": "deterministic tests plus one AccurateCrosshair real replay",
+      "supported_claim": "tested mechanism",
+      "unsupported_claim": "cross-project stability"
+    },
+    {
+      "mechanism": "isolated Build layout",
+      "evidence_level": "single real Build feasibility",
+      "supported_claim": "one compatible physical layout",
+      "unsupported_claim": "stable Build operation"
+    },
+    {
+      "mechanism": "task-specific Hidden Acceptance",
+      "evidence_level": "three-point sensitivity calibration",
+      "supported_claim": "task-specific calibrated oracle",
+      "unsupported_claim": "general Harness"
+    },
+    {
+      "mechanism": "sealed packet",
+      "evidence_level": "one successful execution plus one pre-model permission failure",
+      "supported_claim": "single bounded execution path",
+      "unsupported_claim": "operational stability"
+    },
+    {
+      "mechanism": "ArtifactStore strict readback",
+      "evidence_level": "five committed artifacts in run 8d26e4e5",
+      "supported_claim": "strict readback for this run",
+      "unsupported_claim": "all-run Store stability"
+    },
+    {
+      "mechanism": "Agent ProductExecution",
+      "evidence_level": "single_real_run_observed",
+      "supported_claim": "one partial real run",
+      "unsupported_claim": "stable Agent capability"
+    },
+    {
+      "mechanism": "Retrieval/Evidence",
+      "evidence_level": "real semantic failure in run 8d26e4e5",
+      "supported_claim": "failure owner observed",
+      "unsupported_claim": "sufficient retrieval quality"
+    },
+    {
+      "mechanism": "actual success, Repair, and Runtime",
+      "evidence_level": "unproven",
+      "supported_claim": "none",
+      "unsupported_claim": "success, repair closure, runtime delivery, or stability"
+    }
+  ],
   "outcome": {
     "actual_only_success": false,
     "compile_test_success": false,
@@ -141,6 +257,7 @@
     "new_stage_crossed": false,
     "single_real_run_observed": true,
     "stable_capability": false,
+    "stable_agent_capability": false,
     "product_capability_advanced": false,
     "platform_observation_advanced": true
   },

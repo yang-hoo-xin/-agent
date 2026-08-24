@@ -115,7 +115,13 @@ sufficiency and bound to unrelated first-shot behavior. Changed-product
 Build/Test, Repair, Acceptance, and actual-only success were not reached. No
 rerun or correction is authorized. The detailed outcome is recorded only in
 `docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json`,
-SHA256=`58EB4B83B49477740CDCDCB3C3E4128A4D5A7560F98CF0AE5B4F6BD1687FBA92`.
+SHA256=`01E8B32B1A0E15090DFAD575E9062BB0AE6964A7EA23EA3990CAAB5E64D3719F`.
+The read-only owner audit confirms the first semantic owner is the RgLive
+Evidence sufficiency decision, not the Patch marker gate or old `OBS-001`.
+Its report is
+`docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json`,
+SHA256=`47981B825342DB921F7215BFB2D070F0734BF4F2494B35E1B2A326234F36046B`.
+No P0 code change or new actual is authorized by this status update.
 
 Current execution order:
 
@@ -126,7 +132,7 @@ repository explicit unresolved result recorded
 -> minimal relation Eval completed
 -> RAG-1A explicit unresolved recorded
 -> relation-aware Wall partial trajectory recorded as explicit unresolved before Artifact commit
--> AccurateCrosshair run 8d26e4e5 partial before Patch; Evidence sufficiency owner decision pending
+-> AccurateCrosshair run 8d26e4e5 partial before Patch; RgLive sufficiency owner audited, P0 authorization pending
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint
 ```

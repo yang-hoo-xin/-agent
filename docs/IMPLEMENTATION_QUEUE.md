@@ -12,7 +12,7 @@ Completed, frozen, review, and superseded records belong in
 ```text
 current_queue: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: fresh_actual_failed_pending_bounded_owner_or_explicit_unresolved_decision
+queue_status: rg_live_owner_audit_complete_pending_p0_authorization
 ```
 
 ```text
@@ -24,12 +24,14 @@ last_evidence_pack: 80d2142723db71c43887ebb94a7603e6473aaf729b12ba5b2db147d49538
 last_failure: rg_live_lexical_match_promoted_to_patch_authoritative_sufficiency_without_request_relation_coverage
 last_outcome: actual_only success false; changed-product Build/Test and Repair not reached
 last_outcome_report: docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json
-last_outcome_report_sha256: 58EB4B83B49477740CDCDCB3C3E4128A4D5A7560F98CF0AE5B4F6BD1687FBA92
+last_outcome_report_sha256: 01E8B32B1A0E15090DFAD575E9062BB0AE6964A7EA23EA3990CAAB5E64D3719F
+owner_audit: docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json
+owner_audit_sha256: 47981B825342DB921F7215BFB2D070F0734BF4F2494B35E1B2A326234F36046B
 wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: bounded Evidence/Retrieval sufficiency owner correction, or AccurateCrosshair explicit unresolved and another task
+next_eligible_slice: bounded P0 RgLive Evidence relevance-to-sufficiency separation with focused tests
 activation_required: explicit user selection; no rerun or source/model/marker change is currently authorized
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
@@ -41,6 +43,13 @@ product failure was a lexical `RgLiveEvidenceProvider` item incorrectly
 promoted to patch-authoritative sufficiency and bound to unrelated first-shot
 behavior. No rerun or repair is selected. Detailed evidence exists only in the
 outcome report above.
+
+The read-only owner audit is complete. It confirms that one lexical C# hit is
+currently promoted directly to sufficient patch authority and that the
+ProductExecution Rg path does not consume FeatureSpec evidence requirements or
+acceptance fields. P0 is precise enough for a bounded code package; P1 Search
+Planning representation reuse remains a separate boundary. No code change or
+actual rerun is currently authorized.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 
