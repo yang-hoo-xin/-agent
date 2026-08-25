@@ -130,15 +130,17 @@ Attempts1–5 produced zero current P2 ProductExecution actual runs, so empirica
 actual has not started and both Internal Alpha hard gates remain false. The
 short incident reference is
 `docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md`,
-SHA256=`E21443626ED67561EE0206CAED2EDAC1652A3B04F736315548890B01267A1241`.
+SHA256=`D2B19630BD209CB03EB7AF04F99AAD67D80B70BAB986DEA73756126563322044`.
 Actual remains unauthorized.
 
-The next selected work is no longer another packet-local edit. It is one
-bounded, tested repository implementation checkpoint for sealed-entry/preflight
-that reuses the existing ProductExecution preflight/result, source-binding,
-Artifact, and receipt contracts. It must close Windows physical-path
-equivalence and the Attempts1–5 parser, diagnostic, and Git-trust admission
-failures without creating a complete Public Runner or second control plane.
+Repository checkpoint `c906d99dba8f1850864e090c4f925a78fbd4f373`
+completed the bounded sealed-entry/preflight implementation owner and focused
+tests. Fresh same-context admission remains unverified and blocked; the
+checkpoint is not a receipt or actual result. The next gate is a new
+checkpoint-bound packet/manifest, separate fresh-preflight authorization,
+receipt macro review, and separately authorized actual. Stable mechanism is in
+the P0–P3 Decision Record; physical Attempts facts remain in the sealed-entry
+incident; trigger status remains `ENTRY-002` in the Issue Register.
 
 Current execution order:
 
@@ -152,7 +154,7 @@ repository explicit unresolved result recorded
 -> P0 false-sufficiency closure complete
 -> P1a structural coverage and P1b formal provider entry complete
 -> P2 product path admitted; sealed entry blocked at ENTRY-002 before ProductExecution
--> bounded repository sealed-entry/preflight implementation checkpoint and focused tests
+-> repository sealed-entry/preflight implementation checkpoint c906d99 complete
 -> new packet and manifest from that checkpoint
 -> newly authorized fresh same-context preflight and receipt review
 -> separately authorize empirical actual only after receipt approval

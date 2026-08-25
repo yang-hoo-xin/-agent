@@ -325,6 +325,145 @@ retrieval still demonstrates a real recall failure under a real Eval.
 - P1a checkpoint `d377ab466fb3e2c57c4c33e29bc2408864e5976e`
 - P1b checkpoint `32a939b3f217721b076704cd7e701369fef532ed`
 
+## 15. Current Decision Snapshot
+
+```yaml
+snapshot_as_of_commit: c906d99dba8f1850864e090c4f925a78fbd4f373
+P0: completed
+P1a: completed
+P1b: completed
+ENTRY_repository_implementation_checkpoint: completed
+P2_product_path_admission: admitted
+fresh_sealed_entry_admission: unverified_and_blocked
+ProductExecution_actual_runs: 0
+current_P2_model_calls: 0
+Internal_Alpha_hard_gates: false/false
+```
+
+The code checkpoint proves a repository owner and focused behavior only. It is
+not a fresh-context preflight result, an empirical actual, or execution
+authority.
+
+## 16. Single-Owner Orchestration Boundary
+
+The intended composition is:
+
+```text
+Thin Entry Admission
+→ ProductExecution Preflight
+→ one existing StateGraph
+→ bounded capability adapters
+```
+
+Entry Admission owns packet/manifest identity, execution security context,
+physical locations, tool and local-model availability, outer permission and
+budget facts, output-root admission, and one delegate/no-delegate decision. It
+does not own product retry, Patch approval, completion, or business truth.
+
+ProductExecution Preflight owns the product request, content/source binding,
+provider/product contracts, Artifact boundary, and Graph admission. The two
+layers must not independently own attempt, retry, approval, or completion. At
+`c906d99dba8f1850864e090c4f925a78fbd4f373`, one `StrictGitAdmission`
+identity is threaded through entry and downstream source revalidation without
+turning Entry into a second control plane.
+
+Observations may change the engineering direction. The Graph constrains legal
+order, permission, and side effects; it does not pre-decide search strategy,
+interpretation, or Repair direction. BHF and WallCrawler rules remain domain
+Harness facts and do not enter the generic Workflow owner.
+
+Models may propose engineering semantics; deterministic owners retain identity,
+coverage, authority, and side-effect decisions. Capability work remains
+consumer-first: identify who consumes the result, what decision it changes,
+what current contract cannot represent, and what failure proves the need before
+adding infrastructure. A read-only subsystem exits after returning its bounded
+facts and cannot retain route or completion authority.
+
+## 17. Recovery And Failure Semantics
+
+- **Retry** repeats the same bounded operation under an explicit retry owner.
+- **Resume** continues from a validated durable checkpoint without replaying
+  completed work.
+- **Recovery** re-establishes a trustworthy execution owner and state after a
+  process, host, permission, or entry failure.
+- **Repair** changes the proposed implementation in response to bound product
+  evidence.
+- **Rollback** directly restores a prior reversible state.
+- **Compensation** uses a newly authorized action to offset an irreversible or
+  externally visible side effect.
+- **Fallback** creates a new, lower-authority attempt using a prevalidated
+  capability profile; it never silently replaces the original failure.
+
+Adapters report facts. One control owner decides whether retry is legal. Outer
+Entry Admission does not own product retry.
+
+| Failure fact | Default route |
+| --- | --- |
+| deterministic identity, authority, or schema rejection | block and return the exact owner |
+| explicitly retryable transient provider/tool failure before side effects | one bounded retry owner may propose a new attempt |
+| committed checkpoint with valid continuation authority | resume |
+| lost or uncertain execution ownership | recovery or safe stop |
+| product behavior failure with edit authority | Repair |
+| unknown side-effect state | safe stop and reconcile |
+
+## 18. Authority-Aware Degradation
+
+`FULL`, `EVIDENCE_DEGRADED`, `PLAN_ONLY`, and `SAFE_STOP` are logical operating
+semantics. They should first be projected through existing readiness, blockers,
+requirement coverage, and authority facts rather than creating a new schema.
+
+Capability degradation may preserve or contract authority; it may never expand
+it. Unknown source identity, permission, or side-effect state maps to
+`SAFE_STOP`. Cached, partial, or stale material cannot present itself as fresh,
+complete, sufficient Evidence or Patch authority.
+
+## 19. Retrieval And Vector Boundary
+
+RAG does not require a vector database. Semantic vectors, when activated, are
+only a location-recall aid. Retrieved locations must be rehydrated from current
+live source and rebound to current path/hash/span identity. An index is a
+rebuildable cache; a vector hit is not an `EvidenceItem`, requirement coverage,
+Evidence sufficiency, or Patch authority.
+
+Semantic A/B, hybrid fusion, and persistent vector storage activate only under
+the separate conditional triggers in the Engineering Issue Register. This
+decision record does not activate them.
+
+## 20. Artifact, Checkpoint, Trace, Contract Reuse And Coverage Map
+
+- Graph checkpoint answers **how execution may continue**.
+- ArtifactStore owns product facts that require durable authority, side-effect,
+  resume, lineage, or terminal truth.
+- Trace answers **what happened** and does not become a second fact owner.
+
+All stages should be observable, but not every stage creates an Artifact.
+Persistence belongs only at durable boundaries.
+
+Identity taxonomy remains explicit: outer run/attempt, entry preflight, product
+run/request/feature, stage/action/observation, provider call, Patch/approval,
+and Repair/revalidation identities must be correlated without being collapsed
+into one identifier.
+
+`RunEnvelope`, `ValidatedSourceBinding`, `StageOutcome`, `ToolCallSpec`, and
+`ToolReceipt` are logical checklists. They do not justify new types until a real
+consumer proves that existing contracts cannot represent the required fact.
+
+Run-local working memory is necessary for bounded continuation. Cross-task
+long-term memory activates only after repeated real tasks establish a retrieval
+need; it remains planning-only and cannot store Golden data, old Hook answers,
+or historical output as current fact.
+
+| Content | Unique owner |
+| --- | --- |
+| stable orchestration, recovery, degradation, retrieval, and contract principles | this Decision Record |
+| Attempts1–5 physical facts | AccurateCrosshair sealed-entry incident record |
+| trigger, physical owner, reopening and minimum acceptance | Engineering Issue Register |
+| explicitly activated work | Implementation Queue |
+| Architecture WIP stable single-Graph/observation principles; old BHF/WC order excluded | `reconcile_later` |
+| RAG draft stable semantic/authority/consumer principles; obsolete checkpoints and exits excluded | `extract_stable_principles_then_historicalize_or_rewrite_later` |
+| Coverage Matrix WIP | `regenerate_after_ENTRY` from current source; do not migrate the stale CAV0 table |
+| Local Model untracked protocol | `paused_standalone_asset_reconcile_later`; comparison waits for stable interfaces and a real product bottleneck |
+
 This record preserves the decision route only. It does not claim sealed-entry
 readiness, authorize a preflight rerun or actual, or claim Internal or Public
 Alpha readiness.

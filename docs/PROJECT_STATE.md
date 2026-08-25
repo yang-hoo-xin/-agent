@@ -13,7 +13,7 @@ current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_dependency: ENTRY-002-P2-SEALED-ENTRY-PREFLIGHT-BLOCKED
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
-current_product_code_checkpoint: 32a939b3f217721b076704cd7e701369fef532ed
+current_product_code_checkpoint: c906d99dba8f1850864e090c4f925a78fbd4f373
 current_wip: four independent user documentation changes, no staged files
 latest_repository_run: 32e29415
 latest_repository_run_report_sha256: B7B3F473F8DA8E2500DA67E496DC389B8B9BB5109D8056F49FC170CEB2ED7AD9
@@ -43,10 +43,12 @@ P1a_status: completed_at_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_at_32a939b3f217721b076704cd7e701369fef532ed
 P2_product_path_admission: admitted
 P2_sealed_entry_admission: blocked_at_ENTRY-002
+ENTRY_repository_implementation_checkpoint: completed_at_c906d99dba8f1850864e090c4f925a78fbd4f373
+ENTRY_fresh_same_context_admission: pending
 P2_ProductExecution_actual_runs: 0
 P2_empirical_actual_status: not_started
 P2_entry_incident: docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md
-P2_entry_incident_sha256: E21443626ED67561EE0206CAED2EDAC1652A3B04F736315548890B01267A1241
+P2_entry_incident_sha256: D2B19630BD209CB03EB7AF04F99AAD67D80B70BAB986DEA73756126563322044
 task_reliability_preflight: eligible_for_fresh_actual
 task_reliability_report: docs/audits/ACCURATE_CROSSHAIR_SPREAD_TOGGLE_PREFLIGHT_20260824.json
 task_reliability_report_sha256: 36AAD0A655D05A530143094B376C69BB899C4922E0C2364FDF846446415C9849
@@ -66,7 +68,7 @@ failure_different_repair_revalidation_success: false
 runtime_verified: false
 general_harness_validated: false
 stable_agent_capability: false
-next_capability_step: bounded tested repository sealed-entry/preflight implementation checkpoint reusing ProductExecution preflight/result, source-binding, Artifact, and receipt contracts; then new packet/manifest, newly authorized fresh same-context preflight, receipt review, and separate actual authorization
+next_capability_step: new packet/manifest bound to c906d99, separately authorized fresh same-context preflight, receipt macro review, then separately authorized actual
 rag_1a_status: explicit_unresolved
 rag_1a_relation_aware_status: explicit_unresolved_before_artifact_commit
 rag_1b_status: not_started

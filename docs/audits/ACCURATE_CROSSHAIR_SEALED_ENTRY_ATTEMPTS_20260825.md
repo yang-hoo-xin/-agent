@@ -97,3 +97,36 @@ actual_gate: preflight success plus receipt/hash macro review plus separate actu
 
 This incident record does not claim that sealed-entry engineering is complete
 and does not authorize a rerun, attempt6, or empirical actual.
+
+## 7. Post-Attempt5 Orchestration Consequence
+
+```yaml
+incident_family: sealed_entry_admission
+outer_sealed_entry_attempts: 4
+fresh_preflight_invocations: 1
+ProductExecution_runs: 0
+model_calls: 0
+Builds: 0
+product_conclusion: none
+packet_only_repair_stop_condition: satisfied
+repository_implementation_checkpoint: c906d99dba8f1850864e090c4f925a78fbd4f373
+fresh_same_context_admission: pending
+ENTRY-002_status: active
+```
+
+Static sealing is not same-context admission. Before `c906d99`, entry outcomes
+could escape as exceptions instead of a total ready/blocked result. Manual
+packet recovery preserved authority boundaries but produced an unstable series
+of pre-product failures, satisfying the packet-only stop condition.
+
+Checkpoint `c906d99dba8f1850864e090c4f925a78fbd4f373` moved the owner into the
+repository and added focused Git/entry tests. The verified suite included 17
+Git-admission passes, 11 entry-admission passes with one environment-dependent
+symlink skip, 100 ProductExecution passes, 92 local-entry passes, and six
+`run-request` CLI compatibility passes. These are code-level facts, not a fresh
+preflight receipt.
+
+No new packet, fresh same-context preflight, receipt, or empirical actual was
+produced by `c906d99`. The checkpoint does not reopen P0 or P1 and does not
+activate semantic/vector retrieval, Circuit Breaker, model fallback, the Public
+Runner, or a Trace platform.

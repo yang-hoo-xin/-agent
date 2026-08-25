@@ -12,13 +12,13 @@ Completed, frozen, review, and superseded records belong in
 ```text
 current_queue: P2-entry-preflight-blocked
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: ENTRY-002 active; ProductExecution actual not started
+queue_status: ENTRY-002 repository checkpoint complete; fresh admission pending; ProductExecution actual not started
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 last_task_status: P2_product_path_admitted_sealed_entry_blocked
-last_product_code_checkpoint: 32a939b3f217721b076704cd7e701369fef532ed
+last_product_code_checkpoint: c906d99dba8f1850864e090c4f925a78fbd4f373
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
 P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed
@@ -26,17 +26,19 @@ P2_ProductExecution_actual_runs: 0
 empirical_actual_status: not_started
 last_failure: Attempt5 fresh preflight output-root equivalent Windows paths rejected by pre-normalization string comparison
 incident_record: docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md
-incident_record_sha256: E21443626ED67561EE0206CAED2EDAC1652A3B04F736315548890B01267A1241
+incident_record_sha256: D2B19630BD209CB03EB7AF04F99AAD67D80B70BAB986DEA73756126563322044
 current_owner: ENTRY-002 sealed/fresh execution entry preflight
+ENTRY_repository_implementation_checkpoint: complete
+ENTRY_fresh_same_context_admission: pending
 internal_alpha_hard_gates: false/false
 wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: bounded tested repository sealed-entry/preflight implementation checkpoint reusing existing ProductExecution preflight/result, source-binding, Artifact, and receipt contracts
-implementation_boundary: close Windows physical-path equivalence plus Attempts1-5 parser, diagnostic, and Git-trust admission failures; do not create a complete Public Runner or second control plane
-post_checkpoint_route: new packet and manifest -> newly authorized fresh same-context preflight -> receipt macro review -> separately authorized actual
-activation_required: implementation checkpoint requires current authorization; preflight and actual each retain separate later authorization
+next_eligible_slice: new packet and manifest bound to c906d99 -> newly authorized fresh same-context preflight -> receipt macro review
+implementation_boundary: repository owner is checkpointed; do not expand into ENTRY-001 Public Runner, recovery platform, retrieval work, or second control plane
+post_checkpoint_route: receipt accepted -> separately authorized actual
+activation_required: packet formation, fresh preflight, and actual retain their exact current or later authority boundaries
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 

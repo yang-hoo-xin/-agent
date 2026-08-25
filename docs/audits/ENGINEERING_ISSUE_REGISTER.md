@@ -408,14 +408,14 @@ severity: S2
 decision_priority: P2
 status: observed
 first_seen: WallCrawler run001 post-commit ArtifactRef.to_dict missing
-latest_evidence: AccurateCrosshair run 8d26e4e5 produced a 69,253-byte public execution receipt and five valid Store refs, but owner/result auditing still required bounded manual field extraction from the receipt, run_result, and strict readback. Detailed Artifact facts remain only in docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json
-current_effect: Store truth survived and was verifiable, but the terminal projection remains too large for direct owner triage; reporting is not yet uniform across permission, pre-Artifact, and committed-Artifact boundaries
+latest_evidence: AccurateCrosshair run 8d26e4e5 produced a large public execution receipt and five valid Store refs; Attempt5 then failed before its preflight receipt, proving a pre-Artifact structured-outcome gap. Checkpoint c906d99dba8f1850864e090c4f925a78fbd4f373 added repository EntryAdmissionResultV1 and receipt projection with focused tests, but no fresh-context receipt has been produced
+current_effect: committed Store truth remains verifiable and the entry result/receipt code owner now exists, while general reporting across pre-Artifact and committed-Artifact boundaries remains deferred and empirically unproven
 workaround: use explicit field projection and Store readback for committed results; for current pre-Artifact calibration failures preserve the Provider diagnostic and manually retain the known control-flow limitation without rerunning solely to reconstruct Trace
 reopen_trigger: an independent report/console/UI projection failure, or the Internal Alpha completion checkpoint
 trigger_state: satisfied_by_wall_trace_gap_and_accurate_run8d26e4e5_large_manual_projection
 implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
-next_action: define one stable reporting/failure-receipt projection after Internal Alpha that consumes committed Artifact facts when present and bounded in-memory runtime diagnostics when failure occurs before an Artifact, without changing Artifact schemas
-last_reviewed: 2026-08-24
+next_action: keep ENTRY-002 responsible for the current fresh preflight receipt; after Internal Alpha, evaluate a general projector only from real consumers without changing Artifact schemas
+last_reviewed: 2026-08-25
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - one stable serializer/projection for ArtifactRef, attempt, and result
@@ -437,14 +437,14 @@ severity: S1
 decision_priority: P2
 status: observed
 first_seen: long BHF and WallCrawler runs relied on bounded no-retry protocol and manual waiting
-latest_evidence: relation-aware Wall runs used explicit new-attempt identities after context admission rejects at 16384 and 32768; final run004 at 65536 crossed into the Action/Observation loop and then stopped on a seventh-call 180-second Provider read timeout without retry, model switch, or overwrite of prior failures
-current_effect: the calibration path demonstrates fail-closed detection and bounded manual fallback for context and timeout samples, but the Runner still lacks productized classification, resume, cancellation, and recovery policy
+latest_evidence: relation-aware Wall runs preserved explicit attempts around context and timeout failures. AccurateCrosshair Attempts1–5 add deterministic entry Recovery samples: each new outer entry repaired a frozen pre-product admission defect without replaying ProductExecution, but none is a transient retry sample
+current_effect: ENTRY owns the current deterministic admission recovery; general cancellation, resume, transient retry, fallback, and cross-owner recovery remain deferred
 workaround: fail closed, preserve immutable attempts, classify the failure, and require explicit new-attempt authorization; the current 32768 attempt is one bounded manual fallback instance, not an automatic recovery platform
 reopen_trigger: Internal Alpha completion checkpoint, or a real transient provider/tool failure requiring user-visible recovery
 trigger_state: satisfied_by_wall_relation_actual_context_rejects_and_run004_provider_timeout
 implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
-next_action: keep the immediate recovery manual and bounded; after Internal Alpha, add the minimum policy to the existing Runner/attempt owner using this failure as the first context-admission recovery sample
-last_reviewed: 2026-08-22
+next_action: do not route Attempts1–5 through REC-001 retry; after Internal Alpha, evaluate minimum general recovery policy only from separately classified real failures
+last_reviewed: 2026-08-25
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - deterministic versus transient error classification
@@ -507,23 +507,31 @@ incident_signatures:
   - A3: source Git returned nonzero without retained stderr, so exact ownership was inconclusive
   - A4: source Git returned fatal dubious ownership under the fresh security principal
   - A5: preflight output-root textual path comparison rejected equivalent Windows paths before receipt creation
-latest_evidence: Attempts1-4 entered no ProductExecution run and made zero model calls; Attempt5 payload 979c0fdeca85dbedf9e1156931cf0bf724b57fa69a0cdd2394612745d88f78f7 stopped in sealed_run.py::_write_fresh_preflight_receipt with fresh preflight output root argument drifted, produced no receipt/hash, did not consume the outer attempt, and did not authorize an actual
+latest_evidence: Attempts1-4 entered no ProductExecution run and made zero model calls; Attempt5 payload 979c0fdeca85dbedf9e1156931cf0bf724b57fa69a0cdd2394612745d88f78f7 stopped before receipt. Repository checkpoint c906d99dba8f1850864e090c4f925a78fbd4f373 now owns total entry request/result/blocker/receipt projection, physical output identity, strict Git admission, shared local-model identity reads, and downstream source revalidation with focused tests
 incident_record: docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md
-incident_record_sha256: e21443626ed67561ee0206caed2edac1652a3b04f736315548890b01267a1241
-current_effect: P2 product-path construction is admitted at checkpoint 32a939b3f217721b076704cd7e701369fef532ed, but sealed-entry admission is blocked and empirical ProductExecution actual remains unstarted
+incident_record_sha256: d2b19630bd209cb03eb7af04f99aad67d80b70bab986dea73756126563322044
+packet_only_repair_stop_condition: satisfied_by_attempt5
+implementation_checkpoint: c906d99dba8f1850864e090c4f925a78fbd4f373
+code_owner_and_focused_test_boundary: met
+fresh_same_context_admission: pending
+current_effect: the repository implementation owner exists, but no new packet/manifest, fresh-context receipt, or empirical ProductExecution actual proves sealed-entry admission
 workaround: none authorized; preserve the first failures and keep actual blocked
 reopen_trigger: any fresh sealed entry or preflight fails before packet-bound ProductExecution because entry identity, filesystem authority, Git trust, path equivalence, lock/state, or receipt admission is not represented consistently
 close_trigger: one newly authorized fresh same-context preflight produces a hash-bound receipt after all packet/platform/source/Git/Ollama gates, and a separately authorized sealed actual enters ProductExecution without entry-side identity or permission repair
-next_action: form a bounded, tested repository implementation checkpoint for sealed-entry/preflight by reusing existing ProductExecution preflight/result, source-binding, Artifact, and receipt contracts; close the Windows physical-path equivalence and Attempts1-5 parser, diagnostic, and Git-trust admission failures without creating a Public Runner or second control plane; after checkpointing, form a new packet and manifest, request one fresh same-context preflight, and request actual authorization separately only after receipt review
+next_action: form a new packet and manifest from c906d99dba8f1850864e090c4f925a78fbd4f373, request separate authorization for one fresh same-context preflight, return its receipt/hash for macro review, and request empirical actual authorization separately only after receipt acceptance
 last_reviewed: 2026-08-25
 required_before_stage: P2 empirical actual
-minimum_acceptance:
-  - the repaired sealed-entry/preflight owner exists in a repository checkpoint with focused tests rather than another packet-only patch
-  - declared textual and resolved canonical paths are compared by normalized physical identity before any strict textual receipt binding
-  - packet hash, branch, HEAD, four protected WIP states, Git executable/version, source show-toplevel/HEAD/trees/snapshot, and Ollama identity remain exact
-  - preflight-only creates no execution_root, model call, ProductExecution run, Build, Runtime, diff approval, or Apply
+code_checkpoint_met:
+  - repository EntryAdmission request/result/blocker/receipt owner exists with focused tests
+  - textual/canonical Windows paths use physical parent identity and normalized leaf identity
+  - strict Git identity is shared by entry and downstream source verification without PATH fallback on the strict route
+  - no ProductExecution schema, StateGraph, or Artifact contract was added or changed
+empirical_pending:
+  - a new packet binds c906d99dba8f1850864e090c4f925a78fbd4f373 and passes one authorized fresh same-context preflight
+  - packet hash, branch, HEAD, four protected WIP states, Git executable/version, source show-toplevel/HEAD/trees/snapshot, and Ollama identity remain exact in the fresh receipt
+  - preflight creates no execution_root, model call, ProductExecution run, Build, Runtime, diff approval, or Apply
   - successful preflight writes one bounded receipt plus hash and does not itself authorize actual
-  - failure preserves the exact first boundary and does not create an automatic next attempt
+  - failure preserves the exact first boundary and creates no automatic next attempt
   - ENTRY-001 remains the separate future Public Runner adoption issue
 ```
 
@@ -552,6 +560,10 @@ before Public Alpha. This catalog does not expand, replace, weaken, or complete
 those hard gates.
 
 ### 5.1 Provider And Tool Resilience
+
+All retry-capable entries in this family retain one logical retry owner. An
+adapter reports transport/tool facts; it does not independently replay work or
+compete with the Runner attempt owner.
 
 #### Bounded Exponential Backoff Plus Jitter
 
@@ -654,7 +666,24 @@ degradation_boundary: weights cannot grant new permissions, bypass exact model a
 separate_issue_on_activation: true
 ```
 
+#### Formal Model Comparative Evaluation
+
+```yaml
+capability_key: model_formal_comparative_evaluation
+expected_owner_family: existing product Eval, model identity, expected-isolation, and reviewed selection owners
+real_activation_signal: stable model interfaces plus a real product bottleneck plus explicit user selection justify a frozen comparative run
+expected_benefit: distinguishes task-bound model capability, latency, cost, and failure behavior without changing defaults from anecdotes
+cost_and_risk: requires frozen task, model, runtime, Prompt, schema, source, and expected-isolation identities and can otherwise reward leakage or unstable interfaces
+degradation_boundary: one old diagnostic, social-media claim, or desire to complete an experiment cannot activate comparison or change the default model; no default change occurs before Level 2 evidence
+separate_issue_on_activation: true
+```
+
 ### 5.3 Capability Degradation
+
+`FULL`, `EVIDENCE_DEGRADED`, `PLAN_ONLY`, and `SAFE_STOP` are logical mappings
+over existing readiness, blocker, coverage, and authority facts. They do not add
+a schema. Degradation can only preserve or contract authority; unknown source,
+permission, or side-effect state maps to `SAFE_STOP`.
 
 #### Cache-Backed Degradation
 
@@ -748,6 +777,18 @@ degradation_boundary: unknown or non-idempotent side effects block automatic ret
 separate_issue_on_activation: true
 ```
 
+#### Side-Effect Reconciliation
+
+```yaml
+capability_key: continuity_side_effect_reconciliation
+expected_owner_family: existing operation-specific receipt, approval, Apply, Build, Runtime, and external-effect owners
+real_activation_signal: a real authorized operation loses process or ownership continuity after a side effect may have started and current receipts cannot determine its physical state
+expected_benefit: classifies the current effect as NOT_APPLIED, APPLIED, PARTIALLY_APPLIED, or UNKNOWN before any continuation decision
+cost_and_risk: reconciliation is operation-specific and can itself observe stale or incomplete external state; false certainty can duplicate or conceal effects
+degradation_boundary: retry is eligible only for NOT_APPLIED plus a verified idempotent operation; UNKNOWN and non-idempotent states safe-stop pending manual authority
+separate_issue_on_activation: true
+```
+
 ### 5.5 Safety Invariants And Non-Activation Boundary
 
 - Backup-model routing must never occur silently.
@@ -758,6 +799,8 @@ separate_issue_on_activation: true
   manual approval.
 - Backoff and jitter must never automatically replay non-idempotent or
   high-risk side effects.
+- One logical retry owner decides whether a classified operation is retryable;
+  adapters and gateways never retry independently.
 - Cache-backed and partial results must never appear as fresh, current,
   complete, or sufficient Evidence.
 - Distributed continuity requires durable checkpoint ownership, fresh identity
@@ -771,7 +814,64 @@ implementation: no advanced robustness direction in this catalog is claimed
 implemented or complete. Semantic/vector Retrieval, Dense, RRF, and reranking
 are not activated by this catalog.
 
-## 6. Document Relationships
+## 6. Conditional Retrieval Activation Catalog
+
+This catalog is conditional and does not use `issue_id`. It does not activate
+semantic/vector Retrieval, add current Queue work, or grant Evidence authority.
+`RET-001` remains limited to the observed bge-m3 plus Chroma full-R8
+materialization failure; it does not own future semantic retrieval as a whole.
+
+### 6.1 Semantic Retrieval A/B
+
+```yaml
+capability_key: retrieval_semantic_ab
+activation_trigger: a selected real task misses mandatory source through exact, symbol, lexical, and live retrieval; independent current-source inspection proves the source exists; the user explicitly selects a bounded A/B
+required_evidence:
+  - frozen task, source snapshot, query set, baseline Retriever identity, semantic provider identity, and expected-isolated relevance judgment
+  - one independently verified mandatory-source miss attributable to location recall rather than Entry, coverage, provider timeout, or authority failure
+minimum_acceptance:
+  - compare unique Recall@K against the non-semantic baseline
+  - rehydrate every semantic hit from live source and reject stale identity
+  - measure false-sufficiency behavior and preserve deterministic Patch-authority gates
+non_activation:
+  - ENTRY failure, requirement-coverage failure, provider timeout, available embedding dependency, repository size alone, or architecture-completeness preference
+stop_condition: record only the bounded A/B result; do not activate fusion, storage, or default adoption without a separate trigger
+```
+
+### 6.2 Hybrid Fusion
+
+```yaml
+capability_key: retrieval_hybrid_fusion
+activation_trigger: a completed semantic A/B shows independent product-relevant gain and current retrievers demonstrate complementary misses under explicit user selection
+required_evidence:
+  - frozen outputs and identities for exact/symbol/lexical and semantic retrievers
+  - evidence that neither retriever alone covers the bounded mandatory-source set
+minimum_acceptance:
+  - compare baseline, simple merge, and bounded RRF without changing sufficiency or authority owners
+  - report recall, duplicate suppression, latency, stale rejection, and failure attribution
+non_activation:
+  - semantic provider availability, one attractive hit, or desire to implement a documented architecture
+stop_condition: retain the simplest method unless bounded fusion shows independent gain; do not activate persistence or reranking automatically
+```
+
+### 6.3 Persistent Vector Storage
+
+```yaml
+capability_key: retrieval_persistent_vector_storage
+activation_trigger: semantic retrieval has verified product gain and a real consumer proves material rebuild cost, multi-task or multi-repository reuse, or incremental invalidation cannot be handled by a rebuildable run-local cache
+required_evidence:
+  - measured rebuild and query cost over bound source identities
+  - repeated consumer demand plus explicit invalidation and ownership requirements
+minimum_acceptance:
+  - exact index identity binds provider, embedding model, chunking, source snapshot, and schema
+  - stale entries are rejected and rebuild/incremental invalidation is deterministic
+  - the index remains a cache and never becomes Evidence, sufficiency, or Patch authority
+non_activation:
+  - one hundred thousand lines, installed vector dependencies, general scale concern, or unmeasured future reuse
+stop_condition: prefer rebuildable ephemeral storage until measured consumers justify persistence; stop on unresolved stale-index or ownership behavior
+```
+
+## 7. Document Relationships
 
 - `docs/ACTIVE_PRODUCT_CONTRACT.md` keeps only the current product selection and
   permission boundary; it does not copy this table.
