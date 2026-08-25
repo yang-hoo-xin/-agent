@@ -2,6 +2,7 @@ import ast
 import hashlib
 import inspect
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -33,6 +34,8 @@ from src.mod_agent.local_entry import (
     _canonicalize_run_local_build_diagnostic_paths,
     _build_run_local_il_inspector,
     _create_nuget_isolated_build_profile,
+    _copy_validated_directory_tree,
+    _directory_copy_path_argument,
     _external_evidence_items,
     _local_model_admission_record,
     _local_no_external_disclosure_record,
@@ -76,6 +79,7 @@ from src.mod_agent.local_entry import (
     _verify_final_compiled_artifact_if_built,
     _validate_ollama_context_window,
     _validate_game_folder_build_binding,
+    _windows_extended_length_path,
     _verify_source_disclosure,
     run_local_request,
 )
@@ -1235,6 +1239,100 @@ def _game_folder_dependency(tmp_path: Path) -> Path:
     (root / "doorstop_config.ini").write_bytes(b"enabled=true\r\n")
     (nested / "GameAssembly.dll").write_bytes(b"\x00\x01\xffbinary\x00")
     return root
+
+
+@pytest.mark.parametrize(
+    ("path_text", "expected"),
+    [
+        (r"C:\repo\dependency", r"\\?\C:\repo\dependency"),
+        (
+            r"\\server\share\dependency",
+            r"\\?\UNC\server\share\dependency",
+        ),
+        (r"\\?\C:\already\extended", r"\\?\C:\already\extended"),
+    ],
+)
+def test_windows_extended_length_path_preserves_drive_and_unc_semantics(
+    path_text: str,
+    expected: str,
+) -> None:
+    assert _windows_extended_length_path(path_text) == expected
+
+
+def test_directory_copy_path_argument_is_unchanged_off_windows() -> None:
+    selected = Path("unchanged")
+    assert _directory_copy_path_argument(selected, windows=False) is selected
+
+
+def test_windows_extended_length_path_rejects_relative_and_device_paths() -> None:
+    for selected in (r"relative\dependency", r"\\.\PhysicalDrive0"):
+        with pytest.raises(LocalEntryError, match="absolute filesystem paths"):
+            _windows_extended_length_path(selected)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires real Windows long paths")
+def test_validated_directory_copy_reads_real_source_path_over_260_chars(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source_parent"
+    source.mkdir()
+    padding = 250 - len(str(source)) - 1
+    if padding <= 0 or padding > 240:
+        pytest.skip("temporary root cannot form a bounded long-path fixture")
+    nested = source / ("s" * padding)
+    Path(_windows_extended_length_path(str(nested))).mkdir()
+    long_file = nested / "payload.bin"
+    assert len(str(long_file)) > 260
+    payload = b"\x00long-source\xff\x00"
+    extended_file = Path(_windows_extended_length_path(str(long_file)))
+    extended_file.write_bytes(payload)
+    assert extended_file.is_file()
+
+    destination = tmp_path / "normal_destination"
+    _copy_validated_directory_tree(
+        source=source.resolve(strict=True),
+        destination=destination,
+    )
+
+    assert not str(destination).startswith("\\\\?\\")
+    copied = destination / long_file.relative_to(source)
+    copied_bytes = Path(_windows_extended_length_path(str(copied))).read_bytes()
+    assert copied_bytes == payload
+    assert hashlib.sha256(copied_bytes).hexdigest() == hashlib.sha256(payload).hexdigest()
+    assert extended_file.read_bytes() == payload
+
+
+def test_game_folder_source_containment_rejects_before_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    copy_calls: list[object] = []
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._copy_validated_directory_tree",
+        lambda **kwargs: copy_calls.append(kwargs),
+    )
+    canonical = tmp_path / "canonical" / "Project"
+    dependency_inside = canonical / "dependency"
+    dependency_inside.mkdir(parents=True)
+    (dependency_inside / "inside.bin").write_bytes(b"inside")
+
+    with pytest.raises(LocalEntryError, match="cannot be inside canonical"):
+        _validate_game_folder_build_binding(
+            _game_folder_binding(dependency_inside),
+            canonical_source_root=canonical,
+        )
+
+    container = tmp_path / "container"
+    canonical_inside = container / "Project"
+    canonical_inside.mkdir(parents=True)
+    (container / "dependency.bin").write_bytes(b"container")
+    with pytest.raises(LocalEntryError, match="cannot contain canonical"):
+        _validate_game_folder_build_binding(
+            _game_folder_binding(container),
+            canonical_source_root=canonical_inside,
+        )
+
+    assert copy_calls == []
 
 
 def test_game_folder_binding_snapshots_and_copies_nested_binary_tree(
@@ -2433,6 +2531,64 @@ def test_run_local_request_game_folder_snapshot_drift_stops_before_dotnet(
     assert failure["model_call_count"] == 0
     assert failure["graph_invoked"] is False
     assert dotnet_calls == []
+
+
+def test_run_local_request_game_folder_copy_failure_is_bound_before_dotnet(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _local_run_test_target(tmp_path)
+    dependency = _game_folder_dependency(tmp_path)
+    binding = _game_folder_binding(dependency)
+    source_before = _binary_tree_snapshot(source)
+    dependency_before = _binary_tree_snapshot(dependency)
+    workspace = tmp_path / "runs"
+    dotnet_calls: list[object] = []
+    _install_local_ollama_factory(monkeypatch)
+
+    def fail_copy(*, source: Path, destination: Path) -> None:
+        assert source == dependency.resolve()
+        assert destination.name == "GameFolder"
+        raise OSError("injected long-path copy failure")
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._copy_validated_directory_tree",
+        fail_copy,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._run_nuget_isolated_build",
+        lambda profile: dotnet_calls.append(profile),
+    )
+
+    with pytest.raises(OSError, match="injected long-path copy failure"):
+        run_local_request(
+            description="change local source",
+            target_project=source,
+            workspace_base=workspace,
+            settings_path=Path("config/settings.yaml"),
+            confirm_isolated_write=True,
+            allow_build=True,
+            allow_source_disclosure=False,
+            diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
+            game_folder_build_binding=binding,
+            local_ollama=True,
+            ollama_model="qwen3:4b-instruct",
+            ollama_context_window=32768,
+            ollama_model_identity_reader=lambda *_: _ollama_identity(),
+            ollama_server_version_reader=lambda *_: "0.32.1",
+        )
+
+    run_root = next(path for path in workspace.iterdir() if path.is_dir())
+    failure = json.loads(
+        (run_root / "run_failure.json").read_text(encoding="utf-8")
+    )
+    assert failure["failure_stage"] == "build_dependency_copy"
+    assert failure["game_folder_build_binding"] == binding.to_dict()
+    assert failure["model_call_count"] == 0
+    assert failure["graph_invoked"] is False
+    assert dotnet_calls == []
+    assert _binary_tree_snapshot(source) == source_before
+    assert _binary_tree_snapshot(dependency) == dependency_before
 
 
 def test_pre_graph_cleanup_failure_is_terminally_bound(

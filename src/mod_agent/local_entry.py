@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import math
+import ntpath
 import os
 import re
 import shutil
@@ -1075,6 +1076,47 @@ def _binary_tree_snapshot_sha256(snapshot: tuple[dict[str, object], ...]) -> str
     ).hexdigest()
 
 
+def _windows_extended_length_path(path_text: str) -> str:
+    """Project one validated absolute Windows path into Win32 long-path form."""
+
+    normalized = ntpath.normpath(path_text)
+    if normalized.startswith("\\\\?\\"):
+        return normalized
+    if normalized.startswith("\\\\.\\") or not ntpath.isabs(normalized):
+        raise LocalEntryError(
+            "Extended-length copy paths must be absolute filesystem paths."
+        )
+    if normalized.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + normalized[2:]
+    drive, tail = ntpath.splitdrive(normalized)
+    if re.fullmatch(r"[A-Za-z]:", drive) is None or not tail.startswith("\\"):
+        raise LocalEntryError(
+            "Extended-length copy paths must use an absolute drive or UNC root."
+        )
+    return "\\\\?\\" + normalized
+
+
+def _directory_copy_path_argument(
+    path: Path,
+    *,
+    windows: bool,
+) -> Path | str:
+    if not windows:
+        return path
+    return _windows_extended_length_path(str(path))
+
+
+def _copy_validated_directory_tree(*, source: Path, destination: Path) -> None:
+    """Copy roots whose identity and containment were already validated."""
+
+    windows = os.name == "nt"
+    shutil.copytree(
+        _directory_copy_path_argument(source, windows=windows),
+        _directory_copy_path_argument(destination, windows=windows),
+        copy_function=shutil.copy2,
+    )
+
+
 def _validate_game_folder_build_binding(
     binding: RunLocalGameFolderBindingV1,
     *,
@@ -1132,7 +1174,10 @@ def _materialize_game_folder_build_dependency(
     if destination.exists():
         raise LocalEntryError("Run-local GameFolder dependency destination already exists.")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(identity.source_root, destination)
+    _copy_validated_directory_tree(
+        source=identity.source_root,
+        destination=destination,
+    )
     copied_snapshot = _binary_tree_snapshot(destination)
     copied_hash = _binary_tree_snapshot_sha256(copied_snapshot)
     source_after_copy = _binary_tree_snapshot(identity.source_root)
