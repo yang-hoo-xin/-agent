@@ -10,6 +10,7 @@ import ntpath
 import os
 import re
 import shutil
+import stat as stat_module
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -1054,14 +1055,89 @@ class _RunLocalGameFolderSourceIdentity:
 
 def _binary_tree_snapshot(root: Path) -> tuple[dict[str, object], ...]:
     selected_root = root.resolve(strict=True)
+    walk_root = _directory_copy_path_argument(
+        selected_root,
+        windows=os.name == "nt",
+    )
+    records: list[dict[str, object]] = []
+
+    def fail_walk(error: OSError) -> None:
+        raise LocalEntryError(
+            "GameFolder dependency snapshot traversal failed."
+        ) from error
+
+    def require_plain_entry(
+        path_text: str | os.PathLike[str],
+        *,
+        directory: bool,
+    ) -> os.stat_result:
+        try:
+            entry_stat = os.lstat(path_text)
+        except OSError as exc:
+            raise LocalEntryError(
+                "GameFolder dependency snapshot entry could not be inspected."
+            ) from exc
+        reparse_mask = getattr(
+            stat_module,
+            "FILE_ATTRIBUTE_REPARSE_POINT",
+            0x400,
+        )
+        if stat_module.S_ISLNK(entry_stat.st_mode) or bool(
+            getattr(entry_stat, "st_file_attributes", 0) & reparse_mask
+        ):
+            raise LocalEntryError(
+                "GameFolder dependency snapshot rejects symlink or reparse entries."
+            )
+        expected = (
+            stat_module.S_ISDIR(entry_stat.st_mode)
+            if directory
+            else stat_module.S_ISREG(entry_stat.st_mode)
+        )
+        if not expected:
+            raise LocalEntryError(
+                "GameFolder dependency snapshot rejects non-regular entries."
+            )
+        return entry_stat
+
+    for current_root, directory_names, file_names in os.walk(
+        walk_root,
+        topdown=True,
+        onerror=fail_walk,
+        followlinks=False,
+    ):
+        directory_names.sort(key=lambda name: name.encode("utf-8"))
+        file_names.sort(key=lambda name: name.encode("utf-8"))
+        for directory_name in directory_names:
+            require_plain_entry(
+                os.path.join(current_root, directory_name),
+                directory=True,
+            )
+        for file_name in file_names:
+            file_path = os.path.join(current_root, file_name)
+            entry_stat = require_plain_entry(file_path, directory=False)
+            relative_path = Path(os.path.relpath(file_path, walk_root)).as_posix()
+            if relative_path in ("", ".") or relative_path.startswith("../"):
+                raise LocalEntryError(
+                    "GameFolder dependency snapshot relative path escaped its root."
+                )
+            digest = hashlib.sha256()
+            try:
+                with open(file_path, "rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            except OSError as exc:
+                raise LocalEntryError(
+                    "GameFolder dependency snapshot file could not be read."
+                ) from exc
+            records.append(
+                {
+                    "path": relative_path,
+                    "sha256": digest.hexdigest(),
+                    "size": entry_stat.st_size,
+                }
+            )
     return tuple(
-        {
-            "path": path.relative_to(selected_root).as_posix(),
-            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-            "size": path.stat().st_size,
-        }
-        for path in sorted(selected_root.rglob("*"))
-        if path.is_file()
+        sorted(records, key=lambda item: str(item["path"]).encode("utf-8"))
     )
 
 

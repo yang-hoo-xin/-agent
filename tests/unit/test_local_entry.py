@@ -4,6 +4,7 @@ import inspect
 import json
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -1270,6 +1271,49 @@ def test_windows_extended_length_path_rejects_relative_and_device_paths() -> Non
             _windows_extended_length_path(selected)
 
 
+def test_binary_tree_snapshot_sorts_normalized_paths_by_utf8_bytes(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "snapshot"
+    root.mkdir()
+    for name in ("é.bin", "z.bin", "a.bin"):
+        (root / name).write_bytes(name.encode("utf-8"))
+
+    snapshot = _binary_tree_snapshot(root)
+
+    assert [item["path"] for item in snapshot] == sorted(
+        ("é.bin", "z.bin", "a.bin"),
+        key=lambda value: value.encode("utf-8"),
+    )
+    assert all("\\\\?\\" not in str(item["path"]) for item in snapshot)
+
+
+def test_binary_tree_snapshot_rejects_reparse_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "snapshot"
+    root.mkdir()
+    selected = root / "reparse.bin"
+    selected.write_bytes(b"not trusted as a regular dependency")
+    original_lstat = os.lstat
+
+    def reparse_lstat(path):
+        observed = original_lstat(path)
+        if str(path).endswith("reparse.bin"):
+            return SimpleNamespace(
+                st_mode=stat.S_IFREG,
+                st_file_attributes=0x400,
+                st_size=observed.st_size,
+            )
+        return observed
+
+    monkeypatch.setattr("src.mod_agent.local_entry.os.lstat", reparse_lstat)
+
+    with pytest.raises(LocalEntryError, match="symlink or reparse"):
+        _binary_tree_snapshot(root)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="requires real Windows long paths")
 def test_validated_directory_copy_reads_real_source_path_over_260_chars(
     tmp_path: Path,
@@ -1281,12 +1325,49 @@ def test_validated_directory_copy_reads_real_source_path_over_260_chars(
         pytest.skip("temporary root cannot form a bounded long-path fixture")
     nested = source / ("s" * padding)
     Path(_windows_extended_length_path(str(nested))).mkdir()
-    long_file = nested / "payload.bin"
+    long_file = nested / "payload_a.bin"
+    second_long_file = nested / "payload_b.bin"
     assert len(str(long_file)) > 260
-    payload = b"\x00long-source\xff\x00"
+    assert len(str(second_long_file)) > 260
+    payload = b"\x00long-source-a\xff\x00"
+    second_payload = b"\x00long-source-b\xfe\x00"
     extended_file = Path(_windows_extended_length_path(str(long_file)))
+    extended_second = Path(
+        _windows_extended_length_path(str(second_long_file))
+    )
     extended_file.write_bytes(payload)
+    extended_second.write_bytes(second_payload)
+    (source / "short.bin").write_bytes(b"short")
     assert extended_file.is_file()
+    assert extended_second.is_file()
+
+    initial_snapshot = _binary_tree_snapshot(source)
+    initial_hash = _binary_tree_snapshot_sha256(initial_snapshot)
+    assert len(initial_snapshot) == 3
+    assert {item["path"] for item in initial_snapshot} == {
+        "short.bin",
+        f"{nested.name}/payload_a.bin",
+        f"{nested.name}/payload_b.bin",
+    }
+    extended_second.write_bytes(b"changed-long-source-b")
+    changed_snapshot = _binary_tree_snapshot(source)
+    assert len(changed_snapshot) == 3
+    assert _binary_tree_snapshot_sha256(changed_snapshot) != initial_hash
+
+    legacy_incomplete_binding = RunLocalGameFolderBindingV1(
+        source_root=str(source.resolve()),
+        snapshot_sha256=(
+            "c3d4c14ae937b72aa251ccadc239ebb73852d0f7a22a3b9758e969f04ea490b9"
+        ),
+        file_count=137,
+    )
+    canonical_source = tmp_path / "canonical" / "Project"
+    canonical_source.mkdir(parents=True)
+    with pytest.raises(LocalEntryError, match="file count drifted"):
+        _validate_game_folder_build_binding(
+            legacy_incomplete_binding,
+            canonical_source_root=canonical_source,
+        )
 
     destination = tmp_path / "normal_destination"
     _copy_validated_directory_tree(
@@ -1298,8 +1379,12 @@ def test_validated_directory_copy_reads_real_source_path_over_260_chars(
     copied = destination / long_file.relative_to(source)
     copied_bytes = Path(_windows_extended_length_path(str(copied))).read_bytes()
     assert copied_bytes == payload
-    assert hashlib.sha256(copied_bytes).hexdigest() == hashlib.sha256(payload).hexdigest()
+    assert hashlib.sha256(copied_bytes).hexdigest() == hashlib.sha256(
+        payload
+    ).hexdigest()
     assert extended_file.read_bytes() == payload
+    assert _binary_tree_snapshot(destination) == changed_snapshot
+    assert _binary_tree_snapshot(source) == changed_snapshot
 
 
 def test_game_folder_source_containment_rejects_before_copy(
