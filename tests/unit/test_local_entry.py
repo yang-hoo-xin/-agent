@@ -26,6 +26,7 @@ from src.mod_agent.local_entry import (
     CompiledArtifactInspectionProfile,
     LocalEntryError,
     NuGetIsolatedBuildExecution,
+    RunLocalGameFolderBindingV1,
     _assert_no_absolute_local_paths,
     _assert_ollama_model_identity_stable,
     _bind_objective_failure_to_single_changed_file,
@@ -37,6 +38,9 @@ from src.mod_agent.local_entry import (
     _local_no_external_disclosure_record,
     _local_patch_generation_correction_allowed,
     _implementation_with_runtime_repair_bindings,
+    _binary_tree_snapshot,
+    _binary_tree_snapshot_sha256,
+    _materialize_game_folder_build_dependency,
     _materialize_repair_span_change,
     _objective_verification_source_views,
     _persist_graph_terminal_failure,
@@ -71,6 +75,7 @@ from src.mod_agent.local_entry import (
     _verify_exact_snapshot_change,
     _verify_final_compiled_artifact_if_built,
     _validate_ollama_context_window,
+    _validate_game_folder_build_binding,
     _verify_source_disclosure,
     run_local_request,
 )
@@ -144,6 +149,7 @@ def test_run_local_request_threads_one_strict_git_admission_through_all_source_c
 
     assert "source_git_admission" in signature.parameters
     assert source.count("strict_git_admission=source_git_admission") == 3
+    assert signature.parameters["game_folder_build_binding"].default is None
 
 
 def _runtime_settings(
@@ -1213,6 +1219,208 @@ def test_repair_provider_constraints_deduplicate_diagnostic_messages() -> None:
     ]
 
 
+def _game_folder_binding(root: Path) -> RunLocalGameFolderBindingV1:
+    snapshot = _binary_tree_snapshot(root)
+    return RunLocalGameFolderBindingV1(
+        source_root=str(root.resolve()),
+        snapshot_sha256=_binary_tree_snapshot_sha256(snapshot),
+        file_count=len(snapshot),
+    )
+
+
+def _game_folder_dependency(tmp_path: Path) -> Path:
+    root = tmp_path / "dependency_source" / "GameFolder"
+    nested = root / "BepInEx" / "interop"
+    nested.mkdir(parents=True)
+    (root / "doorstop_config.ini").write_bytes(b"enabled=true\r\n")
+    (nested / "GameAssembly.dll").write_bytes(b"\x00\x01\xffbinary\x00")
+    return root
+
+
+def test_game_folder_binding_snapshots_and_copies_nested_binary_tree(
+    tmp_path: Path,
+) -> None:
+    canonical_source = tmp_path / "canonical" / "Project"
+    canonical_source.mkdir(parents=True)
+    dependency = _game_folder_dependency(tmp_path)
+    binding = _game_folder_binding(dependency)
+    before_source = _binary_tree_snapshot(dependency)
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+
+    identity = _validate_game_folder_build_binding(
+        binding,
+        canonical_source_root=canonical_source,
+    )
+    record = _materialize_game_folder_build_dependency(
+        identity,
+        run_root=run_root,
+    )
+
+    isolated = run_root / "build_dependencies" / "GameFolder"
+    assert record["property_name"] == "GameFolder"
+    assert record["source_file_count"] == 2
+    assert record["copy_file_count"] == 2
+    assert record["source_snapshot_sha256"] == record["copy_snapshot_sha256"]
+    assert _binary_tree_snapshot(isolated) == before_source
+    assert _binary_tree_snapshot(dependency) == before_source
+
+
+def test_game_folder_binding_rejects_arbitrary_msbuild_property() -> None:
+    with pytest.raises(ValueError, match="binding is invalid"):
+        RunLocalGameFolderBindingV1(
+            source_root="C:/dependency",
+            snapshot_sha256="a" * 64,
+            file_count=1,
+            property_name="ArbitraryProperty",
+        )
+
+
+@pytest.mark.parametrize("mutation", ["count", "hash"])
+def test_game_folder_binding_drift_rejects_before_any_dotnet_call(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    canonical_source = tmp_path / "canonical" / "Project"
+    canonical_source.mkdir(parents=True)
+    dependency = _game_folder_dependency(tmp_path)
+    binding = _game_folder_binding(dependency)
+    dotnet_calls: list[tuple[str, ...]] = []
+    if mutation == "count":
+        (dependency / "new.bin").write_bytes(b"new")
+    else:
+        (dependency / "doorstop_config.ini").write_bytes(b"changed")
+
+    with pytest.raises(LocalEntryError, match="file count|snapshot SHA256"):
+        _validate_game_folder_build_binding(
+            binding,
+            canonical_source_root=canonical_source,
+        )
+
+    assert dotnet_calls == []
+
+
+def test_game_folder_destination_reuse_and_escape_are_rejected(
+    tmp_path: Path,
+) -> None:
+    canonical_source = tmp_path / "canonical" / "Project"
+    canonical_source.mkdir(parents=True)
+    dependency = _game_folder_dependency(tmp_path)
+    identity = _validate_game_folder_build_binding(
+        _game_folder_binding(dependency),
+        canonical_source_root=canonical_source,
+    )
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    _materialize_game_folder_build_dependency(identity, run_root=run_root)
+
+    with pytest.raises(LocalEntryError, match="already exists"):
+        _materialize_game_folder_build_dependency(identity, run_root=run_root)
+
+    project = run_root / "project"
+    project.mkdir()
+    config = project / "nuget.config"
+    config.write_text("<configuration />", encoding="utf-8")
+    outside = tmp_path / "outside_game"
+    outside.mkdir()
+    with pytest.raises(LocalEntryError, match="game_folder_dir must remain"):
+        _create_nuget_isolated_build_profile(
+            run_root=run_root,
+            working_directory=project,
+            config_file=config,
+            bepinex_dir=None,
+            timeout_seconds=120,
+            game_folder_dir=outside,
+        )
+
+
+def test_game_folder_profile_binds_unique_property_to_restore_and_build(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    target = run_root / "generated_mods" / "Neutral"
+    baseline = run_root / "baseline_source" / "Neutral"
+    game_folder = run_root / "build_dependencies" / "GameFolder"
+    for directory in (target, baseline, game_folder):
+        directory.mkdir(parents=True)
+    for project in (target, baseline):
+        (project / "nuget.config").write_text("<configuration />", encoding="utf-8")
+
+    profiles = tuple(
+        _create_nuget_isolated_build_profile(
+            run_root=run_root,
+            working_directory=project,
+            config_file=project / "nuget.config",
+            bepinex_dir=None,
+            timeout_seconds=120,
+            game_folder_dir=game_folder,
+        )
+        for project in (target, baseline)
+    )
+
+    expected = f"-p:GameFolder={game_folder.resolve()}"
+    assert profiles[0].game_folder_dir == profiles[1].game_folder_dir
+    for profile in profiles:
+        assert profile.restore_command.count(expected) == 1
+        assert profile.build_command.count(expected) == 1
+        assert profile.to_dict()["game_folder_dir"] == str(game_folder.resolve())
+
+
+def test_actual2_relative_game_folder_fixture_passes_fake_restore_and_build(
+    tmp_path: Path,
+) -> None:
+    canonical_source = tmp_path / "canonical" / "Neutral"
+    canonical_source.mkdir(parents=True)
+    project_bytes = b"<Project><Import Project='GameFolder.props' /></Project>\n"
+    props_bytes = (
+        b"<Project><PropertyGroup><GameFolder>../../build_experiment/fake_game"
+        b"</GameFolder></PropertyGroup></Project>\n"
+    )
+    (canonical_source / "Neutral.csproj").write_bytes(project_bytes)
+    (canonical_source / "GameFolder.props").write_bytes(props_bytes)
+    dependency = _game_folder_dependency(tmp_path)
+    dependency_before = _binary_tree_snapshot(dependency)
+    canonical_before = _binary_tree_snapshot(canonical_source)
+    run_root = tmp_path / "run"
+    target = run_root / "generated_mods" / "Neutral"
+    baseline = run_root / "baseline_source" / "Neutral"
+    shutil.copytree(canonical_source, target)
+    shutil.copytree(canonical_source, baseline)
+    identity = _validate_game_folder_build_binding(
+        _game_folder_binding(dependency),
+        canonical_source_root=canonical_source,
+    )
+    record = _materialize_game_folder_build_dependency(identity, run_root=run_root)
+    game_folder = Path(str(record["isolated_copy"]))
+    calls: list[tuple[str, ...]] = []
+
+    def command_runner(command, **_kwargs):
+        calls.append(tuple(command))
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    for project in (target, baseline):
+        config = project / "nuget.config"
+        config.write_text("<configuration />", encoding="utf-8")
+        profile = _create_nuget_isolated_build_profile(
+            run_root=run_root,
+            working_directory=project,
+            config_file=config,
+            bepinex_dir=None,
+            timeout_seconds=120,
+            game_folder_dir=game_folder,
+        )
+        result = _run_nuget_isolated_build(profile, command_runner=command_runner)
+        assert result.restore_exit_code == 0
+        assert result.build_exit_code == 0
+
+    exact_argument = f"-p:GameFolder={game_folder.resolve()}"
+    assert len(calls) == 4
+    assert all(command.count(exact_argument) == 1 for command in calls)
+    assert (target / "GameFolder.props").read_bytes() == props_bytes
+    assert (baseline / "GameFolder.props").read_bytes() == props_bytes
+    assert _binary_tree_snapshot(canonical_source) == canonical_before
+    assert _binary_tree_snapshot(dependency) == dependency_before
+
 def test_unique_repair_diagnostics_removes_only_exact_duplicates() -> None:
     first = {
         "file": "generated_mods/source/Program.cs",
@@ -2119,6 +2327,112 @@ def test_pre_graph_restore_failure_records_exact_stage_and_stops(
     assert failure["model_call_count"] == 0
     assert failure["graph_invoked"] is False
     assert not (run_root / "a").exists()
+
+
+def test_run_local_request_records_game_folder_binding_before_fake_restore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _local_run_test_target(tmp_path)
+    dependency = _game_folder_dependency(tmp_path)
+    dependency_before = _binary_tree_snapshot(dependency)
+    binding = _game_folder_binding(dependency)
+    workspace = tmp_path / "runs"
+    _install_local_ollama_factory(monkeypatch)
+
+    def fail_restore(profile):
+        exact = f"-p:GameFolder={profile.game_folder_dir}"
+        assert profile.restore_command.count(exact) == 1
+        assert profile.build_command.count(exact) == 1
+        return NuGetIsolatedBuildExecution(
+            restore_exit_code=9,
+            build_exit_code=None,
+            restore_stdout="",
+            restore_stderr="injected restore failure",
+            build_stdout="",
+            build_stderr="",
+            duration_ms=4,
+        )
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._run_nuget_isolated_build",
+        fail_restore,
+    )
+
+    with pytest.raises(LocalEntryError, match="baseline build failed"):
+        run_local_request(
+            description="make General.Enabled control startup patch registration",
+            target_project=source,
+            workspace_base=workspace,
+            settings_path=Path("config/settings.yaml"),
+            confirm_isolated_write=True,
+            allow_build=True,
+            allow_source_disclosure=False,
+            diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
+            game_folder_build_binding=binding,
+            local_ollama=True,
+            ollama_model="qwen3:4b-instruct",
+            ollama_context_window=32768,
+            ollama_model_identity_reader=lambda *_: _ollama_identity(),
+            ollama_server_version_reader=lambda *_: "0.32.1",
+        )
+
+    run_root = next(path for path in workspace.iterdir() if path.is_dir())
+    manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
+    failure = json.loads((run_root / "run_failure.json").read_text(encoding="utf-8"))
+    game_folder = manifest["game_folder_build_dependency"]
+    assert manifest["game_folder_build_binding"] == binding.to_dict()
+    assert game_folder["source_snapshot_sha256"] == binding.snapshot_sha256
+    assert game_folder["copy_snapshot_sha256"] == binding.snapshot_sha256
+    assert Path(game_folder["isolated_copy"]).is_relative_to(run_root)
+    assert failure["failure_stage"] == "baseline_restore"
+    assert failure["game_folder_build_dependency"] == game_folder
+    assert failure["model_call_count"] == 0
+    assert failure["graph_invoked"] is False
+    assert _binary_tree_snapshot(dependency) == dependency_before
+
+
+def test_run_local_request_game_folder_snapshot_drift_stops_before_dotnet(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _local_run_test_target(tmp_path)
+    dependency = _game_folder_dependency(tmp_path)
+    binding = _game_folder_binding(dependency)
+    (dependency / "doorstop_config.ini").write_bytes(b"drifted")
+    workspace = tmp_path / "runs"
+    dotnet_calls: list[object] = []
+    _install_local_ollama_factory(monkeypatch)
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._run_nuget_isolated_build",
+        lambda profile: dotnet_calls.append(profile),
+    )
+
+    with pytest.raises(LocalEntryError, match="snapshot SHA256 drifted"):
+        run_local_request(
+            description="change local source",
+            target_project=source,
+            workspace_base=workspace,
+            settings_path=Path("config/settings.yaml"),
+            confirm_isolated_write=True,
+            allow_build=True,
+            allow_source_disclosure=False,
+            diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
+            game_folder_build_binding=binding,
+            local_ollama=True,
+            ollama_model="qwen3:4b-instruct",
+            ollama_context_window=32768,
+            ollama_model_identity_reader=lambda *_: _ollama_identity(),
+            ollama_server_version_reader=lambda *_: "0.32.1",
+        )
+
+    run_root = next(path for path in workspace.iterdir() if path.is_dir())
+    failure = json.loads((run_root / "run_failure.json").read_text(encoding="utf-8"))
+    assert failure["failure_stage"] == "build_dependency_snapshot"
+    assert failure["game_folder_build_binding"] == binding.to_dict()
+    assert failure["model_call_count"] == 0
+    assert failure["graph_invoked"] is False
+    assert dotnet_calls == []
 
 
 def test_pre_graph_cleanup_failure_is_terminally_bound(

@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -1012,6 +1012,148 @@ class _RuntimeEvidenceConsolidationHandoff:
 
 
 @dataclass(frozen=True)
+class RunLocalGameFolderBindingV1:
+    """Exact read-only GameFolder dependency identity for one local run."""
+
+    source_root: str
+    snapshot_sha256: str
+    file_count: int
+    property_name: Literal["GameFolder"] = "GameFolder"
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.source_root, str)
+            or not self.source_root
+            or not isinstance(self.snapshot_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", self.snapshot_sha256) is None
+            or isinstance(self.file_count, bool)
+            or not isinstance(self.file_count, int)
+            or self.file_count <= 0
+            or self.property_name != "GameFolder"
+        ):
+            raise ValueError("Run-local GameFolder binding is invalid.")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "binding_version": "run_local_game_folder_binding_v1",
+            "source_root": self.source_root,
+            "snapshot_sha256": self.snapshot_sha256,
+            "file_count": self.file_count,
+            "property_name": self.property_name,
+        }
+
+
+@dataclass(frozen=True)
+class _RunLocalGameFolderSourceIdentity:
+    source_root: Path
+    snapshot: tuple[dict[str, object], ...]
+    snapshot_sha256: str
+    file_count: int
+
+
+def _binary_tree_snapshot(root: Path) -> tuple[dict[str, object], ...]:
+    selected_root = root.resolve(strict=True)
+    return tuple(
+        {
+            "path": path.relative_to(selected_root).as_posix(),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "size": path.stat().st_size,
+        }
+        for path in sorted(selected_root.rglob("*"))
+        if path.is_file()
+    )
+
+
+def _binary_tree_snapshot_sha256(snapshot: tuple[dict[str, object], ...]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            list(snapshot),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _validate_game_folder_build_binding(
+    binding: RunLocalGameFolderBindingV1,
+    *,
+    canonical_source_root: Path,
+) -> _RunLocalGameFolderSourceIdentity:
+    source = Path(binding.source_root)
+    if not source.is_absolute():
+        raise LocalEntryError("GameFolder dependency source_root must be absolute.")
+    source = source.resolve(strict=True)
+    if not source.is_dir():
+        raise LocalEntryError("GameFolder dependency source_root is missing.")
+    canonical = canonical_source_root.resolve(strict=True)
+    try:
+        source.relative_to(canonical)
+    except ValueError:
+        pass
+    else:
+        raise LocalEntryError(
+            "GameFolder dependency source cannot be inside canonical product source."
+        )
+    try:
+        canonical.relative_to(source)
+    except ValueError:
+        pass
+    else:
+        raise LocalEntryError(
+            "GameFolder dependency source cannot contain canonical product source."
+        )
+    snapshot = _binary_tree_snapshot(source)
+    observed_hash = _binary_tree_snapshot_sha256(snapshot)
+    if len(snapshot) != binding.file_count:
+        raise LocalEntryError("GameFolder dependency file count drifted.")
+    if observed_hash != binding.snapshot_sha256:
+        raise LocalEntryError("GameFolder dependency snapshot SHA256 drifted.")
+    return _RunLocalGameFolderSourceIdentity(
+        source_root=source,
+        snapshot=snapshot,
+        snapshot_sha256=observed_hash,
+        file_count=len(snapshot),
+    )
+
+
+def _materialize_game_folder_build_dependency(
+    identity: _RunLocalGameFolderSourceIdentity,
+    *,
+    run_root: Path,
+) -> dict[str, object]:
+    root = run_root.resolve(strict=True)
+    destination = root / "build_dependencies" / "GameFolder"
+    _require_run_local_build_path(
+        root=root,
+        path=destination,
+        label="game_folder_dir",
+    )
+    if destination.exists():
+        raise LocalEntryError("Run-local GameFolder dependency destination already exists.")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(identity.source_root, destination)
+    copied_snapshot = _binary_tree_snapshot(destination)
+    copied_hash = _binary_tree_snapshot_sha256(copied_snapshot)
+    source_after_copy = _binary_tree_snapshot(identity.source_root)
+    if source_after_copy != identity.snapshot:
+        raise LocalEntryError("GameFolder dependency source changed during copy.")
+    if copied_snapshot != identity.snapshot or copied_hash != identity.snapshot_sha256:
+        raise LocalEntryError("Run-local GameFolder dependency copy identity drifted.")
+    return {
+        "binding_version": "run_local_game_folder_binding_v1",
+        "property_name": "GameFolder",
+        "source_root": str(identity.source_root),
+        "source_snapshot_sha256": identity.snapshot_sha256,
+        "source_file_count": identity.file_count,
+        "isolated_copy": str(destination),
+        "copy_snapshot_sha256": copied_hash,
+        "copy_file_count": len(copied_snapshot),
+        "build_uses_isolated_copy": True,
+    }
+
+
+@dataclass(frozen=True)
 class NuGetIsolatedBuildProfile:
     """Run-local NuGet restore and build inputs for one delivery workspace."""
 
@@ -1027,6 +1169,7 @@ class NuGetIsolatedBuildProfile:
     user_config_file: Path
     additional_user_config_path: Path
     bepinex_dir: Path | None
+    game_folder_dir: Path | None
     timeout_seconds: int
     restore_command: tuple[str, ...]
     build_command: tuple[str, ...]
@@ -1062,6 +1205,11 @@ class NuGetIsolatedBuildProfile:
             ).hexdigest(),
             "bepinex_dir": (
                 str(self.bepinex_dir) if self.bepinex_dir is not None else None
+            ),
+            "game_folder_dir": (
+                str(self.game_folder_dir)
+                if self.game_folder_dir is not None
+                else None
             ),
             "timeout_seconds": self.timeout_seconds,
             "restore_command": list(self.restore_command),
@@ -1143,11 +1291,15 @@ def _create_nuget_isolated_build_profile(
     config_file: Path,
     bepinex_dir: Path | None,
     timeout_seconds: int,
+    game_folder_dir: Path | None = None,
 ) -> NuGetIsolatedBuildProfile:
     root = run_root.resolve()
     working = working_directory.resolve()
     config = config_file.resolve()
     bepinex = bepinex_dir.resolve() if bepinex_dir is not None else None
+    game_folder = (
+        game_folder_dir.resolve() if game_folder_dir is not None else None
+    )
     for label, path in (
         ("working_directory", working),
         ("config_file", config),
@@ -1159,12 +1311,20 @@ def _create_nuget_isolated_build_profile(
             path=bepinex,
             label="bepinex_dir",
         )
+    if game_folder is not None:
+        _require_run_local_build_path(
+            root=root,
+            path=game_folder,
+            label="game_folder_dir",
+        )
     if not working.is_dir():
         raise LocalEntryError("NuGet-isolated build working directory is missing.")
     if not config.is_file():
         raise LocalEntryError("NuGet-isolated build config file is missing.")
     if bepinex is not None and not bepinex.is_dir():
         raise LocalEntryError("NuGet-isolated build BepInEx directory is missing.")
+    if game_folder is not None and not game_folder.is_dir():
+        raise LocalEntryError("NuGet-isolated build GameFolder directory is missing.")
     if timeout_seconds <= 0:
         raise LocalEntryError("NuGet-isolated build timeout must be positive.")
 
@@ -1179,6 +1339,9 @@ def _create_nuget_isolated_build_profile(
     bepinex_arguments = (
         (f"-p:BepInExDir={bepinex}",) if bepinex is not None else ()
     )
+    game_folder_arguments = (
+        (f"-p:GameFolder={game_folder}",) if game_folder is not None else ()
+    )
     return NuGetIsolatedBuildProfile(
         profile_id="v2_codegen_real_local_dotnet_nuget_isolated",
         run_root=root,
@@ -1192,6 +1355,7 @@ def _create_nuget_isolated_build_profile(
         user_config_file=user_config,
         additional_user_config_path=additional_user_config,
         bepinex_dir=bepinex,
+        game_folder_dir=game_folder,
         timeout_seconds=timeout_seconds,
         restore_command=(
             "dotnet",
@@ -1201,12 +1365,14 @@ def _create_nuget_isolated_build_profile(
             "--packages",
             str(packages),
             *bepinex_arguments,
+            *game_folder_arguments,
         ),
         build_command=(
             "dotnet",
             "build",
             "--no-restore",
             *bepinex_arguments,
+            *game_folder_arguments,
         ),
     )
 
@@ -3350,6 +3516,7 @@ def run_local_request(
     source_disclosure_approval_id: str | None = None,
     source_revision_binding: Mapping[str, str] | None = None,
     source_git_admission: StrictGitAdmission | None = None,
+    game_folder_build_binding: RunLocalGameFolderBindingV1 | None = None,
     compiled_artifact_verifier: Callable[[Path, str], dict[str, Any]] | None = None,
     compiled_artifact_inspection_profile: (
         CompiledArtifactInspectionProfile | None
@@ -3395,6 +3562,12 @@ def run_local_request(
         raise LocalEntryError("run-request requires --allow-build for the real build step.")
     if diff_approval_reader is None:
         raise LocalEntryError("run-request requires an exact diff approval reader.")
+    if game_folder_build_binding is not None and not isinstance(
+        game_folder_build_binding, RunLocalGameFolderBindingV1
+    ):
+        raise LocalEntryError(
+            "run-request game_folder_build_binding must be RunLocalGameFolderBindingV1."
+        )
     if repair_ollama_model is not None and not local_ollama:
         raise LocalEntryError(
             "A Repair Ollama model can only be selected for local Ollama execution."
@@ -3673,11 +3846,66 @@ def run_local_request(
         "graph_invoked": False,
         "patch_payload_parser_entered": False,
         "actual_write_performed": False,
+        "game_folder_build_binding": (
+            game_folder_build_binding.to_dict()
+            if game_folder_build_binding is not None
+            else None
+        ),
+        "game_folder_build_dependency": None,
     }
     (run_root / "run_manifest.json").write_text(
         json.dumps(initial_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    game_folder_dependency: dict[str, object] | None = None
+    isolated_game_folder_dir: Path | None = None
+    if game_folder_build_binding is not None:
+        game_folder_source_identity = _run_pre_graph_step(
+            failure_stage="build_dependency_snapshot",
+            action=lambda: _validate_game_folder_build_binding(
+                game_folder_build_binding,
+                canonical_source_root=source,
+            ),
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+            extra={
+                "game_folder_build_binding": game_folder_build_binding.to_dict()
+            },
+        )
+        game_folder_dependency = _run_pre_graph_step(
+            failure_stage="build_dependency_copy",
+            action=lambda: _materialize_game_folder_build_dependency(
+                game_folder_source_identity,
+                run_root=run_root,
+            ),
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+            extra={
+                "game_folder_build_binding": game_folder_build_binding.to_dict(),
+                "game_folder_source_identity": {
+                    "source_root": str(game_folder_source_identity.source_root),
+                    "snapshot_sha256": game_folder_source_identity.snapshot_sha256,
+                    "file_count": game_folder_source_identity.file_count,
+                },
+            },
+        )
+        isolated_game_folder_dir = Path(
+            str(game_folder_dependency["isolated_copy"])
+        )
+        initial_manifest["game_folder_build_dependency"] = dict(
+            game_folder_dependency
+        )
+        (run_root / "run_manifest.json").write_text(
+            json.dumps(initial_manifest, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
     target_copy = run_root / "generated_mods" / source.name
     baseline_copy = run_root / "baseline_source" / source.name
     target_copy.parent.mkdir(parents=True)
@@ -3765,7 +3993,7 @@ def run_local_request(
     isolated_bepinex_dir: Path | None = None
     if source_bepinex_dir is not None:
         isolated_bepinex_dir = run_root / "build_dependencies" / "BepInEx"
-        isolated_bepinex_dir.parent.mkdir(parents=True)
+        isolated_bepinex_dir.parent.mkdir(parents=True, exist_ok=True)
         _run_pre_graph_step(
             failure_stage="build_dependency_preparation",
             action=lambda: shutil.copytree(source_bepinex_dir, isolated_bepinex_dir),
@@ -3783,14 +4011,20 @@ def run_local_request(
         copied_config = copied_project_root / "nuget.config"
         if not copied_config.exists():
             copied_config.write_bytes(isolated_nuget_config)
+    build_profile_stage = (
+        "build_dependency_profile"
+        if game_folder_build_binding is not None
+        else "baseline_profile"
+    )
     nuget_build_profile = _run_pre_graph_step(
-        failure_stage="baseline_profile",
+        failure_stage=build_profile_stage,
         action=lambda: _create_nuget_isolated_build_profile(
             run_root=run_root,
             working_directory=target_copy,
             config_file=target_copy / "nuget.config",
             bepinex_dir=isolated_bepinex_dir,
             timeout_seconds=120,
+            game_folder_dir=isolated_game_folder_dir,
         ),
         run_root=run_root,
         run_id=run_id,
@@ -3799,13 +4033,14 @@ def run_local_request(
         model_admission=model_admission,
     )
     baseline_build_profile = _run_pre_graph_step(
-        failure_stage="baseline_profile",
+        failure_stage=build_profile_stage,
         action=lambda: _create_nuget_isolated_build_profile(
             run_root=run_root,
             working_directory=baseline_copy,
             config_file=baseline_copy / "nuget.config",
             bepinex_dir=isolated_bepinex_dir,
             timeout_seconds=120,
+            game_folder_dir=isolated_game_folder_dir,
         ),
         run_root=run_root,
         run_id=run_id,
@@ -3858,7 +4093,10 @@ def run_local_request(
         request_id=request_id,
         source_revision_binding=source_revision_binding,
         model_admission=model_admission,
-        extra={"verification_tool_build": verification_tool_build},
+        extra={
+            "verification_tool_build": verification_tool_build,
+            "game_folder_build_dependency": game_folder_dependency,
+        },
     )
     baseline_stdout.write_text(baseline.stdout, encoding="utf-8")
     baseline_stderr.write_text(baseline.stderr, encoding="utf-8")
@@ -3941,6 +4179,7 @@ def run_local_request(
             extra={
                 "baseline_build": baseline_result,
                 "verification_tool_build": verification_tool_build,
+                "game_folder_build_dependency": game_folder_dependency,
             },
         )
         raise error
@@ -5053,6 +5292,11 @@ def run_local_request(
                 else None
             ),
             "build_uses_isolated_copy": isolated_bepinex_dir is not None,
+            "game_folder": (
+                dict(game_folder_dependency)
+                if game_folder_dependency is not None
+                else None
+            ),
         },
         "nuget_isolated_build_profile": nuget_build_profile.to_dict(),
         "compiled_artifact_inspection_profile": (
