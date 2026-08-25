@@ -133,6 +133,13 @@ short incident reference is
 SHA256=`E21443626ED67561EE0206CAED2EDAC1652A3B04F736315548890B01267A1241`.
 Actual remains unauthorized.
 
+The next selected work is no longer another packet-local edit. It is one
+bounded, tested repository implementation checkpoint for sealed-entry/preflight
+that reuses the existing ProductExecution preflight/result, source-binding,
+Artifact, and receipt contracts. It must close Windows physical-path
+equivalence and the Attempts1–5 parser, diagnostic, and Git-trust admission
+failures without creating a complete Public Runner or second control plane.
+
 Current execution order:
 
 ```text
@@ -145,9 +152,10 @@ repository explicit unresolved result recorded
 -> P0 false-sufficiency closure complete
 -> P1a structural coverage and P1b formal provider entry complete
 -> P2 product path admitted; sealed entry blocked at ENTRY-002 before ProductExecution
--> bounded Attempt5 packet Windows physical-path equivalence repair
+-> bounded repository sealed-entry/preflight implementation checkpoint and focused tests
+-> new packet and manifest from that checkpoint
 -> newly authorized fresh same-context preflight and receipt review
--> separately authorize empirical actual only after preflight success
+-> separately authorize empirical actual only after receipt approval
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint
 ```

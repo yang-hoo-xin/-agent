@@ -109,7 +109,7 @@ support is true; it constrains and audits what the model is allowed to claim.
 | P0 | completed | lexical-only RgLive observations fail closed without coverage | do not reopen for positive coverage |
 | P1a | completed at `d377ab466fb3e2c57c4c33e29bc2408864e5976e` | structural/synthetic positive requirement-coverage vertical | P1b formal provider and entry |
 | P1b | completed at `32a939b3f217721b076704cd7e701369fef532ed` | formal local projection/findings providers, validated consumer view, formal ProductExecution entry tests | stop Evidence expansion and enter P2 |
-| P2 | product path admitted; sealed entry blocked at `ENTRY-002` | ProductExecution actual runs remain zero; empirical actual has not started | bounded entry-preflight repair, fresh preflight receipt review, then separate actual authorization |
+| P2 | product path admitted; sealed entry blocked at `ENTRY-002` | ProductExecution actual runs remain zero; empirical actual has not started | repository sealed-entry/preflight checkpoint, new packet, fresh preflight receipt review, then separate actual authorization |
 | Internal Alpha | hard gates false/false | no changed-product success plus repair success pair | P2 empirical hard gates |
 | Public Alpha | not started | public entry and case evidence absent | Internal checkpoint plus public-entry actual |
 
@@ -181,6 +181,15 @@ empirical actual additionally requires sealed-entry admission. The current
 entry blocker is `ENTRY-002`, detailed in
 `docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md`; no current
 P2 ProductExecution actual has started.
+
+After Attempt5 failed before ProductExecution, the next owner is a bounded,
+tested repository implementation checkpoint, not another packet-only patch. It
+reuses existing ProductExecution preflight/result, source-binding, Artifact,
+and receipt contracts to close Windows physical-path equivalence plus the
+Attempts1–5 parser, diagnostic, and Git-trust admission boundaries. This does
+not activate the complete Public Runner in `ENTRY-001` and does not create a
+second control plane. A new packet and manifest follow the checkpoint; fresh
+same-context preflight and empirical actual remain separately authorized gates.
 
 ```text
 new checkpoint

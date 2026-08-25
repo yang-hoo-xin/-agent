@@ -33,8 +33,10 @@ wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: bounded Attempt5 packet Windows physical-path equivalence repair and fresh same-context preflight only
-activation_required: new explicit authorization for the packet repair and preflight; actual requires later separate authorization after receipt review
+next_eligible_slice: bounded tested repository sealed-entry/preflight implementation checkpoint reusing existing ProductExecution preflight/result, source-binding, Artifact, and receipt contracts
+implementation_boundary: close Windows physical-path equivalence plus Attempts1-5 parser, diagnostic, and Git-trust admission failures; do not create a complete Public Runner or second control plane
+post_checkpoint_route: new packet and manifest -> newly authorized fresh same-context preflight -> receipt macro review -> separately authorized actual
+activation_required: implementation checkpoint requires current authorization; preflight and actual each retain separate later authorization
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 

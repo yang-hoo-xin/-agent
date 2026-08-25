@@ -288,15 +288,15 @@ scope: Active Product Contract, Project State, Implementation Queue, and Coding 
 owner: authoritative documentation state synchronization
 evidence_level: checkpoint_and_tests
 severity: S2
-decision_priority: P1
-status: active
+decision_priority: P2
+status: mitigated_for_current_scope
 first_seen: 2026-08-21 checkpoint 397629ee review
-latest_evidence: on 2026-08-25 Active Product Contract, Project State, Implementation Queue, and the P0-P3 decision record still described P0 as pending, P1b as active/uncommitted, or P2 as not admitted after checkpoints c8004845fe3f01d844e79ab8b6aba0634b6a5c01, d377ab466fb3e2c57c4c33e29bc2408864e5976e, and 32a939b3f217721b076704cd7e701369fef532ed had changed the current state
-current_effect: authoritative short pages disagree on the selected stage and first blocker; this is a documentation synchronization defect and does not block product capability by itself
+latest_evidence: docs-only checkpoint 94f696b14939dfdf7992c6b6b3f23a8031275606 synchronized Active Product Contract, Project State, Implementation Queue, and the P0-P3 decision record to P0/P1 completion, P2 product-path admission, ENTRY-002 sealed-entry block, zero current ProductExecution actual runs, and false/false Internal Alpha gates
+current_effect: the four short status owners and decision record now agree for the current scope; the historical drift remains recorded and did not represent a product-capability blocker
 workaround: keep detailed run evidence in one primary record and short selection fields elsewhere
 reopen_trigger: Active Product Contract, Project State, Implementation Queue, or the §8 execution sequence name different current selections
-trigger_state: satisfied_by_2026_08_25_P0_P1_P2_state_drift
-next_action: align the owning short status fields with the Attempts1-5 incident record and current checkpoint; do not duplicate the full run narrative
+trigger_state: mitigated_by_docs_checkpoint_94f696b14939dfdf7992c6b6b3f23a8031275606
+next_action: keep detailed incident evidence in its audit record and reopen only if the owning short pages diverge again
 last_reviewed: 2026-08-25
 ```
 
@@ -514,10 +514,11 @@ current_effect: P2 product-path construction is admitted at checkpoint 32a939b3f
 workaround: none authorized; preserve the first failures and keep actual blocked
 reopen_trigger: any fresh sealed entry or preflight fails before packet-bound ProductExecution because entry identity, filesystem authority, Git trust, path equivalence, lock/state, or receipt admission is not represented consistently
 close_trigger: one newly authorized fresh same-context preflight produces a hash-bound receipt after all packet/platform/source/Git/Ollama gates, and a separately authorized sealed actual enters ProductExecution without entry-side identity or permission repair
-next_action: apply only a bounded Windows physical-path equivalence repair to the Attempt5 packet owner, rerun fresh same-context preflight under new authority, and request actual authorization only after receipt review
+next_action: form a bounded, tested repository implementation checkpoint for sealed-entry/preflight by reusing existing ProductExecution preflight/result, source-binding, Artifact, and receipt contracts; close the Windows physical-path equivalence and Attempts1-5 parser, diagnostic, and Git-trust admission failures without creating a Public Runner or second control plane; after checkpointing, form a new packet and manifest, request one fresh same-context preflight, and request actual authorization separately only after receipt review
 last_reviewed: 2026-08-25
 required_before_stage: P2 empirical actual
 minimum_acceptance:
+  - the repaired sealed-entry/preflight owner exists in a repository checkpoint with focused tests rather than another packet-only patch
   - declared textual and resolved canonical paths are compared by normalized physical identity before any strict textual receipt binding
   - packet hash, branch, HEAD, four protected WIP states, Git executable/version, source show-toplevel/HEAD/trees/snapshot, and Ollama identity remain exact
   - preflight-only creates no execution_root, model call, ProductExecution run, Build, Runtime, diff approval, or Apply

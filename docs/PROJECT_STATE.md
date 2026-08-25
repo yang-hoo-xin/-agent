@@ -66,7 +66,7 @@ failure_different_repair_revalidation_success: false
 runtime_verified: false
 general_harness_validated: false
 stable_agent_capability: false
-next_capability_step: bounded Attempt5 packet Windows physical-path equivalence repair, then a newly authorized fresh same-context preflight; actual remains separately unauthorized
+next_capability_step: bounded tested repository sealed-entry/preflight implementation checkpoint reusing ProductExecution preflight/result, source-binding, Artifact, and receipt contracts; then new packet/manifest, newly authorized fresh same-context preflight, receipt review, and separate actual authorization
 rag_1a_status: explicit_unresolved
 rag_1a_relation_aware_status: explicit_unresolved_before_artifact_commit
 rag_1b_status: not_started
