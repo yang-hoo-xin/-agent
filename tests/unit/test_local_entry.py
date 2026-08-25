@@ -138,6 +138,14 @@ def test_run_local_request_has_no_direct_graph_control_plane() -> None:
     assert "invoke" not in attribute_calls
 
 
+def test_run_local_request_threads_one_strict_git_admission_through_all_source_checks() -> None:
+    signature = inspect.signature(run_local_request)
+    source = inspect.getsource(run_local_request)
+
+    assert "source_git_admission" in signature.parameters
+    assert source.count("strict_git_admission=source_git_admission") == 3
+
+
 def _runtime_settings(
     tmp_path: Path,
     *,

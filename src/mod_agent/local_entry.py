@@ -62,11 +62,20 @@ from src.mod_agent.evidence.dotnet_metadata import (
     enrich_source_evidence_with_member_accesses,
 )
 from src.mod_agent.execution import ExactDiffApprovalRejectedError, ExactTextPatchApplier
+from src.mod_agent.git.admission import StrictGitAdmission
 from src.mod_agent.proposal import LLMExactPatchGenerator, PatchGenerationError
 from src.mod_agent.product_execution import (
     ProductExecutionContractError,
     ProductExecutionInputBindingV1,
     ProductExecutionRequestV1,
+)
+from src.mod_agent.model_admission import (
+    ModelAdmissionError,
+    read_ollama_model_identity as _shared_read_ollama_model_identity,
+    read_ollama_server_version as _shared_read_ollama_server_version,
+    select_ollama_model_identity as _shared_select_ollama_model_identity,
+    validate_ollama_context_window as _shared_validate_ollama_context_window,
+    validate_ollama_model_identity as _shared_validate_ollama_model_identity,
 )
 from src.mod_agent.product_executor import (
     SOURCE_DISCLOSURE_DATA_CLASSES,
@@ -3340,6 +3349,7 @@ def run_local_request(
     diff_approval_reader: Callable[[dict[str, Any]], str] | None = None,
     source_disclosure_approval_id: str | None = None,
     source_revision_binding: Mapping[str, str] | None = None,
+    source_git_admission: StrictGitAdmission | None = None,
     compiled_artifact_verifier: Callable[[Path, str], dict[str, Any]] | None = None,
     compiled_artifact_inspection_profile: (
         CompiledArtifactInspectionProfile | None
@@ -3626,6 +3636,7 @@ def run_local_request(
         snapshot=initial_source_snapshot,
         snapshot_sha256=initial_source_snapshot_sha256,
         binding=source_revision_binding,
+        strict_git_admission=source_git_admission,
     )
     base = Path(workspace_base).resolve()
     base.mkdir(parents=True, exist_ok=True)
@@ -5164,6 +5175,7 @@ def run_local_request(
         product_request,
         product_adapters,
         artifact_store,
+        strict_git_admission=source_git_admission,
     )
     if product_preflight.preflight_status != "ready":
         raise LocalEntryError(
@@ -5176,6 +5188,7 @@ def run_local_request(
                 product_preflight,
                 product_adapters,
                 artifact_store,
+                strict_git_admission=source_git_admission,
             )
         except ProductExecutionContractError:
             raise
@@ -11025,62 +11038,17 @@ def _persist_local_failure_diagnostics(
 
 
 def _read_ollama_model_identity(base_url: str, model: str) -> dict[str, Any]:
-    normalized_base_url = validate_loopback_http_base_url(base_url)
     try:
-        import httpx
-
-        with httpx.Client(
-            timeout=10.0,
-            trust_env=False,
-            follow_redirects=False,
-        ) as client:
-            response = client.get(f"{normalized_base_url}/api/tags")
-        if response.status_code != 200:
-            raise LocalEntryError(
-                f"OLLAMA_MODEL_CATALOG_HTTP_{response.status_code}"
-            )
-        payload = response.json()
-    except LocalEntryError:
-        raise
-    except Exception as exc:
-        raise LocalEntryError(
-            f"OLLAMA_MODEL_CATALOG_UNAVAILABLE:{type(exc).__name__}"
-        ) from exc
-    return _select_ollama_model_identity(
-        payload,
-        base_url=normalized_base_url,
-        expected_model=model,
-    )
+        return _shared_read_ollama_model_identity(base_url, model)
+    except (ModelAdmissionError, ValueError) as exc:
+        raise LocalEntryError(str(exc)) from exc
 
 
 def _read_ollama_server_version(base_url: str) -> str:
-    normalized_base_url = validate_loopback_http_base_url(base_url)
     try:
-        import httpx
-
-        with httpx.Client(
-            timeout=10.0,
-            trust_env=False,
-            follow_redirects=False,
-        ) as client:
-            response = client.get(f"{normalized_base_url}/api/version")
-        if response.status_code != 200:
-            raise LocalEntryError(
-                f"OLLAMA_SERVER_VERSION_HTTP_{response.status_code}"
-            )
-        payload = response.json()
-    except LocalEntryError:
-        raise
-    except Exception as exc:
-        raise LocalEntryError(
-            f"OLLAMA_SERVER_VERSION_UNAVAILABLE:{type(exc).__name__}"
-        ) from exc
-    if not isinstance(payload, dict):
-        raise LocalEntryError("OLLAMA_SERVER_VERSION_SHAPE_INVALID")
-    version = payload.get("version")
-    if not isinstance(version, str) or not version.strip():
-        raise LocalEntryError("OLLAMA_SERVER_VERSION_MISSING")
-    return version
+        return _shared_read_ollama_server_version(base_url)
+    except (ModelAdmissionError, ValueError) as exc:
+        raise LocalEntryError(str(exc)) from exc
 
 
 def _select_ollama_model_identity(
@@ -11089,35 +11057,14 @@ def _select_ollama_model_identity(
     base_url: str,
     expected_model: str,
 ) -> dict[str, Any]:
-    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
-        raise LocalEntryError("OLLAMA_MODEL_CATALOG_SHAPE_INVALID")
-    models = payload["models"]
-    if not models:
-        raise LocalEntryError("OLLAMA_MODEL_LIST_EMPTY")
-    matches = [
-        item
-        for item in models
-        if isinstance(item, dict) and item.get("name") == expected_model
-    ]
-    if len(matches) != 1:
-        raise LocalEntryError("OLLAMA_MODEL_NOT_EXACTLY_PRESENT")
-    selected = matches[0]
-    identity = {
-        "name": selected.get("name"),
-        "model": selected.get("model"),
-        "digest": selected.get("digest"),
-        "modified_at": selected.get("modified_at"),
-        "size": selected.get("size"),
-        "details": selected.get("details"),
-        "capabilities": selected.get("capabilities"),
-        "base_url": base_url,
-    }
-    _validate_ollama_model_identity(
-        identity,
-        expected_base_url=base_url,
-        expected_model=expected_model,
-    )
-    return identity
+    try:
+        return _shared_select_ollama_model_identity(
+            payload,
+            base_url=base_url,
+            expected_model=expected_model,
+        )
+    except ModelAdmissionError as exc:
+        raise LocalEntryError(str(exc)) from exc
 
 
 def _validate_ollama_model_identity(
@@ -11126,26 +11073,14 @@ def _validate_ollama_model_identity(
     expected_base_url: str,
     expected_model: str,
 ) -> None:
-    if identity.get("name") != expected_model:
-        raise LocalEntryError("OLLAMA_MODEL_NAME_MISMATCH")
-    if identity.get("model") != expected_model:
-        raise LocalEntryError("OLLAMA_MODEL_IDENTITY_MISMATCH")
-    if identity.get("base_url") != expected_base_url:
-        raise LocalEntryError("OLLAMA_MODEL_BASE_URL_MISMATCH")
-    digest = identity.get("digest")
-    if (
-        not isinstance(digest, str)
-        or len(digest) != 64
-        or any(character not in "0123456789abcdef" for character in digest)
-    ):
-        raise LocalEntryError("OLLAMA_MODEL_DIGEST_INVALID")
-    if not isinstance(identity.get("details"), dict):
-        raise LocalEntryError("OLLAMA_MODEL_DETAILS_INVALID")
-    capabilities = identity.get("capabilities")
-    if not isinstance(capabilities, list) or not all(
-        isinstance(item, str) for item in capabilities
-    ):
-        raise LocalEntryError("OLLAMA_MODEL_CAPABILITIES_INVALID")
+    try:
+        _shared_validate_ollama_model_identity(
+            identity,
+            expected_base_url=expected_base_url,
+            expected_model=expected_model,
+        )
+    except ModelAdmissionError as exc:
+        raise LocalEntryError(str(exc)) from exc
 
 
 def _validate_ollama_context_window(
@@ -11153,26 +11088,13 @@ def _validate_ollama_context_window(
     *,
     requested_context_window: int | None,
 ) -> int:
-    if (
-        requested_context_window is None
-        or isinstance(requested_context_window, bool)
-        or not isinstance(requested_context_window, int)
-        or requested_context_window <= 0
-    ):
-        raise LocalEntryError("OLLAMA_CONTEXT_WINDOW_INVALID")
-    details = identity.get("details")
-    context_limit = (
-        details.get("context_length") if isinstance(details, Mapping) else None
-    )
-    if (
-        isinstance(context_limit, bool)
-        or not isinstance(context_limit, int)
-        or context_limit <= 0
-    ):
-        raise LocalEntryError("OLLAMA_MODEL_CONTEXT_LENGTH_INVALID")
-    if requested_context_window > context_limit:
-        raise LocalEntryError("OLLAMA_CONTEXT_WINDOW_EXCEEDS_MODEL_LIMIT")
-    return context_limit
+    try:
+        return _shared_validate_ollama_context_window(
+            identity,
+            requested_context_window=requested_context_window,
+        )
+    except ModelAdmissionError as exc:
+        raise LocalEntryError(str(exc)) from exc
 
 
 def _assert_ollama_model_identity_stable(

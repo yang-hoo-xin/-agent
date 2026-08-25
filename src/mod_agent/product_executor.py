@@ -42,6 +42,7 @@ from src.mod_agent.product_execution import (
 )
 from src.mod_agent.workflow.graph import build_graph
 from src.mod_agent.workflow.state import create_initial_state
+from src.mod_agent.git.admission import GitAdmissionError, StrictGitAdmission
 
 
 SOURCE_DISCLOSURE_DATA_CLASSES = (
@@ -81,6 +82,7 @@ def _verify_source_revision_binding(
     snapshot: list[dict[str, Any]],
     snapshot_sha256: str,
     binding: Mapping[str, Any] | None,
+    strict_git_admission: StrictGitAdmission | None = None,
 ) -> None:
     if binding is None:
         projects = [
@@ -94,6 +96,17 @@ def _verify_source_revision_binding(
             )
         return
     if binding.get("binding_version") == "product_source_revision_binding_v2":
+        if strict_git_admission is not None:
+            try:
+                strict_git_admission.verify_source_revision_binding(
+                    source=source,
+                    snapshot=snapshot,
+                    snapshot_sha256=snapshot_sha256,
+                    binding=binding,
+                )
+            except GitAdmissionError as exc:
+                raise LocalEntryError(str(exc)) from exc
+            return
         _verify_generic_source_revision_binding(
             source=source,
             snapshot=snapshot,
@@ -653,6 +666,8 @@ class ProductExecutionInputBindingResolverV1:
         self,
         request: ProductExecutionRequestV1,
         adapters: ProductExecutionAdaptersV1,
+        *,
+        strict_git_admission: StrictGitAdmission | None = None,
     ) -> None:
         if not isinstance(request, ProductExecutionRequestV1):
             raise ProductExecutionContractError(
@@ -672,6 +687,7 @@ class ProductExecutionInputBindingResolverV1:
                 snapshot=source_snapshot_value,
                 snapshot_sha256=source_snapshot_sha256(source_snapshot_value),
                 binding=bindings["source_revision_binding"],
+                strict_git_admission=strict_git_admission,
             )
 
             disclosure = bindings["source_disclosure"]
@@ -952,13 +968,19 @@ def preflight_product_execution(
     request: ProductExecutionRequestV1,
     adapters: ProductExecutionAdaptersV1,
     artifact_store: ArtifactStore,
+    *,
+    strict_git_admission: StrictGitAdmission | None = None,
 ) -> ProductExecutionPreflightResultV1:
     """Perform a no-Graph, no-Store, no-effect product admission check."""
 
     resolver = ProductExecutionInputBindingResolverV1()
     try:
         adapters.validate_for(request)
-        resolver.validate(request, adapters)
+        resolver.validate(
+            request,
+            adapters,
+            strict_git_admission=strict_git_admission,
+        )
     except _ProductExecutionAdmissionError as exc:
         return ProductExecutionPreflightResultV1(
             contract_version="1",
@@ -1306,6 +1328,8 @@ def execute_product_execution(
     preflight: ProductExecutionPreflightResultV1,
     adapters: ProductExecutionAdaptersV1,
     artifact_store: ArtifactStore,
+    *,
+    strict_git_admission: StrictGitAdmission | None = None,
 ) -> ProductExecutionResultV1:
     """Execute the existing StateGraph exactly once and freeze one machine result."""
 
@@ -1315,7 +1339,12 @@ def execute_product_execution(
             side_effects_may_have_started=False,
         )
     request = preflight.request
-    repeated = preflight_product_execution(request, adapters, artifact_store)
+    repeated = preflight_product_execution(
+        request,
+        adapters,
+        artifact_store,
+        strict_git_admission=strict_git_admission,
+    )
     if repeated.preflight_status != "ready" or repeated.request.to_dict() != request.to_dict():
         raise ProductExecutionContractError(
             "Product execution admission changed before Graph START.",

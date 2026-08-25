@@ -4,6 +4,7 @@ from pathlib import Path
 import copy
 import hashlib
 import inspect
+import shutil
 import subprocess
 from dataclasses import replace
 from types import SimpleNamespace
@@ -15,6 +16,7 @@ from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import EvidenceItem, EvidencePack
 from src.mod_agent.evidence.models import DETERMINISTIC_EVIDENCE_AUTHORITY
 from src.mod_agent.execution import ExactDiffApprovalRejectedError
+from src.mod_agent.git.admission import GitExecutableIdentityV1, StrictGitAdmission
 from src.mod_agent.runtime import (
     RuntimeEvidenceItem,
     build_real_runtime_evidence_payload,
@@ -67,6 +69,7 @@ def _nested_source_binding(tmp_path: Path) -> tuple[Path, dict[str, object]]:
     _git(repository, "init")
     _git(repository, "config", "user.name", "Product Binding Test")
     _git(repository, "config", "user.email", "product-binding@test.local")
+    _git(repository, "config", "core.autocrlf", "false")
     _git(repository, "add", "--all")
     _git(repository, "commit", "-m", "baseline")
     snapshot = source_snapshot(project)
@@ -129,6 +132,36 @@ def test_nested_project_and_non_plugin_primary_source_bind_and_roundtrip(
         artifact_binding.to_dict()
     ) == artifact_binding
     assert binding["primary_sources"][0]["path"] == "App/Loader.cs"
+
+
+def test_strict_source_binding_does_not_fall_back_to_path_git(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, binding = _nested_source_binding(tmp_path)
+    repository = project.parent
+    executable = shutil.which("git")
+    assert executable is not None
+    strict = StrictGitAdmission(
+        executable_identity=GitExecutableIdentityV1.read(executable),
+        source_declared_root=repository.as_posix(),
+        source_canonical_root=repository.resolve().as_posix(),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.product_executor._git_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("PATH Git fallback must not run")
+        ),
+    )
+    snapshot = source_snapshot(project)
+
+    _verify_source_revision_binding(
+        source=project,
+        snapshot=snapshot,
+        snapshot_sha256=source_snapshot_sha256(snapshot),
+        binding=binding,
+        strict_git_admission=strict,
+    )
 
 
 @pytest.mark.parametrize(
@@ -785,6 +818,43 @@ def test_public_product_executor_runs_real_graph_and_strict_store_chain(
         item.store_result.outcome == "committed" for item in result.store_attempts
     )
     assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
+
+
+def test_preflight_and_execute_repeat_the_same_strict_git_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, store = _request(tmp_path)
+    adapters = _blocked_evidence_adapters()
+    sentinel = SimpleNamespace(name="strict-git-admission")
+    observed: list[object] = []
+    original = _verify_source_revision_binding
+
+    def verify(**kwargs):
+        observed.append(kwargs.get("strict_git_admission"))
+        return original(**kwargs)
+
+    monkeypatch.setattr(
+        "src.mod_agent.product_executor._verify_source_revision_binding",
+        verify,
+    )
+
+    preflight = preflight_product_execution(
+        request,
+        adapters,
+        store,
+        strict_git_admission=sentinel,
+    )
+    result = execute_product_execution(
+        preflight,
+        adapters,
+        store,
+        strict_git_admission=sentinel,
+    )
+
+    assert preflight.preflight_status == "ready"
+    assert result.execution_disposition == "domain_blocked"
+    assert observed == [sentinel, sentinel]
 
 
 def test_product_preflight_rejects_snapshot_drift_without_graph_or_store(
