@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -10,46 +10,39 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
+current_queue: P2-entry-preflight-blocked
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: rg_live_owner_audit_complete_pending_p0_authorization
+queue_status: ENTRY-002 active; ProductExecution actual not started
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
-last_task_status: partial_before_patch_artifact
-last_product_code_checkpoint: 609afa3704b9c604b26514ea9854246b52ede3d6
-last_run: 8d26e4e5
-last_evidence_pack: 80d2142723db71c43887ebb94a7603e6473aaf729b12ba5b2db147d495387a2b
-last_failure: rg_live_lexical_match_promoted_to_patch_authoritative_sufficiency_without_request_relation_coverage
-last_outcome: actual_only success false; changed-product Build/Test and Repair not reached
-last_outcome_report: docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json
-last_outcome_report_sha256: 01E8B32B1A0E15090DFAD575E9062BB0AE6964A7EA23EA3990CAAB5E64D3719F
-owner_audit: docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json
-owner_audit_sha256: 47981B825342DB921F7215BFB2D070F0734BF4F2494B35E1B2A326234F36046B
+last_task_status: P2_product_path_admitted_sealed_entry_blocked
+last_product_code_checkpoint: 32a939b3f217721b076704cd7e701369fef532ed
+P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
+P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
+P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed
+P2_ProductExecution_actual_runs: 0
+empirical_actual_status: not_started
+last_failure: Attempt5 fresh preflight output-root equivalent Windows paths rejected by pre-normalization string comparison
+incident_record: docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md
+incident_record_sha256: E21443626ED67561EE0206CAED2EDAC1652A3B04F736315548890B01267A1241
+current_owner: ENTRY-002 sealed/fresh execution entry preflight
+internal_alpha_hard_gates: false/false
 wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: bounded P0 RgLive Evidence relevance-to-sufficiency separation with focused tests
-activation_required: explicit user selection; no rerun or source/model/marker change is currently authorized
+next_eligible_slice: bounded Attempt5 packet Windows physical-path equivalence repair and fresh same-context preflight only
+activation_required: new explicit authorization for the packet repair and preflight; actual requires later separate authorization after receipt review
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
-The AccurateCrosshair fresh run `8d26e4e5` committed planning through
-ImplementationPlan, then stopped before Patch Artifact creation. The first
-exception was deterministic validation-marker rejection, while the earlier
-product failure was a lexical `RgLiveEvidenceProvider` item incorrectly
-promoted to patch-authoritative sufficiency and bound to unrelated first-shot
-behavior. No rerun or repair is selected. Detailed evidence exists only in the
-outcome report above.
-
-The read-only owner audit is complete. It confirms that one lexical C# hit is
-currently promoted directly to sufficient patch authority and that the
-ProductExecution Rg path does not consume FeatureSpec evidence requirements or
-acceptance fields. P0 is precise enough for a bounded code package; P1 Search
-Planning representation reuse remains a separate boundary. No code change or
-actual rerun is currently authorized.
+P0 false-sufficiency closure and P1 requirement-coverage/provider construction
+are complete at the checkpoints above. P2 product construction is admitted, but
+Attempts1–5 have not entered ProductExecution under the current sealed-entry
+protocol. The first blocker is `ENTRY-002`; detailed facts remain only in the
+incident record above. No actual is currently authorized.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

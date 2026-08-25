@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -10,10 +10,10 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ```text
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
-current_dependency: RG-LIVE-EVIDENCE-SUFFICIENCY-P0-PENDING-AUTHORIZATION
+current_dependency: ENTRY-002-P2-SEALED-ENTRY-PREFLIGHT-BLOCKED
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
-current_product_code_checkpoint: 609afa3704b9c604b26514ea9854246b52ede3d6
+current_product_code_checkpoint: 32a939b3f217721b076704cd7e701369fef532ed
 current_wip: four independent user documentation changes, no staged files
 latest_repository_run: 32e29415
 latest_repository_run_report_sha256: B7B3F473F8DA8E2500DA67E496DC389B8B9BB5109D8056F49FC170CEB2ED7AD9
@@ -38,6 +38,15 @@ minimal_relation_eval_status: completed
 rag_1a_outcome_report: docs/audits/rag_1a_calibration_outcome_20260822_001/rag_1a_outcome.json
 rag_1a_outcome_report_sha256: 7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B
 selected_actual_only_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
+P0_status: completed_at_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
+P1a_status: completed_at_d377ab466fb3e2c57c4c33e29bc2408864e5976e
+P1b_status: completed_at_32a939b3f217721b076704cd7e701369fef532ed
+P2_product_path_admission: admitted
+P2_sealed_entry_admission: blocked_at_ENTRY-002
+P2_ProductExecution_actual_runs: 0
+P2_empirical_actual_status: not_started
+P2_entry_incident: docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md
+P2_entry_incident_sha256: E21443626ED67561EE0206CAED2EDAC1652A3B04F736315548890B01267A1241
 task_reliability_preflight: eligible_for_fresh_actual
 task_reliability_report: docs/audits/ACCURATE_CROSSHAIR_SPREAD_TOGGLE_PREFLIGHT_20260824.json
 task_reliability_report_sha256: 36AAD0A655D05A530143094B376C69BB899C4922E0C2364FDF846446415C9849
@@ -51,17 +60,17 @@ latest_accurate_crosshair_outcome_report: docs/audits/ACCURATE_CROSSHAIR_ACTUAL_
 latest_accurate_crosshair_outcome_report_sha256: 01E8B32B1A0E15090DFAD575E9062BB0AE6964A7EA23EA3990CAAB5E64D3719F
 rg_live_owner_audit: docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json
 rg_live_owner_audit_sha256: 47981B825342DB921F7215BFB2D070F0734BF4F2494B35E1B2A326234F36046B
-rg_live_failure_issue_id: pending_user_decision
+rg_live_failure_issue_id: EVID-001_mitigated_for_current_scope
 actual_only_build_test_success: false
 failure_different_repair_revalidation_success: false
 runtime_verified: false
 general_harness_validated: false
 stable_agent_capability: false
-next_capability_step: await authorization for bounded P0 RgLive Evidence sufficiency correction; no actual rerun is authorized
+next_capability_step: bounded Attempt5 packet Windows physical-path equivalence repair, then a newly authorized fresh same-context preflight; actual remains separately unauthorized
 rag_1a_status: explicit_unresolved
 rag_1a_relation_aware_status: explicit_unresolved_before_artifact_commit
 rag_1b_status: not_started
-coding_agent_v0_internal_alpha_status: incomplete_actual_only_success_and_repair_revalidation_missing
+coding_agent_v0_internal_alpha_status: incomplete_P2_entry_blocked_and_hard_gates_false_false
 all_source_inventory_at_2026_08_16: completed
 current_inventory_is_fresh: false
 final_asset_reconciliation_required: true

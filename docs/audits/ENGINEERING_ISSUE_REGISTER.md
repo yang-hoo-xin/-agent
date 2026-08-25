@@ -1,7 +1,7 @@
 # Engineering Issue Register
 
 Status: lightweight observation register
-Last reviewed: 2026-08-24
+Last reviewed: 2026-08-25
 
 ## 1. Purpose And Authority Boundary
 
@@ -133,10 +133,10 @@ to `OBS-001`. The symptom again involved source disambiguation, but the current
 owner is deterministic `RgLiveEvidenceProvider.collect` Evidence sufficiency,
 not model-driven EvidenceDiscovery Search Planning/action selection. The new
 failure signature, `deterministic RgLive Evidence relevance-to-sufficiency
-promotion failure`, remains unassigned pending user ID/route selection. Its run
-facts remain in `docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json`;
-the owner audit is
-`docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json`.
+promotion failure`, is now recorded as `EVID-001` and mitigated for the current
+scope by checkpoint `c8004845fe3f01d844e79ab8b6aba0634b6a5c01`. Its run facts
+remain in `docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json`; the
+owner audit is `docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json`.
 
 ### OBS-002
 
@@ -218,6 +218,26 @@ next_action: fail before model execution if identity drift is observed
 last_reviewed: 2026-08-22
 ```
 
+### EVID-001
+
+```yaml
+issue_id: EVID-001
+title: RgLive lexical observations were promoted to Patch authority without requirement coverage
+scope: ProductExecution RgLive lexical-only Evidence sufficiency
+owner: src/mod_agent/evidence/rg_live.py::RgLiveEvidenceProvider.collect
+evidence_level: real_run
+severity: S1
+decision_priority: P3
+status: mitigated_for_current_scope
+first_seen: AccurateCrosshair run 8d26e4e5
+latest_evidence: checkpoint c8004845fe3f01d844e79ab8b6aba0634b6a5c01 makes lexical-only and source-authentic RgLive observations non-authoritative when explicit requirement coverage is absent
+current_effect: the observed wrong sufficient-to-Patch-authority transition is closed for the current lexical-only scope; positive requirement coverage remains the independent P1 capability and is not owned by this Issue
+workaround: none required for the current scope; preserve the deterministic fail-closed boundary
+reopen_trigger: any lexical or source-authentic observation again produces readiness=sufficient, can_generate_patch=true, or Patch Proposal authority without explicit validated requirement coverage
+next_action: reopen only on that exact false-sufficiency signature; do not merge P1 positive coverage work into this Issue
+last_reviewed: 2026-08-25
+```
+
 ### ISO-001
 
 ```yaml
@@ -238,6 +258,27 @@ next_action: stop the run as contaminated before interpreting model quality
 last_reviewed: 2026-08-22
 ```
 
+### AUTH-001
+
+```yaml
+issue_id: AUTH-001
+title: A sealed packet runner could automatically substitute for human exact-diff approval
+scope: exact-diff semantic review and isolated Apply authorization
+owner: sealed packet human approval gate
+evidence_level: mechanical_replay
+severity: S0
+decision_priority: P3
+status: closed
+first_seen: 2026-08-25 Attempt1 packet macro review before execution
+latest_evidence: macro review rejected payload manifest 8110b7b7cc5c86c139733c2c9e07fec5b29114401407fcf8d347c60c599d0b4e because its callback returned the generated diff_hash without a user decision; the packet was superseded before execution and later packets require an interactive PTY marker, full diff display, and exact user input
+current_effect: no unknown generated diff was approved or applied through the defective packet; the superseded packet is not executable
+workaround: none; only the explicit human PTY gate is valid
+reopen_trigger: any packet, Runner, callback, automation, or Agent generates, copies, infers, simulates, or submits the user's exact-diff approval input
+close_trigger: the active sealed packet requires full diff presentation, records AWAITING_EXACT_DIFF_APPROVAL, and accepts only text actually supplied by the user
+next_action: stop before Apply and treat any recurrence as an authorization-boundary failure
+last_reviewed: 2026-08-25
+```
+
 ### DOC-001
 
 ```yaml
@@ -247,15 +288,16 @@ scope: Active Product Contract, Project State, Implementation Queue, and Coding 
 owner: authoritative documentation state synchronization
 evidence_level: checkpoint_and_tests
 severity: S2
-decision_priority: P2
-status: mitigated_for_current_scope
+decision_priority: P1
+status: active
 first_seen: 2026-08-21 checkpoint 397629ee review
-latest_evidence: checkpoint d13382e18d9b9ad4f85ac303e68e0c85bfe12104 aligns WallCrawler selected/pending authorization and links the Dense decision record
-current_effect: current pages restore the WallCrawler selection instead of the stale r8 task
+latest_evidence: on 2026-08-25 Active Product Contract, Project State, Implementation Queue, and the P0-P3 decision record still described P0 as pending, P1b as active/uncommitted, or P2 as not admitted after checkpoints c8004845fe3f01d844e79ab8b6aba0634b6a5c01, d377ab466fb3e2c57c4c33e29bc2408864e5976e, and 32a939b3f217721b076704cd7e701369fef532ed had changed the current state
+current_effect: authoritative short pages disagree on the selected stage and first blocker; this is a documentation synchronization defect and does not block product capability by itself
 workaround: keep detailed run evidence in one primary record and short selection fields elsewhere
 reopen_trigger: Active Product Contract, Project State, Implementation Queue, or the §8 execution sequence name different current selections
-next_action: update only the owning short status fields; do not duplicate full run narratives
-last_reviewed: 2026-08-22
+trigger_state: satisfied_by_2026_08_25_P0_P1_P2_state_drift
+next_action: align the owning short status fields with the Attempts1-5 incident record and current checkpoint; do not duplicate the full run narrative
+last_reviewed: 2026-08-25
 ```
 
 ### REP-001
@@ -445,6 +487,43 @@ minimum_acceptance:
   - public result correlates request, run, tool, observation, Artifact, Plan, Patch, Build, repair, and final result
   - focused entry-delegation tests
   - one real actual-only task completes through the unique public entry before a Public Alpha claim
+```
+
+### ENTRY-002
+
+```yaml
+issue_id: ENTRY-002
+title: Fresh sealed execution entry cannot reliably admit packet-bound ProductExecution
+scope: P2 expected-isolated sealed entry and same-context preflight
+owner: sealed/fresh execution entry preflight; not ProductExecution, Evidence, provider, or the future Public Runner
+evidence_level: real_run
+severity: S1
+decision_priority: P0
+status: active
+first_seen: p2_ac_20260825_001/attempt_1
+incident_signatures:
+  - A1: porcelain ?? was incorrectly classified as staged
+  - A2: stdout.strip removed the first fixed-width porcelain status character
+  - A3: source Git returned nonzero without retained stderr, so exact ownership was inconclusive
+  - A4: source Git returned fatal dubious ownership under the fresh security principal
+  - A5: preflight output-root textual path comparison rejected equivalent Windows paths before receipt creation
+latest_evidence: Attempts1-4 entered no ProductExecution run and made zero model calls; Attempt5 payload 979c0fdeca85dbedf9e1156931cf0bf724b57fa69a0cdd2394612745d88f78f7 stopped in sealed_run.py::_write_fresh_preflight_receipt with fresh preflight output root argument drifted, produced no receipt/hash, did not consume the outer attempt, and did not authorize an actual
+incident_record: docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md
+incident_record_sha256: e21443626ed67561ee0206caed2edac1652a3b04f736315548890b01267a1241
+current_effect: P2 product-path construction is admitted at checkpoint 32a939b3f217721b076704cd7e701369fef532ed, but sealed-entry admission is blocked and empirical ProductExecution actual remains unstarted
+workaround: none authorized; preserve the first failures and keep actual blocked
+reopen_trigger: any fresh sealed entry or preflight fails before packet-bound ProductExecution because entry identity, filesystem authority, Git trust, path equivalence, lock/state, or receipt admission is not represented consistently
+close_trigger: one newly authorized fresh same-context preflight produces a hash-bound receipt after all packet/platform/source/Git/Ollama gates, and a separately authorized sealed actual enters ProductExecution without entry-side identity or permission repair
+next_action: apply only a bounded Windows physical-path equivalence repair to the Attempt5 packet owner, rerun fresh same-context preflight under new authority, and request actual authorization only after receipt review
+last_reviewed: 2026-08-25
+required_before_stage: P2 empirical actual
+minimum_acceptance:
+  - declared textual and resolved canonical paths are compared by normalized physical identity before any strict textual receipt binding
+  - packet hash, branch, HEAD, four protected WIP states, Git executable/version, source show-toplevel/HEAD/trees/snapshot, and Ollama identity remain exact
+  - preflight-only creates no execution_root, model call, ProductExecution run, Build, Runtime, diff approval, or Apply
+  - successful preflight writes one bounded receipt plus hash and does not itself authorize actual
+  - failure preserves the exact first boundary and does not create an automatic next attempt
+  - ENTRY-001 remains the separate future Public Runner adoption issue
 ```
 
 ## 5. Public Alpha Advanced Robustness Trigger Catalog

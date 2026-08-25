@@ -2,7 +2,7 @@
 
 Status: detailed decision record
 Recorded: 2026-08-25
-Recording context: `recorded_during_P1b_working_session`
+Recording context: `recorded_during_P1b_working_session`; status synchronized after P1b checkpoint and P2 sealed-entry incidents
 
 ## 1. Authority And Use
 
@@ -104,18 +104,19 @@ support is true; it constrains and audits what the model is allowed to claim.
 
 ## 5. Delivery Route And Current Status
 
-| Stage | Status at recording | Verified boundary | Next authority gate |
+| Stage | Current synchronized status | Verified boundary | Next authority gate |
 | --- | --- | --- | --- |
 | P0 | completed | lexical-only RgLive observations fail closed without coverage | do not reopen for positive coverage |
 | P1a | completed at `d377ab466fb3e2c57c4c33e29bc2408864e5976e` | structural/synthetic positive requirement-coverage vertical | P1b formal provider and entry |
-| P1b | active, uncommitted | working-session code is not an implementation claim | checkpoint plus focused compatibility evidence |
-| P2 | not admitted | no sealed fresh actual authorized | P1b actual-ready checkpoint and new sealed packet |
-| Internal Alpha | hard gates false | no changed-product success plus repair success pair | P2 hard gates |
+| P1b | completed at `32a939b3f217721b076704cd7e701369fef532ed` | formal local projection/findings providers, validated consumer view, formal ProductExecution entry tests | stop Evidence expansion and enter P2 |
+| P2 | product path admitted; sealed entry blocked at `ENTRY-002` | ProductExecution actual runs remain zero; empirical actual has not started | bounded entry-preflight repair, fresh preflight receipt review, then separate actual authorization |
+| Internal Alpha | hard gates false/false | no changed-product success plus repair success pair | P2 empirical hard gates |
 | Public Alpha | not started | public entry and case evidence absent | Internal checkpoint plus public-entry actual |
 
-The latest committed product checkpoint when this record was created is
-`d377ab466fb3e2c57c4c33e29bc2408864e5976e`. P1b working-tree changes are
-explicitly uncommitted and must not be described as implemented.
+The current committed product checkpoint is
+`32a939b3f217721b076704cd7e701369fef532ed`. The P2 sealed-entry blocker is an
+entry/preflight incident, not evidence that the committed P1b provider or
+coverage capability is unimplemented.
 
 ## 6. P0: False-Sufficiency Closure
 
@@ -145,9 +146,12 @@ completed the structural/synthetic vertical, not all of P1. It established:
 
 ### 7.2 P1b
 
-P1b is required before P2. It owns the formal local-model projection provider,
-findings provider, `run-request`/CLI construction, real preservation capture,
-and formal positive/blocked entry tests.
+P1b checkpoint `32a939b3f217721b076704cd7e701369fef532ed`
+completed the formal local-model projection provider, findings provider,
+`run-request`/CLI construction, real preservation capture, and formal
+positive/blocked entry tests. This completion is bounded to product-path
+construction; it does not prove that a fresh sealed execution context can enter
+ProductExecution.
 
 The coupling decision is:
 
@@ -172,7 +176,11 @@ admission review.
 
 ## 8. P2: Sealed Fresh Actual
 
-P2 starts only after a P1b actual-ready checkpoint:
+P2 product-path admission starts after the P1b actual-ready checkpoint. A fresh
+empirical actual additionally requires sealed-entry admission. The current
+entry blocker is `ENTRY-002`, detailed in
+`docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md`; no current
+P2 ProductExecution actual has started.
 
 ```text
 new checkpoint
@@ -302,9 +310,12 @@ retrieval still demonstrates a real recall failure under a real Eval.
 - `docs/audits/ENGINEERING_ISSUE_REGISTER.md`
 - `docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json`
 - `docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json`
+- `docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md`
 - `docs/audits/LOOP_HISTORY.md`
 - P0 checkpoint `c8004845fe3f01d844e79ab8b6aba0634b6a5c01`
 - P1a checkpoint `d377ab466fb3e2c57c4c33e29bc2408864e5976e`
+- P1b checkpoint `32a939b3f217721b076704cd7e701369fef532ed`
 
-This record preserves the decision route only. It does not upgrade P1b working
-changes, admit P2, or claim Internal or Public Alpha readiness.
+This record preserves the decision route only. It does not claim sealed-entry
+readiness, authorize a preflight rerun or actual, or claim Internal or Public
+Alpha readiness.

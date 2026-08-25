@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-24
+Last updated: 2026-08-25
 
 ## 1. Product
 
@@ -121,7 +121,17 @@ Evidence sufficiency decision, not the Patch marker gate or old `OBS-001`.
 Its report is
 `docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json`,
 SHA256=`47981B825342DB921F7215BFB2D070F0734BF4F2494B35E1B2A326234F36046B`.
-No P0 code change or new actual is authorized by this status update.
+P0 is now complete at checkpoint
+`c8004845fe3f01d844e79ab8b6aba0634b6a5c01`; P1a is complete at
+`d377ab466fb3e2c57c4c33e29bc2408864e5976e`; and P1b is complete at
+`32a939b3f217721b076704cd7e701369fef532ed`. P2 product-path construction is
+admitted, but sealed-entry admission remains blocked under `ENTRY-002`.
+Attempts1–5 produced zero current P2 ProductExecution actual runs, so empirical
+actual has not started and both Internal Alpha hard gates remain false. The
+short incident reference is
+`docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md`,
+SHA256=`E21443626ED67561EE0206CAED2EDAC1652A3B04F736315548890B01267A1241`.
+Actual remains unauthorized.
 
 Current execution order:
 
@@ -132,7 +142,12 @@ repository explicit unresolved result recorded
 -> minimal relation Eval completed
 -> RAG-1A explicit unresolved recorded
 -> relation-aware Wall partial trajectory recorded as explicit unresolved before Artifact commit
--> AccurateCrosshair run 8d26e4e5 partial before Patch; RgLive sufficiency owner audited, P0 authorization pending
+-> P0 false-sufficiency closure complete
+-> P1a structural coverage and P1b formal provider entry complete
+-> P2 product path admitted; sealed entry blocked at ENTRY-002 before ProductExecution
+-> bounded Attempt5 packet Windows physical-path equivalence repair
+-> newly authorized fresh same-context preflight and receipt review
+-> separately authorize empirical actual only after preflight success
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint
 ```
