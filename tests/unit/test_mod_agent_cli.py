@@ -1513,6 +1513,8 @@ def test_cli_run_request_passes_local_ollama_boundary_but_rejects_legacy_summary
     assert captured["runtime_plugin_destination"] is None
     assert captured["allow_game_directory_write"] is False
     assert callable(captured["diff_approval_reader"])
+    assert "requirement_coverage_projection_factory" not in captured
+    assert "requirement_coverage_findings_factory" not in captured
 
 
 def test_cli_run_request_passes_runtime_admission_but_rejects_legacy_summary(
@@ -1729,6 +1731,79 @@ def test_cli_run_request_uses_real_public_product_executor_and_graph(
         item["store_result"]["outcome"] == "committed"
         for item in machine["store_attempts"]
     )
+def _formal_coverage_model_response(request: dict[str, object]) -> dict[str, object] | None:
+    message_type = request.get("message_type")
+    if message_type == "product_requirement_projection":
+        obligations = request["input_obligations"]
+        requirements = []
+        dispositions = []
+        change_indexes = [
+            row["input_obligation_index"]
+            for row in obligations
+            if "change" in row["allowed_roles"]
+        ]
+        requirements.append(
+            {
+                "role": "change",
+                "text": "Change the requested Load behavior.",
+                "input_obligation_indexes": change_indexes,
+                "query_leads": ["Load"],
+            }
+        )
+        for row in obligations:
+            index = row["input_obligation_index"]
+            if index in change_indexes:
+                continue
+            if "scope_boundary" in row["allowed_dispositions"]:
+                dispositions.append(
+                    {
+                        "input_obligation_index": index,
+                        "disposition": "scope_boundary",
+                        "reason": "This non-goal remains a planning scope boundary.",
+                    }
+                )
+            elif "post_change" in row["allowed_dispositions"]:
+                dispositions.append(
+                    {
+                        "input_obligation_index": index,
+                        "disposition": "post_change",
+                        "reason": "This observation occurs after the approved change.",
+                    }
+                )
+            else:
+                requirements.append(
+                    {
+                        "role": row["allowed_roles"][0],
+                        "text": row["text"],
+                        "input_obligation_indexes": [index],
+                        "query_leads": ["Load"],
+                    }
+                )
+        return {
+            "requirements": requirements,
+            "relations": [
+                {
+                    "parent_requirement_indexes": [index],
+                    "meaning": f"Evidence for requirement {index}.",
+                }
+                for index in range(1, len(requirements) + 1)
+            ],
+            "input_dispositions": dispositions,
+        }
+    if message_type == "product_requirement_findings":
+        evidence_id = request["source_observations"][0]["evidence_id"]
+        return {
+            "findings": [
+                {
+                    "relation_index": relation["relation_index"],
+                    "relationship": "support",
+                    "evidence_ids": [evidence_id],
+                    "unresolved_gaps": [],
+                }
+                for relation in request["relations"]
+            ]
+        }
+    return None
 
 
 def test_cli_run_request_real_public_product_executor_compile_success(
@@ -1779,6 +1854,34 @@ def test_cli_run_request_real_public_product_executor_compile_success(
 
     def deterministic_chat(self, messages, trace=None, **kwargs):
         request = json.loads(messages[-1].content)
+        coverage_response = _formal_coverage_model_response(request)
+        if coverage_response is not None:
+            recorder = kwargs.get("provider_request_recorder")
+            if callable(recorder):
+                recorder(
+                    {
+                        "body_sha256": "sha256:" + "c" * 64,
+                        "body_utf8": "{}",
+                        "body_size_bytes": 2,
+                        "context_admission": {
+                            "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
+                            "admitted": True,
+                        },
+                        "timeout_seconds": 120,
+                        "trust_environment": False,
+                        "follow_redirects": False,
+                    }
+                )
+            return ChatResponse(
+                content=json.dumps(coverage_response),
+                model="qwen3:4b-instruct",
+                usage={
+                    "prompt_tokens": 10,
+                    "completion_tokens": 20,
+                    "total_tokens": 30,
+                },
+                raw_response={"done": True, "done_reason": "stop"},
+            )
         evidence_by_id = {
             item["evidence_id"]: item
             for item in request["evidence"]
@@ -1904,6 +2007,34 @@ def test_cli_run_request_real_public_product_executor_compile_success(
         item["store_result"]["outcome"] == "committed"
         for item in machine["store_attempts"]
     )
+    evidence_envelope = next(
+        value
+        for path in workspace.rglob("*.json")
+        if (value := json.loads(path.read_text(encoding="utf-8"))).get(
+            "artifact_type"
+        )
+        == "evidence_pack"
+    )
+    coverage_audits = evidence_envelope["data"]["budget_summary"][
+        "requirement_coverage_model_audits"
+    ]
+    assert [audit["model_role"] for audit in coverage_audits] == [
+        "requirement_projection",
+        "requirement_findings",
+    ]
+    assert all(audit["payload_sha256"] for audit in coverage_audits)
+    assert all(
+        audit["model_identity"]["digest"] == digest
+        for audit in coverage_audits
+    )
+    assert all(
+        audit["provider_request"]["context_admission"]["admitted"] is True
+        for audit in coverage_audits
+    )
+    assert all(
+        "body_utf8" not in audit["provider_request"]
+        for audit in coverage_audits
+    )
 
 
 def test_cli_run_request_real_public_product_executor_runtime_success(
@@ -1980,6 +2111,34 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
 
     def deterministic_chat(self, messages, trace=None, **kwargs):
         request = json.loads(messages[-1].content)
+        coverage_response = _formal_coverage_model_response(request)
+        if coverage_response is not None:
+            recorder = kwargs.get("provider_request_recorder")
+            if callable(recorder):
+                recorder(
+                    {
+                        "body_sha256": "sha256:" + "c" * 64,
+                        "body_utf8": "{}",
+                        "body_size_bytes": 2,
+                        "context_admission": {
+                            "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
+                            "admitted": True,
+                        },
+                        "timeout_seconds": 120,
+                        "trust_environment": False,
+                        "follow_redirects": False,
+                    }
+                )
+            return ChatResponse(
+                content=json.dumps(coverage_response),
+                model="qwen3:4b-instruct",
+                usage={
+                    "prompt_tokens": 10,
+                    "completion_tokens": 20,
+                    "total_tokens": 30,
+                },
+                raw_response={"done": True, "done_reason": "stop"},
+            )
         evidence_by_id = {
             item["evidence_id"]: item
             for item in request["evidence"]

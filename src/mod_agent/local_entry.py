@@ -40,8 +40,8 @@ from src.mod_agent.build import (
     BuildResult,
 )
 from src.mod_agent.evidence import (
-    RequirementCoverageEvidenceProvider,
     RgLiveEvidenceProvider,
+    make_requirement_coverage_evidence_provider,
 )
 from src.mod_agent.evidence.rg_live import _csharp_method_source_spans
 from src.mod_agent.edit_authority_capabilities import (
@@ -3953,11 +3953,6 @@ def run_local_request(
     generator = LLMExactPatchGenerator(llm)
     applier = ExactTextPatchApplier()
     evidence_provider = RgLiveEvidenceProvider(run_root)
-    requirement_coverage_provider = RequirementCoverageEvidenceProvider(
-        evidence_provider,
-        projection_factory=requirement_coverage_projection_factory,
-        findings_factory=requirement_coverage_findings_factory,
-    )
     member_access_resolver = (
         RunLocalMemberAccessResolver(
             inspector_path,
@@ -3977,12 +3972,128 @@ def run_local_request(
     model_call_count = 0
     initial_patch_model_call_count = 0
     repair_model_call_count = 0
+    requirement_coverage_model_audits: list[dict[str, Any]] = []
+
+    def complete_requirement_coverage_json(
+        role: str,
+        payload: Mapping[str, Any],
+        schema: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        nonlocal external_model_input_audit, local_model_input_audit
+        nonlocal model_call_count
+        data_classes = (
+            ("natural_language_request",)
+            if role.startswith("requirement_projection")
+            else (
+                "natural_language_request",
+                "retrieved_local_source_excerpts",
+                "run_local_api_member_metadata_facts",
+            )
+        )
+        if local_ollama:
+            if local_model_identity is None or ollama_model is None:
+                raise LocalEntryError("Local Ollama model identity is missing.")
+            current_identity = identity_reader(llm_base_url, ollama_model)
+            _validate_ollama_model_identity(
+                current_identity,
+                expected_base_url=llm_base_url,
+                expected_model=ollama_model,
+            )
+            _assert_ollama_model_identity_stable(
+                expected=local_model_identity,
+                observed=current_identity,
+            )
+            _validate_ollama_context_window(
+                current_identity,
+                requested_context_window=ollama_context_window,
+            )
+        else:
+            _verify_source_disclosure(
+                source_disclosure,
+                requested_data_classes=data_classes,
+            )
+        exact_payload = dict(payload)
+        _assert_no_absolute_local_paths(exact_payload)
+        response, provider_request = _request_requirement_coverage_model(
+            llm=llm,
+            payload=exact_payload,
+            schema=schema,
+            max_output_tokens=ollama_max_output_tokens,
+            capture_provider_request=local_ollama,
+        )
+        if local_ollama:
+            observed_identity = identity_reader(llm_base_url, str(ollama_model))
+            _validate_ollama_model_identity(
+                observed_identity,
+                expected_base_url=llm_base_url,
+                expected_model=str(ollama_model),
+            )
+            _assert_ollama_model_identity_stable(
+                expected=local_model_identity,
+                observed=observed_identity,
+            )
+        audit = {
+            "model_role": role,
+            "payload_sha256": _sha256_json(exact_payload),
+            "structured_output_sha256": hashlib.sha256(
+                response.content.encode("utf-8")
+            ).hexdigest(),
+            "data_classes": list(data_classes),
+            "model_identity": (
+                dict(local_model_identity)
+                if local_model_identity is not None
+                else dict(model_admission.get("destination") or {})
+            ),
+            "provider_adapter": model_admission.get("provider_adapter"),
+            "execution_locality": model_admission.get("execution_locality"),
+            "provider_request": provider_request,
+            "automatic_provider_fallback": False,
+            "automatic_retry": False,
+            "absolute_local_paths_present": False,
+            "api_key_in_payload": False,
+        }
+        requirement_coverage_model_audits.append(audit)
+        model_call_count += 1
+        audit_path = run_root / (
+            f"requirement_coverage_model_input_audit_{model_call_count}.json"
+        )
+        audit_path.write_text(
+            json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        if local_ollama:
+            local_model_input_audit = audit
+        else:
+            external_model_input_audit = audit
+        try:
+            structured_output = json.loads(response.content)
+        except json.JSONDecodeError as exc:
+            raise ValueError("REQUIREMENT_COVERAGE_MODEL_INVALID_JSON") from exc
+        if not isinstance(structured_output, dict):
+            raise ValueError("REQUIREMENT_COVERAGE_MODEL_OUTPUT_NOT_OBJECT")
+        return structured_output
+
+    requirement_coverage_provider = make_requirement_coverage_evidence_provider(
+        evidence_provider,
+        complete_json=complete_requirement_coverage_json,
+        projection_factory=requirement_coverage_projection_factory,
+        findings_factory=requirement_coverage_findings_factory,
+    )
 
     def evidence_factory(state: dict[str, Any], feature_data: dict[str, Any]):
         evidence_pack = requirement_coverage_provider.collect(
             query=str(state["user_request"]),
             search_root=f"generated_mods/{source.name}",
             feature_data=feature_data,
+        )
+        evidence_pack = replace(
+            evidence_pack,
+            budget_summary={
+                **evidence_pack.budget_summary,
+                "requirement_coverage_model_audits": [
+                    dict(item) for item in requirement_coverage_model_audits
+                ],
+            },
         )
         if member_access_resolver is None or not evidence_pack.can_generate_patch:
             return evidence_pack
@@ -4006,6 +4117,11 @@ def run_local_request(
                 evidence_pack,
                 readiness="insufficient",
                 can_generate_patch=False,
+                requirement_coverage=None,
+                gaps=(
+                    *evidence_pack.gaps,
+                    "Run-local .NET member semantics remain unresolved.",
+                ),
                 blockers=(*evidence_pack.blockers, blocker),
                 missing_evidence=(
                     *evidence_pack.missing_evidence,
@@ -10643,6 +10759,58 @@ def _source_snapshot(root: Path) -> list[dict[str, Any]]:
 
 def _source_snapshot_sha256(snapshot: list[dict[str, Any]]) -> str:
     return _product_source_snapshot_sha256(snapshot)
+
+
+def _request_requirement_coverage_model(
+    *,
+    llm: Any,
+    payload: Mapping[str, Any],
+    schema: Mapping[str, Any],
+    max_output_tokens: int,
+    capture_provider_request: bool,
+) -> tuple[ChatResponse, dict[str, Any]]:
+    """Execute one strict admitted coverage turn without interpreting semantics."""
+
+    provider_request: dict[str, Any] = {}
+
+    def record_provider_request(value: dict[str, Any]) -> None:
+        provider_request.update(
+            {
+                key: item
+                for key, item in value.items()
+                if key != "body_utf8"
+            }
+        )
+
+    response = llm.chat(
+        [
+            Message(
+                role="system",
+                content=(
+                    "Return one strict JSON object matching the native response "
+                    "schema. Do not return reasoning, markdown, stable identities, "
+                    "sufficiency, edit authority, or execution authority."
+                ),
+            ),
+            Message(
+                role="user",
+                content=json.dumps(
+                    dict(payload),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            ),
+        ],
+        temperature=0.0,
+        max_tokens=max_output_tokens,
+        response_format=dict(schema),
+        provider_request_recorder=(
+            record_provider_request if capture_provider_request else None
+        ),
+    )
+    if not isinstance(response, ChatResponse):
+        raise ValueError("REQUIREMENT_COVERAGE_MODEL_RESPONSE_INVALID")
+    return response, provider_request
 
 
 def _sha256_json(value: Any) -> str:

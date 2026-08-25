@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
-from .discovery_contract import request_relation_identity
+from .identity import request_relation_identity
 from .models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
     EvidenceItem,
     EvidencePack,
-    missing_evidence_from_blockers,
 )
 
 REQUIREMENT_COVERAGE_SCHEMA_VERSION = "evidence_requirement_coverage_v1"
@@ -34,6 +34,86 @@ REQUIREMENT_COVERAGE_TRUST_BOUNDARY = (
     "deterministic_input_accounting_and_coverage_projection",
     "deterministic_sufficiency_edit_target_patch_authority_derivation",
 )
+
+
+@dataclass(frozen=True)
+class RequirementCoverageView:
+    """Stable consumer view over one strictly validated coverage receipt."""
+
+    feature_id: str
+    feature_spec_sha256: str
+    authorized_edit_target_ids: frozenset[str]
+    preservation_requirement_texts: tuple[str, ...]
+    change_related_supporting_evidence_ids: frozenset[str]
+
+
+def requirement_input_obligation_model_view(
+    feature_data: Mapping[str, Any],
+) -> list[dict[str, object]]:
+    """Expose indexed obligations without granting stable identity authority."""
+
+    return [
+        {
+            "input_obligation_index": index,
+            "origin": dict(obligation["origin"]),
+            "text": obligation["text"],
+            "allowed_roles": list(obligation["allowed_roles"]),
+            "allowed_dispositions": list(
+                obligation["allowed_dispositions"]
+            ),
+            "required_before_patch_policy": obligation[
+                "required_before_patch"
+            ],
+        }
+        for index, obligation in enumerate(_input_obligations(feature_data), 1)
+    ]
+
+
+def validated_requirement_coverage_view(
+    evidence_pack_payload: Mapping[str, Any],
+) -> RequirementCoverageView | None:
+    """Return consumer facts without exposing raw semantic representation."""
+
+    if "requirement_coverage" not in evidence_pack_payload:
+        return None
+    pack = EvidencePack.from_artifact_payload(evidence_pack_payload)
+    section = pack.requirement_coverage
+    if not isinstance(section, dict):
+        raise ValueError("REQUIREMENT_COVERAGE_SECTION_REQUIRED")
+    requirements = section["requirements"]
+    findings = section["findings"]
+    edit_target_ids = frozenset(
+        str(value) for value in section["edit_target_evidence_ids"]
+    )
+    change_requirement_ids = {
+        str(requirement["requirement_id"])
+        for requirement in requirements
+        if requirement["role"] == "change"
+    }
+    change_related_evidence_ids = {
+        str(evidence_id)
+        for finding in findings
+        if finding["relationship"] == "support"
+        and change_requirement_ids.intersection(
+            str(value) for value in finding["parent_requirement_ids"]
+        )
+        for evidence_id in finding["evidence_ids"]
+    }
+    return RequirementCoverageView(
+        feature_id=str(section["feature_spec_identity"]["feature_id"]),
+        feature_spec_sha256=str(
+            section["feature_spec_identity"]["feature_spec_sha256"]
+        ),
+        authorized_edit_target_ids=edit_target_ids,
+        preservation_requirement_texts=tuple(
+            str(requirement["text"])
+            for requirement in requirements
+            if requirement["role"] == "preservation"
+        ),
+        change_related_supporting_evidence_ids=frozenset(
+            change_related_evidence_ids - edit_target_ids
+        ),
+    )
 
 
 def default_feature_requirement_projection(
@@ -215,93 +295,6 @@ def materialize_requirement_coverage_projection(
     }
 
 
-def build_requirement_coverage_pack(
-    *,
-    query: str,
-    materialized_projection: Mapping[str, Any],
-    retrieved_pack: EvidencePack,
-    findings: Mapping[str, Any],
-) -> EvidencePack:
-    """Build one coverage-owned EvidencePack without model-granted authority."""
-
-    section, readiness, can_generate_patch, blockers, gaps = (
-        _resolve_requirement_coverage(
-            query=query,
-            materialized_projection=materialized_projection,
-            items=retrieved_pack.items,
-            findings=findings,
-        )
-    )
-    return EvidencePack(
-        query=query,
-        readiness=readiness,
-        can_generate_patch=can_generate_patch,
-        items=retrieved_pack.items,
-        gaps=gaps,
-        excluded=retrieved_pack.excluded,
-        blockers=blockers,
-        retrieval_methods_used=retrieved_pack.retrieval_methods_used,
-        missing_evidence=missing_evidence_from_blockers(blockers),
-        disabled_modes=dict(retrieved_pack.disabled_modes),
-        timing=dict(retrieved_pack.timing),
-        budget_summary=dict(retrieved_pack.budget_summary),
-        requirement_coverage=section,
-        message=(
-            "Current-source evidence satisfies every required pre-patch requirement."
-            if can_generate_patch
-            else "Requirement coverage is incomplete or conflicting; patch authority is blocked."
-        ),
-    )
-
-
-class RequirementCoverageEvidenceProvider:
-    """Compose injected semantic findings with deterministic live-source evidence."""
-
-    def __init__(
-        self,
-        source_provider: Any,
-        *,
-        projection_factory: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
-        findings_factory: Callable[
-            [Mapping[str, Any], EvidencePack], Mapping[str, Any]
-        ]
-        | None = None,
-    ) -> None:
-        self.source_provider = source_provider
-        self.projection_factory = projection_factory or default_feature_requirement_projection
-        self.findings_factory = findings_factory
-
-    def collect(
-        self,
-        *,
-        query: str,
-        search_root: str,
-        feature_data: Mapping[str, Any],
-    ) -> EvidencePack:
-        projection = self.projection_factory(feature_data)
-        materialized = materialize_requirement_coverage_projection(
-            feature_data=feature_data,
-            request=query,
-            projection=projection,
-        )
-        retrieved = self.source_provider.collect_query_set(
-            queries=tuple(dict(item) for item in materialized["queries"]),
-            search_root=search_root,
-            max_items=max(1, len(materialized["queries"])),
-        )
-        findings = (
-            self.findings_factory(materialized, retrieved)
-            if self.findings_factory is not None
-            else {"findings": []}
-        )
-        return build_requirement_coverage_pack(
-            query=query,
-            materialized_projection=materialized,
-            retrieved_pack=retrieved,
-            findings=findings,
-        )
-
-
 def validate_requirement_coverage_evidence_pack(pack: EvidencePack) -> None:
     """Strictly recompute coverage semantics and top-level patch authority."""
 
@@ -349,7 +342,7 @@ def validate_requirement_coverage_evidence_pack(pack: EvidencePack) -> None:
         else None
     }
     rebuilt, readiness, can_generate_patch, blockers, gaps = (
-        _resolve_requirement_coverage(
+        resolve_requirement_coverage(
             query=pack.query,
             materialized_projection=materialized,
             items=pack.items,
@@ -367,7 +360,7 @@ def validate_requirement_coverage_evidence_pack(pack: EvidencePack) -> None:
         raise ValueError("REQUIREMENT_COVERAGE_TOP_LEVEL_PROJECTION_DRIFT")
 
 
-def _resolve_requirement_coverage(
+def resolve_requirement_coverage(
     *,
     query: str,
     materialized_projection: Mapping[str, Any],
@@ -705,8 +698,8 @@ def _normalized_projection(
             or not 1 <= index <= len(input_obligations)
             or index in disposition_indexes
             or index in accounted_indexes
-            or input_obligations[index - 1]["required_before_patch"] is True
-            or disposition != "post_change"
+            or disposition
+            not in input_obligations[index - 1]["allowed_dispositions"]
             or not isinstance(reason, str)
             or not reason.strip()
         ):
@@ -785,13 +778,16 @@ def _input_obligations(
             raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATIONS_INVALID")
         obligations = [_copy_json(value) for value in supplied]
     else:
-        sources: list[tuple[str, int, str, tuple[str, ...], bool]] = [
+        sources: list[
+            tuple[str, int, str, tuple[str, ...], bool, tuple[str, ...]]
+        ] = [
             (
                 "user_request",
                 0,
                 _required_string(feature_data, "user_request"),
                 ("change", "preservation"),
                 True,
+                (),
             ),
             (
                 "target_behavior",
@@ -799,6 +795,7 @@ def _input_obligations(
                 _required_string(feature_data, "target_behavior"),
                 ("change",),
                 True,
+                (),
             ),
         ]
         sources.extend(
@@ -808,13 +805,21 @@ def _input_obligations(
                 text,
                 ("pre_patch_evidence",),
                 True,
+                (),
             )
             for index, text in enumerate(
                 _string_list(feature_data, "evidence_requirements"), 1
             )
         )
         sources.extend(
-            ("non_goals", index, text, ("preservation",), True)
+            (
+                "non_goals",
+                index,
+                text,
+                ("preservation", "pre_patch_evidence"),
+                True,
+                ("scope_boundary",),
+            )
             for index, text in enumerate(_string_list(feature_data, "non_goals"), 1)
         )
         sources.extend(
@@ -824,6 +829,7 @@ def _input_obligations(
                 text,
                 ("post_change_acceptance",),
                 False,
+                ("post_change",),
             )
             for index, text in enumerate(
                 _string_list(feature_data, "acceptance_criteria"), 1
@@ -836,6 +842,7 @@ def _input_obligations(
                 text,
                 ("post_change_acceptance",),
                 False,
+                ("post_change",),
             )
             for index, text in enumerate(
                 _string_list(feature_data, "runtime_verification_plan"), 1
@@ -850,9 +857,17 @@ def _input_obligations(
                 "text": text,
                 "mandatory": True,
                 "allowed_roles": list(roles),
+                "allowed_dispositions": list(allowed_dispositions),
                 "required_before_patch": required_before_patch,
             }
-            for field, index, text, roles, required_before_patch in sources
+            for (
+                field,
+                index,
+                text,
+                roles,
+                required_before_patch,
+                allowed_dispositions,
+            ) in sources
         ]
     for obligation in obligations:
         if not isinstance(obligation, dict) or set(obligation) != {
@@ -861,6 +876,7 @@ def _input_obligations(
             "text",
             "mandatory",
             "allowed_roles",
+            "allowed_dispositions",
             "required_before_patch",
         }:
             raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATION_SHAPE_INVALID")
@@ -881,6 +897,13 @@ def _input_obligations(
             or any(
                 role not in REQUIREMENT_ROLES
                 for role in obligation["allowed_roles"]
+            )
+            or not isinstance(obligation.get("allowed_dispositions"), list)
+            or len(obligation["allowed_dispositions"])
+            != len(set(obligation["allowed_dispositions"]))
+            or any(
+                disposition not in {"post_change", "scope_boundary"}
+                for disposition in obligation["allowed_dispositions"]
             )
             or not isinstance(obligation.get("required_before_patch"), bool)
             or obligation.get("input_obligation_id")

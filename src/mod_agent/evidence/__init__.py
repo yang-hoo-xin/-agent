@@ -58,13 +58,23 @@ from .hook_discovery import (
 )
 from .retriever import DeterministicEvidenceRetriever
 from .rg_live import RgLiveEvidenceProvider
+from .identity import REQUEST_RELATION_CONTRACT_VERSION, request_relation_identity
 from .requirement_coverage import (
     REQUIREMENT_COVERAGE_SCHEMA_VERSION,
-    RequirementCoverageEvidenceProvider,
-    build_requirement_coverage_pack,
+    RequirementCoverageView,
     default_feature_requirement_projection,
     materialize_requirement_coverage_projection,
+    requirement_input_obligation_model_view,
+    validated_requirement_coverage_view,
     validate_requirement_coverage_evidence_pack,
+)
+from .requirement_coverage_provider import (
+    RequirementCoverageEvidenceProvider,
+    StructuredModelRequirementCoverageProvider,
+    build_requirement_coverage_pack,
+    make_requirement_coverage_evidence_provider,
+    requirement_findings_response_schema,
+    requirement_projection_response_schema,
 )
 
 __all__ = [
@@ -75,12 +85,21 @@ __all__ = [
     "DenseRetrievalReport",
     "DeterministicEvidenceRetriever",
     "RgLiveEvidenceProvider",
+    "REQUEST_RELATION_CONTRACT_VERSION",
+    "request_relation_identity",
     "REQUIREMENT_COVERAGE_SCHEMA_VERSION",
+    "RequirementCoverageView",
     "RequirementCoverageEvidenceProvider",
+    "StructuredModelRequirementCoverageProvider",
     "build_requirement_coverage_pack",
+    "make_requirement_coverage_evidence_provider",
     "default_feature_requirement_projection",
     "materialize_requirement_coverage_projection",
+    "requirement_input_obligation_model_view",
+    "validated_requirement_coverage_view",
     "validate_requirement_coverage_evidence_pack",
+    "requirement_findings_response_schema",
+    "requirement_projection_response_schema",
     "DisabledDenseRetrievalProvider",
     "EvidenceItem",
     "EvidencePack",

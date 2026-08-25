@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.libs.llm import LLMFactory, OllamaLLM
+from src.libs.llm import ChatResponse, LLMFactory, OllamaLLM
 from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.execution import (
@@ -47,6 +47,7 @@ from src.mod_agent.local_entry import (
     _repair_review_context,
     _read_exact_diff_approval,
     _read_ollama_server_version,
+    _request_requirement_coverage_model,
     _read_utf8_source_snapshot,
     _repair_history_fact_constraints,
     _repair_provider_constraints,
@@ -75,6 +76,44 @@ from src.mod_agent.local_entry import (
 )
 
 _OLLAMA_DIGEST = "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
+
+
+def test_requirement_coverage_model_request_uses_schema_and_admission_recorder() -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeLLM:
+        def chat(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured["kwargs"] = kwargs
+            recorder = kwargs["provider_request_recorder"]
+            recorder(
+                {
+                    "body_utf8": "must-not-persist",
+                    "body_sha256": "a" * 64,
+                    "body_size_bytes": 123,
+                    "context_admission": {
+                        "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
+                        "admitted": True,
+                    },
+                }
+            )
+            return ChatResponse(content='{"requirements":[]}', model="fake-local")
+
+    schema = {"type": "object", "additionalProperties": False}
+    response, provider_request = _request_requirement_coverage_model(
+        llm=_FakeLLM(),
+        payload={"message_type": "product_requirement_projection"},
+        schema=schema,
+        max_output_tokens=4096,
+        capture_provider_request=True,
+    )
+
+    assert response.model == "fake-local"
+    assert captured["kwargs"]["response_format"] == schema
+    assert captured["kwargs"]["max_tokens"] == 4096
+    assert provider_request["context_admission"]["admitted"] is True
+    assert provider_request["body_sha256"] == "a" * 64
+    assert "body_utf8" not in provider_request
 
 
 def test_run_local_request_has_no_direct_graph_control_plane() -> None:

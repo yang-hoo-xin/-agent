@@ -12,7 +12,7 @@ from src.mod_agent.evidence.models import (
     LEGACY_RAG_AUXILIARY_AUTHORITY,
 )
 from src.mod_agent.evidence.requirement_coverage import (
-    REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    validated_requirement_coverage_view,
 )
 from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
 
@@ -191,36 +191,35 @@ class ImplementationPlanner:
                 item["source_path"] for item in planning_items if item.get("source_path")
             )
         )
-        requirement_coverage = evidence_pack.get("requirement_coverage")
-        coverage_edit_target_ids: set[str] | None = None
+        try:
+            coverage_view = validated_requirement_coverage_view(evidence_pack)
+        except ValueError as exc:
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(
+                    {
+                        "code": "REQUIREMENT_COVERAGE_INVALID",
+                        "message": str(exc),
+                    },
+                ),
+                open_questions=("Rebuild requirement coverage before planning.",),
+                evidence_source_paths=evidence_source_paths,
+            )
+        coverage_edit_target_ids: frozenset[str] | None = None
         preservation_boundaries: tuple[str, ...] = ()
-        change_related_evidence_ids: set[str] = set()
-        if requirement_coverage is not None:
+        change_related_evidence_ids: frozenset[str] = frozenset()
+        if coverage_view is not None:
+            expected_feature_hash = hashlib.sha256(
+                json.dumps(
+                    feature_spec.to_artifact_payload(),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
             if (
-                not isinstance(requirement_coverage, dict)
-                or requirement_coverage.get("schema_version")
-                != REQUIREMENT_COVERAGE_SCHEMA_VERSION
-                or not isinstance(
-                    requirement_coverage.get("edit_target_evidence_ids"), list
-                )
-                or not isinstance(requirement_coverage.get("requirements"), list)
-                or not isinstance(requirement_coverage.get("findings"), list)
-                or not isinstance(
-                    requirement_coverage.get("feature_spec_identity"), dict
-                )
-                or requirement_coverage["feature_spec_identity"].get("feature_id")
-                != feature_spec.feature_id
-                or requirement_coverage["feature_spec_identity"].get(
-                    "feature_spec_sha256"
-                )
-                != hashlib.sha256(
-                    json.dumps(
-                        feature_spec.to_artifact_payload(),
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                ).hexdigest()
+                coverage_view.feature_id != feature_spec.feature_id
+                or coverage_view.feature_spec_sha256 != expected_feature_hash
             ):
                 return self._blocked(
                     feature_id=feature_spec.feature_id,
@@ -236,38 +235,13 @@ class ImplementationPlanner:
                     open_questions=("Rebuild requirement coverage before planning.",),
                     evidence_source_paths=evidence_source_paths,
                 )
-            coverage_edit_target_ids = {
-                str(value)
-                for value in requirement_coverage["edit_target_evidence_ids"]
-            }
-            requirements_by_id = {
-                str(requirement.get("requirement_id")): requirement
-                for requirement in requirement_coverage["requirements"]
-                if isinstance(requirement, dict)
-                and requirement.get("requirement_id")
-            }
-            change_requirement_ids = {
-                requirement_id
-                for requirement_id, requirement in requirements_by_id.items()
-                if requirement.get("role") == "change"
-            }
-            preservation_boundaries = tuple(
-                str(requirement["text"])
-                for requirement in requirements_by_id.values()
-                if requirement.get("role") == "preservation"
-                and isinstance(requirement.get("text"), str)
+            coverage_edit_target_ids = coverage_view.authorized_edit_target_ids
+            preservation_boundaries = (
+                coverage_view.preservation_requirement_texts
             )
-            change_related_evidence_ids = {
-                str(evidence_id)
-                for finding in requirement_coverage["findings"]
-                if isinstance(finding, dict)
-                and finding.get("relationship") == "support"
-                and change_requirement_ids.intersection(
-                    str(value)
-                    for value in finding.get("parent_requirement_ids") or []
-                )
-                for evidence_id in finding.get("evidence_ids") or []
-            }
+            change_related_evidence_ids = (
+                coverage_view.change_related_supporting_evidence_ids
+            )
         editable_items = [
             item
             for item in planning_items

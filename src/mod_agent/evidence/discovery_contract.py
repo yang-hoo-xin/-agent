@@ -24,6 +24,7 @@ from src.libs.llm import (
 from src.mod_agent.knowledge.source_registry import SourceDefinition
 
 from .models import EvidenceItem, EvidencePack, missing_evidence_from_blockers
+from .identity import REQUEST_RELATION_CONTRACT_VERSION, request_relation_identity
 
 EVIDENCE_DISCOVERY_TOOLS = frozenset(
     {"search_dotnet_metadata", "inspect_method_il"}
@@ -43,7 +44,6 @@ AGENT_DISCOVERY_LEGACY_PROMPT_CONTRACT_VERSIONS = frozenset(
 )
 AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION = "agent_evidence_discovery_actual_v2"
 REQUIREMENT_PROJECTION_SCHEMA_VERSION = "hook_requirement_projection_v2"
-REQUEST_RELATION_CONTRACT_VERSION = "request_relation_identity_v1"
 SEARCH_PLAN_SCHEMA_VERSION = "hook_discovery_search_plan_v4"
 _SEARCH_PLAN_SCHEMA_VERSION_V2 = "hook_discovery_search_plan_v2"
 _SEARCH_PLAN_SCHEMA_VERSION_V3 = "hook_discovery_search_plan_v3"
@@ -56,30 +56,6 @@ EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES = (
     "source_registry_model_views",
     "tool_observation_metadata_and_il",
 )
-
-
-def request_relation_identity(
-    *,
-    request_sha256: str,
-    projection_sha256: str,
-    relation_index: int,
-) -> str:
-    """Derive one stable request-side relation identity without expected facts."""
-
-    payload = {
-        "request_sha256": request_sha256,
-        "projection_sha256": projection_sha256,
-        "relation_index": relation_index,
-        "schema_version": REQUEST_RELATION_CONTRACT_VERSION,
-    }
-    digest = hashlib.sha256(
-        json.dumps(
-            payload,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    return f"relation_{digest[:16]}"
 
 
 class EvidenceDiscoveryModel(Protocol):

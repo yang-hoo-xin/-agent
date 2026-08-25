@@ -12,8 +12,14 @@ from src.mod_agent.evidence import (
     RgLiveEvidenceProvider,
     build_requirement_coverage_pack,
     default_feature_requirement_projection,
+    make_requirement_coverage_evidence_provider,
     materialize_requirement_coverage_projection,
+    validated_requirement_coverage_view,
 )
+from src.mod_agent.evidence.discovery_contract import (
+    request_relation_identity as hook_compatible_relation_identity,
+)
+from src.mod_agent.evidence.identity import request_relation_identity
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.planning import FeatureSpec, ImplementationPlanner
 from src.mod_agent.proposal import PatchProposalBuilder, ProposalReviewer
@@ -220,6 +226,25 @@ def test_positive_requirement_coverage_roundtrips_and_derives_edit_target(
     payload = pack.to_artifact_payload()
     assert payload["authoritative_for_patch"] is True
     assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+    view = validated_requirement_coverage_view(payload)
+    assert view is not None
+    assert view.authorized_edit_target_ids == frozenset(
+        coverage["edit_target_evidence_ids"]
+    )
+    assert view.preservation_requirement_texts == (
+        "PreserveFeedback must remain unchanged.",
+    )
+
+
+def test_shared_relation_identity_preserves_hook_compatibility() -> None:
+    values = {
+        "request_sha256": "a" * 64,
+        "projection_sha256": "b" * 64,
+        "relation_index": 3,
+    }
+    assert request_relation_identity(**values) == hook_compatible_relation_identity(
+        **values
+    )
 
 
 def test_planner_separates_coverage_edit_and_supporting_bindings(
@@ -717,3 +742,384 @@ def test_requirement_coverage_tamper_is_rejected_on_rehydrate(
 
     with pytest.raises(ValueError, match="REQUIREMENT_COVERAGE_SEMANTIC_DRIFT"):
         EvidencePack.from_artifact_payload(payload)
+
+
+def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
+    tmp_path: Path,
+) -> None:
+    _write_sources(tmp_path)
+    feature = _feature_data()
+    feature["non_goals"] = ["Do not add a new dependency."]
+    calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
+
+    def complete_json(role, payload, schema):
+        calls.append((role, dict(payload), dict(schema)))
+        if role == "requirement_projection":
+            return {
+                "requirements": [
+                    {
+                        "role": "change",
+                        "text": "Change the configurable marker behavior.",
+                        "input_obligation_indexes": [1, 2],
+                        "query_leads": ["ChangeMarker"],
+                    },
+                    {
+                        "role": "preservation",
+                        "text": "Preserve existing feedback from the user request.",
+                        "input_obligation_indexes": [1],
+                        "query_leads": ["ChangeMarker"],
+                    },
+                    {
+                        "role": "pre_patch_evidence",
+                        "text": "Confirm the configuration key.",
+                        "input_obligation_indexes": [3],
+                        "query_leads": ["ConfigKey"],
+                    },
+                    {
+                        "role": "post_change_acceptance",
+                        "text": "Observe runtime acceptance after patching.",
+                        "input_obligation_indexes": [5, 6],
+                        "query_leads": ["RuntimeMarker"],
+                    },
+                ],
+                "relations": [
+                    {
+                        "parent_requirement_indexes": [1, 2],
+                        "meaning": "Change and preservation share current behavior evidence.",
+                    },
+                    {
+                        "parent_requirement_indexes": [3],
+                        "meaning": "Configuration evidence exists before patching.",
+                    },
+                    {
+                        "parent_requirement_indexes": [4],
+                        "meaning": "Acceptance is observed after patching.",
+                    },
+                ],
+                "input_dispositions": [
+                    {
+                        "input_obligation_index": 4,
+                        "disposition": "scope_boundary",
+                        "reason": "Dependency scope is a planning boundary, not source baseline evidence.",
+                    }
+                ],
+            }
+        if role == "requirement_findings":
+            relations = payload["relations"]
+            observations = payload["source_observations"]
+            behavior_id = next(
+                value["evidence_id"]
+                for value in observations
+                if str(value["source_path"]).endswith("Behavior.cs")
+            )
+            config_id = next(
+                value["evidence_id"]
+                for value in observations
+                if str(value["source_path"]).endswith("Configuration.cs")
+            )
+            return {
+                "findings": [
+                    {
+                        "relation_index": relations[0]["relation_index"],
+                        "relationship": "support",
+                        "evidence_ids": [behavior_id],
+                        "unresolved_gaps": [],
+                    },
+                    {
+                        "relation_index": relations[1]["relation_index"],
+                        "relationship": "support",
+                        "evidence_ids": [config_id],
+                        "unresolved_gaps": [],
+                    },
+                    {
+                        "relation_index": relations[2]["relation_index"],
+                        "relationship": "missing",
+                        "evidence_ids": [],
+                        "unresolved_gaps": ["Observed after patching."],
+                    },
+                ]
+            }
+        raise AssertionError(f"Unexpected role: {role}")
+
+    provider = make_requirement_coverage_evidence_provider(
+        RgLiveEvidenceProvider(tmp_path),
+        complete_json=complete_json,
+    )
+    pack = provider.collect(
+        query=str(feature["user_request"]),
+        search_root="generated_mods/SyntheticMod",
+        feature_data=feature,
+    )
+
+    assert [call[0] for call in calls] == [
+        "requirement_projection",
+        "requirement_findings",
+    ]
+    assert pack.readiness == "sufficient"
+    assert pack.can_generate_patch is True
+    coverage = pack.requirement_coverage
+    assert any(
+        requirement["role"] == "preservation"
+        and requirement["input_obligation_ids"]
+        for requirement in coverage["requirements"]
+    )
+    assert coverage["input_dispositions"][0]["disposition"] == "scope_boundary"
+    for _, payload, schema in calls:
+        serialized = str(payload) + str(schema)
+        for forbidden in (
+            "can_generate_patch",
+            "edit_target_evidence_ids",
+            "authoritative_for_patch",
+            "source_ref",
+        ):
+            assert forbidden not in serialized
+
+
+def test_formal_model_provider_invalid_accounting_fails_to_blocking_plan(
+    tmp_path: Path,
+) -> None:
+    _write_sources(tmp_path)
+    feature = _feature_data()
+    calls: list[str] = []
+
+    def complete_json(role, _payload, _schema):
+        calls.append(role)
+        return {
+            "requirements": [
+                {
+                    "role": "change",
+                    "text": "Incomplete change projection.",
+                    "input_obligation_indexes": [2],
+                    "query_leads": ["ChangeMarker"],
+                }
+            ],
+            "relations": [
+                {
+                    "parent_requirement_indexes": [1],
+                    "meaning": "Incomplete relation.",
+                }
+            ],
+            "input_dispositions": [],
+        }
+
+    provider = make_requirement_coverage_evidence_provider(
+        RgLiveEvidenceProvider(tmp_path),
+        complete_json=complete_json,
+    )
+    pack = provider.collect(
+        query=str(feature["user_request"]),
+        search_root="generated_mods/SyntheticMod",
+        feature_data=feature,
+    )
+    plan = ImplementationPlanner().build(
+        feature_spec=_feature_spec(feature),
+        evidence_pack=pack.to_artifact_payload(),
+    )
+
+    assert calls == [
+        "requirement_projection",
+        "requirement_projection_correction",
+    ]
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.budget_summary["semantic_provider_failed_closed"] is True
+    assert plan.blocking is True
+    assert plan.proposed_changes == ()
+
+    calls.clear()
+    graph_provider = make_requirement_coverage_evidence_provider(
+        RgLiveEvidenceProvider(tmp_path),
+        complete_json=complete_json,
+    )
+    store = ArtifactStore(tmp_path / "blocked_artifacts")
+    graph = build_graph(
+        store,
+        evidence_pack_factory=lambda state, feature_data: graph_provider.collect(
+            query=str(state["user_request"]),
+            search_root="generated_mods/SyntheticMod",
+            feature_data=feature_data,
+        ),
+    )
+    result = graph.invoke(
+        create_initial_state(
+            run_id="run_formal_provider_blocked",
+            request_id="req_formal_provider_blocked",
+            user_request="Change the marker while preserving normal feedback.",
+            target_mod="SyntheticMod",
+        )
+    )
+    assert result["current_stage"] == "blocked"
+    assert "implementation_plan" in result["artifacts"]
+    assert "patch_proposal" not in result["artifacts"]
+
+
+def test_formal_model_provider_graph_path_reaches_positive_plan(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "generated_mods" / "FormalMod" / "Behavior.cs"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "public sealed class Behavior\n"
+        "{\n"
+        "    public void ChangeMarker()\n"
+        "    {\n"
+        "        // preserve normal feedback target source API evidence config text\n"
+        "        // runtime verification acceptance\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def complete_json(role, payload, _schema):
+        calls.append(role)
+        if role == "requirement_projection":
+            obligations = payload["input_obligations"]
+            change_indexes = [
+                row["input_obligation_index"]
+                for row in obligations
+                if "change" in row["allowed_roles"]
+            ]
+            requirements = [
+                {
+                    "role": "change",
+                    "text": "Change the marker behavior.",
+                    "input_obligation_indexes": change_indexes,
+                    "query_leads": ["ChangeMarker"],
+                },
+                {
+                    "role": "preservation",
+                    "text": "Preserve normal feedback requested by the user.",
+                    "input_obligation_indexes": [1],
+                    "query_leads": ["ChangeMarker"],
+                },
+            ]
+            dispositions = []
+            for row in obligations:
+                index = row["input_obligation_index"]
+                if index in change_indexes or index == 1:
+                    continue
+                if "scope_boundary" in row["allowed_dispositions"]:
+                    dispositions.append(
+                        {
+                            "input_obligation_index": index,
+                            "disposition": "scope_boundary",
+                            "reason": "The non-goal is retained as a planning scope boundary.",
+                        }
+                    )
+                elif "post_change" in row["allowed_dispositions"]:
+                    dispositions.append(
+                        {
+                            "input_obligation_index": index,
+                            "disposition": "post_change",
+                            "reason": "This observation occurs after patching.",
+                        }
+                    )
+                else:
+                    requirements.append(
+                        {
+                            "role": row["allowed_roles"][0],
+                            "text": row["text"],
+                            "input_obligation_indexes": [index],
+                            "query_leads": ["evidence"],
+                        }
+                    )
+            return {
+                "requirements": requirements,
+                "relations": [
+                    {
+                        "parent_requirement_indexes": [index],
+                        "meaning": f"Evidence disposition for requirement {index}.",
+                    }
+                    for index in range(1, len(requirements) + 1)
+                ],
+                "input_dispositions": dispositions,
+            }
+        if role == "requirement_findings":
+            evidence_id = payload["source_observations"][0]["evidence_id"]
+            return {
+                "findings": [
+                    {
+                        "relation_index": relation["relation_index"],
+                        "relationship": "support",
+                        "evidence_ids": [evidence_id],
+                        "unresolved_gaps": [],
+                    }
+                    for relation in payload["relations"]
+                ]
+            }
+        raise AssertionError(role)
+
+    provider = make_requirement_coverage_evidence_provider(
+        RgLiveEvidenceProvider(tmp_path),
+        complete_json=complete_json,
+    )
+    store = ArtifactStore(tmp_path / "formal_artifacts")
+    graph = build_graph(
+        store,
+        evidence_pack_factory=lambda state, feature_data: provider.collect(
+            query=str(state["user_request"]),
+            search_root="generated_mods/FormalMod",
+            feature_data=feature_data,
+        ),
+        interrupt_after=["create_implementation_plan"],
+    )
+    result = graph.invoke(
+        create_initial_state(
+            run_id="run_formal_positive",
+            request_id="req_formal_positive",
+            user_request="Change the marker while preserving normal feedback.",
+            target_mod="FormalMod",
+        )
+    )
+
+    assert calls == ["requirement_projection", "requirement_findings"]
+    evidence = store.read(
+        ArtifactRef(
+            feature_id=result["feature_id"],
+            artifact_type="evidence_pack",
+            path=result["artifacts"]["evidence_pack"],
+            artifact_hash=result["artifact_hashes"]["evidence_pack"],
+        )
+    )["data"]
+    plan = store.read(
+        ArtifactRef(
+            feature_id=result["feature_id"],
+            artifact_type="implementation_plan",
+            path=result["artifacts"]["implementation_plan"],
+            artifact_hash=result["artifact_hashes"]["implementation_plan"],
+        )
+    )["data"]
+    assert evidence["readiness"] == "sufficient"
+    assert plan["blocking"] is False
+    assert plan["binding_registry"]["edit_bindings"]
+    assert "patch_proposal" not in result["artifacts"]
+
+
+def test_formal_model_provider_invalid_json_uses_one_correction_then_blocks(
+    tmp_path: Path,
+) -> None:
+    _write_sources(tmp_path)
+    roles: list[str] = []
+
+    def complete_json(role, _payload, _schema):
+        roles.append(role)
+        raise ValueError("REQUIREMENT_COVERAGE_MODEL_INVALID_JSON")
+
+    provider = make_requirement_coverage_evidence_provider(
+        RgLiveEvidenceProvider(tmp_path),
+        complete_json=complete_json,
+    )
+    pack = provider.collect(
+        query=str(_feature_data()["user_request"]),
+        search_root="generated_mods/SyntheticMod",
+        feature_data=_feature_data(),
+    )
+
+    assert roles == [
+        "requirement_projection",
+        "requirement_projection_correction",
+    ]
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.budget_summary["semantic_provider_failed_closed"] is True
