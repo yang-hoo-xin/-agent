@@ -643,7 +643,10 @@ def _normalized_projection(
         raise ValueError("REQUIREMENT_COVERAGE_INPUT_DISPOSITIONS_INVALID")
     requirements: list[dict[str, object]] = []
     accounted_indexes: set[int] = set()
-    for raw in raw_requirements:
+    requirement_locations_by_obligation: dict[
+        int, list[dict[str, object]]
+    ] = {}
+    for requirement_item_index, raw in enumerate(raw_requirements):
         if not isinstance(raw, dict) or set(raw) != {
             "role",
             "text",
@@ -679,6 +682,25 @@ def _normalized_projection(
         ):
             raise ValueError("REQUIREMENT_COVERAGE_REQUIREMENT_INVALID")
         accounted_indexes.update(int(index) for index in obligation_indexes)
+        for input_obligation_item_index, input_obligation_index in enumerate(
+            obligation_indexes
+        ):
+            requirement_locations_by_obligation.setdefault(
+                int(input_obligation_index), []
+            ).append(
+                {
+                    "requirement_item_index": requirement_item_index,
+                    "requirement_item_json_path": (
+                        f"$.requirements[{requirement_item_index}]"
+                    ),
+                    "input_obligation_item_index": input_obligation_item_index,
+                    "input_obligation_json_path": (
+                        f"$.requirements[{requirement_item_index}]"
+                        ".input_obligation_indexes"
+                        f"[{input_obligation_item_index}]"
+                    ),
+                }
+            )
         requirements.append(
             {
                 "role": role,
@@ -729,6 +751,59 @@ def _normalized_projection(
                 },
             )
         if index in accounted_indexes:
+            conflicting_requirement_locations = [
+                dict(location)
+                for location in requirement_locations_by_obligation[index]
+            ]
+            conflicting_requirement_paths = [
+                str(location["input_obligation_json_path"])
+                for location in conflicting_requirement_locations
+            ]
+            allowed_dispositions = list(
+                input_obligations[index - 1]["allowed_dispositions"]
+            )
+            affected_requirements_remain_non_empty = all(
+                len(
+                    raw_requirements[
+                        int(location["requirement_item_index"])
+                    ]["input_obligation_indexes"]
+                )
+                > 1
+                for location in conflicting_requirement_locations
+            )
+            empty_requirement_item_indexes_after_removal = [
+                int(location["requirement_item_index"])
+                for location in conflicting_requirement_locations
+                if len(
+                    raw_requirements[
+                        int(location["requirement_item_index"])
+                    ]["input_obligation_indexes"]
+                )
+                == 1
+            ]
+            raw_valid_disposition_indexes = {
+                int(value["input_obligation_index"])
+                for value in raw_dispositions
+                if isinstance(value, dict)
+                and type(value.get("input_obligation_index")) is int
+                and 1
+                <= int(value["input_obligation_index"])
+                <= len(input_obligations)
+            }
+            missing_indexes_after_requirement_removal = sorted(
+                set(range(1, len(input_obligations) + 1))
+                - (accounted_indexes - {index})
+                - raw_valid_disposition_indexes
+            )
+            observed_disposition_is_allowed = (
+                disposition in allowed_dispositions
+            )
+            disposition_reason_is_non_empty = (
+                isinstance(reason, str) and bool(reason.strip())
+            )
+            all_input_obligations_remain_accounted = not (
+                missing_indexes_after_requirement_removal
+            )
             raise RequirementCoverageProjectionError(
                 "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
                 {
@@ -738,9 +813,64 @@ def _normalized_projection(
                     ),
                     "json_path": f"{item_path}.input_obligation_index",
                     "input_obligation_index": index,
-                    "allowed_dispositions": list(
-                        input_obligations[index - 1]["allowed_dispositions"]
+                    "allowed_dispositions": allowed_dispositions,
+                    "conflicting_requirement_locations": (
+                        conflicting_requirement_locations
                     ),
+                    "disposition_item_index": disposition_item_index,
+                    "disposition_item_json_path": item_path,
+                    "correction_directions": [
+                        {
+                            "direction": (
+                                "keep_requirement_accounting_remove_"
+                                "input_disposition"
+                            ),
+                            "remove_json_paths": [item_path],
+                            "retain_json_paths": conflicting_requirement_paths,
+                            "conditions": {
+                                "listed_requirement_accounting_is_retained": True,
+                                "complete_corrected_projection_must_pass_"
+                                "existing_validation": True,
+                            },
+                            "locally_applicable": True,
+                        },
+                        {
+                            "direction": (
+                                "keep_allowed_disposition_remove_requirement_"
+                                "accounting"
+                            ),
+                            "remove_json_paths": conflicting_requirement_paths,
+                            "retain_json_paths": [item_path],
+                            "conditions": {
+                                "observed_disposition_is_allowed": (
+                                    observed_disposition_is_allowed
+                                ),
+                                "disposition_reason_is_non_empty_after_strip": (
+                                    disposition_reason_is_non_empty
+                                ),
+                                "affected_requirements_remain_non_empty": (
+                                    affected_requirements_remain_non_empty
+                                ),
+                                "empty_requirement_item_indexes_after_removal": (
+                                    empty_requirement_item_indexes_after_removal
+                                ),
+                                "all_input_obligations_remain_accounted": (
+                                    all_input_obligations_remain_accounted
+                                ),
+                                "missing_input_obligation_indexes_after_removal": (
+                                    missing_indexes_after_requirement_removal
+                                ),
+                                "complete_corrected_projection_must_pass_"
+                                "existing_validation": True,
+                            },
+                            "locally_applicable": (
+                                observed_disposition_is_allowed
+                                and disposition_reason_is_non_empty
+                                and affected_requirements_remain_non_empty
+                                and all_input_obligations_remain_accounted
+                            ),
+                        },
+                    ],
                 },
             )
         allowed_dispositions = list(

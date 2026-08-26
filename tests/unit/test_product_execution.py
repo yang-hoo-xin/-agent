@@ -1665,31 +1665,70 @@ def test_product_execution_actual7_projection_overlap_fails_closed(
     assert [
         attempt["semantic_materialization_admitted"] for attempt in attempts
     ] == [False, False]
+
+    def expected_overlap_diagnostic(remaining: int) -> dict[str, object]:
+        requirement_path = "$.requirements[2].input_obligation_indexes[2]"
+        disposition_path = "$.input_dispositions[0]"
+        return {
+            "error_code": "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+            "phase": "semantic_materialization",
+            "failure_category": (
+                "obligation_already_accounted_and_dispositioned"
+            ),
+            "json_path": f"{disposition_path}.input_obligation_index",
+            "input_obligation_index": 7,
+            "allowed_dispositions": ["scope_boundary"],
+            "conflicting_requirement_locations": [
+                {
+                    "requirement_item_index": 2,
+                    "requirement_item_json_path": "$.requirements[2]",
+                    "input_obligation_item_index": 2,
+                    "input_obligation_json_path": requirement_path,
+                }
+            ],
+            "disposition_item_index": 0,
+            "disposition_item_json_path": disposition_path,
+            "correction_directions": [
+                {
+                    "direction": (
+                        "keep_requirement_accounting_remove_input_disposition"
+                    ),
+                    "remove_json_paths": [disposition_path],
+                    "retain_json_paths": [requirement_path],
+                    "conditions": {
+                        "listed_requirement_accounting_is_retained": True,
+                        "complete_corrected_projection_must_pass_"
+                        "existing_validation": True,
+                    },
+                    "locally_applicable": True,
+                },
+                {
+                    "direction": (
+                        "keep_allowed_disposition_remove_requirement_accounting"
+                    ),
+                    "remove_json_paths": [requirement_path],
+                    "retain_json_paths": [disposition_path],
+                    "conditions": {
+                        "observed_disposition_is_allowed": True,
+                        "disposition_reason_is_non_empty_after_strip": True,
+                        "affected_requirements_remain_non_empty": True,
+                        "empty_requirement_item_indexes_after_removal": [],
+                        "all_input_obligations_remain_accounted": True,
+                        "missing_input_obligation_indexes_after_removal": [],
+                        "complete_corrected_projection_must_pass_"
+                        "existing_validation": True,
+                    },
+                    "locally_applicable": True,
+                },
+            ],
+            "bounded_correction_attempts_remaining": remaining,
+        }
+
     assert [
         attempt["rejection_diagnostic"] for attempt in attempts
     ] == [
-        {
-            "error_code": "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
-            "phase": "semantic_materialization",
-            "failure_category": (
-                "obligation_already_accounted_and_dispositioned"
-            ),
-            "json_path": "$.input_dispositions[0].input_obligation_index",
-            "input_obligation_index": 7,
-            "allowed_dispositions": ["scope_boundary"],
-            "bounded_correction_attempts_remaining": 1,
-        },
-        {
-            "error_code": "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
-            "phase": "semantic_materialization",
-            "failure_category": (
-                "obligation_already_accounted_and_dispositioned"
-            ),
-            "json_path": "$.input_dispositions[0].input_obligation_index",
-            "input_obligation_index": 7,
-            "allowed_dispositions": ["scope_boundary"],
-            "bounded_correction_attempts_remaining": 0,
-        },
+        expected_overlap_diagnostic(1),
+        expected_overlap_diagnostic(0),
     ]
     assert [
         (
@@ -1738,6 +1777,7 @@ def test_product_execution_actual7_projection_overlap_fails_closed(
         ensure_ascii=False,
         sort_keys=True,
     )
+    assert "previous_projection" not in persisted_json
     assert all(raw_marker not in persisted_json for raw_marker in raw_markers)
     assert not {
         "patch_proposal",
