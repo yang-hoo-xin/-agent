@@ -1502,7 +1502,7 @@ def test_product_execution_formal_coverage_vertical_reaches_changed_bytes_and_bu
     assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
 
 
-def test_product_execution_actual7_projection_overlap_fails_closed(
+def test_product_execution_actual8_projection_correction_no_progress_fails_closed(
     tmp_path: Path,
 ) -> None:
     raw_outputs: list[dict[str, object]] = []
@@ -1546,7 +1546,7 @@ def test_product_execution_actual7_projection_overlap_fails_closed(
                 obligation["input_obligation_index"]
             )
         requirements = list(grouped.values())
-        raw_marker = f"raw-{role}-must-not-persist"
+        raw_marker = "actual8-overlap-output-must-not-persist"
         projection = {
             "requirements": requirements,
             "relations": [
@@ -1664,7 +1664,20 @@ def test_product_execution_actual7_projection_overlap_fails_closed(
     ]
     assert [
         attempt["semantic_materialization_admitted"] for attempt in attempts
-    ] == [False, False]
+    ] == [False, None]
+    raw_output_hashes = [
+        hashlib.sha256(
+            json.dumps(
+                output,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        for output in raw_outputs
+    ]
+    assert raw_outputs[0] == raw_outputs[1]
+    assert len(set(raw_output_hashes)) == 1
 
     def expected_overlap_diagnostic(remaining: int) -> dict[str, object]:
         requirement_path = "$.requirements[2].input_obligation_indexes[2]"
@@ -1728,7 +1741,18 @@ def test_product_execution_actual7_projection_overlap_fails_closed(
         attempt["rejection_diagnostic"] for attempt in attempts
     ] == [
         expected_overlap_diagnostic(1),
-        expected_overlap_diagnostic(0),
+        {
+            "error_code": (
+                "REQUIREMENT_COVERAGE_PROJECTION_CORRECTION_NO_PROGRESS"
+            ),
+            "phase": "correction_progress_validation",
+            "failure_category": "canonical_projection_unchanged",
+            "json_path": "$",
+            "first_rejected_projection_canonical_sha256": raw_output_hashes[0],
+            "correction_projection_canonical_sha256": raw_output_hashes[1],
+            "structured_output_hash_basis": "canonical_json_utf8",
+            "bounded_correction_attempts_remaining": 0,
+        },
     ]
     assert [
         (
@@ -1740,19 +1764,9 @@ def test_product_execution_actual7_projection_overlap_fails_closed(
     ] == [(4, 1, 1), (4, 1, 1)]
     assert [
         attempt["structured_output_canonical_sha256"] for attempt in attempts
-    ] == [
-        hashlib.sha256(
-            json.dumps(
-                output,
-                ensure_ascii=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            ).encode("utf-8")
-        ).hexdigest()
-        for output in raw_outputs
-    ]
+    ] == raw_output_hashes
     assert evidence["budget_summary"]["semantic_provider_failure_codes"] == [
-        "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID"
+        "REQUIREMENT_COVERAGE_PROJECTION_CORRECTION_NO_PROGRESS"
     ]
     assert evidence["budget_summary"]["semantic_provider_failed_closed"] is True
     assert evidence["budget_summary"][
@@ -1774,6 +1788,15 @@ def test_product_execution_actual7_projection_overlap_fails_closed(
     persisted_payloads = [scenario.store.read(ref) for ref in refs.values()]
     persisted_json = json.dumps(
         persisted_payloads,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    rehydrated_evidence = EvidencePack.from_artifact_payload(
+        evidence
+    ).to_artifact_payload()
+    assert rehydrated_evidence == evidence
+    assert "previous_projection" not in json.dumps(
+        rehydrated_evidence,
         ensure_ascii=False,
         sort_keys=True,
     )
