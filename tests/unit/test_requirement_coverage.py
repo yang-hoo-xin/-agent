@@ -1035,6 +1035,7 @@ def test_projection_correction_receives_precise_semantic_overlap_diagnostic() ->
             "json_path": "$.input_dispositions[0].input_obligation_index",
             "input_obligation_index": 4,
             "allowed_dispositions": ["scope_boundary"],
+            "bounded_correction_attempts_remaining": 1,
         }
     ]
     attempts = provider.projection_attempt_audit
@@ -1284,6 +1285,13 @@ def test_second_schema_invalid_projection_fails_closed_with_bounded_audit(
     assert failure_diagnostic["json_path"] == (
         "$.input_dispositions[0].disposition"
     )
+    assert failure_diagnostic["bounded_correction_attempts_remaining"] == 0
+    assert [
+        attempt["rejection_diagnostic"][
+            "bounded_correction_attempts_remaining"
+        ]
+        for attempt in attempts
+    ] == [1, 0]
     assert "Invalid on both bounded attempts." not in str(pack.budget_summary)
     assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
 
@@ -1488,6 +1496,27 @@ def test_formal_model_provider_invalid_accounting_fails_to_blocking_plan(
     assert pack.readiness == "insufficient"
     assert pack.can_generate_patch is False
     assert pack.budget_summary["semantic_provider_failed_closed"] is True
+    attempts = pack.budget_summary["requirement_projection_attempt_audit"]
+    assert len(attempts) == 2
+    assert [
+        attempt["rejection_diagnostic"][
+            "bounded_correction_attempts_remaining"
+        ]
+        for attempt in attempts
+    ] == [1, 0]
+    assert attempts[0]["rejection_diagnostic"]["phase"] == (
+        "semantic_materialization"
+    )
+    assert attempts[1]["rejection_diagnostic"]["phase"] == (
+        "semantic_materialization"
+    )
+    terminal_diagnostic = pack.budget_summary[
+        "semantic_provider_failure_diagnostics"
+    ][0]
+    assert terminal_diagnostic["bounded_correction_attempts_remaining"] == 0
+    assert terminal_diagnostic["error_code"] == (
+        "REQUIREMENT_COVERAGE_INPUT_ACCOUNTING_INCOMPLETE"
+    )
     assert plan.blocking is True
     assert plan.proposed_changes == ()
 
@@ -1688,3 +1717,24 @@ def test_formal_model_provider_invalid_json_uses_one_correction_then_blocks(
     assert pack.readiness == "insufficient"
     assert pack.can_generate_patch is False
     assert pack.budget_summary["semantic_provider_failed_closed"] is True
+    attempts = pack.budget_summary["requirement_projection_attempt_audit"]
+    assert len(attempts) == 2
+    assert [
+        attempt["rejection_diagnostic"][
+            "bounded_correction_attempts_remaining"
+        ]
+        for attempt in attempts
+    ] == [1, 0]
+    assert attempts[0]["rejection_diagnostic"]["phase"] == (
+        "provider_completion"
+    )
+    assert attempts[1]["rejection_diagnostic"]["phase"] == (
+        "provider_completion"
+    )
+    terminal_diagnostic = pack.budget_summary[
+        "semantic_provider_failure_diagnostics"
+    ][0]
+    assert terminal_diagnostic["bounded_correction_attempts_remaining"] == 0
+    assert terminal_diagnostic["error_code"] == (
+        "REQUIREMENT_COVERAGE_MODEL_INVALID_JSON"
+    )

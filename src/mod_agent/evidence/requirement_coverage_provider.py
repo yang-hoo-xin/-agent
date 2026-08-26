@@ -468,7 +468,10 @@ class StructuredModelRequirementCoverageProvider:
                 request=request,
             )
         except ValueError as exc:
-            rejection_diagnostic = _projection_rejection_diagnostic(exc)
+            rejection_diagnostic = _projection_rejection_diagnostic(
+                exc,
+                bounded_correction_attempts_remaining=1,
+            )
             self._record_projection_attempt(
                 attempt_index=1,
                 projection=projection,
@@ -510,7 +513,8 @@ class StructuredModelRequirementCoverageProvider:
                     status="rejected",
                     error_code=str(corrected_exc),
                     rejection_diagnostic=_projection_rejection_diagnostic(
-                        corrected_exc
+                        corrected_exc,
+                        bounded_correction_attempts_remaining=0,
                     ),
                 )
                 raise
@@ -741,7 +745,10 @@ class RequirementCoverageEvidenceProvider:
             except ValueError as exc:
                 provider_failure_codes.append(str(exc))
                 provider_failure_diagnostics.append(
-                    _projection_rejection_diagnostic(exc)
+                    _projection_rejection_diagnostic(
+                        exc,
+                        bounded_correction_attempts_remaining=0,
+                    )
                 )
                 projection = default_feature_requirement_projection(feature_data)
             if isinstance(
@@ -1074,12 +1081,24 @@ def _source_observation_model_view(item: Mapping[str, Any]) -> dict[str, object]
     }
 
 
-def _projection_rejection_diagnostic(exc: ValueError) -> dict[str, object]:
+def _projection_rejection_diagnostic(
+    exc: ValueError,
+    *,
+    bounded_correction_attempts_remaining: int,
+) -> dict[str, object]:
+    if bounded_correction_attempts_remaining not in (0, 1):
+        raise ValueError("Projection correction remainder must be zero or one.")
     if isinstance(
         exc,
         (RequirementProjectionAdmissionError, RequirementCoverageProjectionError),
     ):
-        return {"error_code": str(exc), **dict(exc.diagnostic)}
+        return {
+            "error_code": str(exc),
+            **dict(exc.diagnostic),
+            "bounded_correction_attempts_remaining": (
+                bounded_correction_attempts_remaining
+            ),
+        }
     code = str(exc)
     provider_completion = code.startswith("REQUIREMENT_COVERAGE_MODEL_")
     return {
@@ -1097,8 +1116,10 @@ def _projection_rejection_diagnostic(exc: ValueError) -> dict[str, object]:
         "json_path": "$",
         "allowed_boundary": {
             "complete_projection_required": True,
-            "bounded_correction_attempts_remaining": 1,
         },
+        "bounded_correction_attempts_remaining": (
+            bounded_correction_attempts_remaining
+        ),
     }
 
 
