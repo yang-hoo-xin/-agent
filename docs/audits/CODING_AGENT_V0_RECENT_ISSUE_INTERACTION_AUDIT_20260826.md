@@ -36,8 +36,10 @@ stale_existing_entries_updated:
   - DOC-001
 historical_gap_recorded_without_reactivation:
   - Wall relation-aware Requirement Projection correction at 8c5509e
-post_checkpoint_update_interactions_reviewed: 11
-post_checkpoint_update_new_registered_issues: 0
+post_checkpoint_update_interactions_reviewed: 12
+post_checkpoint_update_new_registered_issues: 1
+post_checkpoint_update_new_registered_issue_ids:
+  - PLAN-001
 ```
 
 The eight interaction gaps consist of one closed-route historical gap, four
@@ -94,7 +96,7 @@ under the same current physical owner `EVID-002`.
 | actual3 / `65541df6` | `build_dependency_copy`; ordinary Windows paths could not read long dependency files | `actual_failure.json` SHA256 `8e62d99017f77378f138e26573658da34827385cb4de3be8b2e2c924ad5762b5`; `run_failure.json` SHA256 `5be3695894c7b31ea6041529c9256a82e5bc02f8c86f1aca5d590bafca471aaa` | extended-length copy checkpoint `1036f98`; `FS-001` mitigated for current scope |
 | actual4 / `f3a54f16` | `build_dependency_copy`; source/destination physically held 165 files while ordinary snapshot traversal observed 137 and rejected identity | outer `actual_failure.json` SHA256 `507f09ca751b8c34615746d4d17448550dd436e442dd82b86542dd9b432474ab`; product `run_failure.json` SHA256 `2100c60a7e7f1580c242d2c533a09b11b5eb11312a73215b1514a77691a66b6f` | complete long-path snapshot checkpoint `2ee3e03`; `FS-002` mitigated for current scope |
 | actual5 / `f6bdb182` | ProductExecution entered; projection and one correction failed `REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID`; findings did not run | `run_result.json` SHA256 `8f5976dc9fe5c499e3100212f0e52d6661aa580e0129f583ea89fca732022265`; `run_manifest.json` SHA256 `f909da809424ac6d9d66b9ee5938ac796de675903e7a9a12ba7bbb137078c6ac` | `2b18874` narrowed per-index schema but did not close real failure; `EVID-002` active |
-| actual6 / `905a0a60` | ProductExecution and one isolated baseline build entered; the same projection failure repeated after two local-model calls; findings/Patch/changed Build did not run | `run_result.json` SHA256 `0c5b766821a3f05b0af54cb3da28ccd6c45e92265196415dcd89cc7352658c92`; `run_manifest.json` SHA256 `2fc0c051bf26755e4bbf3b83c8fbc751829ab65a5e1e8c7434456943351c35f`; EvidencePack SHA256 `9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97` | freeze and repair `EVID-002` before actual7 |
+| actual6 / `905a0a60` | ProductExecution and one isolated baseline build entered; the same projection failure repeated after two local-model calls; findings/Patch/Apply/changed Build did not run | `run_result.json` SHA256 `0c5b766821a3f05b0af54cb3da28ccd6c45e92265196415dcd89cc7352658c92`; `run_manifest.json` SHA256 `2fc0c051bf26755e4bbf3b83c8fbc751829ab65a5e1e8c7434456943351c35f`; EvidencePack SHA256 `9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97` | freeze and repair `EVID-002` before actual7 |
 
 The actual6 initial Ollama body was independently reconstructed from current
 source and the bound FeatureSpec. Its size `8868` and SHA256
@@ -110,8 +112,10 @@ ENTRY-002 current-scope close evidence accepted
 -> P2 empirical path remains blocked at projection-to-findings under active EVID-002; P0 is not reopened
 -> code/test checkpoint lineage 984716f -> 22f8fa0 accepted_for_bounded_code_and_tests
 -> Workflow tests-only checkpoint 1d8aeaff closes four inherited assertions without product-capability or actual claims
--> coverage-authorized ProductExecution deterministic vertical scenario
--> new sealed checkpoint-bound preflight and receipt review only after that scenario
+-> deterministic positive formal-coverage vertical reaches changed isolated bytes and a byte-consuming Build substitute
+-> coverage-removal negative reaches Patch/Dry-run/isolated Apply/Build and registers PLAN-001
+-> PLAN-001 bounded selected ProductExecution coverage-admission repair and vertical regression
+-> new sealed checkpoint-bound preflight and receipt review only after PLAN-001 closes
 -> separately authorized actual7; actual7 is unauthorized now
 -> actual7 independently determines EVID-002 real-run closure and the later product-path result
 ```
@@ -128,13 +132,18 @@ Public Alpha work. Documentation registration is not capability progress.
 | `symbol_exact` plus `text_match` retention and two edit bindings | Existing deterministic retriever contract | Old assertion drift; no Issue |
 | Insufficient Evidence commits a blocking ImplementationPlan before terminal block | Existing Workflow routing contract | Old assertion drift; no Issue |
 | Legacy fixture registered a physical source root but projected relative `source_path=Plugin.cs` without `target_domain` | Fixture drift, not selected ProductExecution path failure | No Issue; explicit GTFO `DomainReviewPolicy` blocks `Plugin.cs` with `scope_boundary` and no downstream success Artifact |
-| Formal requirement coverage lacks one complete ProductExecution positive/negative composition proof | Unproven boundary, not an observed production failure | Current Queue work: coverage-authorized ProductExecution deterministic vertical scenario; register an Issue only if it exposes a production-code first failure with a physical owner |
+| Valid formal requirement coverage ProductExecution positive vertical | Deterministic composition evidence | Passed through changed isolated bytes and a byte-consuming Build substitute; not a real Build, actual, or product-completion claim |
+| Formal requirement coverage section removed after valid provider output | Observed selected ProductExecution deterministic authority bypass | New `PLAN-001`; `ImplementationPlanner.build` treated the missing section as legacy unrestricted, and Patch/Dry-run/isolated Apply/Build calls were 1/1/1/1 instead of zero |
 | `ART-001` production owner projection remains effective and its reopen trigger is unsatisfied | Existing `ART-001` interaction | Corrected to `mitigated_for_current_scope` and `P3`; historical evidence is unchanged |
 | Default/public Graph does not carry SourceRegistry root into relative `source_path` | Conditional authority concern outside the selected write path | No Issue now; trigger only if the default/public Graph receives real write authority without exact source/root authority, or selected ProductExecution fails an explicit negative path test |
 | Findings local schema | Owner not reached | No Issue now; wait for a separately authorized actual7 to reach findings and expose a findings-owned failure |
 | Requirement coverage continuity through Repair | Owner not reached | No Issue now; wait for a legal Patch followed by changed-product failure that exposes coverage loss or misrepresentation |
-| New sealed preflight, receipt, and actual7 | Later authority gates | Not authorized by this docs checkpoint; they follow the deterministic vertical scenario and require separate decisions |
+| New sealed preflight, receipt, and actual7 | Later authority gates | Not authorized by this docs checkpoint; they follow `PLAN-001` closure and require separate decisions |
 
 The conditional source/root trigger does not reinterpret the legacy fixture as
 a current selected-path defect. The findings and Repair interactions remain
 event-triggered so an unobserved failure is not fitted to an Issue in advance.
+`PLAN-001` is not merged into `EVID-001`: the formal provider produced valid
+coverage and the first owner is downstream Planner admission, not RgLive.
+It is not merged into `EVID-002`: projection and findings succeeded before the
+coverage section was removed, so the provider/projection owner is different.

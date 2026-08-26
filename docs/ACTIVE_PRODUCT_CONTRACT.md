@@ -140,7 +140,8 @@ DLL SHA256 is
 `174ce450da330c36bb57ab709880040e1961a3eeefd5bd48c6ab455c12b33e6d`.
 It produced blocked EvidencePack SHA256
 `9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97`,
-no Patch, no changed-product Build, no Repair, and no product-source write.
+no Patch, no Apply, no changed-product Build, no Repair, and no product-source
+write.
 Checkpoint `2b18874a44e1785c1b8775ff2d8a8fa5f84594fb` proved that the
 per-obligation schema is sent to Ollama but did not close the real failure.
 Checkpoint `984716f09ef18111b781bcc1623bf184881f6e41` plus diagnostic
@@ -157,7 +158,18 @@ completed and is not reopened. `EVID-002` remains active until a later fresh
 actual reaches findings without the signature. The detailed recent logical
 chain and attempt evidence are in
 `docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md`.
-Actual7 is not authorized and both Internal Alpha hard gates remain false.
+The deterministic ProductExecution positive vertical scenario then carried
+valid formal requirement coverage through changed isolated bytes and a
+byte-consuming Build substitute. It is composition evidence, not a real Build,
+actual, or product-completion claim. Its coverage-removal negative retained
+`readiness`, `can_generate_patch`, and Evidence items but removed the formal
+authority section; current `ImplementationPlanner.build` treated that input as
+legacy unrestricted and Patch, Dry-run, isolated Apply, and Build were each
+called once instead of zero. This selected ProductExecution authority bypass
+is registered as active `PLAN-001`, with decision priority `P0`; it does not
+reopen the completed P0 product stage. `PLAN-001` now blocks vertical-scenario
+checkpoint formation and every packet/preflight/actual7 route. Actual7 is not
+authorized and both Internal Alpha hard gates remain false.
 
 Current execution order:
 
@@ -175,8 +187,10 @@ repository explicit unresolved result recorded
 -> EVID-002 code/test checkpoint lineage 984716f -> 22f8fa0 formed
 -> checkpoint lineage accepted_for_bounded_code_and_tests; EVID-002 remains active
 -> Workflow tests-only checkpoint 1d8aeaff closes four current-contract assertions without product or actual claims
--> coverage-authorized ProductExecution deterministic vertical scenario
--> new sealed checkpoint-bound preflight and receipt review only after that scenario
+-> deterministic formal-coverage positive vertical reaches changed isolated bytes and a byte-consuming Build substitute
+-> coverage-removal negative reaches Patch/Dry-run/isolated Apply/Build and registers PLAN-001
+-> PLAN-001 bounded selected ProductExecution coverage-admission repair and vertical regression
+-> new sealed checkpoint-bound preflight and receipt review only after PLAN-001 closes
 -> separately authorized actual7; actual7 remains unauthorized now
 -> actual7 independently determines EVID-002 real-run closure and the later product-path result
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation

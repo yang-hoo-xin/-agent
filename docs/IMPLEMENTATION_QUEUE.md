@@ -10,9 +10,9 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: coverage-authorized ProductExecution deterministic vertical scenario
+current_queue: PLAN-001 bounded selected ProductExecution coverage admission repair
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: checkpoint lineage 984716f -> 22f8fa0 is accepted_for_bounded_code_and_tests; deterministic positive/negative ProductExecution composition evidence is next while EVID-002 remains active pending real actual7 revalidation
+queue_status: deterministic positive formal-coverage vertical passed, but removing requirement_coverage allowed Patch/Dry-run/isolated Apply/Build calls 1/1/1/1 instead of 0/0/0/0; PLAN-001 is active while EVID-002 remains active pending real actual7 revalidation
 ```
 
 ```text
@@ -30,23 +30,25 @@ P2_ProductExecution_actual_runs: 2
 empirical_actual_status: actual5_and_actual6_blocked_before_findings
 last_failure: actual6 requirement_projection plus one correction ended REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID
 incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
-current_issue: EVID-002_active_until_fresh_actual_reaches_findings_without_signature
+current_issue: PLAN-001_active_selected_ProductExecution_formal_coverage_admission
+concurrent_issue: EVID-002_active_until_fresh_actual_reaches_findings_without_signature
 ENTRY_repository_implementation_checkpoint: complete
 ENTRY_fresh_same_context_admission: passed_current_scope
 ENTRY-002_status: closed
 actual6_run_id: 905a0a60
 actual6_evidence_pack_sha256: 9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97
 actual6_baseline_build: passed
+actual6_apply: not_reached
 actual6_changed_product_build: not_reached
 internal_alpha_hard_gates: false/false
 wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: coverage-authorized ProductExecution deterministic vertical scenario proving the formal requirement-coverage positive and negative composition boundaries without model, Build, Runtime, packet, preflight, or actual execution
-implementation_boundary: use the existing ProductExecution and Workflow contracts; do not add a Graph node, route, Artifact, Approval, coverage policy, model correction, retrieval path, or second control plane; stop at the first production-code failure and register an Issue only after its physical owner is established
-post_checkpoint_route: deterministic vertical scenario -> new sealed checkpoint-bound preflight -> receipt review -> separately authorized actual7
-activation_required: deterministic vertical scenario is current; packet, preflight, receipt, and actual7 remain later separate gates and are unauthorized now
+next_eligible_slice: bounded PLAN-001 Planner admission repair plus the existing positive and two negative ProductExecution vertical regressions
+implementation_boundary: pass formal-coverage-required runtime context through existing ProductExecutionGraphModeV1/Graph composition to ImplementationPlanner.build; selected ProductExecution must block missing or invalid coverage before edit-binding derivation; preserve legacy non-selected compatibility; do not add an Artifact, Graph branch, Approval, source-root field, or second control plane
+post_checkpoint_route: PLAN-001 focused checkpoint and vertical regression -> new sealed checkpoint-bound preflight -> receipt review -> separately authorized actual7
+activation_required: PLAN-001 repair is current; packet, preflight, receipt, and actual7 remain later separate gates and are unauthorized now
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
@@ -59,10 +61,15 @@ the current P2 empirical-path Issue at the projection-to-findings boundary; P0
 remains completed and is not reopened. The `984716f` -> `22f8fa0` code
 checkpoint lineage is accepted only as bounded code/test evidence and does not
 close the Issue. Workflow tests-only checkpoint `1d8aeaff` closes inherited
-assertion drift and is not product capability or actual evidence. The current
-deterministic vertical scenario addresses an unproven composition boundary,
-not an observed production failure, so it is Queue work rather than a new
-Issue. Only a separately authorized actual7 can
+assertion drift and is not product capability or actual evidence. The
+deterministic positive vertical scenario is also composition evidence only.
+Its coverage-removal negative established a separate selected ProductExecution
+Planner-owned authority bypass: the formal provider succeeded, but once the
+coverage section was removed, Patch, Dry-run, isolated Apply, and Build each
+ran once. `PLAN-001` therefore owns the current Queue; it is not `EVID-001` or
+`EVID-002`, and its `P0` decision priority does not reopen the completed P0
+product stage. Only after `PLAN-001` closes can a new sealed preflight be
+considered. Only a separately authorized actual7 can
 provide the close-trigger evidence, and its downstream product result remains
 an independent outcome. Actual7 is not authorized.
 

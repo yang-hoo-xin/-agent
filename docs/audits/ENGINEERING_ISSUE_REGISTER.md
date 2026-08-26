@@ -354,6 +354,36 @@ minimum_acceptance:
   - no third correction, model switch, retrieval expansion, or policy relaxation
 ```
 
+### PLAN-001
+
+```yaml
+issue_id: PLAN-001
+title: selected ProductExecution treats missing formal requirement coverage as legacy unrestricted planning
+scope: selected ProductExecution create_implementation_plan coverage admission before edit-binding derivation
+owner: src/mod_agent/planning/implementation_plan.py::ImplementationPlanner.build selected ProductExecution formal requirement-coverage admission
+evidence_level: mechanical_replay
+severity: S0
+decision_priority: P0
+status: active
+first_seen: HEAD f240d103df89b95c8259f2bca731afc34f26b02b deterministic vertical scenario; failing test test_product_execution_blocks_removed_formal_coverage_before_patch_effect
+latest_evidence: the formal provider first generated valid requirement coverage; after the section was removed, readiness, can_generate_patch, and Evidence items remained, and Patch, Dry-run, isolated Apply, and Build call counts were 1/1/1/1 instead of 0/0/0/0. The valid formal-coverage positive vertical scenario passed through changed isolated bytes and a byte-consuming Build substitute. Canonical source was not written
+current_effect: vertical scenario checkpoint formation, packet, preflight, receipt, and actual7 are blocked. EVID-002 remains independently active, and the completed P0 product stage is not reopened
+workaround: keep actual7 unauthorized and preserve the tests-first failure; do not globally disable legacy EvidencePack behavior
+reopen_trigger: selected ProductExecution forms an edit binding, Patch authority, or any later effect after the formal requirement coverage section is missing or invalid
+close_trigger: a focused checkpoint makes selected ProductExecution mode require formal coverage and produces a blocking ImplementationPlan before edit binding or Patch when coverage is missing or invalid; the valid formal positive vertical still reaches changed isolated bytes and the byte-consuming Build substitute; legacy non-selected Planner/Graph behavior remains compatible; both negative scenarios have zero Apply and Build calls
+next_action: implement one bounded Planner admission repair and run the positive plus two negative vertical regressions
+last_reviewed: 2026-08-26
+required_before_stage: next P2 empirical actual
+minimum_acceptance:
+  - selected ProductExecution missing formal requirement coverage fails closed
+  - Patch, Dry-run, isolated Apply, and Build effect calls are all zero
+  - no success terminal Artifact is created
+  - valid formal coverage positive vertical still reaches changed isolated bytes and the byte-consuming Build substitute
+  - legacy non-selected Planner and Graph behavior remains compatible
+  - the selected ProductExecution path/Review negative passes
+  - no new Artifact, Graph branch, Approval, or control plane
+```
+
 ### ISO-001
 
 ```yaml
