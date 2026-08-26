@@ -4,6 +4,7 @@ from pathlib import Path
 import copy
 import hashlib
 import inspect
+import json
 import shutil
 import subprocess
 from dataclasses import replace
@@ -565,6 +566,7 @@ def _formal_coverage_vertical_scenario(
     *,
     search_root: str = "generated_mods/Example",
     remove_requirement_coverage: bool = False,
+    requirement_coverage_completion=None,
 ) -> SimpleNamespace:
     request, store = _request(tmp_path)
     workspace_root = Path(request.isolated_workspace_root)
@@ -607,6 +609,8 @@ def _formal_coverage_vertical_scenario(
 
     def complete_json(role, payload, _schema):
         trace["completion_roles"].append(role)
+        if requirement_coverage_completion is not None:
+            return requirement_coverage_completion(role, payload, _schema)
         if role == "requirement_projection":
             obligations = payload["input_obligations"]
             change_indexes = [
@@ -1495,6 +1499,256 @@ def test_product_execution_formal_coverage_vertical_reaches_changed_bytes_and_bu
     assert build["status"] == "success"
     assert build["verified_artifacts"][0]["path"] == "bin/Debug/Example.dll"
     assert "runtime_evidence" not in refs
+    assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
+
+
+def test_product_execution_actual7_projection_overlap_fails_closed(
+    tmp_path: Path,
+) -> None:
+    raw_outputs: list[dict[str, object]] = []
+    response_schemas: list[dict[str, object]] = []
+    raw_markers: list[str] = []
+
+    def overlap_completion(role, payload, schema):
+        assert role in {
+            "requirement_projection",
+            "requirement_projection_correction",
+        }
+        obligations = payload["input_obligations"]
+        assert [row["input_obligation_index"] for row in obligations] == list(
+            range(1, len(obligations) + 1)
+        )
+        overlap_obligation = obligations[6]
+        assert overlap_obligation["input_obligation_index"] == 7
+        assert overlap_obligation["origin"] == {
+            "field": "non_goals",
+            "index": 3,
+        }
+        assert overlap_obligation["allowed_roles"] == [
+            "preservation",
+            "pre_patch_evidence",
+        ]
+        assert overlap_obligation["allowed_dispositions"] == ["scope_boundary"]
+
+        grouped: dict[str, dict[str, object]] = {}
+        for obligation in obligations:
+            requirement_role = obligation["allowed_roles"][0]
+            group = grouped.setdefault(
+                requirement_role,
+                {
+                    "role": requirement_role,
+                    "text": obligation["text"],
+                    "input_obligation_indexes": [],
+                    "query_leads": [obligation["text"]],
+                },
+            )
+            group["input_obligation_indexes"].append(
+                obligation["input_obligation_index"]
+            )
+        requirements = list(grouped.values())
+        raw_marker = f"raw-{role}-must-not-persist"
+        projection = {
+            "requirements": requirements,
+            "relations": [
+                {
+                    "parent_requirement_indexes": list(
+                        range(1, len(requirements) + 1)
+                    ),
+                    "meaning": "All projected obligations require evidence disposition.",
+                }
+            ],
+            "input_dispositions": [
+                {
+                    "input_obligation_index": 7,
+                    "disposition": "scope_boundary",
+                    "reason": raw_marker,
+                }
+            ],
+        }
+        raw_outputs.append(copy.deepcopy(projection))
+        response_schemas.append(copy.deepcopy(schema))
+        raw_markers.append(raw_marker)
+        return projection
+
+    scenario = _formal_coverage_vertical_scenario(
+        tmp_path,
+        requirement_coverage_completion=overlap_completion,
+    )
+    isolated_snapshot_before = source_snapshot_sha256(
+        source_snapshot(Path(scenario.request.isolated_target_root))
+    )
+    canonical_snapshot_before = source_snapshot_sha256(
+        source_snapshot(Path(scenario.request.source_root))
+    )
+
+    result = execute_product_execution(
+        preflight_product_execution(
+            scenario.request,
+            scenario.adapters,
+            scenario.store,
+        ),
+        scenario.adapters,
+        scenario.store,
+    )
+
+    assert scenario.trace["completion_roles"] == [
+        "requirement_projection",
+        "requirement_projection_correction",
+    ]
+    assert len(raw_outputs) == 2
+    assert response_schemas[0] == response_schemas[1]
+    assert (
+        scenario.trace["patch_calls"],
+        scenario.trace["dry_run_calls"],
+        scenario.trace["apply_calls"],
+        scenario.trace["build_calls"],
+    ) == (0, 0, 0, 0)
+    assert scenario.target.read_bytes() == scenario.source_before
+    assert scenario.canonical.read_bytes() == scenario.canonical_before
+    assert source_snapshot_sha256(
+        source_snapshot(Path(scenario.request.isolated_target_root))
+    ) == isolated_snapshot_before
+    assert source_snapshot_sha256(
+        source_snapshot(Path(scenario.request.source_root))
+    ) == canonical_snapshot_before
+
+    roles = tuple(item.artifact_role for item in result.store_attempts)
+    assert result.platform_status == "completed"
+    assert result.execution_disposition == "domain_blocked"
+    assert result.terminal_node == "blocked"
+    assert roles == (
+        "request_planning_report",
+        "mod_planning_brief",
+        "feature_spec",
+        "evidence_pack",
+        "implementation_plan",
+        "blocked_report",
+    )
+    assert tuple(item.artifact_role for item in result.outputs) == roles
+    assert all(item.repair_attempt == 0 for item in result.store_attempts)
+    assert tuple(
+        (event.effect_role, event.event_status, event.repair_attempt)
+        for event in result.effect_events
+    ) == (
+        ("evidence_retrieval", "started", 0),
+        ("evidence_retrieval", "completed", 0),
+    )
+
+    refs = {item.artifact_role: item.artifact_ref for item in result.outputs}
+    evidence = scenario.store.read(refs["evidence_pack"])["data"]
+    implementation = scenario.store.read(refs["implementation_plan"])["data"]
+    attempts = evidence["budget_summary"][
+        "requirement_projection_attempt_audit"
+    ]
+    attempt_audit_fields = {
+        "attempt_index",
+        "structured_output_canonical_sha256",
+        "structured_output_hash_basis",
+        "schema_sha256",
+        "status",
+        "error_code",
+        "response_schema_admitted",
+        "semantic_materialization_admitted",
+        "requirement_count",
+        "relation_count",
+        "input_disposition_count",
+        "rejection_diagnostic",
+    }
+    assert [set(attempt) for attempt in attempts] == [
+        attempt_audit_fields,
+        attempt_audit_fields,
+    ]
+    assert [attempt["response_schema_admitted"] for attempt in attempts] == [
+        True,
+        True,
+    ]
+    assert [
+        attempt["semantic_materialization_admitted"] for attempt in attempts
+    ] == [False, False]
+    assert [
+        attempt["rejection_diagnostic"] for attempt in attempts
+    ] == [
+        {
+            "error_code": "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+            "phase": "semantic_materialization",
+            "failure_category": (
+                "obligation_already_accounted_and_dispositioned"
+            ),
+            "json_path": "$.input_dispositions[0].input_obligation_index",
+            "input_obligation_index": 7,
+            "allowed_dispositions": ["scope_boundary"],
+            "bounded_correction_attempts_remaining": 1,
+        },
+        {
+            "error_code": "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+            "phase": "semantic_materialization",
+            "failure_category": (
+                "obligation_already_accounted_and_dispositioned"
+            ),
+            "json_path": "$.input_dispositions[0].input_obligation_index",
+            "input_obligation_index": 7,
+            "allowed_dispositions": ["scope_boundary"],
+            "bounded_correction_attempts_remaining": 0,
+        },
+    ]
+    assert [
+        (
+            attempt["requirement_count"],
+            attempt["relation_count"],
+            attempt["input_disposition_count"],
+        )
+        for attempt in attempts
+    ] == [(4, 1, 1), (4, 1, 1)]
+    assert [
+        attempt["structured_output_canonical_sha256"] for attempt in attempts
+    ] == [
+        hashlib.sha256(
+            json.dumps(
+                output,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        for output in raw_outputs
+    ]
+    assert evidence["budget_summary"]["semantic_provider_failure_codes"] == [
+        "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID"
+    ]
+    assert evidence["budget_summary"]["semantic_provider_failed_closed"] is True
+    assert evidence["budget_summary"][
+        "semantic_provider_failure_diagnostics"
+    ] == [attempts[1]["rejection_diagnostic"]]
+
+    assert evidence["readiness"] == "insufficient"
+    assert evidence["authoritative_for_patch"] is False
+    assert evidence["can_generate_patch"] is False
+    assert evidence["verified_findings"] == []
+    assert evidence["requirement_coverage"]["findings"] == []
+    coverage = validated_requirement_coverage_view(evidence)
+    assert coverage is not None
+    assert coverage.authorized_edit_target_ids == frozenset()
+    assert implementation["blocking"] is True
+    assert implementation["proposed_changes"] == []
+    assert implementation["binding_registry"] == {}
+
+    persisted_payloads = [scenario.store.read(ref) for ref in refs.values()]
+    persisted_json = json.dumps(
+        persisted_payloads,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    assert all(raw_marker not in persisted_json for raw_marker in raw_markers)
+    assert not {
+        "patch_proposal",
+        "proposal_review",
+        "dry_run_result",
+        "isolated_apply_result",
+        "build_result",
+        "repair_plan",
+        "workflow_checkpoint",
+        "workflow_summary",
+    }.intersection(roles)
     assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
 
 
