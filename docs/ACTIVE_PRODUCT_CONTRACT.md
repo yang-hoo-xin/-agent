@@ -144,8 +144,14 @@ no Patch, no changed-product Build, no Repair, and no product-source write.
 Checkpoint `2b18874a44e1785c1b8775ff2d8a8fa5f84594fb` proved that the
 per-obligation schema is sent to Ollama but did not close the real failure.
 Checkpoint `984716f09ef18111b781bcc1623bf184881f6e41` plus diagnostic
-follow-up `22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e` now form the bounded
-code/test repair lineage and await macro review. This is still the P2
+follow-up `22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e` form the bounded
+code/test repair lineage and are `accepted_for_bounded_code_and_tests` by
+macro review. Workflow tests-only checkpoint
+`1d8aeaff32a93d5475debca482ba72404b9674cf` then closed four inherited
+integration assertions against the current retrieval, blocking-plan, and
+explicit GTFO review-policy contracts. It is test-contract closure, not a new
+product capability, ProductExecution actual, or real-run closure. This is
+still the P2
 empirical path blocked at the projection-to-findings boundary; P0 remains
 completed and is not reopened. `EVID-002` remains active until a later fresh
 actual reaches findings without the signature. The detailed recent logical
@@ -167,8 +173,11 @@ repository explicit unresolved result recorded
 -> repository Entry checkpoint c906d99 plus two fresh preflight/actual pairs close ENTRY-002 for the current scope
 -> actual5 and actual6 enter ProductExecution and repeat the same projection disposition failure before findings
 -> EVID-002 code/test checkpoint lineage 984716f -> 22f8fa0 formed
--> macro checkpoint review; acceptance does not close EVID-002
--> new checkpoint-bound preflight and separately authorized actual7 only after review
+-> checkpoint lineage accepted_for_bounded_code_and_tests; EVID-002 remains active
+-> Workflow tests-only checkpoint 1d8aeaff closes four current-contract assertions without product or actual claims
+-> coverage-authorized ProductExecution deterministic vertical scenario
+-> new sealed checkpoint-bound preflight and receipt review only after that scenario
+-> separately authorized actual7; actual7 remains unauthorized now
 -> actual7 independently determines EVID-002 real-run closure and the later product-path result
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint

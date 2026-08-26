@@ -207,8 +207,8 @@ scope: calibration actual authorization packet construction
 owner: production FeatureSpec and ArtifactStore identity projection
 evidence_level: mechanical_replay
 severity: S1
-decision_priority: P0
-status: active
+decision_priority: P3
+status: mitigated_for_current_scope
 first_seen: 2026-08-21 BHF preflight
 latest_evidence: production RequestPlanner and FeatureSpecBuilder produce feature_258e3fb80ea6 with hash 79786316d2c4a8201e5c5659a81ae9906b6cf5fa638edd32c6da3cdee751dded
 current_effect: future calibration runs use the production owner rather than hand-authored payload fields
@@ -338,12 +338,12 @@ latest_evidence: actual6 run 905a0a60 at checkpoint 2b18874 sent the per-obligat
 incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
 implementation_checkpoint: 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
 implementation_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 followed by diagnostic closure 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
-implementation_checkpoint_status: formed_pending_macro_review
-current_effect: actual5 and actual6 have not reached findings; checkpoints 984716f and 22f8fa0 are code/test evidence only and do not close the real-run Issue. Packet, preflight, and actual7 remain blocked until separate macro decisions
+implementation_checkpoint_status: accepted_for_bounded_code_and_tests
+current_effect: actual5 and actual6 have not reached findings; checkpoints 984716f and 22f8fa0 are accepted bounded code/test evidence only and do not close the real-run Issue. The coverage-authorized ProductExecution deterministic vertical scenario is Queue work, while packet, preflight, receipt, and actual7 remain unauthorized pending later separate decisions
 workaround: preserve the immutable actual5/actual6 outputs and fail-closed EvidencePack; do not add a third correction, switch model, change retrieval, or relax coverage policy
 reopen_trigger: any selected real task returns a projection object that fails exact response-schema admission or deterministic input-disposition semantics after the single bounded correction
-close_trigger: after a focused checkpoint passes macro review, a newly sealed preflight passes and a separately authorized fresh actual reaches findings without this failure signature
-next_action: perform read-only macro review of the 984716f to 22f8fa0 checkpoint lineage; if accepted, separately authorize a new packet/preflight and then actual7. Code-checkpoint acceptance, Issue real-run closure, and the later actual7 product result are three distinct decisions
+close_trigger: the accepted focused checkpoint is followed by a newly sealed preflight that passes, and a separately authorized fresh actual reaches findings without this failure signature
+next_action: complete the deterministic vertical scenario without treating its unproven composition boundary as a new Issue; afterward separately decide whether to authorize a new sealed checkpoint-bound preflight and receipt review, then actual7. Code-checkpoint acceptance, Issue real-run closure, and the later actual7 product result remain three distinct decisions
 last_reviewed: 2026-08-26
 required_before_stage: next P2 empirical actual
 minimum_acceptance:

@@ -10,12 +10,14 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ```text
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
-current_dependency: EVID-002-CODE-CHECKPOINT-MACRO-REVIEW
+current_dependency: coverage-authorized ProductExecution deterministic vertical scenario
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
 current_product_code_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 -> 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
-current_product_code_checkpoint_review: pending_macro_review
+current_product_code_checkpoint_review: accepted_for_bounded_code_and_tests
+latest_workflow_test_checkpoint: 1d8aeaff32a93d5475debca482ba72404b9674cf
+latest_workflow_test_checkpoint_claim: test_contract_closure_only_not_product_capability_or_actual
 current_wip: four independent user documentation changes, no staged files
 latest_repository_run: 32e29415
 latest_repository_run_report_sha256: B7B3F473F8DA8E2500DA67E496DC389B8B9BB5109D8056F49FC170CEB2ED7AD9
@@ -53,7 +55,7 @@ P2_empirical_actual_status: actual5_and_actual6_blocked_before_findings
 P2_entry_incident: docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md
 P2_entry_incident_sha256: D2B19630BD209CB03EB7AF04F99AAD67D80B70BAB986DEA73756126563322044
 P2_recent_issue_interaction_audit: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
-task_reliability_preflight: eligible_for_fresh_actual
+task_reliability_preflight: historical_eligibility_only_new_checkpoint_bound_preflight_required_after_vertical_scenario
 task_reliability_report: docs/audits/ACCURATE_CROSSHAIR_SPREAD_TOGGLE_PREFLIGHT_20260824.json
 task_reliability_report_sha256: 36AAD0A655D05A530143094B376C69BB899C4922E0C2364FDF846446415C9849
 accurate_crosshair_actual_authorized: false
@@ -76,7 +78,7 @@ failure_different_repair_revalidation_success: false
 runtime_verified: false
 general_harness_validated: false
 stable_agent_capability: false
-next_capability_step: read-only review checkpoint lineage 984716f -> 22f8fa0; if accepted, separately authorize a new preflight and actual7. Checkpoint acceptance does not close EVID-002 or determine actual7 product outcome
+next_capability_step: execute the coverage-authorized ProductExecution deterministic vertical scenario; only afterward may a new sealed checkpoint-bound preflight and receipt review be considered, followed by separately authorized actual7. Checkpoint and scenario evidence do not close EVID-002 or determine actual7 product outcome
 rag_1a_status: explicit_unresolved
 rag_1a_relation_aware_status: explicit_unresolved_before_artifact_commit
 rag_1b_status: not_started

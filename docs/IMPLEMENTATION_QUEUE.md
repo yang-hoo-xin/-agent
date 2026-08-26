@@ -10,9 +10,9 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: P2-EVID-002-checkpoint-review
+current_queue: coverage-authorized ProductExecution deterministic vertical scenario
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: checkpoint lineage 984716f -> 22f8fa0 formed and awaits macro code/test review; EVID-002 remains active pending real actual7 revalidation
+queue_status: checkpoint lineage 984716f -> 22f8fa0 is accepted_for_bounded_code_and_tests; deterministic positive/negative ProductExecution composition evidence is next while EVID-002 remains active pending real actual7 revalidation
 ```
 
 ```text
@@ -20,7 +20,9 @@ last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 last_task_status: P2_empirical_path_blocked_at_projection_to_findings_boundary
 last_product_code_checkpoint: 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
 last_product_code_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 -> 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
-last_product_code_checkpoint_review: pending_macro_review
+last_product_code_checkpoint_review: accepted_for_bounded_code_and_tests
+last_workflow_test_checkpoint: 1d8aeaff32a93d5475debca482ba72404b9674cf
+last_workflow_test_checkpoint_claim: test_contract_closure_only_not_product_capability_or_actual
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
 P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed
@@ -41,10 +43,10 @@ wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: read-only macro review of checkpoint lineage 984716f -> 22f8fa0 exact diffs, tests, owner boundary, and four-WIP preservation
-implementation_boundary: no retrieval/findings/coverage-policy/Planner/Resolver/model/budget/vector/Entry change; no third correction and no new Artifact or Graph
-post_checkpoint_route: checkpoint review accepted -> new checkpoint-bound preflight -> receipt review -> separately authorized actual7
-activation_required: checkpoint review is current; packet, preflight, and actual7 remain later separate gates
+next_eligible_slice: coverage-authorized ProductExecution deterministic vertical scenario proving the formal requirement-coverage positive and negative composition boundaries without model, Build, Runtime, packet, preflight, or actual execution
+implementation_boundary: use the existing ProductExecution and Workflow contracts; do not add a Graph node, route, Artifact, Approval, coverage policy, model correction, retrieval path, or second control plane; stop at the first production-code failure and register an Issue only after its physical owner is established
+post_checkpoint_route: deterministic vertical scenario -> new sealed checkpoint-bound preflight -> receipt review -> separately authorized actual7
+activation_required: deterministic vertical scenario is current; packet, preflight, receipt, and actual7 remain later separate gates and are unauthorized now
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
@@ -55,8 +57,12 @@ scope and prove two ProductExecution entries. Both actuals fail closed before
 findings on the same projection disposition signature. `EVID-002` is therefore
 the current P2 empirical-path Issue at the projection-to-findings boundary; P0
 remains completed and is not reopened. The `984716f` -> `22f8fa0` code
-checkpoint lineage being formed or
-accepted does not close the Issue. Only a separately authorized actual7 can
+checkpoint lineage is accepted only as bounded code/test evidence and does not
+close the Issue. Workflow tests-only checkpoint `1d8aeaff` closes inherited
+assertion drift and is not product capability or actual evidence. The current
+deterministic vertical scenario addresses an unproven composition boundary,
+not an observed production failure, so it is Queue work rather than a new
+Issue. Only a separately authorized actual7 can
 provide the close-trigger evidence, and its downstream product result remains
 an independent outcome. Actual7 is not authorized.
 
@@ -1054,6 +1060,9 @@ open gap describes it.
 | GTFO launch, copy, or gameplay evidence | A selected Mod acceptance criterion requires it and the user separately approves exact launch/copy actions | Conditional |
 | Production ArtifactStore hardening | A real delivery task exposes recovery, concurrency, history-query, migration, or retention failure | Conditional |
 | Long-term memory/closed-loop automation | Repeated verified tasks expose a recurrence or retrieval failure that manually recorded lessons cannot solve | Conditional; history is not trusted policy memory |
+| Default/public Graph source-root authority | The default/public Graph receives real write authority while still lacking exact source/root authority, or a selected ProductExecution negative path test fails under its explicit `DomainReviewPolicy` | Conditional; SourceRegistry root omission from relative `source_path` is not a current selected-path Issue |
+| Findings local-schema follow-up | A separately authorized actual7 reaches findings and exposes a local findings-schema failure | Conditional; wait for the findings owner and do not register an Issue early |
+| Requirement coverage continuity through Repair | A legal Patch reaches changed-product failure and Repair loses or misrepresents the admitted coverage contract | Conditional; wait for the changed-product failure owner |
 
 ## 4. Task Record Template
 

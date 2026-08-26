@@ -36,6 +36,8 @@ stale_existing_entries_updated:
   - DOC-001
 historical_gap_recorded_without_reactivation:
   - Wall relation-aware Requirement Projection correction at 8c5509e
+post_checkpoint_update_interactions_reviewed: 11
+post_checkpoint_update_new_registered_issues: 0
 ```
 
 The eight interaction gaps consist of one closed-route historical gap, four
@@ -106,12 +108,33 @@ schema or that the schema expresses every cross-field semantic invariant.
 ```text
 ENTRY-002 current-scope close evidence accepted
 -> P2 empirical path remains blocked at projection-to-findings under active EVID-002; P0 is not reopened
--> code/test checkpoint lineage 984716f -> 22f8fa0 formed and awaits macro review
--> checkpoint acceptance, if granted, does not close EVID-002
--> new checkpoint-bound preflight
--> separately authorized actual7
+-> code/test checkpoint lineage 984716f -> 22f8fa0 accepted_for_bounded_code_and_tests
+-> Workflow tests-only checkpoint 1d8aeaff closes four inherited assertions without product-capability or actual claims
+-> coverage-authorized ProductExecution deterministic vertical scenario
+-> new sealed checkpoint-bound preflight and receipt review only after that scenario
+-> separately authorized actual7; actual7 is unauthorized now
 -> actual7 independently determines EVID-002 real-run closure and the later product-path result
 ```
 
 This audit does not authorize code, model, actual, Build, Runtime, vector, or
 Public Alpha work. Documentation registration is not capability progress.
+
+## 5. Post-Checkpoint Issue Interaction Update
+
+| Reviewed interaction | Decision | Issue/Queue consequence |
+| --- | --- | --- |
+| `984716f` -> `22f8fa0` macro checkpoint review | Existing `EVID-002` interaction | `accepted_for_bounded_code_and_tests`; `EVID-002` remains active and actual7 remains unauthorized |
+| Workflow tests-only checkpoint `1d8aeaff32a93d5475debca482ba72404b9674cf` | Normal test-contract maintenance | No Issue; four inherited assertions now express current deterministic retrieval, blocking ImplementationPlan, and explicit review-policy contracts; no product capability or actual claim |
+| `symbol_exact` plus `text_match` retention and two edit bindings | Existing deterministic retriever contract | Old assertion drift; no Issue |
+| Insufficient Evidence commits a blocking ImplementationPlan before terminal block | Existing Workflow routing contract | Old assertion drift; no Issue |
+| Legacy fixture registered a physical source root but projected relative `source_path=Plugin.cs` without `target_domain` | Fixture drift, not selected ProductExecution path failure | No Issue; explicit GTFO `DomainReviewPolicy` blocks `Plugin.cs` with `scope_boundary` and no downstream success Artifact |
+| Formal requirement coverage lacks one complete ProductExecution positive/negative composition proof | Unproven boundary, not an observed production failure | Current Queue work: coverage-authorized ProductExecution deterministic vertical scenario; register an Issue only if it exposes a production-code first failure with a physical owner |
+| `ART-001` production owner projection remains effective and its reopen trigger is unsatisfied | Existing `ART-001` interaction | Corrected to `mitigated_for_current_scope` and `P3`; historical evidence is unchanged |
+| Default/public Graph does not carry SourceRegistry root into relative `source_path` | Conditional authority concern outside the selected write path | No Issue now; trigger only if the default/public Graph receives real write authority without exact source/root authority, or selected ProductExecution fails an explicit negative path test |
+| Findings local schema | Owner not reached | No Issue now; wait for a separately authorized actual7 to reach findings and expose a findings-owned failure |
+| Requirement coverage continuity through Repair | Owner not reached | No Issue now; wait for a legal Patch followed by changed-product failure that exposes coverage loss or misrepresentation |
+| New sealed preflight, receipt, and actual7 | Later authority gates | Not authorized by this docs checkpoint; they follow the deterministic vertical scenario and require separate decisions |
+
+The conditional source/root trigger does not reinterpret the legacy fixture as
+a current selected-path defect. The findings and Repair interactions remain
+event-triggered so an unobserved failure is not fitted to an Issue in advance.
