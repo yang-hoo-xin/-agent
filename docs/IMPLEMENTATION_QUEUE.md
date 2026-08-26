@@ -10,15 +10,17 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: EVID-002-projection-structured-output-contract
+current_queue: P2-EVID-002-checkpoint-review
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: actual6 repeated projection disposition admission failure after one correction; findings and Patch not reached
+queue_status: checkpoint lineage 984716f -> 22f8fa0 formed and awaits macro code/test review; EVID-002 remains active pending real actual7 revalidation
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
-last_task_status: P2_empirical_actual_blocked_at_EVID-002
-last_product_code_checkpoint: 2b18874a44e1785c1b8775ff2d8a8fa5f84594fb
+last_task_status: P2_empirical_path_blocked_at_projection_to_findings_boundary
+last_product_code_checkpoint: 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
+last_product_code_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 -> 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
+last_product_code_checkpoint_review: pending_macro_review
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
 P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed
@@ -26,7 +28,7 @@ P2_ProductExecution_actual_runs: 2
 empirical_actual_status: actual5_and_actual6_blocked_before_findings
 last_failure: actual6 requirement_projection plus one correction ended REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID
 incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
-current_owner: EVID-002 requirement projection structured-output admission, diagnostics, and one-correction contract
+current_issue: EVID-002_active_until_fresh_actual_reaches_findings_without_signature
 ENTRY_repository_implementation_checkpoint: complete
 ENTRY_fresh_same_context_admission: passed_current_scope
 ENTRY-002_status: closed
@@ -39,10 +41,10 @@ wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: implement exact local projection schema admission, precise semantic rejection diagnostics, and the existing one-correction contract -> focused checkpoint -> stop
+next_eligible_slice: read-only macro review of checkpoint lineage 984716f -> 22f8fa0 exact diffs, tests, owner boundary, and four-WIP preservation
 implementation_boundary: no retrieval/findings/coverage-policy/Planner/Resolver/model/budget/vector/Entry change; no third correction and no new Artifact or Graph
-post_checkpoint_route: new checkpoint-bound preflight -> receipt review -> separately authorized actual7
-activation_required: EVID-002 code work is authorized; packet, preflight, and actual7 remain later separate gates
+post_checkpoint_route: checkpoint review accepted -> new checkpoint-bound preflight -> receipt review -> separately authorized actual7
+activation_required: checkpoint review is current; packet, preflight, and actual7 remain later separate gates
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
@@ -51,7 +53,12 @@ remain complete within their recorded construction boundaries. Fresh preflight4
 plus actual5 and fresh preflight5 plus actual6 close `ENTRY-002` for the current
 scope and prove two ProductExecution entries. Both actuals fail closed before
 findings on the same projection disposition signature. `EVID-002` is therefore
-the only active P0 work; actual7 is not authorized.
+the current P2 empirical-path Issue at the projection-to-findings boundary; P0
+remains completed and is not reopened. The `984716f` -> `22f8fa0` code
+checkpoint lineage being formed or
+accepted does not close the Issue. Only a separately authorized actual7 can
+provide the close-trigger evidence, and its downstream product result remains
+an independent outcome. Actual7 is not authorized.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

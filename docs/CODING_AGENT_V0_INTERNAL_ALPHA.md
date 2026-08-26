@@ -738,8 +738,10 @@ r8 repository objective explicit unresolved 已记录
 → P0 lexical false-sufficiency、P1a deterministic coverage 与 P1b formal provider construction 完成
 → ENTRY-002 经 preflight4/actual5 与 preflight5/actual6 在当前 scope 关闭
 → actual5/actual6 均进入 ProductExecution，但在 findings 前重复 requirement projection disposition failure
-→ EVID-002 structured-output admission、精确诊断和单次 correction checkpoint
+→ EVID-002 structured-output admission、精确诊断和单次 correction checkpoint lineage 984716f → 22f8fa0 已形成，等待宏观审核
+→ checkpoint审核通过不等于Issue关闭
 → 新 checkpoint-bound preflight 与单独授权 actual7
+→ actual7独立判定EVID-002真实运行关闭及后续产品路径结果
 → 一条 Build/Test 成功 + 一次 Failure → Different Repair → Revalidation
 → Internal Alpha completion checkpoint
 → RAG-1B：唯一公共入口采用同一 Evidence executor + Operational Readiness work
@@ -784,7 +786,7 @@ r8 repository objective explicit unresolved 已记录
 - WallCrawler committed actual 不能形成负向能力结论，Case Reliability 为 `invalid_for_agent_evaluation_for_current_protocol`；
 - 最小关系级 Eval 已把 lane coverage、required/missing relations、完整 Hook identity、禁止 identity、相关 IL 与 budget terminal 一并计入；
 - RAG-1A outcome 为 `explicit_unresolved`，不是 pass；outcome report SHA256 为 `7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B`；
-- `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001` 的 run `8d26e4e5` 触发 P0；P0/P1 和 Entry 后续 checkpoint 已形成。Recovery actual5 `f6bdb182` 与 actual6 `905a0a60` 均进入 ProductExecution，却在一次 Requirement Projection correction 后重复 `REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID`，findings 未到达。actual6 完成 12 个 live queries 和一次隔离 baseline restore/build，baseline DLL SHA256 为 `174ce450da330c36bb57ab709880040e1961a3eeefd5bd48c6ab455c12b33e6d`；它没有 Patch、changed-product Build、Repair 或 source write。EvidencePack SHA256 为 `9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97`。`EVID-002` 是当前唯一 P0 owner；actual7 未授权。当前两项 Internal Alpha 硬门仍为 false：没有 actual-only changed-product Build/Test success，也没有 Failure → Different Repair → Revalidation success。Runtime 未验证，但本轮不擅自把它新增为当前 compile/test Internal Alpha 硬门；gameplay delivery/Public Alpha 仍需适用的独立 Runtime 证据。近期完整 Issue 交互审计位于 `docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md`。
+- `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001` 的 run `8d26e4e5` 触发并关闭了P0 lexical false-sufficiency；当前P0没有重开。Recovery actual5 `f6bdb182` 与 actual6 `905a0a60` 均进入 ProductExecution，却在一次 Requirement Projection correction 后重复 `REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID`，findings 未到达。actual6 完成 12 个 live queries 和一次隔离 baseline restore/build，baseline DLL SHA256 为 `174ce450da330c36bb57ab709880040e1961a3eeefd5bd48c6ab455c12b33e6d`；它没有 Patch、changed-product Build、Repair 或 source write。EvidencePack SHA256 为 `9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97`。`EVID-002` 是当前P2 empirical path在projection-to-findings边界的active Issue。代码checkpoint lineage `984716f` → `22f8fa0` 已形成但等待宏观审核；审核通过不关闭Issue，只有后续fresh actual不再出现该签名并到达findings才满足关闭条件。actual7本身的后续产品结果是第三个独立判断。actual7未授权。当前两项 Internal Alpha 硬门仍为 false：没有 actual-only changed-product Build/Test success，也没有 Failure → Different Repair → Revalidation success。Runtime 未验证，但本轮不擅自把它新增为当前 compile/test Internal Alpha 硬门；gameplay delivery/Public Alpha 仍需适用的独立 Runtime 证据。近期完整 Issue 交互审计位于 `docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md`。
 
 Relation-aware follow-up did not change the frozen old RAG-1A comparison. It
 formed product-code checkpoints `dc93e39` for deterministic

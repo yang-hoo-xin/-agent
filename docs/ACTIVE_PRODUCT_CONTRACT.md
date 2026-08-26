@@ -143,7 +143,12 @@ It produced blocked EvidencePack SHA256
 no Patch, no changed-product Build, no Repair, and no product-source write.
 Checkpoint `2b18874a44e1785c1b8775ff2d8a8fa5f84594fb` proved that the
 per-obligation schema is sent to Ollama but did not close the real failure.
-`EVID-002` is therefore the only active P0 owner. The detailed recent logical
+Checkpoint `984716f09ef18111b781bcc1623bf184881f6e41` plus diagnostic
+follow-up `22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e` now form the bounded
+code/test repair lineage and await macro review. This is still the P2
+empirical path blocked at the projection-to-findings boundary; P0 remains
+completed and is not reopened. `EVID-002` remains active until a later fresh
+actual reaches findings without the signature. The detailed recent logical
 chain and attempt evidence are in
 `docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md`.
 Actual7 is not authorized and both Internal Alpha hard gates remain false.
@@ -161,8 +166,10 @@ repository explicit unresolved result recorded
 -> P1a structural coverage and P1b formal provider entry complete
 -> repository Entry checkpoint c906d99 plus two fresh preflight/actual pairs close ENTRY-002 for the current scope
 -> actual5 and actual6 enter ProductExecution and repeat the same projection disposition failure before findings
--> EVID-002 bounded structured-output admission, exact diagnostic, and one-correction checkpoint
--> new checkpoint-bound preflight and separately authorized actual7 only after checkpoint review
+-> EVID-002 code/test checkpoint lineage 984716f -> 22f8fa0 formed
+-> macro checkpoint review; acceptance does not close EVID-002
+-> new checkpoint-bound preflight and separately authorized actual7 only after review
+-> actual7 independently determines EVID-002 real-run closure and the later product-path result
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint
 ```

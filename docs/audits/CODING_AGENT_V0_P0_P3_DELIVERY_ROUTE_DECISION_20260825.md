@@ -109,7 +109,7 @@ support is true; it constrains and audits what the model is allowed to claim.
 | P0 | completed | lexical-only RgLive observations fail closed without coverage | do not reopen for positive coverage |
 | P1a | completed at `d377ab466fb3e2c57c4c33e29bc2408864e5976e` | structural/synthetic positive requirement-coverage vertical | P1b formal provider and entry |
 | P1b | completed at `32a939b3f217721b076704cd7e701369fef532ed` | formal local projection/findings providers, validated consumer view, formal ProductExecution entry tests | stop Evidence expansion and enter P2 |
-| P2 | empirical actual active; `ENTRY-002` closed for current scope; `EVID-002` active | actual5 and actual6 entered ProductExecution, called the local model twice each, and stopped before findings on the same projection disposition signature | bounded projection structured-output admission/diagnostic/correction checkpoint, then a new preflight and separately authorized actual7 |
+| P2 | empirical path blocked at projection-to-findings; `ENTRY-002` closed for current scope; `EVID-002` active | actual5 and actual6 entered ProductExecution, called the local model twice each, and stopped before findings on the same projection disposition signature; checkpoint lineage `984716f` -> `22f8fa0` is formed but not yet macro-reviewed | checkpoint review, then a new preflight and separately authorized actual7 |
 | Internal Alpha | hard gates false/false | no changed-product success plus repair success pair | P2 empirical hard gates |
 | Public Alpha | not started | public entry and case evidence absent | Internal checkpoint plus public-entry actual |
 
@@ -190,6 +190,21 @@ therefore owns exact local response-schema admission, precise semantic
 rejection diagnostics, and the existing single correction. It does not own
 retrieval, findings semantics, coverage policy, model switching, a third
 correction, or vector work.
+
+Three decisions remain separate:
+
+1. **Code checkpoint review** may accept that the `984716f` -> `22f8fa0`
+   lineage implements and tests its bounded claim. This does not change
+   `EVID-002` to closed.
+2. **Issue real-run closure** requires the recorded close trigger: after review
+   and a new preflight, a separately authorized actual must reach findings
+   without the projection failure signature.
+3. **Actual7 product result** is independent of Issue closure. Actual7 may close
+   `EVID-002` and still truthfully block later at findings, coverage, edit
+   authority, Patch, or Build. It is not predeclared as product success.
+
+This remains P2 empirical work. P0 lexical false-sufficiency is completed and
+is not reopened by the projection Issue or its decision priority.
 
 ```text
 new checkpoint
@@ -328,7 +343,7 @@ retrieval still demonstrates a real recall failure under a real Eval.
 ## 15. Current Decision Snapshot
 
 ```yaml
-snapshot_as_of_commit: 2b18874a44e1785c1b8775ff2d8a8fa5f84594fb
+snapshot_as_of_commit: 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
 P0: completed
 P1a: completed
 P1b: completed
@@ -339,6 +354,8 @@ ENTRY-002: closed
 ProductExecution_actual_runs: 2
 current_P2_model_calls: 4_total_across_actual5_and_actual6
 current_owner: EVID-002
+EVID-002_status: active_pending_actual7
+EVID-002_code_checkpoint: 984716f_to_22f8fa0_formed_pending_macro_review
 actual6_baseline_build: passed
 actual6_changed_product_build: not_reached
 Internal_Alpha_hard_gates: false/false

@@ -10,10 +10,12 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 ```text
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
-current_dependency: EVID-002-PROJECTION-STRUCTURED-OUTPUT-CONTRACT
+current_dependency: EVID-002-CODE-CHECKPOINT-MACRO-REVIEW
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
-current_product_code_checkpoint: 2b18874a44e1785c1b8775ff2d8a8fa5f84594fb
+current_product_code_checkpoint: 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
+current_product_code_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 -> 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
+current_product_code_checkpoint_review: pending_macro_review
 current_wip: four independent user documentation changes, no staged files
 latest_repository_run: 32e29415
 latest_repository_run_report_sha256: B7B3F473F8DA8E2500DA67E496DC389B8B9BB5109D8056F49FC170CEB2ED7AD9
@@ -68,13 +70,13 @@ latest_accurate_crosshair_outcome_report_sha256: 01E8B32B1A0E15090DFAD575E9062BB
 rg_live_owner_audit: docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json
 rg_live_owner_audit_sha256: 47981B825342DB921F7215BFB2D070F0734BF4F2494B35E1B2A326234F36046B
 rg_live_failure_issue_id: EVID-001_mitigated_for_current_scope
-current_failure_issue_id: EVID-002_active
+current_failure_issue_id: EVID-002_active_pending_actual7_real_run_closure
 actual_only_build_test_success: false
 failure_different_repair_revalidation_success: false
 runtime_verified: false
 general_harness_validated: false
 stable_agent_capability: false
-next_capability_step: EVID-002 bounded structured-output admission, exact diagnostic, and one-correction checkpoint; stop before packet or actual7
+next_capability_step: read-only review checkpoint lineage 984716f -> 22f8fa0; if accepted, separately authorize a new preflight and actual7. Checkpoint acceptance does not close EVID-002 or determine actual7 product outcome
 rag_1a_status: explicit_unresolved
 rag_1a_relation_aware_status: explicit_unresolved_before_artifact_commit
 rag_1b_status: not_started

@@ -207,8 +207,8 @@ scope: calibration actual authorization packet construction
 owner: production FeatureSpec and ArtifactStore identity projection
 evidence_level: mechanical_replay
 severity: S1
-decision_priority: P3
-status: closed
+decision_priority: P0
+status: active
 first_seen: 2026-08-21 BHF preflight
 latest_evidence: production RequestPlanner and FeatureSpecBuilder produce feature_258e3fb80ea6 with hash 79786316d2c4a8201e5c5659a81ae9906b6cf5fa638edd32c6da3cdee751dded
 current_effect: future calibration runs use the production owner rather than hand-authored payload fields
@@ -331,16 +331,19 @@ scope: ProductExecution requirement projection response-schema admission, semant
 owner: src/mod_agent/evidence/requirement_coverage_provider.py::StructuredModelRequirementCoverageProvider.project
 evidence_level: real_run
 severity: S1
-decision_priority: P3
-status: closed
+decision_priority: P0
+status: active
 first_seen: actual5 run f6bdb182
 latest_evidence: actual6 run 905a0a60 at checkpoint 2b18874 sent the per-obligation schema in Ollama format; the independently reconstructed request body size 8868 and SHA256 951d949e32259fcf76fc3f5d29608f48ebdedfd8271e17e2139f7e78213482c1 exactly match the run audit, but requirement_projection and requirement_projection_correction again ended REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID before findings. EvidencePack SHA256 is 9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97
 incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
-current_effect: findings is not reached, EvidencePack fails closed, Patch authority remains false, and actual7 is blocked
+implementation_checkpoint: 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
+implementation_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 followed by diagnostic closure 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
+implementation_checkpoint_status: formed_pending_macro_review
+current_effect: actual5 and actual6 have not reached findings; checkpoints 984716f and 22f8fa0 are code/test evidence only and do not close the real-run Issue. Packet, preflight, and actual7 remain blocked until separate macro decisions
 workaround: preserve the immutable actual5/actual6 outputs and fail-closed EvidencePack; do not add a third correction, switch model, change retrieval, or relax coverage policy
 reopen_trigger: any selected real task returns a projection object that fails exact response-schema admission or deterministic input-disposition semantics after the single bounded correction
-close_trigger: a focused checkpoint locally validates the exact response schema, distinguishes precise semantic rejection conditions, supplies bounded machine-readable correction detail, and a new fresh actual reaches findings without this failure signature
-next_action: implement the bounded structured-output admission, diagnostic, and one-correction contract; stop before packet or actual7
+close_trigger: after a focused checkpoint passes macro review, a newly sealed preflight passes and a separately authorized fresh actual reaches findings without this failure signature
+next_action: perform read-only macro review of the 984716f to 22f8fa0 checkpoint lineage; if accepted, separately authorize a new packet/preflight and then actual7. Code-checkpoint acceptance, Issue real-run closure, and the later actual7 product result are three distinct decisions
 last_reviewed: 2026-08-26
 required_before_stage: next P2 empirical actual
 minimum_acceptance:
@@ -405,7 +408,7 @@ decision_priority: P2
 status: mitigated_for_current_scope
 first_seen: 2026-08-21 checkpoint 397629ee review
 latest_evidence: the 2026-08-26 issue-interaction docs checkpoint synchronizes Active Product Contract, Project State, Implementation Queue, the P0-P3 decision record, and Internal Alpha to preflight4/actual5 plus preflight5/actual6; ProductExecution actual runs are 2, ENTRY-002 is closed for the current scope, EVID-002 is active, and both Internal Alpha hard gates remain false
-current_effect: current short status owners agree that projection structured-output admission is the only active P0 product owner; documentation remains evidence projection rather than capability progress
+current_effect: current short status owners agree that P2 empirical execution is blocked at the projection-to-findings boundary; P0 remains completed and is not reopened. Documentation remains evidence projection rather than capability progress
 workaround: keep detailed run evidence in one primary record and short selection fields elsewhere
 reopen_trigger: Active Product Contract, Project State, Implementation Queue, or the §8 execution sequence name different current selections
 trigger_state: mitigated_by_2026_08_26_issue_interaction_docs_checkpoint
@@ -611,8 +614,8 @@ scope: P2 expected-isolated sealed entry and same-context preflight
 owner: sealed/fresh execution entry preflight; not ProductExecution, Evidence, provider, or the future Public Runner
 evidence_level: real_run
 severity: S1
-decision_priority: P0
-status: active
+decision_priority: P3
+status: closed
 first_seen: p2_ac_20260825_001/attempt_1
 incident_signatures:
   - A1: porcelain ?? was incorrectly classified as staged

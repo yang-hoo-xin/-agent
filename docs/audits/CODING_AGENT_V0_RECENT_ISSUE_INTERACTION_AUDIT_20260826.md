@@ -105,11 +105,12 @@ schema or that the schema expresses every cross-field semantic invariant.
 
 ```text
 ENTRY-002 current-scope close evidence accepted
--> EVID-002 is the only active P0 product owner
--> implement exact local projection schema admission, precise semantic rejection diagnostics, and one bounded correction contract
--> focused tests and independent code checkpoint
+-> P2 empirical path remains blocked at projection-to-findings under active EVID-002; P0 is not reopened
+-> code/test checkpoint lineage 984716f -> 22f8fa0 formed and awaits macro review
+-> checkpoint acceptance, if granted, does not close EVID-002
 -> new checkpoint-bound preflight
 -> separately authorized actual7
+-> actual7 independently determines EVID-002 real-run closure and the later product-path result
 ```
 
 This audit does not authorize code, model, actual, Build, Runtime, vector, or
