@@ -20,6 +20,12 @@ from src.mod_agent.evidence.discovery_contract import (
     request_relation_identity as hook_compatible_relation_identity,
 )
 from src.mod_agent.evidence.identity import request_relation_identity
+from src.mod_agent.evidence.requirement_coverage import (
+    requirement_input_obligation_model_view,
+)
+from src.mod_agent.evidence.requirement_coverage_provider import (
+    requirement_projection_response_schema,
+)
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.planning import FeatureSpec, ImplementationPlanner
 from src.mod_agent.proposal import PatchProposalBuilder, ProposalReviewer
@@ -44,6 +50,38 @@ def _feature_data() -> dict[str, object]:
         "blocked": False,
         "blockers": [],
     }
+
+
+def _schema_allows_input_disposition(
+    schema: dict[str, object],
+    *,
+    index: int,
+    disposition: str,
+    reason: str = "bounded reason",
+) -> bool:
+    dispositions = schema["properties"]["input_dispositions"]
+    if dispositions["maxItems"] < 1:
+        return False
+    value = {
+        "input_obligation_index": index,
+        "disposition": disposition,
+        "reason": reason,
+    }
+    variants = dispositions["items"]["oneOf"]
+    return any(
+        set(value) == set(variant["required"])
+        and variant["additionalProperties"] is False
+        and all(
+            (
+                value[name] == property_schema["const"]
+                if "const" in property_schema
+                else isinstance(value[name], str)
+                and len(value[name]) >= property_schema.get("minLength", 0)
+            )
+            for name, property_schema in variant["properties"].items()
+        )
+        for variant in variants
+    )
 
 
 def _projection() -> dict[str, object]:
@@ -744,6 +782,135 @@ def test_requirement_coverage_tamper_is_rejected_on_rehydrate(
         EvidencePack.from_artifact_payload(payload)
 
 
+def test_projection_schema_binds_thirteen_obligation_dispositions_per_index(
+) -> None:
+    feature = _feature_data()
+    feature["evidence_requirements"] = ["evidence 1", "evidence 2", "evidence 3"]
+    feature["non_goals"] = ["boundary 1", "boundary 2", "boundary 3"]
+    feature["acceptance_criteria"] = [
+        "acceptance 1",
+        "acceptance 2",
+        "acceptance 3",
+    ]
+    feature["runtime_verification_plan"] = ["runtime 1", "runtime 2"]
+    obligations = requirement_input_obligation_model_view(feature)
+
+    schema = requirement_projection_response_schema(
+        input_obligations=obligations
+    )
+
+    assert len(obligations) == 13
+    dispositions = schema["properties"]["input_dispositions"]
+    assert dispositions["maxItems"] == 8
+    observed_pairs = {
+        (
+            variant["properties"]["input_obligation_index"]["const"],
+            variant["properties"]["disposition"]["const"],
+        )
+        for variant in dispositions["items"]["oneOf"]
+    }
+    assert observed_pairs == {
+        (6, "scope_boundary"),
+        (7, "scope_boundary"),
+        (8, "scope_boundary"),
+        (9, "post_change"),
+        (10, "post_change"),
+        (11, "post_change"),
+        (12, "post_change"),
+        (13, "post_change"),
+    }
+    assert _schema_allows_input_disposition(
+        schema,
+        index=6,
+        disposition="scope_boundary",
+    )
+    assert _schema_allows_input_disposition(
+        schema,
+        index=9,
+        disposition="post_change",
+    )
+    assert not _schema_allows_input_disposition(
+        schema,
+        index=6,
+        disposition="post_change",
+    )
+    assert not _schema_allows_input_disposition(
+        schema,
+        index=9,
+        disposition="scope_boundary",
+    )
+    assert not _schema_allows_input_disposition(
+        schema,
+        index=1,
+        disposition="scope_boundary",
+    )
+    assert not _schema_allows_input_disposition(
+        schema,
+        index=6,
+        disposition="scope_boundary",
+        reason="",
+    )
+
+
+def test_projection_schema_has_zero_dispositions_when_no_obligation_is_eligible(
+) -> None:
+    feature = _feature_data()
+    feature["non_goals"] = []
+    feature["acceptance_criteria"] = []
+    feature["runtime_verification_plan"] = []
+    obligations = requirement_input_obligation_model_view(feature)
+
+    schema = requirement_projection_response_schema(
+        input_obligations=obligations
+    )
+
+    dispositions = schema["properties"]["input_dispositions"]
+    assert dispositions["maxItems"] == 0
+    assert "oneOf" not in dispositions["items"]
+    assert not _schema_allows_input_disposition(
+        schema,
+        index=1,
+        disposition="scope_boundary",
+    )
+
+
+def test_projection_materializer_still_rejects_cross_bound_disposition() -> None:
+    feature = _feature_data()
+    projection = deepcopy(_projection())
+    del projection["requirements"][2]
+    projection["relations"] = [
+        {
+            "parent_requirement_indexes": [1],
+            "meaning": "Change evidence.",
+        },
+        {
+            "parent_requirement_indexes": [2],
+            "meaning": "Pre-patch evidence.",
+        },
+        {
+            "parent_requirement_indexes": [3],
+            "meaning": "Post-change evidence.",
+        },
+    ]
+    projection["input_dispositions"] = [
+        {
+            "input_obligation_index": 4,
+            "disposition": "post_change",
+            "reason": "Invalid cross-bound disposition.",
+        }
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+    ):
+        materialize_requirement_coverage_projection(
+            feature_data=feature,
+            request=str(feature["user_request"]),
+            projection=projection,
+        )
+
+
 def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
     tmp_path: Path,
 ) -> None:
@@ -855,6 +1022,15 @@ def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
         "requirement_projection",
         "requirement_findings",
     ]
+    projection_rules = calls[0][1]["rules"]
+    assert any(
+        "per-index values listed in input_obligations" in rule
+        for rule in projection_rules
+    )
+    assert all(
+        "allowed post-change dispositions" not in rule
+        for rule in projection_rules
+    )
     assert pack.readiness == "sufficient"
     assert pack.can_generate_patch is True
     coverage = pack.requirement_coverage
@@ -881,9 +1057,11 @@ def test_formal_model_provider_invalid_accounting_fails_to_blocking_plan(
     _write_sources(tmp_path)
     feature = _feature_data()
     calls: list[str] = []
+    projection_schemas: list[dict[str, object]] = []
 
-    def complete_json(role, _payload, _schema):
+    def complete_json(role, _payload, schema):
         calls.append(role)
+        projection_schemas.append(deepcopy(schema))
         return {
             "requirements": [
                 {
@@ -920,6 +1098,16 @@ def test_formal_model_provider_invalid_accounting_fails_to_blocking_plan(
         "requirement_projection",
         "requirement_projection_correction",
     ]
+    assert projection_schemas[0] == projection_schemas[1]
+    disposition_schema = projection_schemas[0]["properties"][
+        "input_dispositions"
+    ]
+    assert disposition_schema["maxItems"] == 3
+    assert not _schema_allows_input_disposition(
+        projection_schemas[0],
+        index=4,
+        disposition="post_change",
+    )
     assert pack.readiness == "insufficient"
     assert pack.can_generate_patch is False
     assert pack.budget_summary["semantic_provider_failed_closed"] is True

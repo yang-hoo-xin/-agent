@@ -55,15 +55,27 @@ class StructuredModelRequirementCoverageProvider:
     ) -> Mapping[str, Any]:
         obligations = requirement_input_obligation_model_view(feature_data)
         schema = requirement_projection_response_schema(
-            max_input_obligation_index=len(obligations)
+            input_obligations=obligations
         )
         payload = {
             "message_type": "product_requirement_projection",
             "request": request,
             "input_obligations": obligations,
             "rules": [
-                "Return only requirement semantics, obligation indexes, focused query leads, relations, and allowed post-change dispositions.",
-                "Every input obligation must be carried by one or more requirements or receive one allowed post-change disposition with a bounded reason.",
+                (
+                    "Return only requirement semantics, obligation indexes, focused "
+                    "query leads, relations, and allowed dispositions."
+                ),
+                (
+                    "Every input obligation must be carried by one or more "
+                    "requirements or receive one disposition explicitly listed in "
+                    "that input obligation's allowed_dispositions with a bounded "
+                    "reason."
+                ),
+                (
+                    "Use input_dispositions only with the per-index values listed in "
+                    "input_obligations; do not invent or cross-bind disposition values."
+                ),
                 "A user-request obligation may be carried by both change and preservation requirements when both semantics are present.",
                 "Do not return stable ids, final required_before_patch, sufficiency, edit targets, paths, symbols, Patch authority, or execution authority.",
                 "Do not use expected-side data, historical implementations, or prior outputs.",
@@ -359,8 +371,51 @@ def build_requirement_coverage_pack(
 
 
 def requirement_projection_response_schema(
-    *, max_input_obligation_index: int
+    *, input_obligations: list[Mapping[str, Any]]
 ) -> dict[str, object]:
+    max_input_obligation_index = len(input_obligations)
+    if max_input_obligation_index < 1:
+        raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATIONS_INVALID")
+    disposition_variants: list[dict[str, object]] = []
+    eligible_disposition_indexes: set[int] = set()
+    observed_indexes: list[int] = []
+    for obligation in input_obligations:
+        index = obligation.get("input_obligation_index")
+        allowed_dispositions = obligation.get("allowed_dispositions")
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or not isinstance(allowed_dispositions, list)
+            or any(
+                not isinstance(disposition, str)
+                or disposition not in {"post_change", "scope_boundary"}
+                for disposition in allowed_dispositions
+            )
+            or len(allowed_dispositions) != len(set(allowed_dispositions))
+        ):
+            raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATIONS_INVALID")
+        observed_indexes.append(index)
+        if allowed_dispositions:
+            eligible_disposition_indexes.add(index)
+        for disposition_value in allowed_dispositions:
+            disposition_variants.append(
+                {
+                    "type": "object",
+                    "properties": {
+                        "input_obligation_index": {"const": index},
+                        "disposition": {"const": disposition_value},
+                        "reason": {"type": "string", "minLength": 1},
+                    },
+                    "required": [
+                        "input_obligation_index",
+                        "disposition",
+                        "reason",
+                    ],
+                    "additionalProperties": False,
+                }
+            )
+    if observed_indexes != list(range(1, max_input_obligation_index + 1)):
+        raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATIONS_INVALID")
     requirement = {
         "type": "object",
         "properties": {
@@ -405,23 +460,15 @@ def requirement_projection_response_schema(
         "required": ["parent_requirement_indexes", "meaning"],
         "additionalProperties": False,
     }
-    disposition = {
-        "type": "object",
-        "properties": {
-            "input_obligation_index": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": max_input_obligation_index,
-            },
-            "disposition": {
-                "type": "string",
-                "enum": ["post_change", "scope_boundary"],
-            },
-            "reason": {"type": "string", "minLength": 1},
-        },
-        "required": ["input_obligation_index", "disposition", "reason"],
-        "additionalProperties": False,
-    }
+    disposition_items: dict[str, object] = (
+        {"oneOf": disposition_variants}
+        if disposition_variants
+        else {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        }
+    )
     return {
         "type": "object",
         "properties": {
@@ -439,8 +486,8 @@ def requirement_projection_response_schema(
             },
             "input_dispositions": {
                 "type": "array",
-                "maxItems": max_input_obligation_index,
-                "items": disposition,
+                "maxItems": len(eligible_disposition_indexes),
+                "items": disposition_items,
             },
         },
         "required": ["requirements", "relations", "input_dispositions"],
