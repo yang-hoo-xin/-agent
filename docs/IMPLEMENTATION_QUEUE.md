@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-08-25
+Last updated: 2026-08-26
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -10,43 +10,48 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: P2-entry-preflight-blocked
+current_queue: EVID-002-projection-structured-output-contract
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: ENTRY-002 repository checkpoint complete; fresh admission pending; ProductExecution actual not started
+queue_status: actual6 repeated projection disposition admission failure after one correction; findings and Patch not reached
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
-last_task_status: P2_product_path_admitted_sealed_entry_blocked
-last_product_code_checkpoint: c906d99dba8f1850864e090c4f925a78fbd4f373
+last_task_status: P2_empirical_actual_blocked_at_EVID-002
+last_product_code_checkpoint: 2b18874a44e1785c1b8775ff2d8a8fa5f84594fb
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
 P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed
-P2_ProductExecution_actual_runs: 0
-empirical_actual_status: not_started
-last_failure: Attempt5 fresh preflight output-root equivalent Windows paths rejected by pre-normalization string comparison
-incident_record: docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md
-incident_record_sha256: D2B19630BD209CB03EB7AF04F99AAD67D80B70BAB986DEA73756126563322044
-current_owner: ENTRY-002 sealed/fresh execution entry preflight
+P2_ProductExecution_actual_runs: 2
+empirical_actual_status: actual5_and_actual6_blocked_before_findings
+last_failure: actual6 requirement_projection plus one correction ended REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID
+incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
+current_owner: EVID-002 requirement projection structured-output admission, diagnostics, and one-correction contract
 ENTRY_repository_implementation_checkpoint: complete
-ENTRY_fresh_same_context_admission: pending
+ENTRY_fresh_same_context_admission: passed_current_scope
+ENTRY-002_status: closed
+actual6_run_id: 905a0a60
+actual6_evidence_pack_sha256: 9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97
+actual6_baseline_build: passed
+actual6_changed_product_build: not_reached
 internal_alpha_hard_gates: false/false
 wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: new packet and manifest bound to c906d99 -> newly authorized fresh same-context preflight -> receipt macro review
-implementation_boundary: repository owner is checkpointed; do not expand into ENTRY-001 Public Runner, recovery platform, retrieval work, or second control plane
-post_checkpoint_route: receipt accepted -> separately authorized actual
-activation_required: packet formation, fresh preflight, and actual retain their exact current or later authority boundaries
+next_eligible_slice: implement exact local projection schema admission, precise semantic rejection diagnostics, and the existing one-correction contract -> focused checkpoint -> stop
+implementation_boundary: no retrieval/findings/coverage-policy/Planner/Resolver/model/budget/vector/Entry change; no third correction and no new Artifact or Graph
+post_checkpoint_route: new checkpoint-bound preflight -> receipt review -> separately authorized actual7
+activation_required: EVID-002 code work is authorized; packet, preflight, and actual7 remain later separate gates
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
 P0 false-sufficiency closure and P1 requirement-coverage/provider construction
-are complete at the checkpoints above. P2 product construction is admitted, but
-Attempts1–5 have not entered ProductExecution under the current sealed-entry
-protocol. The first blocker is `ENTRY-002`; detailed facts remain only in the
-incident record above. No actual is currently authorized.
+remain complete within their recorded construction boundaries. Fresh preflight4
+plus actual5 and fresh preflight5 plus actual6 close `ENTRY-002` for the current
+scope and prove two ProductExecution entries. Both actuals fail closed before
+findings on the same projection disposition signature. `EVID-002` is therefore
+the only active P0 work; actual7 is not authorized.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

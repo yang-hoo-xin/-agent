@@ -1,7 +1,7 @@
 # Engineering Issue Register
 
 Status: lightweight observation register
-Last reviewed: 2026-08-25
+Last reviewed: 2026-08-26
 
 ## 1. Purpose And Authority Boundary
 
@@ -238,6 +238,119 @@ next_action: reopen only on that exact false-sufficiency signature; do not merge
 last_reviewed: 2026-08-25
 ```
 
+### EXEC-001
+
+```yaml
+issue_id: EXEC-001
+title: Long packet and run roots exceeded the Windows isolated-workspace path budget
+scope: P2 isolated workspace materialization before ProductExecution
+owner: packet-bound execution-root path budget
+evidence_level: real_run
+severity: S1
+decision_priority: P2
+status: mitigated_for_current_scope
+first_seen: actual1 run a63fdb36
+latest_evidence: actual1 stopped at workspace_preparation before ProductExecution; its actual_failure SHA256 is 257855d76ce8de66b26915ffc8ef46ef539be91ee5de4b6e4ef82f351a322808 and product run_failure SHA256 is 54f74947912ebee5573cd47d40481062509faeea59c5fa7288fb060075d6eede. Short a6a2-a6a6 roots remained within the sealed path budget and later actuals entered ProductExecution
+incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
+current_effect: the selected Case no longer fails workspace materialization, but arbitrary long delivery roots are not claimed supported
+workaround: seal a conservative destination-path budget and use a short packet-bound execution root
+reopen_trigger: a fresh Windows actual that satisfies the sealed path budget fails workspace materialization because a projected destination path is too long, or a packet is sealed without checking every generated destination class
+next_action: none in the current scope; reopen only on the exact workspace path-budget signature
+last_reviewed: 2026-08-26
+```
+
+### BUILD-001
+
+```yaml
+issue_id: BUILD-001
+title: Isolated baseline restore could not resolve the target project's GameFolder dependency
+scope: run-local build dependency identity and MSBuild GameFolder projection
+owner: src/mod_agent/local_entry.py::RunLocalGameFolderBindingV1
+evidence_level: real_run
+severity: S1
+decision_priority: P2
+status: mitigated_for_current_scope
+first_seen: actual2 run d9c35191
+latest_evidence: actual2 baseline restore reported `The GameFolder property must be set to the Game folder.`; checkpoint a182db4 added one exact read-only binding and run-local `-p:GameFolder`; actual6 run 905a0a60 then completed isolated baseline restore/build with DLL SHA256 174ce450da330c36bb57ab709880040e1961a3eeefd5bd48c6ab455c12b33e6d
+incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
+current_effect: the selected AccurateCrosshair baseline build dependency is admitted and buildable; changed-product Build remains not reached
+workaround: use the exact sealed GameFolder snapshot through the run-local binding; do not modify canonical GameFolder.props
+reopen_trigger: a new bound target with a verified run-local GameFolder dependency reaches baseline restore/build but the existing binding cannot project the exact property without changing canonical source
+next_action: none in the current scope; do not generalize to arbitrary MSBuild properties without a real consumer
+last_reviewed: 2026-08-26
+```
+
+### FS-001
+
+```yaml
+issue_id: FS-001
+title: Ordinary Windows directory copy omitted or could not read long GameFolder dependency paths
+scope: run-local GameFolder dependency copy on Windows
+owner: src/mod_agent/local_entry.py::_copy_validated_directory_tree
+evidence_level: real_run
+severity: S1
+decision_priority: P2
+status: mitigated_for_current_scope
+first_seen: actual3 run 65541df6
+latest_evidence: actual3 stopped at build_dependency_copy with long-path file reads reported missing; checkpoint 1036f98 added validated extended-length path projection, and actual4 copied the physical 165-file dependency before the later independent snapshot failure
+incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
+current_effect: copy no longer blocks the selected Windows Case; long-path snapshot identity remained a separate owner under FS-002
+workaround: use validated absolute extended-length source and destination paths only inside the bounded directory-copy owner
+reopen_trigger: a fresh Windows run with an exact bound dependency again fails or omits a regular file during run-local copy because of path-length handling
+next_action: none in the current scope; preserve the exact copy boundary and reject symlink/reparse expansion
+last_reviewed: 2026-08-26
+```
+
+### FS-002
+
+```yaml
+issue_id: FS-002
+title: GameFolder snapshot traversal omitted Windows long-path files and produced false identity drift
+scope: run-local binary dependency snapshot and post-copy identity
+owner: src/mod_agent/local_entry.py::_binary_tree_snapshot
+evidence_level: real_run
+severity: S1
+decision_priority: P2
+status: mitigated_for_current_scope
+first_seen: actual4 run f3a54f16
+latest_evidence: actual4 physically contained 165 source and destination files while the old snapshot observed 137 and rejected copy identity; product run_failure SHA256 is 2100c60a7e7f1580c242d2c533a09b11b5eb11312a73215b1514a77691a66b6f. Checkpoint 2ee3e03 added complete extended-length traversal; actual5 and actual6 admitted the full 165-file snapshot e7bed3c58810a0203f2aa08f58e1dc7d43def39574899d1add6f0fb46326673b
+incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
+current_effect: the selected dependency source/copy identity now remains equal and no longer blocks baseline Build
+workaround: use the single complete long-path snapshot owner for binding, copy verification, and path budget inventory
+reopen_trigger: a fresh Windows run reports source/copy count or hash drift while an independent physical inventory proves regular long-path files were omitted by the snapshot owner
+next_action: none in the current scope; no second snapshot algorithm
+last_reviewed: 2026-08-26
+```
+
+### EVID-002
+
+```yaml
+issue_id: EVID-002
+title: Requirement projection structured output fails deterministic disposition admission after one correction
+scope: ProductExecution requirement projection response-schema admission, semantic rejection diagnostics, and bounded correction contract
+owner: src/mod_agent/evidence/requirement_coverage_provider.py::StructuredModelRequirementCoverageProvider.project
+evidence_level: real_run
+severity: S1
+decision_priority: P3
+status: closed
+first_seen: actual5 run f6bdb182
+latest_evidence: actual6 run 905a0a60 at checkpoint 2b18874 sent the per-obligation schema in Ollama format; the independently reconstructed request body size 8868 and SHA256 951d949e32259fcf76fc3f5d29608f48ebdedfd8271e17e2139f7e78213482c1 exactly match the run audit, but requirement_projection and requirement_projection_correction again ended REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID before findings. EvidencePack SHA256 is 9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97
+incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
+current_effect: findings is not reached, EvidencePack fails closed, Patch authority remains false, and actual7 is blocked
+workaround: preserve the immutable actual5/actual6 outputs and fail-closed EvidencePack; do not add a third correction, switch model, change retrieval, or relax coverage policy
+reopen_trigger: any selected real task returns a projection object that fails exact response-schema admission or deterministic input-disposition semantics after the single bounded correction
+close_trigger: a focused checkpoint locally validates the exact response schema, distinguishes precise semantic rejection conditions, supplies bounded machine-readable correction detail, and a new fresh actual reaches findings without this failure signature
+next_action: implement the bounded structured-output admission, diagnostic, and one-correction contract; stop before packet or actual7
+last_reviewed: 2026-08-26
+required_before_stage: next P2 empirical actual
+minimum_acceptance:
+  - the returned projection object is locally validated against the exact response schema before semantic materialization
+  - schema failure is distinct from duplicate disposition index, requirement/disposition overlap, disallowed disposition, invalid reason, and incomplete accounting
+  - the one correction receives bounded machine-readable rejection detail without model reasoning or authority
+  - failed output remains non-authoritative and cannot grant Evidence sufficiency or Patch authority
+  - no third correction, model switch, retrieval expansion, or policy relaxation
+```
+
 ### ISO-001
 
 ```yaml
@@ -291,13 +404,13 @@ severity: S2
 decision_priority: P2
 status: mitigated_for_current_scope
 first_seen: 2026-08-21 checkpoint 397629ee review
-latest_evidence: docs-only checkpoint 94f696b14939dfdf7992c6b6b3f23a8031275606 synchronized Active Product Contract, Project State, Implementation Queue, and the P0-P3 decision record to P0/P1 completion, P2 product-path admission, ENTRY-002 sealed-entry block, zero current ProductExecution actual runs, and false/false Internal Alpha gates
-current_effect: the four short status owners and decision record now agree for the current scope; the historical drift remains recorded and did not represent a product-capability blocker
+latest_evidence: the 2026-08-26 issue-interaction docs checkpoint synchronizes Active Product Contract, Project State, Implementation Queue, the P0-P3 decision record, and Internal Alpha to preflight4/actual5 plus preflight5/actual6; ProductExecution actual runs are 2, ENTRY-002 is closed for the current scope, EVID-002 is active, and both Internal Alpha hard gates remain false
+current_effect: current short status owners agree that projection structured-output admission is the only active P0 product owner; documentation remains evidence projection rather than capability progress
 workaround: keep detailed run evidence in one primary record and short selection fields elsewhere
 reopen_trigger: Active Product Contract, Project State, Implementation Queue, or the §8 execution sequence name different current selections
-trigger_state: mitigated_by_docs_checkpoint_94f696b14939dfdf7992c6b6b3f23a8031275606
+trigger_state: mitigated_by_2026_08_26_issue_interaction_docs_checkpoint
 next_action: keep detailed incident evidence in its audit record and reopen only if the owning short pages diverge again
-last_reviewed: 2026-08-25
+last_reviewed: 2026-08-26
 ```
 
 ### REP-001
@@ -408,14 +521,14 @@ severity: S2
 decision_priority: P2
 status: observed
 first_seen: WallCrawler run001 post-commit ArtifactRef.to_dict missing
-latest_evidence: AccurateCrosshair run 8d26e4e5 produced a large public execution receipt and five valid Store refs; Attempt5 then failed before its preflight receipt, proving a pre-Artifact structured-outcome gap. Checkpoint c906d99dba8f1850864e090c4f925a78fbd4f373 added repository EntryAdmissionResultV1 and receipt projection with focused tests, but no fresh-context receipt has been produced
-current_effect: committed Store truth remains verifiable and the entry result/receipt code owner now exists, while general reporting across pre-Artifact and committed-Artifact boundaries remains deferred and empirically unproven
+latest_evidence: actual6 run 905a0a60 committed a blocked EvidencePack and ImplementationPlan after the earlier semantic provider failure REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID, but the top-level terminal blocker projected downstream REQUIREMENT_COVERAGE_INSUFFICIENT with owner=domain. The same result projected canonical_source_unchanged=false while source_change_verification=null; independent snapshot verification proved the source unchanged
+current_effect: committed Store truth and run-local diagnostics remain recoverable, but the public terminal projection can hide the primary provider owner and collapses not_evaluated into false
 workaround: use explicit field projection and Store readback for committed results; for current pre-Artifact calibration failures preserve the Provider diagnostic and manually retain the known control-flow limitation without rerunning solely to reconstruct Trace
 reopen_trigger: an independent report/console/UI projection failure, or the Internal Alpha completion checkpoint
-trigger_state: satisfied_by_wall_trace_gap_and_accurate_run8d26e4e5_large_manual_projection
+trigger_state: satisfied_by_wall_trace_gap_accurate_run8d26e4e5_and_actual6_primary_failure_tristate_drift
 implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
-next_action: keep ENTRY-002 responsible for the current fresh preflight receipt; after Internal Alpha, evaluate a general projector only from real consumers without changing Artifact schemas
-last_reviewed: 2026-08-25
+next_action: do not interrupt EVID-002; after Internal Alpha, project primary_failure separately from downstream_disposition and preserve true/false/not_evaluated without changing Artifact schemas
+last_reviewed: 2026-08-26
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - one stable serializer/projection for ArtifactRef, attempt, and result
@@ -437,14 +550,14 @@ severity: S1
 decision_priority: P2
 status: observed
 first_seen: long BHF and WallCrawler runs relied on bounded no-retry protocol and manual waiting
-latest_evidence: relation-aware Wall runs preserved explicit attempts around context and timeout failures. AccurateCrosshair Attempts1–5 add deterministic entry Recovery samples: each new outer entry repaired a frozen pre-product admission defect without replaying ProductExecution, but none is a transient retry sample
-current_effect: ENTRY owns the current deterministic admission recovery; general cancellation, resume, transient retry, fallback, and cross-owner recovery remain deferred
+latest_evidence: relation-aware Wall runs preserved explicit attempts around context and timeout failures. AccurateCrosshair entry Attempts A1-A5 and Recovery actual1-actual6 preserve distinct packet, receipt, run, failure, checkpoint, and recovery identities; actual5 and actual6 each entered ProductExecution once, and no Recovery automatically replayed a consumed actual or approved a diff
+current_effect: the current Case demonstrates explicit failure-driven Recovery and immutable attempt lineage, not automatic retry, durable distributed resume, fallback, or a general recovery platform
 workaround: fail closed, preserve immutable attempts, classify the failure, and require explicit new-attempt authorization; the current 32768 attempt is one bounded manual fallback instance, not an automatic recovery platform
 reopen_trigger: Internal Alpha completion checkpoint, or a real transient provider/tool failure requiring user-visible recovery
 trigger_state: satisfied_by_wall_relation_actual_context_rejects_and_run004_provider_timeout
 implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
 next_action: do not route Attempts1–5 through REC-001 retry; after Internal Alpha, evaluate minimum general recovery policy only from separately classified real failures
-last_reviewed: 2026-08-25
+last_reviewed: 2026-08-26
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - deterministic versus transient error classification
@@ -507,31 +620,29 @@ incident_signatures:
   - A3: source Git returned nonzero without retained stderr, so exact ownership was inconclusive
   - A4: source Git returned fatal dubious ownership under the fresh security principal
   - A5: preflight output-root textual path comparison rejected equivalent Windows paths before receipt creation
-latest_evidence: Attempts1-4 entered no ProductExecution run and made zero model calls; Attempt5 payload 979c0fdeca85dbedf9e1156931cf0bf724b57fa69a0cdd2394612745d88f78f7 stopped before receipt. Repository checkpoint c906d99dba8f1850864e090c4f925a78fbd4f373 now owns total entry request/result/blocker/receipt projection, physical output identity, strict Git admission, shared local-model identity reads, and downstream source revalidation with focused tests
+latest_evidence: checkpoint c906d99 owns Entry admission. Fresh preflight4 produced ready receipt SHA256 5a46b500e1078aa01afd952a551ae1624f7bf240a91f8c28f44a35a1fef7e0b0 and actual5 entered ProductExecution without entry repair. After checkpoint 2b18874, fresh preflight5 produced ready receipt SHA256 383c856ac4d12e08c91eaa215452fe4c941d79a58dbeec5248badf1ca4112859 and actual6 again entered ProductExecution without entry repair
 incident_record: docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md
 incident_record_sha256: d2b19630bd209cb03eb7af04f99aad67d80b70bab986dea73756126563322044
 packet_only_repair_stop_condition: satisfied_by_attempt5
 implementation_checkpoint: c906d99dba8f1850864e090c4f925a78fbd4f373
 code_owner_and_focused_test_boundary: met
-fresh_same_context_admission: pending
-current_effect: the repository implementation owner exists, but no new packet/manifest, fresh-context receipt, or empirical ProductExecution actual proves sealed-entry admission
-workaround: none authorized; preserve the first failures and keep actual blocked
+fresh_same_context_admission: passed_for_current_scope_twice
+current_effect: no current Entry blocker remains; actual5 and actual6 failures belong to EVID-002 inside ProductExecution
+workaround: none required for the current scope; each new checkpoint still requires its normal hash-bound preflight and separate actual authority
 reopen_trigger: any fresh sealed entry or preflight fails before packet-bound ProductExecution because entry identity, filesystem authority, Git trust, path equivalence, lock/state, or receipt admission is not represented consistently
 close_trigger: one newly authorized fresh same-context preflight produces a hash-bound receipt after all packet/platform/source/Git/Ollama gates, and a separately authorized sealed actual enters ProductExecution without entry-side identity or permission repair
-next_action: form a new packet and manifest from c906d99dba8f1850864e090c4f925a78fbd4f373, request separate authorization for one fresh same-context preflight, return its receipt/hash for macro review, and request empirical actual authorization separately only after receipt acceptance
-last_reviewed: 2026-08-25
+next_action: none; reopen only on a new failure before ProductExecution with an Entry-owned signature. ENTRY-001 remains the separate Public Alpha adoption issue
+last_reviewed: 2026-08-26
 required_before_stage: P2 empirical actual
 code_checkpoint_met:
   - repository EntryAdmission request/result/blocker/receipt owner exists with focused tests
   - textual/canonical Windows paths use physical parent identity and normalized leaf identity
   - strict Git identity is shared by entry and downstream source verification without PATH fallback on the strict route
   - no ProductExecution schema, StateGraph, or Artifact contract was added or changed
-empirical_pending:
-  - a new packet binds c906d99dba8f1850864e090c4f925a78fbd4f373 and passes one authorized fresh same-context preflight
-  - packet hash, branch, HEAD, four protected WIP states, Git executable/version, source show-toplevel/HEAD/trees/snapshot, and Ollama identity remain exact in the fresh receipt
-  - preflight creates no execution_root, model call, ProductExecution run, Build, Runtime, diff approval, or Apply
-  - successful preflight writes one bounded receipt plus hash and does not itself authorize actual
-  - failure preserves the exact first boundary and creates no automatic next attempt
+closure_evidence:
+  - preflight4 and preflight5 each passed packet, platform, source, Git, and Ollama gates with model generation and ProductExecution counts zero
+  - actual5 and actual6 each revalidated Entry and entered one ProductExecution run without entry-side identity or permission repair
+  - no preflight authorized actual, no outer retry occurred, and no packet supplied exact-diff approval
   - ENTRY-001 remains the separate future Public Runner adoption issue
 ```
 

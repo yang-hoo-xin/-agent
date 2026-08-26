@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-25
+Last updated: 2026-08-26
 
 ## 1. Product
 
@@ -124,23 +124,29 @@ SHA256=`47981B825342DB921F7215BFB2D070F0734BF4F2494B35E1B2A326234F36046B`.
 P0 is now complete at checkpoint
 `c8004845fe3f01d844e79ab8b6aba0634b6a5c01`; P1a is complete at
 `d377ab466fb3e2c57c4c33e29bc2408864e5976e`; and P1b is complete at
-`32a939b3f217721b076704cd7e701369fef532ed`. P2 product-path construction is
-admitted, but sealed-entry admission remains blocked under `ENTRY-002`.
-Attempts1–5 produced zero current P2 ProductExecution actual runs, so empirical
-actual has not started and both Internal Alpha hard gates remain false. The
-short incident reference is
+`32a939b3f217721b076704cd7e701369fef532ed`. Repository Entry checkpoint
+`c906d99dba8f1850864e090c4f925a78fbd4f373`, fresh preflight4/actual5, and
+fresh preflight5/actual6 close `ENTRY-002` for the current scope: both actuals
+entered ProductExecution without entry-side repair. The sealed-entry incident
+reference remains
 `docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md`,
 SHA256=`D2B19630BD209CB03EB7AF04F99AAD67D80B70BAB986DEA73756126563322044`.
-Actual remains unauthorized.
 
-Repository checkpoint `c906d99dba8f1850864e090c4f925a78fbd4f373`
-completed the bounded sealed-entry/preflight implementation owner and focused
-tests. Fresh same-context admission remains unverified and blocked; the
-checkpoint is not a receipt or actual result. The next gate is a new
-checkpoint-bound packet/manifest, separate fresh-preflight authorization,
-receipt macro review, and separately authorized actual. Stable mechanism is in
-the P0–P3 Decision Record; physical Attempts facts remain in the sealed-entry
-incident; trigger status remains `ENTRY-002` in the Issue Register.
+Actual5 run `f6bdb182` and actual6 run `905a0a60` each called the local model
+twice for Requirement Projection and one correction, then failed closed with
+`REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID` before findings. Actual6
+completed 12 live queries and one isolated baseline restore/build; its baseline
+DLL SHA256 is
+`174ce450da330c36bb57ab709880040e1961a3eeefd5bd48c6ab455c12b33e6d`.
+It produced blocked EvidencePack SHA256
+`9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97`,
+no Patch, no changed-product Build, no Repair, and no product-source write.
+Checkpoint `2b18874a44e1785c1b8775ff2d8a8fa5f84594fb` proved that the
+per-obligation schema is sent to Ollama but did not close the real failure.
+`EVID-002` is therefore the only active P0 owner. The detailed recent logical
+chain and attempt evidence are in
+`docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md`.
+Actual7 is not authorized and both Internal Alpha hard gates remain false.
 
 Current execution order:
 
@@ -153,11 +159,10 @@ repository explicit unresolved result recorded
 -> relation-aware Wall partial trajectory recorded as explicit unresolved before Artifact commit
 -> P0 false-sufficiency closure complete
 -> P1a structural coverage and P1b formal provider entry complete
--> P2 product path admitted; sealed entry blocked at ENTRY-002 before ProductExecution
--> repository sealed-entry/preflight implementation checkpoint c906d99 complete
--> new packet and manifest from that checkpoint
--> newly authorized fresh same-context preflight and receipt review
--> separately authorize empirical actual only after receipt approval
+-> repository Entry checkpoint c906d99 plus two fresh preflight/actual pairs close ENTRY-002 for the current scope
+-> actual5 and actual6 enter ProductExecution and repeat the same projection disposition failure before findings
+-> EVID-002 bounded structured-output admission, exact diagnostic, and one-correction checkpoint
+-> new checkpoint-bound preflight and separately authorized actual7 only after checkpoint review
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint
 ```

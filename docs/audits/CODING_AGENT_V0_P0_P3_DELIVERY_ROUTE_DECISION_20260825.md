@@ -2,7 +2,7 @@
 
 Status: detailed decision record
 Recorded: 2026-08-25
-Recording context: `recorded_during_P1b_working_session`; status synchronized after P1b checkpoint and P2 sealed-entry incidents
+Recording context: `recorded_during_P1b_working_session`; status synchronized through actual6 and the active EVID-002 owner
 
 ## 1. Authority And Use
 
@@ -109,7 +109,7 @@ support is true; it constrains and audits what the model is allowed to claim.
 | P0 | completed | lexical-only RgLive observations fail closed without coverage | do not reopen for positive coverage |
 | P1a | completed at `d377ab466fb3e2c57c4c33e29bc2408864e5976e` | structural/synthetic positive requirement-coverage vertical | P1b formal provider and entry |
 | P1b | completed at `32a939b3f217721b076704cd7e701369fef532ed` | formal local projection/findings providers, validated consumer view, formal ProductExecution entry tests | stop Evidence expansion and enter P2 |
-| P2 | product path admitted; sealed entry blocked at `ENTRY-002` | ProductExecution actual runs remain zero; empirical actual has not started | repository sealed-entry/preflight checkpoint, new packet, fresh preflight receipt review, then separate actual authorization |
+| P2 | empirical actual active; `ENTRY-002` closed for current scope; `EVID-002` active | actual5 and actual6 entered ProductExecution, called the local model twice each, and stopped before findings on the same projection disposition signature | bounded projection structured-output admission/diagnostic/correction checkpoint, then a new preflight and separately authorized actual7 |
 | Internal Alpha | hard gates false/false | no changed-product success plus repair success pair | P2 empirical hard gates |
 | Public Alpha | not started | public entry and case evidence absent | Internal checkpoint plus public-entry actual |
 
@@ -176,20 +176,20 @@ admission review.
 
 ## 8. P2: Sealed Fresh Actual
 
-P2 product-path admission starts after the P1b actual-ready checkpoint. A fresh
-empirical actual additionally requires sealed-entry admission. The current
-entry blocker is `ENTRY-002`, detailed in
-`docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md`; no current
-P2 ProductExecution actual has started.
+P2 product-path admission starts after the P1b actual-ready checkpoint. Fresh
+preflight4 plus actual5 and fresh preflight5 plus actual6 now satisfy the
+`ENTRY-002` current-scope close trigger: both actuals entered ProductExecution
+without entry-side repair. Entry remains separately reopenable on a new
+pre-ProductExecution identity or permission failure.
 
-After Attempt5 failed before ProductExecution, the next owner is a bounded,
-tested repository implementation checkpoint, not another packet-only patch. It
-reuses existing ProductExecution preflight/result, source-binding, Artifact,
-and receipt contracts to close Windows physical-path equivalence plus the
-Attempts1–5 parser, diagnostic, and Git-trust admission boundaries. This does
-not activate the complete Public Runner in `ENTRY-001` and does not create a
-second control plane. A new packet and manifest follow the checkpoint; fresh
-same-context preflight and empirical actual remain separately authorized gates.
+Actual5 and actual6 establish the next current owner inside ProductExecution.
+The per-obligation schema from checkpoint `2b18874` was physically sent to
+Ollama, but one projection plus one correction still failed
+`REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID` before findings. `EVID-002`
+therefore owns exact local response-schema admission, precise semantic
+rejection diagnostics, and the existing single correction. It does not own
+retrieval, findings semantics, coverage policy, model switching, a third
+correction, or vector work.
 
 ```text
 new checkpoint
@@ -328,21 +328,26 @@ retrieval still demonstrates a real recall failure under a real Eval.
 ## 15. Current Decision Snapshot
 
 ```yaml
-snapshot_as_of_commit: c906d99dba8f1850864e090c4f925a78fbd4f373
+snapshot_as_of_commit: 2b18874a44e1785c1b8775ff2d8a8fa5f84594fb
 P0: completed
 P1a: completed
 P1b: completed
 ENTRY_repository_implementation_checkpoint: completed
 P2_product_path_admission: admitted
-fresh_sealed_entry_admission: unverified_and_blocked
-ProductExecution_actual_runs: 0
-current_P2_model_calls: 0
+fresh_sealed_entry_admission: passed_for_current_scope
+ENTRY-002: closed
+ProductExecution_actual_runs: 2
+current_P2_model_calls: 4_total_across_actual5_and_actual6
+current_owner: EVID-002
+actual6_baseline_build: passed
+actual6_changed_product_build: not_reached
 Internal_Alpha_hard_gates: false/false
 ```
 
-The code checkpoint proves a repository owner and focused behavior only. It is
-not a fresh-context preflight result, an empirical actual, or execution
-authority.
+The current checkpoint plus actuals prove only the bounded facts above. They do
+not prove positive sufficiency, Patch generation, changed-product Build,
+Repair/Revalidation, Entry repeatability beyond the tested scope, or Internal
+Alpha completion.
 
 ## 16. Single-Owner Orchestration Boundary
 
@@ -456,7 +461,8 @@ or historical output as current fact.
 | Content | Unique owner |
 | --- | --- |
 | stable orchestration, recovery, degradation, retrieval, and contract principles | this Decision Record |
-| Attempts1–5 physical facts | AccurateCrosshair sealed-entry incident record |
+| Sealed-entry Attempts A1–A5 physical facts | AccurateCrosshair sealed-entry incident record |
+| Complete recent logical-chain Issue interaction and actual1–6 facts | `docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md` |
 | trigger, physical owner, reopening and minimum acceptance | Engineering Issue Register |
 | explicitly activated work | Implementation Queue |
 | Architecture WIP stable single-Graph/observation principles; old BHF/WC order excluded | `reconcile_later` |
@@ -464,6 +470,6 @@ or historical output as current fact.
 | Coverage Matrix WIP | `regenerate_after_ENTRY` from current source; do not migrate the stale CAV0 table |
 | Local Model untracked protocol | `paused_standalone_asset_reconcile_later`; comparison waits for stable interfaces and a real product bottleneck |
 
-This record preserves the decision route only. It does not claim sealed-entry
-readiness, authorize a preflight rerun or actual, or claim Internal or Public
-Alpha readiness.
+This record preserves the decision route only. It does not authorize the
+`EVID-002` implementation checkpoint's successor packet, preflight, actual7,
+or any Internal or Public Alpha claim.
