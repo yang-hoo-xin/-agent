@@ -5642,9 +5642,12 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     assert "blocked_report" not in result["artifacts"]
     assert result["blockers"] == []
     assert result["evidence_summary"]["can_generate_patch"] is True
-    assert result["evidence_summary"]["retrieval_methods_used"] == ["symbol_exact"]
+    assert result["evidence_summary"]["retrieval_methods_used"] == [
+        "symbol_exact",
+        "text_match",
+    ]
     assert result["evidence_summary"]["missing_evidence"] == []
-    assert result["evidence_summary"]["timing"]["final_count"] == 1.0
+    assert result["evidence_summary"]["timing"]["final_count"] == 2.0
     assert result["review_summary"]["allowed_next_stage"] == "dry_run_apply"
     assert result["build_summary"]["execution_mode"] == "fake"
     assert result["build_summary"]["claims_real_build_success"] is False
@@ -5663,7 +5666,10 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     assert proposal["context_pack"]["binding_registry_ref"]["artifact_hash"] == (
         result["artifact_hashes"]["implementation_plan"]
     )
-    assert proposal["context_pack"]["allowed_edit_binding_ids"] == ["edit_binding_001"]
+    assert proposal["context_pack"]["allowed_edit_binding_ids"] == [
+        "edit_binding_001",
+        "edit_binding_002",
+    ]
     assert proposal["context_pack"]["display_fields_authority"] == (
         "derived_non_authoritative"
     )
@@ -6341,16 +6347,24 @@ def test_missing_knowledge_routes_to_blocked_after_evidence(tmp_path: Path) -> N
 
     assert result["current_stage"] == "blocked"
     assert "evidence_pack" in result["artifacts"]
-    assert "implementation_plan" not in result["artifacts"]
+    assert "implementation_plan" in result["artifacts"]
     assert "patch_proposal" not in result["artifacts"]
     assert "proposal_review" not in result["artifacts"]
     assert "dry_run_result" not in result["artifacts"]
+    assert "isolated_apply_result" not in result["artifacts"]
     assert "build_result" not in result["artifacts"]
     assert "runtime_evidence" not in result["artifacts"]
+    assert "eval_report" not in result["artifacts"]
+    assert "repair_plan" not in result["artifacts"]
+    assert "workflow_summary" not in result["artifacts"]
     assert result["evidence_summary"]["readiness"] == "insufficient"
     assert result["evidence_summary"]["missing_evidence"]
     assert result["evidence_summary"]["timing"]["final_count"] == 0.0
     assert result["blockers"]
+    implementation = _artifact_data(store, result, "implementation_plan")
+    assert implementation["blocking"] is True
+    assert implementation["proposed_changes"] == []
+    assert implementation["blockers"]
     blocked_envelope = store.read(_artifact_ref(store, result, "blocked_report"))
     blocked_report = blocked_envelope["data"]
     assert blocked_envelope["status"] == "blocked"
@@ -6614,10 +6628,13 @@ def test_retrieve_evidence_trace_exposes_pack_summary(tmp_path: Path) -> None:
     assert event["artifact_refs"] == [result["artifacts"]["evidence_pack"]]
     assert event["details"]["readiness"] == "sufficient"
     assert event["details"]["can_generate_patch"] is True
-    assert event["details"]["retrieval_methods_used"] == ["symbol_exact"]
+    assert event["details"]["retrieval_methods_used"] == [
+        "symbol_exact",
+        "text_match",
+    ]
     assert event["details"]["missing_evidence_count"] == 0
     assert event["details"]["disabled_modes"]["bm25"]
-    assert event["details"]["timing"]["final_count"] == 1.0
+    assert event["details"]["timing"]["final_count"] == 2.0
 
 
 def test_retrieve_evidence_trace_records_blocked_summary(tmp_path: Path) -> None:
@@ -7841,14 +7858,18 @@ def test_runtime_probe_factory_can_accept_v1_boundary(tmp_path: Path) -> None:
 
 def test_review_block_does_not_create_fake_success_artifacts(tmp_path: Path) -> None:
     store = ArtifactStore(tmp_path / "artifacts")
+    knowledge_database = _knowledge_with_load_symbol(tmp_path)
+    policy = build_gtfo_profile(tmp_path).review_policy()
     graph = build_graph(
         store,
-        knowledge_database=_knowledge_with_load_symbol(tmp_path, root_name="secrets"),
+        knowledge_database=knowledge_database,
+        domain_review_policy=policy,
     )
     state = create_initial_state(
         run_id="run_001",
         request_id="req_001",
         user_request="make Load enable diagnostics",
+        target_domain="gtfo",
         target_mod="BetterHitFeedback",
     )
 
@@ -7858,9 +7879,22 @@ def test_review_block_does_not_create_fake_success_artifacts(tmp_path: Path) -> 
     assert result["review_summary"]["allowed_next_stage"] is None
     assert "proposal_review" in result["artifacts"]
     assert "dry_run_result" not in result["artifacts"]
+    assert "isolated_apply_result" not in result["artifacts"]
     assert "build_result" not in result["artifacts"]
     assert "runtime_evidence" not in result["artifacts"]
+    assert "eval_report" not in result["artifacts"]
     assert "workflow_summary" not in result["artifacts"]
+    source = knowledge_database.list_sources()[0]
+    evidence = _artifact_data(store, result, "evidence_pack")
+    proposal = _artifact_data(store, result, "patch_proposal")
+    review = _artifact_data(store, result, "proposal_review")
+    assert Path(source.root_path) == (tmp_path / "source").resolve()
+    assert {item["source_path"] for item in evidence["items"]} == {"Plugin.cs"}
+    assert proposal["files"] == ["Plugin.cs"]
+    assert review["decision"] == "blocked_scope_risk"
+    assert any(
+        finding["rule_id"] == "scope_boundary" for finding in review["findings"]
+    )
 
 
 def test_default_graph_uses_domain_policy_for_unsupported_domain(tmp_path: Path) -> None:
