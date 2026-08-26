@@ -36,6 +36,15 @@ REQUIREMENT_COVERAGE_TRUST_BOUNDARY = (
 )
 
 
+class RequirementCoverageProjectionError(ValueError):
+    """Legacy-compatible projection rejection with bounded exact diagnostics."""
+
+    def __init__(self, code: str, diagnostic: Mapping[str, Any]) -> None:
+        self.code = code
+        self.diagnostic = dict(diagnostic)
+        super().__init__(code)
+
+
 @dataclass(frozen=True)
 class RequirementCoverageView:
     """Stable consumer view over one strictly validated coverage receipt."""
@@ -681,8 +690,8 @@ def _normalized_projection(
             }
         )
     dispositions: list[dict[str, object]] = []
-    disposition_indexes: set[int] = set()
-    for raw in raw_dispositions:
+    disposition_indexes: dict[int, int] = {}
+    for disposition_item_index, raw in enumerate(raw_dispositions):
         if not isinstance(raw, dict) or set(raw) != {
             "input_obligation_index",
             "disposition",
@@ -692,19 +701,75 @@ def _normalized_projection(
         index = raw.get("input_obligation_index")
         disposition = raw.get("disposition")
         reason = raw.get("reason")
+        item_path = f"$.input_dispositions[{disposition_item_index}]"
         if (
             isinstance(index, bool)
             or not isinstance(index, int)
             or not 1 <= index <= len(input_obligations)
-            or index in disposition_indexes
-            or index in accounted_indexes
-            or disposition
-            not in input_obligations[index - 1]["allowed_dispositions"]
-            or not isinstance(reason, str)
-            or not reason.strip()
         ):
-            raise ValueError("REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID")
-        disposition_indexes.add(index)
+            raise RequirementCoverageProjectionError(
+                "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+                {
+                    "phase": "semantic_materialization",
+                    "failure_category": "invalid_obligation_index",
+                    "json_path": f"{item_path}.input_obligation_index",
+                    "input_obligation_count": len(input_obligations),
+                },
+            )
+        if index in disposition_indexes:
+            raise RequirementCoverageProjectionError(
+                "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+                {
+                    "phase": "semantic_materialization",
+                    "failure_category": "duplicate_disposition_index",
+                    "json_path": f"{item_path}.input_obligation_index",
+                    "input_obligation_index": index,
+                    "first_disposition_item_index": disposition_indexes[index],
+                    "duplicate_disposition_item_index": disposition_item_index,
+                },
+            )
+        if index in accounted_indexes:
+            raise RequirementCoverageProjectionError(
+                "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+                {
+                    "phase": "semantic_materialization",
+                    "failure_category": (
+                        "obligation_already_accounted_and_dispositioned"
+                    ),
+                    "json_path": f"{item_path}.input_obligation_index",
+                    "input_obligation_index": index,
+                    "allowed_dispositions": list(
+                        input_obligations[index - 1]["allowed_dispositions"]
+                    ),
+                },
+            )
+        allowed_dispositions = list(
+            input_obligations[index - 1]["allowed_dispositions"]
+        )
+        if disposition not in allowed_dispositions:
+            raise RequirementCoverageProjectionError(
+                "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+                {
+                    "phase": "semantic_materialization",
+                    "failure_category": "disallowed_disposition",
+                    "json_path": f"{item_path}.disposition",
+                    "input_obligation_index": index,
+                    "allowed_dispositions": allowed_dispositions,
+                    "observed_disposition": disposition,
+                },
+            )
+        if not isinstance(reason, str) or not reason.strip():
+            raise RequirementCoverageProjectionError(
+                "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+                {
+                    "phase": "semantic_materialization",
+                    "failure_category": "invalid_reason",
+                    "json_path": f"{item_path}.reason",
+                    "input_obligation_index": index,
+                    "required_boundary": "non_empty_after_strip",
+                },
+            )
+        disposition_indexes[index] = disposition_item_index
         dispositions.append(
             {
                 "input_obligation_index": index,
@@ -712,10 +777,25 @@ def _normalized_projection(
                 "reason": reason.strip(),
             }
         )
-    if accounted_indexes | disposition_indexes != set(
+    disposition_index_set = set(disposition_indexes)
+    if accounted_indexes | disposition_index_set != set(
         range(1, len(input_obligations) + 1)
     ):
-        raise ValueError("REQUIREMENT_COVERAGE_INPUT_ACCOUNTING_INCOMPLETE")
+        missing_indexes = sorted(
+            set(range(1, len(input_obligations) + 1))
+            - accounted_indexes
+            - disposition_index_set
+        )
+        raise RequirementCoverageProjectionError(
+            "REQUIREMENT_COVERAGE_INPUT_ACCOUNTING_INCOMPLETE",
+            {
+                "phase": "semantic_materialization",
+                "failure_category": "input_accounting_incomplete",
+                "json_path": "$.input_dispositions",
+                "missing_input_obligation_indexes": missing_indexes,
+                "input_obligation_count": len(input_obligations),
+            },
+        )
     relations: list[dict[str, object]] = []
     for raw in raw_relations:
         if not isinstance(raw, dict) or set(raw) != {

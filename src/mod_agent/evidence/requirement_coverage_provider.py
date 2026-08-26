@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from .models import EvidencePack, missing_evidence_from_blockers
 from .requirement_coverage import (
     REQUIREMENT_ROLES,
+    RequirementCoverageProjectionError,
     default_feature_requirement_projection,
     materialize_requirement_coverage_projection,
     requirement_input_obligation_model_view,
@@ -20,6 +21,374 @@ from .requirement_coverage import (
 StructuredJsonCompletion = Callable[
     [str, Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]
 ]
+
+_PROJECTION_SCHEMA_KEYWORDS = frozenset(
+    {
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "minItems",
+        "maxItems",
+        "items",
+        "minLength",
+        "enum",
+        "minimum",
+        "maximum",
+        "oneOf",
+        "const",
+    }
+)
+
+
+class RequirementProjectionAdmissionError(ValueError):
+    """Bounded exact response-schema rejection without retaining raw output."""
+
+    def __init__(self, diagnostic: Mapping[str, Any]) -> None:
+        self.code = "REQUIREMENT_COVERAGE_PROJECTION_SCHEMA_INVALID"
+        self.diagnostic = dict(diagnostic)
+        super().__init__(self.code)
+
+
+def admit_requirement_projection_response(
+    value: object,
+    *,
+    schema: Mapping[str, Any],
+) -> None:
+    """Validate only the JSON Schema constructs emitted by this provider."""
+
+    diagnostic = _projection_schema_failure(value, schema=schema, path="$")
+    if diagnostic is not None:
+        raise RequirementProjectionAdmissionError(diagnostic)
+
+
+def _projection_schema_failure(
+    value: object,
+    *,
+    schema: Mapping[str, Any],
+    path: str,
+) -> dict[str, object] | None:
+    unsupported = sorted(set(schema) - _PROJECTION_SCHEMA_KEYWORDS)
+    if unsupported:
+        return _schema_diagnostic(
+            category="schema_construct_unsupported",
+            path=path,
+            keyword="schema",
+            allowed_boundary={"supported_keywords": sorted(_PROJECTION_SCHEMA_KEYWORDS)},
+            details={"unsupported_keywords": unsupported},
+        )
+    variants = schema.get("oneOf")
+    if variants is not None:
+        if not isinstance(variants, list) or not variants:
+            return _schema_diagnostic(
+                category="schema_construct_invalid",
+                path=path,
+                keyword="oneOf",
+                allowed_boundary={"non_empty_variant_list": True},
+            )
+        failures = [
+            _projection_schema_failure(value, schema=variant, path=path)
+            for variant in variants
+            if isinstance(variant, Mapping)
+        ]
+        if len(failures) != len(variants):
+            return _schema_diagnostic(
+                category="schema_construct_invalid",
+                path=path,
+                keyword="oneOf",
+                allowed_boundary={"variant_type": "object"},
+            )
+        accepted_count = sum(failure is None for failure in failures)
+        if accepted_count == 1:
+            return None
+        if accepted_count > 1:
+            return _schema_diagnostic(
+                category="schema_one_of_ambiguous",
+                path=path,
+                keyword="oneOf",
+                allowed_boundary={"exactly_one_match": True},
+            )
+        matching_const_indexes = [
+            index
+            for index, variant in enumerate(variants)
+            if _schema_variant_consts_match(value, variant)
+        ]
+        if len(matching_const_indexes) == 1:
+            return failures[matching_const_indexes[0]]
+        allowed_pairs = _schema_disposition_pairs(variants)
+        if isinstance(value, Mapping) and allowed_pairs:
+            observed_index = value.get("input_obligation_index")
+            observed_disposition = value.get("disposition")
+            allowed_for_index = sorted(
+                str(pair["disposition"])
+                for pair in allowed_pairs
+                if pair["input_obligation_index"] == observed_index
+            )
+            return _schema_diagnostic(
+                category="disallowed_disposition",
+                path=f"{path}.disposition",
+                keyword="oneOf",
+                allowed_boundary={
+                    "input_obligation_index": observed_index,
+                    "allowed_dispositions": allowed_for_index,
+                    "allowed_pairs": allowed_pairs,
+                },
+                details={
+                    "observed_disposition": (
+                        observed_disposition
+                        if isinstance(observed_disposition, str)
+                        else None
+                    )
+                },
+            )
+        return _schema_diagnostic(
+            category="schema_one_of_no_match",
+            path=path,
+            keyword="oneOf",
+            allowed_boundary={
+                "branch_failure_categories": sorted(
+                    {
+                        str(failure.get("failure_category"))
+                        for failure in failures
+                        if failure is not None
+                    }
+                )
+            },
+        )
+    expected_type = schema.get("type")
+    if expected_type is not None and not _json_schema_type_matches(
+        value, str(expected_type)
+    ):
+        return _schema_diagnostic(
+            category="schema_type_mismatch",
+            path=path,
+            keyword="type",
+            allowed_boundary={"type": expected_type},
+            details={"observed_type": _json_type_name(value)},
+        )
+    if "const" in schema and not _json_values_equal(value, schema["const"]):
+        return _schema_diagnostic(
+            category="schema_const_mismatch",
+            path=path,
+            keyword="const",
+            allowed_boundary={"const": schema["const"]},
+        )
+    if "enum" in schema:
+        enum_values = schema["enum"]
+        if not isinstance(enum_values, list) or not any(
+            _json_values_equal(value, allowed) for allowed in enum_values
+        ):
+            return _schema_diagnostic(
+                category="schema_enum_mismatch",
+                path=path,
+                keyword="enum",
+                allowed_boundary={"enum": enum_values},
+            )
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        required = schema.get("required", [])
+        if not isinstance(properties, Mapping) or not isinstance(required, list):
+            return _schema_diagnostic(
+                category="schema_construct_invalid",
+                path=path,
+                keyword="properties",
+                allowed_boundary={"properties_type": "object", "required_type": "array"},
+            )
+        for required_name in required:
+            if required_name not in value:
+                return _schema_diagnostic(
+                    category="schema_required_property_missing",
+                    path=f"{path}.{required_name}",
+                    keyword="required",
+                    allowed_boundary={"required_property": required_name},
+                )
+        if schema.get("additionalProperties") is False:
+            additional = sorted(set(value) - set(properties))
+            if additional:
+                return _schema_diagnostic(
+                    category="schema_additional_property",
+                    path=f"{path}.{additional[0]}",
+                    keyword="additionalProperties",
+                    allowed_boundary={"allowed_properties": sorted(properties)},
+                )
+        for property_name, property_schema in properties.items():
+            if property_name not in value:
+                continue
+            if not isinstance(property_schema, Mapping):
+                return _schema_diagnostic(
+                    category="schema_construct_invalid",
+                    path=f"{path}.{property_name}",
+                    keyword="properties",
+                    allowed_boundary={"property_schema_type": "object"},
+                )
+            failure = _projection_schema_failure(
+                value[property_name],
+                schema=property_schema,
+                path=f"{path}.{property_name}",
+            )
+            if failure is not None:
+                return failure
+    if isinstance(value, list):
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            return _schema_diagnostic(
+                category="schema_array_too_short",
+                path=path,
+                keyword="minItems",
+                allowed_boundary={"minItems": minimum},
+                details={"observed_items": len(value)},
+            )
+        if isinstance(maximum, int) and len(value) > maximum:
+            return _schema_diagnostic(
+                category="schema_array_too_long",
+                path=path,
+                keyword="maxItems",
+                allowed_boundary={"maxItems": maximum},
+                details={"observed_items": len(value)},
+            )
+        item_schema = schema.get("items")
+        if item_schema is not None:
+            if not isinstance(item_schema, Mapping):
+                return _schema_diagnostic(
+                    category="schema_construct_invalid",
+                    path=path,
+                    keyword="items",
+                    allowed_boundary={"items_type": "object"},
+                )
+            for index, item in enumerate(value):
+                failure = _projection_schema_failure(
+                    item,
+                    schema=item_schema,
+                    path=f"{path}[{index}]",
+                )
+                if failure is not None:
+                    return failure
+    if isinstance(value, str):
+        minimum_length = schema.get("minLength")
+        if isinstance(minimum_length, int) and len(value) < minimum_length:
+            return _schema_diagnostic(
+                category="schema_string_too_short",
+                path=path,
+                keyword="minLength",
+                allowed_boundary={"minLength": minimum_length},
+                details={"observed_length": len(value)},
+            )
+    if isinstance(value, int) and not isinstance(value, bool):
+        minimum_value = schema.get("minimum")
+        maximum_value = schema.get("maximum")
+        if isinstance(minimum_value, int) and value < minimum_value:
+            return _schema_diagnostic(
+                category="schema_integer_below_minimum",
+                path=path,
+                keyword="minimum",
+                allowed_boundary={"minimum": minimum_value},
+                details={"observed_value": value},
+            )
+        if isinstance(maximum_value, int) and value > maximum_value:
+            return _schema_diagnostic(
+                category="schema_integer_above_maximum",
+                path=path,
+                keyword="maximum",
+                allowed_boundary={"maximum": maximum_value},
+                details={"observed_value": value},
+            )
+    return None
+
+
+def _schema_variant_consts_match(
+    value: object,
+    variant: object,
+) -> bool:
+    if not isinstance(value, Mapping) or not isinstance(variant, Mapping):
+        return False
+    properties = variant.get("properties")
+    if not isinstance(properties, Mapping):
+        return False
+    const_properties = {
+        name: property_schema["const"]
+        for name, property_schema in properties.items()
+        if isinstance(property_schema, Mapping) and "const" in property_schema
+    }
+    return bool(const_properties) and all(
+        name in value and _json_values_equal(value[name], expected)
+        for name, expected in const_properties.items()
+    )
+
+
+def _schema_disposition_pairs(variants: list[object]) -> list[dict[str, object]]:
+    pairs: list[dict[str, object]] = []
+    for variant in variants:
+        if not isinstance(variant, Mapping):
+            continue
+        properties = variant.get("properties")
+        if not isinstance(properties, Mapping):
+            continue
+        index_schema = properties.get("input_obligation_index")
+        disposition_schema = properties.get("disposition")
+        if (
+            isinstance(index_schema, Mapping)
+            and isinstance(disposition_schema, Mapping)
+            and isinstance(index_schema.get("const"), int)
+            and not isinstance(index_schema.get("const"), bool)
+            and isinstance(disposition_schema.get("const"), str)
+        ):
+            pairs.append(
+                {
+                    "input_obligation_index": index_schema["const"],
+                    "disposition": disposition_schema["const"],
+                }
+            )
+    return pairs
+
+
+def _schema_diagnostic(
+    *,
+    category: str,
+    path: str,
+    keyword: str,
+    allowed_boundary: Mapping[str, Any],
+    details: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    return {
+        "phase": "response_schema_admission",
+        "failure_category": category,
+        "json_path": path,
+        "schema_keyword": keyword,
+        "allowed_boundary": dict(allowed_boundary),
+        **(dict(details) if details is not None else {}),
+    }
+
+
+def _json_schema_type_matches(value: object, expected: str) -> bool:
+    return {
+        "object": isinstance(value, dict),
+        "array": isinstance(value, list),
+        "string": isinstance(value, str),
+        "integer": isinstance(value, int) and not isinstance(value, bool),
+    }.get(expected, False)
+
+
+def _json_type_name(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    return type(value).__name__
+
+
+def _json_values_equal(left: object, right: object) -> bool:
+    return type(left) is type(right) and left == right
 
 
 class RequirementCoverageSemanticProvider(Protocol):
@@ -46,6 +415,11 @@ class StructuredModelRequirementCoverageProvider:
 
     def __init__(self, complete_json: StructuredJsonCompletion) -> None:
         self.complete_json = complete_json
+        self._projection_attempt_audit: list[dict[str, object]] = []
+
+    @property
+    def projection_attempt_audit(self) -> tuple[dict[str, object], ...]:
+        return tuple(dict(item) for item in self._projection_attempt_audit)
 
     def project(
         self,
@@ -53,6 +427,7 @@ class StructuredModelRequirementCoverageProvider:
         feature_data: Mapping[str, Any],
         request: str,
     ) -> Mapping[str, Any]:
+        self._projection_attempt_audit = []
         obligations = requirement_input_obligation_model_view(feature_data)
         schema = requirement_projection_response_schema(
             input_obligations=obligations
@@ -86,34 +461,148 @@ class StructuredModelRequirementCoverageProvider:
             projection = self.complete_json(
                 "requirement_projection", payload, schema
             )
-            materialize_requirement_coverage_projection(
+            self._admit_and_materialize_projection(
+                projection,
+                schema=schema,
                 feature_data=feature_data,
                 request=request,
-                projection=projection,
             )
         except ValueError as exc:
+            rejection_diagnostic = _projection_rejection_diagnostic(exc)
+            self._record_projection_attempt(
+                attempt_index=1,
+                projection=projection,
+                schema=schema,
+                status="rejected",
+                error_code=str(exc),
+                rejection_diagnostic=rejection_diagnostic,
+            )
             correction = {
                 **payload,
                 "message_type": "product_requirement_projection_correction",
                 "rejected_output_sha256": (
                     _json_sha256(projection) if projection is not None else None
                 ),
+                "rejected_output_hash_basis": "canonical_json_utf8",
                 "error_code": str(exc),
+                "rejection_diagnostic": rejection_diagnostic,
                 "instruction": (
                     "Return one complete corrected projection using the same schema; "
                     "do not patch the rejected output."
                 ),
             }
-            corrected = self.complete_json(
-                "requirement_projection_correction", correction, schema
-            )
-            materialize_requirement_coverage_projection(
-                feature_data=feature_data,
-                request=request,
+            corrected: Mapping[str, Any] | None = None
+            try:
+                corrected = self.complete_json(
+                    "requirement_projection_correction", correction, schema
+                )
+                self._admit_and_materialize_projection(
+                    corrected,
+                    schema=schema,
+                    feature_data=feature_data,
+                    request=request,
+                )
+            except ValueError as corrected_exc:
+                self._record_projection_attempt(
+                    attempt_index=2,
+                    projection=corrected,
+                    schema=schema,
+                    status="rejected",
+                    error_code=str(corrected_exc),
+                    rejection_diagnostic=_projection_rejection_diagnostic(
+                        corrected_exc
+                    ),
+                )
+                raise
+            self._record_projection_attempt(
+                attempt_index=2,
                 projection=corrected,
+                schema=schema,
+                status="accepted",
+                error_code=None,
+                rejection_diagnostic=None,
             )
             return corrected
+        self._record_projection_attempt(
+            attempt_index=1,
+            projection=projection,
+            schema=schema,
+            status="accepted",
+            error_code=None,
+            rejection_diagnostic=None,
+        )
         return projection
+
+    @staticmethod
+    def _admit_and_materialize_projection(
+        projection: Mapping[str, Any],
+        *,
+        schema: Mapping[str, Any],
+        feature_data: Mapping[str, Any],
+        request: str,
+    ) -> None:
+        admit_requirement_projection_response(projection, schema=schema)
+        materialize_requirement_coverage_projection(
+            feature_data=feature_data,
+            request=request,
+            projection=projection,
+        )
+
+    def _record_projection_attempt(
+        self,
+        *,
+        attempt_index: int,
+        projection: Mapping[str, Any] | None,
+        schema: Mapping[str, Any],
+        status: str,
+        error_code: str | None,
+        rejection_diagnostic: Mapping[str, Any] | None,
+    ) -> None:
+        phase = (
+            str(rejection_diagnostic.get("phase"))
+            if rejection_diagnostic is not None
+            else None
+        )
+        self._projection_attempt_audit.append(
+            {
+                "attempt_index": attempt_index,
+                "structured_output_canonical_sha256": (
+                    _json_sha256(projection) if projection is not None else None
+                ),
+                "structured_output_hash_basis": (
+                    "canonical_json_utf8" if projection is not None else None
+                ),
+                "schema_sha256": _json_sha256(schema),
+                "status": status,
+                "error_code": error_code,
+                "response_schema_admitted": (
+                    False
+                    if phase == "response_schema_admission"
+                    else True
+                    if phase == "semantic_materialization" or status == "accepted"
+                    else None
+                ),
+                "semantic_materialization_admitted": (
+                    True
+                    if status == "accepted"
+                    else False
+                    if phase == "semantic_materialization"
+                    else None
+                ),
+                "requirement_count": _list_field_count(
+                    projection, "requirements"
+                ),
+                "relation_count": _list_field_count(projection, "relations"),
+                "input_disposition_count": _list_field_count(
+                    projection, "input_dispositions"
+                ),
+                "rejection_diagnostic": (
+                    dict(rejection_diagnostic)
+                    if rejection_diagnostic is not None
+                    else None
+                ),
+            }
+        )
 
     def findings(
         self,
@@ -241,6 +730,8 @@ class RequirementCoverageEvidenceProvider:
         feature_data: Mapping[str, Any],
     ) -> EvidencePack:
         provider_failure_codes: list[str] = []
+        provider_failure_diagnostics: list[dict[str, object]] = []
+        projection_attempt_audit: list[dict[str, object]] = []
         if self.semantic_provider is not None:
             try:
                 projection = self.semantic_provider.project(
@@ -249,7 +740,18 @@ class RequirementCoverageEvidenceProvider:
                 )
             except ValueError as exc:
                 provider_failure_codes.append(str(exc))
+                provider_failure_diagnostics.append(
+                    _projection_rejection_diagnostic(exc)
+                )
                 projection = default_feature_requirement_projection(feature_data)
+            if isinstance(
+                self.semantic_provider,
+                StructuredModelRequirementCoverageProvider,
+            ):
+                projection_attempt_audit = [
+                    dict(item)
+                    for item in self.semantic_provider.projection_attempt_audit
+                ]
         elif self.projection_factory is not None:
             projection = self.projection_factory(feature_data)
         else:
@@ -287,6 +789,19 @@ class RequirementCoverageEvidenceProvider:
             retrieved_pack=retrieved,
             findings=findings,
         )
+        if projection_attempt_audit or provider_failure_diagnostics:
+            pack = replace(
+                pack,
+                budget_summary={
+                    **pack.budget_summary,
+                    "requirement_projection_attempt_audit": (
+                        projection_attempt_audit
+                    ),
+                    "semantic_provider_failure_diagnostics": (
+                        provider_failure_diagnostics
+                    ),
+                },
+            )
         if not provider_failure_codes:
             return pack
         return replace(
@@ -557,6 +1072,44 @@ def _source_observation_model_view(item: Mapping[str, Any]) -> dict[str, object]
             "excerpt",
         )
     }
+
+
+def _projection_rejection_diagnostic(exc: ValueError) -> dict[str, object]:
+    if isinstance(
+        exc,
+        (RequirementProjectionAdmissionError, RequirementCoverageProjectionError),
+    ):
+        return {"error_code": str(exc), **dict(exc.diagnostic)}
+    code = str(exc)
+    provider_completion = code.startswith("REQUIREMENT_COVERAGE_MODEL_")
+    return {
+        "error_code": code,
+        "phase": (
+            "provider_completion"
+            if provider_completion
+            else "semantic_materialization"
+        ),
+        "failure_category": (
+            "provider_completion_error"
+            if provider_completion
+            else "semantic_validation_rejection"
+        ),
+        "json_path": "$",
+        "allowed_boundary": {
+            "complete_projection_required": True,
+            "bounded_correction_attempts_remaining": 1,
+        },
+    }
+
+
+def _list_field_count(
+    value: object,
+    field_name: str,
+) -> int | None:
+    if not isinstance(value, Mapping):
+        return None
+    field_value = value.get(field_name)
+    return len(field_value) if isinstance(field_value, list) else None
 
 
 def _json_sha256(value: object) -> str:

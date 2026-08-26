@@ -10,6 +10,7 @@ from src.mod_agent.evidence import (
     EvidencePack,
     RequirementCoverageEvidenceProvider,
     RgLiveEvidenceProvider,
+    StructuredModelRequirementCoverageProvider,
     build_requirement_coverage_pack,
     default_feature_requirement_projection,
     make_requirement_coverage_evidence_provider,
@@ -21,9 +22,12 @@ from src.mod_agent.evidence.discovery_contract import (
 )
 from src.mod_agent.evidence.identity import request_relation_identity
 from src.mod_agent.evidence.requirement_coverage import (
+    RequirementCoverageProjectionError,
     requirement_input_obligation_model_view,
 )
 from src.mod_agent.evidence.requirement_coverage_provider import (
+    RequirementProjectionAdmissionError,
+    admit_requirement_projection_response,
     requirement_projection_response_schema,
 )
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
@@ -128,6 +132,26 @@ def _projection() -> dict[str, object]:
         ],
         "input_dispositions": [],
     }
+
+
+def _projection_without_obligation_four() -> dict[str, object]:
+    projection = deepcopy(_projection())
+    del projection["requirements"][2]
+    projection["relations"] = [
+        {
+            "parent_requirement_indexes": [1],
+            "meaning": "Change evidence.",
+        },
+        {
+            "parent_requirement_indexes": [2],
+            "meaning": "Pre-patch evidence.",
+        },
+        {
+            "parent_requirement_indexes": [3],
+            "meaning": "Post-change evidence.",
+        },
+    ]
+    return projection
 
 
 def _write_sources(root: Path) -> None:
@@ -874,24 +898,243 @@ def test_projection_schema_has_zero_dispositions_when_no_obligation_is_eligible(
     )
 
 
+def test_projection_schema_invalid_pair_is_rejected_before_materializer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    feature = _feature_data()
+    obligations = requirement_input_obligation_model_view(feature)
+    schema = requirement_projection_response_schema(
+        input_obligations=obligations
+    )
+    invalid = deepcopy(_projection())
+    invalid["input_dispositions"] = [
+        {
+            "input_obligation_index": 4,
+            "disposition": "post_change",
+            "reason": "Cross-bound pair.",
+        }
+    ]
+
+    with pytest.raises(RequirementProjectionAdmissionError) as admission:
+        admit_requirement_projection_response(invalid, schema=schema)
+    assert str(admission.value) == "REQUIREMENT_COVERAGE_PROJECTION_SCHEMA_INVALID"
+    assert admission.value.diagnostic == {
+        "phase": "response_schema_admission",
+        "failure_category": "disallowed_disposition",
+        "json_path": "$.input_dispositions[0].disposition",
+        "schema_keyword": "oneOf",
+        "allowed_boundary": {
+            "input_obligation_index": 4,
+            "allowed_dispositions": ["scope_boundary"],
+            "allowed_pairs": [
+                {"input_obligation_index": 4, "disposition": "scope_boundary"},
+                {"input_obligation_index": 5, "disposition": "post_change"},
+                {"input_obligation_index": 6, "disposition": "post_change"},
+            ],
+        },
+        "observed_disposition": "post_change",
+    }
+
+    materializer_calls: list[dict[str, object]] = []
+    original_materializer = materialize_requirement_coverage_projection
+
+    def tracked_materializer(**kwargs):
+        materializer_calls.append(deepcopy(kwargs["projection"]))
+        return original_materializer(**kwargs)
+
+    monkeypatch.setattr(
+        "src.mod_agent.evidence.requirement_coverage_provider."
+        "materialize_requirement_coverage_projection",
+        tracked_materializer,
+    )
+    roles: list[str] = []
+    correction_payloads: list[dict[str, object]] = []
+    schemas: list[dict[str, object]] = []
+
+    def complete_json(role, payload, response_schema):
+        roles.append(role)
+        schemas.append(deepcopy(response_schema))
+        if role == "requirement_projection":
+            return deepcopy(invalid)
+        correction_payloads.append(deepcopy(payload))
+        return deepcopy(_projection())
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    corrected = provider.project(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+    )
+
+    assert corrected == _projection()
+    assert roles == [
+        "requirement_projection",
+        "requirement_projection_correction",
+    ]
+    assert schemas[0] == schemas[1]
+    assert materializer_calls == [_projection()]
+    diagnostic = correction_payloads[0]["rejection_diagnostic"]
+    assert diagnostic["json_path"] == "$.input_dispositions[0].disposition"
+    assert diagnostic["failure_category"] == "disallowed_disposition"
+    assert [item["status"] for item in provider.projection_attempt_audit] == [
+        "rejected",
+        "accepted",
+    ]
+    assert provider.projection_attempt_audit[0]["response_schema_admitted"] is False
+    assert provider.projection_attempt_audit[1]["response_schema_admitted"] is True
+
+
+def test_projection_schema_admission_rejects_unsupported_constructs() -> None:
+    with pytest.raises(RequirementProjectionAdmissionError) as rejection:
+        admit_requirement_projection_response(
+            {},
+            schema={"type": "object", "patternProperties": {}},
+        )
+
+    assert rejection.value.diagnostic["failure_category"] == (
+        "schema_construct_unsupported"
+    )
+    assert rejection.value.diagnostic["allowed_boundary"][
+        "supported_keywords"
+    ]
+    assert rejection.value.diagnostic["unsupported_keywords"] == [
+        "patternProperties"
+    ]
+
+
+def test_projection_correction_receives_precise_semantic_overlap_diagnostic() -> None:
+    feature = _feature_data()
+    overlap = deepcopy(_projection())
+    overlap["input_dispositions"] = [
+        {
+            "input_obligation_index": 4,
+            "disposition": "scope_boundary",
+            "reason": "Schema-valid but already requirement-accounted.",
+        }
+    ]
+    correction_diagnostics: list[dict[str, object]] = []
+
+    def complete_json(role, payload, _schema):
+        if role == "requirement_projection":
+            return deepcopy(overlap)
+        correction_diagnostics.append(deepcopy(payload["rejection_diagnostic"]))
+        return deepcopy(_projection())
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    provider.project(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+    )
+
+    assert correction_diagnostics == [
+        {
+            "error_code": "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+            "phase": "semantic_materialization",
+            "failure_category": (
+                "obligation_already_accounted_and_dispositioned"
+            ),
+            "json_path": "$.input_dispositions[0].input_obligation_index",
+            "input_obligation_index": 4,
+            "allowed_dispositions": ["scope_boundary"],
+        }
+    ]
+    attempts = provider.projection_attempt_audit
+    assert attempts[0]["response_schema_admitted"] is True
+    assert attempts[0]["semantic_materialization_admitted"] is False
+    assert attempts[1]["status"] == "accepted"
+
+
+@pytest.mark.parametrize(
+    ("failure_case", "error_code", "category", "json_path"),
+    [
+        (
+            "overlap",
+            "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+            "obligation_already_accounted_and_dispositioned",
+            "$.input_dispositions[0].input_obligation_index",
+        ),
+        (
+            "duplicate",
+            "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+            "duplicate_disposition_index",
+            "$.input_dispositions[1].input_obligation_index",
+        ),
+        (
+            "whitespace_reason",
+            "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
+            "invalid_reason",
+            "$.input_dispositions[0].reason",
+        ),
+        (
+            "incomplete",
+            "REQUIREMENT_COVERAGE_INPUT_ACCOUNTING_INCOMPLETE",
+            "input_accounting_incomplete",
+            "$.input_dispositions",
+        ),
+    ],
+)
+def test_projection_semantic_rejections_are_precise_and_legacy_compatible(
+    failure_case: str,
+    error_code: str,
+    category: str,
+    json_path: str,
+) -> None:
+    feature = _feature_data()
+    projection = (
+        deepcopy(_projection())
+        if failure_case == "overlap"
+        else _projection_without_obligation_four()
+    )
+    if failure_case == "overlap":
+        projection["input_dispositions"] = [
+            {
+                "input_obligation_index": 4,
+                "disposition": "scope_boundary",
+                "reason": "Already covered by a requirement.",
+            }
+        ]
+    elif failure_case == "duplicate":
+        projection["input_dispositions"] = [
+            {
+                "input_obligation_index": 4,
+                "disposition": "scope_boundary",
+                "reason": "First disposition.",
+            },
+            {
+                "input_obligation_index": 4,
+                "disposition": "scope_boundary",
+                "reason": "Duplicate disposition.",
+            },
+        ]
+    elif failure_case == "whitespace_reason":
+        projection["input_dispositions"] = [
+            {
+                "input_obligation_index": 4,
+                "disposition": "scope_boundary",
+                "reason": "   ",
+            }
+        ]
+    obligations = requirement_input_obligation_model_view(feature)
+    schema = requirement_projection_response_schema(
+        input_obligations=obligations
+    )
+    admit_requirement_projection_response(projection, schema=schema)
+
+    with pytest.raises(RequirementCoverageProjectionError) as rejection:
+        materialize_requirement_coverage_projection(
+            feature_data=feature,
+            request=str(feature["user_request"]),
+            projection=projection,
+        )
+
+    assert str(rejection.value) == error_code
+    assert rejection.value.diagnostic["phase"] == "semantic_materialization"
+    assert rejection.value.diagnostic["failure_category"] == category
+    assert rejection.value.diagnostic["json_path"] == json_path
+
+
 def test_projection_materializer_still_rejects_cross_bound_disposition() -> None:
     feature = _feature_data()
-    projection = deepcopy(_projection())
-    del projection["requirements"][2]
-    projection["relations"] = [
-        {
-            "parent_requirement_indexes": [1],
-            "meaning": "Change evidence.",
-        },
-        {
-            "parent_requirement_indexes": [2],
-            "meaning": "Pre-patch evidence.",
-        },
-        {
-            "parent_requirement_indexes": [3],
-            "meaning": "Post-change evidence.",
-        },
-    ]
+    projection = _projection_without_obligation_four()
     projection["input_dispositions"] = [
         {
             "input_obligation_index": 4,
@@ -900,15 +1143,149 @@ def test_projection_materializer_still_rejects_cross_bound_disposition() -> None
         }
     ]
 
-    with pytest.raises(
-        ValueError,
-        match="REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
-    ):
+    with pytest.raises(RequirementCoverageProjectionError) as rejection:
         materialize_requirement_coverage_projection(
             feature_data=feature,
             request=str(feature["user_request"]),
             projection=projection,
         )
+    assert str(rejection.value) == "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID"
+    assert rejection.value.diagnostic["failure_category"] == "disallowed_disposition"
+    assert rejection.value.diagnostic["allowed_dispositions"] == [
+        "scope_boundary"
+    ]
+
+
+def test_legal_projection_correction_reaches_findings_consumer(
+    tmp_path: Path,
+) -> None:
+    _write_sources(tmp_path)
+    feature = _feature_data()
+    invalid = deepcopy(_projection())
+    invalid["input_dispositions"] = [
+        {
+            "input_obligation_index": 4,
+            "disposition": "post_change",
+            "reason": "Schema-invalid pair must not be retained.",
+        }
+    ]
+    roles: list[str] = []
+
+    def complete_json(role, payload, _schema):
+        roles.append(role)
+        if role == "requirement_projection":
+            return deepcopy(invalid)
+        if role == "requirement_projection_correction":
+            assert payload["rejection_diagnostic"]["failure_category"] == (
+                "disallowed_disposition"
+            )
+            return deepcopy(_projection())
+        if role == "requirement_findings":
+            return {
+                "findings": [
+                    {
+                        "relation_index": relation["relation_index"],
+                        "relationship": "missing",
+                        "evidence_ids": [],
+                        "unresolved_gaps": ["Semantic support is not established."],
+                    }
+                    for relation in payload["relations"]
+                ]
+            }
+        raise AssertionError(role)
+
+    provider = make_requirement_coverage_evidence_provider(
+        RgLiveEvidenceProvider(tmp_path),
+        complete_json=complete_json,
+    )
+    pack = provider.collect(
+        query=str(feature["user_request"]),
+        search_root="generated_mods/SyntheticMod",
+        feature_data=feature,
+    )
+
+    assert roles == [
+        "requirement_projection",
+        "requirement_projection_correction",
+        "requirement_findings",
+    ]
+    attempts = pack.budget_summary["requirement_projection_attempt_audit"]
+    assert [attempt["status"] for attempt in attempts] == [
+        "rejected",
+        "accepted",
+    ]
+    assert attempts[0]["response_schema_admitted"] is False
+    assert attempts[1]["semantic_materialization_admitted"] is True
+    assert "Schema-invalid pair must not be retained." not in str(attempts)
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+
+
+def test_second_schema_invalid_projection_fails_closed_with_bounded_audit(
+    tmp_path: Path,
+) -> None:
+    _write_sources(tmp_path)
+    feature = _feature_data()
+    invalid = deepcopy(_projection())
+    invalid["input_dispositions"] = [
+        {
+            "input_obligation_index": 4,
+            "disposition": "post_change",
+            "reason": "Invalid on both bounded attempts.",
+        }
+    ]
+    roles: list[str] = []
+
+    def complete_json(role, _payload, _schema):
+        roles.append(role)
+        if role.startswith("requirement_projection"):
+            return deepcopy(invalid)
+        raise AssertionError("findings must not be called")
+
+    provider = make_requirement_coverage_evidence_provider(
+        RgLiveEvidenceProvider(tmp_path),
+        complete_json=complete_json,
+    )
+    pack = provider.collect(
+        query=str(feature["user_request"]),
+        search_root="generated_mods/SyntheticMod",
+        feature_data=feature,
+    )
+
+    assert roles == [
+        "requirement_projection",
+        "requirement_projection_correction",
+    ]
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    payload = pack.to_artifact_payload()
+    assert payload["authoritative_for_patch"] is False
+    attempts = pack.budget_summary["requirement_projection_attempt_audit"]
+    assert len(attempts) == 2
+    assert all(attempt["status"] == "rejected" for attempt in attempts)
+    assert all(
+        attempt["response_schema_admitted"] is False for attempt in attempts
+    )
+    assert all(
+        attempt["structured_output_canonical_sha256"] for attempt in attempts
+    )
+    assert all(
+        attempt["structured_output_hash_basis"] == "canonical_json_utf8"
+        for attempt in attempts
+    )
+    assert pack.budget_summary["semantic_provider_failure_codes"] == [
+        "REQUIREMENT_COVERAGE_PROJECTION_SCHEMA_INVALID"
+    ]
+    failure_diagnostic = pack.budget_summary[
+        "semantic_provider_failure_diagnostics"
+    ][0]
+    assert failure_diagnostic["phase"] == "response_schema_admission"
+    assert failure_diagnostic["failure_category"] == "disallowed_disposition"
+    assert failure_diagnostic["json_path"] == (
+        "$.input_dispositions[0].disposition"
+    )
+    assert "Invalid on both bounded attempts." not in str(pack.budget_summary)
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
 
 
 def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
