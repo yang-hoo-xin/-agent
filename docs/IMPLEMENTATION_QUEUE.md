@@ -10,17 +10,17 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: PLAN-001 bounded selected ProductExecution coverage admission repair
+current_queue: fresh sealed checkpoint-bound preflight requires separate user authorization
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: deterministic positive formal-coverage vertical passed, but removing requirement_coverage allowed Patch/Dry-run/isolated Apply/Build calls 1/1/1/1 instead of 0/0/0/0; PLAN-001 is active while EVID-002 remains active pending real actual7 revalidation
+queue_status: PLAN-001 closed at 61a4df67 with deterministic composition/authority evidence only; EVID-002 remains active and no preflight or actual is authorized
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 last_task_status: P2_empirical_path_blocked_at_projection_to_findings_boundary
-last_product_code_checkpoint: 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
-last_product_code_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 -> 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
-last_product_code_checkpoint_review: accepted_for_bounded_code_and_tests
+last_product_code_checkpoint: 61a4df677ad39ca87ec9486ec0556481778c9c36
+last_product_code_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 -> 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e -> 61a4df677ad39ca87ec9486ec0556481778c9c36
+last_product_code_checkpoint_review: accepted_deterministic_composition_and_authority_only
 last_workflow_test_checkpoint: 1d8aeaff32a93d5475debca482ba72404b9674cf
 last_workflow_test_checkpoint_claim: test_contract_closure_only_not_product_capability_or_actual
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
@@ -30,8 +30,8 @@ P2_ProductExecution_actual_runs: 2
 empirical_actual_status: actual5_and_actual6_blocked_before_findings
 last_failure: actual6 requirement_projection plus one correction ended REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID
 incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
-current_issue: PLAN-001_active_selected_ProductExecution_formal_coverage_admission
-concurrent_issue: EVID-002_active_until_fresh_actual_reaches_findings_without_signature
+current_issue: EVID-002_active_until_fresh_actual_reaches_findings_without_signature
+PLAN-001_status: closed_at_61a4df677ad39ca87ec9486ec0556481778c9c36
 ENTRY_repository_implementation_checkpoint: complete
 ENTRY_fresh_same_context_admission: passed_current_scope
 ENTRY-002_status: closed
@@ -45,10 +45,10 @@ wallcrawler_rerun_authorized: false
 wallcrawler_context_escalation: closed
 bhf_continue_authorized: false
 retrieval_provider_exploration: closed
-next_eligible_slice: bounded PLAN-001 Planner admission repair plus the existing positive and two negative ProductExecution vertical regressions
-implementation_boundary: pass formal-coverage-required runtime context through existing ProductExecutionGraphModeV1/Graph composition to ImplementationPlanner.build; selected ProductExecution must block missing or invalid coverage before edit-binding derivation; preserve legacy non-selected compatibility; do not add an Artifact, Graph branch, Approval, source-root field, or second control plane
-post_checkpoint_route: PLAN-001 focused checkpoint and vertical regression -> new sealed checkpoint-bound preflight -> receipt review -> separately authorized actual7
-activation_required: PLAN-001 repair is current; packet, preflight, receipt, and actual7 remain later separate gates and are unauthorized now
+next_eligible_slice: fresh sealed checkpoint-bound preflight requires separate user authorization
+implementation_boundary: no packet, preflight, receipt, actual7, model, Build, or Runtime action is authorized by the deterministic checkpoint
+post_checkpoint_route: separate preflight authorization -> fresh sealed checkpoint-bound preflight -> receipt review -> separately authorized actual7
+activation_required: packet, preflight, receipt, and actual7 are unauthorized now
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
@@ -61,15 +61,11 @@ the current P2 empirical-path Issue at the projection-to-findings boundary; P0
 remains completed and is not reopened. The `984716f` -> `22f8fa0` code
 checkpoint lineage is accepted only as bounded code/test evidence and does not
 close the Issue. Workflow tests-only checkpoint `1d8aeaff` closes inherited
-assertion drift and is not product capability or actual evidence. The
-deterministic positive vertical scenario is also composition evidence only.
-Its coverage-removal negative established a separate selected ProductExecution
-Planner-owned authority bypass: the formal provider succeeded, but once the
-coverage section was removed, Patch, Dry-run, isolated Apply, and Build each
-ran once. `PLAN-001` therefore owns the current Queue; it is not `EVID-001` or
-`EVID-002`, and its `P0` decision priority does not reopen the completed P0
-product stage. Only after `PLAN-001` closes can a new sealed preflight be
-considered. Only a separately authorized actual7 can
+assertion drift and is not product capability or actual evidence. Checkpoint
+`61a4df67` closes `PLAN-001` with deterministic composition/authority evidence;
+it is not a real Build or actual and does not reopen the completed P0 product
+stage. A fresh sealed preflight requires separate user authorization. Only a
+separately authorized actual7 can
 provide the close-trigger evidence, and its downstream product result remains
 an independent outcome. Actual7 is not authorized.
 

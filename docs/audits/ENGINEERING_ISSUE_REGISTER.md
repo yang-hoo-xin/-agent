@@ -339,11 +339,11 @@ incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_2026
 implementation_checkpoint: 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
 implementation_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 followed by diagnostic closure 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
 implementation_checkpoint_status: accepted_for_bounded_code_and_tests
-current_effect: actual5 and actual6 have not reached findings; checkpoints 984716f and 22f8fa0 are accepted bounded code/test evidence only and do not close the real-run Issue. The coverage-authorized ProductExecution deterministic vertical scenario is Queue work, while packet, preflight, receipt, and actual7 remain unauthorized pending later separate decisions
+current_effect: actual5 and actual6 have not reached findings; checkpoints 984716f and 22f8fa0 are accepted bounded code/test evidence only and do not close the real-run Issue. PLAN-001 is closed independently at deterministic composition/authority checkpoint 61a4df67. Packet, preflight, receipt, and actual7 remain unauthorized
 workaround: preserve the immutable actual5/actual6 outputs and fail-closed EvidencePack; do not add a third correction, switch model, change retrieval, or relax coverage policy
 reopen_trigger: any selected real task returns a projection object that fails exact response-schema admission or deterministic input-disposition semantics after the single bounded correction
 close_trigger: the accepted focused checkpoint is followed by a newly sealed preflight that passes, and a separately authorized fresh actual reaches findings without this failure signature
-next_action: complete the deterministic vertical scenario without treating its unproven composition boundary as a new Issue; afterward separately decide whether to authorize a new sealed checkpoint-bound preflight and receipt review, then actual7. Code-checkpoint acceptance, Issue real-run closure, and the later actual7 product result remain three distinct decisions
+next_action: a fresh sealed checkpoint-bound preflight requires separate user authorization; actual7 requires its own later authorization. EVID-002 real-run closure remains independent
 last_reviewed: 2026-08-26
 required_before_stage: next P2 empirical actual
 minimum_acceptance:
@@ -364,14 +364,16 @@ owner: src/mod_agent/planning/implementation_plan.py::ImplementationPlanner.buil
 evidence_level: mechanical_replay
 severity: S0
 decision_priority: P0
-status: active
+status: closed
 first_seen: HEAD f240d103df89b95c8259f2bca731afc34f26b02b deterministic vertical scenario; failing test test_product_execution_blocks_removed_formal_coverage_before_patch_effect
 latest_evidence: the formal provider first generated valid requirement coverage; after the section was removed, readiness, can_generate_patch, and Evidence items remained, and Patch, Dry-run, isolated Apply, and Build call counts were 1/1/1/1 instead of 0/0/0/0. The valid formal-coverage positive vertical scenario passed through changed isolated bytes and a byte-consuming Build substitute. Canonical source was not written
-current_effect: vertical scenario checkpoint formation, packet, preflight, receipt, and actual7 are blocked. EVID-002 remains independently active, and the completed P0 product stage is not reopened
-workaround: keep actual7 unauthorized and preserve the tests-first failure; do not globally disable legacy EvidencePack behavior
 reopen_trigger: selected ProductExecution forms an edit binding, Patch authority, or any later effect after the formal requirement coverage section is missing or invalid
 close_trigger: a focused checkpoint makes selected ProductExecution mode require formal coverage and produces a blocking ImplementationPlan before edit binding or Patch when coverage is missing or invalid; the valid formal positive vertical still reaches changed isolated bytes and the byte-consuming Build substitute; legacy non-selected Planner/Graph behavior remains compatible; both negative scenarios have zero Apply and Build calls
-next_action: implement one bounded Planner admission repair and run the positive plus two negative vertical regressions
+implementation_checkpoint: 61a4df677ad39ca87ec9486ec0556481778c9c36
+close_evidence: selected ProductExecution missing coverage now produces a blocking ImplementationPlan before edit binding or Patch; the valid formal positive reaches changed isolated bytes and the byte-consuming Build substitute; the coverage-removal and path/Review negatives have zero Apply/Build; full regressions passed requirement_coverage 33, product_execution 103, planning 30, proposal_review 32, patch_apply 22, workflow_graph 135, plus py_compile
+current_effect: the deterministic selected ProductExecution authority bypass is closed. The checkpoint is composition/authority evidence only, not an actual or real Build; EVID-002 remains active
+workaround: none required for PLAN-001; keep packet, preflight, receipt, and actual7 unauthorized pending separate decisions
+next_action: none; reopen only on the recorded reopen_trigger
 last_reviewed: 2026-08-26
 required_before_stage: next P2 empirical actual
 minimum_acceptance:

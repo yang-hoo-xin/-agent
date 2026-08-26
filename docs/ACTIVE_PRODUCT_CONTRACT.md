@@ -158,18 +158,13 @@ completed and is not reopened. `EVID-002` remains active until a later fresh
 actual reaches findings without the signature. The detailed recent logical
 chain and attempt evidence are in
 `docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md`.
-The deterministic ProductExecution positive vertical scenario then carried
-valid formal requirement coverage through changed isolated bytes and a
-byte-consuming Build substitute. It is composition evidence, not a real Build,
-actual, or product-completion claim. Its coverage-removal negative retained
-`readiness`, `can_generate_patch`, and Evidence items but removed the formal
-authority section; current `ImplementationPlanner.build` treated that input as
-legacy unrestricted and Patch, Dry-run, isolated Apply, and Build were each
-called once instead of zero. This selected ProductExecution authority bypass
-is registered as active `PLAN-001`, with decision priority `P0`; it does not
-reopen the completed P0 product stage. `PLAN-001` now blocks vertical-scenario
-checkpoint formation and every packet/preflight/actual7 route. Actual7 is not
-authorized and both Internal Alpha hard gates remain false.
+Checkpoint `61a4df677ad39ca87ec9486ec0556481778c9c36` closes `PLAN-001`:
+selected ProductExecution now blocks missing formal coverage before edit-binding
+derivation, the valid formal path still reaches changed isolated bytes, the
+non-selected legacy path remains compatible, and the path negative blocks.
+This is deterministic composition/authority evidence only, not an actual or
+real Build. `EVID-002` remains active. Packet, preflight, receipt, and actual7
+remain unauthorized, and both Internal Alpha hard gates remain false.
 
 Current execution order:
 
@@ -189,8 +184,8 @@ repository explicit unresolved result recorded
 -> Workflow tests-only checkpoint 1d8aeaff closes four current-contract assertions without product or actual claims
 -> deterministic formal-coverage positive vertical reaches changed isolated bytes and a byte-consuming Build substitute
 -> coverage-removal negative reaches Patch/Dry-run/isolated Apply/Build and registers PLAN-001
--> PLAN-001 bounded selected ProductExecution coverage-admission repair and vertical regression
--> new sealed checkpoint-bound preflight and receipt review only after PLAN-001 closes
+-> PLAN-001 closes at deterministic composition/authority checkpoint 61a4df67
+-> fresh sealed checkpoint-bound preflight requires separate user authorization
 -> separately authorized actual7; actual7 remains unauthorized now
 -> actual7 independently determines EVID-002 real-run closure and the later product-path result
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
