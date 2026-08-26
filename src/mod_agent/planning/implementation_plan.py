@@ -36,6 +36,7 @@ class ImplementationPlanner:
         *,
         feature_spec: FeatureSpec,
         evidence_pack: dict[str, Any],
+        formal_requirement_coverage_required: bool = False,
     ) -> ImplementationPlan:
         """Return an implementation plan or a blocking result."""
 
@@ -57,6 +58,26 @@ class ImplementationPlanner:
                 feature_id=feature_spec.feature_id,
                 blockers=blockers,
                 open_questions=open_questions,
+            )
+
+        if (
+            formal_requirement_coverage_required
+            and "requirement_coverage" not in evidence_pack
+        ):
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(
+                    {
+                        "code": "FORMAL_REQUIREMENT_COVERAGE_REQUIRED",
+                        "message": (
+                            "Selected ProductExecution requires formal requirement "
+                            "coverage before edit-binding derivation."
+                        ),
+                    },
+                ),
+                open_questions=(
+                    "Rebuild formal requirement coverage before planning edits.",
+                ),
             )
 
         if (

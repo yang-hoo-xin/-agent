@@ -13,9 +13,21 @@ import pytest
 
 from src.mod_agent.artifacts import ArtifactStore, ArtifactWriteResult
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
-from src.mod_agent.evidence import EvidenceItem, EvidencePack
+from src.mod_agent.evidence import (
+    EvidenceItem,
+    EvidencePack,
+    RgLiveEvidenceProvider,
+    build_requirement_coverage_pack,
+    default_feature_requirement_projection,
+    make_requirement_coverage_evidence_provider,
+    materialize_requirement_coverage_projection,
+    validated_requirement_coverage_view,
+)
 from src.mod_agent.evidence.models import DETERMINISTIC_EVIDENCE_AUTHORITY
-from src.mod_agent.execution import ExactDiffApprovalRejectedError
+from src.mod_agent.execution import (
+    ExactDiffApprovalRejectedError,
+    ExactTextPatchApplier,
+)
 from src.mod_agent.git.admission import GitExecutableIdentityV1, StrictGitAdmission
 from src.mod_agent.runtime import (
     RuntimeEvidenceItem,
@@ -345,6 +357,89 @@ def _blocked_evidence_adapters() -> ProductExecutionAdaptersV1:
     )
 
 
+def _formalize_product_test_pack(
+    *,
+    query: str,
+    feature_data: dict[str, object],
+    retrieved_pack: EvidencePack,
+) -> EvidencePack:
+    assert retrieved_pack.items
+    materialized = materialize_requirement_coverage_projection(
+        feature_data=feature_data,
+        request=query,
+        projection=default_feature_requirement_projection(feature_data),
+    )
+    evidence_id = retrieved_pack.items[0].evidence_id
+    per_query_execution = [
+        {
+            "query_id": row["query_id"],
+            "requirement_id": row["requirement_id"],
+            "query_sha256": hashlib.sha256(
+                str(row["query"]).encode("utf-8")
+            ).hexdigest(),
+            "evidence_ids": [evidence_id],
+        }
+        for row in materialized["queries"]
+    ]
+    retrieved_pack = replace(
+        retrieved_pack,
+        budget_summary={
+            **dict(retrieved_pack.budget_summary),
+            "query_count": len(per_query_execution),
+            "max_items": len(per_query_execution),
+            "per_query_execution": per_query_execution,
+            "all_queries_executed": True,
+            "dense_enabled": False,
+        },
+    )
+    required_by_id = {
+        str(requirement["requirement_id"]): bool(
+            requirement["required_before_patch"]
+        )
+        for requirement in materialized["requirements"]
+    }
+    findings = {
+        "findings": [
+            {
+                "relation_index": int(
+                    relation["provenance"]["relation_index"]
+                ),
+                "relationship": (
+                    "support"
+                    if any(
+                        required_by_id[str(parent)]
+                        for parent in relation["parent_requirement_ids"]
+                    )
+                    else "missing"
+                ),
+                "evidence_ids": (
+                    [evidence_id]
+                    if any(
+                        required_by_id[str(parent)]
+                        for parent in relation["parent_requirement_ids"]
+                    )
+                    else []
+                ),
+                "unresolved_gaps": (
+                    []
+                    if any(
+                        required_by_id[str(parent)]
+                        for parent in relation["parent_requirement_ids"]
+                    )
+                    else ["Observed only after patching."]
+                ),
+            }
+            for relation in materialized["relations"]
+        ]
+    }
+    return build_requirement_coverage_pack(
+        query=query,
+        materialized_projection=materialized,
+        retrieved_pack=retrieved_pack,
+        findings=findings,
+    )
+
+
 def _successful_compile_adapters(
     request: ProductExecutionRequestV1,
     *,
@@ -354,8 +449,8 @@ def _successful_compile_adapters(
     diff_hash = "sha256:" + "d" * 64
     remaining_build_exit_codes = list(build_exit_codes or [0])
 
-    def evidence_pack_factory(_state, _feature):
-        return EvidencePack(
+    def evidence_pack_factory(_state, feature_data):
+        retrieved_pack = EvidencePack(
             query=request.user_request,
             readiness="sufficient",
             can_generate_patch=True,
@@ -375,6 +470,11 @@ def _successful_compile_adapters(
                 ),
             ),
             retrieval_methods_used=("symbol_exact",),
+        )
+        return _formalize_product_test_pack(
+            query=request.user_request,
+            feature_data=feature_data,
+            retrieved_pack=retrieved_pack,
         )
 
     def patch_change_factory(_state, implementation, _evidence_pack):
@@ -457,6 +557,275 @@ def _successful_compile_adapters(
         runtime_evidence_factory=None,
         compiled_artifact_verifier=None,
         source_change_verifier=None,
+    )
+
+
+def _formal_coverage_vertical_scenario(
+    tmp_path: Path,
+    *,
+    search_root: str = "generated_mods/Example",
+    remove_requirement_coverage: bool = False,
+) -> SimpleNamespace:
+    request, store = _request(tmp_path)
+    workspace_root = Path(request.isolated_workspace_root)
+    target = workspace_root / search_root / "Behavior.cs"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source_before = (
+        "public sealed class Behavior\n"
+        "{\n"
+        "    public void ChangeMarker()\n"
+        "    {\n"
+        "        // preserve normal feedback target source API evidence config text\n"
+        "        // runtime verification acceptance\n"
+        "    }\n"
+        "}\n"
+    ).encode("utf-8")
+    source_after = source_before.replace(
+        b"public void ChangeMarker()",
+        b"public void ChangeMarkerWithCoverage()",
+    )
+    target.write_bytes(source_before)
+    canonical = Path(request.source_root) / "Plugin.cs"
+    canonical_before = canonical.read_bytes()
+    values = request.to_dict()
+    values["isolated_source_snapshot_sha256"] = source_snapshot_sha256(
+        source_snapshot(Path(request.isolated_target_root))
+    )
+    request = ProductExecutionRequestV1.from_dict(values)
+    trace: dict[str, object] = {
+        "completion_roles": [],
+        "patch_calls": 0,
+        "dry_run_calls": 0,
+        "apply_calls": 0,
+        "build_calls": 0,
+        "build_observed_sha256": None,
+        "dry_run_diff_hash": None,
+        "coverage_edit_target_ids": (),
+        "patch_edit_binding_id": None,
+        "patch_binding_evidence_id": None,
+    }
+
+    def complete_json(role, payload, _schema):
+        trace["completion_roles"].append(role)
+        if role == "requirement_projection":
+            obligations = payload["input_obligations"]
+            change_indexes = [
+                row["input_obligation_index"]
+                for row in obligations
+                if "change" in row["allowed_roles"]
+            ]
+            requirements = [
+                {
+                    "role": "change",
+                    "text": "Change the marker behavior.",
+                    "input_obligation_indexes": change_indexes,
+                    "query_leads": ["ChangeMarker"],
+                },
+                {
+                    "role": "preservation",
+                    "text": "Preserve normal feedback requested by the user.",
+                    "input_obligation_indexes": [1],
+                    "query_leads": ["ChangeMarker"],
+                },
+            ]
+            dispositions = []
+            for row in obligations:
+                index = row["input_obligation_index"]
+                if index in change_indexes or index == 1:
+                    continue
+                if "scope_boundary" in row["allowed_dispositions"]:
+                    dispositions.append(
+                        {
+                            "input_obligation_index": index,
+                            "disposition": "scope_boundary",
+                            "reason": (
+                                "The non-goal is retained as a planning scope "
+                                "boundary."
+                            ),
+                        }
+                    )
+                elif "post_change" in row["allowed_dispositions"]:
+                    dispositions.append(
+                        {
+                            "input_obligation_index": index,
+                            "disposition": "post_change",
+                            "reason": "This observation occurs after patching.",
+                        }
+                    )
+                else:
+                    requirements.append(
+                        {
+                            "role": row["allowed_roles"][0],
+                            "text": row["text"],
+                            "input_obligation_indexes": [index],
+                            "query_leads": ["evidence"],
+                        }
+                    )
+            return {
+                "requirements": requirements,
+                "relations": [
+                    {
+                        "parent_requirement_indexes": [index],
+                        "meaning": f"Evidence disposition for requirement {index}.",
+                    }
+                    for index in range(1, len(requirements) + 1)
+                ],
+                "input_dispositions": dispositions,
+            }
+        if role == "requirement_findings":
+            evidence_id = payload["source_observations"][0]["evidence_id"]
+            return {
+                "findings": [
+                    {
+                        "relation_index": relation["relation_index"],
+                        "relationship": "support",
+                        "evidence_ids": [evidence_id],
+                        "unresolved_gaps": [],
+                    }
+                    for relation in payload["relations"]
+                ]
+            }
+        raise AssertionError(role)
+
+    coverage_provider = make_requirement_coverage_evidence_provider(
+        RgLiveEvidenceProvider(workspace_root),
+        complete_json=complete_json,
+    )
+
+    def evidence_pack_factory(state, feature_data):
+        pack = coverage_provider.collect(
+            query=str(state["user_request"]),
+            search_root=search_root,
+            feature_data=feature_data,
+        )
+        coverage = validated_requirement_coverage_view(pack.to_artifact_payload())
+        assert coverage is not None
+        trace["coverage_edit_target_ids"] = tuple(
+            sorted(coverage.authorized_edit_target_ids)
+        )
+        return (
+            replace(pack, requirement_coverage=None)
+            if remove_requirement_coverage
+            else pack
+        )
+
+    def patch_change_factory(_state, implementation, evidence_pack):
+        trace["patch_calls"] = int(trace["patch_calls"]) + 1
+        changes = copy.deepcopy(implementation["proposed_changes"])
+        assert len(changes) == 1
+        binding_id = changes[0]["edit_binding_id"]
+        bindings = {
+            binding["binding_id"]: binding
+            for binding in implementation["binding_registry"]["edit_bindings"]
+        }
+        binding = bindings[binding_id]
+        coverage = validated_requirement_coverage_view(evidence_pack)
+        if coverage is not None:
+            assert binding["evidence_id"] in coverage.authorized_edit_target_ids
+        trace["patch_edit_binding_id"] = binding_id
+        trace["patch_binding_evidence_id"] = binding["evidence_id"]
+        assert "target_file" not in changes[0]
+        assert "canonical_target_path" not in changes[0]
+        changes[0]["patch"] = {
+            "kind": "exact_text_replace",
+            "match_mode": "bound_span_exact",
+            "before_text": "public void ChangeMarker()",
+            "after_text": "public void ChangeMarkerWithCoverage()",
+            "expected_occurrences": 1,
+        }
+        return tuple(changes)
+
+    applier = ExactTextPatchApplier()
+
+    def dry_run_factory(proposal, implementation, review):
+        trace["dry_run_calls"] = int(trace["dry_run_calls"]) + 1
+        before = target.read_bytes()
+        result = applier.run(
+            workspace_root=workspace_root,
+            proposal=proposal,
+            implementation_plan=implementation,
+            review=review,
+            allow_write=False,
+        )
+        assert target.read_bytes() == before == source_before
+        trace["dry_run_diff_hash"] = result["diff_hash"]
+        return result
+
+    def isolated_apply_factory(proposal, implementation, review):
+        trace["apply_calls"] = int(trace["apply_calls"]) + 1
+        approved_diff_hash = trace["dry_run_diff_hash"]
+        assert isinstance(approved_diff_hash, str)
+        return applier.run(
+            workspace_root=workspace_root,
+            proposal=proposal,
+            implementation_plan=implementation,
+            review=review,
+            allow_write=True,
+            approved_diff_hash=approved_diff_hash,
+        )
+
+    def build_result_factory(feature_id, input_execution_mode):
+        trace["build_calls"] = int(trace["build_calls"]) + 1
+        expected_artifact = (
+            Path(request.isolated_target_root)
+            / "bin"
+            / "Debug"
+            / "Example.dll"
+        )
+
+        def runner(_profile):
+            observed = target.read_bytes()
+            trace["build_observed_sha256"] = hashlib.sha256(observed).hexdigest()
+            if observed != source_after:
+                return BuildCommandResult(
+                    exit_code=1,
+                    stderr=(
+                        f"{target.as_posix()}(1,1): error CS1002: "
+                        "Applied bytes do not match the deterministic expectation"
+                    ),
+                )
+            expected_artifact.parent.mkdir(parents=True, exist_ok=True)
+            expected_artifact.write_bytes(hashlib.sha256(observed).digest())
+            return BuildCommandResult(
+                exit_code=0,
+                stdout="Deterministic byte-consuming Build substitute passed",
+            )
+
+        return BuildAdapter().run_local(
+            feature_id=feature_id,
+            profile=BuildProfile(
+                profile_id="coverage_vertical_byte_consumer",
+                build_system="deterministic_byte_check",
+                working_directory=str(request.isolated_target_root),
+                command=("deterministic-byte-check",),
+                timeout_seconds=1,
+                expected_artifacts=("bin/Debug/Example.dll",),
+            ),
+            command_runner=runner,
+            allow_execution=True,
+            input_execution_mode=input_execution_mode,
+        )
+
+    adapters = ProductExecutionAdaptersV1(
+        evidence_pack_factory=evidence_pack_factory,
+        patch_change_factory=patch_change_factory,
+        dry_run_factory=dry_run_factory,
+        isolated_apply_factory=isolated_apply_factory,
+        build_result_factory=build_result_factory,
+        runtime_evidence_factory=None,
+        compiled_artifact_verifier=None,
+        source_change_verifier=None,
+    )
+    return SimpleNamespace(
+        request=request,
+        store=store,
+        adapters=adapters,
+        trace=trace,
+        target=target,
+        source_before=source_before,
+        source_after=source_after,
+        canonical=canonical,
+        canonical_before=canonical_before,
     )
 
 
@@ -983,6 +1352,257 @@ def test_public_product_executor_runs_exact_mutation_build_chain(
     assert result.variant_result.build_status == "success"
     assert result.variant_result.workflow_checkpoint_ref is not None
     assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
+
+
+def test_product_execution_formal_coverage_vertical_reaches_changed_bytes_and_build(
+    tmp_path: Path,
+) -> None:
+    scenario = _formal_coverage_vertical_scenario(tmp_path)
+
+    preflight = preflight_product_execution(
+        scenario.request,
+        scenario.adapters,
+        scenario.store,
+    )
+    result = execute_product_execution(
+        preflight,
+        scenario.adapters,
+        scenario.store,
+    )
+
+    assert preflight.preflight_status == "ready"
+    assert result.platform_status == "completed"
+    assert result.execution_disposition == "succeeded"
+    assert result.terminal_node == "build"
+    assert scenario.trace["completion_roles"] == [
+        "requirement_projection",
+        "requirement_findings",
+    ]
+    assert (
+        scenario.trace["patch_calls"],
+        scenario.trace["dry_run_calls"],
+        scenario.trace["apply_calls"],
+        scenario.trace["build_calls"],
+    ) == (1, 1, 1, 1)
+    assert scenario.trace["patch_binding_evidence_id"] in (
+        scenario.trace["coverage_edit_target_ids"]
+    )
+    assert scenario.target.read_bytes() == scenario.source_after
+    assert scenario.canonical.read_bytes() == scenario.canonical_before
+    assert scenario.trace["build_observed_sha256"] == hashlib.sha256(
+        scenario.source_after
+    ).hexdigest()
+
+    roles = tuple(item.artifact_role for item in result.store_attempts)
+    assert roles == (
+        "request_planning_report",
+        "mod_planning_brief",
+        "feature_spec",
+        "evidence_pack",
+        "implementation_plan",
+        "patch_proposal",
+        "proposal_review",
+        "dry_run_result",
+        "isolated_apply_result",
+        "build_result",
+        "workflow_checkpoint",
+    )
+    assert tuple(item.artifact_role for item in result.outputs) == roles
+    assert tuple(
+        (event.effect_role, event.event_status) for event in result.effect_events
+    ) == (
+        ("evidence_retrieval", "started"),
+        ("evidence_retrieval", "completed"),
+        ("patch_generation", "started"),
+        ("patch_generation", "completed"),
+        ("dry_run", "started"),
+        ("dry_run", "completed"),
+        ("isolated_apply", "started"),
+        ("isolated_apply", "completed"),
+        ("build", "started"),
+        ("build", "completed"),
+    )
+    assert all(
+        item.store_result.outcome == "committed" for item in result.store_attempts
+    )
+
+    refs = {item.artifact_role: item.artifact_ref for item in result.outputs}
+
+    def data(role: str) -> dict[str, object]:
+        return scenario.store.read(refs[role])["data"]
+
+    def upstream_roles(role: str) -> tuple[str, ...]:
+        return tuple(
+            item["artifact_type"]
+            for item in scenario.store.read(refs[role])["inputs"][
+                "upstream_artifacts"
+            ]
+        )
+
+    assert upstream_roles("evidence_pack") == ("feature_spec",)
+    assert upstream_roles("implementation_plan") == (
+        "feature_spec",
+        "evidence_pack",
+    )
+    assert upstream_roles("patch_proposal") == (
+        "implementation_plan",
+        "evidence_pack",
+    )
+    assert upstream_roles("proposal_review") == ("patch_proposal",)
+    assert upstream_roles("dry_run_result") == (
+        "patch_proposal",
+        "proposal_review",
+    )
+    assert upstream_roles("isolated_apply_result") == (
+        "patch_proposal",
+        "proposal_review",
+        "dry_run_result",
+    )
+    assert upstream_roles("build_result") == (
+        "dry_run_result",
+        "isolated_apply_result",
+    )
+    assert "build_result" in upstream_roles("workflow_checkpoint")
+
+    evidence = data("evidence_pack")
+    implementation = data("implementation_plan")
+    proposal = data("patch_proposal")
+    review = data("proposal_review")
+    dry_run = data("dry_run_result")
+    apply_result = data("isolated_apply_result")
+    build = data("build_result")
+    coverage = validated_requirement_coverage_view(evidence)
+    assert coverage is not None
+    edit_binding = implementation["binding_registry"]["edit_bindings"][0]
+    assert edit_binding["evidence_id"] in coverage.authorized_edit_target_ids
+    assert proposal["diff_intent"][0]["edit_binding_id"] == edit_binding["binding_id"]
+    assert proposal["files"] == ["generated_mods/Example/Behavior.cs"]
+    assert review["decision"] == "approve_dry_run"
+    assert dry_run["actual_write_performed"] is False
+    assert dry_run["real_patch_applied"] is False
+    assert dry_run["approved_by_user"] is False
+    assert dry_run["diff_hash"] == scenario.trace["dry_run_diff_hash"]
+    assert dry_run["unified_diff_sha256"] == hashlib.sha256(
+        dry_run["unified_diff"].encode("utf-8")
+    ).hexdigest()
+    assert apply_result["actual_write_performed"] is True
+    assert apply_result["real_patch_applied"] is True
+    assert apply_result["approved_diff_hash"] == dry_run["diff_hash"]
+    assert apply_result["exact_diff_approved"] is True
+    assert build["execution_mode"] == "local"
+    assert build["build_profile"]["build_system"] == "deterministic_byte_check"
+    assert build["input_execution_mode"] == "isolated_apply"
+    assert build["status"] == "success"
+    assert build["verified_artifacts"][0]["path"] == "bin/Debug/Example.dll"
+    assert "runtime_evidence" not in refs
+    assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
+
+
+def test_product_execution_blocks_removed_formal_coverage_before_patch_effect(
+    tmp_path: Path,
+) -> None:
+    scenario = _formal_coverage_vertical_scenario(
+        tmp_path,
+        remove_requirement_coverage=True,
+    )
+
+    result = execute_product_execution(
+        preflight_product_execution(
+            scenario.request,
+            scenario.adapters,
+            scenario.store,
+        ),
+        scenario.adapters,
+        scenario.store,
+    )
+
+    roles = tuple(item.artifact_role for item in result.store_attempts)
+    assert (
+        (
+            scenario.trace["patch_calls"],
+            scenario.trace["dry_run_calls"],
+            scenario.trace["apply_calls"],
+            scenario.trace["build_calls"],
+        ),
+        scenario.target.read_bytes(),
+        scenario.canonical.read_bytes(),
+    ) == (
+        (0, 0, 0, 0),
+        scenario.source_before,
+        scenario.canonical_before,
+    )
+    assert result.execution_disposition == "domain_blocked"
+    assert result.terminal_node == "blocked"
+    assert roles == (
+        "request_planning_report",
+        "mod_planning_brief",
+        "feature_spec",
+        "evidence_pack",
+        "implementation_plan",
+        "blocked_report",
+    )
+    assert not {
+        "patch_proposal",
+        "proposal_review",
+        "dry_run_result",
+        "isolated_apply_result",
+        "build_result",
+        "workflow_checkpoint",
+        "workflow_summary",
+    }.intersection(roles)
+    assert tuple(
+        (event.effect_role, event.event_status) for event in result.effect_events
+    ) == (
+        ("evidence_retrieval", "started"),
+        ("evidence_retrieval", "completed"),
+    )
+
+
+def test_product_execution_blocks_coverage_derived_forbidden_path_before_apply(
+    tmp_path: Path,
+) -> None:
+    scenario = _formal_coverage_vertical_scenario(
+        tmp_path,
+        search_root="BepInEx/core",
+    )
+
+    result = execute_product_execution(
+        preflight_product_execution(
+            scenario.request,
+            scenario.adapters,
+            scenario.store,
+        ),
+        scenario.adapters,
+        scenario.store,
+    )
+
+    roles = tuple(item.artifact_role for item in result.store_attempts)
+    assert (
+        scenario.trace["patch_calls"],
+        scenario.trace["dry_run_calls"],
+        scenario.trace["apply_calls"],
+        scenario.trace["build_calls"],
+    ) == (1, 0, 0, 0)
+    assert scenario.target.read_bytes() == scenario.source_before
+    assert scenario.canonical.read_bytes() == scenario.canonical_before
+    assert result.execution_disposition == "domain_blocked"
+    assert result.terminal_node == "blocked"
+    assert any(blocker.code == "FORBIDDEN_PATHS" for blocker in result.blockers)
+    assert "patch_proposal" in roles
+    assert "proposal_review" in roles
+    assert roles[-2:] == ("proposal_review", "blocked_report")
+    assert not {
+        "dry_run_result",
+        "isolated_apply_result",
+        "build_result",
+        "workflow_checkpoint",
+        "workflow_summary",
+    }.intersection(roles)
+    assert not {
+        "dry_run",
+        "isolated_apply",
+        "build",
+    }.intersection(event.effect_role for event in result.effect_events)
 
 
 def test_public_product_executor_runs_exact_runtime_terminal_chain(

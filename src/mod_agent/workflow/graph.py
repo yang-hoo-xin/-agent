@@ -757,7 +757,13 @@ def build_graph(
         "create_implementation_plan",
         _make_real_graph_node(
             "create_implementation_plan",
-            lambda state: _run_create_implementation_plan(state, artifact_store),
+            lambda state: _run_create_implementation_plan(
+                state,
+                artifact_store,
+                formal_requirement_coverage_required=(
+                    validated_product_execution_mode is not None
+                ),
+            ),
         ),
     )
     graph.add_node(
@@ -1434,6 +1440,8 @@ def _run_retrieve_evidence(
 def _run_create_implementation_plan(
     state: ModAgentState,
     artifact_store: ArtifactStore,
+    *,
+    formal_requirement_coverage_required: bool = False,
 ) -> ModAgentState:
     feature_spec = _feature_spec_from_payload(
         _read_artifact_data(state, artifact_store, "feature_spec")
@@ -1442,6 +1450,9 @@ def _run_create_implementation_plan(
     implementation = ImplementationPlanner().build(
         feature_spec=feature_spec,
         evidence_pack=evidence_pack,
+        formal_requirement_coverage_required=(
+            formal_requirement_coverage_required
+        ),
     )
     artifact_ref = artifact_store.write(
         feature_id=implementation.feature_id,

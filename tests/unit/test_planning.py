@@ -449,6 +449,44 @@ def test_implementation_plan_binds_every_change_to_evidence() -> None:
     assert implementation.rollback_plan
 
 
+def test_formal_coverage_admission_is_selected_only_and_legacy_default_remains() -> None:
+    plan = RequestPlanner().plan("make Load enable diagnostics")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [_authoritative_item()],
+    }
+
+    selected = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+        formal_requirement_coverage_required=True,
+    )
+    legacy = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert selected.blocking is True
+    assert selected.proposed_changes == ()
+    assert selected.binding_registry is None
+    assert selected.blockers == (
+        {
+            "code": "FORMAL_REQUIREMENT_COVERAGE_REQUIRED",
+            "message": (
+                "Selected ProductExecution requires formal requirement coverage "
+                "before edit-binding derivation."
+            ),
+        },
+    )
+    assert legacy.blocking is False
+    assert legacy.proposed_changes[0]["edit_binding_id"] == "edit_binding_001"
+
+
 def test_implementation_plan_allows_mixed_evidence_without_editing_every_source() -> None:
     plan = RequestPlanner().plan("hook enemy damage method for BetterHitFeedback")
     spec = FeatureSpecBuilder().build(plan)
