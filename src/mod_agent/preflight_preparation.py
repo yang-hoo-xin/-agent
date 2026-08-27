@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -95,6 +96,26 @@ def _positive_int(value: object, field: str) -> int:
 
 def _hash_string(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _git_object_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value) is not None
+    )
+
+
+def _positive_finite_number(value: object, field: str) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError(
+            f"Preflight preparation {field} must be a positive finite number."
+        )
+    return float(value)
 
 
 def _canonical_json_sha256(value: Any) -> str:
@@ -306,6 +327,174 @@ def derive_run_identities(
 
 
 @dataclass(frozen=True)
+class DeterministicPostChangeConditionsV1:
+    only_unaccounted: Literal[True]
+    required_before_patch_policy: Literal[False]
+    allowed_dispositions_exact: tuple[str, ...]
+    all_other_omissions: Literal["fail_closed"]
+
+    def __post_init__(self) -> None:
+        if self.only_unaccounted is not True:
+            raise ValueError(
+                "Deterministic post-change only_unaccounted must be true."
+            )
+        if self.required_before_patch_policy is not False:
+            raise ValueError(
+                "Deterministic post-change required_before_patch_policy must be false."
+            )
+        if self.allowed_dispositions_exact != ("post_change",):
+            raise ValueError(
+                "Deterministic post-change dispositions must equal post_change."
+            )
+        if self.all_other_omissions != "fail_closed":
+            raise ValueError(
+                "Deterministic post-change omissions must equal fail_closed."
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "only_unaccounted": self.only_unaccounted,
+            "required_before_patch_policy": self.required_before_patch_policy,
+            "allowed_dispositions_exact": list(self.allowed_dispositions_exact),
+            "all_other_omissions": self.all_other_omissions,
+        }
+
+
+@dataclass(frozen=True)
+class SelectedPreflightConfigurationV1:
+    configuration_id: str
+    route: str
+    main_ollama_timeout_seconds: float
+    timeout_owner: str
+    repair_ollama_timeout_seconds: float | None
+    repair_timeout_selection: str
+    projection_contract_checkpoint: str
+    model_projection_fields: tuple[str, ...]
+    model_relations_authorized: Literal[False]
+    deterministic_relation_completion: Literal[True]
+    deterministic_relation_rule: Literal["one relation per requirement"]
+    deterministic_post_change: DeterministicPostChangeConditionsV1
+    initial_projection_attempts: Literal[1]
+    maximum_correction_attempts_after_initial: Literal[1]
+    provider_fallback: Literal[False]
+    automatic_retry: Literal[False]
+    external_disclosure: Literal[False]
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "configuration_id",
+            "route",
+            "timeout_owner",
+            "repair_timeout_selection",
+            "projection_contract_checkpoint",
+            "deterministic_relation_rule",
+        ):
+            selected_text = _required_text(getattr(self, field_name), field_name)
+            if not selected_text.strip():
+                raise ValueError(
+                    f"Preflight preparation {field_name} must not be blank."
+                )
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.configuration_id) is None:
+            raise ValueError("Preflight preparation configuration_id format is invalid.")
+        _positive_finite_number(
+            self.main_ollama_timeout_seconds,
+            "main_ollama_timeout_seconds",
+        )
+        if self.repair_ollama_timeout_seconds is not None:
+            _positive_finite_number(
+                self.repair_ollama_timeout_seconds,
+                "repair_ollama_timeout_seconds",
+            )
+        if not _git_object_id(self.projection_contract_checkpoint):
+            raise ValueError(
+                "Preflight preparation projection_contract_checkpoint is invalid."
+            )
+        if (
+            not isinstance(self.model_projection_fields, tuple)
+            or not self.model_projection_fields
+            or len(set(self.model_projection_fields))
+            != len(self.model_projection_fields)
+            or any(
+                not isinstance(item, str) or not item or not item.strip()
+                for item in self.model_projection_fields
+            )
+        ):
+            raise ValueError(
+                "Preflight preparation model_projection_fields are invalid."
+            )
+        if self.model_relations_authorized is not False:
+            raise ValueError("Model relations authorization must remain false.")
+        if self.deterministic_relation_completion is not True:
+            raise ValueError("Deterministic relation completion must remain true.")
+        if self.deterministic_relation_rule != "one relation per requirement":
+            raise ValueError("Deterministic relation rule is invalid.")
+        if not isinstance(
+            self.deterministic_post_change,
+            DeterministicPostChangeConditionsV1,
+        ):
+            raise ValueError("Deterministic post-change conditions are invalid.")
+        if self.initial_projection_attempts != 1 or isinstance(
+            self.initial_projection_attempts,
+            bool,
+        ):
+            raise ValueError("Initial projection attempts must equal 1.")
+        if self.maximum_correction_attempts_after_initial != 1 or isinstance(
+            self.maximum_correction_attempts_after_initial,
+            bool,
+        ):
+            raise ValueError("Maximum correction attempts must equal 1.")
+        for field_name in (
+            "provider_fallback",
+            "automatic_retry",
+            "external_disclosure",
+        ):
+            if getattr(self, field_name) is not False:
+                raise ValueError(f"Selected configuration {field_name} must be false.")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "configuration_id": self.configuration_id,
+            "route": self.route,
+            "main_ollama_timeout_seconds": float(
+                self.main_ollama_timeout_seconds
+            ),
+            "timeout_owner": self.timeout_owner,
+            "repair_ollama_timeout_seconds": (
+                None
+                if self.repair_ollama_timeout_seconds is None
+                else float(self.repair_ollama_timeout_seconds)
+            ),
+            "repair_timeout_selection": self.repair_timeout_selection,
+            "projection_contract_checkpoint": self.projection_contract_checkpoint,
+            "model_projection_fields": list(self.model_projection_fields),
+            "model_relations_authorized": self.model_relations_authorized,
+            "deterministic_relation_completion": (
+                self.deterministic_relation_completion
+            ),
+            "deterministic_relation_rule": self.deterministic_relation_rule,
+            "deterministic_post_change": self.deterministic_post_change.to_dict(),
+            "initial_projection_attempts": self.initial_projection_attempts,
+            "maximum_correction_attempts_after_initial": (
+                self.maximum_correction_attempts_after_initial
+            ),
+            "provider_fallback": self.provider_fallback,
+            "automatic_retry": self.automatic_retry,
+            "external_disclosure": self.external_disclosure,
+        }
+
+
+@dataclass(frozen=True)
+class RejectedPreflightIdentityReservationV1:
+    packet_path: str
+    receipt_path: str
+    receipt_manifest_path: str
+
+    def __post_init__(self) -> None:
+        for field_name in ("packet_path", "receipt_path", "receipt_manifest_path"):
+            _required_text(getattr(self, field_name), field_name)
+
+
+@dataclass(frozen=True)
 class SealedPreflightPreparationRequestV1:
     contract_version: Literal["1"]
     packet_root: str
@@ -314,7 +503,7 @@ class SealedPreflightPreparationRequestV1:
     request_text: str
     identity_series: str
     identity_sequence: int
-    configuration_id: str
+    selected_configuration: SelectedPreflightConfigurationV1
     platform_root: str
     allowed_dirty_paths: tuple[str, ...]
     source_root: str
@@ -330,6 +519,9 @@ class SealedPreflightPreparationRequestV1:
     predecessor_receipt_path: str
     predecessor_receipt_manifest_path: str
     actual_lineage_packet_paths: tuple[str, ...]
+    rejected_preflight_identity_reservations: tuple[
+        RejectedPreflightIdentityReservationV1, ...
+    ]
 
     def __post_init__(self) -> None:
         if self.contract_version != "1":
@@ -340,7 +532,6 @@ class SealedPreflightPreparationRequestV1:
             "task_id",
             "request_text",
             "identity_series",
-            "configuration_id",
             "platform_root",
             "source_root",
             "target_project",
@@ -362,8 +553,11 @@ class SealedPreflightPreparationRequestV1:
             identity_series=self.identity_series,
             identity_sequence=self.identity_sequence,
         )
-        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", self.configuration_id) is None:
-            raise ValueError("Preflight preparation configuration_id format is invalid.")
+        if not isinstance(
+            self.selected_configuration,
+            SelectedPreflightConfigurationV1,
+        ):
+            raise ValueError("Preflight preparation selected_configuration is invalid.")
         for field_name in ("ollama_context_window", "ollama_output_budget"):
             _positive_int(getattr(self, field_name), field_name)
         if self.ollama_context_window <= self.ollama_output_budget:
@@ -387,6 +581,23 @@ class SealedPreflightPreparationRequestV1:
             raise ValueError("Preflight preparation preflight lineage is empty.")
         if not self.actual_lineage_packet_paths:
             raise ValueError("Preflight preparation actual lineage is empty.")
+        if (
+            not isinstance(self.rejected_preflight_identity_reservations, tuple)
+            or any(
+                not isinstance(item, RejectedPreflightIdentityReservationV1)
+                for item in self.rejected_preflight_identity_reservations
+            )
+            or len(
+                {
+                    (item.packet_path, item.receipt_path, item.receipt_manifest_path)
+                    for item in self.rejected_preflight_identity_reservations
+                }
+            )
+            != len(self.rejected_preflight_identity_reservations)
+        ):
+            raise ValueError(
+                "Preflight preparation rejected identity reservations are invalid."
+            )
         for selected in self.allowed_dirty_paths:
             _strict_posix_path(selected, "allowed_dirty_paths")
         _strict_posix_path(self.project_file, "project_file")
@@ -493,16 +704,27 @@ class _ActualLineageRecord:
 
 
 @dataclass(frozen=True)
+class _RejectedPreflightReservationRecord:
+    preflight: _PreflightLineageRecord
+    receipt_sha256: str
+    receipt_manifest_sha256: str
+
+
+@dataclass(frozen=True)
 class _LineageAdmission:
     predecessor: _PreflightLineageRecord
     preflight_records: tuple[_PreflightLineageRecord, ...]
     actual_records: tuple[_ActualLineageRecord, ...]
+    reservation_records: tuple[_RejectedPreflightReservationRecord, ...]
     predecessor_receipt_sha256: str
     predecessor_receipt_manifest_sha256: str
     sources: tuple[dict[str, Any], ...]
 
 
-def _parse_run_identity(outer_run_id: object, actual_id: object) -> tuple[str, int]:
+def _parse_run_identity_components(
+    outer_run_id: object,
+    actual_id: object,
+) -> tuple[str, int, int]:
     if not isinstance(outer_run_id, str) or not isinstance(actual_id, str):
         raise _fail(
             "LINEAGE_RUN_IDENTITY_SHAPE_INVALID",
@@ -519,6 +741,14 @@ def _parse_run_identity(outer_run_id: object, actual_id: object) -> tuple[str, i
         )
     outer_number = int(match.group(2))
     actual_number = int(actual_match.group(1))
+    return match.group(1), outer_number, actual_number
+
+
+def _parse_run_identity(outer_run_id: object, actual_id: object) -> tuple[str, int]:
+    series, outer_number, actual_number = _parse_run_identity_components(
+        outer_run_id,
+        actual_id,
+    )
     if outer_number != actual_number:
         raise _fail(
             "LINEAGE_RUN_IDENTITY_MISMATCH",
@@ -529,7 +759,7 @@ def _parse_run_identity(outer_run_id: object, actual_id: object) -> tuple[str, i
                 "actual_id": actual_id,
             },
         )
-    return match.group(1), outer_number
+    return series, outer_number
 
 
 def _parse_preflight_identity(
@@ -561,7 +791,11 @@ def _parse_preflight_identity(
     return attempt_number, preflight_number
 
 
-def _load_preflight_record(value: str) -> _PreflightLineageRecord:
+def _load_preflight_record(
+    value: str,
+    *,
+    require_consistent_future_identity: bool = True,
+) -> _PreflightLineageRecord:
     packet_path = _resolve_existing_file(value, "preflight packet")
     packet = _read_json_object(packet_path, "preflight packet")
     if packet.get("packet_version") != "p2_thin_entry_admission_packet_v6":
@@ -614,8 +848,13 @@ def _load_preflight_record(value: str) -> _PreflightLineageRecord:
             "The historical future canary identity is invalid.",
             stage="lineage",
         )
-    series, sequence = _parse_run_identity(packet.get("outer_run_id"), actual_id)
-    if canary != sequence:
+    series, sequence, actual_sequence = _parse_run_identity_components(
+        packet.get("outer_run_id"),
+        actual_id,
+    )
+    if require_consistent_future_identity and (
+        canary != sequence or actual_sequence != sequence
+    ):
         raise _fail(
             "LINEAGE_RUN_IDENTITY_MISMATCH",
             "Historical canary, outer, and actual identities encode different sequences.",
@@ -727,21 +966,24 @@ def _load_preflight_record(value: str) -> _PreflightLineageRecord:
     )
 
 
-def _verify_predecessor_receipt(
-    predecessor: _PreflightLineageRecord,
-    request: SealedPreflightPreparationRequestV1,
+def _verify_preflight_receipt(
+    preflight: _PreflightLineageRecord,
+    *,
+    receipt_path_value: str,
+    receipt_manifest_path_value: str,
+    require_ready: bool,
 ) -> tuple[str, str]:
     receipt_path = _resolve_existing_file(
-        request.predecessor_receipt_path,
-        "predecessor receipt",
+        receipt_path_value,
+        "historical preflight receipt",
     )
     receipt_manifest_path = _resolve_existing_file(
-        request.predecessor_receipt_manifest_path,
-        "predecessor receipt manifest",
+        receipt_manifest_path_value,
+        "historical preflight receipt manifest",
     )
-    if not os.path.samefile(receipt_path, predecessor.receipt_path) or not os.path.samefile(
+    if not os.path.samefile(receipt_path, preflight.receipt_path) or not os.path.samefile(
         receipt_manifest_path,
-        predecessor.receipt_manifest_path,
+        preflight.receipt_manifest_path,
     ):
         raise _fail(
             "LINEAGE_PREDECESSOR_RECEIPT_REFERENCE_DRIFT",
@@ -766,7 +1008,7 @@ def _verify_predecessor_receipt(
         manifest.get("actual_authorized") is not False
         or manifest.get("manifest_version") != "sealed_entry_admission_manifest_v1"
         or manifest.get("payload_manifest_sha256")
-        != predecessor.payload_manifest_sha256
+        != preflight.payload_manifest_sha256
         or manifest.get("receipt_sha256") != receipt_sha256
     ):
         raise _fail(
@@ -794,9 +1036,9 @@ def _verify_predecessor_receipt(
             stage="lineage",
         )
     expected_request_identity = {
-        "attempt_id": predecessor.attempt_id,
-        "outer_run_id": predecessor.outer_run_id,
-        "payload_manifest_sha256": predecessor.payload_manifest_sha256,
+        "attempt_id": preflight.attempt_id,
+        "outer_run_id": preflight.outer_run_id,
+        "payload_manifest_sha256": preflight.payload_manifest_sha256,
     }
     if (
         receipt.get("actual_authorized") is not False
@@ -817,7 +1059,7 @@ def _verify_predecessor_receipt(
         "predecessor receipt output root",
     )
     if (
-        not os.path.samefile(receipt_packet_root, predecessor.packet_path.parent)
+        not os.path.samefile(receipt_packet_root, preflight.packet_path.parent)
         or not os.path.samefile(receipt_output_root, receipt_path.parent)
     ):
         raise _fail(
@@ -842,19 +1084,39 @@ def _verify_predecessor_receipt(
             diagnostics={"error_type": type(exc).__name__},
         ) from exc
     if (
-        result.status != "ready"
-        or result.outer_run_id != predecessor.outer_run_id
-        or result.attempt_id != predecessor.attempt_id
-        or result.payload_manifest_sha256 != predecessor.payload_manifest_sha256
+        (require_ready and result.status != "ready")
+        or result.outer_run_id != preflight.outer_run_id
+        or result.attempt_id != preflight.attempt_id
+        or result.payload_manifest_sha256 != preflight.payload_manifest_sha256
         or result.packet_root_text != receipt.get("packet_root_text")
         or result.output_root_text != receipt.get("output_root_text")
     ):
         raise _fail(
-            "LINEAGE_RECEIPT_RESULT_NOT_READY",
-            "The predecessor receipt is not a ready result for the sealed identity.",
+            "LINEAGE_RECEIPT_RESULT_INVALID_FOR_USE",
+            "The historical receipt result is invalid for its lineage role.",
             stage="lineage",
         )
     return receipt_sha256, _file_sha256(receipt_manifest_path)
+
+
+def _load_rejected_preflight_reservation(
+    value: RejectedPreflightIdentityReservationV1,
+) -> _RejectedPreflightReservationRecord:
+    preflight = _load_preflight_record(
+        value.packet_path,
+        require_consistent_future_identity=False,
+    )
+    receipt_sha256, receipt_manifest_sha256 = _verify_preflight_receipt(
+        preflight,
+        receipt_path_value=value.receipt_path,
+        receipt_manifest_path_value=value.receipt_manifest_path,
+        require_ready=False,
+    )
+    return _RejectedPreflightReservationRecord(
+        preflight=preflight,
+        receipt_sha256=receipt_sha256,
+        receipt_manifest_sha256=receipt_manifest_sha256,
+    )
 
 
 def _load_actual_record(value: str) -> _ActualLineageRecord:
@@ -982,12 +1244,18 @@ def _admit_lineage(
         for value in request.preflight_lineage_packet_paths
     )
     predecessor = preflight_records[-1]
-    receipt_sha256, receipt_manifest_sha256 = _verify_predecessor_receipt(
+    receipt_sha256, receipt_manifest_sha256 = _verify_preflight_receipt(
         predecessor,
-        request,
+        receipt_path_value=request.predecessor_receipt_path,
+        receipt_manifest_path_value=request.predecessor_receipt_manifest_path,
+        require_ready=True,
     )
     actual_records = tuple(
         _load_actual_record(value) for value in request.actual_lineage_packet_paths
+    )
+    reservation_records = tuple(
+        _load_rejected_preflight_reservation(value)
+        for value in request.rejected_preflight_identity_reservations
     )
     if any(record.identity_series != run_identities.identity_series for record in actual_records):
         raise _fail(
@@ -1021,6 +1289,25 @@ def _admit_lineage(
             "The explicit actual lineage repeats an identity.",
             stage="lineage",
         )
+    used_preflight_attempts = {record.attempt_id for record in preflight_records}
+    used_preflight_ids = {record.preflight_id for record in preflight_records}
+    used_preflight_attempts.update(
+        record.accepted_preflight_attempt_id for record in actual_records
+    )
+    used_preflight_ids.update(record.accepted_preflight_id for record in actual_records)
+    for reservation in reservation_records:
+        record = reservation.preflight
+        if (
+            record.attempt_id in used_preflight_attempts
+            or record.preflight_id in used_preflight_ids
+        ):
+            raise _fail(
+                "LINEAGE_RESERVED_PREFLIGHT_IDENTITY_DUPLICATE",
+                "A rejected preflight reservation repeats a used preflight identity.",
+                stage="lineage",
+            )
+        used_preflight_attempts.add(record.attempt_id)
+        used_preflight_ids.add(record.preflight_id)
     for actual in actual_records:
         matching = preflight_keys.get(
             (
@@ -1094,7 +1381,13 @@ def _admit_lineage(
                 "required_sequence": next_sequence,
             },
         )
-    next_attempt = predecessor.attempt_number + 1
+    next_attempt = (
+        max(
+            [record.attempt_number for record in preflight_records]
+            + [record.preflight.attempt_number for record in reservation_records]
+        )
+        + 1
+    )
     used = {
         "outer_run_id": run_identities.outer_run_id
         in {record.outer_run_id for record in (*preflight_records, *actual_records)},
@@ -1107,6 +1400,10 @@ def _admit_lineage(
         in {
             *[record.attempt_id for record in preflight_records],
             *[record.accepted_preflight_attempt_id for record in actual_records],
+            *[
+                record.preflight.attempt_id
+                for record in reservation_records
+            ],
         },
     }
     used_names = [name for name, present in used.items() if present]
@@ -1155,10 +1452,37 @@ def _admit_lineage(
                 "sha256": record.packet_sha256,
             }
         )
+    for reservation in reservation_records:
+        record = reservation.preflight
+        sources.extend(
+            (
+                {
+                    "role": "rejected_preflight_reservation_packet",
+                    "path": record.packet_path.as_posix(),
+                    "sha256": record.packet_sha256,
+                },
+                {
+                    "role": "rejected_preflight_reservation_seal",
+                    "path": record.preflight_path.as_posix(),
+                    "sha256": record.preflight_sha256,
+                },
+                {
+                    "role": "rejected_preflight_reservation_receipt",
+                    "path": record.receipt_path.as_posix(),
+                    "sha256": reservation.receipt_sha256,
+                },
+                {
+                    "role": "rejected_preflight_reservation_receipt_manifest",
+                    "path": record.receipt_manifest_path.as_posix(),
+                    "sha256": reservation.receipt_manifest_sha256,
+                },
+            )
+        )
     return _LineageAdmission(
         predecessor=predecessor,
         preflight_records=preflight_records,
         actual_records=actual_records,
+        reservation_records=reservation_records,
         predecessor_receipt_sha256=receipt_sha256,
         predecessor_receipt_manifest_sha256=receipt_manifest_sha256,
         sources=tuple(sources),
@@ -1617,8 +1941,35 @@ def prepare_sealed_entry_preflight(
         ) from exc
     selected_dependencies = dependencies or PreflightPreparationDependenciesV1()
     current = _read_current_facts(request, selected_dependencies)
-    next_attempt_number = lineage.predecessor.attempt_number + 1
-    next_preflight_number = lineage.predecessor.preflight_number + 1
+    if (
+        request.selected_configuration.projection_contract_checkpoint
+        != current["platform_head"]
+    ):
+        raise _fail(
+            "PROJECTION_CONTRACT_CHECKPOINT_DRIFT",
+            "Projection contract checkpoint must equal the current platform checkpoint.",
+            stage="selected_configuration",
+        )
+    next_attempt_number = (
+        max(
+            [record.attempt_number for record in lineage.preflight_records]
+            + [
+                record.preflight.attempt_number
+                for record in lineage.reservation_records
+            ]
+        )
+        + 1
+    )
+    next_preflight_number = (
+        max(
+            [record.preflight_number for record in lineage.preflight_records]
+            + [
+                record.preflight.preflight_number
+                for record in lineage.reservation_records
+            ]
+        )
+        + 1
+    )
     if next_preflight_number > 999:
         raise _fail(
             "PREFLIGHT_IDENTITY_SPACE_EXHAUSTED",
@@ -1627,12 +1978,18 @@ def prepare_sealed_entry_preflight(
         )
     preflight_attempt_id = f"preflight_{next_attempt_number}"
     preflight_id = (
-        f"entry_preflight_{next_preflight_number:03d}_{request.configuration_id}_at_"
+        "entry_preflight_"
+        f"{next_preflight_number:03d}_"
+        f"{request.selected_configuration.configuration_id}_at_"
         f"{current['platform_head'][:8]}"
     )
     used_preflight_ids = {
         *[record.preflight_id for record in lineage.preflight_records],
         *[record.accepted_preflight_id for record in lineage.actual_records],
+        *[
+            record.preflight.preflight_id
+            for record in lineage.reservation_records
+        ],
     }
     if preflight_id in used_preflight_ids:
         raise _fail(
@@ -1647,6 +2004,28 @@ def prepare_sealed_entry_preflight(
     )
     output_root = packet_root / f"fresh_preflight_root_{preflight_attempt_id}"
     entry_request_fields = [field.name for field in fields(EntryAdmissionRequestV1)]
+    selected_configuration = {
+        **request.selected_configuration.to_dict(),
+        "configuration_source": "typed_input_and_current_platform_checkpoint",
+        "model": request.ollama_model,
+        "model_digest": current["model_digest"],
+        "configured_num_ctx": request.ollama_context_window,
+        "output_budget": request.ollama_output_budget,
+        "canary_authorized": False,
+    }
+    rejected_reservations = [
+        {
+            "packet_path": record.preflight.packet_path.as_posix(),
+            "packet_sha256": record.preflight.packet_sha256,
+            "preflight_manifest_sha256": record.preflight.preflight_sha256,
+            "receipt_sha256": record.receipt_sha256,
+            "receipt_manifest_sha256": record.receipt_manifest_sha256,
+            "attempt_id": record.preflight.attempt_id,
+            "preflight_id": record.preflight.preflight_id,
+            "future_run_identity_consumed": False,
+        }
+        for record in lineage.reservation_records
+    ]
     packet = {
         "packet_version": "p2_thin_entry_admission_packet_v6",
         "preparation_owner": (
@@ -1655,7 +2034,8 @@ def prepare_sealed_entry_preflight(
         "packet_date": request.packet_date,
         "task_id": request.task_id,
         "seal_revision": (
-            f"{request.configuration_id}_at_{current['platform_head'][:8]}"
+            f"{request.selected_configuration.configuration_id}_at_"
+            f"{current['platform_head'][:8]}"
         ),
         "outer_run_id": identities.outer_run_id,
         "attempt_id": identities.preflight_attempt_id,
@@ -1707,16 +2087,7 @@ def prepare_sealed_entry_preflight(
             "generation_authorized": False,
             "generation_calls": 0,
         },
-        "selected_configuration": {
-            "configuration_id": request.configuration_id,
-            "configuration_source": "explicit_input_and_current_platform_checkpoint",
-            "projection_checkpoint": current["platform_head"],
-            "model": request.ollama_model,
-            "model_digest": current["model_digest"],
-            "configured_num_ctx": request.ollama_context_window,
-            "output_budget": request.ollama_output_budget,
-            "canary_authorized": False,
-        },
+        "selected_configuration": selected_configuration,
         "future_execution_binding": {
             "status": "preserved_as_non_authorizing_future_identity",
             "future_canary_number": identities.future_canary_number,
@@ -1738,6 +2109,11 @@ def prepare_sealed_entry_preflight(
             "predecessor_receipt_sha256": lineage.predecessor_receipt_sha256,
             "predecessor_receipt_manifest_sha256": (
                 lineage.predecessor_receipt_manifest_sha256
+            ),
+            "rejected_preflight_identity_reservations": rejected_reservations,
+            "rejected_reservation_policy": (
+                "reserve_preflight_attempt_and_identity_only_without_consuming_"
+                "future_run_identity"
             ),
             "unused_check_sources": [dict(item) for item in lineage.sources],
             "unused_checks": {
@@ -1855,6 +2231,8 @@ def prepare_sealed_entry_preflight(
         "unused_identity_check": {
             "boundary": "explicit_finite_paths_only",
             "sources": [dict(item) for item in lineage.sources],
+            "rejected_preflight_identity_reservations": rejected_reservations,
+            "rejected_reservations_consume_future_run_identity": False,
             "outer_run_id": "unused",
             "future_actual_id": "unused",
             "preflight_attempt_id": "unused",
@@ -1881,6 +2259,7 @@ def prepare_sealed_entry_preflight(
             "output_budget": request.ollama_output_budget,
             "generation_calls": 0,
         },
+        "selected_configuration": selected_configuration,
         "entry_contract": {
             "request": "EntryAdmissionRequestV1",
             "request_contract_version": "1",
@@ -1969,9 +2348,15 @@ def prepare_sealed_entry_preflight(
             f"{identities.identity_sequence}."
         ),
         (
-            f"Advanced frozen preflight identity {lineage.predecessor.preflight_id} "
-            f"to {identities.preflight_id} and attempt "
+            f"Advanced valid predecessor {lineage.predecessor.preflight_id} beyond "
+            f"{len(lineage.reservation_records)} executed rejected preflight "
+            f"reservation(s) to {identities.preflight_id} and attempt "
             f"{identities.preflight_attempt_id}."
+        ),
+        (
+            f"Sealed typed route {request.selected_configuration.route}, main timeout "
+            f"{float(request.selected_configuration.main_ollama_timeout_seconds)}, "
+            "and the deterministic projection contract into packet payload bytes."
         ),
         (
             "Checked identity non-use only against the explicitly supplied, hash-bound "

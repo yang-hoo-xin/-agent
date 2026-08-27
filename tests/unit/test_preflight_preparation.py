@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -15,8 +16,11 @@ import pytest
 
 from src.mod_agent.cli import build_parser, main as cli_main
 from src.mod_agent.preflight_preparation import (
+    DeterministicPostChangeConditionsV1,
     PreflightPreparationDependenciesV1,
     PreflightPreparationError,
+    RejectedPreflightIdentityReservationV1,
+    SelectedPreflightConfigurationV1,
     SealedPreflightPreparationRequestV1,
     derive_run_identities,
     prepare_sealed_entry_preflight,
@@ -305,6 +309,14 @@ def _fixture(tmp_path: Path) -> tuple[
         tmp_path / "lineage" / "actual9",
         predecessor,
     )
+    rejected = _seal_preflight_fixture(
+        tmp_path / "lineage" / "rejected_preflight11",
+        outer_run_id="p2_ac_20260825_009",
+        attempt_id="preflight_11",
+        preflight_id="entry_preflight_012_rejected_mapping",
+        canary_number=10,
+        actual_id="actual_10",
+    )
     model_calls: list[tuple[str, str]] = []
 
     def read_model(base_url: str, model: str) -> dict[str, Any]:
@@ -331,13 +343,39 @@ def _fixture(tmp_path: Path) -> tuple[
     (tmp_path / "delivery").mkdir()
     request = SealedPreflightPreparationRequestV1(
         contract_version="1",
-        packet_root=str(tmp_path / "delivery" / "preflight11"),
+        packet_root=str(tmp_path / "delivery" / "preflight12"),
         packet_date="2026-08-27",
         task_id="ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001",
         request_text="Enable a deterministic AccurateCrosshair spread toggle.",
         identity_series="p2_ac_20260825",
         identity_sequence=10,
-        configuration_id="deterministic_projection",
+        selected_configuration=SelectedPreflightConfigurationV1(
+            configuration_id="deterministic_projection",
+            route="qwen3.6:27b × current full_correction",
+            main_ollama_timeout_seconds=600.0,
+            timeout_owner=(
+                "src.mod_agent.local_entry.run_local_request."
+                "ollama_timeout_seconds"
+            ),
+            repair_ollama_timeout_seconds=None,
+            repair_timeout_selection="independent_not_selected",
+            projection_contract_checkpoint=_git(platform, "rev-parse", "HEAD"),
+            model_projection_fields=("requirements", "input_dispositions"),
+            model_relations_authorized=False,
+            deterministic_relation_completion=True,
+            deterministic_relation_rule="one relation per requirement",
+            deterministic_post_change=DeterministicPostChangeConditionsV1(
+                only_unaccounted=True,
+                required_before_patch_policy=False,
+                allowed_dispositions_exact=("post_change",),
+                all_other_omissions="fail_closed",
+            ),
+            initial_projection_attempts=1,
+            maximum_correction_attempts_after_initial=1,
+            provider_fallback=False,
+            automatic_retry=False,
+            external_disclosure=False,
+        ),
         platform_root=str(platform),
         allowed_dirty_paths=(),
         source_root=str(source),
@@ -353,11 +391,18 @@ def _fixture(tmp_path: Path) -> tuple[
         predecessor_receipt_path=str(predecessor["receipt"]),
         predecessor_receipt_manifest_path=str(predecessor["receipt_manifest"]),
         actual_lineage_packet_paths=(str(actual),),
+        rejected_preflight_identity_reservations=(
+            RejectedPreflightIdentityReservationV1(
+                packet_path=str(rejected["packet"]),
+                receipt_path=str(rejected["receipt"]),
+                receipt_manifest_path=str(rejected["receipt_manifest"]),
+            ),
+        ),
     )
     return request, dependencies, predecessor
 
 
-def test_actual9_preflight10_lineage_derives_the_next_identity_group(
+def test_actual9_preflight10_and_rejected_preflight11_derive_both_next_identities(
     tmp_path: Path,
 ) -> None:
     request, dependencies, predecessor = _fixture(tmp_path)
@@ -371,9 +416,9 @@ def test_actual9_preflight10_lineage_derives_the_next_identity_group(
         "future_canary_number": 10,
         "outer_run_id": "p2_ac_20260825_010",
         "future_actual_id": "actual_10",
-        "preflight_attempt_id": "preflight_11",
+        "preflight_attempt_id": "preflight_12",
         "preflight_id": (
-            "entry_preflight_012_deterministic_projection_at_"
+            "entry_preflight_013_deterministic_projection_at_"
             + _git(Path(request.platform_root), "rev-parse", "HEAD")[:8]
         ),
     }
@@ -391,6 +436,247 @@ def test_actual9_preflight10_lineage_derives_the_next_identity_group(
         "future_canary_number": 10,
         "status": "preserved_as_non_authorizing_future_identity",
     }
+
+
+def test_rejected_preflight_reserves_only_preflight_identity(tmp_path: Path) -> None:
+    request, dependencies, _ = _fixture(tmp_path)
+
+    result = prepare_sealed_entry_preflight(request, dependencies=dependencies)
+
+    packet = json.loads((Path(request.packet_root) / "packet.json").read_text())
+    reservations = packet["identity_lineage"][
+        "rejected_preflight_identity_reservations"
+    ]
+    assert reservations == [
+        {
+            "attempt_id": "preflight_11",
+            "future_run_identity_consumed": False,
+            "packet_path": Path(
+                request.rejected_preflight_identity_reservations[0].packet_path
+            ).resolve().as_posix(),
+            "packet_sha256": _file_sha256(
+                Path(request.rejected_preflight_identity_reservations[0].packet_path)
+            ),
+            "preflight_id": "entry_preflight_012_rejected_mapping",
+            "preflight_manifest_sha256": _file_sha256(
+                Path(request.rejected_preflight_identity_reservations[0].packet_path)
+                .parent
+                / "PREFLIGHT.json"
+            ),
+            "receipt_manifest_sha256": _file_sha256(
+                Path(
+                    request.rejected_preflight_identity_reservations[
+                        0
+                    ].receipt_manifest_path
+                )
+            ),
+            "receipt_sha256": _file_sha256(
+                Path(request.rejected_preflight_identity_reservations[0].receipt_path)
+            ),
+        }
+    ]
+    assert result.identities.outer_run_id == "p2_ac_20260825_010"
+    assert result.identities.future_actual_id == "actual_10"
+    assert result.identities.preflight_attempt_id == "preflight_12"
+    assert all(
+        key not in reservations[0]
+        for key in ("outer_run_id", "future_canary_number", "future_actual_id")
+    )
+
+
+def test_rejected_preflight_cannot_become_the_valid_run_predecessor(
+    tmp_path: Path,
+) -> None:
+    request, dependencies, _ = _fixture(tmp_path)
+    reservation = request.rejected_preflight_identity_reservations[0]
+    request = replace(
+        request,
+        preflight_lineage_packet_paths=(reservation.packet_path,),
+        predecessor_receipt_path=reservation.receipt_path,
+        predecessor_receipt_manifest_path=reservation.receipt_manifest_path,
+        rejected_preflight_identity_reservations=(),
+    )
+
+    with pytest.raises(
+        PreflightPreparationError,
+        match="LINEAGE_RUN_IDENTITY_MISMATCH",
+    ):
+        prepare_sealed_entry_preflight(request, dependencies=dependencies)
+
+    assert not Path(request.packet_root).exists()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ("not_executed", "receipt_missing", "receipt_hash_drift", "not_sealed"),
+)
+def test_invalid_rejected_preflight_reservation_fails_before_write(
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    request, dependencies, _ = _fixture(tmp_path)
+    reservation = request.rejected_preflight_identity_reservations[0]
+    packet_path = Path(reservation.packet_path)
+    receipt_path = Path(reservation.receipt_path)
+    if failure == "not_executed":
+        _write_json(receipt_path, {"status": "not_executed"})
+        manifest_path = Path(reservation.receipt_manifest_path)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["receipt_sha256"] = _file_sha256(receipt_path)
+        _write_json(manifest_path, manifest)
+    elif failure == "receipt_missing":
+        receipt_path.unlink()
+    elif failure == "receipt_hash_drift":
+        receipt_path.write_text(
+            receipt_path.read_text(encoding="utf-8") + " ",
+            encoding="utf-8",
+        )
+    else:
+        preflight_path = packet_path.parent / "PREFLIGHT.json"
+        preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+        preflight["packet_sealed"] = False
+        _write_json(preflight_path, preflight)
+
+    with pytest.raises(PreflightPreparationError):
+        prepare_sealed_entry_preflight(request, dependencies=dependencies)
+
+    assert not Path(request.packet_root).exists()
+
+
+def test_structured_configuration_is_identical_in_packet_and_preflight_and_sealed(
+    tmp_path: Path,
+) -> None:
+    request, dependencies, _ = _fixture(tmp_path)
+
+    result = prepare_sealed_entry_preflight(request, dependencies=dependencies)
+
+    root = Path(request.packet_root)
+    packet = json.loads((root / "packet.json").read_text(encoding="utf-8"))
+    preflight = json.loads((root / "PREFLIGHT.json").read_text(encoding="utf-8"))
+    selected = packet["selected_configuration"]
+    assert selected == preflight["selected_configuration"]
+    assert selected["route"] == "qwen3.6:27b × current full_correction"
+    assert selected["main_ollama_timeout_seconds"] == 600.0
+    assert selected["timeout_owner"] == (
+        "src.mod_agent.local_entry.run_local_request.ollama_timeout_seconds"
+    )
+    assert selected["repair_ollama_timeout_seconds"] is None
+    assert selected["repair_timeout_selection"] == "independent_not_selected"
+    assert selected["projection_contract_checkpoint"] == _git(
+        Path(request.platform_root), "rev-parse", "HEAD"
+    )
+    assert selected["model_projection_fields"] == [
+        "requirements",
+        "input_dispositions",
+    ]
+    assert selected["model_relations_authorized"] is False
+    assert selected["deterministic_relation_completion"] is True
+    assert selected["deterministic_relation_rule"] == "one relation per requirement"
+    assert selected["deterministic_post_change"] == {
+        "all_other_omissions": "fail_closed",
+        "allowed_dispositions_exact": ["post_change"],
+        "only_unaccounted": True,
+        "required_before_patch_policy": False,
+    }
+    assert selected["initial_projection_attempts"] == 1
+    assert selected["maximum_correction_attempts_after_initial"] == 1
+    assert selected["provider_fallback"] is False
+    assert selected["automatic_retry"] is False
+    assert selected["external_disclosure"] is False
+    payload_files = {
+        name: _file_sha256(root / name)
+        for name in ("packet.json", "sealed_entry_runner.py")
+    }
+    assert _canonical_sha256(payload_files) == result.payload_manifest_sha256
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    (
+        ("route", ""),
+        ("main_ollama_timeout_seconds", True),
+        ("main_ollama_timeout_seconds", 0.0),
+        ("main_ollama_timeout_seconds", math.inf),
+        ("main_ollama_timeout_seconds", math.nan),
+        ("timeout_owner", ""),
+        ("repair_ollama_timeout_seconds", True),
+        ("repair_ollama_timeout_seconds", 0.0),
+        ("repair_ollama_timeout_seconds", math.inf),
+        ("repair_timeout_selection", ""),
+        ("projection_contract_checkpoint", "not-a-git-object"),
+        ("model_projection_fields", ()),
+        ("model_projection_fields", ("requirements", "requirements")),
+        ("model_relations_authorized", True),
+        ("deterministic_relation_completion", False),
+        ("deterministic_relation_rule", "different rule"),
+        ("initial_projection_attempts", 0),
+        ("maximum_correction_attempts_after_initial", 2),
+        ("provider_fallback", True),
+        ("automatic_retry", True),
+        ("external_disclosure", True),
+    ),
+)
+def test_invalid_structured_configuration_is_rejected_before_write(
+    tmp_path: Path,
+    field: str,
+    invalid_value: Any,
+) -> None:
+    request, _dependencies, _ = _fixture(tmp_path)
+
+    with pytest.raises(ValueError):
+        replace(
+            request.selected_configuration,
+            **{field: invalid_value},
+        )
+
+    assert not Path(request.packet_root).exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    (
+        ("only_unaccounted", False),
+        ("required_before_patch_policy", True),
+        ("allowed_dispositions_exact", ()),
+        ("allowed_dispositions_exact", ("pre_change",)),
+        ("all_other_omissions", "allow"),
+    ),
+)
+def test_invalid_deterministic_post_change_rule_is_rejected_before_write(
+    tmp_path: Path,
+    field: str,
+    invalid_value: Any,
+) -> None:
+    request, _dependencies, _ = _fixture(tmp_path)
+
+    with pytest.raises(ValueError):
+        replace(
+            request.selected_configuration.deterministic_post_change,
+            **{field: invalid_value},
+        )
+
+    assert not Path(request.packet_root).exists()
+
+
+def test_projection_checkpoint_must_equal_current_platform_head_before_write(
+    tmp_path: Path,
+) -> None:
+    request, dependencies, _ = _fixture(tmp_path)
+    request = replace(
+        request,
+        selected_configuration=replace(
+            request.selected_configuration,
+            projection_contract_checkpoint="a" * 40,
+        ),
+    )
+
+    with pytest.raises(
+        PreflightPreparationError,
+        match="PROJECTION_CONTRACT_CHECKPOINT_DRIFT",
+    ):
+        prepare_sealed_entry_preflight(request, dependencies=dependencies)
+
+    assert not Path(request.packet_root).exists()
 
 
 def test_wrong_009_10_actual10_mapping_fails_before_any_file_write(
@@ -453,6 +739,44 @@ def _cli_arguments() -> list[str]:
         "10",
         "--configuration-id",
         "deterministic_projection",
+        "--route",
+        "qwen3.6:27b × current full_correction",
+        "--main-ollama-timeout-seconds",
+        "600.0",
+        "--timeout-owner",
+        "src.mod_agent.local_entry.run_local_request.ollama_timeout_seconds",
+        "--repair-timeout-selection",
+        "independent_not_selected",
+        "--projection-contract-checkpoint",
+        "a" * 40,
+        "--model-projection-field",
+        "requirements",
+        "--model-projection-field",
+        "input_dispositions",
+        "--model-relations-authorized",
+        "false",
+        "--deterministic-relation-completion",
+        "true",
+        "--deterministic-relation-rule",
+        "one relation per requirement",
+        "--deterministic-post-change-only-unaccounted",
+        "true",
+        "--deterministic-post-change-required-before-patch-policy",
+        "false",
+        "--deterministic-post-change-allowed-disposition",
+        "post_change",
+        "--deterministic-post-change-all-other-omissions",
+        "fail_closed",
+        "--initial-projection-attempts",
+        "1",
+        "--maximum-correction-attempts-after-initial",
+        "1",
+        "--provider-fallback",
+        "false",
+        "--automatic-retry",
+        "false",
+        "--external-disclosure",
+        "false",
         "--platform-root",
         "C:/platform",
         "--source-root",
@@ -481,6 +805,10 @@ def _cli_arguments() -> list[str]:
         "C:/lineage/preflight/receipt_manifest.json",
         "--actual-lineage-packet",
         "C:/lineage/actual/packet.json",
+        "--rejected-preflight-identity-reservation",
+        "C:/lineage/rejected/packet.json",
+        "C:/lineage/rejected/receipt.json",
+        "C:/lineage/rejected/receipt_manifest.json",
     ]
 
 
@@ -499,6 +827,24 @@ def test_cli_exposes_one_series_and_sequence_without_independent_identities() ->
             "preflight_id",
         }
     )
+
+
+def test_cli_help_lists_structured_configuration_and_reservation_inputs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as raised:
+        cli_main(["prepare-sealed-entry-preflight", "--help"])
+
+    help_text = capsys.readouterr().out
+    assert raised.value.code == 0
+    assert "--rejected-preflight-identity-reservation" in help_text
+    assert "--main-ollama-timeout-seconds" in help_text
+    assert "--projection-contract-checkpoint" in help_text
+    assert "--model-projection-field" in help_text
+    assert "--outer-run-id" not in help_text
+    assert "--future-canary-number" not in help_text
+    assert "--future-actual-id" not in help_text
+    assert "--preflight-id" not in help_text
 
 
 def test_cli_delegates_to_the_preparation_owner(
@@ -537,11 +883,22 @@ def test_cli_delegates_to_the_preparation_owner(
     assert isinstance(request, SealedPreflightPreparationRequestV1)
     assert request.identity_series == "p2_ac_20260825"
     assert request.identity_sequence == 10
+    assert request.selected_configuration.route == (
+        "qwen3.6:27b × current full_correction"
+    )
+    assert request.selected_configuration.main_ollama_timeout_seconds == 600.0
     assert request.preflight_lineage_packet_paths == (
         "C:/lineage/preflight/packet.json",
     )
     assert request.actual_lineage_packet_paths == (
         "C:/lineage/actual/packet.json",
+    )
+    assert request.rejected_preflight_identity_reservations == (
+        RejectedPreflightIdentityReservationV1(
+            packet_path="C:/lineage/rejected/packet.json",
+            receipt_path="C:/lineage/rejected/receipt.json",
+            receipt_manifest_path="C:/lineage/rejected/receipt_manifest.json",
+        ),
     )
 
 
@@ -744,7 +1101,7 @@ def test_same_inputs_are_deterministic_across_two_fresh_roots(tmp_path: Path) ->
     (tmp_path / "second_delivery").mkdir()
     second_request = replace(
         request,
-        packet_root=str(tmp_path / "second_delivery" / "preflight11"),
+        packet_root=str(tmp_path / "second_delivery" / "preflight12"),
     )
     second = prepare_sealed_entry_preflight(second_request, dependencies=dependencies)
     first_root = Path(request.packet_root)

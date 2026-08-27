@@ -29,7 +29,10 @@ from .local_entry import (
 )
 from .planning import ModPlanningBriefBuilder, RequestPlanner
 from .preflight_preparation import (
+    DeterministicPostChangeConditionsV1,
     PreflightPreparationError,
+    RejectedPreflightIdentityReservationV1,
+    SelectedPreflightConfigurationV1,
     SealedPreflightPreparationRequestV1,
     prepare_sealed_entry_preflight,
 )
@@ -65,6 +68,14 @@ class PlanRequestResult:
     stopped_before: str
     request_planning_report: dict[str, object]
     mod_planning_brief: dict[str, object]
+
+
+def _strict_cli_bool(value: str) -> bool:
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise argparse.ArgumentTypeError("value must be exactly true or false")
 
 
 def plan_request(
@@ -342,6 +353,85 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_entry_parser.add_argument("--identity-series", required=True)
     prepare_entry_parser.add_argument("--identity-sequence", required=True, type=int)
     prepare_entry_parser.add_argument("--configuration-id", required=True)
+    prepare_entry_parser.add_argument("--route", required=True)
+    prepare_entry_parser.add_argument(
+        "--main-ollama-timeout-seconds",
+        required=True,
+        type=float,
+    )
+    prepare_entry_parser.add_argument("--timeout-owner", required=True)
+    prepare_entry_parser.add_argument(
+        "--repair-ollama-timeout-seconds",
+        type=float,
+    )
+    prepare_entry_parser.add_argument("--repair-timeout-selection", required=True)
+    prepare_entry_parser.add_argument(
+        "--projection-contract-checkpoint",
+        required=True,
+    )
+    prepare_entry_parser.add_argument(
+        "--model-projection-field",
+        action="append",
+        required=True,
+    )
+    prepare_entry_parser.add_argument(
+        "--model-relations-authorized",
+        required=True,
+        type=_strict_cli_bool,
+    )
+    prepare_entry_parser.add_argument(
+        "--deterministic-relation-completion",
+        required=True,
+        type=_strict_cli_bool,
+    )
+    prepare_entry_parser.add_argument(
+        "--deterministic-relation-rule",
+        required=True,
+    )
+    prepare_entry_parser.add_argument(
+        "--deterministic-post-change-only-unaccounted",
+        required=True,
+        type=_strict_cli_bool,
+    )
+    prepare_entry_parser.add_argument(
+        "--deterministic-post-change-required-before-patch-policy",
+        required=True,
+        type=_strict_cli_bool,
+    )
+    prepare_entry_parser.add_argument(
+        "--deterministic-post-change-allowed-disposition",
+        action="append",
+        required=True,
+    )
+    prepare_entry_parser.add_argument(
+        "--deterministic-post-change-all-other-omissions",
+        required=True,
+    )
+    prepare_entry_parser.add_argument(
+        "--initial-projection-attempts",
+        required=True,
+        type=int,
+    )
+    prepare_entry_parser.add_argument(
+        "--maximum-correction-attempts-after-initial",
+        required=True,
+        type=int,
+    )
+    prepare_entry_parser.add_argument(
+        "--provider-fallback",
+        required=True,
+        type=_strict_cli_bool,
+    )
+    prepare_entry_parser.add_argument(
+        "--automatic-retry",
+        required=True,
+        type=_strict_cli_bool,
+    )
+    prepare_entry_parser.add_argument(
+        "--external-disclosure",
+        required=True,
+        type=_strict_cli_bool,
+    )
     prepare_entry_parser.add_argument("--platform-root", required=True)
     prepare_entry_parser.add_argument(
         "--allowed-dirty-path",
@@ -383,6 +473,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--actual-lineage-packet",
         action="append",
         required=True,
+    )
+    prepare_entry_parser.add_argument(
+        "--rejected-preflight-identity-reservation",
+        action="append",
+        nargs=3,
+        default=[],
+        metavar=("PACKET", "RECEIPT", "RECEIPT_MANIFEST"),
     )
 
     evidence_parser = subparsers.add_parser(
@@ -943,7 +1040,54 @@ def main(argv: Sequence[str] | None = None) -> int:
                 request_text=args.request_text,
                 identity_series=args.identity_series,
                 identity_sequence=args.identity_sequence,
-                configuration_id=args.configuration_id,
+                selected_configuration=SelectedPreflightConfigurationV1(
+                    configuration_id=args.configuration_id,
+                    route=args.route,
+                    main_ollama_timeout_seconds=(
+                        args.main_ollama_timeout_seconds
+                    ),
+                    timeout_owner=args.timeout_owner,
+                    repair_ollama_timeout_seconds=(
+                        args.repair_ollama_timeout_seconds
+                    ),
+                    repair_timeout_selection=args.repair_timeout_selection,
+                    projection_contract_checkpoint=(
+                        args.projection_contract_checkpoint
+                    ),
+                    model_projection_fields=tuple(args.model_projection_field),
+                    model_relations_authorized=(
+                        args.model_relations_authorized
+                    ),
+                    deterministic_relation_completion=(
+                        args.deterministic_relation_completion
+                    ),
+                    deterministic_relation_rule=(
+                        args.deterministic_relation_rule
+                    ),
+                    deterministic_post_change=(
+                        DeterministicPostChangeConditionsV1(
+                            only_unaccounted=(
+                                args.deterministic_post_change_only_unaccounted
+                            ),
+                            required_before_patch_policy=(
+                                args.deterministic_post_change_required_before_patch_policy
+                            ),
+                            allowed_dispositions_exact=tuple(
+                                args.deterministic_post_change_allowed_disposition
+                            ),
+                            all_other_omissions=(
+                                args.deterministic_post_change_all_other_omissions
+                            ),
+                        )
+                    ),
+                    initial_projection_attempts=args.initial_projection_attempts,
+                    maximum_correction_attempts_after_initial=(
+                        args.maximum_correction_attempts_after_initial
+                    ),
+                    provider_fallback=args.provider_fallback,
+                    automatic_retry=args.automatic_retry,
+                    external_disclosure=args.external_disclosure,
+                ),
                 platform_root=args.platform_root,
                 allowed_dirty_paths=tuple(args.allowed_dirty_path),
                 source_root=args.source_root,
@@ -963,6 +1107,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.predecessor_receipt_manifest
                 ),
                 actual_lineage_packet_paths=tuple(args.actual_lineage_packet),
+                rejected_preflight_identity_reservations=tuple(
+                    RejectedPreflightIdentityReservationV1(
+                        packet_path=values[0],
+                        receipt_path=values[1],
+                        receipt_manifest_path=values[2],
+                    )
+                    for values in args.rejected_preflight_identity_reservation
+                ),
             )
             result = prepare_sealed_entry_preflight(request)
         except PreflightPreparationError as exc:
