@@ -1,6 +1,91 @@
+import hashlib
 from pathlib import Path
 
+import pytest
+
 from src.mod_agent.evidence import RgLiveEvidenceProvider
+
+
+ACTUAL10_QUERY_LEADS = (
+    "AccurateCrosshair General Settings Accurate Spread Enabled",
+    "AccurateCrosshair config schema settings reference",
+    "AccurateCrosshair source code spread calculation logic",
+    "AccurateCrosshair target source or API evidence",
+    "AccurateCrosshair config or text evidence",
+    "AccurateCrosshair current source or docs evidence",
+    "AccurateCrosshair config schema or settings reference",
+    "AccurateCrosshair compile or static validation",
+    "AccurateCrosshair runtime verification plan",
+)
+
+
+def _write_actual10_source_fixture(root: Path) -> Path:
+    source_root = root / "generated_mods" / "AccurateCrosshair"
+    patches = source_root / "CrosshairPatches"
+    patches.mkdir(parents=True)
+    (source_root / "Configuration.cs").write_text(
+        "using BepInEx.Configuration;\n"
+        "\n"
+        "namespace AccurateCrosshair\n"
+        "{\n"
+        "    public static class Configuration\n"
+        "    {\n"
+        "        public static bool FollowsRecoil { get; private set; } = true;\n"
+        "        public static bool PopEnabled { get; private set; } = false;\n"
+        "\n"
+        "        private static ConfigFile configFile;\n"
+        "\n"
+        "        static Configuration()\n"
+        "        {\n"
+        "            configFile = new ConfigFile(Paths.ConfigPath + \".cfg\");\n"
+        "            BindAll(configFile);\n"
+        "        }\n"
+        "\n"
+        "        private static void BindAll(ConfigFile config)\n"
+        "        {\n"
+        "            string section = \"General Settings\";\n"
+        "            string key = \"Follow Recoil\";\n"
+        "            FollowsRecoil = config.Bind(section, key, FollowsRecoil).Value;\n"
+        "            key = \"First Shot Display Mode\";\n"
+        "            config.Bind(section, key, \"Inner\");\n"
+        "            key = \"Pop Enabled\";\n"
+        "            PopEnabled = config.Bind(section, key, PopEnabled).Value;\n"
+        "        }\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (patches / "SpreadPatches.cs").write_text(
+        "namespace AccurateCrosshair.CrosshairPatches\n"
+        "{\n"
+        "    internal static class SpreadPatches\n"
+        "    {\n"
+        "        private static float _targetSpread;\n"
+        "\n"
+        "        private static bool OverrideCrosshairSize(ref float crosshairSize)\n"
+        "        {\n"
+        "            float spread;\n"
+        "            spread = aimSpread + hipFireSpread;\n"
+        "            _targetSpread = spread;\n"
+        "            crosshairSize = GetCrosshairSize();\n"
+        "            return true;\n"
+        "        }\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (source_root / "Loader.cs").write_text(
+        "namespace AccurateCrosshair\n"
+        "{\n"
+        "    internal sealed class Loader\n"
+        "    {\n"
+        "        // target source API evidence; current source docs evidence.\n"
+        "        // compile static validation; runtime verification plan.\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    return source_root
 
 
 def test_rg_live_provider_returns_hashed_live_target_source(tmp_path: Path) -> None:
@@ -236,6 +321,59 @@ def test_rg_live_provider_blocks_requested_file_without_request_term_match(
     )
 
 
+def test_rg_live_provider_blocks_search_root_outside_workspace(tmp_path: Path) -> None:
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="BoundarySignal",
+        search_root="../outside-workspace",
+    )
+
+    assert pack.items == ()
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.blockers[0]["code"] == "INSUFFICIENT_EVIDENCE"
+    assert pack.blockers[0]["message"].startswith("Search root escapes workspace:")
+
+
+def test_rg_live_query_set_rejects_insufficient_item_budget(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="^RG_LIVE_QUERY_SET_BUDGET_INVALID$"):
+        RgLiveEvidenceProvider(tmp_path).collect_query_set(
+            queries=(
+                {
+                    "query_id": "query_one",
+                    "query": "BoundarySignal",
+                    "requirement_id": "requirement_one",
+                },
+            ),
+            search_root="generated_mods/Example",
+            max_items=0,
+        )
+
+
+def test_rg_live_query_set_rejects_duplicate_query_id(tmp_path: Path) -> None:
+    source = tmp_path / "generated_mods" / "Example" / "Behavior.cs"
+    source.parent.mkdir(parents=True)
+    source.write_text("public sealed class Behavior {}\n", encoding="utf-8")
+    queries = (
+        {
+            "query_id": "query_repeated",
+            "query": "Behavior",
+            "requirement_id": "requirement_one",
+        },
+        {
+            "query_id": "query_repeated",
+            "query": "Behavior",
+            "requirement_id": "requirement_two",
+        },
+    )
+
+    with pytest.raises(ValueError, match="^RG_LIVE_QUERY_SET_ID_DUPLICATE$"):
+        RgLiveEvidenceProvider(tmp_path).collect_query_set(
+            queries=queries,
+            search_root="generated_mods/Example",
+            max_items=len(queries),
+        )
+
+
 def test_rg_live_provider_binds_enclosing_csharp_method_declaration(
     tmp_path: Path,
 ) -> None:
@@ -324,3 +462,135 @@ def test_rg_live_provider_binds_declared_member_types_from_containing_type(
             "is_static": False,
         },
     }
+
+
+def test_actual10_configuration_query_selects_bind_all_method_span(
+    tmp_path: Path,
+) -> None:
+    source_root = _write_actual10_source_fixture(tmp_path)
+    source = source_root / "Configuration.cs"
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="AccurateCrosshair config schema settings reference",
+        search_root="generated_mods/AccurateCrosshair",
+    )
+
+    item = pack.items[0]
+    assert item.source_path == "generated_mods/AccurateCrosshair/Configuration.cs"
+    assert item.source_hash == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert item.source_hash == item.file_hash == item.doc_hash
+    assert item.span == {"start_line": 18, "end_line": 29}
+    assert item.excerpt.splitlines()[0] == (
+        "        private static void BindAll(ConfigFile config)"
+    )
+    assert "config.Bind(section, key, FollowsRecoil).Value" in item.excerpt
+    assert item.symbol == "BindAll"
+    assert item.method_name == "BindAll"
+    assert item.declaring_type == "Configuration"
+    assert item.declaring_type_full_name == "AccurateCrosshair.Configuration"
+
+
+def test_actual10_spread_query_selects_override_method_span(tmp_path: Path) -> None:
+    source_root = _write_actual10_source_fixture(tmp_path)
+    source = source_root / "CrosshairPatches" / "SpreadPatches.cs"
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="AccurateCrosshair source code spread calculation logic",
+        search_root="generated_mods/AccurateCrosshair",
+    )
+
+    item = pack.items[0]
+    assert item.source_path == (
+        "generated_mods/AccurateCrosshair/CrosshairPatches/SpreadPatches.cs"
+    )
+    assert item.source_hash == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert item.span == {"start_line": 7, "end_line": 16}
+    assert item.excerpt.splitlines()[0] == (
+        "        private static bool OverrideCrosshairSize(ref float crosshairSize)"
+    )
+    assert "spread = aimSpread + hipFireSpread;" in item.excerpt
+    assert "crosshairSize = GetCrosshairSize();" in item.excerpt
+    assert item.method_name == "OverrideCrosshairSize"
+    assert item.declaring_type == "SpreadPatches"
+    assert item.declaring_type_full_name == (
+        "AccurateCrosshair.CrosshairPatches.SpreadPatches"
+    )
+
+
+def test_rg_live_non_method_match_keeps_bounded_context_without_symbol_fabrication(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "generated_mods" / "Example" / "Behavior.cs"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "namespace Example\n"
+        "{\n"
+        "    public sealed class Behavior\n"
+        "    {\n"
+        "        public void EarlierMethod()\n"
+        "        {\n"
+        "            UseEarlierSignal();\n"
+        "        }\n"
+        "\n"
+        "        private static string BoundarySignal = \"class-level\";\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="BoundarySignal",
+        search_root="generated_mods/Example",
+    )
+
+    item = pack.items[0]
+    assert item.span == {"start_line": 1, "end_line": 12}
+    assert item.method_name is None
+    assert item.method_kind is None
+    assert item.declaring_type is None
+
+
+def test_actual10_query_set_retains_three_files_and_upgrades_method_evidence(
+    tmp_path: Path,
+) -> None:
+    _write_actual10_source_fixture(tmp_path)
+    queries = tuple(
+        {
+            "query_id": f"actual10_query_{index}",
+            "query": query,
+            "requirement_id": f"actual10_requirement_{index}",
+        }
+        for index, query in enumerate(ACTUAL10_QUERY_LEADS, 1)
+    )
+
+    pack = RgLiveEvidenceProvider(tmp_path).collect_query_set(
+        queries=queries,
+        search_root="generated_mods/AccurateCrosshair",
+        max_items=len(queries),
+    )
+
+    assert pack.budget_summary["query_count"] == 9
+    assert pack.budget_summary["all_queries_executed"] is True
+    assert all(
+        len(execution["evidence_ids"]) <= 1
+        for execution in pack.budget_summary["per_query_execution"]
+    )
+    assert {
+        item.source_path.rsplit("/", 1)[-1]
+        for item in pack.items
+    } == {"Configuration.cs", "Loader.cs", "SpreadPatches.cs"}
+    configuration_items = [
+        item for item in pack.items if item.source_path.endswith("/Configuration.cs")
+    ]
+    spread_items = [
+        item for item in pack.items if item.source_path.endswith("/SpreadPatches.cs")
+    ]
+    assert configuration_items
+    assert spread_items
+    assert any(item.method_name == "BindAll" for item in configuration_items)
+    assert any("config.Bind" in item.excerpt for item in configuration_items)
+    assert any(item.method_name == "OverrideCrosshairSize" for item in spread_items)
+    assert any("aimSpread + hipFireSpread" in item.excerpt for item in spread_items)
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.to_artifact_payload()["authoritative_for_patch"] is False

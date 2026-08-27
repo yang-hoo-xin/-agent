@@ -162,7 +162,21 @@ class RgLiveEvidenceProvider:
                 reason=f"Selected live C# source is not valid UTF-8: {exc}",
             )
         lines = source.splitlines(keepends=True)
-        method_context = _enclosing_csharp_method(lines, selected_line=selected_line)
+        selected_line = _select_match_line(
+            tuple(
+                (line_number, text)
+                for path, line_number, text in matches
+                if path == selected_path
+            ),
+            tokens,
+            lines=lines,
+            fallback_line=selected_line,
+        )
+        method_context = (
+            _enclosing_csharp_method(lines, selected_line=selected_line)
+            if _csharp_method_match_rank(lines, selected_line=selected_line) > 0
+            else None
+        )
         start_line = (
             method_context["declaration_line"]
             if method_context is not None
@@ -476,6 +490,51 @@ def _select_file(
     return path, selected_line
 
 
+def _select_match_line(
+    matches: tuple[tuple[int, str], ...],
+    tokens: list[str],
+    *,
+    lines: list[str],
+    fallback_line: int,
+) -> int:
+    """Choose one match inside an already selected file."""
+
+    if not matches:
+        return fallback_line
+    method_spans = _csharp_method_source_spans(lines)
+
+    def match_key(match: tuple[int, str]) -> tuple[int, int, int, int, int, int]:
+        line_number, text = match
+        method_rank, match_context = _csharp_method_match_context(
+            lines,
+            selected_line=line_number,
+            method_spans=method_spans,
+        )
+        lowered_text = text.lower()
+        lowered_context = match_context.lower()
+        return (
+            -sum(lowered_context.count(token) for token in tokens),
+            -sum(1 for token in tokens if token in lowered_context),
+            -sum(lowered_text.count(token) for token in tokens),
+            -method_rank,
+            min(
+                (
+                    index
+                    for index, token in enumerate(tokens)
+                    if token in lowered_text
+                ),
+                default=len(tokens),
+            ),
+            line_number,
+        )
+
+    selected_line, _ = sorted(
+        matches,
+        key=match_key,
+    )[0]
+    return selected_line
+
+
 def _best_symbol(excerpt: str, tokens: list[str]) -> str | None:
     identifiers = _TOKEN_RE.findall(excerpt)
     scored = sorted(
@@ -525,6 +584,54 @@ def _enclosing_csharp_method(
             "return_type": match.group("return_type"),
         }
     return None
+
+
+def _csharp_method_match_rank(
+    lines: list[str],
+    *,
+    selected_line: int,
+    method_spans: tuple[dict[str, object], ...] | None = None,
+) -> int:
+    """Rank a match only when it belongs to a complete C# method source span."""
+
+    rank, _ = _csharp_method_match_context(
+        lines,
+        selected_line=selected_line,
+        method_spans=method_spans,
+    )
+    return rank
+
+
+def _csharp_method_match_context(
+    lines: list[str],
+    *,
+    selected_line: int,
+    method_spans: tuple[dict[str, object], ...] | None = None,
+) -> tuple[int, str]:
+    """Return verified method rank and bounded scoring context for one match."""
+
+    spans = (
+        _csharp_method_source_spans(lines)
+        if method_spans is None
+        else method_spans
+    )
+    for span in spans:
+        start_line = int(span["start_line"])
+        end_line = int(span["end_line"])
+        if start_line < selected_line <= end_line:
+            return 2, str(span["source_text"])
+        if selected_line == start_line:
+            return 1, str(span["source_text"])
+    if 1 <= selected_line <= len(lines):
+        value = lines[selected_line - 1].strip()
+        if (
+            _CSHARP_METHOD_RE.fullmatch(value) is not None
+            and "{" in value
+            and "}" in value
+        ):
+            return 2, lines[selected_line - 1]
+        return 0, lines[selected_line - 1]
+    return 0, ""
 
 
 def _csharp_method_source_spans(lines: list[str]) -> tuple[dict[str, object], ...]:

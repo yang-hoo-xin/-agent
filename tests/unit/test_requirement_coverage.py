@@ -290,6 +290,118 @@ def _write_sources(root: Path) -> None:
     )
 
 
+def _actual10_method_coverage_inputs(tmp_path: Path):
+    source = tmp_path / "generated_mods" / "AccurateCrosshair"
+    patches = source / "CrosshairPatches"
+    patches.mkdir(parents=True)
+    (source / "Configuration.cs").write_text(
+        "namespace AccurateCrosshair\n"
+        "{\n"
+        "    public static class Configuration\n"
+        "    {\n"
+        "        private static ConfigFile configFile;\n"
+        "\n"
+        "        static Configuration()\n"
+        "        {\n"
+        "            configFile = new ConfigFile(Paths.ConfigPath + \".cfg\");\n"
+        "            BindAll(configFile);\n"
+        "        }\n"
+        "\n"
+        "        private static void BindAll(ConfigFile config)\n"
+        "        {\n"
+        "            string section = \"General Settings\";\n"
+        "            string key = \"Follow Recoil\";\n"
+        "            config.Bind(section, key, true);\n"
+        "            config.Bind(section, \"First Shot Display Mode\", \"Inner\");\n"
+        "            config.Bind(section, \"Pop Enabled\", false);\n"
+        "        }\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (patches / "SpreadPatches.cs").write_text(
+        "namespace AccurateCrosshair.CrosshairPatches\n"
+        "{\n"
+        "    internal static class SpreadPatches\n"
+        "    {\n"
+        "        private static bool OverrideCrosshairSize(ref float crosshairSize)\n"
+        "        {\n"
+        "            float spread = aimSpread + hipFireSpread;\n"
+        "            crosshairSize = spread;\n"
+        "            return true;\n"
+        "        }\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (source / "Loader.cs").write_text(
+        "namespace AccurateCrosshair\n"
+        "{\n"
+        "    internal sealed class Loader\n"
+        "    {\n"
+        "        // runtime verification plan\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    feature = _feature_data()
+    feature["user_request"] = (
+        "Add an accurate spread setting while preserving independent settings."
+    )
+    projection = deepcopy(_projection())
+    projection["requirements"][0]["query_leads"] = [
+        "AccurateCrosshair source code spread calculation logic"
+    ]
+    projection["requirements"][1]["query_leads"] = [
+        "AccurateCrosshair config schema settings reference"
+    ]
+    projection["requirements"][2]["query_leads"] = [
+        "AccurateCrosshair source code spread calculation logic"
+    ]
+    projection["requirements"][3]["query_leads"] = [
+        "AccurateCrosshair runtime verification plan"
+    ]
+    materialized = materialize_requirement_coverage_projection(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+        projection=projection,
+    )
+    retrieved = RgLiveEvidenceProvider(tmp_path).collect_query_set(
+        queries=tuple(dict(value) for value in materialized["queries"]),
+        search_root="generated_mods/AccurateCrosshair",
+        max_items=len(materialized["queries"]),
+    )
+    spread = next(
+        item for item in retrieved.items if item.source_path.endswith("/SpreadPatches.cs")
+    )
+    configuration = next(
+        item for item in retrieved.items if item.source_path.endswith("/Configuration.cs")
+    )
+    findings = {
+        "findings": [
+            {
+                "relation_index": 1,
+                "relationship": "support",
+                "evidence_ids": [spread.evidence_id],
+                "unresolved_gaps": [],
+            },
+            {
+                "relation_index": 2,
+                "relationship": "support",
+                "evidence_ids": [configuration.evidence_id],
+                "unresolved_gaps": [],
+            },
+            {
+                "relation_index": 3,
+                "relationship": "missing",
+                "evidence_ids": [],
+                "unresolved_gaps": ["Runtime observation occurs after patching."],
+            },
+        ]
+    }
+    return feature, materialized, retrieved, spread, configuration, findings
+
+
 def _materialized_and_retrieved(tmp_path: Path):
     _write_sources(tmp_path)
     feature = _feature_data()
@@ -402,6 +514,65 @@ def test_positive_requirement_coverage_roundtrips_and_derives_edit_target(
     )
     assert view.preservation_requirement_texts == (
         "PreserveFeedback must remain unchanged.",
+    )
+
+
+def test_actual10_method_spans_allow_existing_coverage_to_derive_edit_target(
+    tmp_path: Path,
+) -> None:
+    feature, materialized, retrieved, spread, configuration, findings = (
+        _actual10_method_coverage_inputs(tmp_path)
+    )
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        findings=findings,
+    )
+
+    assert spread.method_name == "OverrideCrosshairSize"
+    assert configuration.method_name == "BindAll"
+    assert spread.source_type == configuration.source_type == "target_source"
+    assert spread.source_hash and configuration.source_hash
+    assert spread.span and configuration.span
+    assert pack.readiness == "sufficient"
+    assert pack.can_generate_patch is True
+    assert pack.requirement_coverage["edit_target_evidence_ids"] == [
+        spread.evidence_id
+    ]
+    assert pack.requirement_coverage["sufficiency"] == {
+        "status": "sufficient",
+        "reasons": [],
+    }
+
+
+def test_actual10_unimplemented_gap_still_blocks_existing_coverage(
+    tmp_path: Path,
+) -> None:
+    feature, materialized, retrieved, spread, _, findings = (
+        _actual10_method_coverage_inputs(tmp_path)
+    )
+    findings["findings"][0]["unresolved_gaps"] = ["目标尚未实现"]
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        findings=findings,
+    )
+
+    change_requirement_id = materialized["requirements"][0]["requirement_id"]
+    assert spread.evidence_id in findings["findings"][0]["evidence_ids"]
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.requirement_coverage["edit_target_evidence_ids"] == []
+    assert (
+        f"required_requirement_unresolved:{change_requirement_id}"
+        in pack.requirement_coverage["sufficiency"]["reasons"]
+    )
+    assert "change_edit_target_evidence_missing" in (
+        pack.requirement_coverage["sufficiency"]["reasons"]
     )
 
 
