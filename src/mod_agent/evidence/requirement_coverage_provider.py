@@ -44,6 +44,9 @@ _PROJECTION_SCHEMA_KEYWORDS = frozenset(
 _INITIAL_PRIOR_OUTPUT_RULE = (
     "Do not use expected-side data, historical implementations, or prior outputs."
 )
+_DETERMINISTIC_POST_CHANGE_DISPOSITION_REASON = (
+    "Deterministically deferred to post-change verification."
+)
 
 
 class RequirementProjectionAdmissionError(ValueError):
@@ -396,6 +399,50 @@ def _json_values_equal(left: object, right: object) -> bool:
     return type(left) is type(right) and left == right
 
 
+def _complete_admitted_requirement_projection(
+    projection: Mapping[str, Any],
+    *,
+    input_obligations: list[Mapping[str, Any]],
+) -> dict[str, object]:
+    """Deep-copy one admitted model draft and add only structural defaults."""
+
+    completed = deepcopy(dict(projection))
+    requirements = completed["requirements"]
+    dispositions = completed["input_dispositions"]
+    accounted_indexes = {
+        int(index)
+        for requirement in requirements
+        for index in requirement["input_obligation_indexes"]
+    }
+    explicit_disposition_indexes = {
+        int(disposition["input_obligation_index"])
+        for disposition in dispositions
+    }
+    for obligation in input_obligations:
+        index = int(obligation["input_obligation_index"])
+        if index in accounted_indexes or index in explicit_disposition_indexes:
+            continue
+        if (
+            obligation["required_before_patch_policy"] is False
+            and obligation["allowed_dispositions"] == ["post_change"]
+        ):
+            dispositions.append(
+                {
+                    "input_obligation_index": index,
+                    "disposition": "post_change",
+                    "reason": _DETERMINISTIC_POST_CHANGE_DISPOSITION_REASON,
+                }
+            )
+    completed["relations"] = [
+        {
+            "parent_requirement_indexes": [index],
+            "meaning": f"Evidence disposition for requirement {index}.",
+        }
+        for index in range(1, len(requirements) + 1)
+    ]
+    return completed
+
+
 class RequirementCoverageSemanticProvider(Protocol):
     """Propose bounded semantics without owning identities or authority."""
 
@@ -440,20 +487,25 @@ class StructuredModelRequirementCoverageProvider:
         initial_rules = [
             (
                 "Return only requirement semantics, obligation indexes, focused "
-                "query leads, relations, and allowed dispositions."
+                "query leads, and explicit allowed input dispositions."
             ),
             (
-                "Every input obligation must be carried by one or more "
-                "requirements or receive one disposition explicitly listed in "
-                "that input obligation's allowed_dispositions with a bounded "
-                "reason."
+                "Every required-before-patch input obligation must be carried by "
+                "one or more requirements or receive one disposition explicitly "
+                "listed in that input obligation's allowed_dispositions with a "
+                "bounded reason."
             ),
             (
                 "Use input_dispositions only with the per-index values listed in "
                 "input_obligations; do not invent or cross-bind disposition values."
             ),
+            (
+                "Deterministic code adds relations and may add only an otherwise-"
+                "unaccounted post-change disposition whose policy is not required "
+                "before patching and whose sole allowed disposition is post_change."
+            ),
             "A user-request obligation may be carried by both change and preservation requirements when both semantics are present.",
-            "Do not return stable ids, final required_before_patch, sufficiency, edit targets, paths, symbols, Patch authority, or execution authority.",
+            "Do not return relations, stable ids, final required_before_patch, sufficiency, edit targets, paths, symbols, Patch authority, or execution authority.",
             _INITIAL_PRIOR_OUTPUT_RULE,
         ]
         payload = {
@@ -463,11 +515,12 @@ class StructuredModelRequirementCoverageProvider:
             "rules": initial_rules,
         }
         projection: Mapping[str, Any] | None = None
+        completed_projection: dict[str, object] | None = None
         try:
             projection = self.complete_json(
                 "requirement_projection", payload, schema
             )
-            self._admit_and_materialize_projection(
+            completed_projection = self._admit_and_materialize_projection(
                 projection,
                 schema=schema,
                 feature_data=feature_data,
@@ -540,10 +593,11 @@ class StructuredModelRequirementCoverageProvider:
                                 "bounded_correction_attempts_remaining": 0,
                             },
                         )
-                materialize_requirement_coverage_projection(
+                completed_correction = self._admit_and_materialize_projection(
+                    corrected,
+                    schema=schema,
                     feature_data=feature_data,
                     request=request,
-                    projection=corrected,
                 )
             except ValueError as corrected_exc:
                 self._record_projection_attempt(
@@ -566,7 +620,7 @@ class StructuredModelRequirementCoverageProvider:
                 error_code=None,
                 rejection_diagnostic=None,
             )
-            return corrected
+            return completed_correction
         self._record_projection_attempt(
             attempt_index=1,
             projection=projection,
@@ -575,7 +629,9 @@ class StructuredModelRequirementCoverageProvider:
             error_code=None,
             rejection_diagnostic=None,
         )
-        return projection
+        if completed_projection is None:
+            raise RuntimeError("Accepted projection completion is unavailable.")
+        return completed_projection
 
     @staticmethod
     def _admit_and_materialize_projection(
@@ -584,13 +640,20 @@ class StructuredModelRequirementCoverageProvider:
         schema: Mapping[str, Any],
         feature_data: Mapping[str, Any],
         request: str,
-    ) -> None:
+    ) -> dict[str, object]:
         admit_requirement_projection_response(projection, schema=schema)
+        completed_projection = _complete_admitted_requirement_projection(
+            projection,
+            input_obligations=requirement_input_obligation_model_view(
+                feature_data
+            ),
+        )
         materialize_requirement_coverage_projection(
             feature_data=feature_data,
             request=request,
-            projection=projection,
+            projection=completed_projection,
         )
+        return completed_projection
 
     def _record_projection_attempt(
         self,
@@ -607,6 +670,10 @@ class StructuredModelRequirementCoverageProvider:
             if rejection_diagnostic is not None
             else None
         )
+        # Hashes and counts describe only the raw model draft. An accepted
+        # attempt also means its deterministic completed copy passed semantic
+        # materialization; that full projection is returned downstream instead
+        # of being duplicated in the audit record.
         self._projection_attempt_audit.append(
             {
                 "attempt_index": attempt_index,
@@ -1013,20 +1080,6 @@ def requirement_projection_response_schema(
         ],
         "additionalProperties": False,
     }
-    relation = {
-        "type": "object",
-        "properties": {
-            "parent_requirement_indexes": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 16,
-                "items": {"type": "integer", "minimum": 1, "maximum": 16},
-            },
-            "meaning": {"type": "string", "minLength": 1},
-        },
-        "required": ["parent_requirement_indexes", "meaning"],
-        "additionalProperties": False,
-    }
     disposition_items: dict[str, object] = (
         {"oneOf": disposition_variants}
         if disposition_variants
@@ -1045,19 +1098,13 @@ def requirement_projection_response_schema(
                 "maxItems": 16,
                 "items": requirement,
             },
-            "relations": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 32,
-                "items": relation,
-            },
             "input_dispositions": {
                 "type": "array",
                 "maxItems": len(eligible_disposition_indexes),
                 "items": disposition_items,
             },
         },
-        "required": ["requirements", "relations", "input_dispositions"],
+        "required": ["requirements", "input_dispositions"],
         "additionalProperties": False,
     }
 

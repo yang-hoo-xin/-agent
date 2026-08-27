@@ -667,13 +667,6 @@ def _formal_coverage_vertical_scenario(
                     )
             return {
                 "requirements": requirements,
-                "relations": [
-                    {
-                        "parent_requirement_indexes": [index],
-                        "meaning": f"Evidence disposition for requirement {index}.",
-                    }
-                    for index in range(1, len(requirements) + 1)
-                ],
                 "input_dispositions": dispositions,
             }
         if role == "requirement_findings":
@@ -1549,14 +1542,6 @@ def test_product_execution_actual8_projection_correction_no_progress_fails_close
         raw_marker = "actual8-overlap-output-must-not-persist"
         projection = {
             "requirements": requirements,
-            "relations": [
-                {
-                    "parent_requirement_indexes": list(
-                        range(1, len(requirements) + 1)
-                    ),
-                    "meaning": "All projected obligations require evidence disposition.",
-                }
-            ],
             "input_dispositions": [
                 {
                     "input_obligation_index": 7,
@@ -1761,7 +1746,7 @@ def test_product_execution_actual8_projection_correction_no_progress_fails_close
             attempt["input_disposition_count"],
         )
         for attempt in attempts
-    ] == [(4, 1, 1), (4, 1, 1)]
+    ] == [(4, None, 1), (4, None, 1)]
     assert [
         attempt["structured_output_canonical_sha256"] for attempt in attempts
     ] == raw_output_hashes

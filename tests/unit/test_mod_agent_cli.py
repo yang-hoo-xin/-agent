@@ -1781,13 +1781,6 @@ def _formal_coverage_model_response(request: dict[str, object]) -> dict[str, obj
                 )
         return {
             "requirements": requirements,
-            "relations": [
-                {
-                    "parent_requirement_indexes": [index],
-                    "meaning": f"Evidence for requirement {index}.",
-                }
-                for index in range(1, len(requirements) + 1)
-            ],
             "input_dispositions": dispositions,
         }
     if message_type == "product_requirement_findings":

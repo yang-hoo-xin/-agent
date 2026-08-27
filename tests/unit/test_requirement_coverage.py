@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
 from pathlib import Path
 
@@ -131,6 +132,78 @@ def _projection() -> dict[str, object]:
             },
         ],
         "input_dispositions": [],
+    }
+
+
+def _model_projection(
+    projection: dict[str, object] | None = None,
+) -> dict[str, object]:
+    model_projection = deepcopy(
+        _projection() if projection is None else projection
+    )
+    del model_projection["relations"]
+    return model_projection
+
+
+def _deterministically_completed_model_projection(
+    projection: dict[str, object] | None = None,
+) -> dict[str, object]:
+    completed = _model_projection(projection)
+    completed["relations"] = [
+        {
+            "parent_requirement_indexes": [index],
+            "meaning": f"Evidence disposition for requirement {index}.",
+        }
+        for index in range(1, len(completed["requirements"]) + 1)
+    ]
+    return completed
+
+
+def _actual9_derived_feature_data() -> dict[str, object]:
+    feature = _feature_data()
+    feature["evidence_requirements"] = [
+        "Pre-patch evidence 1.",
+        "Pre-patch evidence 2.",
+        "Pre-patch evidence 3.",
+        "Pre-patch evidence 4.",
+    ]
+    feature["non_goals"] = [
+        "Preserve boundary 1.",
+        "Preserve boundary 2.",
+        "Preserve boundary 3.",
+    ]
+    feature["acceptance_criteria"] = [
+        "Post-change acceptance 1.",
+        "Post-change acceptance 2.",
+    ]
+    feature["runtime_verification_plan"] = [
+        "Post-change runtime check 1.",
+        "Post-change runtime check 2.",
+    ]
+    return feature
+
+
+def _supplied_obligation(
+    *,
+    feature_hash: str,
+    field: str,
+    index: int,
+    text: str,
+    allowed_roles: list[str],
+    allowed_dispositions: list[str],
+    required_before_patch: bool,
+) -> dict[str, object]:
+    digest = hashlib.sha256(
+        "\0".join((feature_hash, field, str(index), text)).encode("utf-8")
+    ).hexdigest()[:20]
+    return {
+        "input_obligation_id": f"obligation_{digest}",
+        "origin": {"field": field, "index": index},
+        "text": text,
+        "mandatory": True,
+        "allowed_roles": list(allowed_roles),
+        "allowed_dispositions": list(allowed_dispositions),
+        "required_before_patch": required_before_patch,
     }
 
 
@@ -910,6 +983,310 @@ def test_projection_schema_binds_thirteen_obligation_dispositions_per_index(
     )
 
 
+def test_projection_schema_keeps_relations_out_of_model_authority() -> None:
+    obligations = requirement_input_obligation_model_view(_feature_data())
+
+    schema = requirement_projection_response_schema(
+        input_obligations=obligations
+    )
+
+    assert set(schema["properties"]) == {
+        "requirements",
+        "input_dispositions",
+    }
+    assert schema["required"] == ["requirements", "input_dispositions"]
+
+
+def test_actual9_derived_two_requirement_projection_is_completed_before_findings(
+) -> None:
+    feature = _actual9_derived_feature_data()
+    raw_projection = {
+        "requirements": [
+            {
+                "role": "change",
+                "text": "Keep the two model-owned change obligations.",
+                "input_obligation_indexes": [1, 2],
+                "query_leads": ["actual9-no-evidence-change"],
+            },
+            {
+                "role": "pre_patch_evidence",
+                "text": "Keep the seven model-owned pre-patch obligations.",
+                "input_obligation_indexes": list(range(3, 10)),
+                "query_leads": ["actual9-no-evidence-pre-patch"],
+            },
+        ],
+        "input_dispositions": [],
+    }
+    raw_projection_before = deepcopy(raw_projection)
+    calls: list[str] = []
+    projection_payloads: list[dict[str, object]] = []
+    projection_schemas: list[dict[str, object]] = []
+
+    def complete_json(role, payload, schema):
+        calls.append(role)
+        if role == "requirement_projection":
+            projection_payloads.append(deepcopy(payload))
+            projection_schemas.append(deepcopy(schema))
+            return raw_projection
+        if role == "requirement_findings":
+            assert len(payload["requirements"]) == 2
+            assert [
+                relation["meaning"] for relation in payload["relations"]
+            ] == [
+                "Evidence disposition for requirement 1.",
+                "Evidence disposition for requirement 2.",
+            ]
+            return {
+                "findings": [
+                    {
+                        "relation_index": relation["relation_index"],
+                        "relationship": "missing",
+                        "evidence_ids": [],
+                        "unresolved_gaps": ["No current-source evidence found."],
+                    }
+                    for relation in payload["relations"]
+                ]
+            }
+        raise AssertionError(role)
+
+    class EmptySourceProvider:
+        def collect_query_set(self, *, queries, search_root, max_items):
+            assert len(queries) == 2
+            assert search_root == "generated_mods/SyntheticMod"
+            assert max_items == 2
+            return EvidencePack.empty(
+                query="actual9-derived-no-evidence",
+                reason="No current-source evidence was supplied.",
+            )
+
+    provider = make_requirement_coverage_evidence_provider(
+        EmptySourceProvider(),
+        complete_json=complete_json,
+    )
+    pack = provider.collect(
+        query=str(feature["user_request"]),
+        search_root="generated_mods/SyntheticMod",
+        feature_data=feature,
+    )
+
+    assert calls == ["requirement_projection", "requirement_findings"]
+    assert raw_projection == raw_projection_before
+    assert set(projection_schemas[0]["properties"]) == {
+        "requirements",
+        "input_dispositions",
+    }
+    assert any(
+        rule.startswith("Do not return relations,")
+        for rule in projection_payloads[0]["rules"]
+    )
+    assert not any(
+        "query leads, relations" in rule
+        for rule in projection_payloads[0]["rules"]
+    )
+    coverage = pack.requirement_coverage
+    assert coverage is not None
+    assert len(coverage["requirements"]) == 2
+    assert len(coverage["relations"]) == 2
+    assert all(
+        relation["parent_requirement_ids"]
+        == [coverage["requirements"][index]["requirement_id"]]
+        for index, relation in enumerate(coverage["relations"])
+    )
+    obligation_index_by_id = {
+        obligation["input_obligation_id"]: index
+        for index, obligation in enumerate(coverage["input_obligations"], 1)
+    }
+    assert [
+        obligation_index_by_id[disposition["input_obligation_id"]]
+        for disposition in coverage["input_dispositions"]
+    ] == [10, 11, 12, 13]
+    assert {
+        (disposition["disposition"], disposition["reason"])
+        for disposition in coverage["input_dispositions"]
+    } == {
+        (
+            "post_change",
+            "Deterministically deferred to post-change verification.",
+        )
+    }
+    attempts = pack.budget_summary["requirement_projection_attempt_audit"]
+    assert len(attempts) == 1
+    assert attempts[0]["status"] == "accepted"
+    assert attempts[0]["requirement_count"] == 2
+    assert attempts[0]["relation_count"] is None
+    assert attempts[0]["input_disposition_count"] == 0
+    assert pack.items == ()
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.to_artifact_payload()["authoritative_for_patch"] is False
+
+
+def test_deterministic_completion_preserves_model_fields_and_input_object() -> None:
+    feature = _feature_data()
+    raw_projection = _model_projection(_projection_without_obligation_four())
+    raw_projection["input_dispositions"] = [
+        {
+            "input_obligation_index": 4,
+            "disposition": "scope_boundary",
+            "reason": "Explicit model-owned scope decision.",
+        }
+    ]
+    raw_projection_before = deepcopy(raw_projection)
+
+    provider = StructuredModelRequirementCoverageProvider(
+        lambda role, _payload, _schema: raw_projection
+        if role == "requirement_projection"
+        else (_ for _ in ()).throw(AssertionError(role))
+    )
+    completed = provider.project(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+    )
+    repeated = provider.project(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+    )
+
+    assert raw_projection == raw_projection_before
+    assert completed["requirements"] == raw_projection_before["requirements"]
+    assert completed["input_dispositions"] == raw_projection_before[
+        "input_dispositions"
+    ]
+    assert completed["relations"] == [
+        {
+            "parent_requirement_indexes": [index],
+            "meaning": f"Evidence disposition for requirement {index}.",
+        }
+        for index in range(1, len(completed["requirements"]) + 1)
+    ]
+    assert repeated["relations"] == completed["relations"]
+
+
+def test_missing_required_non_goal_scope_boundary_still_fails_closed() -> None:
+    feature = _feature_data()
+    first = _model_projection(_projection_without_obligation_four())
+    second = deepcopy(first)
+    second["requirements"][0]["text"] = "Changed correction draft text."
+    roles: list[str] = []
+
+    def complete_json(role, _payload, _schema):
+        roles.append(role)
+        return deepcopy(
+            first if role == "requirement_projection" else second
+        )
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    with pytest.raises(RequirementCoverageProjectionError) as rejection:
+        provider.project(
+            feature_data=feature,
+            request=str(feature["user_request"]),
+        )
+
+    assert roles == [
+        "requirement_projection",
+        "requirement_projection_correction",
+    ]
+    assert str(rejection.value) == (
+        "REQUIREMENT_COVERAGE_INPUT_ACCOUNTING_INCOMPLETE"
+    )
+    assert rejection.value.diagnostic[
+        "missing_input_obligation_indexes"
+    ] == [4]
+
+
+@pytest.mark.parametrize(
+    "allowed_dispositions",
+    [[], ["post_change", "scope_boundary"]],
+)
+def test_missing_or_ambiguous_allowed_disposition_is_not_auto_selected(
+    allowed_dispositions: list[str],
+) -> None:
+    feature_hash = "a" * 64
+    feature = _feature_data()
+    feature["feature_spec_sha256"] = feature_hash
+    feature["input_obligations"] = [
+        _supplied_obligation(
+            feature_hash=feature_hash,
+            field="user_request",
+            index=0,
+            text="Change the marker.",
+            allowed_roles=["change"],
+            allowed_dispositions=[],
+            required_before_patch=True,
+        ),
+        _supplied_obligation(
+            feature_hash=feature_hash,
+            field="acceptance_criteria",
+            index=1,
+            text="Observe the result after the change.",
+            allowed_roles=["post_change_acceptance"],
+            allowed_dispositions=allowed_dispositions,
+            required_before_patch=False,
+        ),
+    ]
+    first = {
+        "requirements": [
+            {
+                "role": "change",
+                "text": "Change the marker.",
+                "input_obligation_indexes": [1],
+                "query_leads": ["ChangeMarker"],
+            }
+        ],
+        "input_dispositions": [],
+    }
+    second = deepcopy(first)
+    second["requirements"][0]["text"] = "Corrected change text."
+
+    provider = StructuredModelRequirementCoverageProvider(
+        lambda role, _payload, _schema: deepcopy(
+            first if role == "requirement_projection" else second
+        )
+    )
+    with pytest.raises(RequirementCoverageProjectionError) as rejection:
+        provider.project(
+            feature_data=feature,
+            request=str(feature["user_request"]),
+        )
+
+    assert str(rejection.value) == (
+        "REQUIREMENT_COVERAGE_INPUT_ACCOUNTING_INCOMPLETE"
+    )
+    assert rejection.value.diagnostic[
+        "missing_input_obligation_indexes"
+    ] == [2]
+
+
+def test_model_returned_relations_are_rejected_instead_of_ignored() -> None:
+    feature = _feature_data()
+    model_output_with_relations = _projection()
+    roles: list[str] = []
+
+    def complete_json(role, _payload, _schema):
+        roles.append(role)
+        return deepcopy(model_output_with_relations)
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    with pytest.raises(RequirementProjectionAdmissionError) as rejection:
+        provider.project(
+            feature_data=feature,
+            request=str(feature["user_request"]),
+        )
+
+    assert roles == [
+        "requirement_projection",
+        "requirement_projection_correction",
+    ]
+    assert rejection.value.diagnostic["failure_category"] == (
+        "schema_additional_property"
+    )
+    assert rejection.value.diagnostic["json_path"] == "$.relations"
+    assert all(
+        attempt["response_schema_admitted"] is False
+        for attempt in provider.projection_attempt_audit
+    )
+
+
 def test_projection_schema_has_zero_dispositions_when_no_obligation_is_eligible(
 ) -> None:
     feature = _feature_data()
@@ -940,7 +1317,7 @@ def test_projection_schema_invalid_pair_is_rejected_before_materializer(
     schema = requirement_projection_response_schema(
         input_obligations=obligations
     )
-    invalid = deepcopy(_projection())
+    invalid = _model_projection()
     invalid["input_dispositions"] = [
         {
             "input_obligation_index": 4,
@@ -991,7 +1368,7 @@ def test_projection_schema_invalid_pair_is_rejected_before_materializer(
         if role == "requirement_projection":
             return deepcopy(invalid)
         correction_payloads.append(deepcopy(payload))
-        return deepcopy(_projection())
+        return _model_projection()
 
     provider = StructuredModelRequirementCoverageProvider(complete_json)
     corrected = provider.project(
@@ -999,13 +1376,14 @@ def test_projection_schema_invalid_pair_is_rejected_before_materializer(
         request=str(feature["user_request"]),
     )
 
-    assert corrected == _projection()
+    expected_completed = _deterministically_completed_model_projection()
+    assert corrected == expected_completed
     assert roles == [
         "requirement_projection",
         "requirement_projection_correction",
     ]
     assert schemas[0] == schemas[1]
-    assert materializer_calls == [_projection()]
+    assert materializer_calls == [expected_completed]
     diagnostic = correction_payloads[0]["rejection_diagnostic"]
     assert diagnostic["json_path"] == "$.input_dispositions[0].disposition"
     assert diagnostic["failure_category"] == "disallowed_disposition"
@@ -1037,7 +1415,7 @@ def test_projection_schema_admission_rejects_unsupported_constructs() -> None:
 
 def test_projection_correction_receives_precise_semantic_overlap_diagnostic() -> None:
     feature = _feature_data()
-    overlap = _projection_with_multi_requirement_overlap()
+    overlap = _model_projection(_projection_with_multi_requirement_overlap())
     first_projection = deepcopy(overlap)
     first_projection_before = deepcopy(first_projection)
     projection_payloads: list[dict[str, object]] = []
@@ -1052,7 +1430,7 @@ def test_projection_correction_receives_precise_semantic_overlap_diagnostic() ->
         payload["previous_projection"]["requirements"][0]["text"] = (
             "Temporary correction-input mutation."
         )
-        return deepcopy(_projection())
+        return _model_projection()
 
     provider = StructuredModelRequirementCoverageProvider(complete_json)
     provider.project(
@@ -1192,7 +1570,7 @@ def test_identical_correction_is_rejected_before_second_materialization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     feature = _feature_data()
-    overlap = _projection_with_multi_requirement_overlap()
+    overlap = _model_projection(_projection_with_multi_requirement_overlap())
     roles: list[str] = []
     materializer_calls: list[dict[str, object]] = []
     original_materializer = materialize_requirement_coverage_projection
@@ -1222,7 +1600,11 @@ def test_identical_correction_is_rejected_before_second_materialization(
         "requirement_projection",
         "requirement_projection_correction",
     ]
-    assert materializer_calls == [overlap]
+    assert materializer_calls == [
+        _deterministically_completed_model_projection(
+            _projection_with_multi_requirement_overlap()
+        )
+    ]
     assert str(rejection.value) == (
         "REQUIREMENT_COVERAGE_PROJECTION_CORRECTION_NO_PROGRESS"
     )
@@ -1379,7 +1761,10 @@ def test_projection_semantic_rejections_are_precise_and_legacy_compatible(
     schema = requirement_projection_response_schema(
         input_obligations=obligations
     )
-    admit_requirement_projection_response(projection, schema=schema)
+    admit_requirement_projection_response(
+        _model_projection(projection),
+        schema=schema,
+    )
 
     with pytest.raises(RequirementCoverageProjectionError) as rejection:
         materialize_requirement_coverage_projection(
@@ -1423,7 +1808,7 @@ def test_legal_projection_correction_reaches_findings_consumer(
 ) -> None:
     _write_sources(tmp_path)
     feature = _feature_data()
-    invalid = deepcopy(_projection())
+    invalid = _model_projection()
     invalid["input_dispositions"] = [
         {
             "input_obligation_index": 4,
@@ -1441,7 +1826,7 @@ def test_legal_projection_correction_reaches_findings_consumer(
             assert payload["rejection_diagnostic"]["failure_category"] == (
                 "disallowed_disposition"
             )
-            return deepcopy(_projection())
+            return _model_projection()
         if role == "requirement_findings":
             return {
                 "findings": [
@@ -1488,7 +1873,7 @@ def test_overlap_correction_direction_a_reaches_findings_consumer(
 ) -> None:
     _write_sources(tmp_path)
     feature = _feature_data()
-    overlap = deepcopy(_projection())
+    overlap = _model_projection()
     overlap["input_dispositions"] = [
         {
             "input_obligation_index": 4,
@@ -1551,8 +1936,8 @@ def test_overlap_correction_direction_b_reaches_findings_when_conditions_hold(
 ) -> None:
     _write_sources(tmp_path)
     feature = _feature_data()
-    overlap = _projection_with_multi_requirement_overlap()
-    corrected = _projection_after_overlap_direction_b()
+    overlap = _model_projection(_projection_with_multi_requirement_overlap())
+    corrected = _model_projection(_projection_after_overlap_direction_b())
     roles: list[str] = []
 
     def complete_json(role, payload, _schema):
@@ -1664,7 +2049,7 @@ def test_second_schema_invalid_projection_fails_closed_with_bounded_audit(
 ) -> None:
     _write_sources(tmp_path)
     feature = _feature_data()
-    invalid = deepcopy(_projection())
+    invalid = _model_projection()
     invalid["input_dispositions"] = [
         {
             "input_obligation_index": 4,
@@ -1777,20 +2162,6 @@ def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
                         "query_leads": ["RuntimeMarker"],
                     },
                 ],
-                "relations": [
-                    {
-                        "parent_requirement_indexes": [1, 2],
-                        "meaning": "Change and preservation share current behavior evidence.",
-                    },
-                    {
-                        "parent_requirement_indexes": [3],
-                        "meaning": "Configuration evidence exists before patching.",
-                    },
-                    {
-                        "parent_requirement_indexes": [4],
-                        "meaning": "Acceptance is observed after patching.",
-                    },
-                ],
                 "input_dispositions": [
                     {
                         "input_obligation_index": 4,
@@ -1823,11 +2194,17 @@ def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
                     {
                         "relation_index": relations[1]["relation_index"],
                         "relationship": "support",
-                        "evidence_ids": [config_id],
+                        "evidence_ids": [behavior_id],
                         "unresolved_gaps": [],
                     },
                     {
                         "relation_index": relations[2]["relation_index"],
+                        "relationship": "support",
+                        "evidence_ids": [config_id],
+                        "unresolved_gaps": [],
+                    },
+                    {
+                        "relation_index": relations[3]["relation_index"],
                         "relationship": "missing",
                         "evidence_ids": [],
                         "unresolved_gaps": ["Observed after patching."],
@@ -1901,12 +2278,6 @@ def test_formal_model_provider_invalid_accounting_fails_to_blocking_plan(
                     ),
                     "input_obligation_indexes": [2],
                     "query_leads": ["ChangeMarker"],
-                }
-            ],
-            "relations": [
-                {
-                    "parent_requirement_indexes": [1],
-                    "meaning": "Incomplete relation.",
                 }
             ],
             "input_dispositions": [],
@@ -2067,13 +2438,6 @@ def test_formal_model_provider_graph_path_reaches_positive_plan(
                     )
             return {
                 "requirements": requirements,
-                "relations": [
-                    {
-                        "parent_requirement_indexes": [index],
-                        "meaning": f"Evidence disposition for requirement {index}.",
-                    }
-                    for index in range(1, len(requirements) + 1)
-                ],
                 "input_dispositions": dispositions,
             }
         if role == "requirement_findings":
