@@ -1010,12 +1010,28 @@ def test_actual9_derived_two_requirement_projection_is_completed_before_findings
             },
             {
                 "role": "pre_patch_evidence",
-                "text": "Keep the seven model-owned pre-patch obligations.",
-                "input_obligation_indexes": list(range(3, 10)),
+                "text": "Keep the four model-owned pre-patch obligations.",
+                "input_obligation_indexes": [3, 4, 5, 6],
                 "query_leads": ["actual9-no-evidence-pre-patch"],
             },
         ],
-        "input_dispositions": [],
+        "input_dispositions": [
+            {
+                "input_obligation_index": 7,
+                "disposition": "scope_boundary",
+                "reason": "Model-explicit scope boundary for obligation 7.",
+            },
+            {
+                "input_obligation_index": 8,
+                "disposition": "scope_boundary",
+                "reason": "Model-explicit scope boundary for obligation 8.",
+            },
+            {
+                "input_obligation_index": 9,
+                "disposition": "scope_boundary",
+                "reason": "Model-explicit scope boundary for obligation 9.",
+            },
+        ],
     }
     raw_projection_before = deepcopy(raw_projection)
     calls: list[str] = []
@@ -1087,34 +1103,73 @@ def test_actual9_derived_two_requirement_projection_is_completed_before_findings
     assert coverage is not None
     assert len(coverage["requirements"]) == 2
     assert len(coverage["relations"]) == 2
-    assert all(
-        relation["parent_requirement_ids"]
-        == [coverage["requirements"][index]["requirement_id"]]
-        for index, relation in enumerate(coverage["relations"])
-    )
     obligation_index_by_id = {
         obligation["input_obligation_id"]: index
         for index, obligation in enumerate(coverage["input_obligations"], 1)
     }
     assert [
-        obligation_index_by_id[disposition["input_obligation_id"]]
+        {
+            "role": requirement["role"],
+            "text": requirement["text"],
+            "input_obligation_indexes": [
+                obligation_index_by_id[obligation_id]
+                for obligation_id in requirement["input_obligation_ids"]
+            ],
+            "query_leads": requirement["query_leads"],
+        }
+        for requirement in coverage["requirements"]
+    ] == raw_projection_before["requirements"]
+    assert [
+        {
+            "relation_index": relation["provenance"]["relation_index"],
+            "parent_requirement_ids": relation["parent_requirement_ids"],
+            "meaning": relation["meaning"],
+        }
+        for relation in coverage["relations"]
+    ] == [
+        {
+            "relation_index": 1,
+            "parent_requirement_ids": [
+                coverage["requirements"][0]["requirement_id"]
+            ],
+            "meaning": "Evidence disposition for requirement 1.",
+        },
+        {
+            "relation_index": 2,
+            "parent_requirement_ids": [
+                coverage["requirements"][1]["requirement_id"]
+            ],
+            "meaning": "Evidence disposition for requirement 2.",
+        },
+    ]
+    assert [
+        {
+            "input_obligation_index": obligation_index_by_id[
+                disposition["input_obligation_id"]
+            ],
+            "disposition": disposition["disposition"],
+            "reason": disposition["reason"],
+        }
         for disposition in coverage["input_dispositions"]
-    ] == [10, 11, 12, 13]
-    assert {
-        (disposition["disposition"], disposition["reason"])
-        for disposition in coverage["input_dispositions"]
-    } == {
-        (
-            "post_change",
-            "Deterministically deferred to post-change verification.",
-        )
-    }
+    ] == [
+        *raw_projection_before["input_dispositions"],
+        *[
+            {
+                "input_obligation_index": index,
+                "disposition": "post_change",
+                "reason": (
+                    "Deterministically deferred to post-change verification."
+                ),
+            }
+            for index in range(10, 14)
+        ],
+    ]
     attempts = pack.budget_summary["requirement_projection_attempt_audit"]
     assert len(attempts) == 1
     assert attempts[0]["status"] == "accepted"
     assert attempts[0]["requirement_count"] == 2
     assert attempts[0]["relation_count"] is None
-    assert attempts[0]["input_disposition_count"] == 0
+    assert attempts[0]["input_disposition_count"] == 3
     assert pack.items == ()
     assert pack.readiness == "insufficient"
     assert pack.can_generate_patch is False
