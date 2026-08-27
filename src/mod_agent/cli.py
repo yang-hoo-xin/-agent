@@ -28,6 +28,11 @@ from .local_entry import (
     run_local_request,
 )
 from .planning import ModPlanningBriefBuilder, RequestPlanner
+from .preflight_preparation import (
+    PreflightPreparationError,
+    SealedPreflightPreparationRequestV1,
+    prepare_sealed_entry_preflight,
+)
 from .product_execution import (
     ProductExecutionContractError,
     ProductExecutionResultV1,
@@ -322,6 +327,63 @@ def build_parser() -> argparse.ArgumentParser:
     plan_parser.add_argument("description", help="Natural-language request description.")
     plan_parser.add_argument("--target-game")
     plan_parser.add_argument("--target-mod")
+
+    prepare_entry_parser = subparsers.add_parser(
+        "prepare-sealed-entry-preflight",
+        help=(
+            "Derive the next identities and atomically seal one five-file "
+            "preflight-only Entry packet."
+        ),
+    )
+    prepare_entry_parser.add_argument("--packet-root", required=True)
+    prepare_entry_parser.add_argument("--packet-date", required=True)
+    prepare_entry_parser.add_argument("--task-id", required=True)
+    prepare_entry_parser.add_argument("--request-text", required=True)
+    prepare_entry_parser.add_argument("--identity-series", required=True)
+    prepare_entry_parser.add_argument("--identity-sequence", required=True, type=int)
+    prepare_entry_parser.add_argument("--configuration-id", required=True)
+    prepare_entry_parser.add_argument("--platform-root", required=True)
+    prepare_entry_parser.add_argument(
+        "--allowed-dirty-path",
+        action="append",
+        default=[],
+    )
+    prepare_entry_parser.add_argument("--source-root", required=True)
+    prepare_entry_parser.add_argument("--target-project", required=True)
+    prepare_entry_parser.add_argument("--project-file", required=True)
+    prepare_entry_parser.add_argument(
+        "--primary-source",
+        action="append",
+        required=True,
+    )
+    prepare_entry_parser.add_argument("--git-executable", required=True)
+    prepare_entry_parser.add_argument("--ollama-base-url", required=True)
+    prepare_entry_parser.add_argument("--ollama-model", required=True)
+    prepare_entry_parser.add_argument(
+        "--ollama-context-window",
+        required=True,
+        type=int,
+    )
+    prepare_entry_parser.add_argument(
+        "--ollama-output-budget",
+        required=True,
+        type=int,
+    )
+    prepare_entry_parser.add_argument(
+        "--preflight-lineage-packet",
+        action="append",
+        required=True,
+    )
+    prepare_entry_parser.add_argument("--predecessor-receipt", required=True)
+    prepare_entry_parser.add_argument(
+        "--predecessor-receipt-manifest",
+        required=True,
+    )
+    prepare_entry_parser.add_argument(
+        "--actual-lineage-packet",
+        action="append",
+        required=True,
+    )
 
     evidence_parser = subparsers.add_parser(
         "evidence-request",
@@ -869,6 +931,96 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_mod=args.target_mod,
         )
         print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "prepare-sealed-entry-preflight":
+        try:
+            request = SealedPreflightPreparationRequestV1(
+                contract_version="1",
+                packet_root=args.packet_root,
+                packet_date=args.packet_date,
+                task_id=args.task_id,
+                request_text=args.request_text,
+                identity_series=args.identity_series,
+                identity_sequence=args.identity_sequence,
+                configuration_id=args.configuration_id,
+                platform_root=args.platform_root,
+                allowed_dirty_paths=tuple(args.allowed_dirty_path),
+                source_root=args.source_root,
+                target_project=args.target_project,
+                project_file=args.project_file,
+                primary_source_paths=tuple(args.primary_source),
+                git_executable=args.git_executable,
+                ollama_base_url=args.ollama_base_url,
+                ollama_model=args.ollama_model,
+                ollama_context_window=args.ollama_context_window,
+                ollama_output_budget=args.ollama_output_budget,
+                preflight_lineage_packet_paths=tuple(
+                    args.preflight_lineage_packet
+                ),
+                predecessor_receipt_path=args.predecessor_receipt,
+                predecessor_receipt_manifest_path=(
+                    args.predecessor_receipt_manifest
+                ),
+                actual_lineage_packet_paths=tuple(args.actual_lineage_packet),
+            )
+            result = prepare_sealed_entry_preflight(request)
+        except PreflightPreparationError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "command": "prepare-sealed-entry-preflight",
+                        "stage": exc.stage,
+                        "code": exc.code,
+                        "reason": str(exc),
+                        "diagnostics": exc.diagnostics,
+                        "packet_root_created": False,
+                        "sealed_files_written": 0,
+                        "model_generation_calls": 0,
+                        "ProductExecution_runs": 0,
+                        "Builds": 0,
+                        "Runtime_runs": 0,
+                        "Apply_runs": 0,
+                        "execution_root_created": False,
+                        "apply_workspace_created": False,
+                        "canary_authorized": False,
+                        "actual_authorized": False,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+        except ValueError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "command": "prepare-sealed-entry-preflight",
+                        "stage": "request",
+                        "code": "PREPARATION_REQUEST_INVALID",
+                        "reason": str(exc),
+                        "packet_root_created": False,
+                        "sealed_files_written": 0,
+                        "model_generation_calls": 0,
+                        "ProductExecution_runs": 0,
+                        "Builds": 0,
+                        "Runtime_runs": 0,
+                        "Apply_runs": 0,
+                        "execution_root_created": False,
+                        "apply_workspace_created": False,
+                        "canary_authorized": False,
+                        "actual_authorized": False,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
         return 0
 
     if args.command == "apply-patch":
