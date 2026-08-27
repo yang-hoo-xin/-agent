@@ -1867,7 +1867,7 @@ def test_cli_run_request_real_public_product_executor_compile_success(
                             "mode": "provider_body_utf8_proxy_plus_output_budget_v1",
                             "admitted": True,
                         },
-                        "timeout_seconds": 120,
+                        "timeout_seconds": self.timeout,
                         "trust_environment": False,
                         "follow_redirects": False,
                     }
@@ -1926,7 +1926,7 @@ def test_cli_run_request_real_public_product_executor_compile_success(
                 {
                     "body_sha256": "sha256:" + "a" * 64,
                     "body_utf8": "{}",
-                    "timeout_seconds": 120,
+                    "timeout_seconds": self.timeout,
                     "trust_environment": False,
                     "follow_redirects": False,
                 }
@@ -1970,6 +1970,18 @@ def test_cli_run_request_real_public_product_executor_compile_success(
             raise AssertionError("CLI requested approval before durable DryRunResult existed")
 
     monkeypatch.setattr("src.mod_agent.cli.sys.stdin", ExactApprovalInput())
+    production_run_local_request = local_entry_module.run_local_request
+
+    def run_with_main_ollama_timeout(**kwargs):
+        return production_run_local_request(
+            **kwargs,
+            ollama_timeout_seconds=600.0,
+        )
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli.run_local_request",
+        run_with_main_ollama_timeout,
+    )
     exit_code = main(
         [
             "run-request",
@@ -2032,9 +2044,26 @@ def test_cli_run_request_real_public_product_executor_compile_success(
         for audit in coverage_audits
     )
     assert all(
+        audit["provider_request"]["timeout_seconds"] == 600.0
+        for audit in coverage_audits
+    )
+    assert all(
         "body_utf8" not in audit["provider_request"]
         for audit in coverage_audits
     )
+    initial_patch_audit = payload["local_model_input_audit"]
+    assert initial_patch_audit["model_role"] == "initial_patch"
+    assert initial_patch_audit["provider_request"]["timeout_seconds"] == 600.0
+    assert (
+        initial_patch_audit["provider_request_profile"]["timeout_seconds"]
+        == 600.0
+    )
+    manifest = json.loads(
+        (Path(payload["run_root"]) / "run_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["ollama_patch_generation_profile"]["timeout_seconds"] == 600.0
 
 
 def test_cli_run_request_real_public_product_executor_runtime_success(

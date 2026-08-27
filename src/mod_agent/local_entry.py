@@ -3649,6 +3649,7 @@ def run_local_request(
     local_ollama: bool = False,
     ollama_base_url: str = "http://127.0.0.1:11434",
     ollama_model: str | None = None,
+    ollama_timeout_seconds: float | None = None,
     repair_ollama_model: str | None = None,
     repair_ollama_timeout_seconds: float | None = None,
     ollama_max_output_tokens: int = 4096,
@@ -3693,6 +3694,20 @@ def run_local_request(
         raise LocalEntryError(
             "A Repair Ollama model can only be selected for local Ollama execution."
         )
+    if ollama_timeout_seconds is not None:
+        if not local_ollama:
+            raise LocalEntryError(
+                "Main Ollama timeout can only be configured for local Ollama execution."
+            )
+        if (
+            isinstance(ollama_timeout_seconds, bool)
+            or not isinstance(ollama_timeout_seconds, (int, float))
+            or not math.isfinite(float(ollama_timeout_seconds))
+            or ollama_timeout_seconds <= 0
+        ):
+            raise LocalEntryError(
+                "Main Ollama timeout seconds must be a positive finite number."
+            )
     if repair_ollama_timeout_seconds is not None:
         if repair_ollama_model is None:
             raise LocalEntryError(
@@ -3794,10 +3809,15 @@ def run_local_request(
             ),
         )
         try:
+            llm_options: dict[str, Any] = {
+                "base_url": llm_base_url,
+                "context_window": ollama_context_window,
+            }
+            if ollama_timeout_seconds is not None:
+                llm_options["timeout"] = float(ollama_timeout_seconds)
             llm = LLMFactory.create(
                 settings,
-                base_url=llm_base_url,
-                context_window=ollama_context_window,
+                **llm_options,
             )
         except Exception as exc:
             raise LocalEntryError(
