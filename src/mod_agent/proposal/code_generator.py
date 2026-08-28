@@ -61,43 +61,27 @@ class LLMExactPatchGenerator:
         provider_request_recorder: Callable[[dict[str, Any]], None] | None = None,
         post_response_admission: Callable[[ChatResponse], None] | None = None,
     ) -> GeneratedPatch:
-        allowed_bindings = {
-            str(item["binding_id"])
-            for item in binding_registry.get("edit_bindings") or []
-            if isinstance(item, dict) and item.get("binding_id")
-        }
+        edit_bindings_by_id = _index_bindings(
+            binding_registry.get("edit_bindings") or [],
+            binding_kind="edit",
+        )
+        supporting_bindings_by_id = _index_bindings(
+            binding_registry.get("supporting_bindings") or [],
+            binding_kind="supporting",
+        )
+        allowed_bindings = set(edit_bindings_by_id)
         if not allowed_bindings:
             raise PatchGenerationError("No editable binding is available for generation.")
 
-        evidence_by_id = {
-            str(item["evidence_id"]): item
-            for item in evidence_items
-            if isinstance(item, dict) and item.get("evidence_id")
-        }
+        evidence_by_id = _index_evidence_items(evidence_items)
         binding_contexts: dict[str, dict[str, Any]] = {}
         binding_evidence_excerpts: dict[str, str] = {}
-        for binding in binding_registry.get("edit_bindings") or []:
-            if not isinstance(binding, dict) or not binding.get("binding_id"):
-                continue
+        for binding_id, binding in edit_bindings_by_id.items():
             evidence = evidence_by_id.get(str(binding.get("evidence_id") or "")) or {}
-            binding_id = str(binding["binding_id"])
-            binding_contexts[binding_id] = {
-                field: binding.get(field) or evidence.get(evidence_field)
-                for field, evidence_field in (
-                    ("evidence_id", "evidence_id"),
-                    ("source_hash", "source_hash"),
-                    ("canonical_target_path", "source_path"),
-                    ("declaring_type", "declaring_type"),
-                    ("method_name", "method_name"),
-                    ("parameter_types", "parameter_types"),
-                    ("return_type", "return_type"),
-                    ("method_kind", "method_kind"),
-                    ("declared_member_types", "declared_member_types"),
-                    ("declaring_type_full_name", "declaring_type_full_name"),
-                    ("declared_members", "declared_members"),
-                    ("verified_member_accesses", "verified_member_accesses"),
-                )
-            }
+            binding_contexts[binding_id] = _edit_binding_context(
+                binding=binding,
+                evidence=evidence,
+            )
             excerpt = evidence.get("excerpt")
             if isinstance(excerpt, str) and excerpt:
                 binding_evidence_excerpts[binding_id] = excerpt
@@ -122,6 +106,22 @@ class LLMExactPatchGenerator:
         normalized_required_changes = _normalize_required_change_units(
             required_change_units,
             allowed_bindings=allowed_bindings,
+            supporting_bindings=set(supporting_bindings_by_id),
+        )
+        _validate_required_change_input_coverage(
+            normalized_required_changes,
+            allowed_bindings=allowed_bindings,
+            required_change_units_supplied=required_change_units is not None,
+        )
+        model_input_projection = _build_patch_model_input_projection(
+            evidence_items=evidence_items,
+            evidence_by_id=evidence_by_id,
+            edit_bindings_by_id=edit_bindings_by_id,
+            supporting_bindings_by_id=supporting_bindings_by_id,
+            binding_contexts=binding_contexts,
+            binding_evidence_excerpts=binding_evidence_excerpts,
+            required_change_units=normalized_required_changes,
+            strict_required_projection=required_change_units is not None,
         )
 
         response_schema = _patch_response_schema(
@@ -181,8 +181,9 @@ class LLMExactPatchGenerator:
                         "Return strict JSON only. Never invent a file path, symbol, API, or "
                         "binding id. Each change must use one allowed edit_binding_id and an "
                         "exact_text_replace patch whose before_text is copied verbatim from "
-                        "the evidence bound to that edit_binding_id, including its exact "
-                        "line endings. Return exactly one change for every "
+                        "the source_excerpt in the matching edit_binding_context, including "
+                        "its exact line endings. supporting_evidence is read-only context "
+                        "and never authorizes an edit target. Return exactly one change for every "
                         "required_change_units entry and preserve its exact change_id and "
                         "edit_binding_id. Any "
                         "required_validation_by_binding entries are authoritative upstream "
@@ -203,7 +204,7 @@ class LLMExactPatchGenerator:
                             "request": user_request,
                             "constraints": constraints,
                             "allowed_edit_binding_ids": sorted(allowed_bindings),
-                            "edit_binding_contexts": binding_contexts,
+                            **model_input_projection,
                             "required_change_units": [
                                 dict(item) for item in normalized_required_changes
                             ],
@@ -213,7 +214,6 @@ class LLMExactPatchGenerator:
                                     model_required_validation.items()
                                 )
                             },
-                            "evidence": evidence_items,
                             **output_contract,
                         },
                         ensure_ascii=False,
@@ -268,6 +268,445 @@ class LLMExactPatchGenerator:
             model=response.model,
             usage=response.usage,
             raw_text=response.content,
+        )
+
+
+def _projection_error(
+    message: str,
+    *,
+    failure_classification: str,
+    **diagnostics: Any,
+) -> PatchGenerationError:
+    return PatchGenerationError(
+        message,
+        diagnostics={
+            "failure_boundary": "patch_model_input_projection",
+            "failure_classification": failure_classification,
+            **diagnostics,
+        },
+    )
+
+
+def _index_bindings(
+    raw_bindings: Any,
+    *,
+    binding_kind: str,
+) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    if not isinstance(raw_bindings, (list, tuple)):
+        return indexed
+    for raw in raw_bindings:
+        if not isinstance(raw, dict) or not raw.get("binding_id"):
+            continue
+        binding_id = str(raw["binding_id"])
+        if binding_id in indexed:
+            raise _projection_error(
+                f"Duplicate {binding_kind} binding id is not admissible.",
+                failure_classification="duplicate_binding_id",
+                binding_kind=binding_kind,
+                binding_id=binding_id,
+            )
+        indexed[binding_id] = raw
+    return indexed
+
+
+def _index_evidence_items(
+    evidence_items: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    for raw in evidence_items:
+        if not isinstance(raw, dict) or not raw.get("evidence_id"):
+            continue
+        evidence_id = str(raw["evidence_id"])
+        if evidence_id in indexed:
+            raise _projection_error(
+                "Duplicate evidence_id is not admissible for patch generation.",
+                failure_classification="duplicate_evidence_id",
+                evidence_id=evidence_id,
+            )
+        indexed[evidence_id] = raw
+    return indexed
+
+
+def _binding_or_evidence_value(
+    binding: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    *,
+    binding_field: str,
+    evidence_field: str,
+) -> Any:
+    binding_value = binding.get(binding_field)
+    return binding_value if binding_value is not None else evidence.get(evidence_field)
+
+
+def _edit_binding_context(
+    *,
+    binding: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+) -> dict[str, Any]:
+    binding_id = str(binding.get("binding_id") or "")
+    context: dict[str, Any] = {"binding_id": binding_id}
+    for binding_field, evidence_field in (
+        ("evidence_id", "evidence_id"),
+        ("source_hash", "source_hash"),
+        ("canonical_target_path", "source_path"),
+        ("source_type", "source_type"),
+        ("target_symbol", "symbol"),
+        ("target_span", "span"),
+        ("declaring_type", "declaring_type"),
+        ("method_name", "method_name"),
+        ("parameter_types", "parameter_types"),
+        ("return_type", "return_type"),
+        ("method_kind", "method_kind"),
+        ("declared_member_types", "declared_member_types"),
+        ("declaring_type_full_name", "declaring_type_full_name"),
+        ("declared_members", "declared_members"),
+        ("verified_member_accesses", "verified_member_accesses"),
+        ("usage", "usage"),
+    ):
+        value = _binding_or_evidence_value(
+            binding,
+            evidence,
+            binding_field=binding_field,
+            evidence_field=evidence_field,
+        )
+        if value is not None:
+            context[binding_field] = value
+    return context
+
+
+def _evidence_source_hash(evidence: Mapping[str, Any]) -> Any:
+    return (
+        evidence.get("source_hash")
+        or evidence.get("file_hash")
+        or evidence.get("doc_hash")
+    )
+
+
+def _validate_required_edit_projection(
+    *,
+    binding_id: str,
+    binding: Mapping[str, Any],
+    evidence_by_id: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, Any]:
+    evidence_id = binding.get("evidence_id")
+    canonical_target_path = binding.get("canonical_target_path")
+    source_hash = binding.get("source_hash")
+    if not isinstance(evidence_id, str) or not evidence_id:
+        raise _projection_error(
+            "Required edit binding is missing its evidence identity.",
+            failure_classification="required_edit_binding_identity_incomplete",
+            binding_id=binding_id,
+            missing_field="evidence_id",
+        )
+    if not isinstance(canonical_target_path, str) or not canonical_target_path:
+        raise _projection_error(
+            "Required edit binding is missing its canonical target path.",
+            failure_classification="required_edit_binding_identity_incomplete",
+            binding_id=binding_id,
+            evidence_id=evidence_id,
+            missing_field="canonical_target_path",
+        )
+    if not isinstance(source_hash, str) or not source_hash:
+        raise _projection_error(
+            "Required edit binding is missing its source hash.",
+            failure_classification="required_edit_binding_source_hash_missing",
+            binding_id=binding_id,
+            evidence_id=evidence_id,
+        )
+    evidence = evidence_by_id.get(evidence_id)
+    if evidence is None:
+        raise _projection_error(
+            "Required edit binding evidence is missing.",
+            failure_classification="required_edit_evidence_missing",
+            binding_id=binding_id,
+            evidence_id=evidence_id,
+        )
+    excerpt = evidence.get("excerpt")
+    if not isinstance(excerpt, str) or not excerpt:
+        raise _projection_error(
+            "Required edit binding evidence excerpt is missing.",
+            failure_classification="required_edit_evidence_excerpt_missing",
+            binding_id=binding_id,
+            evidence_id=evidence_id,
+        )
+    identity_checks = (
+        ("canonical_target_path", "source_path"),
+        ("target_symbol", "symbol"),
+        ("target_span", "span"),
+    )
+    for binding_field, evidence_field in identity_checks:
+        if binding.get(binding_field) != evidence.get(evidence_field):
+            raise _projection_error(
+                "Required edit binding identity does not match its evidence.",
+                failure_classification="required_edit_binding_evidence_drift",
+                binding_id=binding_id,
+                evidence_id=evidence_id,
+                binding_field=binding_field,
+                evidence_field=evidence_field,
+            )
+    evidence_source_hash = _evidence_source_hash(evidence)
+    if not isinstance(evidence_source_hash, str) or not evidence_source_hash:
+        raise _projection_error(
+            "Required edit evidence is missing its source hash.",
+            failure_classification="required_edit_evidence_source_hash_missing",
+            binding_id=binding_id,
+            evidence_id=evidence_id,
+        )
+    if source_hash != evidence_source_hash:
+        raise _projection_error(
+            "Required edit binding source hash does not match its evidence.",
+            failure_classification="required_edit_binding_evidence_drift",
+            binding_id=binding_id,
+            evidence_id=evidence_id,
+            binding_field="source_hash",
+            evidence_field="source_hash|file_hash|doc_hash",
+        )
+    return evidence
+
+
+def _normalized_identity_value(value: Any) -> Any:
+    if isinstance(value, (list, tuple)):
+        return tuple(_normalized_identity_value(item) for item in value)
+    if isinstance(value, Mapping):
+        return tuple(
+            (str(key), _normalized_identity_value(nested))
+            for key, nested in sorted(value.items(), key=lambda item: str(item[0]))
+        )
+    return value
+
+
+def _validate_supporting_projection(
+    *,
+    binding_id: str,
+    binding: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+) -> None:
+    evidence_id = str(binding.get("evidence_id") or "")
+    for binding_field, evidence_field in (
+        ("source_path", "source_path"),
+        ("target_symbol", "symbol"),
+        ("target_span", "span"),
+        ("source_type", "source_type"),
+        ("declaring_type", "declaring_type"),
+        ("method_name", "method_name"),
+        ("parameter_types", "parameter_types"),
+        ("return_type", "return_type"),
+        ("method_kind", "method_kind"),
+    ):
+        if _normalized_identity_value(
+            binding.get(binding_field)
+        ) != _normalized_identity_value(evidence.get(evidence_field)):
+            raise _projection_error(
+                "Supporting binding identity does not match its evidence.",
+                failure_classification="supporting_binding_evidence_drift",
+                binding_id=binding_id,
+                evidence_id=evidence_id,
+                binding_field=binding_field,
+                evidence_field=evidence_field,
+            )
+
+
+def _required_supporting_binding_ids(
+    required_change_units: tuple[dict[str, Any], ...],
+    *,
+    supporting_bindings: set[str],
+) -> set[str]:
+    required: set[str] = set()
+    for unit in required_change_units:
+        required.update(
+            binding_id
+            for binding_id in unit.get("supporting_binding_ids") or []
+            if binding_id in supporting_bindings
+        )
+        hook_target_binding_id = unit.get("hook_target_binding_id")
+        if hook_target_binding_id in supporting_bindings:
+            required.add(str(hook_target_binding_id))
+    return required
+
+
+def _supporting_evidence_view(
+    *,
+    binding_id: str,
+    binding: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+    include_member_facts: bool,
+) -> dict[str, Any]:
+    view: dict[str, Any] = {"binding_id": binding_id}
+    for field in (
+        "evidence_id",
+        "source_path",
+        "source_type",
+        "target_symbol",
+        "target_span",
+        "declaring_type",
+        "method_name",
+        "parameter_types",
+        "return_type",
+        "method_kind",
+        "claim_supported",
+        "usage",
+    ):
+        value = binding.get(field)
+        if value is not None:
+            view[field] = value
+    source_hash = _evidence_source_hash(evidence)
+    if source_hash is not None:
+        view["source_hash"] = source_hash
+    view["excerpt"] = evidence["excerpt"]
+    if include_member_facts:
+        for field in (
+            "declared_member_types",
+            "declared_members",
+            "verified_member_accesses",
+        ):
+            value = evidence.get(field)
+            if value:
+                view[field] = value
+    return view
+
+
+def _build_patch_model_input_projection(
+    *,
+    evidence_items: list[dict[str, Any]],
+    evidence_by_id: Mapping[str, Mapping[str, Any]],
+    edit_bindings_by_id: Mapping[str, Mapping[str, Any]],
+    supporting_bindings_by_id: Mapping[str, Mapping[str, Any]],
+    binding_contexts: Mapping[str, Mapping[str, Any]],
+    binding_evidence_excerpts: Mapping[str, str],
+    required_change_units: tuple[dict[str, Any], ...],
+    strict_required_projection: bool,
+) -> dict[str, Any]:
+    required_edit_binding_ids = {
+        str(item["edit_binding_id"]) for item in required_change_units
+    }
+    selected_edit_binding_ids = (
+        required_edit_binding_ids
+        if strict_required_projection
+        else set(edit_bindings_by_id)
+    )
+    projected_edit_contexts: dict[str, dict[str, Any]] = {}
+    consumed_evidence_ids: set[str] = set()
+    for binding_id in sorted(selected_edit_binding_ids):
+        binding = edit_bindings_by_id[binding_id]
+        evidence: Mapping[str, Any] = {}
+        if strict_required_projection:
+            evidence = _validate_required_edit_projection(
+                binding_id=binding_id,
+                binding=binding,
+                evidence_by_id=evidence_by_id,
+            )
+        else:
+            evidence = evidence_by_id.get(
+                str(binding.get("evidence_id") or ""),
+                {},
+            )
+        context = dict(binding_contexts[binding_id])
+        excerpt = binding_evidence_excerpts.get(binding_id)
+        if excerpt is not None:
+            context["source_excerpt"] = excerpt
+        projected_edit_contexts[binding_id] = context
+        evidence_id = evidence.get("evidence_id")
+        if isinstance(evidence_id, str) and evidence_id:
+            consumed_evidence_ids.add(evidence_id)
+
+    required_supporting_ids = _required_supporting_binding_ids(
+        required_change_units,
+        supporting_bindings=set(supporting_bindings_by_id),
+    )
+    supporting_views: list[dict[str, Any]] = []
+    for binding_id in sorted(supporting_bindings_by_id):
+        binding = supporting_bindings_by_id[binding_id]
+        evidence_id = binding.get("evidence_id")
+        if not isinstance(evidence_id, str) or not evidence_id:
+            if binding_id in required_supporting_ids:
+                raise _projection_error(
+                    "Required supporting binding is missing its evidence identity.",
+                    failure_classification=(
+                        "required_supporting_binding_identity_incomplete"
+                    ),
+                    binding_id=binding_id,
+                )
+            continue
+        evidence = evidence_by_id.get(evidence_id)
+        if evidence is None:
+            if binding_id in required_supporting_ids:
+                raise _projection_error(
+                    "Required supporting evidence is missing.",
+                    failure_classification="required_supporting_evidence_missing",
+                    binding_id=binding_id,
+                    evidence_id=evidence_id,
+                )
+            continue
+        excerpt = evidence.get("excerpt")
+        if not isinstance(excerpt, str) or not excerpt:
+            if strict_required_projection or binding_id in required_supporting_ids:
+                raise _projection_error(
+                    "Supporting evidence excerpt is missing.",
+                    failure_classification="supporting_evidence_excerpt_missing",
+                    binding_id=binding_id,
+                    evidence_id=evidence_id,
+                )
+            continue
+        if strict_required_projection or binding_id in required_supporting_ids:
+            _validate_supporting_projection(
+                binding_id=binding_id,
+                binding=binding,
+                evidence=evidence,
+            )
+            source_hash = _evidence_source_hash(evidence)
+            if not isinstance(source_hash, str) or not source_hash:
+                raise _projection_error(
+                    "Supporting evidence is missing its source hash.",
+                    failure_classification="supporting_evidence_source_hash_missing",
+                    binding_id=binding_id,
+                    evidence_id=evidence_id,
+                )
+        supporting_views.append(
+            _supporting_evidence_view(
+                binding_id=binding_id,
+                binding=binding,
+                evidence=evidence,
+                include_member_facts=binding_id in required_supporting_ids,
+            )
+        )
+        consumed_evidence_ids.add(evidence_id)
+
+    projection: dict[str, Any] = {
+        "edit_binding_contexts": projected_edit_contexts,
+        "supporting_evidence": supporting_views,
+    }
+    if not strict_required_projection:
+        unbound_excerpts = [
+            excerpt
+            for item in evidence_items
+            if isinstance(item, dict)
+            and str(item.get("evidence_id") or "") not in consumed_evidence_ids
+            and isinstance((excerpt := item.get("excerpt")), str)
+            and excerpt
+        ]
+        if unbound_excerpts:
+            projection["unbound_evidence_excerpts"] = unbound_excerpts
+    return projection
+
+
+def _validate_required_change_input_coverage(
+    required_change_units: tuple[dict[str, Any], ...],
+    *,
+    allowed_bindings: set[str],
+    required_change_units_supplied: bool,
+) -> None:
+    if not required_change_units_supplied:
+        return
+    covered_bindings = {
+        str(item["edit_binding_id"]) for item in required_change_units
+    }
+    missing_bindings = sorted(allowed_bindings - covered_bindings)
+    if not required_change_units or missing_bindings:
+        raise _projection_error(
+            "Required change units do not cover every editable binding.",
+            failure_classification="required_change_input_coverage_incomplete",
+            missing_edit_binding_ids=missing_bindings,
         )
 
 
@@ -346,6 +785,7 @@ def _normalize_required_change_units(
     raw_units: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None,
     *,
     allowed_bindings: set[str],
+    supporting_bindings: set[str],
 ) -> tuple[dict[str, Any], ...]:
     if raw_units is None:
         return ()
@@ -354,37 +794,91 @@ def _normalize_required_change_units(
     seen_pairs: set[tuple[str, str]] = set()
     for index, raw in enumerate(raw_units, start=1):
         if not isinstance(raw, dict):
-            raise PatchGenerationError(
-                f"Required change unit {index} must be an object."
+            raise _projection_error(
+                f"Required change unit {index} must be an object.",
+                failure_classification="required_change_unit_invalid",
+                change_index=index,
             )
         change_id = str(raw.get("change_id") or "")
         binding_id = str(raw.get("edit_binding_id") or "")
         if not change_id or not binding_id:
-            raise PatchGenerationError(
-                f"Required change unit {index} requires change_id and edit_binding_id."
+            raise _projection_error(
+                f"Required change unit {index} requires change_id and edit_binding_id.",
+                failure_classification="required_change_unit_identity_incomplete",
+                change_index=index,
             )
         if binding_id not in allowed_bindings:
-            raise PatchGenerationError(
-                f"Required change unit {index} uses an unknown edit binding id."
+            raise _projection_error(
+                f"Required change unit {index} uses an unknown edit binding id.",
+                failure_classification="required_change_unit_binding_unknown",
+                change_index=index,
+                binding_id=binding_id,
             )
         pair = (change_id, binding_id)
         if change_id in seen_ids or pair in seen_pairs:
-            raise PatchGenerationError(
-                "Required change units must have unique change_id values."
+            raise _projection_error(
+                "Required change units must have unique change_id values.",
+                failure_classification="required_change_unit_identity_duplicate",
+                change_index=index,
+                change_id=change_id,
+            )
+        raw_supporting_ids = raw.get("supporting_binding_ids")
+        if raw_supporting_ids is None:
+            normalized_supporting_ids: list[str] = []
+        elif isinstance(raw_supporting_ids, (list, tuple)):
+            normalized_supporting_ids = [str(item) for item in raw_supporting_ids]
+        else:
+            raise _projection_error(
+                "Required change unit supporting_binding_ids must be a list.",
+                failure_classification="required_supporting_binding_ids_invalid",
+                change_index=index,
+                change_id=change_id,
+            )
+        if any(not item for item in normalized_supporting_ids) or len(
+            set(normalized_supporting_ids)
+        ) != len(normalized_supporting_ids):
+            raise _projection_error(
+                "Required change unit supporting binding ids must be non-empty and unique.",
+                failure_classification="required_supporting_binding_ids_invalid",
+                change_index=index,
+                change_id=change_id,
+            )
+        unknown_supporting_ids = sorted(
+            set(normalized_supporting_ids) - allowed_bindings - supporting_bindings
+        )
+        if unknown_supporting_ids:
+            raise _projection_error(
+                "Required change unit references an unknown supporting binding id.",
+                failure_classification="required_supporting_binding_unknown",
+                change_index=index,
+                change_id=change_id,
+                binding_ids=unknown_supporting_ids,
+            )
+        raw_hook_target = raw.get("hook_target_binding_id")
+        hook_target_binding_id = (
+            str(raw_hook_target) if raw_hook_target is not None else None
+        )
+        if hook_target_binding_id == "" or (
+            hook_target_binding_id is not None
+            and hook_target_binding_id not in supporting_bindings
+        ):
+            raise _projection_error(
+                "Required change unit references an unknown hook target binding id.",
+                failure_classification="required_hook_target_binding_unknown",
+                change_index=index,
+                change_id=change_id,
+                binding_id=hook_target_binding_id,
             )
         seen_ids.add(change_id)
         seen_pairs.add(pair)
         normalized.append(
             {
-                key: raw.get(key)
-                for key in (
-                    "change_id",
-                    "change_type",
-                    "edit_binding_id",
-                    "hook_target_binding_id",
-                    "supporting_binding_ids",
-                    "operation",
-                )
+                "change_id": raw.get("change_id"),
+                "change_type": raw.get("change_type"),
+                "edit_binding_id": raw.get("edit_binding_id"),
+                "hook_target_binding_id": hook_target_binding_id,
+                "supporting_binding_ids": normalized_supporting_ids,
+                "operation": raw.get("operation"),
             }
         )
     return tuple(normalized)
