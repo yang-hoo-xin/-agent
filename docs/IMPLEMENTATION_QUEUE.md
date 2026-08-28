@@ -12,56 +12,59 @@ Completed, frozen, review, and superseded records belong in
 ```text
 current_queue: fresh sealed checkpoint-bound preflight requires separate user authorization
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: actual10 reached Findings and closed EVID-002; EVID-003 remains active pending actual11 real-run validation; no preflight, receipt, actual11 packet, or actual11 execution is authorized
+queue_status: actual12 closed EVID-003 and stopped before the Patch model call under active EVID-004; no fresh preflight, receipt, actual13 packet, or actual13 execution is authorized
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
-last_task_status: P2_empirical_path_reached_findings_blocked_at_coverage_and_planning
-current_product_code_checkpoint: 1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39
+last_task_status: P2_empirical_path_reached_non_blocking_planning_and_patch_then_blocked_at_patch_pre_call_admission
+current_product_code_checkpoint: 05bbca578baad23403d3ab7fc3327755592e3ac8
+current_product_code_checkpoint_claim: deterministic Patch input projection/admission code and tests only
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
 P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed
 P1_product_completion_claim: false
-latest_actual_identity: p2_ac_20260825_010/actual_10
-latest_product_run: 940f14d6
-latest_actual_result_sha256: 596ab34dcda6c97431481b6787dd954c539c0ff49bd6c078a1c1ded0ebe82128
-latest_actual_status: Entry_passed_baseline_Build_passed_Projection_passed_Findings_reached_Coverage_insufficient_ImplementationPlan_blocking
-latest_actual_unreached: PatchProposal/ProposalReview/Dry-run/approval/Apply/changed-product Build/Repair/Revalidation/Runtime
+latest_actual_identity: p2_ac_20260825_012/actual_12
+latest_actual_status: Entry_baseline_Build_compiled_plugin_inspection_Projection_RgLive_Retrieval_Findings_passed_Coverage_sufficient_Planning_non_blocking_Patch_pre_call_blocked
+latest_actual_model_calls: 2_total_0_Patch
+latest_actual_unreached: Patch Artifact/ProposalReview/Dry-run/approval/Apply/changed-product Build/Repair/Revalidation/Runtime
 EVID-002_status: closed
-current_issue: EVID-003_active_pending_actual11_real_run_validation
+EVID-003_status: closed
+current_issue: EVID-004_active_patch_pre_call_context_admission
 issue_register: docs/audits/ENGINEERING_ISSUE_REGISTER.md
 internal_alpha_hard_gates: false/false
+internal_alpha: false
 runtime_verified: false
+stable_agent_capability: false
 public_alpha_authorized: false
 next_eligible_slice: fresh sealed checkpoint-bound preflight requires separate user authorization
-post_checkpoint_route: separate preflight authorization -> fresh sealed preflight -> receipt review -> separately authorized actual11 packet preparation -> separately authorized actual11 execution
-actual11_acceptance_route: Entry -> Projection -> RgLive Retrieval -> Findings -> Coverage sufficient -> non-blocking Planning -> PatchProposal -> ProposalReview -> complete Dry-run diff -> wait for human exact-diff approval
+post_checkpoint_route: separate preflight authorization -> fresh sealed checkpoint-bound preflight -> receipt review -> separately authorized actual13 packet preparation -> separately authorized actual13 execution
+actual13_acceptance_route: Entry -> Projection -> RgLive Retrieval -> Findings -> Coverage sufficient -> non-blocking Planning -> old Patch pre-call signature absent -> Patch provider request admitted -> Patch model call formed -> PatchProposal -> ProposalReview -> complete Dry-run diff -> wait for human exact-diff approval
 post_approval_route: isolated Apply -> changed-product Build
-actual11_role: integration_canary_not_model_ab
-activation_required: preflight, receipt, actual11 packet preparation, actual11 execution, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
-automatic_actual12_authorized: false
+activation_required: preflight, receipt review, actual13 packet preparation, actual13 execution, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
+automatic_actual13_authorized: false
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
 P0 remains completed and the selected product remains on the P2 empirical path;
-P1 code structure is not product completion. Actual10 passed Entry, baseline
-Build, Projection, and reached Findings, then stopped on insufficient Coverage
-and a blocking ImplementationPlan. The Build was baseline-only. `EVID-002` is
-closed because its exact real-run close trigger was met; `EVID-003` owns the
-remaining Findings/Coverage expected-delta boundary. The accepted RgLive,
-expected-delta, FeatureSpec identity, and stable Actual runner checkpoints are
-bounded code/test evidence, not standalone product capability, actual, model,
-or Build evidence. See the Issue Register for exact owners, evidence, and close
+P1 code structure is not product completion. Actual12 passed Entry, baseline
+Build, compiled-plugin inspection, Projection, RgLive Retrieval, and Findings;
+formed sufficient Coverage with non-empty authorized edit targets; and entered
+non-blocking Planning and Patch. The Build was baseline-only. `EVID-003` is
+closed because its exact real-run close trigger was met. Active `EVID-004` owns
+only the Patch pre-call input-projection/admission failure; it does not belong
+to Retrieval, Findings, Coverage, Planning, or Patch-model output quality. The
+current checkpoint is bounded deterministic code/test evidence, not proof of a
+real Patch call or output. See the Issue Register for exact evidence and close
 triggers.
 
-No fresh preflight, receipt, actual11 packet, or actual11 has been created.
-Fresh sealed preflight requires separate user authorization. After receipt
-review, actual11 packet preparation and actual11 execution remain separate
-authorization decisions. Actual11 is an integration canary, not a model A/B,
-and it cannot automatically create actual12. Exact-diff approval must follow a
-complete Dry-run diff; without that approval, isolated Apply and changed-product
-Build are not eligible.
+No fresh checkpoint-bound preflight, receipt, actual13 packet, or actual13
+execution has been created or authorized. Fresh preflight requires separate
+user authorization; receipt review does not authorize packet preparation; and
+actual13 packet preparation and execution remain separate authorization
+decisions. Exact-diff approval must follow a complete Dry-run diff; without that
+approval, isolated Apply and changed-product Build are not eligible. No next
+attempt is pre-authorized.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

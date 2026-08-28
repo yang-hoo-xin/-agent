@@ -364,29 +364,68 @@ scope: ProductExecution Findings-to-Coverage expected-delta semantics and determ
 owner: src/mod_agent/evidence/requirement_coverage.py::resolve_requirement_coverage and Findings semantic boundary
 evidence_level: real_run
 severity: S1
-decision_priority: P0
-status: active
+decision_priority: P3
+status: closed
 first_seen: p2_ac_20260825_010/actual_10 Product run 940f14d6
-latest_evidence: actual10 passed Entry, baseline Build, Projection, and reached Findings, then produced insufficient Coverage and a blocking ImplementationPlan. A real 27B Findings-only replay obtained five Evidence items and identified Configuration.BindAll and SpreadPatches.OverrideCrosshairSize. The remaining failure owner is Findings/Coverage expected-delta semantics; legal RgLive fallback is not the failure owner
-actual_result_sha256: 596ab34dcda6c97431481b6787dd954c539c0ff49bd6c078a1c1ded0ebe82128
+latest_evidence: fresh actual p2_ac_20260825_012/actual_12 passed Entry, baseline Build, compiled-plugin inspection, Requirement Projection, RgLive Retrieval, and Findings; formed sufficient Coverage with edit_target_evidence_ids rg_live_7b954ec77325936f, rg_live_a301d80d4e9593b0, and rg_live_aad4f3b5731dbc95; set EvidencePack can_generate_patch=true; formed a non-blocking ImplementationPlan with blockers=[]; and entered generate_patch_proposal before the independent EVID-004 pre-call failure
+actual_result: 'C:\Users\10160\Documents\Codex\2026-08-28\accurate-crosshair-actual12-fresh-preflight\outputs\actual_p2_ac_20260825_012_actual_12\e\p\p2_ac_20260825_012\run_result.json'
+actual_result_sha256: 8b4f5388109519bd686091e768eb4f5c630e309eb3ff560d65c9428771ac395c
 rg_live_method_span_checkpoint: 68893efb50acdd940608a3fd133fe6e79ddfc77b
 implementation_checkpoint: 206c94d00b79d2c92fa162624a5d3b924409f396
-implementation_checkpoint_status: accepted_for_bounded_code_and_tests_pending_actual11_real_run_validation
+implementation_checkpoint_status: accepted_for_bounded_code_and_tests_and_validated_by_actual12_close_evidence
 bounded_semantics: role=change plus support plus an exact authoritative target-source identity retains an edit target even when unresolved gaps describe behavior that does not exist until the change; missing, conflict, pre_patch_evidence, and preservation remain fail closed
-current_effect: no real run has yet proved Coverage sufficient, a non-empty authorized edit target, or entry into non-blocking Planning/Patch under the accepted expected-delta semantics
-workaround: preserve actual10 and the Findings-only replay as immutable evidence; do not reinterpret legal fallback as RgLive failure and do not relax missing, conflict, pre_patch_evidence, or preservation gates
+close_evidence: actual12 met the recorded close trigger through sufficient Coverage, three non-empty authorized edit-target evidence ids, a non-blocking ImplementationPlan, and entry into generate_patch_proposal while the existing missing, conflict, pre_patch_evidence, and preservation fail-closed semantics were unchanged
+current_effect: the expected-delta owner is closed. This does not establish product success; actual12 stopped before the Patch model call under the separately registered EVID-004 owner
+workaround: none required for EVID-003; preserve actual10, the Findings-only replay, and actual12 as immutable evidence and do not relax missing, conflict, pre_patch_evidence, or preservation gates
 reopen_trigger: after closure, any selected real task again revokes an exact authoritative edit target solely because a supported role=change Finding retains the requested expected delta, or any missing/conflict/pre_patch_evidence/preservation case becomes authorized
 close_trigger: a fresh actual forms Coverage sufficient, a non-empty authorized edit target, and enters non-blocking Planning and Patch, while missing, conflict, pre_patch_evidence, and preservation remain fail closed
-next_action: fresh sealed preflight requires separate user authorization; after receipt review, actual11 packet preparation and actual11 execution require separate authorizations. Actual11 is an integration canary, not a model A/B
+next_action: none; reopen only on the recorded reopen_trigger
 last_reviewed: 2026-08-28
-required_before_stage: next P2 empirical actual
+required_before_stage: none_closed
 minimum_acceptance:
   - Entry, Projection, RgLive Retrieval, and Findings are reached on the fresh actual
   - Coverage is sufficient and exposes a non-empty authorized edit target from exact authoritative source identity
-  - Planning is non-blocking and PatchProposal is reached
+  - Planning is non-blocking and generate_patch_proposal is entered
   - missing, conflict, pre_patch_evidence, and preservation remain fail closed
-  - ProposalReview and complete no-write Dry-run diff precede any request for human exact-diff approval
-  - no Apply or changed-product Build occurs without that approval
+```
+
+### EVID-004
+
+```yaml
+issue_id: EVID-004
+title: Patch request duplicates full Evidence and edit_binding_contexts, pushing conservative admission to 51,064 over 40,960
+scope: Patch model-input projection and Ollama structured-request pre-call context admission only
+owner: src/mod_agent/proposal/code_generator.py::LLMExactPatchGenerator.generate Patch model-input projection plus existing Ollama structured pre-call admission
+evidence_level: real_run
+severity: S1
+decision_priority: P0
+status: active
+first_seen: p2_ac_20260825_012/actual_12
+latest_evidence: >-
+  actual12 reached generate_patch_proposal after sufficient Coverage and non-blocking Planning, then failed at source_node=generate_patch_proposal, stage=generate_patch_proposal_execution, owner=platform, with OllamaLLMError: [Ollama] Structured request exceeds the configured pre-call context budget.
+actual_result: 'C:\Users\10160\Documents\Codex\2026-08-28\accurate-crosshair-actual12-fresh-preflight\outputs\actual_p2_ac_20260825_012_actual_12\e\p\p2_ac_20260825_012\run_result.json'
+actual_result_sha256: 8b4f5388109519bd686091e768eb4f5c630e309eb3ff560d65c9428771ac395c
+consumption: consumed_once
+failure_boundary: the third model role was Patch generation, but structured pre-call admission rejected its provider body before the Patch request was sent; total model_call_count=2 for requirement_projection and requirement_findings, Patch model calls=0, and patch_payload_parser_entered=false
+unreached_effects: no Patch Artifact, ProposalReview, Dry-run, diff or approval, Apply, changed-product Build, Repair, Revalidation, or Runtime; the passed Build was baseline-only
+physical_cause: the Patch request projected full Evidence together with edit_binding_contexts, including repeated declared_members and related facts, so the 46,968-byte body required a conservative 51,064 against configured num_ctx 40,960 with num_predict 4,096
+implementation_checkpoint: 05bbca578baad23403d3ab7fc3327755592e3ac8
+implementation_checkpoint_status: accepted_for_deterministic_code_and_tests_pending_fresh_preflight_and_actual
+checkpoint_evidence: deterministic reconstruction of frozen actual12 data reduced the provider body from 46,968 to 26,440 bytes and conservative required context from 51,064 to 30,536 under the same num_ctx 40,960 and num_predict 4,096, changing admission from false to true; all six required edit/support excerpts remain present; missing or drifted authoritative input fails before the provider call; independent regressions report Patch plus ProductExecution plus Planning 169 passed and Local Entry 126 passed
+checkpoint_claim_boundary: the model now receives only a deterministic compressed view while the complete EvidencePack and Binding Registry remain in process for post-response validation; this checkpoint does not prove a real Patch provider call, model output, schema or semantic admission, Review, or Dry-run
+current_effect: only the Patch model call is blocked before provider admission. Retrieval, Findings, Coverage, and Planning already passed and are not owned by this Issue. No Patch output existed, so Qwen output quality is not implicated
+workaround: preserve actual12 as consumed immutable evidence; do not infer retry authority from the checkpoint or treat deterministic reconstruction as a real Patch call
+reopen_trigger: after closure, a fresh selected actual bound to the same compact-projection lineage again reproduces the old structured pre-call budget signature before a Patch provider call
+close_trigger: a new fresh preflight bound to checkpoint 05bbca578baad23403d3ab7fc3327755592e3ac8 passes; a separately authorized new actual does not reproduce the old pre-call budget signature; and the Patch provider request is admitted and forms a real Patch model call. Any later model-output schema or semantic failure, ProposalReview result, or Dry-run failure belongs to the newly reached physical owner and does not keep EVID-004 open
+next_action: a fresh sealed checkpoint-bound preflight requires separate user authorization; after receipt review, actual13 packet preparation and actual13 execution require separate authorizations. Neither actual13 nor any later attempt is pre-authorized
+last_reviewed: 2026-08-28
+required_before_stage: next P2 Patch provider call
+minimum_acceptance:
+  - the fresh preflight is sealed against checkpoint 05bbca578baad23403d3ab7fc3327755592e3ac8 and passes
+  - the separately authorized fresh actual does not reproduce the old structured pre-call budget signature
+  - the Patch provider request is admitted and a real Patch model call is formed
+  - any failure after response arrival is assigned to its reached schema, semantic, Review, or Dry-run owner rather than retained under EVID-004
+  - no fresh preflight, packet, actual, exact-diff approval, Apply, or changed-product Build is inferred from this Issue
 ```
 
 ### PLAN-001

@@ -51,73 +51,74 @@ P0 false-sufficiency closure remains completed, and the current product stage
 remains the P2 empirical path. P1 code structure does not by itself establish
 product completion.
 
-The latest real ProductExecution is `p2_ac_20260825_010/actual_10`, Product run
-`940f14d6`. It passed Entry, baseline Build, Requirement Projection, and reached
-Findings. Coverage was insufficient and ImplementationPlan blocked. Patch,
-ProposalReview, Dry-run, approval, Apply, changed-product Build, Repair,
-Revalidation, and Runtime were not reached. The Build that passed was the
+The latest real ProductExecution is `p2_ac_20260825_012/actual_12`, consumed
+once. It passed Entry, baseline Build, compiled-plugin inspection, Requirement
+Projection, RgLive Retrieval, and Findings. Coverage was sufficient,
+`edit_target_evidence_ids` contained three entries, the EvidencePack had
+`can_generate_patch=true`, and the ImplementationPlan was non-blocking with no
+blockers. It entered `generate_patch_proposal`, then stopped at the platform
+Patch pre-call context-admission boundary. The Build that passed was the
 baseline Build, not a changed-product Build. Detailed run and Issue evidence is
-kept in `docs/audits/ENGINEERING_ISSUE_REGISTER.md`.
+kept only in `docs/audits/ENGINEERING_ISSUE_REGISTER.md`.
 
-Actual10 satisfies the recorded close trigger for `EVID-002`: a fresh preflight
-passed and the fresh actual reached Findings without the prior Projection
-failure signature. `EVID-002` is therefore closed. This closes only the old
-Projection owner; it does not mean actual10 or the product succeeded.
+Actual12 satisfies the recorded close trigger for `EVID-003`: a fresh actual
+formed sufficient Coverage, retained non-empty authorized edit targets, and
+entered non-blocking Planning and Patch while the existing missing, conflict,
+`pre_patch_evidence`, and preservation gates remained fail closed. `EVID-003`
+is therefore closed. This is bounded real-run validation of the expected-delta
+semantics; it is not product success.
 
-Checkpoint `68893efb50acdd940608a3fd133fe6e79ddfc77b` repaired the RgLive
-method-span owner. A real 27B Findings-only replay retrieved five Evidence items
-and identified `Configuration.BindAll` and
-`SpreadPatches.OverrideCrosshairSize`; the remaining owner is now the
-Findings/Coverage expected-delta boundary, not the legal RgLive fallback.
-Checkpoint `206c94d00b79d2c92fa162624a5d3b924409f396` records bounded
-code/test acceptance for expected-delta permission semantics, pending real-run
-validation under active Issue `EVID-003`. Checkpoint
-`3c79d2dceb6d6ab61499e418b4b1b3ddc8214678` hardens FeatureSpec payload
-identity only. Neither checkpoint is standalone product progress.
+The current physical blocker is active Issue `EVID-004`. The Patch model input
+projection in
+`src/mod_agent/proposal/code_generator.py::LLMExactPatchGenerator.generate`,
+combined with the existing Ollama structured pre-call admission, rejected the
+Patch request before it was sent to the model. Actual12 made two model calls,
+for Projection and Findings, and made zero Patch model calls. It created no
+Patch Artifact, ProposalReview, Dry-run diff, approval, Apply, changed-product
+Build, Repair, Revalidation, or Runtime result. The failure does not establish
+anything about Patch-model output quality.
 
-The stable Actual runner lineage
-`81d0147c8bcabeccccd3244ea29253a0a0c22c01` ->
-`1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39` is accepted bounded
-code/test evidence for one deterministic Actual root, journal/consumption race
-handling, no per-run Python launcher, RunSpec projection, best-effort terminal
-summary, and GameFolder/compiled-artifact profile passage. It does not prove a
-real model call, actual, Build, or product result, and it does not close the
-Public Alpha `ENTRY-001`, `OPS-001`, or `REC-001` Issues.
+Checkpoint `48eac8e08da6cc795c6a6b8f51f66ffa12f0ccbe` repaired the actual11
+pre-Graph dependency-root caller and is part of the current HEAD lineage rather
+than a separate product-completion claim. Current product-code checkpoint
+`05bbca578baad23403d3ab7fc3327755592e3ac8` records bounded deterministic
+code/test evidence for compact Patch model-input projection and pre-call
+admission. The complete EvidencePack and Binding Registry remain in process for
+post-response validation; the model receives a deterministic compressed view,
+and missing or drifted authority inputs fail before the provider call. This
+checkpoint does not prove a real Patch model call, model output, Review,
+Dry-run, or later product stage.
 
 Current execution order:
 
 ```text
 -> P0 false-sufficiency closure complete
 -> P1a structural coverage and P1b formal provider entry complete
--> actual10 passes Entry, baseline Build, Projection, and reaches Findings
--> actual10 Coverage insufficient; blocking ImplementationPlan; EVID-002 closes
--> EVID-003 remains active pending actual11 expected-delta real-run validation
--> fresh sealed checkpoint-bound preflight requires separate user authorization
+-> actual12 passes Entry, baseline Build, compiled-plugin inspection, Projection, RgLive Retrieval, and Findings
+-> actual12 Coverage sufficient; non-empty authorized edit targets; non-blocking Planning; EVID-003 closes
+-> actual12 enters Patch and stops before the Patch model call; EVID-004 remains active
+-> fresh sealed preflight bound to checkpoint 05bbca578baad23403d3ab7fc3327755592e3ac8 requires separate user authorization
 -> receipt review
--> separately authorized actual11 packet preparation
--> separately authorized actual11 execution
--> Entry -> Projection -> RgLive Retrieval -> Findings -> Coverage sufficient
--> non-blocking Planning -> PatchProposal -> ProposalReview
+-> separately authorized actual13 packet preparation
+-> separately authorized actual13 execution
+-> Patch provider request admitted and Patch model call formed
+-> PatchProposal -> ProposalReview
 -> complete Dry-run diff -> wait for human exact-diff approval
 -> only after approval: isolated Apply -> changed-product Build
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint
 ```
 
-Actual11 is an integration canary, not a model A/B. No fresh preflight, receipt,
-actual11 packet, or actual11 exists yet. Packet preparation and execution remain
-separately authorized, no automatic actual12 is permitted, and exact-diff
-approval cannot be inferred. The two Internal Alpha hard gates remain false:
-actual-only changed-product Build/Test success and Failure -> Different Repair
--> Revalidation. Runtime remains false and Public Alpha remains unauthorized.
-
-The current product-code checkpoint synchronized by this docs state is
-`1b9acd0`. Fresh preflight must read the live physical Git HEAD rather than
-infer it from this document. Semantic reconciliation of the three non-ancestor
-commits is complete: `9bce437` is
-`absorbed_or_superseded/do_not_merge`; `9a237b7` and `c000021` are
-`byte-identical_present/no_action`. They do not block actual11 or Internal Alpha
-and do not authorize merge, cherry-pick, or overwrite of user WIP.
+No fresh checkpoint-bound preflight, receipt, actual13 packet, or actual13
+execution is authorized or created. Preflight, packet preparation, and
+execution remain separate authorization decisions, and no next attempt is
+pre-authorized. Exact-diff approval can be requested only after a complete
+Dry-run diff. The current product stage remains the P2 empirical path; `P0`
+decision priority in the Issue Register is work priority, not a product stage.
+The two Internal Alpha hard gates remain false: actual-only changed-product
+Build/Test success and Failure -> Different Repair -> Revalidation. Coding
+Agent v0 internal alpha, Runtime, stable Agent capability, and Public Alpha all
+remain false or unauthorized.
 
 ## 2. Current Verified Capability
 
