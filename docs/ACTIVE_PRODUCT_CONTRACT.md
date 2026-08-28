@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-26
+Last updated: 2026-08-28
 
 ## 1. Product
 
@@ -46,162 +46,76 @@ RAG/ER, Planning, Proposal, Review/Dry-run, Build/Test, Repair, Graph, and
 ArtifactStore modules. It does not create a second Agent framework or a second
 workflow.
 
-The repository actual-only `r8_il_inspector` issue now has an explicit
-unresolved result. Checkpoint `e436434` and run `32e29415` prove that the
-existing workflow reaches local Repair generation and ProposalReview with a
-replaceable local provider, while the deterministic Dry-run structural gate
-rejects the generated Repair Patch before Repair Apply because it contains an
-unmatched closing brace. Earlier bounded runs reached Repair Apply and a second
-real Build but retained the same `assemblyPath`/`peReader` compiler failure.
-The repository objective did not pass, `source_revision_binding` remains empty,
-and further r8 retries, model changes, manual Patch repair, or Workflow changes
-are not authorized.
+The selected simple task remains `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+P0 false-sufficiency closure remains completed, and the current product stage
+remains the P2 empirical path. P1 code structure does not by itself establish
+product completion.
 
-The BetterHitFeedback positive calibration now also has an explicit unresolved
-result for the current `qwen3:4b-instruct` model and Search Planning strategy.
-Bounded run002 and run004 each committed a real EvidencePack after local model
-and tool execution, but both ended `budget_exhausted`, `insufficient`, and
-`block` without the acceptable `ES_Hitreact.ActivateState` identity. The run004
-EvidencePack hash is
-`b554e02190af1117b4b552072eea0404ae4271927b803619db9447c89764e9b1`;
-its read-only expected-side comparison again reported
-`acceptable_hook_identity_set_matches=false`. The stable failure owner is the
-current model's Search Planning/candidate disambiguation, not ArtifactStore,
-provider transport, context admission, Retriever execution, metadata/IL, or a
-proven budget incompatibility. No further BHF prompt, validator, correction,
-budget, provider, Dense, or repeatability tuning is authorized.
+The latest real ProductExecution is `p2_ac_20260825_010/actual_10`, Product run
+`940f14d6`. It passed Entry, baseline Build, Requirement Projection, and reached
+Findings. Coverage was insufficient and ImplementationPlan blocked. Patch,
+ProposalReview, Dry-run, approval, Apply, changed-product Build, Repair,
+Revalidation, and Runtime were not reached. The Build that passed was the
+baseline Build, not a changed-product Build. Detailed run and Issue evidence is
+kept in `docs/audits/ENGINEERING_ISSUE_REGISTER.md`.
 
-The bounded WallCrawler run002 then committed EvidencePack
-`4588f5f5e357e00f788ec552af6960c0302aa3adb8ca48987956665077e2d704`
-after two metadata searches and one IL inspection, but completed only two of
-four required lanes and ended `budget_exhausted`, `insufficient`, and `block`
-with no verified finding or Hook identity. The generic expected-side comparison
-matched insufficiency, control action, and the empty acceptable identity set,
-while leaving required, forbidden, and required-missing relations unscored.
-The Case Reliability verdict is therefore
-`invalid_for_agent_evaluation_for_current_protocol`, and Agent behavior is
-inconclusive rather than a WallCrawler negative-capability pass.
+Actual10 satisfies the recorded close trigger for `EVID-002`: a fresh preflight
+passed and the fresh actual reached Findings without the prior Projection
+failure signature. `EVID-002` is therefore closed. This closes only the old
+Projection owner; it does not mean actual10 or the product succeeded.
 
-The minimal two-Case relation Eval is complete over the frozen BHF and
-WallCrawler results. BHF remains `valid_with_limitations` as a Case and
-explicitly unresolved for the current model/strategy; WallCrawler remains
-invalid under the current comparator and five-model-step/four-tool-call
-protocol. RAG-1A therefore ends `explicit_unresolved`, not passed. Detailed
-hash-bound evidence is recorded in
-`docs/audits/rag_1a_calibration_outcome_20260822_001/rag_1a_outcome.json`,
-SHA256=`7EFC4F46CB41162585F56F21EF4CB48EA7E347CC676188935D7256C5F5FBA95B`.
+Checkpoint `68893efb50acdd940608a3fd133fe6e79ddfc77b` repaired the RgLive
+method-span owner. A real 27B Findings-only replay retrieved five Evidence items
+and identified `Configuration.BindAll` and
+`SpreadPatches.OverrideCrosshairSize`; the remaining owner is now the
+Findings/Coverage expected-delta boundary, not the legal RgLive fallback.
+Checkpoint `206c94d00b79d2c92fa162624a5d3b924409f396` records bounded
+code/test acceptance for expected-delta permission semantics, pending real-run
+validation under active Issue `EVID-003`. Checkpoint
+`3c79d2dceb6d6ab61499e418b4b1b3ddc8214678` hardens FeatureSpec payload
+identity only. Neither checkpoint is standalone product progress.
 
-The relation-aware calibration follow-up then formed deterministic platform
-checkpoints for Case reliability, request-side Relation identity,
-Relation-to-Observation lineage, bounded missing, strict rehydrate, per-call
-Ollama context admission, and one bounded Requirement Projection correction.
-The latest product-code checkpoint is `8c5509e`. Four expected-isolated Wall
-attempts crossed progressively later boundaries; final run004 used run-level
-`num_ctx=65536`, completed seven model-call attempts, accepted two model tool
-actions, and entered the Tool/Observation control loop before the seventh
-Provider response exceeded the 180-second read timeout. It did not commit an
-EvidencePack, read expected-side data, or execute comparison. This proves one
-partial real control flow, not a committed relation trajectory or stable
-capability. The relation-aware Wall route is now
-`explicit_unresolved_before_artifact_commit`; no further Wall context, timeout,
-Prompt, provider, model, or repeatability work is selected.
-
-The selected simple task is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`. Its fresh
-run `8d26e4e5` committed RequestPlan, PlanningBrief, FeatureSpec, EvidencePack,
-and ImplementationPlan, then stopped before a Patch Artifact. The deterministic
-marker gate reported the first exception, but the earlier product failure was
-the sole lexical Evidence item being promoted to patch-authoritative
-sufficiency and bound to unrelated first-shot behavior. Changed-product
-Build/Test, Repair, Acceptance, and actual-only success were not reached. No
-rerun or correction is authorized. The detailed outcome is recorded only in
-`docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json`,
-SHA256=`01E8B32B1A0E15090DFAD575E9062BB0AE6964A7EA23EA3990CAAB5E64D3719F`.
-The read-only owner audit confirms the first semantic owner is the RgLive
-Evidence sufficiency decision, not the Patch marker gate or old `OBS-001`.
-Its report is
-`docs/audits/RG_LIVE_EVIDENCE_SUFFICIENCY_OWNER_AUDIT_20260824.json`,
-SHA256=`47981B825342DB921F7215BFB2D070F0734BF4F2494B35E1B2A326234F36046B`.
-P0 is now complete at checkpoint
-`c8004845fe3f01d844e79ab8b6aba0634b6a5c01`; P1a is complete at
-`d377ab466fb3e2c57c4c33e29bc2408864e5976e`; and P1b is complete at
-`32a939b3f217721b076704cd7e701369fef532ed`. Repository Entry checkpoint
-`c906d99dba8f1850864e090c4f925a78fbd4f373`, fresh preflight4/actual5, and
-fresh preflight5/actual6 close `ENTRY-002` for the current scope: both actuals
-entered ProductExecution without entry-side repair. The sealed-entry incident
-reference remains
-`docs/audits/ACCURATE_CROSSHAIR_SEALED_ENTRY_ATTEMPTS_20260825.md`,
-SHA256=`D2B19630BD209CB03EB7AF04F99AAD67D80B70BAB986DEA73756126563322044`.
-
-Actual5 run `f6bdb182` and actual6 run `905a0a60` each called the local model
-twice for Requirement Projection and one correction, then failed closed with
-`REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID` before findings. Actual6
-completed 12 live queries and one isolated baseline restore/build; its baseline
-DLL SHA256 is
-`174ce450da330c36bb57ab709880040e1961a3eeefd5bd48c6ab455c12b33e6d`.
-It produced blocked EvidencePack SHA256
-`9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97`,
-no Patch, no Apply, no changed-product Build, no Repair, and no product-source
-write.
-Checkpoint `2b18874a44e1785c1b8775ff2d8a8fa5f84594fb` proved that the
-per-obligation schema is sent to Ollama but did not close the real failure.
-Checkpoint `984716f09ef18111b781bcc1623bf184881f6e41` plus diagnostic
-follow-up `22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e` form the bounded
-code/test repair lineage and are `accepted_for_bounded_code_and_tests` by
-macro review. Workflow tests-only checkpoint
-`1d8aeaff32a93d5475debca482ba72404b9674cf` then closed four inherited
-integration assertions against the current retrieval, blocking-plan, and
-explicit GTFO review-policy contracts. It is test-contract closure, not a new
-product capability, ProductExecution actual, or real-run closure. This is
-still the P2
-empirical path blocked at the projection-to-findings boundary; P0 remains
-completed and is not reopened. `EVID-002` remains active until a later fresh
-actual reaches findings without the signature. The detailed recent logical
-chain and attempt evidence are in
-`docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md`.
-Checkpoint `61a4df677ad39ca87ec9486ec0556481778c9c36` closes `PLAN-001`:
-selected ProductExecution now blocks missing formal coverage before edit-binding
-derivation, the valid formal path still reaches changed isolated bytes, the
-non-selected legacy path remains compatible, and the path negative blocks.
-This is deterministic composition/authority evidence only, not an actual or
-real Build. `EVID-002` remains active. Packet, preflight, receipt, and actual7
-remain unauthorized, and both Internal Alpha hard gates remain false.
+The stable Actual runner lineage
+`81d0147c8bcabeccccd3244ea29253a0a0c22c01` ->
+`1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39` is accepted bounded
+code/test evidence for one deterministic Actual root, journal/consumption race
+handling, no per-run Python launcher, RunSpec projection, best-effort terminal
+summary, and GameFolder/compiled-artifact profile passage. It does not prove a
+real model call, actual, Build, or product result, and it does not close the
+Public Alpha `ENTRY-001`, `OPS-001`, or `REC-001` Issues.
 
 Current execution order:
 
 ```text
-repository explicit unresolved result recorded
--> BHF positive calibration explicit unresolved recorded
--> WallCrawler actual/comparison completed; Case invalid and Agent behavior inconclusive
--> minimal relation Eval completed
--> RAG-1A explicit unresolved recorded
--> relation-aware Wall partial trajectory recorded as explicit unresolved before Artifact commit
 -> P0 false-sufficiency closure complete
 -> P1a structural coverage and P1b formal provider entry complete
--> repository Entry checkpoint c906d99 plus two fresh preflight/actual pairs close ENTRY-002 for the current scope
--> actual5 and actual6 enter ProductExecution and repeat the same projection disposition failure before findings
--> EVID-002 code/test checkpoint lineage 984716f -> 22f8fa0 formed
--> checkpoint lineage accepted_for_bounded_code_and_tests; EVID-002 remains active
--> Workflow tests-only checkpoint 1d8aeaff closes four current-contract assertions without product or actual claims
--> deterministic formal-coverage positive vertical reaches changed isolated bytes and a byte-consuming Build substitute
--> coverage-removal negative reaches Patch/Dry-run/isolated Apply/Build and registers PLAN-001
--> PLAN-001 closes at deterministic composition/authority checkpoint 61a4df67
+-> actual10 passes Entry, baseline Build, Projection, and reaches Findings
+-> actual10 Coverage insufficient; blocking ImplementationPlan; EVID-002 closes
+-> EVID-003 remains active pending actual11 expected-delta real-run validation
 -> fresh sealed checkpoint-bound preflight requires separate user authorization
--> separately authorized actual7; actual7 remains unauthorized now
--> actual7 independently determines EVID-002 real-run closure and the later product-path result
+-> receipt review
+-> separately authorized actual11 packet preparation
+-> separately authorized actual11 execution
+-> Entry -> Projection -> RgLive Retrieval -> Findings -> Coverage sufficient
+-> non-blocking Planning -> PatchProposal -> ProposalReview
+-> complete Dry-run diff -> wait for human exact-diff approval
+-> only after approval: isolated Apply -> changed-product Build
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint
 ```
 
-The detailed integration target is
-`docs/CODING_AGENT_V0_INTERNAL_ALPHA.md`. RAG/ER boundaries remain in
-`docs/ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT.md`. Neither document
-claims that RAG-1A, RAG-1B, or Coding Agent v0 is complete.
+Actual11 is an integration canary, not a model A/B. No fresh preflight, receipt,
+actual11 packet, or actual11 exists yet. Packet preparation and execution remain
+separately authorized, no automatic actual12 is permitted, and exact-diff
+approval cannot be inferred. The two Internal Alpha hard gates remain false:
+actual-only changed-product Build/Test success and Failure -> Different Repair
+-> Revalidation. Runtime remains false and Public Alpha remains unauthorized.
 
-Three non-ancestor worktree heads require semantic reconciliation before v0
-integration: `9bce437`, `9a237b7`, and `c000021`. Only `9bce437` contains a
-substantial code change: one 29-file controlled-delivery hardening commit.
-These commits must not be merged or discarded solely because they are outside
-the current ancestry.
+The current repository HEAD is `1b9acd0`. Semantic reconciliation of the three
+non-ancestor commits is complete: `9bce437` is
+`absorbed_or_superseded/do_not_merge`; `9a237b7` and `c000021` are
+`byte-identical_present/no_action`. They do not block actual11 or Internal Alpha
+and do not authorize merge, cherry-pick, or overwrite of user WIP.
 
 ## 2. Current Verified Capability
 

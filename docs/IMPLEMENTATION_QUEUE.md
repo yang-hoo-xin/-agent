@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-08-26
+Last updated: 2026-08-28
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -12,62 +12,56 @@ Completed, frozen, review, and superseded records belong in
 ```text
 current_queue: fresh sealed checkpoint-bound preflight requires separate user authorization
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: PLAN-001 closed at 61a4df67 with deterministic composition/authority evidence only; EVID-002 remains active and no preflight or actual is authorized
+queue_status: actual10 reached Findings and closed EVID-002; EVID-003 remains active pending actual11 real-run validation; no preflight, receipt, actual11 packet, or actual11 execution is authorized
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
-last_task_status: P2_empirical_path_blocked_at_projection_to_findings_boundary
-last_product_code_checkpoint: 61a4df677ad39ca87ec9486ec0556481778c9c36
-last_product_code_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 -> 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e -> 61a4df677ad39ca87ec9486ec0556481778c9c36
-last_product_code_checkpoint_review: accepted_deterministic_composition_and_authority_only
-last_workflow_test_checkpoint: 1d8aeaff32a93d5475debca482ba72404b9674cf
-last_workflow_test_checkpoint_claim: test_contract_closure_only_not_product_capability_or_actual
+last_task_status: P2_empirical_path_reached_findings_blocked_at_coverage_and_planning
+current_head: 1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
 P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed
-P2_ProductExecution_actual_runs: 2
-empirical_actual_status: actual5_and_actual6_blocked_before_findings
-last_failure: actual6 requirement_projection plus one correction ended REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID
-incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
-current_issue: EVID-002_active_until_fresh_actual_reaches_findings_without_signature
-PLAN-001_status: closed_at_61a4df677ad39ca87ec9486ec0556481778c9c36
-ENTRY_repository_implementation_checkpoint: complete
-ENTRY_fresh_same_context_admission: passed_current_scope
-ENTRY-002_status: closed
-actual6_run_id: 905a0a60
-actual6_evidence_pack_sha256: 9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97
-actual6_baseline_build: passed
-actual6_apply: not_reached
-actual6_changed_product_build: not_reached
+P1_product_completion_claim: false
+latest_actual_identity: p2_ac_20260825_010/actual_10
+latest_product_run: 940f14d6
+latest_actual_result_sha256: 596ab34dcda6c97431481b6787dd954c539c0ff49bd6c078a1c1ded0ebe82128
+latest_actual_status: Entry_passed_baseline_Build_passed_Projection_passed_Findings_reached_Coverage_insufficient_ImplementationPlan_blocking
+latest_actual_unreached: PatchProposal/ProposalReview/Dry-run/approval/Apply/changed-product Build/Repair/Revalidation/Runtime
+EVID-002_status: closed
+current_issue: EVID-003_active_pending_actual11_real_run_validation
+issue_register: docs/audits/ENGINEERING_ISSUE_REGISTER.md
 internal_alpha_hard_gates: false/false
-wallcrawler_rerun_authorized: false
-wallcrawler_context_escalation: closed
-bhf_continue_authorized: false
-retrieval_provider_exploration: closed
+runtime_verified: false
+public_alpha_authorized: false
 next_eligible_slice: fresh sealed checkpoint-bound preflight requires separate user authorization
-implementation_boundary: no packet, preflight, receipt, actual7, model, Build, or Runtime action is authorized by the deterministic checkpoint
-post_checkpoint_route: separate preflight authorization -> fresh sealed checkpoint-bound preflight -> receipt review -> separately authorized actual7
-activation_required: packet, preflight, receipt, and actual7 are unauthorized now
+post_checkpoint_route: separate preflight authorization -> fresh sealed preflight -> receipt review -> separately authorized actual11 packet preparation -> separately authorized actual11 execution
+actual11_acceptance_route: Entry -> Projection -> RgLive Retrieval -> Findings -> Coverage sufficient -> non-blocking Planning -> PatchProposal -> ProposalReview -> complete Dry-run diff -> wait for human exact-diff approval
+post_approval_route: isolated Apply -> changed-product Build
+actual11_role: integration_canary_not_model_ab
+activation_required: preflight, receipt, actual11 packet preparation, actual11 execution, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
+automatic_actual12_authorized: false
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
-P0 false-sufficiency closure and P1 requirement-coverage/provider construction
-remain complete within their recorded construction boundaries. Fresh preflight4
-plus actual5 and fresh preflight5 plus actual6 close `ENTRY-002` for the current
-scope and prove two ProductExecution entries. Both actuals fail closed before
-findings on the same projection disposition signature. `EVID-002` is therefore
-the current P2 empirical-path Issue at the projection-to-findings boundary; P0
-remains completed and is not reopened. The `984716f` -> `22f8fa0` code
-checkpoint lineage is accepted only as bounded code/test evidence and does not
-close the Issue. Workflow tests-only checkpoint `1d8aeaff` closes inherited
-assertion drift and is not product capability or actual evidence. Checkpoint
-`61a4df67` closes `PLAN-001` with deterministic composition/authority evidence;
-it is not a real Build or actual and does not reopen the completed P0 product
-stage. A fresh sealed preflight requires separate user authorization. Only a
-separately authorized actual7 can
-provide the close-trigger evidence, and its downstream product result remains
-an independent outcome. Actual7 is not authorized.
+P0 remains completed and the selected product remains on the P2 empirical path;
+P1 code structure is not product completion. Actual10 passed Entry, baseline
+Build, Projection, and reached Findings, then stopped on insufficient Coverage
+and a blocking ImplementationPlan. The Build was baseline-only. `EVID-002` is
+closed because its exact real-run close trigger was met; `EVID-003` owns the
+remaining Findings/Coverage expected-delta boundary. The accepted RgLive,
+expected-delta, FeatureSpec identity, and stable Actual runner checkpoints are
+bounded code/test evidence, not standalone product capability, actual, model,
+or Build evidence. See the Issue Register for exact owners, evidence, and close
+triggers.
+
+No fresh preflight, receipt, actual11 packet, or actual11 has been created.
+Fresh sealed preflight requires separate user authorization. After receipt
+review, actual11 packet preparation and actual11 execution remain separate
+authorization decisions. Actual11 is an integration canary, not a model A/B,
+and it cannot automatically create actual12. Exact-diff approval must follow a
+complete Dry-run diff; without that approval, isolated Apply and changed-product
+Build are not eligible.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 
@@ -1064,7 +1058,6 @@ open gap describes it.
 | Production ArtifactStore hardening | A real delivery task exposes recovery, concurrency, history-query, migration, or retention failure | Conditional |
 | Long-term memory/closed-loop automation | Repeated verified tasks expose a recurrence or retrieval failure that manually recorded lessons cannot solve | Conditional; history is not trusted policy memory |
 | Default/public Graph source-root authority | The default/public Graph receives real write authority while still lacking exact source/root authority, or a selected ProductExecution negative path test fails under its explicit `DomainReviewPolicy` | Conditional; SourceRegistry root omission from relative `source_path` is not a current selected-path Issue |
-| Findings local-schema follow-up | A separately authorized actual7 reaches findings and exposes a local findings-schema failure | Conditional; wait for the findings owner and do not register an Issue early |
 | Requirement coverage continuity through Repair | A legal Patch reaches changed-product failure and Repair loses or misrepresents the admitted coverage contract | Conditional; wait for the changed-product failure owner |
 
 ## 4. Task Record Template

@@ -1,7 +1,7 @@
 # Engineering Issue Register
 
 Status: lightweight observation register
-Last reviewed: 2026-08-26
+Last reviewed: 2026-08-28
 
 ## 1. Purpose And Authority Boundary
 
@@ -331,27 +331,62 @@ scope: ProductExecution requirement projection response-schema admission, semant
 owner: src/mod_agent/evidence/requirement_coverage_provider.py::StructuredModelRequirementCoverageProvider.project
 evidence_level: real_run
 severity: S1
-decision_priority: P0
-status: active
+decision_priority: P3
+status: closed
 first_seen: actual5 run f6bdb182
-latest_evidence: actual6 run 905a0a60 at checkpoint 2b18874 sent the per-obligation schema in Ollama format; the independently reconstructed request body size 8868 and SHA256 951d949e32259fcf76fc3f5d29608f48ebdedfd8271e17e2139f7e78213482c1 exactly match the run audit, but requirement_projection and requirement_projection_correction again ended REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID before findings. EvidencePack SHA256 is 9d87c968606fd8cbf7e02d43b2fe46a968096a3a597b51f2902ea481c2841f97
+latest_evidence: fresh actual p2_ac_20260825_010/actual_10, Product run 940f14d6, passed Entry, baseline Build, Requirement Projection, and reached Findings without REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID. Its actual_result SHA256 is 596ab34dcda6c97431481b6787dd954c539c0ff49bd6c078a1c1ded0ebe82128. Coverage was insufficient and ImplementationPlan blocked; Patch, ProposalReview, Dry-run, approval, Apply, changed-product Build, Repair, Revalidation, and Runtime were not reached
 incident_record: docs/audits/CODING_AGENT_V0_RECENT_ISSUE_INTERACTION_AUDIT_20260826.md
 implementation_checkpoint: 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
 implementation_checkpoint_lineage: 984716f09ef18111b781bcc1623bf184881f6e41 followed by diagnostic closure 22f8fa0f6913e964b556d49c8d3d6a01ead5ae2e
 implementation_checkpoint_status: accepted_for_bounded_code_and_tests
-current_effect: actual5 and actual6 have not reached findings; checkpoints 984716f and 22f8fa0 are accepted bounded code/test evidence only and do not close the real-run Issue. PLAN-001 is closed independently at deterministic composition/authority checkpoint 61a4df67. Packet, preflight, receipt, and actual7 remain unauthorized
+close_evidence: actual10 met the original close trigger through a fresh passed preflight and a fresh actual that reached Findings without the prior Projection failure signature
+current_effect: the old Projection owner is closed. This does not establish actual10 or product success; actual10 stopped at insufficient Coverage and a blocking ImplementationPlan, now owned separately by EVID-003
 workaround: preserve the immutable actual5/actual6 outputs and fail-closed EvidencePack; do not add a third correction, switch model, change retrieval, or relax coverage policy
 reopen_trigger: any selected real task returns a projection object that fails exact response-schema admission or deterministic input-disposition semantics after the single bounded correction
 close_trigger: the accepted focused checkpoint is followed by a newly sealed preflight that passes, and a separately authorized fresh actual reaches findings without this failure signature
-next_action: a fresh sealed checkpoint-bound preflight requires separate user authorization; actual7 requires its own later authorization. EVID-002 real-run closure remains independent
-last_reviewed: 2026-08-26
-required_before_stage: next P2 empirical actual
+next_action: none; reopen only on the recorded reopen_trigger
+last_reviewed: 2026-08-28
+required_before_stage: none_closed
 minimum_acceptance:
   - the returned projection object is locally validated against the exact response schema before semantic materialization
   - schema failure is distinct from duplicate disposition index, requirement/disposition overlap, disallowed disposition, invalid reason, and incomplete accounting
   - the one correction receives bounded machine-readable rejection detail without model reasoning or authority
   - failed output remains non-authoritative and cannot grant Evidence sufficiency or Patch authority
   - no third correction, model switch, retrieval expansion, or policy relaxation
+```
+
+### EVID-003
+
+```yaml
+issue_id: EVID-003
+title: Supported change expected-delta gaps revoke the authoritative edit target before Planning
+scope: ProductExecution Findings-to-Coverage expected-delta semantics and deterministic edit-target derivation
+owner: src/mod_agent/evidence/requirement_coverage.py::resolve_requirement_coverage and Findings semantic boundary
+evidence_level: real_run
+severity: S1
+decision_priority: P0
+status: active
+first_seen: p2_ac_20260825_010/actual_10 Product run 940f14d6
+latest_evidence: actual10 passed Entry, baseline Build, Projection, and reached Findings, then produced insufficient Coverage and a blocking ImplementationPlan. A real 27B Findings-only replay obtained five Evidence items and identified Configuration.BindAll and SpreadPatches.OverrideCrosshairSize. The remaining failure owner is Findings/Coverage expected-delta semantics; legal RgLive fallback is not the failure owner
+actual_result_sha256: 596ab34dcda6c97431481b6787dd954c539c0ff49bd6c078a1c1ded0ebe82128
+rg_live_method_span_checkpoint: 68893efb50acdd940608a3fd133fe6e79ddfc77b
+implementation_checkpoint: 206c94d00b79d2c92fa162624a5d3b924409f396
+implementation_checkpoint_status: accepted_for_bounded_code_and_tests_pending_actual11_real_run_validation
+bounded_semantics: role=change plus support plus an exact authoritative target-source identity retains an edit target even when unresolved gaps describe behavior that does not exist until the change; missing, conflict, pre_patch_evidence, and preservation remain fail closed
+current_effect: no real run has yet proved Coverage sufficient, a non-empty authorized edit target, or entry into non-blocking Planning/Patch under the accepted expected-delta semantics
+workaround: preserve actual10 and the Findings-only replay as immutable evidence; do not reinterpret legal fallback as RgLive failure and do not relax missing, conflict, pre_patch_evidence, or preservation gates
+reopen_trigger: after closure, any selected real task again revokes an exact authoritative edit target solely because a supported role=change Finding retains the requested expected delta, or any missing/conflict/pre_patch_evidence/preservation case becomes authorized
+close_trigger: a fresh actual forms Coverage sufficient, a non-empty authorized edit target, and enters non-blocking Planning and Patch, while missing, conflict, pre_patch_evidence, and preservation remain fail closed
+next_action: fresh sealed preflight requires separate user authorization; after receipt review, actual11 packet preparation and actual11 execution require separate authorizations. Actual11 is an integration canary, not a model A/B
+last_reviewed: 2026-08-28
+required_before_stage: next P2 empirical actual
+minimum_acceptance:
+  - Entry, Projection, RgLive Retrieval, and Findings are reached on the fresh actual
+  - Coverage is sufficient and exposes a non-empty authorized edit target from exact authoritative source identity
+  - Planning is non-blocking and PatchProposal is reached
+  - missing, conflict, pre_patch_evidence, and preservation remain fail closed
+  - ProposalReview and complete no-write Dry-run diff precede any request for human exact-diff approval
+  - no Apply or changed-product Build occurs without that approval
 ```
 
 ### PLAN-001
@@ -371,10 +406,10 @@ reopen_trigger: selected ProductExecution forms an edit binding, Patch authority
 close_trigger: a focused checkpoint makes selected ProductExecution mode require formal coverage and produces a blocking ImplementationPlan before edit binding or Patch when coverage is missing or invalid; the valid formal positive vertical still reaches changed isolated bytes and the byte-consuming Build substitute; legacy non-selected Planner/Graph behavior remains compatible; both negative scenarios have zero Apply and Build calls
 implementation_checkpoint: 61a4df677ad39ca87ec9486ec0556481778c9c36
 close_evidence: selected ProductExecution missing coverage now produces a blocking ImplementationPlan before edit binding or Patch; the valid formal positive reaches changed isolated bytes and the byte-consuming Build substitute; the coverage-removal and path/Review negatives have zero Apply/Build; full regressions passed requirement_coverage 33, product_execution 103, planning 30, proposal_review 32, patch_apply 22, workflow_graph 135, plus py_compile
-current_effect: the deterministic selected ProductExecution authority bypass is closed. The checkpoint is composition/authority evidence only, not an actual or real Build; EVID-002 remains active
-workaround: none required for PLAN-001; keep packet, preflight, receipt, and actual7 unauthorized pending separate decisions
+current_effect: the deterministic selected ProductExecution authority bypass is closed. The checkpoint is composition/authority evidence only, not an actual or real Build; actual10 reached a blocking ImplementationPlan because Coverage was insufficient, under active Issue EVID-003
+workaround: none required for PLAN-001; fresh preflight, receipt, actual11 packet preparation, and actual11 execution remain separately controlled
 next_action: none; reopen only on the recorded reopen_trigger
-last_reviewed: 2026-08-26
+last_reviewed: 2026-08-28
 required_before_stage: next P2 empirical actual
 minimum_acceptance:
   - selected ProductExecution missing formal requirement coverage fails closed
@@ -439,13 +474,13 @@ severity: S2
 decision_priority: P2
 status: mitigated_for_current_scope
 first_seen: 2026-08-21 checkpoint 397629ee review
-latest_evidence: the 2026-08-26 issue-interaction docs checkpoint synchronizes Active Product Contract, Project State, Implementation Queue, the P0-P3 decision record, and Internal Alpha to preflight4/actual5 plus preflight5/actual6; ProductExecution actual runs are 2, ENTRY-002 is closed for the current scope, EVID-002 is active, and both Internal Alpha hard gates remain false
-current_effect: current short status owners agree that P2 empirical execution is blocked at the projection-to-findings boundary; P0 remains completed and is not reopened. Documentation remains evidence projection rather than capability progress
+latest_evidence: the 2026-08-28 docs-only synchronization aligns Active Product Contract, Project State, Implementation Queue, and this Issue Register to HEAD 1b9acd0 and actual10. It records EVID-002 closed, EVID-003 active, P0 completed, the P2 Findings/Coverage boundary, and both Internal Alpha hard gates false. Internal Alpha documentation was outside this synchronization scope
+current_effect: the four authorized status owners agree that P2 empirical execution reached Findings and is blocked by insufficient Coverage and a blocking ImplementationPlan under EVID-003; P0 remains completed and is not reopened. Documentation remains evidence projection rather than capability progress
 workaround: keep detailed run evidence in one primary record and short selection fields elsewhere
 reopen_trigger: Active Product Contract, Project State, Implementation Queue, or the §8 execution sequence name different current selections
-trigger_state: mitigated_by_2026_08_26_issue_interaction_docs_checkpoint
+trigger_state: mitigated_by_2026_08_28_actual10_docs_only_sync
 next_action: keep detailed incident evidence in its audit record and reopen only if the owning short pages diverge again
-last_reviewed: 2026-08-26
+last_reviewed: 2026-08-28
 ```
 
 ### REP-001
@@ -501,13 +536,14 @@ decision_priority: P2
 status: observed
 first_seen: BHF and WallCrawler local actuals required chat polling while only per-provider timeout was available
 latest_evidence: AccurateCrosshair first-run collaboration took about 52 minutes while the sealed ProductExecution command took about 159 seconds; packet preparation, one zero-model projectless permission stop, execution-root correction, fresh-page execution, and strict result extraction were manually coordinated without a stage heartbeat. Detailed timing remains only in docs/audits/ACCURATE_CROSSHAIR_ACTUAL_OUTCOME_20260824.json
-current_effect: current manual coordination does not block the selected Evidence-owner correction or invalidate Internal Alpha evidence, but operational stability cannot be measured reliably and Public Alpha Operational Readiness remains blocked
+stable_runner_checkpoint: 81d0147c8bcabeccccd3244ea29253a0a0c22c01 -> 1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39 accepted for bounded code/tests only, including best-effort terminal summary; it is not actual or runtime evidence
+current_effect: current manual coordination does not block the selected EVID-003 validation or invalidate Internal Alpha evidence, but operational stability cannot be measured reliably and Public Alpha Operational Readiness remains blocked. The stable runner lineage does not close OPS-001
 workaround: bounded attempts, per-call timeout, manual polling, and terminal Artifact/failure receipt
 reopen_trigger: satisfied by run004 duration/progress opacity; implementation remains scheduled after Internal Alpha and before core stability/public alpha
 trigger_state: satisfied_by_wall_run004_and_accurate_run8d26e4e5_without_heartbeat
 implementation_timing: after Internal Alpha and before Core Stability Validation
 next_action: after Internal Alpha, project lifecycle state from existing LangGraph state plus ArtifactStore/attempt facts
-last_reviewed: 2026-08-24
+last_reviewed: 2026-08-28
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - stable CREATED/PREFLIGHTING/EXECUTING/WAITING_PROVIDER/SUCCEEDED/FAILED/CANCELLED/EXPIRED states mapped from existing facts
@@ -562,8 +598,8 @@ workaround: use explicit field projection and Store readback for committed resul
 reopen_trigger: an independent report/console/UI projection failure, or the Internal Alpha completion checkpoint
 trigger_state: satisfied_by_wall_trace_gap_accurate_run8d26e4e5_and_actual6_primary_failure_tristate_drift
 implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
-next_action: do not interrupt EVID-002; after Internal Alpha, project primary_failure separately from downstream_disposition and preserve true/false/not_evaluated without changing Artifact schemas
-last_reviewed: 2026-08-26
+next_action: do not interrupt EVID-003; after Internal Alpha, project primary_failure separately from downstream_disposition and preserve true/false/not_evaluated without changing Artifact schemas
+last_reviewed: 2026-08-28
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - one stable serializer/projection for ArtifactRef, attempt, and result
@@ -586,13 +622,14 @@ decision_priority: P2
 status: observed
 first_seen: long BHF and WallCrawler runs relied on bounded no-retry protocol and manual waiting
 latest_evidence: relation-aware Wall runs preserved explicit attempts around context and timeout failures. AccurateCrosshair entry Attempts A1-A5 and Recovery actual1-actual6 preserve distinct packet, receipt, run, failure, checkpoint, and recovery identities; actual5 and actual6 each entered ProductExecution once, and no Recovery automatically replayed a consumed actual or approved a diff
-current_effect: the current Case demonstrates explicit failure-driven Recovery and immutable attempt lineage, not automatic retry, durable distributed resume, fallback, or a general recovery platform
+stable_runner_checkpoint: 81d0147c8bcabeccccd3244ea29253a0a0c22c01 -> 1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39 accepted for bounded code/tests only, including deterministic Actual root and journal/consumption race handling; it is not real recovery evidence
+current_effect: the current Case and runner lineage demonstrate bounded immutable attempt controls, not automatic retry, durable distributed resume, fallback, or a general recovery platform. The lineage does not close REC-001
 workaround: fail closed, preserve immutable attempts, classify the failure, and require explicit new-attempt authorization; the current 32768 attempt is one bounded manual fallback instance, not an automatic recovery platform
 reopen_trigger: Internal Alpha completion checkpoint, or a real transient provider/tool failure requiring user-visible recovery
 trigger_state: satisfied_by_wall_relation_actual_context_rejects_and_run004_provider_timeout
 implementation_timing: after Internal Alpha and before Coding Agent v0 public alpha
 next_action: do not route Attempts1–5 through REC-001 retry; after Internal Alpha, evaluate minimum general recovery policy only from separately classified real failures
-last_reviewed: 2026-08-26
+last_reviewed: 2026-08-28
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - deterministic versus transient error classification
@@ -617,11 +654,12 @@ decision_priority: P2
 status: deferred
 first_seen: inventory records run-request, evidence-request, intelligent-evidence-request, and direct Graph/internal entry paths
 latest_evidence: AccurateCrosshair run 8d26e4e5 invoked the existing ProductExecution/StateGraph once and committed five Store Artifacts, but its first projectless launch stopped before Runner entry because mutable lock/state were coupled to a read-only master packet directory; a sealed external execution-root wrapper was required for the successful single run
-current_effect: one bounded internal actual used the same Runner, but the projectless handoff remains wrapper-bound and Public Alpha cannot yet claim one public lifecycle, route authority, Store truth, and terminal projection
+stable_runner_checkpoint: 81d0147c8bcabeccccd3244ea29253a0a0c22c01 -> 1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39 accepted for bounded code/tests only, including one deterministic Actual root, no per-run Python launcher, RunSpec field projection, and GameFolder/compiled-artifact profile passage; it is not a public-entry actual
+current_effect: bounded internal actuals and the stable Actual runner lineage do not establish one adopted public entrypoint. Public Alpha cannot yet claim one public lifecycle, route authority, Store truth, and terminal projection, so ENTRY-001 remains deferred
 workaround: keep current internal-alpha/calibration paths explicitly bounded and non-public
 reopen_trigger: Internal Alpha completion checkpoint or RAG-1B activation
 next_action: during RAG-1B, inventory every public, CLI, API, and MCP entry and make each delegate or explicitly exit product authority
-last_reviewed: 2026-08-24
+last_reviewed: 2026-08-28
 required_before_stage: Coding Agent v0 public alpha
 minimum_acceptance:
   - exactly one public product entry invokes the same Agent Runner
@@ -662,12 +700,12 @@ packet_only_repair_stop_condition: satisfied_by_attempt5
 implementation_checkpoint: c906d99dba8f1850864e090c4f925a78fbd4f373
 code_owner_and_focused_test_boundary: met
 fresh_same_context_admission: passed_for_current_scope_twice
-current_effect: no current Entry blocker remains; actual5 and actual6 failures belong to EVID-002 inside ProductExecution
+current_effect: no current Entry blocker remains; actual10 passed Entry and reached Findings, while its downstream Coverage/Planning failure belongs to EVID-003 inside ProductExecution
 workaround: none required for the current scope; each new checkpoint still requires its normal hash-bound preflight and separate actual authority
 reopen_trigger: any fresh sealed entry or preflight fails before packet-bound ProductExecution because entry identity, filesystem authority, Git trust, path equivalence, lock/state, or receipt admission is not represented consistently
 close_trigger: one newly authorized fresh same-context preflight produces a hash-bound receipt after all packet/platform/source/Git/Ollama gates, and a separately authorized sealed actual enters ProductExecution without entry-side identity or permission repair
 next_action: none; reopen only on a new failure before ProductExecution with an Entry-owned signature. ENTRY-001 remains the separate Public Alpha adoption issue
-last_reviewed: 2026-08-26
+last_reviewed: 2026-08-28
 required_before_stage: P2 empirical actual
 code_checkpoint_met:
   - repository EntryAdmission request/result/blocker/receipt owner exists with focused tests
