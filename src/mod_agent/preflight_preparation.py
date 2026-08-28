@@ -1141,7 +1141,7 @@ def _load_actual_record(value: str) -> _ActualLineageRecord:
                 stage="lineage",
             )
         seal = _read_json_object(seal_path, "actual lineage seal")
-        material = ("packet.json", "actual_runner.py")
+        material = ("packet.json",)
         files = seal.get("files")
         if (
             seal.get("seal_version") != "sealed_actual_run_v1"

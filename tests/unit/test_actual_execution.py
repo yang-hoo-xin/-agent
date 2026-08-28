@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import inspect
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -15,12 +14,12 @@ from src.mod_agent.actual_execution import (
     ACTUAL_JOURNAL_FILENAME,
     ACTUAL_PACKET_FILENAME,
     ACTUAL_SEAL_FILENAME,
-    ACTUAL_THIN_LAUNCHER_FILENAME,
     ActualExecutionDependenciesV1,
     ActualProductExecutionSelectionV1,
     ActualRunError,
     ActualRunPreparationRequestV1,
     ActualRunSpecV1,
+    _execution_arguments,
     execute_sealed_actual_run,
     prepare_sealed_actual_run,
 )
@@ -30,7 +29,12 @@ from src.mod_agent.entry_admission import (
     admit_sealed_entry,
     entry_request_from_preflight_packet,
 )
-from src.mod_agent.local_entry import LocalEntryError, run_local_request
+from src.mod_agent.local_entry import (
+    CompiledArtifactInspectionProfile,
+    LocalEntryError,
+    RunLocalGameFolderBindingV1,
+    run_local_request,
+)
 from src.mod_agent.preflight_preparation import (
     _load_actual_record,
     prepare_sealed_entry_preflight,
@@ -38,7 +42,6 @@ from src.mod_agent.preflight_preparation import (
 from tests.unit.test_preflight_preparation import (
     _file_sha256,
     _fixture as preflight_fixture,
-    _seal_actual_fixture,
 )
 
 
@@ -65,7 +68,7 @@ def _admit_preflight(
     )
     assert run.result.status == "ready"
     return Path(str(run.receipt_path)), Path(str(run.receipt_manifest_path))
-def _prepared_actual(tmp_path: Path):
+def _actual_request(tmp_path: Path):
     preflight_request, preflight_dependencies, _ = preflight_fixture(tmp_path)
     preflight = prepare_sealed_entry_preflight(
         preflight_request,
@@ -75,10 +78,8 @@ def _prepared_actual(tmp_path: Path):
         preflight_request,
         preflight_dependencies,
     )
-    packet_root = tmp_path / "delivery" / "actual10"
     request = ActualRunPreparationRequestV1(
         contract_version="1",
-        packet_root=str(packet_root),
         accepted_preflight_packet_path=str(
             Path(preflight_request.packet_root) / "packet.json"
         ),
@@ -89,9 +90,6 @@ def _prepared_actual(tmp_path: Path):
         accepted_receipt_sha256=_file_sha256(receipt),
         accepted_receipt_manifest_path=str(receipt_manifest),
         accepted_receipt_manifest_sha256=_file_sha256(receipt_manifest),
-        actual_lineage_packet_paths=tuple(
-            preflight_request.actual_lineage_packet_paths
-        ),
         product_execution=ActualProductExecutionSelectionV1(
             contract_version="1",
             workspace_base=str((tmp_path / "actual_workspaces").resolve()),
@@ -111,6 +109,11 @@ def _prepared_actual(tmp_path: Path):
         server_version_reader=preflight_dependencies.server_version_reader,
         context_validator=preflight_dependencies.context_validator,
     )
+    return request, dependencies, preflight
+
+
+def _prepared_actual(tmp_path: Path):
+    request, dependencies, preflight = _actual_request(tmp_path)
     result = prepare_sealed_actual_run(request, dependencies=dependencies)
     return request, dependencies, result, preflight
 
@@ -128,10 +131,16 @@ def test_prepare_derives_future_identities_and_preserves_owner_inputs(
     assert result.Builds == 0
     assert result.Apply_runs == 0
     root = Path(request.packet_root)
+    preflight_root = Path(request.accepted_preflight_packet_path).parent
+    assert root.parent == preflight_root.parent
+    assert root != preflight_root
+    assert root.name == (
+        f"actual_{preflight.identities.outer_run_id}_"
+        f"{preflight.identities.future_actual_id}"
+    )
     assert {path.name for path in root.iterdir()} == {
         ACTUAL_PACKET_FILENAME,
         ACTUAL_SEAL_FILENAME,
-        ACTUAL_THIN_LAUNCHER_FILENAME,
         "RUN.md",
     }
     packet = json.loads((root / ACTUAL_PACKET_FILENAME).read_text(encoding="utf-8"))
@@ -171,6 +180,8 @@ def test_public_prepare_request_has_no_independent_outer_or_actual_identity() ->
             "actual_attempt_id",
             "future_actual_id",
             "future_canary_number",
+            "packet_root",
+            "actual_lineage_packet_paths",
         }
     )
 
@@ -203,7 +214,6 @@ def test_run_local_request_requires_explicit_identities_as_one_pair() -> None:
         "manifest_hash",
         "payload_manifest",
         "future_identity",
-        "identity_consumed",
         "platform_head",
         "source",
         "model",
@@ -224,7 +234,10 @@ def test_prepare_fails_closed_before_actual_packet_write(
     )
     accepted_receipt_sha256 = _file_sha256(receipt)
     accepted_receipt_manifest_sha256 = _file_sha256(receipt_manifest)
-    actual_lineage = list(preflight_request.actual_lineage_packet_paths)
+    expected_actual_root = Path(preflight_request.packet_root).parent / (
+        f"actual_{prepared_preflight.identities.outer_run_id}_"
+        f"{prepared_preflight.identities.future_actual_id}"
+    )
     if failure == "receipt_status":
         payload = json.loads(receipt.read_text(encoding="utf-8"))
         payload["result"]["status"] = "blocked"
@@ -244,29 +257,6 @@ def test_prepare_fails_closed_before_actual_packet_write(
         packet = json.loads(packet_path.read_text(encoding="utf-8"))
         packet["future_execution_binding"]["future_attempt_id"] = "actual_999"
         packet_path.write_text(json.dumps(packet), encoding="utf-8")
-    elif failure == "identity_consumed":
-        current_preflight = {
-            "packet": Path(preflight_request.packet_root) / "packet.json",
-            "receipt": receipt,
-            "receipt_manifest": receipt_manifest,
-            "payload_manifest": json.loads(
-                (Path(preflight_request.packet_root) / "PREFLIGHT.json").read_text()
-            )["payload_manifest_sha256"],
-            "preflight_id": json.loads(
-                (Path(preflight_request.packet_root) / "packet.json").read_text()
-            )["preflight_id"],
-        }
-        actual_lineage.append(
-            str(
-                _seal_actual_fixture(
-                    tmp_path / "lineage" / "consumed_actual10",
-                    current_preflight,
-                    outer_run_id="p2_ac_20260825_010",
-                    actual_id="actual_10",
-                    accepted_attempt_id="preflight_12",
-                )
-            )
-        )
     elif failure == "platform_head":
         platform = Path(preflight_request.platform_root)
         (platform / "new.txt").write_text("new\n", encoding="utf-8")
@@ -295,7 +285,6 @@ def test_prepare_fails_closed_before_actual_packet_write(
         )
     request = ActualRunPreparationRequestV1(
         contract_version="1",
-        packet_root=str(tmp_path / "delivery" / "actual10"),
         accepted_preflight_packet_path=str(
             Path(preflight_request.packet_root) / "packet.json"
         ),
@@ -308,7 +297,6 @@ def test_prepare_fails_closed_before_actual_packet_write(
         accepted_receipt_sha256=accepted_receipt_sha256,
         accepted_receipt_manifest_path=str(receipt_manifest),
         accepted_receipt_manifest_sha256=accepted_receipt_manifest_sha256,
-        actual_lineage_packet_paths=tuple(actual_lineage),
         product_execution=ActualProductExecutionSelectionV1(
             contract_version="1",
             workspace_base=str((tmp_path / "workspaces").resolve()),
@@ -325,7 +313,7 @@ def test_prepare_fails_closed_before_actual_packet_write(
     with pytest.raises(ActualRunError):
         prepare_sealed_actual_run(request, dependencies=dependencies)
 
-    assert not Path(request.packet_root).exists()
+    assert not expected_actual_root.exists()
     assert Path(predecessor["packet"]).is_file()
 
 
@@ -333,6 +321,7 @@ def test_execute_requires_runtime_authorization_and_revalidates_before_owner(
     tmp_path: Path,
 ) -> None:
     request, dependencies, prepared, _ = _prepared_actual(tmp_path)
+    packet_root = prepared.packet_root
     calls: list[dict[str, Any]] = []
     dependencies = replace(
         dependencies,
@@ -341,7 +330,7 @@ def test_execute_requires_runtime_authorization_and_revalidates_before_owner(
 
     with pytest.raises(ActualRunError, match="ACTUAL_EXECUTION_AUTHORIZATION_REQUIRED"):
         execute_sealed_actual_run(
-            request.packet_root,
+            packet_root,
             expected_packet_sha256=prepared.packet_sha256,
             expected_seal_sha256=prepared.seal_sha256,
             actual_execution_authorized=False,
@@ -350,7 +339,7 @@ def test_execute_requires_runtime_authorization_and_revalidates_before_owner(
         )
 
     assert calls == []
-    assert not (Path(request.packet_root) / ACTUAL_CONSUMPTION_FILENAME).exists()
+    assert not (Path(packet_root) / ACTUAL_CONSUMPTION_FILENAME).exists()
 
     with pytest.raises(ActualRunError, match="ACTUAL_REVIEW_HASH_DRIFT"):
         execute_sealed_actual_run(
@@ -376,11 +365,14 @@ def test_repeat_root_does_not_overwrite_and_concurrent_seal_has_one_winner(
         prepare_sealed_actual_run(request, dependencies=dependencies)
     assert _file_sha256(marker) == packet_sha256
 
-    race = replace(request, packet_root=str(tmp_path / "delivery" / "actual10_race"))
+    race, race_dependencies, _ = _actual_request(tmp_path / "race")
 
     def prepare() -> str:
         try:
-            return prepare_sealed_actual_run(race, dependencies=dependencies).status
+            return prepare_sealed_actual_run(
+                race,
+                dependencies=race_dependencies,
+            ).status
         except ActualRunError as exc:
             return exc.code
 
@@ -397,14 +389,13 @@ def test_repeat_root_does_not_overwrite_and_concurrent_seal_has_one_winner(
 ACTUAL_SEALED_FILE_SET_FOR_TEST = (
     ACTUAL_PACKET_FILENAME,
     ACTUAL_SEAL_FILENAME,
-    ACTUAL_THIN_LAUNCHER_FILENAME,
     "RUN.md",
 )
 
 
 @pytest.mark.parametrize(
     "drift_file",
-    (ACTUAL_PACKET_FILENAME, ACTUAL_SEAL_FILENAME, ACTUAL_THIN_LAUNCHER_FILENAME),
+    (ACTUAL_PACKET_FILENAME, ACTUAL_SEAL_FILENAME),
 )
 def test_execute_rejects_actual_seal_drift_before_owner(
     tmp_path: Path,
@@ -442,6 +433,7 @@ def test_execute_rejects_bound_fact_drift_before_owner(
     drift: str,
 ) -> None:
     request, dependencies, prepared, _ = _prepared_actual(tmp_path)
+    packet_root = prepared.packet_root
     if drift == "receipt":
         path = Path(request.accepted_receipt_path)
         path.write_text(path.read_text(encoding="utf-8") + " ", encoding="utf-8")
@@ -489,7 +481,7 @@ def test_execute_rejects_bound_fact_drift_before_owner(
 
     with pytest.raises(ActualRunError):
         execute_sealed_actual_run(
-            request.packet_root,
+            packet_root,
             expected_packet_sha256=prepared.packet_sha256,
             expected_seal_sha256=prepared.seal_sha256,
             actual_execution_authorized=True,
@@ -498,7 +490,7 @@ def test_execute_rejects_bound_fact_drift_before_owner(
         )
 
     assert calls == 0
-    assert not (Path(request.packet_root) / ACTUAL_CONSUMPTION_FILENAME).exists()
+    assert not (Path(packet_root) / ACTUAL_CONSUMPTION_FILENAME).exists()
 
 
 def test_execute_consumes_before_exactly_one_owner_call_and_projects_safe_journal(
@@ -563,6 +555,7 @@ def test_execute_consumes_before_exactly_one_owner_call_and_projects_safe_journa
     )
     journal = json.loads(journal_text)
     assert journal["model_calls"] == 2
+    assert journal["model_call_accounting_complete"] is True
     assert journal["last_observed_model_role"] == "requirement_findings"
     assert journal["stage"] == "blocked"
     assert journal["terminal"] == {
@@ -669,78 +662,75 @@ def test_stable_v7_packet_is_readable_by_existing_actual_lineage_owner(
     assert record.accepted_receipt_sha256 == request.accepted_receipt_sha256
 
 
-def test_actual10_frozen_semantics_are_representable_without_byte_comparison() -> None:
-    frozen = {
-        "evidence_status": "historical_task_record_external_files_unavailable",
-        "packet_version": "p2_receipt_bound_actual_packet_v6",
-        "outer_run_id": "p2_ac_20260825_010",
-        "actual_attempt_id": "actual_10",
-        "historical_hashes": {
-            "packet_sha256": (
-                "cf351c0d9e2b8143bd285a1df420454b9f10f68f821775c22e082673cf30d0b7"
-            ),
-            "runner_sha256": (
-                "1061ee4ddac160ad7317859713a1afb5a5671a5aabc8d3380340ff30905f1d88"
-            ),
-            "payload_manifest_sha256": (
-                "d6366dbb5d3b6c0f945a9ac7586ffcddbb4e8dc26d0c22625fdebc23d94b9eaf"
-            ),
-            "delivery_manifest_sha256": (
-                "76d0c7981b128c2a182d2c2709e8fb1af84da29b726d826b33124912ad5cf379"
-            ),
-            "receipt_sha256": (
-                "6436283873df8cf38e180b441c5973c499e81201e7da9066a57f17881ab485d0"
-            ),
-            "receipt_manifest_sha256": (
-                "83303ded4fb31086714c1d027ec29257c9c35b61f9983d2f54bb7c603ae31d80"
-            ),
-            "actual_result_sha256": "596ab34dcda6c97431481b6787dd954c539c0ff49bd6c078a1c1ded0ebe82128",
-        },
-        "source_identity_prefixes": {
-            "repository_head": "d80ae700",
-            "repository_tree": "cd4a59",
-            "project_tree": "3e7f515",
-            "snapshot_sha256": "ae5304",
-        },
-        "model": {
-            "model": "qwen3.6:27b",
-            "digest_prefix": "a50eda8e",
-            "quantization_level": "Q4_K_M",
-            "configured_context": 40960,
-            "output_budget": 4096,
-        },
-        "selected_configuration": {
-            "main_ollama_timeout_seconds": 600.0,
-            "repair_ollama_timeout_seconds": None,
-            "provider_fallback": False,
-            "automatic_retry": False,
-            "external_disclosure": False,
-            "route": "full_correction",
-            "model_projection_fields": ["requirements", "input_dispositions"],
-            "deterministic_relation_rule": "one relation per requirement",
-        },
-        "execution_counts": {
-            "run_local_request": 1,
-            "requirement_projection": 1,
-            "findings": 1,
-            "ProductExecution": 1,
-            "baseline_Build": 1,
-            "Patch": 0,
-            "diff_approval": 0,
-            "Apply": 0,
-            "changed_Build": 0,
-            "Repair": 0,
-            "Runtime": 0,
-        },
-    }
+def test_historical_semantic_contract_uses_real_spec_and_owner_projection(
+    tmp_path: Path,
+) -> None:
+    request, _, prepared, _ = _prepared_actual(tmp_path)
+    packet = json.loads(
+        (Path(prepared.packet_root) / ACTUAL_PACKET_FILENAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    spec = ActualRunSpecV1.from_dict(packet["actual_run_spec"])
+    owner_inputs = _execution_arguments(
+        spec,
+        lambda _diff: "literal user input",
+    )
+    preflight_packet = json.loads(
+        Path(request.accepted_preflight_packet_path).read_text(encoding="utf-8")
+    )
 
-    assert frozen["outer_run_id"].rsplit("_", 1)[1] == "010"
-    assert frozen["actual_attempt_id"] == "actual_10"
-    assert frozen["selected_configuration"]["provider_fallback"] is False
-    assert frozen["selected_configuration"]["automatic_retry"] is False
-    assert frozen["execution_counts"]["run_local_request"] == 1
-    assert frozen["execution_counts"]["Runtime"] == 0
-    assert frozen["evidence_status"] != "byte_for_byte_verified"
+    assert spec.request == preflight_packet["request"]
+    assert spec.source["target_project"] == preflight_packet["source_identity"][
+        "target_project"
+    ]
+    assert spec.source["source_revision_binding"] == preflight_packet[
+        "source_identity"
+    ]["source_revision_binding"]
+    assert spec.model == {
+        "provider": "ollama",
+        "base_url": "http://127.0.0.1:11434",
+        "model": "local-neutral-model",
+        "digest": "b" * 64,
+        "quantization_level": "Q4_K_M",
+        "server_version": "1.2.3",
+        "context_limit": 65536,
+        "configured_context": 32768,
+        "output_budget": 4096,
+        "local_only": True,
+    }
+    assert spec.platform["HEAD"] == preflight_packet["platform"][
+        "current_checkpoint"
+    ]
+    assert spec.accepted_preflight["receipt_sha256"] == (
+        request.accepted_receipt_sha256
+    )
+    assert spec.selected_configuration["route"] == (
+        "qwen3.6:27b × current full_correction"
+    )
+    assert spec.selected_configuration["model_projection_fields"] == [
+        "requirements",
+        "input_dispositions",
+    ]
+    assert spec.selected_configuration["provider_fallback"] is False
+    assert spec.selected_configuration["automatic_retry"] is False
+    assert owner_inputs["description"] == spec.request
+    assert owner_inputs["target_project"] == spec.source["target_project"]
+    assert owner_inputs["source_revision_binding"] == spec.source[
+        "source_revision_binding"
+    ]
+    assert owner_inputs["ollama_model"] == spec.model["model"]
+    assert owner_inputs["ollama_context_window"] == spec.model[
+        "configured_context"
+    ]
+    assert owner_inputs["ollama_max_output_tokens"] == spec.model[
+        "output_budget"
+    ]
+    assert owner_inputs["ollama_timeout_seconds"] == 600.0
+    assert owner_inputs["completion_classification"] == dict(
+        request.product_execution.completion_classification
+    )
+    assert owner_inputs["run_gtfo_runtime"] is False
 
 
 def test_cli_separates_prepare_from_later_actual_authorization(
@@ -749,8 +739,6 @@ def test_cli_separates_prepare_from_later_actual_authorization(
 ) -> None:
     arguments = [
             "prepare-sealed-actual",
-            "--packet-root",
-            "C:/actual",
             "--accepted-preflight-packet",
             "C:/preflight/packet.json",
             "--accepted-preflight-packet-sha256",
@@ -816,3 +804,277 @@ def test_cli_separates_prepare_from_later_actual_authorization(
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 2
     assert payload["code"] == "ACTUAL_EXECUTION_AUTHORIZATION_REQUIRED"
+
+
+def test_same_ready_receipt_cannot_prepare_and_execute_from_two_roots(
+    tmp_path: Path,
+) -> None:
+    first_request, dependencies, first, _ = _prepared_actual(tmp_path)
+    public_fields = set(inspect.signature(ActualRunPreparationRequestV1).parameters)
+    assert "packet_root" not in public_fields
+    assert "actual_lineage_packet_paths" not in public_fields
+    with pytest.raises(ActualRunError, match="ACTUAL_PACKET_ROOT_ALREADY_EXISTS"):
+        prepare_sealed_actual_run(first_request, dependencies=dependencies)
+    owner_calls = 0
+
+    def owner(**_kwargs):
+        nonlocal owner_calls
+        owner_calls += 1
+        return {"model_call_count": 0, "current_stage": "blocked"}
+
+    selected = replace(dependencies, execution_owner=owner)
+    execute_sealed_actual_run(
+        first_request.packet_root,
+        expected_packet_sha256=first.packet_sha256,
+        expected_seal_sha256=first.seal_sha256,
+        actual_execution_authorized=True,
+        diff_approval_reader=lambda _diff: "literal user input",
+        dependencies=selected,
+    )
+
+    assert owner_calls == 1
+
+
+def test_same_receipt_concurrent_prepare_has_one_physical_winner_even_without_lineage(
+    tmp_path: Path,
+) -> None:
+    request, dependencies, _ = _actual_request(tmp_path)
+
+    def prepare(selected: ActualRunPreparationRequestV1) -> str:
+        try:
+            return prepare_sealed_actual_run(
+                selected,
+                dependencies=dependencies,
+            ).status
+        except ActualRunError as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(prepare, (request, request)))
+
+    assert outcomes.count("sealed") == 1
+    assert outcomes.count("ACTUAL_PACKET_ROOT_ALREADY_EXISTS") == 1
+
+
+def test_preexisting_journal_blocks_before_consumption_and_owner(
+    tmp_path: Path,
+) -> None:
+    request, dependencies, prepared, _ = _prepared_actual(tmp_path)
+    journal_path = Path(request.packet_root) / ACTUAL_JOURNAL_FILENAME
+    journal_path.write_text("{}\n", encoding="utf-8")
+    owner_calls = 0
+
+    def owner(**_kwargs):
+        nonlocal owner_calls
+        owner_calls += 1
+        return {}
+
+    with pytest.raises(ActualRunError, match="ACTUAL_JOURNAL_ALREADY_EXISTS"):
+        execute_sealed_actual_run(
+            request.packet_root,
+            expected_packet_sha256=prepared.packet_sha256,
+            expected_seal_sha256=prepared.seal_sha256,
+            actual_execution_authorized=True,
+            diff_approval_reader=lambda _diff: "literal user input",
+            dependencies=replace(dependencies, execution_owner=owner),
+        )
+
+    assert owner_calls == 0
+    assert not (Path(request.packet_root) / ACTUAL_CONSUMPTION_FILENAME).exists()
+
+
+def test_concurrent_execute_has_one_journal_claim_and_one_owner_call(
+    tmp_path: Path,
+) -> None:
+    request, dependencies, prepared, _ = _prepared_actual(tmp_path)
+    owner_calls = 0
+
+    def owner(**_kwargs):
+        nonlocal owner_calls
+        owner_calls += 1
+        return {"model_call_count": 0, "current_stage": "blocked"}
+
+    selected = replace(dependencies, execution_owner=owner)
+
+    def execute() -> str:
+        try:
+            return execute_sealed_actual_run(
+                prepared.packet_root,
+                expected_packet_sha256=prepared.packet_sha256,
+                expected_seal_sha256=prepared.seal_sha256,
+                actual_execution_authorized=True,
+                diff_approval_reader=lambda _diff: "literal user input",
+                dependencies=selected,
+            ).status
+        except ActualRunError as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _index: execute(), range(2)))
+
+    assert outcomes.count("terminal") == 1
+    assert len(outcomes) == 2
+    assert owner_calls == 1
+
+
+def test_packet_contains_no_generated_per_run_python_launcher(tmp_path: Path) -> None:
+    request, _, _, _ = _prepared_actual(tmp_path)
+
+    assert not (Path(request.packet_root) / "actual_runner.py").exists()
+    assert "actual_runner.py" not in json.loads(
+        (Path(request.packet_root) / ACTUAL_SEAL_FILENAME).read_text(encoding="utf-8")
+    )["files"]
+    run_text = (Path(request.packet_root) / "RUN.md").read_text(encoding="utf-8")
+    assert "-m src.main execute-sealed-actual" in run_text
+    assert "actual_runner.py" not in run_text
+
+
+def test_owner_exception_journal_does_not_invent_zero_model_calls(
+    tmp_path: Path,
+) -> None:
+    request, dependencies, prepared, _ = _prepared_actual(tmp_path)
+
+    def owner(**_kwargs):
+        raise RuntimeError("unknown model-call progress")
+
+    execute_sealed_actual_run(
+        request.packet_root,
+        expected_packet_sha256=prepared.packet_sha256,
+        expected_seal_sha256=prepared.seal_sha256,
+        actual_execution_authorized=True,
+        diff_approval_reader=lambda _diff: "literal user input",
+        dependencies=replace(dependencies, execution_owner=owner),
+    )
+    journal = json.loads(
+        (Path(request.packet_root) / ACTUAL_JOURNAL_FILENAME).read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert journal["model_calls"] is None
+    assert journal["model_call_accounting_complete"] is False
+
+
+def test_cli_accepts_typed_game_folder_and_inspection_profile_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    game_folder = tmp_path / "game_folder_binding.json"
+    inspection = tmp_path / "inspection_profile.json"
+    game_payload = {
+        "binding_version": "run_local_game_folder_binding_v1",
+        "source_root": str((tmp_path / "GameFolder").resolve()),
+        "snapshot_sha256": "f" * 64,
+        "file_count": 1,
+        "property_name": "GameFolder",
+    }
+    inspection_payload = {
+        "project_path": str((tmp_path / "Inspector.csproj").resolve()),
+        "method_symbol": "Inspector.Program.Main",
+        "expected_guid": "plugin.guid",
+        "expected_name": "Plugin",
+        "expected_version": "1.0.0",
+        "timeout_seconds": 120,
+    }
+    game_folder.write_text(json.dumps(game_payload), encoding="utf-8")
+    inspection.write_text(json.dumps(inspection_payload), encoding="utf-8")
+
+    arguments = [
+            "prepare-sealed-actual",
+            "--accepted-preflight-packet",
+            "C:/preflight/packet.json",
+            "--accepted-preflight-packet-sha256",
+            "a" * 64,
+            "--accepted-preflight-manifest-sha256",
+            "b" * 64,
+            "--accepted-payload-manifest-sha256",
+            "c" * 64,
+            "--accepted-receipt",
+            "C:/preflight/receipt.json",
+            "--accepted-receipt-sha256",
+            "d" * 64,
+            "--accepted-receipt-manifest",
+            "C:/preflight/manifest.json",
+            "--accepted-receipt-manifest-sha256",
+            "e" * 64,
+            "--workspace-root",
+            "C:/workspaces",
+            "--settings",
+            "C:/settings.yaml",
+            "--game-folder-build-binding-file",
+            str(game_folder),
+            "--compiled-artifact-inspection-profile-file",
+            str(inspection),
+    ]
+    args = build_parser().parse_args(arguments)
+
+    assert args.game_folder_build_binding_file == str(game_folder)
+    assert args.compiled_artifact_inspection_profile_file == str(inspection)
+
+    captured: dict[str, Any] = {}
+
+    class Result:
+        def to_dict(self) -> dict[str, Any]:
+            return {"status": "sealed", "actual_authorized": False}
+
+    def prepare_owner(request: ActualRunPreparationRequestV1) -> Result:
+        captured["request"] = request
+        return Result()
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli.prepare_sealed_actual_run",
+        prepare_owner,
+    )
+    assert cli_main(arguments) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "sealed"
+    selection = captured["request"].product_execution
+    assert dict(selection.game_folder_build_binding) == game_payload
+    assert dict(selection.compiled_artifact_inspection_profile) == inspection_payload
+
+
+def test_typed_profiles_roundtrip_from_spec_into_stable_owner_inputs(
+    tmp_path: Path,
+) -> None:
+    request, dependencies, _ = _actual_request(tmp_path)
+    game_payload = {
+        "binding_version": "run_local_game_folder_binding_v1",
+        "source_root": str((tmp_path / "GameFolder").resolve()),
+        "snapshot_sha256": "f" * 64,
+        "file_count": 3,
+        "property_name": "GameFolder",
+    }
+    inspection_payload = {
+        "project_path": str((tmp_path / "Inspector.csproj").resolve()),
+        "method_symbol": "Inspector.Program.Main",
+        "expected_guid": "plugin.guid",
+        "expected_name": "Plugin",
+        "expected_version": "1.0.0",
+        "timeout_seconds": 120,
+    }
+    request = replace(
+        request,
+        product_execution=replace(
+            request.product_execution,
+            game_folder_build_binding=game_payload,
+            compiled_artifact_inspection_profile=inspection_payload,
+        ),
+    )
+    prepared = prepare_sealed_actual_run(request, dependencies=dependencies)
+    packet = json.loads(
+        (Path(prepared.packet_root) / ACTUAL_PACKET_FILENAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    spec = ActualRunSpecV1.from_dict(packet["actual_run_spec"])
+    owner_inputs = _execution_arguments(
+        spec,
+        lambda _diff: "literal user input",
+    )
+
+    game_binding = owner_inputs["game_folder_build_binding"]
+    inspection_profile = owner_inputs["compiled_artifact_inspection_profile"]
+    assert isinstance(game_binding, RunLocalGameFolderBindingV1)
+    assert game_binding.to_dict() == game_payload
+    assert isinstance(inspection_profile, CompiledArtifactInspectionProfile)
+    assert inspection_profile.to_dict() == inspection_payload

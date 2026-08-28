@@ -7,6 +7,7 @@ import json
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from .actual_execution import (
     ActualProductExecutionSelectionV1,
@@ -111,6 +112,16 @@ def _read_exact_diff_approval_from_stdin(dry_run: dict[str, object]) -> str:
     )
     print("Exact diff hash approval: ", end="", file=sys.stderr, flush=True)
     return sys.stdin.readline().strip()
+
+
+def _read_typed_json_object_file(path_value: str, role: str) -> dict[str, object]:
+    try:
+        value = json.loads(Path(path_value).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{role} file is not valid readable UTF-8 JSON.") from exc
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{role} file must contain one JSON object.")
+    return dict(value)
 
 
 def plan_request(
@@ -521,7 +532,6 @@ def build_parser() -> argparse.ArgumentParser:
         "prepare-sealed-actual",
         help="Compile a ready Entry receipt into a sealed, preparation-only Actual spec.",
     )
-    prepare_actual_parser.add_argument("--packet-root", required=True)
     prepare_actual_parser.add_argument("--accepted-preflight-packet", required=True)
     prepare_actual_parser.add_argument(
         "--accepted-preflight-packet-sha256", required=True
@@ -538,9 +548,6 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_actual_parser.add_argument(
         "--accepted-receipt-manifest-sha256", required=True
     )
-    prepare_actual_parser.add_argument(
-        "--actual-lineage-packet", action="append", default=[]
-    )
     prepare_actual_parser.add_argument("--workspace-root", required=True)
     prepare_actual_parser.add_argument("--settings", required=True)
     prepare_actual_parser.add_argument(
@@ -552,6 +559,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prepare_actual_parser.add_argument(
         "--objective-verification-argument", action="append", default=[]
+    )
+    prepare_actual_parser.add_argument("--game-folder-build-binding-file")
+    prepare_actual_parser.add_argument(
+        "--compiled-artifact-inspection-profile-file"
     )
 
     execute_actual_parser = subparsers.add_parser(
@@ -1272,7 +1283,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = prepare_sealed_actual_run(
                 ActualRunPreparationRequestV1(
                     contract_version="1",
-                    packet_root=args.packet_root,
                     accepted_preflight_packet_path=(
                         args.accepted_preflight_packet
                     ),
@@ -1293,9 +1303,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     accepted_receipt_manifest_sha256=(
                         args.accepted_receipt_manifest_sha256
                     ),
-                    actual_lineage_packet_paths=tuple(
-                        args.actual_lineage_packet
-                    ),
                     product_execution=ActualProductExecutionSelectionV1(
                         contract_version="1",
                         workspace_base=args.workspace_root,
@@ -1305,6 +1312,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                         objective_verification_command=(
                             tuple(args.objective_verification_argument)
                             if args.objective_verification_argument
+                            else None
+                        ),
+                        game_folder_build_binding=(
+                            _read_typed_json_object_file(
+                                args.game_folder_build_binding_file,
+                                "GameFolder binding",
+                            )
+                            if args.game_folder_build_binding_file
+                            else None
+                        ),
+                        compiled_artifact_inspection_profile=(
+                            _read_typed_json_object_file(
+                                args.compiled_artifact_inspection_profile_file,
+                                "compiled-artifact inspection profile",
+                            )
+                            if args.compiled_artifact_inspection_profile_file
                             else None
                         ),
                     ),

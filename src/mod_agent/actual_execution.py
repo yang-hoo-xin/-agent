@@ -39,19 +39,16 @@ from src.mod_agent.preflight_preparation import (
 
 ACTUAL_PACKET_FILENAME = "packet.json"
 ACTUAL_SEAL_FILENAME = "ACTUAL_SEAL.json"
-ACTUAL_THIN_LAUNCHER_FILENAME = "actual_runner.py"
 ACTUAL_RUN_FILENAME = "RUN.md"
 ACTUAL_CONSUMPTION_FILENAME = "actual_consumption.json"
 ACTUAL_JOURNAL_FILENAME = "actual_journal.json"
 ACTUAL_SEALED_FILE_SET = (
     ACTUAL_PACKET_FILENAME,
     ACTUAL_SEAL_FILENAME,
-    ACTUAL_THIN_LAUNCHER_FILENAME,
     ACTUAL_RUN_FILENAME,
 )
 ACTUAL_SEAL_MATERIAL = (
     ACTUAL_PACKET_FILENAME,
-    ACTUAL_THIN_LAUNCHER_FILENAME,
 )
 
 
@@ -266,7 +263,6 @@ class ActualProductExecutionSelectionV1:
 @dataclass(frozen=True)
 class ActualRunPreparationRequestV1:
     contract_version: Literal["1"]
-    packet_root: str
     accepted_preflight_packet_path: str
     accepted_preflight_packet_sha256: str
     accepted_preflight_manifest_sha256: str
@@ -275,14 +271,12 @@ class ActualRunPreparationRequestV1:
     accepted_receipt_sha256: str
     accepted_receipt_manifest_path: str
     accepted_receipt_manifest_sha256: str
-    actual_lineage_packet_paths: tuple[str, ...]
     product_execution: ActualProductExecutionSelectionV1
 
     def __post_init__(self) -> None:
         if self.contract_version != "1":
             raise ValueError("Actual preparation request version is invalid.")
         for name in (
-            "packet_root",
             "accepted_preflight_packet_path",
             "accepted_receipt_path",
             "accepted_receipt_manifest_path",
@@ -297,14 +291,24 @@ class ActualRunPreparationRequestV1:
         ):
             if re.fullmatch(r"[0-9a-f]{64}", _required_text(getattr(self, name), name)) is None:
                 raise ValueError(f"Actual run {name} is invalid.")
-        if not isinstance(self.actual_lineage_packet_paths, tuple) or len(
-            set(self.actual_lineage_packet_paths)
-        ) != len(self.actual_lineage_packet_paths):
-            raise ValueError("Actual lineage packet paths are invalid.")
-        for value in self.actual_lineage_packet_paths:
-            _absolute_normalized_path(value, "actual_lineage_packet_paths")
         if not isinstance(self.product_execution, ActualProductExecutionSelectionV1):
             raise ValueError("Actual ProductExecution selection is invalid.")
+
+    @property
+    def packet_root(self) -> str:
+        preflight = _load_preflight_record(self.accepted_preflight_packet_path)
+        return _deterministic_actual_packet_root(preflight).as_posix()
+
+    @property
+    def actual_lineage_packet_paths(self) -> tuple[str, ...]:
+        packet = _read_json_object(
+            Path(self.accepted_preflight_packet_path),
+            "accepted preflight packet",
+        )
+        return tuple(
+            record["packet_path"]
+            for record in _actual_lineage_from_preflight_packet(packet)
+        )
 
 
 @dataclass(frozen=True)
@@ -578,6 +582,63 @@ def _lineage_records(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
     return tuple(records)
 
 
+def _actual_lineage_from_preflight_packet(
+    packet: Mapping[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    lineage = packet.get("identity_lineage")
+    sources = lineage.get("unused_check_sources") if isinstance(lineage, Mapping) else None
+    if not isinstance(sources, list):
+        raise _fail(
+            "ACTUAL_PREFLIGHT_LINEAGE_MISSING",
+            "Accepted preflight packet lacks its sealed actual lineage sources.",
+            stage="lineage",
+        )
+    paths: list[str] = []
+    expected_hashes: dict[str, str] = {}
+    for item in sources:
+        if not isinstance(item, Mapping) or item.get("role") != "actual_packet":
+            continue
+        path = item.get("path")
+        digest = item.get("sha256")
+        if (
+            not isinstance(path, str)
+            or not path
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or path in expected_hashes
+        ):
+            raise _fail(
+                "ACTUAL_PREFLIGHT_LINEAGE_INVALID",
+                "Accepted preflight actual lineage source is invalid.",
+                stage="lineage",
+            )
+        paths.append(path)
+        expected_hashes[path] = digest
+    records = _lineage_records(tuple(paths))
+    if any(
+        record["packet_sha256"] != expected_hashes[record["packet_path"]]
+        for record in records
+    ):
+        raise _fail(
+            "ACTUAL_PREFLIGHT_LINEAGE_HASH_DRIFT",
+            "Accepted preflight actual lineage differs from its sealed hashes.",
+            stage="lineage",
+        )
+    return records
+
+
+def _deterministic_actual_packet_root(preflight: Any) -> Path:
+    parent = preflight.packet_path.parent.parent.resolve(strict=True)
+    leaf = f"actual_{preflight.outer_run_id}_{preflight.future_actual_id}"
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", leaf) is None:
+        raise _fail(
+            "ACTUAL_PACKET_ROOT_IDENTITY_INVALID",
+            "Accepted future identity cannot form the deterministic Actual root.",
+            stage="identity",
+        )
+    return parent / leaf
+
+
 def _derive_spec(
     request: ActualRunPreparationRequestV1,
     *,
@@ -611,7 +672,7 @@ def _derive_spec(
             "Platform, source, or model identity drifted before Actual preparation.",
             stage="current_facts",
         ) from exc
-    lineage = _lineage_records(request.actual_lineage_packet_paths)
+    lineage = _actual_lineage_from_preflight_packet(packet)
     if any(
         item["outer_run_id"] == preflight.outer_run_id
         or item["actual_attempt_id"] == preflight.future_actual_id
@@ -634,7 +695,7 @@ def _derive_spec(
         )
     return ActualRunSpecV1(
         contract_version="1",
-        packet_root=request.packet_root,
+        packet_root=_deterministic_actual_packet_root(preflight).as_posix(),
         outer_run_id=preflight.outer_run_id,
         actual_attempt_id=preflight.future_actual_id,
         request=packet["request"],
@@ -692,19 +753,6 @@ def _derive_spec(
     )
 
 
-def _thin_launcher_source() -> str:
-    return '''from __future__ import annotations
-
-import sys
-
-from src.mod_agent.cli import main
-
-
-if __name__ == "__main__":
-    raise SystemExit(main(["execute-sealed-actual", *sys.argv[1:]]))
-'''
-
-
 def _run_command(
     packet_root: Path,
     *,
@@ -751,7 +799,9 @@ def prepare_sealed_actual_run(
 ) -> ActualRunPreparationResultV1:
     """Compile and seal an Actual spec without granting or starting execution."""
 
-    root = Path(request.packet_root)
+    selected_dependencies = dependencies or ActualExecutionDependenciesV1()
+    spec = _derive_spec(request, dependencies=selected_dependencies)
+    root = Path(spec.packet_root)
     if root.exists():
         raise _fail(
             "ACTUAL_PACKET_ROOT_ALREADY_EXISTS",
@@ -772,8 +822,6 @@ def prepare_sealed_actual_run(
             "Actual packet parent must be an existing directory.",
             stage="output_root",
         )
-    selected_dependencies = dependencies or ActualExecutionDependenciesV1()
-    spec = _derive_spec(request, dependencies=selected_dependencies)
     accepted = spec.accepted_preflight
     preflight_root = Path(accepted["packet_path"]).parent.resolve(strict=True)
     preflight_output_root = Path(accepted["receipt_path"]).parent.resolve(strict=True)
@@ -816,10 +864,8 @@ def prepare_sealed_actual_run(
             ),
         }
     )
-    launcher_bytes = _thin_launcher_source().encode("utf-8")
     material = {
         ACTUAL_PACKET_FILENAME: hashlib.sha256(packet_bytes).hexdigest(),
-        ACTUAL_THIN_LAUNCHER_FILENAME: hashlib.sha256(launcher_bytes).hexdigest(),
     }
     seal_bytes = _json_bytes(
         {
@@ -848,7 +894,6 @@ def prepare_sealed_actual_run(
     files = {
         ACTUAL_PACKET_FILENAME: packet_bytes,
         ACTUAL_SEAL_FILENAME: seal_bytes,
-        ACTUAL_THIN_LAUNCHER_FILENAME: launcher_bytes,
         ACTUAL_RUN_FILENAME: run_bytes,
     }
     _materialize(root, files)
@@ -960,7 +1005,6 @@ def _request_from_spec(spec: ActualRunSpecV1) -> ActualRunPreparationRequestV1:
     accepted = spec.accepted_preflight
     return ActualRunPreparationRequestV1(
         contract_version="1",
-        packet_root=spec.packet_root,
         accepted_preflight_packet_path=accepted["packet_path"],
         accepted_preflight_packet_sha256=accepted["packet_sha256"],
         accepted_preflight_manifest_sha256=accepted["preflight_manifest_sha256"],
@@ -969,9 +1013,6 @@ def _request_from_spec(spec: ActualRunSpecV1) -> ActualRunPreparationRequestV1:
         accepted_receipt_sha256=accepted["receipt_sha256"],
         accepted_receipt_manifest_path=accepted["receipt_manifest_path"],
         accepted_receipt_manifest_sha256=accepted["receipt_manifest_sha256"],
-        actual_lineage_packet_paths=tuple(
-            item["packet_path"] for item in spec.actual_lineage
-        ),
         product_execution=spec.product_execution,
     )
 
@@ -1052,10 +1093,12 @@ def _entry_request_from_spec(spec: ActualRunSpecV1) -> EntryAdmissionRequestV1:
 
 def _terminal_projection(
     result: Mapping[str, Any],
-) -> tuple[int, str | None, dict[str, Any]]:
-    model_calls = result.get("model_call_count", 0)
-    if type(model_calls) is not int or model_calls < 0:
-        model_calls = 0
+) -> tuple[int | None, bool, str | None, dict[str, Any]]:
+    reported_model_calls = result.get("model_call_count")
+    accounting_complete = (
+        type(reported_model_calls) is int and reported_model_calls >= 0
+    )
+    model_calls = reported_model_calls if accounting_complete else None
     audit = result.get("local_model_input_audit")
     model_role = (
         audit.get("model_role")
@@ -1064,13 +1107,13 @@ def _terminal_projection(
     )
     product = result.get("product_execution_result")
     if not isinstance(product, Mapping):
-        return model_calls, model_role, {
+        return model_calls, accounting_complete, model_role, {
             "platform_status": None,
             "execution_disposition": None,
             "failure_stage": None,
             "terminal_node": result.get("current_stage"),
         }
-    return model_calls, model_role, {
+    return model_calls, accounting_complete, model_role, {
         "platform_status": product.get("platform_status"),
         "execution_disposition": product.get("execution_disposition"),
         "failure_stage": product.get("failure_stage"),
@@ -1129,11 +1172,18 @@ def execute_sealed_actual_run(
     spec = _load_sealed_spec(packet_root)
     root = Path(spec.packet_root).resolve(strict=True)
     consumption_path = root / ACTUAL_CONSUMPTION_FILENAME
+    journal_path = root / ACTUAL_JOURNAL_FILENAME
     if consumption_path.exists():
         raise _fail(
             "ACTUAL_IDENTITY_ALREADY_CONSUMED",
             "Actual identity was consumed before an earlier execution attempt.",
             stage="consumption",
+        )
+    if journal_path.exists():
+        raise _fail(
+            "ACTUAL_JOURNAL_ALREADY_EXISTS",
+            "Actual terminal journal path already exists before execution.",
+            stage="journal",
         )
     expected = _derive_spec(
         _request_from_spec(spec),
@@ -1153,9 +1203,31 @@ def execute_sealed_actual_run(
         "status": "consumed_before_execution",
     }
     try:
+        journal_handle = journal_path.open("xb")
+    except FileExistsError as exc:
+        raise _fail(
+            "ACTUAL_JOURNAL_ALREADY_EXISTS",
+            "Actual terminal journal path was concurrently claimed.",
+            stage="journal",
+        ) from exc
+    journal_handle.write(
+        _json_bytes(
+            {
+                "journal_version": "actual_run_journal_reservation_v1",
+                "outer_run_id": spec.outer_run_id,
+                "actual_attempt_id": spec.actual_attempt_id,
+                "status": "reserved_before_execution",
+                "terminal_summary_complete": False,
+            }
+        )
+    )
+    journal_handle.flush()
+    try:
         with consumption_path.open("xb") as handle:
             handle.write(_json_bytes(consumption))
     except FileExistsError as exc:
+        journal_handle.close()
+        journal_path.unlink()
         raise _fail(
             "ACTUAL_IDENTITY_ALREADY_CONSUMED",
             "Actual identity was concurrently consumed by another execution.",
@@ -1166,10 +1238,16 @@ def execute_sealed_actual_run(
         owner_result = selected_dependencies.execution_owner(
             **_execution_arguments(spec, diff_approval_reader)
         )
-        model_calls, model_role, terminal = _terminal_projection(owner_result)
+        (
+            model_calls,
+            model_call_accounting_complete,
+            model_role,
+            terminal,
+        ) = _terminal_projection(owner_result)
         status: Literal["terminal", "failed"] = "terminal"
     except Exception as exc:
-        model_calls = 0
+        model_calls = None
+        model_call_accounting_complete = False
         model_role = None
         terminal = {
             "status": "owner_exception",
@@ -1190,6 +1268,7 @@ def execute_sealed_actual_run(
         "started_at": started,
         "finished_at": finished,
         "model_calls": model_calls,
+        "model_call_accounting_complete": model_call_accounting_complete,
         "last_observed_model_role": model_role,
         "stage": terminal.get("terminal_node") or terminal.get("status"),
         "automatic_retry": False,
@@ -1198,10 +1277,13 @@ def execute_sealed_actual_run(
         "raw_prompt_persisted": False,
         "raw_reasoning_persisted": False,
         "source_text_persisted": False,
+        "terminal_summary_complete": True,
     }
-    journal_path = root / ACTUAL_JOURNAL_FILENAME
-    with journal_path.open("xb") as handle:
-        handle.write(_json_bytes(journal))
+    journal_handle.seek(0)
+    journal_handle.truncate()
+    journal_handle.write(_json_bytes(journal))
+    journal_handle.flush()
+    journal_handle.close()
     return ActualRunResultV1(
         status=status,
         outer_run_id=spec.outer_run_id,
