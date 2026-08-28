@@ -775,6 +775,21 @@ class StructuredModelRequirementCoverageProvider:
                 "Semantic findings are proposals; deterministic code validates every identity and derives sufficiency and authority.",
                 "Do not return paths, source refs, stable ids, sufficiency, edit targets, Patch authority, or execution authority.",
                 "State unresolved gaps explicitly and do not infer missing current source as support.",
+                (
+                    "For role=change, support means the cited Evidence proves the "
+                    "current implementation and exact modification location; it "
+                    "does not require the requested behavior to exist before the "
+                    "change."
+                ),
+                (
+                    "For role=change, use missing when current source or API "
+                    "evidence is absent or the modification location is unknown, "
+                    "and use conflict when the cited Evidence conflicts."
+                ),
+                (
+                    "A supported change may retain unresolved gaps that describe "
+                    "the requested expected delta; preserve those gaps verbatim."
+                ),
             ],
         }
         findings: Mapping[str, Any] | None = None

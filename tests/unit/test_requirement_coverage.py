@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -402,6 +403,148 @@ def _actual10_method_coverage_inputs(tmp_path: Path):
     return feature, materialized, retrieved, spread, configuration, findings
 
 
+def _actual10_expected_delta_inputs(tmp_path: Path):
+    feature, _, _, _, _, _ = _actual10_method_coverage_inputs(tmp_path)
+    feature["non_goals"] = []
+    feature["target_behavior"] = (
+        "Add Accurate Spread Enabled with default true; when false after restart, "
+        "stop overriding the raw crosshair size with accurate spread data."
+    )
+    feature["evidence_requirements"] = [
+        "Provide target source/API and current configuration schema evidence."
+    ]
+    projection = {
+        "requirements": [
+            {
+                "role": "change",
+                "text": str(feature["target_behavior"]),
+                "input_obligation_indexes": [1, 2],
+                "query_leads": [
+                    "AccurateCrosshair source code spread calculation logic",
+                    "AccurateCrosshair config schema settings reference",
+                ],
+            },
+            {
+                "role": "pre_patch_evidence",
+                "text": str(feature["evidence_requirements"][0]),
+                "input_obligation_indexes": [3],
+                "query_leads": [
+                    "AccurateCrosshair config schema settings reference"
+                ],
+            },
+            {
+                "role": "post_change_acceptance",
+                "text": "Validate the requested behavior after the change.",
+                "input_obligation_indexes": [4, 5],
+                "query_leads": ["AccurateCrosshair runtime verification plan"],
+            },
+        ],
+        "relations": [
+            {
+                "parent_requirement_indexes": [index],
+                "meaning": f"Evidence disposition for requirement {index}.",
+            }
+            for index in range(1, 4)
+        ],
+        "input_dispositions": [],
+    }
+    materialized = materialize_requirement_coverage_projection(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+        projection=projection,
+    )
+    retrieved = RgLiveEvidenceProvider(tmp_path).collect_query_set(
+        queries=tuple(dict(value) for value in materialized["queries"]),
+        search_root="generated_mods/AccurateCrosshair",
+        max_items=len(materialized["queries"]),
+    )
+    spread = next(
+        item for item in retrieved.items if item.source_path.endswith("/SpreadPatches.cs")
+    )
+    configuration = next(
+        item for item in retrieved.items if item.source_path.endswith("/Configuration.cs")
+    )
+    expected_delta_gaps = [
+        (
+            "The new boolean setting 'Accurate Spread Enabled' is not present in "
+            "the provided source code excerpts."
+        ),
+        (
+            "Logic to disable accurate spread data override when the setting is "
+            "false is not implemented."
+        ),
+    ]
+    findings = {
+        "findings": [
+            {
+                "relation_index": 1,
+                "relationship": "support",
+                "evidence_ids": [spread.evidence_id, configuration.evidence_id],
+                "unresolved_gaps": list(expected_delta_gaps),
+            },
+            {
+                "relation_index": 2,
+                "relationship": "support",
+                "evidence_ids": [configuration.evidence_id],
+                "unresolved_gaps": [],
+            },
+            {
+                "relation_index": 3,
+                "relationship": "missing",
+                "evidence_ids": [],
+                "unresolved_gaps": [
+                    "No evidence of post-change validation or compile/static "
+                    "analysis output is provided."
+                ],
+            },
+        ]
+    }
+    return (
+        feature,
+        materialized,
+        retrieved,
+        spread,
+        configuration,
+        findings,
+        expected_delta_gaps,
+    )
+
+
+def _separate_role_coverage_inputs(tmp_path: Path):
+    feature, _, _ = _materialized_and_retrieved(tmp_path)
+    materialized = materialize_requirement_coverage_projection(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+        projection=_deterministically_completed_model_projection(),
+    )
+    retrieved = RgLiveEvidenceProvider(tmp_path).collect_query_set(
+        queries=tuple(dict(value) for value in materialized["queries"]),
+        search_root="generated_mods/SyntheticMod",
+        max_items=len(materialized["queries"]),
+    )
+    evidence = _evidence_by_requirement(materialized, retrieved)
+    findings = {
+        "findings": [
+            {
+                "relation_index": index,
+                "relationship": "support" if index < 4 else "missing",
+                "evidence_ids": (
+                    [
+                        evidence[
+                            str(materialized["requirements"][index - 1]["requirement_id"])
+                        ][0]
+                    ]
+                    if index < 4
+                    else []
+                ),
+                "unresolved_gaps": [] if index < 4 else ["After patch."],
+            }
+            for index in range(1, 5)
+        ]
+    }
+    return feature, materialized, retrieved, findings
+
+
 def _materialized_and_retrieved(tmp_path: Path):
     _write_sources(tmp_path)
     feature = _feature_data()
@@ -547,13 +690,64 @@ def test_actual10_method_spans_allow_existing_coverage_to_derive_edit_target(
     }
 
 
-def test_actual10_unimplemented_gap_still_blocks_existing_coverage(
+def test_actual10_expected_delta_gaps_preserve_change_edit_targets_and_roundtrip(
     tmp_path: Path,
 ) -> None:
-    feature, materialized, retrieved, spread, _, findings = (
-        _actual10_method_coverage_inputs(tmp_path)
+    (
+        feature,
+        materialized,
+        retrieved,
+        spread,
+        configuration,
+        findings,
+        expected_delta_gaps,
+    ) = _actual10_expected_delta_inputs(tmp_path)
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        findings=findings,
     )
-    findings["findings"][0]["unresolved_gaps"] = ["目标尚未实现"]
+
+    assert pack.readiness == "sufficient"
+    assert pack.can_generate_patch is True
+    coverage = pack.requirement_coverage
+    assert [
+        (requirement["role"], requirement["required_before_patch"])
+        for requirement in coverage["requirements"]
+    ] == [
+        ("change", True),
+        ("pre_patch_evidence", True),
+        ("post_change_acceptance", False),
+    ]
+    assert coverage["edit_target_evidence_ids"] == sorted(
+        [spread.evidence_id, configuration.evidence_id]
+    )
+    assert coverage["findings"][0]["unresolved_gaps"] == expected_delta_gaps
+    payload = pack.to_artifact_payload()
+    assert payload["authoritative_for_patch"] is True
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+
+
+@pytest.mark.parametrize("relationship", ["missing", "conflict"])
+def test_change_missing_or_conflict_still_blocks_without_edit_target(
+    tmp_path: Path,
+    relationship: str,
+) -> None:
+    (
+        feature,
+        materialized,
+        retrieved,
+        _,
+        _,
+        findings,
+        _,
+    ) = _actual10_expected_delta_inputs(tmp_path)
+    change = findings["findings"][0]
+    change["relationship"] = relationship
+    if relationship == "missing":
+        change["evidence_ids"] = []
 
     pack = build_requirement_coverage_pack(
         query=str(feature["user_request"]),
@@ -563,17 +757,142 @@ def test_actual10_unimplemented_gap_still_blocks_existing_coverage(
     )
 
     change_requirement_id = materialized["requirements"][0]["requirement_id"]
-    assert spread.evidence_id in findings["findings"][0]["evidence_ids"]
     assert pack.readiness == "insufficient"
     assert pack.can_generate_patch is False
     assert pack.requirement_coverage["edit_target_evidence_ids"] == []
-    assert (
-        f"required_requirement_unresolved:{change_requirement_id}"
-        in pack.requirement_coverage["sufficiency"]["reasons"]
+    expected_reason = (
+        f"required_requirement_{'missing' if relationship == 'missing' else 'conflicting'}:"
+        f"{change_requirement_id}"
     )
+    assert expected_reason in pack.requirement_coverage["sufficiency"]["reasons"]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "field_value"),
+    [
+        ("source_path", ""),
+        ("source_hash", None),
+        ("span", None),
+        ("source_type", "documentation"),
+    ],
+)
+def test_change_support_without_exact_target_source_identity_stays_blocked(
+    tmp_path: Path,
+    field_name: str,
+    field_value: object,
+) -> None:
+    (
+        feature,
+        materialized,
+        retrieved,
+        spread,
+        configuration,
+        findings,
+        _,
+    ) = _actual10_expected_delta_inputs(tmp_path)
+    change = findings["findings"][0]
+    change["evidence_ids"] = [spread.evidence_id]
+    replacement_values = {field_name: field_value}
+    if field_name == "source_hash":
+        replacement_values.update(file_hash=None, doc_hash=None)
+    changed_spread = replace(spread, **replacement_values)
+    changed_items = tuple(
+        changed_spread if item.evidence_id == spread.evidence_id else item
+        for item in retrieved.items
+    )
+    changed_retrieved = replace(retrieved, items=changed_items)
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=changed_retrieved,
+        findings=findings,
+    )
+
+    assert configuration.evidence_id not in change["evidence_ids"]
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.requirement_coverage["edit_target_evidence_ids"] == []
     assert "change_edit_target_evidence_missing" in (
         pack.requirement_coverage["sufficiency"]["reasons"]
     )
+
+
+@pytest.mark.parametrize("mode", ["unresolved", "conflict"])
+def test_preservation_unresolved_or_conflict_still_fails_closed(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    feature, materialized, retrieved, findings = _separate_role_coverage_inputs(
+        tmp_path
+    )
+    preservation = findings["findings"][2]
+    if mode == "unresolved":
+        preservation["unresolved_gaps"] = [
+            "The preservation boundary is not established."
+        ]
+    else:
+        preservation["relationship"] = "conflict"
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        findings=findings,
+    )
+
+    preservation_requirement_id = materialized["requirements"][2]["requirement_id"]
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    expected_reason = (
+        f"required_requirement_{'unresolved' if mode == 'unresolved' else 'conflicting'}:"
+        f"{preservation_requirement_id}"
+    )
+    assert expected_reason in pack.requirement_coverage["sufficiency"]["reasons"]
+
+
+def test_findings_prompt_defines_change_support_as_current_source_location(
+    tmp_path: Path,
+) -> None:
+    (
+        feature,
+        materialized,
+        retrieved,
+        _,
+        _,
+        findings,
+        _,
+    ) = _actual10_expected_delta_inputs(tmp_path)
+    payloads: list[dict[str, object]] = []
+
+    def complete_json(role, payload, _schema):
+        assert role == "requirement_findings"
+        payloads.append(deepcopy(payload))
+        return deepcopy(findings)
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    assert provider.findings(
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        request=str(feature["user_request"]),
+    ) == findings
+
+    assert payloads[0]["rules"][-3:] == [
+        (
+            "For role=change, support means the cited Evidence proves the current "
+            "implementation and exact modification location; it does not require "
+            "the requested behavior to exist before the change."
+        ),
+        (
+            "For role=change, use missing when current source or API evidence is "
+            "absent or the modification location is unknown, and use conflict when "
+            "the cited Evidence conflicts."
+        ),
+        (
+            "A supported change may retain unresolved gaps that describe the "
+            "requested expected delta; preserve those gaps verbatim."
+        ),
+    ]
 
 
 def test_shared_relation_identity_preserves_hook_compatibility() -> None:

@@ -432,6 +432,9 @@ def resolve_requirement_coverage(
             }
         )
     requirements = [dict(value) for value in materialized_projection["requirements"]]
+    requirement_by_id = {
+        str(value["requirement_id"]): value for value in requirements
+    }
     required_ids = {
         str(value["requirement_id"])
         for value in requirements
@@ -446,6 +449,7 @@ def resolve_requirement_coverage(
     }
     reasons: list[str] = []
     for requirement_id in sorted(required_ids):
+        requirement_role = requirement_by_id[requirement_id]["role"]
         relevant = [
             finding
             for finding in normalized_findings
@@ -455,7 +459,10 @@ def resolve_requirement_coverage(
             str(evidence_id)
             for finding in relevant
             if finding["relationship"] == "support"
-            and not finding["unresolved_gaps"]
+            and (
+                requirement_role == "change"
+                or not finding["unresolved_gaps"]
+            )
             for evidence_id in finding["evidence_ids"]
             if evidence_id in authoritative_ids
         }
@@ -465,7 +472,14 @@ def resolve_requirement_coverage(
             reasons.append(f"required_requirement_conflicting:{requirement_id}")
         if any(finding["relationship"] == "missing" for finding in relevant):
             reasons.append(f"required_requirement_missing:{requirement_id}")
-        if any(finding["unresolved_gaps"] for finding in relevant):
+        if any(
+            finding["unresolved_gaps"]
+            and not (
+                requirement_role == "change"
+                and finding["relationship"] == "support"
+            )
+            for finding in relevant
+        ):
             reasons.append(f"required_requirement_unresolved:{requirement_id}")
     change_ids = {
         str(value["requirement_id"])
@@ -476,7 +490,6 @@ def resolve_requirement_coverage(
         str(evidence_id)
         for finding in normalized_findings
         if finding["relationship"] == "support"
-        and not finding["unresolved_gaps"]
         and change_ids.intersection(finding["parent_requirement_ids"])
         for evidence_id in finding["evidence_ids"]
     }
