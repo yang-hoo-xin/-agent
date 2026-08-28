@@ -18,7 +18,7 @@ queue_status: actual10 reached Findings and closed EVID-002; EVID-003 remains ac
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 last_task_status: P2_empirical_path_reached_findings_blocked_at_coverage_and_planning
-current_head: 1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39
+current_product_code_checkpoint: 1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
 P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed

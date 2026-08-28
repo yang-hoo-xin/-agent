@@ -13,7 +13,7 @@ current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_dependency: fresh sealed checkpoint-bound preflight requires separate user authorization
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
-current_head: 1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39
+current_product_code_checkpoint: 1b9acd0b780e2f54853fa0e8ebcd0ade322b1a39
 current_wip: four independent user documentation changes, no staged files
 selected_actual_only_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 P0_status: completed_at_c8004845fe3f01d844e79ab8b6aba0634b6a5c01

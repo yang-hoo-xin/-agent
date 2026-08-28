@@ -111,8 +111,10 @@ approval cannot be inferred. The two Internal Alpha hard gates remain false:
 actual-only changed-product Build/Test success and Failure -> Different Repair
 -> Revalidation. Runtime remains false and Public Alpha remains unauthorized.
 
-The current repository HEAD is `1b9acd0`. Semantic reconciliation of the three
-non-ancestor commits is complete: `9bce437` is
+The current product-code checkpoint synchronized by this docs state is
+`1b9acd0`. Fresh preflight must read the live physical Git HEAD rather than
+infer it from this document. Semantic reconciliation of the three non-ancestor
+commits is complete: `9bce437` is
 `absorbed_or_superseded/do_not_merge`; `9a237b7` and `c000021` are
 `byte-identical_present/no_action`. They do not block actual11 or Internal Alpha
 and do not authorize merge, cherry-pick, or overwrite of user WIP.

@@ -474,7 +474,7 @@ severity: S2
 decision_priority: P2
 status: mitigated_for_current_scope
 first_seen: 2026-08-21 checkpoint 397629ee review
-latest_evidence: the 2026-08-28 docs-only synchronization aligns Active Product Contract, Project State, Implementation Queue, and this Issue Register to HEAD 1b9acd0 and actual10. It records EVID-002 closed, EVID-003 active, P0 completed, the P2 Findings/Coverage boundary, and both Internal Alpha hard gates false. Internal Alpha documentation was outside this synchronization scope
+latest_evidence: the 2026-08-28 docs-only synchronization aligns Active Product Contract, Project State, Implementation Queue, and this Issue Register to product-code checkpoint 1b9acd0 and actual10. It records EVID-002 closed, EVID-003 active, P0 completed, the P2 Findings/Coverage boundary, and both Internal Alpha hard gates false. Internal Alpha documentation was outside this synchronization scope
 current_effect: the four authorized status owners agree that P2 empirical execution reached Findings and is blocked by insufficient Coverage and a blocking ImplementationPlan under EVID-003; P0 remains completed and is not reopened. Documentation remains evidence projection rather than capability progress
 workaround: keep detailed run evidence in one primary record and short selection fields elsewhere
 reopen_trigger: Active Product Contract, Project State, Implementation Queue, or the §8 execution sequence name different current selections
