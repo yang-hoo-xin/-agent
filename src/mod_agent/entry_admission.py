@@ -217,6 +217,46 @@ class EntryAdmissionRequestV1:
         )
 
 
+def entry_request_from_preflight_packet(
+    packet: Mapping[str, Any],
+    *,
+    payload_manifest_sha256: str,
+) -> EntryAdmissionRequestV1:
+    """Project one sealed preflight packet through the Entry request contract."""
+
+    platform = packet["platform"]
+    delivery = packet["delivery"]
+    source = packet["source_identity"]
+    model = packet["model_identity"]
+    return EntryAdmissionRequestV1(
+        contract_version="1",
+        outer_run_id=packet["outer_run_id"],
+        attempt_id=packet["attempt_id"],
+        payload_manifest_sha256=payload_manifest_sha256,
+        packet_root_text=delivery["packet_root_text"],
+        packet_root_canonical_text=delivery["packet_root_canonical_text"],
+        output_root_text=delivery["fresh_preflight_root_text"],
+        output_root_canonical_text=delivery["fresh_preflight_root_canonical_text"],
+        platform_root=platform["repository_root"],
+        platform_checkpoint=platform["current_checkpoint"],
+        platform_branch=platform["branch"],
+        allowed_dirty_paths=tuple(platform["allowed_dirty_paths"]),
+        source_declared_root=source["declared_root"],
+        source_canonical_root=source["canonical_root"],
+        target_project=source["target_project"],
+        source_revision_binding=dict(source["source_revision_binding"]),
+        git_executable_identity=GitExecutableIdentityV1.from_dict(
+            packet["git_executable_identity"]
+        ),
+        ollama_base_url=model["base_url"],
+        ollama_model=model["model"],
+        ollama_digest=model["digest"],
+        ollama_server_version=model["server_version"],
+        ollama_context_window=model["configured_num_ctx"],
+        ollama_output_budget=model["num_predict"],
+    )
+
+
 @dataclass(frozen=True)
 class EntryAdmissionBlockerV1:
     stage: str
@@ -519,6 +559,73 @@ def _write_receipt(
     )
 
 
+def verify_entry_current_facts(
+    request: EntryAdmissionRequestV1,
+    *,
+    dependencies: EntryAdmissionDependenciesV1 | None = None,
+) -> tuple[dict[str, Any], ...]:
+    """Revalidate the sealed platform, source, and model facts without writing."""
+
+    selected_dependencies = dependencies or EntryAdmissionDependenciesV1(
+        git_admission=request.strict_git_admission()
+    )
+    if selected_dependencies.git_admission != request.strict_git_admission():
+        raise GitAdmissionError(
+            "ENTRY_GIT_ADMISSION_IDENTITY_DRIFT",
+            "Entry Git admission dependency drifted from request identity.",
+        )
+    platform = selected_dependencies.git_admission.verify_platform(
+        repository=Path(request.platform_root),
+        expected_head=request.platform_checkpoint,
+        expected_branch=request.platform_branch,
+        allowed_dirty_paths=request.allowed_dirty_paths,
+    )
+    gates: list[dict[str, Any]] = [
+        {"gate": "platform", "decision": "passed", "facts": platform}
+    ]
+
+    from src.mod_agent.product_executor import source_snapshot, source_snapshot_sha256
+
+    target_project = Path(request.target_project).resolve(strict=True)
+    snapshot = source_snapshot(target_project)
+    source = selected_dependencies.git_admission.verify_source_revision_binding(
+        source=target_project,
+        snapshot=snapshot,
+        snapshot_sha256=source_snapshot_sha256(snapshot),
+        binding=request.source_revision_binding,
+    )
+    gates.append({"gate": "source", "decision": "passed", "facts": source})
+
+    identity = selected_dependencies.model_identity_reader(
+        request.ollama_base_url, request.ollama_model
+    )
+    if identity.get("digest") != request.ollama_digest:
+        raise ModelAdmissionError("OLLAMA_MODEL_DIGEST_DRIFT")
+    version = selected_dependencies.server_version_reader(request.ollama_base_url)
+    if version != request.ollama_server_version:
+        raise ModelAdmissionError("OLLAMA_SERVER_VERSION_DRIFT")
+    context_limit = selected_dependencies.context_validator(
+        identity,
+        requested_context_window=request.ollama_context_window,
+    )
+    gates.append(
+        {
+            "gate": "model",
+            "decision": "passed",
+            "facts": {
+                "model": request.ollama_model,
+                "digest": request.ollama_digest,
+                "server_version": version,
+                "context_limit": context_limit,
+                "configured_context": request.ollama_context_window,
+                "output_budget": request.ollama_output_budget,
+                "generation_calls": 0,
+            },
+        }
+    )
+    return tuple(gates)
+
+
 def admit_sealed_entry(
     request: EntryAdmissionRequestV1,
     *,
@@ -541,61 +648,9 @@ def admit_sealed_entry(
         )
         return EntryAdmissionRunV1(result, None, None, None)
 
-    selected_dependencies = dependencies or EntryAdmissionDependenciesV1(
-        git_admission=request.strict_git_admission()
-    )
     try:
-        if selected_dependencies.git_admission != request.strict_git_admission():
-            raise GitAdmissionError(
-                "ENTRY_GIT_ADMISSION_IDENTITY_DRIFT",
-                "Entry Git admission dependency drifted from request identity.",
-            )
-        platform = selected_dependencies.git_admission.verify_platform(
-            repository=Path(request.platform_root),
-            expected_head=request.platform_checkpoint,
-            expected_branch=request.platform_branch,
-            allowed_dirty_paths=request.allowed_dirty_paths,
-        )
-        gates.append({"gate": "platform", "decision": "passed", "facts": platform})
-
-        from src.mod_agent.product_executor import source_snapshot, source_snapshot_sha256
-
-        target_project = Path(request.target_project).resolve(strict=True)
-        snapshot = source_snapshot(target_project)
-        source = selected_dependencies.git_admission.verify_source_revision_binding(
-            source=target_project,
-            snapshot=snapshot,
-            snapshot_sha256=source_snapshot_sha256(snapshot),
-            binding=request.source_revision_binding,
-        )
-        gates.append({"gate": "source", "decision": "passed", "facts": source})
-
-        identity = selected_dependencies.model_identity_reader(
-            request.ollama_base_url, request.ollama_model
-        )
-        if identity.get("digest") != request.ollama_digest:
-            raise ModelAdmissionError("OLLAMA_MODEL_DIGEST_DRIFT")
-        version = selected_dependencies.server_version_reader(request.ollama_base_url)
-        if version != request.ollama_server_version:
-            raise ModelAdmissionError("OLLAMA_SERVER_VERSION_DRIFT")
-        context_limit = selected_dependencies.context_validator(
-            identity,
-            requested_context_window=request.ollama_context_window,
-        )
-        gates.append(
-            {
-                "gate": "model",
-                "decision": "passed",
-                "facts": {
-                    "model": request.ollama_model,
-                    "digest": request.ollama_digest,
-                    "server_version": version,
-                    "context_limit": context_limit,
-                    "configured_context": request.ollama_context_window,
-                    "output_budget": request.ollama_output_budget,
-                    "generation_calls": 0,
-                },
-            }
+        gates.extend(
+            verify_entry_current_facts(request, dependencies=dependencies)
         )
     except GitAdmissionError as exc:
         result = _blocked(

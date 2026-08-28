@@ -8,6 +8,13 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 
+from .actual_execution import (
+    ActualProductExecutionSelectionV1,
+    ActualRunError,
+    ActualRunPreparationRequestV1,
+    execute_sealed_actual_run,
+    prepare_sealed_actual_run,
+)
 from .artifacts.store import ArtifactStorePreflightError
 from .edit_authority_capabilities import (
     parse_current_edit_authority_review_result,
@@ -76,6 +83,34 @@ def _strict_cli_bool(value: str) -> bool:
     if value == "false":
         return False
     raise argparse.ArgumentTypeError("value must be exactly true or false")
+
+
+def _read_exact_diff_approval_from_stdin(dry_run: dict[str, object]) -> str:
+    print(
+        json.dumps(
+            {
+                "status": "AWAITING_EXACT_DIFF_APPROVAL",
+                "diff_hash": dry_run.get("diff_hash"),
+                "context_hashes": dry_run.get("context_hashes"),
+                "unified_diff": dry_run.get("unified_diff"),
+                "unified_diff_sha256": dry_run.get("unified_diff_sha256"),
+                "unified_diff_bytes": dry_run.get("unified_diff_bytes"),
+                "diff_stats": dry_run.get("diff_stats"),
+                "static_checks": dry_run.get("static_checks"),
+                "diff_preview": dry_run.get("diff_preview"),
+                "instruction": (
+                    "Paste the exact diff_hash to approve isolated apply; "
+                    "enter REJECTED_BY_USER to explicitly reject it; any "
+                    "other input blocks the write as a hash mismatch."
+                ),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        file=sys.stderr,
+    )
+    print("Exact diff hash approval: ", end="", file=sys.stderr, flush=True)
+    return sys.stdin.readline().strip()
 
 
 def plan_request(
@@ -480,6 +515,54 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=3,
         default=[],
         metavar=("PACKET", "RECEIPT", "RECEIPT_MANIFEST"),
+    )
+
+    prepare_actual_parser = subparsers.add_parser(
+        "prepare-sealed-actual",
+        help="Compile a ready Entry receipt into a sealed, preparation-only Actual spec.",
+    )
+    prepare_actual_parser.add_argument("--packet-root", required=True)
+    prepare_actual_parser.add_argument("--accepted-preflight-packet", required=True)
+    prepare_actual_parser.add_argument(
+        "--accepted-preflight-packet-sha256", required=True
+    )
+    prepare_actual_parser.add_argument(
+        "--accepted-preflight-manifest-sha256", required=True
+    )
+    prepare_actual_parser.add_argument(
+        "--accepted-payload-manifest-sha256", required=True
+    )
+    prepare_actual_parser.add_argument("--accepted-receipt", required=True)
+    prepare_actual_parser.add_argument("--accepted-receipt-sha256", required=True)
+    prepare_actual_parser.add_argument("--accepted-receipt-manifest", required=True)
+    prepare_actual_parser.add_argument(
+        "--accepted-receipt-manifest-sha256", required=True
+    )
+    prepare_actual_parser.add_argument(
+        "--actual-lineage-packet", action="append", default=[]
+    )
+    prepare_actual_parser.add_argument("--workspace-root", required=True)
+    prepare_actual_parser.add_argument("--settings", required=True)
+    prepare_actual_parser.add_argument(
+        "--completion-classification",
+        action="append",
+        nargs=2,
+        default=[],
+        metavar=("NAME", "TRUE_OR_FALSE"),
+    )
+    prepare_actual_parser.add_argument(
+        "--objective-verification-argument", action="append", default=[]
+    )
+
+    execute_actual_parser = subparsers.add_parser(
+        "execute-sealed-actual",
+        help="Execute one sealed Actual spec after separate explicit authorization.",
+    )
+    execute_actual_parser.add_argument("--packet-root", required=True)
+    execute_actual_parser.add_argument("--expected-packet-sha256", required=True)
+    execute_actual_parser.add_argument("--expected-seal-sha256", required=True)
+    execute_actual_parser.add_argument(
+        "--authorize-actual-execution", action="store_true"
     )
 
     evidence_parser = subparsers.add_parser(
@@ -1175,6 +1258,112 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
         return 0
 
+    if args.command == "prepare-sealed-actual":
+        try:
+            classification = tuple(
+                sorted(
+                    (
+                        (name, _strict_cli_bool(value))
+                        for name, value in args.completion_classification
+                    ),
+                    key=lambda item: item[0].encode("utf-8"),
+                )
+            )
+            result = prepare_sealed_actual_run(
+                ActualRunPreparationRequestV1(
+                    contract_version="1",
+                    packet_root=args.packet_root,
+                    accepted_preflight_packet_path=(
+                        args.accepted_preflight_packet
+                    ),
+                    accepted_preflight_packet_sha256=(
+                        args.accepted_preflight_packet_sha256
+                    ),
+                    accepted_preflight_manifest_sha256=(
+                        args.accepted_preflight_manifest_sha256
+                    ),
+                    accepted_payload_manifest_sha256=(
+                        args.accepted_payload_manifest_sha256
+                    ),
+                    accepted_receipt_path=args.accepted_receipt,
+                    accepted_receipt_sha256=args.accepted_receipt_sha256,
+                    accepted_receipt_manifest_path=(
+                        args.accepted_receipt_manifest
+                    ),
+                    accepted_receipt_manifest_sha256=(
+                        args.accepted_receipt_manifest_sha256
+                    ),
+                    actual_lineage_packet_paths=tuple(
+                        args.actual_lineage_packet
+                    ),
+                    product_execution=ActualProductExecutionSelectionV1(
+                        contract_version="1",
+                        workspace_base=args.workspace_root,
+                        settings_path=args.settings,
+                        requested_completion_scope="compile_only",
+                        completion_classification=classification,
+                        objective_verification_command=(
+                            tuple(args.objective_verification_argument)
+                            if args.objective_verification_argument
+                            else None
+                        ),
+                    ),
+                )
+            )
+        except (ActualRunError, ValueError) as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "command": "prepare-sealed-actual",
+                        "stage": getattr(exc, "stage", "request"),
+                        "code": getattr(exc, "code", "ACTUAL_REQUEST_INVALID"),
+                        "reason": str(exc),
+                        "actual_authorized": False,
+                        "model_generation_calls": 0,
+                        "ProductExecution_runs": 0,
+                        "Builds": 0,
+                        "Apply_runs": 0,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    if args.command == "execute-sealed-actual":
+        try:
+            result = execute_sealed_actual_run(
+                args.packet_root,
+                expected_packet_sha256=args.expected_packet_sha256,
+                expected_seal_sha256=args.expected_seal_sha256,
+                actual_execution_authorized=bool(
+                    args.authorize_actual_execution
+                ),
+                diff_approval_reader=_read_exact_diff_approval_from_stdin,
+            )
+        except ActualRunError as exc:
+            print(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "command": "execute-sealed-actual",
+                        "stage": exc.stage,
+                        "code": exc.code,
+                        "reason": str(exc),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 2
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0 if result.status == "terminal" else 2
+
     if args.command == "apply-patch":
         decision = PermissionModel().decide("confirmed_write")
         print(
@@ -1295,35 +1484,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "run-request":
-        def read_diff_approval(dry_run: dict[str, object]) -> str:
-            print(
-                json.dumps(
-                    {
-                        "status": "AWAITING_EXACT_DIFF_APPROVAL",
-                        "diff_hash": dry_run.get("diff_hash"),
-                        "context_hashes": dry_run.get("context_hashes"),
-                        "unified_diff": dry_run.get("unified_diff"),
-                        "unified_diff_sha256": dry_run.get(
-                            "unified_diff_sha256"
-                        ),
-                        "unified_diff_bytes": dry_run.get("unified_diff_bytes"),
-                        "diff_stats": dry_run.get("diff_stats"),
-                        "static_checks": dry_run.get("static_checks"),
-                        "diff_preview": dry_run.get("diff_preview"),
-                        "instruction": (
-                            "Paste the exact diff_hash to approve isolated apply; "
-                            "enter REJECTED_BY_USER to explicitly reject it; any "
-                            "other input blocks the write as a hash mismatch."
-                        ),
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                file=sys.stderr,
-            )
-            print("Exact diff hash approval: ", end="", file=sys.stderr, flush=True)
-            return sys.stdin.readline().strip()
-
         try:
             result = run_local_request(
                 description=args.description,
@@ -1339,7 +1499,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 allow_game_launch=bool(args.allow_game_launch),
                 runtime_plugin_destination=args.runtime_plugin_destination,
                 allow_game_directory_write=bool(args.allow_game_directory_write),
-                diff_approval_reader=read_diff_approval,
+                diff_approval_reader=_read_exact_diff_approval_from_stdin,
                 local_ollama=bool(args.local_ollama),
                 ollama_base_url=args.ollama_base_url,
                 ollama_model=args.ollama_model,

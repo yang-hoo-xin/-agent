@@ -1122,12 +1122,57 @@ def _load_rejected_preflight_reservation(
 def _load_actual_record(value: str) -> _ActualLineageRecord:
     packet_path = _resolve_existing_file(value, "actual lineage packet")
     packet = _read_json_object(packet_path, "actual lineage packet")
-    if packet.get("packet_version") != "p2_receipt_bound_actual_packet_v6":
+    packet_version = packet.get("packet_version")
+    if packet_version not in {
+        "p2_receipt_bound_actual_packet_v6",
+        "p2_receipt_bound_actual_packet_v7",
+    }:
         raise _fail(
             "LINEAGE_ACTUAL_PACKET_VERSION_UNKNOWN",
             "The historical actual packet version is not supported.",
             stage="lineage",
         )
+    if packet_version == "p2_receipt_bound_actual_packet_v7":
+        seal_path = packet_path.parent / "ACTUAL_SEAL.json"
+        if not seal_path.is_file():
+            raise _fail(
+                "LINEAGE_ACTUAL_SEAL_MISSING",
+                "The stable Actual packet lacks ACTUAL_SEAL.json.",
+                stage="lineage",
+            )
+        seal = _read_json_object(seal_path, "actual lineage seal")
+        material = ("packet.json", "actual_runner.py")
+        files = seal.get("files")
+        if (
+            seal.get("seal_version") != "sealed_actual_run_v1"
+            or seal.get("packet_sealed") is not True
+            or seal.get("manifest_material") != list(material)
+            or not isinstance(files, Mapping)
+        ):
+            raise _fail(
+                "LINEAGE_ACTUAL_SEAL_INVALID",
+                "The stable Actual seal shape or status is invalid.",
+                stage="lineage",
+            )
+        observed: dict[str, str] = {}
+        for filename in material:
+            selected = packet_path.parent / filename
+            if not selected.is_file():
+                raise _fail(
+                    "LINEAGE_ACTUAL_SEAL_FILE_MISSING",
+                    "A stable Actual sealed file is missing.",
+                    stage="lineage",
+                    diagnostics={"filename": filename},
+                )
+            observed[filename] = _file_sha256(selected)
+        if files != observed or seal.get("manifest_sha256") != _canonical_json_sha256(
+            observed
+        ):
+            raise _fail(
+                "LINEAGE_ACTUAL_SEAL_DRIFT",
+                "The stable Actual packet no longer matches its seal.",
+                stage="lineage",
+            )
     seal_status = packet.get("seal_status")
     if not isinstance(seal_status, Mapping) or seal_status.get("packet_sealed") is not True:
         raise _fail(
@@ -1622,6 +1667,16 @@ def _read_current_facts(
         model_digest = model_identity.get("digest")
         if not _hash_string(model_digest):
             raise ValueError("Preflight preparation model digest is invalid.")
+        model_details = model_identity.get("details")
+        quantization_level = (
+            model_details.get("quantization_level")
+            if isinstance(model_details, Mapping)
+            else None
+        )
+        if quantization_level is not None and (
+            not isinstance(quantization_level, str) or not quantization_level
+        ):
+            raise ValueError("Preflight preparation model quantization is invalid.")
         server_version = dependencies.server_version_reader(request.ollama_base_url)
         if not isinstance(server_version, str) or not server_version:
             raise ValueError("Preflight preparation model server version is invalid.")
@@ -1683,6 +1738,7 @@ def _read_current_facts(
         "git_identity": git_identity,
         "model_identity": model_identity,
         "model_digest": model_digest,
+        "quantization_level": quantization_level,
         "server_version": server_version,
         "context_limit": context_limit,
     }
@@ -1750,43 +1806,6 @@ def _load_packet(packet_root: Path, expected_payload_manifest: str) -> dict[str,
     return packet
 
 
-def _entry_request(packet: dict[str, Any], payload_manifest: str) -> Any:
-    from src.mod_agent.entry_admission import EntryAdmissionRequestV1
-    from src.mod_agent.git.admission import GitExecutableIdentityV1
-
-    platform = packet["platform"]
-    delivery = packet["delivery"]
-    source = packet["source_identity"]
-    model = packet["model_identity"]
-    return EntryAdmissionRequestV1(
-        contract_version="1",
-        outer_run_id=packet["outer_run_id"],
-        attempt_id=packet["attempt_id"],
-        payload_manifest_sha256=payload_manifest,
-        packet_root_text=delivery["packet_root_text"],
-        packet_root_canonical_text=delivery["packet_root_canonical_text"],
-        output_root_text=delivery["fresh_preflight_root_text"],
-        output_root_canonical_text=delivery["fresh_preflight_root_canonical_text"],
-        platform_root=platform["repository_root"],
-        platform_checkpoint=platform["current_checkpoint"],
-        platform_branch=platform["branch"],
-        allowed_dirty_paths=tuple(platform["allowed_dirty_paths"]),
-        source_declared_root=source["declared_root"],
-        source_canonical_root=source["canonical_root"],
-        target_project=source["target_project"],
-        source_revision_binding=dict(source["source_revision_binding"]),
-        git_executable_identity=GitExecutableIdentityV1.from_dict(
-            packet["git_executable_identity"]
-        ),
-        ollama_base_url=model["base_url"],
-        ollama_model=model["model"],
-        ollama_digest=model["digest"],
-        ollama_server_version=model["server_version"],
-        ollama_context_window=model["configured_num_ctx"],
-        ollama_output_budget=model["num_predict"],
-    )
-
-
 def _unauthorized(packet: dict[str, Any], mode: str) -> int:
     code = "CANARY_NOT_AUTHORIZED" if mode == "canary" else "ACTUAL_NOT_AUTHORIZED"
     future = packet["future_execution_binding"]
@@ -1832,10 +1851,15 @@ def main() -> int:
     packet = _load_packet(Path(args.packet_root), args.payload_manifest_sha256)
     if args.mode in {"canary", "actual"}:
         return _unauthorized(packet, args.mode)
-    request = _entry_request(packet, args.payload_manifest_sha256)
     from src.mod_agent.entry_admission import (
         EntryAdmissionDependenciesV1,
         admit_sealed_entry,
+        entry_request_from_preflight_packet,
+    )
+
+    request = entry_request_from_preflight_packet(
+        packet,
+        payload_manifest_sha256=args.payload_manifest_sha256,
     )
 
     run = admit_sealed_entry(
@@ -2077,6 +2101,7 @@ def prepare_sealed_entry_preflight(
             "base_url": request.ollama_base_url,
             "model": request.ollama_model,
             "digest": current["model_digest"],
+            "quantization_level": current["quantization_level"],
             "server_version": current["server_version"],
             "context_limit": current["context_limit"],
             "configured_num_ctx": request.ollama_context_window,
@@ -2253,6 +2278,7 @@ def prepare_sealed_entry_preflight(
             "base_url": request.ollama_base_url,
             "model": request.ollama_model,
             "digest": current["model_digest"],
+            "quantization_level": current["quantization_level"],
             "server_version": current["server_version"],
             "context_limit": current["context_limit"],
             "configured_context": request.ollama_context_window,

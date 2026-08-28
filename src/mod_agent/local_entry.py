@@ -3663,9 +3663,21 @@ def run_local_request(
     requirement_coverage_findings_factory: (
         Callable[[Mapping[str, Any], Any], Mapping[str, Any]] | None
     ) = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     """Run one request through the existing graph against an isolated target copy."""
 
+    if (run_id is None) != (request_id is None):
+        raise LocalEntryError(
+            "run-request explicit run_id and request_id must be supplied together."
+        )
+    if run_id is not None and (
+        re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", run_id) is None
+        or not isinstance(request_id, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", request_id) is None
+    ):
+        raise LocalEntryError("run-request explicit run identity is invalid.")
     if not description.strip():
         raise LocalEntryError("run-request requires a non-empty natural-language request.")
     if local_ollama and allow_source_disclosure:
@@ -3954,8 +3966,10 @@ def run_local_request(
     )
     base = Path(workspace_base).resolve()
     base.mkdir(parents=True, exist_ok=True)
-    run_id = uuid4().hex[:8]
-    request_id = f"request_{run_id}"
+    if run_id is None:
+        run_id = uuid4().hex[:8]
+        request_id = f"request_{run_id}"
+    assert request_id is not None
     run_root = (base / run_id).resolve()
     run_root.mkdir(parents=True)
     initial_manifest = {
