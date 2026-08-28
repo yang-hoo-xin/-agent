@@ -10,7 +10,7 @@ import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from src.mod_agent.entry_admission import (
@@ -509,14 +509,66 @@ def _verify_current_facts(
     )
     platform_gate = next(item for item in gates if item["gate"] == "platform")
     dirty_records = platform_gate["facts"]["dirty_records"]
-    observed_dirty = {item["path"]: item["sha256"] for item in dirty_records}
     expected_dirty = packet["platform"].get("allowed_dirty_path_sha256_at_seal")
-    if observed_dirty != expected_dirty:
-        raise _fail(
+
+    def dirty_drift() -> ActualRunError:
+        return _fail(
             "ACTUAL_PLATFORM_DIRTY_BYTES_DRIFT",
             "Allowed dirty platform bytes changed after preflight.",
             stage="current_facts",
         )
+
+    if not isinstance(dirty_records, list) or not isinstance(
+        expected_dirty, Mapping
+    ):
+        raise dirty_drift()
+    observed_paths: list[str] = []
+    for item in dirty_records:
+        if (
+            not isinstance(item, Mapping)
+            or set(item) != {"path", "status"}
+            or not isinstance(item.get("path"), str)
+            or not item["path"]
+            or not isinstance(item.get("status"), str)
+            or not item["status"]
+        ):
+            raise dirty_drift()
+        observed_paths.append(item["path"])
+    if len(observed_paths) != len(set(observed_paths)) or set(
+        observed_paths
+    ) != set(expected_dirty):
+        raise dirty_drift()
+
+    try:
+        platform_root = Path(packet["platform"]["repository_root"]).resolve(
+            strict=True
+        )
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise dirty_drift() from exc
+    for path_text in sorted(expected_dirty):
+        digest = expected_dirty[path_text]
+        if (
+            not isinstance(path_text, str)
+            or not path_text
+            or "\\" in path_text
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            raise dirty_drift()
+        relative = PurePosixPath(path_text)
+        if (
+            relative.is_absolute()
+            or any(part in {"", ".", ".."} for part in relative.parts)
+            or relative.as_posix() != path_text
+        ):
+            raise dirty_drift()
+        try:
+            selected = (platform_root / Path(*relative.parts)).resolve(strict=True)
+            selected.relative_to(platform_root)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise dirty_drift() from exc
+        if not selected.is_file() or _file_sha256(selected) != digest:
+            raise dirty_drift()
 
 
 def _validated_preflight(

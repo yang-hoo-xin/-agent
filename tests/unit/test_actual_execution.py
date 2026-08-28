@@ -20,6 +20,7 @@ from src.mod_agent.actual_execution import (
     ActualRunPreparationRequestV1,
     ActualRunSpecV1,
     _execution_arguments,
+    _verify_current_facts,
     execute_sealed_actual_run,
     prepare_sealed_actual_run,
 )
@@ -28,6 +29,7 @@ from src.mod_agent.entry_admission import (
     EntryAdmissionDependenciesV1,
     admit_sealed_entry,
     entry_request_from_preflight_packet,
+    verify_entry_current_facts,
 )
 from src.mod_agent.local_entry import (
     CompiledArtifactInspectionProfile,
@@ -42,6 +44,15 @@ from src.mod_agent.preflight_preparation import (
 from tests.unit.test_preflight_preparation import (
     _file_sha256,
     _fixture as preflight_fixture,
+    _git,
+)
+
+
+_DIRTY_PLATFORM_PATHS = (
+    "docs/ARCHITECTURE_OVERVIEW.md",
+    "docs/ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT.md",
+    "docs/SPEC_COVERAGE_MATRIX.md",
+    "docs/LOCAL_MODEL_COMPARATIVE_EVALUATION_EXPERIMENT.md",
 )
 
 
@@ -68,8 +79,13 @@ def _admit_preflight(
     )
     assert run.result.status == "ready"
     return Path(str(run.receipt_path)), Path(str(run.receipt_manifest_path))
-def _actual_request(tmp_path: Path):
-    preflight_request, preflight_dependencies, _ = preflight_fixture(tmp_path)
+
+
+def _actual_request_from_preflight(
+    preflight_request: Any,
+    preflight_dependencies: Any,
+    tmp_path: Path,
+):
     preflight = prepare_sealed_entry_preflight(
         preflight_request,
         dependencies=preflight_dependencies,
@@ -110,6 +126,44 @@ def _actual_request(tmp_path: Path):
         context_validator=preflight_dependencies.context_validator,
     )
     return request, dependencies, preflight
+
+
+def _actual_request(tmp_path: Path):
+    preflight_request, preflight_dependencies, _ = preflight_fixture(tmp_path)
+    return _actual_request_from_preflight(
+        preflight_request,
+        preflight_dependencies,
+        tmp_path,
+    )
+
+
+def _actual_request_with_dirty_platform(tmp_path: Path):
+    preflight_request, preflight_dependencies, _ = preflight_fixture(tmp_path)
+    platform = Path(preflight_request.platform_root)
+    for path_text in _DIRTY_PLATFORM_PATHS[:3]:
+        path = platform / Path(path_text)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"baseline:{path_text}\n", encoding="utf-8")
+    _git(platform, "add", ".")
+    _git(platform, "commit", "-m", "tracked documentation baseline")
+    for path_text in _DIRTY_PLATFORM_PATHS:
+        path = platform / Path(path_text)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"wip:{path_text}\n", encoding="utf-8")
+    head = _git(platform, "rev-parse", "HEAD")
+    preflight_request = replace(
+        preflight_request,
+        allowed_dirty_paths=_DIRTY_PLATFORM_PATHS,
+        selected_configuration=replace(
+            preflight_request.selected_configuration,
+            projection_contract_checkpoint=head,
+        ),
+    )
+    return _actual_request_from_preflight(
+        preflight_request,
+        preflight_dependencies,
+        tmp_path,
+    )
 
 
 def _prepared_actual(tmp_path: Path):
@@ -1078,3 +1132,116 @@ def test_typed_profiles_roundtrip_from_spec_into_stable_owner_inputs(
     assert game_binding.to_dict() == game_payload
     assert isinstance(inspection_profile, CompiledArtifactInspectionProfile)
     assert inspection_profile.to_dict() == inspection_payload
+
+
+def test_real_platform_gate_path_status_shape_allows_dirty_bytes_at_seal(
+    tmp_path: Path,
+) -> None:
+    request, dependencies, _ = _actual_request_with_dirty_platform(tmp_path)
+    packet = json.loads(
+        Path(request.accepted_preflight_packet_path).read_text(encoding="utf-8")
+    )
+    entry = entry_request_from_preflight_packet(
+        packet,
+        payload_manifest_sha256=request.accepted_payload_manifest_sha256,
+    )
+    gates = verify_entry_current_facts(
+        entry,
+        dependencies=EntryAdmissionDependenciesV1(
+            git_admission=entry.strict_git_admission(),
+            model_identity_reader=dependencies.model_identity_reader,
+            server_version_reader=dependencies.server_version_reader,
+            context_validator=dependencies.context_validator,
+        ),
+    )
+    platform_gate = next(item for item in gates if item["gate"] == "platform")
+    dirty_records = platform_gate["facts"]["dirty_records"]
+
+    assert {frozenset(record) for record in dirty_records} == {
+        frozenset(("path", "status"))
+    }
+    assert {record["path"] for record in dirty_records} == set(
+        _DIRTY_PLATFORM_PATHS
+    )
+    result = prepare_sealed_actual_run(request, dependencies=dependencies)
+    assert Path(result.packet_root).is_dir()
+
+
+def test_dirty_platform_byte_drift_blocks_before_packet_write(tmp_path: Path) -> None:
+    request, dependencies, _ = _actual_request_with_dirty_platform(tmp_path)
+    root = Path(request.packet_root)
+    packet = json.loads(
+        Path(request.accepted_preflight_packet_path).read_text(encoding="utf-8")
+    )
+    selected = Path(packet["platform"]["repository_root"]) / Path(
+        _DIRTY_PLATFORM_PATHS[0]
+    )
+    selected.write_text(
+        selected.read_text(encoding="utf-8") + "drift\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ActualRunError, match="ACTUAL_PLATFORM_DIRTY_BYTES_DRIFT"):
+        prepare_sealed_actual_run(request, dependencies=dependencies)
+
+    assert not root.exists()
+
+
+def test_dirty_platform_path_set_drift_blocks_before_packet_write(tmp_path: Path) -> None:
+    request, dependencies, _ = _actual_request_with_dirty_platform(tmp_path)
+    root = Path(request.packet_root)
+    packet = json.loads(
+        Path(request.accepted_preflight_packet_path).read_text(encoding="utf-8")
+    )
+    platform_root = Path(packet["platform"]["repository_root"])
+    (platform_root / Path(_DIRTY_PLATFORM_PATHS[-1])).unlink()
+
+    with pytest.raises(ActualRunError, match="ACTUAL_PLATFORM_DIRTY_BYTES_DRIFT"):
+        prepare_sealed_actual_run(request, dependencies=dependencies)
+
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("unsafe_kind", ("escape", "non_file"))
+def test_dirty_platform_unsafe_path_or_non_file_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe_kind: str,
+) -> None:
+    request, dependencies, _ = _actual_request_with_dirty_platform(tmp_path)
+    root = Path(request.packet_root)
+    packet = json.loads(
+        Path(request.accepted_preflight_packet_path).read_text(encoding="utf-8")
+    )
+    entry = entry_request_from_preflight_packet(
+        packet,
+        payload_manifest_sha256=request.accepted_payload_manifest_sha256,
+    )
+    platform_root = Path(packet["platform"]["repository_root"])
+    if unsafe_kind == "escape":
+        dirty_path = "../escape.txt"
+    else:
+        dirty_path = "docs/not_a_file"
+        (platform_root / Path(dirty_path)).mkdir(parents=True)
+    packet["platform"]["allowed_dirty_path_sha256_at_seal"] = {
+        dirty_path: "f" * 64
+    }
+    monkeypatch.setattr(
+        "src.mod_agent.actual_execution.verify_entry_current_facts",
+        lambda *_args, **_kwargs: (
+            {
+                "gate": "platform",
+                "decision": "passed",
+                "facts": {
+                    "dirty_records": [
+                        {"path": dirty_path, "status": " M"}
+                    ]
+                },
+            },
+        ),
+    )
+
+    with pytest.raises(ActualRunError, match="ACTUAL_PLATFORM_DIRTY_BYTES_DRIFT"):
+        _verify_current_facts(entry, packet, dependencies)
+
+    assert not root.exists()
