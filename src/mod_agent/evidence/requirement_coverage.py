@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .identity import request_relation_identity
+from .identity import feature_spec_payload_sha256, request_relation_identity
 from .models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
     EvidenceItem,
@@ -33,6 +33,9 @@ REQUIREMENT_COVERAGE_TRUST_BOUNDARY = (
     "deterministic_current_source_reference_validation",
     "deterministic_input_accounting_and_coverage_projection",
     "deterministic_sufficiency_edit_target_patch_authority_derivation",
+)
+_FEATURE_SPEC_DERIVED_FIELDS = frozenset(
+    {"feature_spec_sha256", "input_obligations"}
 )
 
 
@@ -177,6 +180,26 @@ def materialize_requirement_coverage_projection(
 ) -> dict[str, object]:
     """Assign deterministic requirement, relation, and query identities."""
 
+    _reject_feature_spec_derived_fields(feature_data)
+    return _materialize_requirement_coverage_projection(
+        feature_id=_required_string(feature_data, "feature_id"),
+        feature_spec_sha256=feature_spec_payload_sha256(feature_data),
+        input_obligations=_input_obligations(feature_data),
+        request=request,
+        projection=projection,
+    )
+
+
+def _materialize_requirement_coverage_projection(
+    *,
+    feature_id: str,
+    feature_spec_sha256: str,
+    input_obligations: list[dict[str, object]],
+    request: str,
+    projection: Mapping[str, Any],
+) -> dict[str, object]:
+    """Materialize from identity inputs owned by deterministic code."""
+
     if set(projection) != {"requirements", "relations", "input_dispositions"}:
         raise ValueError("REQUIREMENT_COVERAGE_PROJECTION_SHAPE_INVALID")
     raw_requirements = projection.get("requirements")
@@ -188,15 +211,7 @@ def materialize_requirement_coverage_projection(
         or not 1 <= len(raw_relations) <= 32
     ):
         raise ValueError("REQUIREMENT_COVERAGE_PROJECTION_BUDGET_INVALID")
-    feature_id = _required_string(feature_data, "feature_id")
-    supplied_feature_hash = feature_data.get("feature_spec_sha256")
-    feature_spec_sha256 = (
-        str(supplied_feature_hash)
-        if _hash_string(supplied_feature_hash)
-        else _json_sha256(dict(feature_data))
-    )
     request_sha256 = hashlib.sha256(request.strip().encode("utf-8")).hexdigest()
-    input_obligations = _input_obligations(feature_data)
     normalized_projection = _normalized_projection(
         raw_requirements=raw_requirements,
         raw_relations=raw_relations,
@@ -631,12 +646,9 @@ def _validate_materialized_projection(
     }
     if _json_sha256(normalized_projection) != projection_identity["projection_sha256"]:
         raise ValueError("REQUIREMENT_COVERAGE_PROJECTION_HASH_INVALID")
-    rematerialized = materialize_requirement_coverage_projection(
-        feature_data={
-            "feature_id": feature_identity["feature_id"],
-            "feature_spec_sha256": feature_identity["feature_spec_sha256"],
-            "input_obligations": input_obligations,
-        },
+    rematerialized = _rematerialize_stored_requirement_coverage(
+        feature_identity=feature_identity,
+        input_obligations=input_obligations,
         request=query,
         projection=normalized_projection,
     )
@@ -989,109 +1001,113 @@ def _projected_requirement(
 def _input_obligations(
     feature_data: Mapping[str, Any],
 ) -> list[dict[str, object]]:
-    supplied = feature_data.get("input_obligations")
-    supplied_hash = feature_data.get("feature_spec_sha256")
-    feature_hash = (
-        str(supplied_hash)
-        if _hash_string(supplied_hash)
-        else _json_sha256(dict(feature_data))
+    _reject_feature_spec_derived_fields(feature_data)
+    feature_hash = feature_spec_payload_sha256(feature_data)
+    sources: list[
+        tuple[str, int, str, tuple[str, ...], bool, tuple[str, ...]]
+    ] = [
+        (
+            "user_request",
+            0,
+            _required_string(feature_data, "user_request"),
+            ("change", "preservation"),
+            True,
+            (),
+        ),
+        (
+            "target_behavior",
+            0,
+            _required_string(feature_data, "target_behavior"),
+            ("change",),
+            True,
+            (),
+        ),
+    ]
+    sources.extend(
+        (
+            "evidence_requirements",
+            index,
+            text,
+            ("pre_patch_evidence",),
+            True,
+            (),
+        )
+        for index, text in enumerate(
+            _string_list(feature_data, "evidence_requirements"), 1
+        )
     )
-    if supplied is not None:
-        if not isinstance(supplied, list) or not supplied:
-            raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATIONS_INVALID")
-        obligations = [_copy_json(value) for value in supplied]
-    else:
-        sources: list[
-            tuple[str, int, str, tuple[str, ...], bool, tuple[str, ...]]
-        ] = [
-            (
-                "user_request",
-                0,
-                _required_string(feature_data, "user_request"),
-                ("change", "preservation"),
-                True,
-                (),
+    sources.extend(
+        (
+            "non_goals",
+            index,
+            text,
+            ("preservation", "pre_patch_evidence"),
+            True,
+            ("scope_boundary",),
+        )
+        for index, text in enumerate(_string_list(feature_data, "non_goals"), 1)
+    )
+    sources.extend(
+        (
+            "acceptance_criteria",
+            index,
+            text,
+            ("post_change_acceptance",),
+            False,
+            ("post_change",),
+        )
+        for index, text in enumerate(
+            _string_list(feature_data, "acceptance_criteria"), 1
+        )
+    )
+    sources.extend(
+        (
+            "runtime_verification_plan",
+            index,
+            text,
+            ("post_change_acceptance",),
+            False,
+            ("post_change",),
+        )
+        for index, text in enumerate(
+            _string_list(feature_data, "runtime_verification_plan"), 1
+        )
+    )
+    obligations = [
+        {
+            "input_obligation_id": _stable_id(
+                "obligation", feature_hash, field, str(index), text
             ),
-            (
-                "target_behavior",
-                0,
-                _required_string(feature_data, "target_behavior"),
-                ("change",),
-                True,
-                (),
-            ),
-        ]
-        sources.extend(
-            (
-                "evidence_requirements",
-                index,
-                text,
-                ("pre_patch_evidence",),
-                True,
-                (),
-            )
-            for index, text in enumerate(
-                _string_list(feature_data, "evidence_requirements"), 1
-            )
-        )
-        sources.extend(
-            (
-                "non_goals",
-                index,
-                text,
-                ("preservation", "pre_patch_evidence"),
-                True,
-                ("scope_boundary",),
-            )
-            for index, text in enumerate(_string_list(feature_data, "non_goals"), 1)
-        )
-        sources.extend(
-            (
-                "acceptance_criteria",
-                index,
-                text,
-                ("post_change_acceptance",),
-                False,
-                ("post_change",),
-            )
-            for index, text in enumerate(
-                _string_list(feature_data, "acceptance_criteria"), 1
-            )
-        )
-        sources.extend(
-            (
-                "runtime_verification_plan",
-                index,
-                text,
-                ("post_change_acceptance",),
-                False,
-                ("post_change",),
-            )
-            for index, text in enumerate(
-                _string_list(feature_data, "runtime_verification_plan"), 1
-            )
-        )
-        obligations = [
-            {
-                "input_obligation_id": _stable_id(
-                    "obligation", feature_hash, field, str(index), text
-                ),
-                "origin": {"field": field, "index": index},
-                "text": text,
-                "mandatory": True,
-                "allowed_roles": list(roles),
-                "allowed_dispositions": list(allowed_dispositions),
-                "required_before_patch": required_before_patch,
-            }
-            for (
-                field,
-                index,
-                text,
-                roles,
-                required_before_patch,
-                allowed_dispositions,
-            ) in sources
-        ]
+            "origin": {"field": field, "index": index},
+            "text": text,
+            "mandatory": True,
+            "allowed_roles": list(roles),
+            "allowed_dispositions": list(allowed_dispositions),
+            "required_before_patch": required_before_patch,
+        }
+        for (
+            field,
+            index,
+            text,
+            roles,
+            required_before_patch,
+            allowed_dispositions,
+        ) in sources
+    ]
+    return _validated_input_obligations(
+        obligations,
+        feature_spec_sha256=feature_hash,
+    )
+
+
+def _validated_input_obligations(
+    supplied: object,
+    *,
+    feature_spec_sha256: str,
+) -> list[dict[str, object]]:
+    if not isinstance(supplied, list) or not supplied:
+        raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATIONS_INVALID")
+    obligations = [_copy_json(value) for value in supplied]
     for obligation in obligations:
         if not isinstance(obligation, dict) or set(obligation) != {
             "input_obligation_id",
@@ -1132,7 +1148,7 @@ def _input_obligations(
             or obligation.get("input_obligation_id")
             != _stable_id(
                 "obligation",
-                feature_hash,
+                feature_spec_sha256,
                 str(origin["field"]),
                 str(origin["index"]),
                 str(obligation["text"]),
@@ -1140,6 +1156,44 @@ def _input_obligations(
         ):
             raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATION_INVALID")
     return [dict(value) for value in obligations]
+
+
+def _rematerialize_stored_requirement_coverage(
+    *,
+    feature_identity: Mapping[str, Any],
+    input_obligations: object,
+    request: str,
+    projection: Mapping[str, Any],
+) -> dict[str, object]:
+    """Rebuild persisted coverage without pretending it is FeatureSpec data."""
+
+    if (
+        set(feature_identity) != {"feature_id", "feature_spec_sha256"}
+        or not isinstance(feature_identity.get("feature_id"), str)
+        or not feature_identity["feature_id"]
+        or not _hash_string(feature_identity.get("feature_spec_sha256"))
+    ):
+        raise ValueError("REQUIREMENT_COVERAGE_IDENTITY_INVALID")
+    feature_spec_sha256 = str(feature_identity["feature_spec_sha256"])
+    return _materialize_requirement_coverage_projection(
+        feature_id=str(feature_identity["feature_id"]),
+        feature_spec_sha256=feature_spec_sha256,
+        input_obligations=_validated_input_obligations(
+            input_obligations,
+            feature_spec_sha256=feature_spec_sha256,
+        ),
+        request=request,
+        projection=projection,
+    )
+
+
+def _reject_feature_spec_derived_fields(feature_data: Mapping[str, Any]) -> None:
+    reserved = sorted(_FEATURE_SPEC_DERIVED_FIELDS.intersection(feature_data))
+    if reserved:
+        raise ValueError(
+            "REQUIREMENT_COVERAGE_FEATURE_DATA_RESERVED_FIELD:"
+            + ",".join(reserved)
+        )
 
 
 def _required_string(value: Mapping[str, Any], key: str) -> str:

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
 
+from src.mod_agent.evidence.identity import feature_spec_payload_sha256
 from src.mod_agent.evidence.models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
     EVIDENCE_PACK_AUTHORITY,
@@ -230,14 +229,9 @@ class ImplementationPlanner:
         preservation_boundaries: tuple[str, ...] = ()
         change_related_evidence_ids: frozenset[str] = frozenset()
         if coverage_view is not None:
-            expected_feature_hash = hashlib.sha256(
-                json.dumps(
-                    feature_spec.to_artifact_payload(),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode("utf-8")
-            ).hexdigest()
+            expected_feature_hash = feature_spec_payload_sha256(
+                feature_spec.to_artifact_payload()
+            )
             if (
                 coverage_view.feature_id != feature_spec.feature_id
                 or coverage_view.feature_spec_sha256 != expected_feature_hash

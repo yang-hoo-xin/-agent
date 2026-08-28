@@ -4,8 +4,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
+from typing import Any
 
 REQUEST_RELATION_CONTRACT_VERSION = "request_relation_identity_v1"
+
+
+def feature_spec_payload_sha256(payload: Mapping[str, Any]) -> str:
+    """Hash the actual FeatureSpec data using its canonical JSON bytes."""
+
+    return hashlib.sha256(
+        json.dumps(
+            dict(payload),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def request_relation_identity(

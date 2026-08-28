@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -22,7 +23,10 @@ from src.mod_agent.evidence import (
 from src.mod_agent.evidence.discovery_contract import (
     request_relation_identity as hook_compatible_relation_identity,
 )
-from src.mod_agent.evidence.identity import request_relation_identity
+from src.mod_agent.evidence.identity import (
+    feature_spec_payload_sha256,
+    request_relation_identity,
+)
 from src.mod_agent.evidence.requirement_coverage import (
     RequirementCoverageProjectionError,
     requirement_input_obligation_model_view,
@@ -182,30 +186,6 @@ def _actual9_derived_feature_data() -> dict[str, object]:
         "Post-change runtime check 2.",
     ]
     return feature
-
-
-def _supplied_obligation(
-    *,
-    feature_hash: str,
-    field: str,
-    index: int,
-    text: str,
-    allowed_roles: list[str],
-    allowed_dispositions: list[str],
-    required_before_patch: bool,
-) -> dict[str, object]:
-    digest = hashlib.sha256(
-        "\0".join((feature_hash, field, str(index), text)).encode("utf-8")
-    ).hexdigest()[:20]
-    return {
-        "input_obligation_id": f"obligation_{digest}",
-        "origin": {"field": field, "index": index},
-        "text": text,
-        "mandatory": True,
-        "allowed_roles": list(allowed_roles),
-        "allowed_dispositions": list(allowed_dispositions),
-        "required_before_patch": required_before_patch,
-    }
 
 
 def _projection_without_obligation_four() -> dict[str, object]:
@@ -906,6 +886,115 @@ def test_shared_relation_identity_preserves_hook_compatibility() -> None:
     )
 
 
+def test_feature_spec_payload_identity_is_canonical_and_content_bound() -> None:
+    feature = _feature_data()
+    expected = hashlib.sha256(
+        json.dumps(
+            feature,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    original = materialize_requirement_coverage_projection(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+        projection=_projection(),
+    )
+    reordered = materialize_requirement_coverage_projection(
+        feature_data=dict(reversed(tuple(feature.items()))),
+        request=str(feature["user_request"]),
+        projection=_projection(),
+    )
+    changed_feature = deepcopy(feature)
+    changed_feature["target_behavior"] = "Use a semantically different marker."
+    changed_projection = deepcopy(_projection())
+    changed_projection["requirements"][0]["text"] = changed_feature[
+        "target_behavior"
+    ]
+    changed = materialize_requirement_coverage_projection(
+        feature_data=changed_feature,
+        request=str(changed_feature["user_request"]),
+        projection=changed_projection,
+    )
+
+    assert original["feature_spec_identity"]["feature_spec_sha256"] == expected
+    assert reordered["feature_spec_identity"] == original["feature_spec_identity"]
+    assert changed["feature_spec_identity"] != original["feature_spec_identity"]
+    assert changed["requirements"][0]["requirement_id"] != original[
+        "requirements"
+    ][0]["requirement_id"]
+
+
+@pytest.mark.parametrize(
+    ("reserved_field", "reserved_value"),
+    [
+        ("feature_spec_sha256", "a" * 64),
+        ("feature_spec_sha256", "not-a-sha256"),
+        ("input_obligations", []),
+    ],
+)
+def test_public_feature_spec_data_rejects_derived_identity_fields(
+    reserved_field: str,
+    reserved_value: object,
+) -> None:
+    feature = _feature_data()
+    feature[reserved_field] = reserved_value
+
+    with pytest.raises(
+        ValueError,
+        match="REQUIREMENT_COVERAGE_FEATURE_DATA_RESERVED_FIELD",
+    ):
+        materialize_requirement_coverage_projection(
+            feature_data=feature,
+            request=str(feature["user_request"]),
+            projection=_projection(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("reserved_field", "reserved_value"),
+    [
+        ("feature_spec_sha256", "a" * 64),
+        ("feature_spec_sha256", "not-a-sha256"),
+        ("input_obligations", None),
+    ],
+)
+def test_structured_provider_rejects_derived_identity_before_model_call(
+    reserved_field: str,
+    reserved_value: object,
+) -> None:
+    feature = _feature_data()
+    if reserved_field == "input_obligations":
+        legitimate = materialize_requirement_coverage_projection(
+            feature_data=feature,
+            request=str(feature["user_request"]),
+            projection=_projection(),
+        )
+        feature[reserved_field] = legitimate["input_obligations"]
+    else:
+        feature[reserved_field] = reserved_value
+    model_call_count = 0
+
+    def complete_json(_role, _payload, _schema):
+        nonlocal model_call_count
+        model_call_count += 1
+        return _model_projection()
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    with pytest.raises(
+        ValueError,
+        match="REQUIREMENT_COVERAGE_FEATURE_DATA_RESERVED_FIELD",
+    ):
+        provider.project(
+            feature_data=feature,
+            request=str(feature["user_request"]),
+        )
+
+    assert model_call_count == 0
+
+
 def test_planner_separates_coverage_edit_and_supporting_bindings(
     tmp_path: Path,
 ) -> None:
@@ -933,6 +1022,49 @@ def test_planner_separates_coverage_edit_and_supporting_bindings(
     ).validate_registry_against_evidence()
     assert validation.allowed is True
     assert validation.blockers == ()
+
+
+def test_planner_and_coverage_share_feature_payload_identity_owner(
+    tmp_path: Path,
+) -> None:
+    feature, _, _, pack = _positive_pack(tmp_path)
+    feature_spec = _feature_spec(feature)
+    coverage_identity = pack.requirement_coverage["feature_spec_identity"]
+
+    assert coverage_identity["feature_spec_sha256"] == (
+        feature_spec_payload_sha256(feature_spec.to_artifact_payload())
+    )
+    matching = ImplementationPlanner().build(
+        feature_spec=feature_spec,
+        evidence_pack=pack.to_artifact_payload(),
+    )
+    changed = ImplementationPlanner().build(
+        feature_spec=replace(
+            feature_spec,
+            target_behavior="Use a semantically different marker.",
+        ),
+        evidence_pack=pack.to_artifact_payload(),
+    )
+
+    assert matching.blocking is False
+    assert changed.blocking is True
+    assert changed.blockers[0]["code"] == "REQUIREMENT_COVERAGE_INVALID"
+
+
+def test_feature_payload_identity_tamper_is_rejected_on_rehydrate(
+    tmp_path: Path,
+) -> None:
+    _, _, _, pack = _positive_pack(tmp_path)
+    payload = pack.to_artifact_payload()
+    payload["requirement_coverage"]["feature_spec_identity"][
+        "feature_spec_sha256"
+    ] = "f" * 64
+
+    with pytest.raises(
+        ValueError,
+        match="REQUIREMENT_COVERAGE_INPUT_OBLIGATION_INVALID",
+    ):
+        EvidencePack.from_artifact_payload(payload)
 
 
 def test_preservation_only_target_source_does_not_become_edit_target(
@@ -1737,69 +1869,6 @@ def test_missing_required_non_goal_scope_boundary_still_fails_closed() -> None:
     assert rejection.value.diagnostic[
         "missing_input_obligation_indexes"
     ] == [4]
-
-
-@pytest.mark.parametrize(
-    "allowed_dispositions",
-    [[], ["post_change", "scope_boundary"]],
-)
-def test_missing_or_ambiguous_allowed_disposition_is_not_auto_selected(
-    allowed_dispositions: list[str],
-) -> None:
-    feature_hash = "a" * 64
-    feature = _feature_data()
-    feature["feature_spec_sha256"] = feature_hash
-    feature["input_obligations"] = [
-        _supplied_obligation(
-            feature_hash=feature_hash,
-            field="user_request",
-            index=0,
-            text="Change the marker.",
-            allowed_roles=["change"],
-            allowed_dispositions=[],
-            required_before_patch=True,
-        ),
-        _supplied_obligation(
-            feature_hash=feature_hash,
-            field="acceptance_criteria",
-            index=1,
-            text="Observe the result after the change.",
-            allowed_roles=["post_change_acceptance"],
-            allowed_dispositions=allowed_dispositions,
-            required_before_patch=False,
-        ),
-    ]
-    first = {
-        "requirements": [
-            {
-                "role": "change",
-                "text": "Change the marker.",
-                "input_obligation_indexes": [1],
-                "query_leads": ["ChangeMarker"],
-            }
-        ],
-        "input_dispositions": [],
-    }
-    second = deepcopy(first)
-    second["requirements"][0]["text"] = "Corrected change text."
-
-    provider = StructuredModelRequirementCoverageProvider(
-        lambda role, _payload, _schema: deepcopy(
-            first if role == "requirement_projection" else second
-        )
-    )
-    with pytest.raises(RequirementCoverageProjectionError) as rejection:
-        provider.project(
-            feature_data=feature,
-            request=str(feature["user_request"]),
-        )
-
-    assert str(rejection.value) == (
-        "REQUIREMENT_COVERAGE_INPUT_ACCOUNTING_INCOMPLETE"
-    )
-    assert rejection.value.diagnostic[
-        "missing_input_obligation_indexes"
-    ] == [2]
 
 
 def test_model_returned_relations_are_rejected_instead_of_ignored() -> None:
