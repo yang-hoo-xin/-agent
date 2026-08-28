@@ -35,6 +35,7 @@ from src.mod_agent.local_entry import (
     _canonicalize_run_local_build_diagnostic_paths,
     _build_run_local_il_inspector,
     _create_nuget_isolated_build_profile,
+    _create_run_local_member_access_resolver,
     _copy_validated_directory_tree,
     _directory_copy_path_argument,
     _external_evidence_items,
@@ -2289,6 +2290,124 @@ def test_run_local_inspector_build_records_restore_failure_without_build(
     assert record["inspector_exists"] is False
 
 
+def test_member_access_resolver_prefers_standalone_run_local_bepinex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_root = tmp_path / "run"
+    standalone = run_root / "build_dependencies" / "BepInEx"
+    game_folder = run_root / "build_dependencies" / "GameFolder" / "BepInEx"
+    standalone.mkdir(parents=True)
+    game_folder.mkdir(parents=True)
+    inspector = run_root / "verification_tools" / "inspector.dll"
+    inspector.parent.mkdir(parents=True)
+    inspector.write_bytes(b"inspector")
+    received: list[Path] = []
+
+    class RecordingResolver:
+        def __init__(self, _inspector_path: Path, *, dependency_root: Path) -> None:
+            received.append(dependency_root)
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.RunLocalMemberAccessResolver",
+        RecordingResolver,
+    )
+
+    resolver = _create_run_local_member_access_resolver(
+        inspector_path=inspector,
+        run_root=run_root,
+    )
+
+    assert isinstance(resolver, RecordingResolver)
+    assert received == [standalone.resolve()]
+    assert received[0] is not None
+
+
+def test_member_access_resolver_falls_back_to_game_folder_bepinex(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_root = tmp_path / "run"
+    game_folder = run_root / "build_dependencies" / "GameFolder" / "BepInEx"
+    game_folder.mkdir(parents=True)
+    inspector = run_root / "verification_tools" / "inspector.dll"
+    inspector.parent.mkdir(parents=True)
+    inspector.write_bytes(b"inspector")
+    received: list[Path] = []
+
+    class RecordingResolver:
+        def __init__(self, _inspector_path: Path, *, dependency_root: Path) -> None:
+            received.append(dependency_root)
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.RunLocalMemberAccessResolver",
+        RecordingResolver,
+    )
+
+    _create_run_local_member_access_resolver(
+        inspector_path=inspector,
+        run_root=run_root,
+    )
+
+    assert received == [game_folder.resolve()]
+    assert received[0].is_relative_to(run_root.resolve())
+
+
+def test_member_access_resolver_rejects_missing_run_local_dependency_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    host_bepinex = tmp_path / "host" / "BepInEx"
+    host_bepinex.mkdir(parents=True)
+    inspector = run_root / "verification_tools" / "inspector.dll"
+    inspector.parent.mkdir(parents=True)
+    inspector.write_bytes(b"inspector")
+    received: list[Path] = []
+
+    class RecordingResolver:
+        def __init__(self, _inspector_path: Path, *, dependency_root: Path) -> None:
+            received.append(dependency_root)
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry.RunLocalMemberAccessResolver",
+        RecordingResolver,
+    )
+
+    with pytest.raises(
+        LocalEntryError,
+        match="compiled artifact member access dependency root is missing",
+    ):
+        _create_run_local_member_access_resolver(
+            inspector_path=inspector,
+            run_root=run_root,
+        )
+    assert received == []
+    assert not host_bepinex.resolve().is_relative_to(run_root.resolve())
+
+
+def test_member_access_resolver_rejects_non_directory_dependency_paths(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    standalone = run_root / "build_dependencies" / "BepInEx"
+    game_folder = run_root / "build_dependencies" / "GameFolder" / "BepInEx"
+    standalone.parent.mkdir(parents=True)
+    standalone.write_bytes(b"not a directory")
+    game_folder.parent.mkdir(parents=True)
+    game_folder.write_bytes(b"not a directory")
+    inspector = run_root / "verification_tools" / "inspector.dll"
+    inspector.parent.mkdir(parents=True)
+    inspector.write_bytes(b"inspector")
+
+    with pytest.raises(LocalEntryError):
+        _create_run_local_member_access_resolver(
+            inspector_path=inspector,
+            run_root=run_root,
+        )
+
+
 def test_resolve_project_path_property_uses_project_directory(tmp_path: Path) -> None:
     project_dir = tmp_path / "generated_mods" / "BetterHitFeedback"
     project_dir.mkdir(parents=True)
@@ -2461,6 +2580,109 @@ def test_pre_graph_verifier_failure_persists_terminal_lineage(
     ).hexdigest()
     assert not (run_root / "a").exists()
     assert (source / "Plugin.cs").read_text(encoding="utf-8").endswith("{}\n")
+
+
+def test_member_access_dependency_failure_is_persisted_before_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "canonical" / "BetterHitFeedback"
+    source.mkdir(parents=True)
+    (source / "BetterHitFeedback.csproj").write_text(
+        "<Project><PropertyGroup>"
+        "<AssemblyName>BetterHitFeedback</AssemblyName>"
+        "</PropertyGroup></Project>",
+        encoding="utf-8",
+    )
+    (source / "Plugin.cs").write_text(
+        "namespace BetterHitFeedback; public sealed class Plugin {}\n",
+        encoding="utf-8",
+    )
+    workspace = tmp_path / "runs"
+    inspector_project = tmp_path / "tracked-inspector" / "r8_il_inspector.csproj"
+    inspector_project.parent.mkdir()
+    inspector_project.write_text(
+        '<Project Sdk="Microsoft.NET.Sdk" />',
+        encoding="utf-8",
+    )
+    _install_local_ollama_factory(monkeypatch)
+
+    def build(profile):
+        artifact = profile.working_directory / "bin" / "Debug" / "BetterHitFeedback.dll"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_bytes(b"baseline")
+        return NuGetIsolatedBuildExecution(
+            restore_exit_code=0,
+            build_exit_code=0,
+            restore_stdout="restore ok",
+            restore_stderr="",
+            build_stdout="build ok",
+            build_stderr="",
+            duration_ms=12,
+        )
+
+    def build_inspector(_profile, *, run_root, **_):
+        inspector = run_root / "verification_tools" / "r8_il_inspector.dll"
+        inspector.parent.mkdir(parents=True)
+        inspector.write_bytes(b"inspector")
+        return {
+            "inspector_path": str(inspector),
+            "inspector_sha256": hashlib.sha256(b"inspector").hexdigest(),
+        }
+
+    monkeypatch.setattr("src.mod_agent.local_entry._run_nuget_isolated_build", build)
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._build_run_local_il_inspector",
+        build_inspector,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._verify_bepin_plugin_identity",
+        lambda *_args, **_kwargs: {"identity_verified": True},
+    )
+
+    with pytest.raises(
+        LocalEntryError,
+        match="compiled artifact member access dependency root is missing",
+    ):
+        run_local_request(
+            description="make General.Enabled control startup patch registration",
+            target_project=source,
+            workspace_base=workspace,
+            settings_path=Path("config/settings.yaml"),
+            confirm_isolated_write=True,
+            allow_build=True,
+            allow_source_disclosure=False,
+            diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
+            compiled_artifact_inspection_profile=CompiledArtifactInspectionProfile(
+                project_path=inspector_project,
+                method_symbol="BetterHitFeedback.Plugin.Load",
+                expected_guid="local.betterhitfeedback",
+                expected_name="BetterHitFeedback",
+                expected_version="0.1.0",
+            ),
+            local_ollama=True,
+            ollama_model="qwen3:4b-instruct",
+            ollama_context_window=32768,
+            ollama_model_identity_reader=lambda *_: _ollama_identity(),
+            ollama_server_version_reader=lambda *_: "0.32.1",
+        )
+
+    run_root = next(path for path in workspace.iterdir() if path.is_dir())
+    manifest = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
+    failure = json.loads((run_root / "run_failure.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "failed"
+    assert manifest["terminal_failure_stage"] == (
+        "compiled_artifact_member_access_dependency"
+    )
+    assert manifest["graph_invoked"] is False
+    assert failure["failure_stage"] == "compiled_artifact_member_access_dependency"
+    assert failure["error_type"] == "LocalEntryError"
+    assert failure["error"] == (
+        "Run-local compiled artifact member access dependency root is missing."
+    )
+    assert failure["graph_invoked"] is False
+    assert failure["model_call_count"] == 0
+    assert not (run_root / "a").exists()
 
 
 def test_pre_graph_restore_failure_records_exact_stage_and_stops(

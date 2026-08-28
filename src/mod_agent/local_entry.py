@@ -2169,6 +2169,36 @@ def _require_run_local_build_path(*, root: Path, path: Path, label: str) -> None
         ) from exc
 
 
+def _create_run_local_member_access_resolver(
+    *,
+    inspector_path: Path,
+    run_root: Path,
+) -> RunLocalMemberAccessResolver:
+    root = run_root.resolve()
+    dependency_paths = (
+        root / "build_dependencies" / "BepInEx",
+        root / "build_dependencies" / "GameFolder" / "BepInEx",
+    )
+    for dependency_path in dependency_paths:
+        resolved_dependency = dependency_path.resolve()
+        try:
+            _require_run_local_build_path(
+                root=root,
+                path=resolved_dependency,
+                label="compiled artifact member access dependency_root",
+            )
+        except LocalEntryError:
+            continue
+        if resolved_dependency.is_dir():
+            return RunLocalMemberAccessResolver(
+                inspector_path,
+                dependency_root=resolved_dependency,
+            )
+    raise LocalEntryError(
+        "Run-local compiled artifact member access dependency root is missing."
+    )
+
+
 def _join_build_phase_output(*phases: tuple[str, str]) -> str:
     selected = [f"[{label}]\n{output}" for label, output in phases if output]
     return "\n".join(selected)
@@ -4358,14 +4388,25 @@ def run_local_request(
     generator = LLMExactPatchGenerator(llm)
     applier = ExactTextPatchApplier()
     evidence_provider = RgLiveEvidenceProvider(run_root)
-    member_access_resolver = (
-        RunLocalMemberAccessResolver(
-            inspector_path,
-            dependency_root=isolated_bepinex_dir,
+    member_access_resolver = None
+    if inspector_path is not None:
+        member_access_resolver = _run_pre_graph_step(
+            failure_stage="compiled_artifact_member_access_dependency",
+            action=lambda: _create_run_local_member_access_resolver(
+                inspector_path=inspector_path,
+                run_root=run_root,
+            ),
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+            extra={
+                "baseline_build": baseline_result,
+                "verification_tool_build": verification_tool_build,
+                "game_folder_build_dependency": game_folder_dependency,
+            },
         )
-        if inspector_path is not None
-        else None
-    )
     artifact_store = ArtifactStore(run_root / "a")
     build_stdout = run_root / "build.stdout.log"
     build_stderr = run_root / "build.stderr.log"
