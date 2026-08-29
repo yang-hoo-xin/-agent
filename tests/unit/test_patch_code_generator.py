@@ -1571,6 +1571,167 @@ def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
     assert generated.changes[0]["patch"]["after_text"] == "new"
 
 
+def test_normalized_nested_region_requires_two_patch_replacements() -> None:
+    configuration_excerpt = "ReloadConfiguration();"
+    spread_inner_excerpt = "crosshairSize = GetCrosshairSize();"
+    spread_outer_excerpt = (
+        "crosshairSize = GetCrosshairSize();\nreturn true;"
+    )
+    evidence_items = [
+        {
+            "evidence_id": "ev_configuration",
+            "source_path": "generated_mods/AccurateCrosshair/Configuration.cs",
+            "source_hash": "configuration_hash",
+            "symbol": "OnFileChanged",
+            "span": {"start_line": 35, "end_line": 55},
+            "source_type": "target_source",
+            "excerpt": configuration_excerpt,
+        },
+        {
+            "evidence_id": "ev_spread_inner",
+            "source_path": (
+                "generated_mods/AccurateCrosshair/CrosshairPatches/SpreadPatches.cs"
+            ),
+            "source_hash": "spread_hash",
+            "symbol": "OverrideCrosshairSize",
+            "span": {"start_line": 115, "end_line": 155},
+            "source_type": "target_source",
+            "declaring_type": "SpreadPatches",
+            "method_name": "OverrideCrosshairSize",
+            "parameter_types": None,
+            "return_type": "bool",
+            "method_kind": "method",
+            "excerpt": spread_inner_excerpt,
+        },
+        {
+            "evidence_id": "ev_spread_outer",
+            "source_path": (
+                "generated_mods/AccurateCrosshair/CrosshairPatches/SpreadPatches.cs"
+            ),
+            "source_hash": "spread_hash",
+            "symbol": "OverrideCrosshairSize",
+            "span": {"start_line": 115, "end_line": 160},
+            "source_type": "target_source",
+            "excerpt": spread_outer_excerpt,
+        },
+    ]
+    binding_registry = {
+        "schema_version": "binding_registry_v1",
+        "owner_artifact_type": "implementation_plan",
+        "edit_bindings": [
+            {
+                "binding_id": "edit_binding_001",
+                "evidence_id": "ev_configuration",
+                "canonical_target_path": evidence_items[0]["source_path"],
+                "source_hash": "configuration_hash",
+                "target_symbol": "OnFileChanged",
+                "target_span": evidence_items[0]["span"],
+            },
+            {
+                "binding_id": "edit_binding_002",
+                "evidence_id": "ev_spread_outer",
+                "canonical_target_path": evidence_items[2]["source_path"],
+                "source_hash": "spread_hash",
+                "target_symbol": "OverrideCrosshairSize",
+                "target_span": evidence_items[2]["span"],
+            },
+        ],
+        "supporting_bindings": [
+            {
+                "binding_id": "support_binding_ev_spread_inner",
+                "evidence_id": "ev_spread_inner",
+                "source_path": evidence_items[1]["source_path"],
+                "source_type": "target_source",
+                "target_symbol": "OverrideCrosshairSize",
+                "target_span": evidence_items[1]["span"],
+                "declaring_type": "SpreadPatches",
+                "method_name": "OverrideCrosshairSize",
+                "parameter_types": None,
+                "return_type": "bool",
+                "method_kind": "method",
+                "usage": "edit_source_evidence",
+            }
+        ],
+    }
+    required_change_units = [
+        {
+            "change_id": "chg_001",
+            "change_type": "modify_behavior",
+            "edit_binding_id": "edit_binding_001",
+            "supporting_binding_ids": [],
+            "operation": "minimal_evidence_bound_change",
+        },
+        {
+            "change_id": "chg_002",
+            "change_type": "modify_behavior",
+            "edit_binding_id": "edit_binding_002",
+            "supporting_binding_ids": ["support_binding_ev_spread_inner"],
+            "operation": "minimal_evidence_bound_change",
+        },
+    ]
+    response = {
+        "changes": [
+            {
+                "change_id": "chg_001",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_001",
+                "operation": "exact_text_replace",
+                "rationale": "bounded configuration change",
+                "expected_validation": ["static validation"],
+                "rollback_hint": "restore configuration",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": configuration_excerpt,
+                    "after_text": "ReloadConfigurationAndSpreadSetting();",
+                    "expected_occurrences": 1,
+                },
+            },
+            {
+                "change_id": "chg_002",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_002",
+                "operation": "exact_text_replace",
+                "rationale": "bounded spread change",
+                "expected_validation": ["static validation"],
+                "rollback_hint": "restore spread method",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": spread_outer_excerpt,
+                    "after_text": (
+                        "if (enabled) crosshairSize = GetCrosshairSize();\nreturn true;"
+                    ),
+                    "expected_occurrences": 1,
+                },
+            },
+        ]
+    }
+    llm = _RecordingLLM(json.dumps(response))
+
+    generated = LLMExactPatchGenerator(llm).generate(
+        user_request="add an accurate spread enabled setting",
+        evidence_items=evidence_items,
+        binding_registry=binding_registry,
+        constraints=[],
+        required_change_units=required_change_units,
+        require_native_schema=True,
+        provider_request_recorder=lambda _: None,
+    )
+
+    prompt_payload = json.loads(llm.messages[1].content)
+    response_schema = llm.kwargs["response_format"]
+    assert len(prompt_payload["required_change_units"]) == 2
+    assert set(prompt_payload["edit_binding_contexts"]) == {
+        "edit_binding_001",
+        "edit_binding_002",
+    }
+    assert prompt_payload["required_change_units"][1]["supporting_binding_ids"] == [
+        "support_binding_ev_spread_inner"
+    ]
+    assert response_schema["properties"]["changes"]["minItems"] == 2
+    assert response_schema["properties"]["changes"]["maxItems"] == 2
+    assert len(generated.changes) == 2
+
+
 def test_malformed_patch_json_preserves_diagnostics_without_repairing_content() -> None:
     content = '{"changes":[{"patch":}'
     llm = _RecordingLLM(content)

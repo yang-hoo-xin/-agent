@@ -834,3 +834,198 @@ def test_implementation_plan_ignores_auxiliary_context_items() -> None:
     assert implementation.evidence_refs == ("ev_001",)
     assert implementation.evidence_source_paths == ("mods/BetterHitFeedback/Plugin.cs",)
     assert implementation.target_files == ("mods/BetterHitFeedback/Plugin.cs",)
+
+
+def test_implementation_plan_normalizes_actual15_nested_edit_evidence() -> None:
+    plan = RequestPlanner().plan(
+        "add an accurate spread enabled setting",
+        target_mod="AccurateCrosshair",
+    )
+    spec = FeatureSpecBuilder().build(plan)
+    configuration = _authoritative_item(
+        evidence_id="rg_live_configuration",
+        source_path="generated_mods/AccurateCrosshair/Configuration.cs",
+        symbol="OnFileChanged",
+        span={"start_line": 35, "end_line": 55},
+        source_hash="configuration_hash",
+        file_hash="configuration_hash",
+        declaring_type="Configuration",
+        declaring_type_full_name="AccurateCrosshair.Configuration",
+        method_name="OnFileChanged",
+        parameter_types=None,
+        return_type="void",
+    )
+    spread_inner = _authoritative_item(
+        evidence_id="rg_live_spread_inner",
+        source_path=(
+            "generated_mods/AccurateCrosshair/CrosshairPatches/SpreadPatches.cs"
+        ),
+        symbol="OverrideCrosshairSize",
+        span={"start_line": 115, "end_line": 155},
+        source_hash="spread_hash",
+        file_hash="spread_hash",
+        declaring_type="SpreadPatches",
+        declaring_type_full_name=(
+            "AccurateCrosshair.CrosshairPatches.SpreadPatches"
+        ),
+        method_name="OverrideCrosshairSize",
+        parameter_types=None,
+        return_type="bool",
+    )
+    spread_outer = _authoritative_item(
+        **{
+            **spread_inner,
+            "evidence_id": "rg_live_spread_outer",
+            "span": {"start_line": 115, "end_line": 160},
+        }
+    )
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [configuration, spread_inner, spread_outer],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is False
+    assert len(implementation.proposed_changes) == 2
+    assert len(implementation.binding_registry["edit_bindings"]) == 2
+    assert implementation.evidence_refs == (
+        "rg_live_configuration",
+        "rg_live_spread_inner",
+        "rg_live_spread_outer",
+    )
+    spread_binding = implementation.binding_registry["edit_bindings"][1]
+    assert spread_binding["binding_id"] == "edit_binding_002"
+    assert spread_binding["evidence_id"] == "rg_live_spread_outer"
+    assert spread_binding["target_span"] == {
+        "start_line": 115,
+        "end_line": 160,
+    }
+    merged_support = next(
+        binding
+        for binding in implementation.binding_registry["supporting_bindings"]
+        if binding["evidence_id"] == "rg_live_spread_inner"
+    )
+    assert merged_support["target_span"] == {
+        "start_line": 115,
+        "end_line": 155,
+    }
+    assert implementation.proposed_changes[1]["supporting_binding_ids"] == [
+        merged_support["binding_id"]
+    ]
+
+
+def test_implementation_plan_keeps_distinct_nonoverlapping_edit_units() -> None:
+    plan = RequestPlanner().plan("change two methods", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    first = _authoritative_item(
+        evidence_id="ev_first",
+        symbol="First",
+        method_name="First",
+        span={"start_line": 10, "end_line": 20},
+    )
+    different_symbol = _authoritative_item(
+        evidence_id="ev_second",
+        symbol="Second",
+        method_name="Second",
+        span={"start_line": 30, "end_line": 40},
+    )
+    different_hash = _authoritative_item(
+        evidence_id="ev_third",
+        symbol="Third",
+        method_name="Third",
+        span={"start_line": 50, "end_line": 60},
+        source_hash="file_hash_002",
+        file_hash="file_hash_002",
+    )
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [first, different_symbol, different_hash],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is False
+    assert len(implementation.binding_registry["edit_bindings"]) == 3
+    assert len(implementation.proposed_changes) == 3
+    assert implementation.binding_registry["supporting_bindings"] == []
+
+
+def test_implementation_plan_fails_closed_for_partially_overlapping_edit_units() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(
+                evidence_id="ev_first",
+                span={"start_line": 10, "end_line": 20},
+            ),
+            _authoritative_item(
+                evidence_id="ev_second",
+                span={"start_line": 15, "end_line": 25},
+            ),
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.proposed_changes == ()
+    assert implementation.blockers[0]["code"] == "EDIT_TARGET_NORMALIZATION_UNSAFE"
+    assert implementation.blockers[0]["evidence_ids"] == ["ev_first", "ev_second"]
+
+
+def test_implementation_plan_fails_closed_for_nested_different_source_hashes() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(
+                evidence_id="ev_inner",
+                span={"start_line": 10, "end_line": 20},
+            ),
+            _authoritative_item(
+                evidence_id="ev_outer",
+                span={"start_line": 5, "end_line": 25},
+                source_hash="file_hash_002",
+                file_hash="file_hash_002",
+            ),
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.proposed_changes == ()
+    assert implementation.blockers[0]["code"] == "EDIT_TARGET_NORMALIZATION_UNSAFE"
+    assert implementation.blockers[0]["evidence_ids"] == ["ev_inner", "ev_outer"]

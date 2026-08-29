@@ -305,9 +305,17 @@ class ImplementationPlanner:
                 evidence_source_paths=evidence_source_paths,
             )
 
+        edit_units, normalization_blocker = self._normalize_edit_units(editable_items)
+        if normalization_blocker is not None:
+            return self._blocked(
+                feature_id=feature_spec.feature_id,
+                blockers=(normalization_blocker,),
+                open_questions=(normalization_blocker["message"],),
+                evidence_source_paths=evidence_source_paths,
+            )
         edit_bindings = tuple(
             self._edit_binding(index=index, item=item)
-            for index, item in enumerate(editable_items, start=1)
+            for index, (item, _) in enumerate(edit_units, start=1)
         )
         supporting_bindings = self._supporting_bindings(planning_items)
         binding_registry = self._binding_registry(
@@ -320,6 +328,11 @@ class ImplementationPlanner:
             if str(binding.get("evidence_id") or "")
             in change_related_evidence_ids
         )
+        supporting_binding_ids_by_evidence = {
+            str(binding["evidence_id"]): str(binding["binding_id"])
+            for binding in binding_registry["supporting_bindings"]
+            if binding.get("evidence_id") and binding.get("binding_id")
+        }
         hook_target_binding_id, hook_target_blocker = self._select_hook_target_binding(
             feature_spec=feature_spec,
             binding_registry=binding_registry,
@@ -336,9 +349,19 @@ class ImplementationPlanner:
                 index=index,
                 feature_spec=feature_spec,
                 hook_target_binding_id=hook_target_binding_id,
-                supporting_binding_ids=change_supporting_binding_ids,
+                supporting_binding_ids=tuple(
+                    dict.fromkeys(
+                        (
+                            *change_supporting_binding_ids,
+                            *(
+                                supporting_binding_ids_by_evidence[evidence_id]
+                                for evidence_id in merged_evidence_ids
+                            ),
+                        )
+                    )
+                ),
             )
-            for index, item in enumerate(editable_items, start=1)
+            for index, (_, merged_evidence_ids) in enumerate(edit_units, start=1)
         )
 
         return ImplementationPlan(
@@ -360,6 +383,199 @@ class ImplementationPlanner:
             evidence_source_paths=evidence_source_paths,
             binding_registry=binding_registry,
         )
+
+    @classmethod
+    def _normalize_edit_units(
+        cls,
+        items: list[dict[str, Any]],
+    ) -> tuple[
+        tuple[tuple[dict[str, Any], tuple[str, ...]], ...],
+        dict[str, Any] | None,
+    ]:
+        """Collapse only nested spans with one exact physical method identity."""
+
+        indexed_items = list(enumerate(items))
+        paths_with_multiple_items = {
+            str(item.get("source_path") or "")
+            for _, item in indexed_items
+            if sum(
+                1
+                for _, other in indexed_items
+                if other.get("source_path") == item.get("source_path")
+            )
+            > 1
+        }
+        spans: dict[int, tuple[int, int]] = {}
+        for index, item in indexed_items:
+            path = str(item.get("source_path") or "")
+            if path not in paths_with_multiple_items:
+                continue
+            span = cls._exact_line_span(item.get("span"))
+            if span is None:
+                return (), cls._normalization_blocker(
+                    items=[item],
+                    message=(
+                        "Multiple editable evidence items for one path require "
+                        "valid exact line spans before physical change-unit normalization."
+                    ),
+                )
+            spans[index] = span
+
+        for left_index, left in indexed_items:
+            for right_index, right in indexed_items[left_index + 1 :]:
+                if left.get("source_path") != right.get("source_path"):
+                    continue
+                left_span = spans[left_index]
+                right_span = spans[right_index]
+                if not cls._spans_overlap(left_span, right_span):
+                    continue
+                left_identity = cls._exact_edit_identity(left)
+                right_identity = cls._exact_edit_identity(right)
+                if left_identity is None or left_identity != right_identity:
+                    return (), cls._normalization_blocker(
+                        items=[left, right],
+                        message=(
+                            "Overlapping editable evidence for one path does not "
+                            "share one complete exact source and method identity."
+                        ),
+                    )
+
+        grouped: dict[tuple[Any, ...], list[tuple[int, dict[str, Any]]]] = {}
+        standalone: list[tuple[int, dict[str, Any], tuple[str, ...]]] = []
+        for index, item in indexed_items:
+            identity = cls._exact_edit_identity(item)
+            if identity is None or str(item.get("source_path") or "") not in (
+                paths_with_multiple_items
+            ):
+                standalone.append((index, item, ()))
+                continue
+            grouped.setdefault(identity, []).append((index, item))
+
+        normalized: list[tuple[int, dict[str, Any], tuple[str, ...]]] = standalone
+        for identity_items in grouped.values():
+            remaining = list(identity_items)
+            while remaining:
+                component = [remaining.pop(0)]
+                changed = True
+                while changed:
+                    changed = False
+                    for entry in list(remaining):
+                        entry_span = spans[entry[0]]
+                        if any(
+                            cls._spans_overlap(entry_span, spans[member[0]])
+                            for member in component
+                        ):
+                            component.append(entry)
+                            remaining.remove(entry)
+                            changed = True
+                if len(component) == 1:
+                    index, item = component[0]
+                    normalized.append((index, item, ()))
+                    continue
+                outer_entries = [
+                    entry
+                    for entry in component
+                    if all(
+                        cls._span_contains(spans[entry[0]], spans[other[0]])
+                        for other in component
+                    )
+                ]
+                if not outer_entries:
+                    return (), cls._normalization_blocker(
+                        items=[item for _, item in component],
+                        message=(
+                            "Overlapping editable spans cannot be represented by "
+                            "one independently authorized outer span."
+                        ),
+                    )
+                retained_index, retained_item = min(
+                    outer_entries,
+                    key=lambda entry: entry[0],
+                )
+                merged_evidence_ids = tuple(
+                    str(item["evidence_id"])
+                    for index, item in sorted(component, key=lambda entry: entry[0])
+                    if index != retained_index and item.get("evidence_id")
+                )
+                normalized.append(
+                    (
+                        min(index for index, _ in component),
+                        retained_item,
+                        merged_evidence_ids,
+                    )
+                )
+
+        normalized.sort(key=lambda entry: entry[0])
+        return tuple((item, merged) for _, item, merged in normalized), None
+
+    @staticmethod
+    def _exact_edit_identity(item: dict[str, Any]) -> tuple[Any, ...] | None:
+        source_hash = (
+            item.get("source_hash")
+            or item.get("file_hash")
+            or item.get("doc_hash")
+        )
+        required_identity = (
+            item.get("source_path"),
+            source_hash,
+            item.get("symbol"),
+            item.get("declaring_type"),
+            item.get("declaring_type_full_name"),
+            item.get("method_name"),
+            item.get("return_type"),
+            item.get("method_kind"),
+        )
+        if any(not isinstance(value, str) or not value for value in required_identity):
+            return None
+        parameter_types = item.get("parameter_types")
+        if parameter_types is None:
+            normalized_parameters = None
+        elif isinstance(parameter_types, (list, tuple)) and all(
+            isinstance(value, str) for value in parameter_types
+        ):
+            normalized_parameters = tuple(parameter_types)
+        else:
+            return None
+        return (*required_identity, normalized_parameters)
+
+    @staticmethod
+    def _exact_line_span(value: Any) -> tuple[int, int] | None:
+        if not isinstance(value, dict):
+            return None
+        start_line = value.get("start_line")
+        end_line = value.get("end_line")
+        if (
+            type(start_line) is not int
+            or type(end_line) is not int
+            or start_line < 1
+            or end_line < start_line
+        ):
+            return None
+        return start_line, end_line
+
+    @staticmethod
+    def _spans_overlap(left: tuple[int, int], right: tuple[int, int]) -> bool:
+        return left[0] <= right[1] and right[0] <= left[1]
+
+    @staticmethod
+    def _span_contains(outer: tuple[int, int], inner: tuple[int, int]) -> bool:
+        return outer[0] <= inner[0] and outer[1] >= inner[1]
+
+    @staticmethod
+    def _normalization_blocker(
+        *,
+        items: list[dict[str, Any]],
+        message: str,
+    ) -> dict[str, Any]:
+        return {
+            "code": "EDIT_TARGET_NORMALIZATION_UNSAFE",
+            "message": message,
+            "evidence_ids": [
+                str(item["evidence_id"])
+                for item in items
+                if item.get("evidence_id")
+            ],
+        }
 
     @staticmethod
     def _edit_binding(
