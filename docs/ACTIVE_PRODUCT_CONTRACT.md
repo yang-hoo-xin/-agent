@@ -99,7 +99,7 @@ Current execution order:
 -> actual15 returns no provider response before 600.0 seconds; EVID-005 remains active
 -> checkpoint 53d228fa normalizes the frozen Plan to two physical edit units; PLAN-002 awaits real-run close evidence
 -> this docs-only state synchronization completes
--> separately authorize one actual15 frozen-input Patch-only replay bound to the deterministic two-unit Plan
+-> execute and review the authorized-once actual15 frozen-input Patch-only replay bound to the deterministic two-unit Plan
 -> replay exactly one qwen3.6:27b initial_patch call at 40960/4096/600 with no retry, fallback, model switch, Graph, Build, Apply, or actual16
 -> complete response: review the provider-response/parser boundary before deciding any durable response checkpoint or fresh preflight
 -> repeated timeout: stop increasing timeout and decide Patch-role model/responsibility routing
@@ -110,9 +110,11 @@ Current execution order:
 -> Coding Agent v0 internal alpha checkpoint
 ```
 
-No Patch-only replay, fresh preflight, actual16 packet, or actual16 execution is
-authorized or created. Exact-diff approval can be requested only after a
-complete Dry-run diff. The current product stage remains the P2 empirical path;
+The current user request authorizes exactly one bounded Patch-only replay; it
+has not yet been created or executed. No fresh preflight, actual16 packet, or
+actual16 execution is authorized or created. Exact-diff approval can be
+requested only after a complete Dry-run diff. The current product stage remains
+the P2 empirical path;
 `P0` decision priority in the Issue Register is work priority, not a product
 stage. The two Internal Alpha hard gates remain false: actual-only
 changed-product Build/Test success and Failure -> Different Repair ->

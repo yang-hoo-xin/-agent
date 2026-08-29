@@ -452,14 +452,14 @@ unreached_effects: no PatchProposal, ProposalReview, Dry-run, diff or approval, 
 filesystem_effect: canonical source was unchanged; the only new isolated file was the baseline Build nuget.config, not an Apply result
 attempt_boundary: no retry, fallback, model switch, or actual16 occurred
 current_effect: the current hardware, model, and request-interface combination cannot serve as a stable Patch production path at this observed boundary; this does not prove that qwen3.6:27b is generally incapable
-workaround: do not infer authority for another model run or actual16; do not add retries, fallback, a model switch, or a longer timeout under this Issue
+workaround: the current user request authorizes only the one bounded replay; do not infer authority for any additional model run or actual16, and do not add retries, fallback, a model switch, or a longer timeout under this Issue
 reopen_trigger: after closure, the same explicitly bound configuration again admits the initial_patch request but produces no complete response before the 600.0-second timeout
-close_trigger: one separately authorized frozen-input single-call Patch-only replay or a later fresh actual, under the same explicit configuration, obtains a complete provider response and enters the Patch payload parser; if the same boundary still times out, stop extending timeout and enter a Patch-role model/responsibility routing decision
-next_action: separately authorize one actual15 frozen-input plus 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 deterministic two-unit Plan Patch-only replay with exactly one qwen3.6:27b initial_patch call at num_ctx=40960, num_predict=4096, and timeout=600.0 seconds; do not run Graph, Build, Apply, or actual16 and do not retry, fall back, or switch models
+close_trigger: the currently authorized-once frozen-input single-call Patch-only replay or a later separately authorized fresh actual, under the same explicit configuration, obtains a complete provider response and enters the Patch payload parser; if the same boundary still times out, stop extending timeout and enter a Patch-role model/responsibility routing decision
+next_action: execute and review the currently authorized-once actual15 frozen-input plus 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 deterministic two-unit Plan Patch-only replay with exactly one qwen3.6:27b initial_patch call at num_ctx=40960, num_predict=4096, and timeout=600.0 seconds; do not run Graph, Build, Apply, or actual16 and do not retry, fall back, or switch models
 last_reviewed: 2026-08-29
 required_before_stage: next P2 stable Patch provider response path
 minimum_acceptance:
-  - the replay or fresh actual is explicitly authorized and bound to one frozen input and the same 40960/4096/600 configuration
+  - the replay uses the current one-time authorization and is bound to one frozen input and the same 40960/4096/600 configuration
   - exactly one qwen3.6:27b initial_patch invocation occurs with no retry, fallback, or model switch
   - a complete provider response arrives and patch_payload_parser_entered=true to close this Issue
   - a repeated timeout routes to a Patch-role model/responsibility decision instead of another timeout increase
@@ -519,8 +519,8 @@ checkpoint_claim_boundary: deterministic Planning/change-unit normalization and 
 current_effect: the code/test checkpoint is formed and accepted for the bounded nested-unit defect, but real-run close evidence still requires one Patch-only replay or a later actual; this Issue does not claim to solve the EVID-005 600.0-second provider timeout
 workaround: preserve the outer authorized 115-160 physical unit and retain the inner Evidence only through the existing supporting binding and change supporting refs; do not treat timeout behavior as normalization evidence
 reopen_trigger: after closure, the same exact source identity and source hash again materialize the nested 115-155 and 115-160 spans as separate physical edit units, or normalization drops the outer authorization, supporting binding, or change supporting refs
-close_trigger: one separately authorized actual15 frozen-input Patch-only replay or a later fresh actual bound to checkpoint 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 observes the three-change/three-edit input normalize to two physical change/edit units, preserves the outer authorized 115-160 unit, and retains the inner Evidence in the existing supporting binding and change supporting refs; provider response completion is not part of this Issue's close trigger
-next_action: use the separately authorized single actual15 frozen-input Patch-only replay to verify the deterministic two-unit Plan before the provider invocation; no actual16, Graph, Build, Apply, retry, fallback, model switch, or timeout increase is authorized
+close_trigger: the currently authorized-once actual15 frozen-input Patch-only replay or a later separately authorized fresh actual bound to checkpoint 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 observes the three-change/three-edit input normalize to two physical change/edit units, preserves the outer authorized 115-160 unit, and retains the inner Evidence in the existing supporting binding and change supporting refs; provider response completion is not part of this Issue's close trigger
+next_action: execute the currently authorized-once actual15 frozen-input Patch-only replay to verify the deterministic two-unit Plan before the provider invocation; no actual16, Graph, Build, Apply, retry, fallback, model switch, or timeout increase is authorized
 last_reviewed: 2026-08-29
 required_before_stage: next P2 deterministic Patch request construction
 minimum_acceptance:

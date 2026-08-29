@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: separate authorization required for one actual15 frozen-input Patch-only replay bound to the 53d228fa deterministic two-unit Plan
+current_dependency: execute and review the authorized-once actual15 frozen-input Patch-only replay bound to the 53d228fa deterministic two-unit Plan
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
@@ -75,15 +75,15 @@ stable_agent_capability: false
 coding_agent_v0_internal_alpha_status: false
 public_alpha_authorized: false
 patch_only_replay_created: false
-patch_only_replay_authorized: false
+patch_only_replay_authorized: authorized_once_pending_execution_by_current_user_request
 fresh_preflight_created: false
 fresh_preflight_authorized: false
 actual16_packet_created: false
 actual16_execution_created: false
 complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
-next_capability_step: separately authorize one actual15 frozen-input plus 53d228fa two-unit Plan Patch-only replay with exactly one qwen3.6:27b initial_patch call at 40960/4096/600 and no retry, fallback, model switch, Graph, Build, Apply, or actual16
-next_attempt_pre_authorized: false
+next_capability_step: execute and review the authorized-once actual15 frozen-input plus 53d228fa two-unit Plan Patch-only replay with exactly one qwen3.6:27b initial_patch call at 40960/4096/600 and no retry, fallback, model switch, Graph, Build, Apply, or actual16
+next_attempt_pre_authorized: true_for_one_patch_only_replay_only
 ```
 
 The detailed current target and exact non-completion boundaries are in
