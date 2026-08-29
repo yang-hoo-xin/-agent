@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: execute and review the authorized-once actual15 frozen-input Patch-only replay bound to the 53d228fa deterministic two-unit Plan
+current_dependency: form and review the bounded EVID-006 response-contract/materialization code/test checkpoint
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
@@ -57,16 +57,18 @@ latest_accurate_crosshair_revalidation: not_reached
 latest_accurate_crosshair_runtime: not_reached
 latest_accurate_crosshair_canonical_source_changed: false
 latest_accurate_crosshair_isolated_new_file: baseline_Build_nuget.config_only_not_Apply
-latest_accurate_crosshair_issue_records: docs/audits/ENGINEERING_ISSUE_REGISTER.md EVID-004/EVID-005/PLAN-002
+latest_accurate_crosshair_issue_records: docs/audits/ENGINEERING_ISSUE_REGISTER.md EVID-004/EVID-005/EVID-006/PLAN-002
 EVID-002_status: closed_by_actual10_projection_to_findings_evidence
 EVID-003_status: closed_by_actual12_expected_delta_real_run_validation
 EVID-004_status: closed_by_actual13_actual14_actual15_patch_request_admission_and_real_patch_call
-EVID-005_status: active_initial_patch_provider_invocation_response_timeout
+EVID-005_status: active_same_configuration_27b_patch_only_replay_repeated_provider_timeout
 current_failure_issue_id: EVID-005
 current_failure_owner: main Ollama Patch provider invocation/response boundary through LLMExactPatchGenerator.generate
 current_issue_decision_priority: P0_current_work_priority_not_product_stage
+EVID-006_status: active_response_contract_materialization_and_initial_patch_role_routing
+current_code_test_issue_id: EVID-006
 PLAN-001_status: closed_at_61a4df677ad39ca87ec9486ec0556481778c9c36
-PLAN-002_status: mitigated_for_current_scope_at_53d228fa_pending_real_run_close_evidence
+PLAN-002_status: closed_by_frozen_27b_patch_only_replay_pre_call_reconstruction
 actual_only_build_test_success: false
 failure_different_repair_revalidation_success: false
 runtime_verified: false
@@ -74,16 +76,19 @@ general_harness_validated: false
 stable_agent_capability: false
 coding_agent_v0_internal_alpha_status: false
 public_alpha_authorized: false
-patch_only_replay_created: false
-patch_only_replay_authorized: authorized_once_pending_execution_by_current_user_request
+patch_only_replay_created: true
+patch_only_replay_authorized: consumed_once_by_completed_27b_replay
+patch_only_replay_result: provider_timeout_complete_response_absent_parser_not_entered
+isolated_4b_patch_role_probe_result: complete_response_parser_entered_before_text_outside_edit_binding_GeneratedPatch_0
+isolated_4b_patch_role_probe_authority: not_actual_not_fallback_not_production_role
 fresh_preflight_created: false
 fresh_preflight_authorized: false
 actual16_packet_created: false
 actual16_execution_created: false
 complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
-next_capability_step: execute and review the authorized-once actual15 frozen-input plus 53d228fa two-unit Plan Patch-only replay with exactly one qwen3.6:27b initial_patch call at 40960/4096/600 and no retry, fallback, model switch, Graph, Build, Apply, or actual16
-next_attempt_pre_authorized: true_for_one_patch_only_replay_only
+next_capability_step: form and review a bounded EVID-006 code/test checkpoint where the model returns bounded replacement/after text and deterministic materialization injects authoritative before_text and expected_occurrences from exact bindings while preserving existing admission
+next_attempt_pre_authorized: false
 ```
 
 The detailed current target and exact non-completion boundaries are in

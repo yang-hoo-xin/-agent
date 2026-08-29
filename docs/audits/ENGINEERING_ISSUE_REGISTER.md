@@ -439,31 +439,80 @@ severity: S1
 decision_priority: P0
 status: active
 first_seen: actual14
-observed_twice: actual14 and p2_ac_20260825_015/actual_15 reached the same admitted initial_patch provider invocation/response boundary and returned no complete response before the 600.0-second timeout
+observed_instances: actual14, p2_ac_20260825_015/actual_15, and the frozen 27B Patch-only replay reached the same admitted initial_patch provider invocation/response boundary without a complete response
 latest_evidence: >-
-  p2_ac_20260825_015/actual_15 was consumed by one RUN. Its wrapper reached terminal with ProductExecution partial after Entry, continuation-packet revalidation, baseline Build, compiled-plugin inspection, requirement_projection, requirement_findings, sufficient Coverage with six Evidence items, three requirements/findings, and three edit targets, and non-blocking Planning with three changes and three bindings. The third model invocation formed with role=initial_patch, but no response arrived before the 600.0-second timeout and patch_payload_parser_entered=false.
+  The frozen two-unit Patch-only replay made exactly one qwen3.6:27b initial_patch call against digest a50eda8ed977ab48a12431878896b27ffd5cef552c17af3317d9623b939a7f1e. Its 26,097-byte provider body required 30,193 of configured num_ctx=40,960 with num_predict=4,096 and timeout=600 seconds. It ended after 602.692 seconds with provider_timeout, complete_response_absent=true, and no parser entry.
 actual_result: 'C:\Users\10160\Documents\Codex\2026-08-29\accurate-crosshair-actual15-continuation-preflight\outputs\actual_p2_ac_20260825_015_actual_15\e\p\p2_ac_20260825_015\run_result.json'
 actual_result_sha256: 3a7cbebe50a21c4fcfd7634dea2f9bac5a3fd0bdcb9278514cd0342abb92c5c6
-consumption: consumed_once
-provider_request_admission: body=26440 bytes; conservative_required_context=30536; configured_num_ctx=40960; num_predict=4096
-failure_boundary: the admitted third model call had role=initial_patch and timed out after 600.0 seconds with no response; patch_payload_parser_entered=false
+patch_only_replay_output_root: 'C:\Users\10160\Documents\Codex\2026-08-29\accurate-crosshair-patch-only-replay\outputs'
+patch_only_replay_terminal_result_sha256: 2ffef1ade948974973033fcc811ca793e94618d13d1defd44bc4b509f8813b06
+consumption: actual15_consumed_once_and_27b_patch_only_replay_consumed_once
+latest_provider_request_admission: body=26097 bytes; conservative_required_context=30193; configured_num_ctx=40960; num_predict=4096; timeout=600 seconds
+failure_boundary: the frozen 27B replay's single initial_patch call ended after 602.692 seconds with provider_timeout, complete_response_absent=true, and patch_payload_parser_entered=false
 owner_exclusions: Retrieval, Findings, Coverage, Planning, and the Patch payload parser had either already passed or were not entered and do not own this timeout
 unreached_effects: no PatchProposal, ProposalReview, Dry-run, diff or approval, Apply, changed-product Build, Repair, Revalidation, or Runtime
 filesystem_effect: canonical source was unchanged; the only new isolated file was the baseline Build nuget.config, not an Apply result
-attempt_boundary: no retry, fallback, model switch, or actual16 occurred
-current_effect: the current hardware, model, and request-interface combination cannot serve as a stable Patch production path at this observed boundary; this does not prove that qwen3.6:27b is generally incapable
-workaround: the current user request authorizes only the one bounded replay; do not infer authority for any additional model run or actual16, and do not add retries, fallback, a model switch, or a longer timeout under this Issue
+attempt_boundary: exactly one qwen3.6:27b call occurred with no retry, fallback, model switch, Graph, Build, Apply, or actual16
+current_effect: the same frozen configuration again failed to produce a complete 27B provider response, so this hardware, model, and request-interface combination is not a stable Patch production path at the observed boundary; this does not prove that qwen3.6:27b is generally incapable
+workaround: do not repeat the same 27B call, increase timeout, perform a 4B correction, or infer authority for another model run or actual16
 reopen_trigger: after closure, the same explicitly bound configuration again admits the initial_patch request but produces no complete response before the 600.0-second timeout
-close_trigger: the currently authorized-once frozen-input single-call Patch-only replay or a later separately authorized fresh actual, under the same explicit configuration, obtains a complete provider response and enters the Patch payload parser; if the same boundary still times out, stop extending timeout and enter a Patch-role model/responsibility routing decision
-next_action: execute and review the currently authorized-once actual15 frozen-input plus 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 deterministic two-unit Plan Patch-only replay with exactly one qwen3.6:27b initial_patch call at num_ctx=40960, num_predict=4096, and timeout=600.0 seconds; do not run Graph, Build, Apply, or actual16 and do not retry, fall back, or switch models
+close_trigger: a separately authorized fresh Patch-only probe or later actual, under the same explicit 27B configuration, obtains a complete provider response and enters the Patch payload parser; a different-model response or parser result does not close this Issue
+close_evidence_status: not_met; the frozen 27B replay repeated provider_timeout and the isolated 4B probe is a different model and responsibility experiment
+next_action: retain EVID-005 as active while EVID-006 owns the next bounded code/test checkpoint; do not repeat the same 27B call, increase timeout, perform a 4B correction, or prepare actual16
 last_reviewed: 2026-08-29
 required_before_stage: next P2 stable Patch provider response path
 minimum_acceptance:
-  - the replay uses the current one-time authorization and is bound to one frozen input and the same 40960/4096/600 configuration
+  - a fresh probe or actual has separate authorization and is bound to one frozen input and the same 40960/4096/600 configuration
   - exactly one qwen3.6:27b initial_patch invocation occurs with no retry, fallback, or model switch
   - a complete provider response arrives and patch_payload_parser_entered=true to close this Issue
   - a repeated timeout routes to a Patch-role model/responsibility decision instead of another timeout increase
   - no Graph, Build, Apply, actual16, or later product-stage authority is inferred from this Issue
+```
+
+### EVID-006
+
+```yaml
+issue_id: EVID-006
+title: Model-owned authoritative binding fields couple 27B liveness failure with 4B exact-binding admission failure
+scope: Complete Patch materialization from the LLMExactPatchGenerator native response through deterministic GeneratedPatch construction and initial Patch-role routing
+owner: LLMExactPatchGenerator response contract/materialization and initial Patch role routing boundary
+evidence_level: real_run
+severity: S1
+decision_priority: P0
+status: active
+first_seen: 2026-08-29 frozen 27B Patch-only replay plus isolated 4B Patch-role probe
+latest_evidence: >-
+  The frozen 27B replay used the accepted two-unit Plan but returned no complete response. The isolated qwen3:4b-instruct probe used the same canonical user, system, schema, constraints, and generation-input hashes and an identical provider body after model normalization; its one call returned a complete response in 208.046 seconds, persisted it before parsing, and entered the parser, but deterministic admission rejected edit_binding_001 with before_text_outside_edit_binding. The raw response contained two changes and GeneratedPatch count was zero.
+patch_only_replay_output_root: 'C:\Users\10160\Documents\Codex\2026-08-29\accurate-crosshair-patch-only-replay\outputs'
+patch_only_replay_terminal_result_sha256: 2ffef1ade948974973033fcc811ca793e94618d13d1defd44bc4b509f8813b06
+patch_only_replay_model: qwen3.6:27b
+patch_only_replay_model_digest: a50eda8ed977ab48a12431878896b27ffd5cef552c17af3317d9623b939a7f1e
+patch_role_probe_output_root: 'C:\Users\10160\Documents\Codex\2026-08-29\accurate-crosshair-patch-role-4b-probe\outputs'
+patch_role_probe_model: qwen3:4b-instruct
+patch_role_probe_model_digest: 0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0
+input_identity_evidence: canonical user, system, schema, constraints, and generation-input hashes were identical between the 27B replay and 4B probe; after model-name normalization, the provider bodies were identical
+liveness_evidence: the single 27B call ended after 602.692 seconds with provider_timeout and no complete response; the single 4B call returned a complete response in 208.046 seconds, persisted it before parsing, and entered the parser
+admission_evidence: the 4B response contained two changes but deterministic admission rejected edit_binding_001 before_text_outside_edit_binding and formed zero GeneratedPatch items
+probe_authority_boundary: the 4B probe was not an actual and not a fallback, did not alter Projection or Findings model decisions, and does not establish a 4B production Patch role
+owner_exclusions: Planner, Evidence, ProposalReview, Apply, and later product stages do not own this response-contract/materialization boundary
+current_effect: 27B does not provide stable liveness under the frozen interface while 4B liveness does not satisfy exact-binding admission; neither observation alone supplies a stable Patch production role
+minimum_solution_direction: remove authoritative before_text, path, hash, and expected_occurrences from native model responsibility; the model returns bounded replacement or after text for each already selected change/edit binding plus only fields requiring semantic judgment, while deterministic materialization injects authoritative fields from the exact binding and source excerpt
+contract_reuse: reuse the existing GeneratedPatch, PatchProposal, Binding, and Review contracts; add no Artifact, Graph branch, Approval, Gateway, or second control plane
+directional_review: GPT Pro supports keeping the stronger existing control plane and reducing model responsibility, but that review is direction only and is not evidence
+workaround: do not repeat the same 27B call, increase timeout, run a 4B correction, route 4B directly into production Patch, or prepare actual16
+reopen_trigger: after closure, the native model schema again requires authoritative before_text, path, hash, or expected_occurrences, or deterministic materialization accepts an invalid binding/change/after_text or fails to preserve existing admission
+close_trigger: a bounded code/test checkpoint proves the native model schema does not require before_text; deterministic materialization attaches authoritative before_text and expected_occurrences from the exact binding while preserving every existing admission check; and a zero-model replay of the frozen 4B raw response or an equivalent exact fixture forms a two-change GeneratedPatch while invalid binding, change, or after_text remains fail closed
+real_model_close_evidence: separate from the code/test close trigger and requires later explicit authorization
+next_action: form and review only that bounded code/test checkpoint; after review, decide separately whether to authorize a fresh Patch-only probe
+last_reviewed: 2026-08-29
+required_before_stage: next P2 complete Patch materialization attempt
+minimum_acceptance:
+  - native model schema omits authoritative before_text, path, hash, and expected_occurrences responsibility
+  - deterministic materialization derives those fields only from the exact binding and source excerpt
+  - every existing schema, binding, source-identity, preservation, and semantic admission remains active
+  - frozen 4B raw response or an equivalent exact fixture forms exactly two GeneratedPatch changes without a model call
+  - invalid binding id, change identity, or after_text remains fail closed
+  - no new Artifact, Graph branch, Approval, Gateway, or control plane
 ```
 
 ### PLAN-001
@@ -508,21 +557,24 @@ owner: Planning change-unit composition and nested physical edit-unit normalizat
 evidence_level: real_run
 severity: S1
 decision_priority: P1
-status: mitigated_for_current_scope
+status: closed
 first_seen: p2_ac_20260825_015/actual_15
-latest_evidence: actual15 formed one Configuration physical edit unit and two nested units for the same SpreadPatches.OverrideCrosshairSize source identity and source hash at spans 115-155 and 115-160
+latest_evidence: the frozen 27B Patch-only replay reconstructed the accepted Plan before provider invocation and observed the three change/edit units normalize to two physical units; the outer authorized SpreadPatches.OverrideCrosshairSize 115-160 unit remained and the inner 115-155 Evidence remained in supporting lineage
 implementation_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
-implementation_checkpoint_status: accepted_for_deterministic_code_and_tests_pending_patch_only_replay_or_later_actual_close_evidence
+implementation_checkpoint_status: accepted_for_deterministic_code_and_tests_and_validated_by_frozen_27b_patch_only_replay_close_evidence
 checkpoint_evidence: checkpoint 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 normalizes the frozen actual15 three-change/three-edit input to two physical change/edit units; it preserves the existing authorized outer 115-160 SpreadPatches.OverrideCrosshairSize unit and moves the inner 115-155 Evidence into the existing supporting binding and the change supporting refs
 reconstruction_evidence: frozen request reconstruction reduced body bytes from 26,440 to 26,097 and conservative required context from 30,536 to 30,193; 74 focused tests passed
-checkpoint_claim_boundary: deterministic Planning/change-unit normalization and focused tests only; no real-run closure, complete provider response, parser admission, PatchProposal, Review, Dry-run, Apply, or changed-product Build is proven
-current_effect: the code/test checkpoint is formed and accepted for the bounded nested-unit defect, but real-run close evidence still requires one Patch-only replay or a later actual; this Issue does not claim to solve the EVID-005 600.0-second provider timeout
-workaround: preserve the outer authorized 115-160 physical unit and retain the inner Evidence only through the existing supporting binding and change supporting refs; do not treat timeout behavior as normalization evidence
+patch_only_replay_output_root: 'C:\Users\10160\Documents\Codex\2026-08-29\accurate-crosshair-patch-only-replay\outputs'
+patch_only_replay_terminal_result_sha256: 2ffef1ade948974973033fcc811ca793e94618d13d1defd44bc4b509f8813b06
+close_evidence: the frozen 27B Patch-only replay met the recorded close trigger through three-to-two deterministic pre-call normalization, preservation of the outer authorized 115-160 unit, and preservation of the inner Evidence supporting lineage; provider response completion is outside this Issue
+checkpoint_claim_boundary: deterministic Planning/change-unit normalization, focused tests, and frozen replay pre-call reconstruction only; no complete provider response, parser admission, PatchProposal, Review, Dry-run, Apply, or changed-product Build is proven
+current_effect: the nested physical edit-unit owner is closed. The independent 27B provider timeout remains active under EVID-005 and the response-contract/materialization boundary is owned by EVID-006
+workaround: none required for PLAN-002; preserve the outer authorized 115-160 physical unit and retain the inner Evidence only through the existing supporting binding and change supporting refs
 reopen_trigger: after closure, the same exact source identity and source hash again materialize the nested 115-155 and 115-160 spans as separate physical edit units, or normalization drops the outer authorization, supporting binding, or change supporting refs
-close_trigger: the currently authorized-once actual15 frozen-input Patch-only replay or a later separately authorized fresh actual bound to checkpoint 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 observes the three-change/three-edit input normalize to two physical change/edit units, preserves the outer authorized 115-160 unit, and retains the inner Evidence in the existing supporting binding and change supporting refs; provider response completion is not part of this Issue's close trigger
-next_action: execute the currently authorized-once actual15 frozen-input Patch-only replay to verify the deterministic two-unit Plan before the provider invocation; no actual16, Graph, Build, Apply, retry, fallback, model switch, or timeout increase is authorized
+close_trigger: an authorized actual15 frozen-input Patch-only replay or a later separately authorized fresh actual bound to checkpoint 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 observes the three-change/three-edit input normalize to two physical change/edit units, preserves the outer authorized 115-160 unit, and retains the inner Evidence in the existing supporting binding and change supporting refs; provider response completion is not part of this Issue's close trigger
+next_action: none; reopen only on the recorded reopen_trigger
 last_reviewed: 2026-08-29
-required_before_stage: next P2 deterministic Patch request construction
+required_before_stage: none_closed
 minimum_acceptance:
   - the Configuration edit remains one physical unit
   - SpreadPatches.OverrideCrosshairSize retains only the outer authorized 115-160 physical unit for the exact source identity and source hash

@@ -10,14 +10,14 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: execute and review the authorized-once actual15 frozen-input Patch-only replay bound to the 53d228fa deterministic two-unit Plan
+current_queue: form and review the bounded EVID-006 response-contract/materialization code/test checkpoint
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: actual15 closed the old EVID-004 pre-call owner, repeated the EVID-005 admitted-provider timeout, and exposed the separately mitigated PLAN-002 nested edit-unit issue; one bounded replay is authorized and pending execution, while no fresh preflight or actual16 is authorized
+queue_status: the consumed frozen 27B Patch-only replay closed PLAN-002 but repeated EVID-005 provider timeout; the isolated 4B probe returned a complete response and entered the parser but failed exact-binding admission, activating EVID-006; no further model call, fresh preflight, or actual16 is authorized
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
-last_task_status: P2_empirical_path_reached_admitted_initial_patch_provider_call_then_600.0_second_no_response_timeout
+last_task_status: P2_empirical_path_27b_replay_provider_timeout_and_isolated_4b_probe_exact_binding_admission_rejected
 current_product_code_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
 current_product_code_checkpoint_claim: deterministic orchestration, nested physical change-unit normalization, and tests only; not model, Patch, or Build success
 product_code_lineage: 05bbca578baad23403d3ab7fc3327755592e3ac8 -> d353bd0cf4750e8c902f1639c7787fed4b6afa20 -> 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
@@ -32,53 +32,54 @@ latest_actual_unreached: Patch Artifact/ProposalReview/Dry-run/approval/Apply/ch
 EVID-002_status: closed
 EVID-003_status: closed
 EVID-004_status: closed
-current_issue: EVID-005_active_initial_patch_provider_invocation_response_timeout
-PLAN-002_status: mitigated_for_current_scope_pending_real_run_close_evidence
+EVID-005_status: active_same_configuration_27b_replay_repeated_provider_timeout
+current_issue: EVID-006_active_response_contract_materialization_and_initial_patch_role_routing
+PLAN-002_status: closed_by_frozen_27b_replay_pre_call_reconstruction
 issue_register: docs/audits/ENGINEERING_ISSUE_REGISTER.md
 internal_alpha_hard_gates: false/false
 internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: authorized-once pending-execution actual15 frozen-input Patch-only replay with the 53d228fa deterministic two-unit Plan
-successful_replay_route: complete provider response -> provider-response/parser boundary review -> decide durable response checkpoint and fresh preflight
-timeout_replay_route: stop timeout extension -> Patch-role model/responsibility strategy decision
+next_eligible_slice: bounded EVID-006 code/test checkpoint using deterministic authoritative binding-field materialization
+post_checkpoint_route: checkpoint review -> decide whether to authorize a fresh Patch-only probe
 post_approval_route: isolated Apply -> changed-product Build
-patch_only_replay_authorized: authorized_once_pending_execution_by_current_user_request
-activation_required: fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
+patch_only_replay_authorized: consumed_once_by_completed_27b_replay
+activation_required: any further model call, fresh Patch-only probe, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
+same_27b_replay_authorized: false
+isolated_4b_correction_authorized: false
 automatic_actual16_authorized: false
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
 P0 remains completed and the selected product remains on the P2 empirical path;
-P1 code structure is not product completion. Actual15 passed the deterministic
-path through non-blocking Planning and formed a real admitted `initial_patch`
-call, then received no provider response before timeout. `EVID-004` is closed;
-active `EVID-005` owns only the provider invocation/response boundary.
-`PLAN-002` independently records nested physical edit-unit composition and is
-mitigated by the current deterministic checkpoint pending real-run close
-evidence. See the Issue Register for detailed evidence and exact triggers.
+P1 code structure is not product completion. The consumed frozen 27B replay
+again timed out at the provider boundary, so `EVID-005` remains active. Its
+deterministic pre-call reconstruction closed `PLAN-002`. The isolated 4B probe
+proved bounded liveness but failed exact-binding admission and formed no
+`GeneratedPatch`; active `EVID-006` owns the response-contract/materialization
+and initial Patch-role routing boundary. See the Issue Register for detailed
+evidence and exact triggers.
 
 Current execution order:
 
 1. This docs-only state synchronization is complete.
-2. Execute and review the authorized-once Patch-only replay using actual15
-   frozen input plus the `53d228fa14e00ebd2fcbc64cc1ba331623668fd4`
-   deterministic two-unit Plan.
-3. The replay makes exactly one `qwen3.6:27b` `initial_patch` call with the same
-   `40960/4096/600` configuration, with no retry, fallback, model switch,
-   Graph, Build, Apply, or actual16.
-4. If a complete response arrives, review the provider-response/parser
-   boundary, then decide whether to form a durable response checkpoint and a
-   fresh preflight.
-5. If the replay still times out, stop extending the timeout and enter a
-   Patch-role model/responsibility strategy decision.
+2. Form a bounded `EVID-006` code/test checkpoint in the existing
+   `LLMExactPatchGenerator` response-contract/materialization boundary.
+3. Remove authoritative `before_text`, path, hash, and `expected_occurrences`
+   from native model responsibility; deterministically inject them from the
+   exact binding/source excerpt while retaining existing admission.
+4. Use the frozen 4B raw response or an equivalent exact fixture in a zero-model
+   replay to form a two-change `GeneratedPatch`; invalid binding, change, or
+   after text must remain fail closed.
+5. Review the checkpoint, then decide whether to authorize a fresh Patch-only
+   probe.
 
-The current user request authorizes exactly one bounded Patch-only replay; it
-has not yet been created or executed. No fresh preflight, actual16 packet, or
-actual16 execution is authorized. Exact-diff approval still requires a complete
-Dry-run diff. Without that approval, isolated Apply and changed-product Build
-are not eligible. No additional attempt is pre-authorized.
+Do not rerun the same 27B call, increase timeout, perform a 4B correction, or
+prepare actual16. No fresh Patch-only probe, fresh preflight, actual16 packet,
+or actual16 execution is authorized. Exact-diff approval still requires a
+complete Dry-run diff. Without that approval, isolated Apply and
+changed-product Build are not eligible.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

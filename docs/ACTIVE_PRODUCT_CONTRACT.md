@@ -61,23 +61,26 @@ response before the 600.0-second timeout. The Patch payload parser was not
 entered. Detailed run evidence and exact Issue triggers are kept only in
 `docs/audits/ENGINEERING_ISSUE_REGISTER.md`.
 
-`EVID-003` remains closed. `EVID-004` is now closed because actual13, actual14,
-and actual15 no longer reproduced its old pre-call context signature: the
-Patch request was admitted and a real Patch model call formed. The current
-physical blocker is active Issue `EVID-005`, owned by the main Ollama Patch
-provider invocation/response boundary reached through
-`LLMExactPatchGenerator.generate`. It is not owned by Retrieval, Findings,
-Coverage, Planning, or the Patch payload parser, and it does not establish that
-`qwen3.6:27b` is generally incapable.
+`EVID-003` and `EVID-004` remain closed. The authorized-once 27B Patch-only
+replay has now been consumed. It reconstructed the frozen two-unit Plan and
+formed exactly one `qwen3.6:27b` `initial_patch` call under the frozen
+configuration, but again reached provider timeout without a complete response
+or parser entry. `EVID-005` therefore remains active; repeating the same 27B
+call or increasing timeout is not the next route.
 
-Actual15 Planning also exposed the independent `PLAN-002` physical edit-unit
-composition issue: two nested units targeted the same
-`SpreadPatches.OverrideCrosshairSize` source identity. Checkpoint
-`53d228fa14e00ebd2fcbc64cc1ba331623668fd4` normalizes that frozen three-change,
-three-binding input to two physical change/edit units while retaining the
-outer authorized unit and folding the inner evidence into supporting refs.
-`PLAN-002` is mitigated for the current scope but awaits real-run close evidence;
-it does not claim to solve the 600.0-second provider timeout.
+The replay also supplied the independent close evidence for `PLAN-002`: the
+three edit units normalized to two, the outer authorized 115-160 unit remained,
+and the inner evidence remained in supporting lineage before provider
+invocation. `PLAN-002` is now closed. Provider response is outside that Issue.
+
+A separate isolated `qwen3:4b-instruct` Patch-role probe used the same canonical
+input identities and normalized provider body. Its single call returned a
+complete response and entered the parser, but deterministic admission rejected
+`edit_binding_001` with `before_text_outside_edit_binding`; the raw response had
+two changes and formed zero `GeneratedPatch` items. This was not an actual or a
+fallback and does not establish a 4B production Patch role. Active Issue
+`EVID-006` now owns the bounded response-contract/materialization and initial
+Patch-role routing boundary.
 
 The current code lineage is compact Patch input checkpoint
 `05bbca578baad23403d3ab7fc3327755592e3ac8`, sealed run-family continuation
@@ -96,13 +99,13 @@ Current execution order:
 -> P1a structural coverage and P1b formal provider entry complete
 -> actual15 passes Entry through sufficient Coverage and non-blocking Planning
 -> actual15 Patch request admitted; real initial_patch call formed; EVID-004 closes
--> actual15 returns no provider response before 600.0 seconds; EVID-005 remains active
--> checkpoint 53d228fa normalizes the frozen Plan to two physical edit units; PLAN-002 awaits real-run close evidence
--> this docs-only state synchronization completes
--> execute and review the authorized-once actual15 frozen-input Patch-only replay bound to the deterministic two-unit Plan
--> replay exactly one qwen3.6:27b initial_patch call at 40960/4096/600 with no retry, fallback, model switch, Graph, Build, Apply, or actual16
--> complete response: review the provider-response/parser boundary before deciding any durable response checkpoint or fresh preflight
--> repeated timeout: stop increasing timeout and decide Patch-role model/responsibility routing
+-> authorized-once frozen 27B Patch-only replay repeats provider timeout; EVID-005 remains active
+-> replay verifies three-to-two physical edit-unit normalization; PLAN-002 closes
+-> isolated 4B probe returns a complete response but exact-binding admission rejects it
+-> EVID-006 owns the bounded response-contract/materialization and initial Patch-role routing boundary
+-> form a bounded code/test checkpoint that deterministically injects authoritative binding fields
+-> review that checkpoint, then decide whether to authorize a fresh Patch-only probe
+-> do not repeat the same 27B call, increase timeout, run a 4B correction, or prepare actual16
 -> PatchProposal -> ProposalReview
 -> complete Dry-run diff -> wait for human exact-diff approval
 -> only after approval: isolated Apply -> changed-product Build
@@ -110,11 +113,10 @@ Current execution order:
 -> Coding Agent v0 internal alpha checkpoint
 ```
 
-The current user request authorizes exactly one bounded Patch-only replay; it
-has not yet been created or executed. No fresh preflight, actual16 packet, or
-actual16 execution is authorized or created. Exact-diff approval can be
-requested only after a complete Dry-run diff. The current product stage remains
-the P2 empirical path;
+The one bounded Patch-only replay authorization has been consumed. No fresh
+Patch-only probe, fresh preflight, actual16 packet, or actual16 execution is
+authorized or created. Exact-diff approval can be requested only after a
+complete Dry-run diff. The current product stage remains the P2 empirical path;
 `P0` decision priority in the Issue Register is work priority, not a product
 stage. The two Internal Alpha hard gates remain false: actual-only
 changed-product Build/Test success and Failure -> Different Repair ->
