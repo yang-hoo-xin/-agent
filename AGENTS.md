@@ -93,6 +93,33 @@ order above.
   migrated. Consolidation requires a separately authorized migration task with
   compatibility and Artifact-history handling.
 
+### 3.2 Actual First-Failure Loop
+
+- Use an Actual as a bounded integration or acceptance attempt, not as the
+  default tool for local diagnosis and not as an automatic retry loop.
+- For each authorized Actual, handle only its first physical failure:
+  freeze the exact input identities and trace, reproduce the failure with the
+  smallest evidence-preserving focused test, deterministic vertical scenario,
+  or offline replay, implement one general repair at the verified owner, and
+  prove the old failure signature is caught deterministically before another
+  Actual is eligible.
+- The repair must express a reusable invariant. Task-specific paths, symbols,
+  spans, and model outputs may be regression fixtures, but must not become
+  hard-coded production policy unless the selected product contract explicitly
+  makes them domain facts.
+- After focused and vertical evidence passes, authorize at most one new Actual
+  to accept that repair. A later first failure belongs to a new decision cycle;
+  it does not authorize an automatic next attempt, fallback, prompt change, or
+  downstream repair.
+- If one general repair does not remove the same first-failure signature, stop
+  local patching and re-audit the input representation, responsibility split,
+  or technical choice. Do not keep extending timeouts, schemas, gates, or
+  control-plane surface to preserve the existing route.
+- A successful Actual proves only the stages and bound facts it reached. Promote
+  a stable capability claim only after the same invariants hold across the
+  required real-task set and no task-specific authority was smuggled into the
+  implementation.
+
 ## 4. Architecture Guardrails
 
 - Keep one LangGraph `StateGraph` as the workflow control plane. Conditional
