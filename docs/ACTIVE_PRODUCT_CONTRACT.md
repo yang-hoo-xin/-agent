@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 ## 1. Product
 
@@ -78,9 +78,32 @@ input identities and normalized provider body. Its single call returned a
 complete response and entered the parser, but deterministic admission rejected
 `edit_binding_001` with `before_text_outside_edit_binding`; the raw response had
 two changes and formed zero `GeneratedPatch` items. This was not an actual or a
-fallback and does not establish a 4B production Patch role. Active Issue
-`EVID-006` now owns the bounded response-contract/materialization and initial
-Patch-role routing boundary.
+fallback and does not establish a 4B production Patch role.
+
+The rejection was correct and is not resolved by deterministically injecting
+`before_text`. `edit_binding_001` authorizes only `Configuration.cs`,
+`OnFileChanged`, span 35-55. The requested setting also
+requires a property declaration near lines 12-17 and a default binding in
+`BindAll` near lines 50-78; the latter appears only as supporting evidence, not
+edit authority. The 4B `before_text` crosses from `OnFileChanged` into
+`BindAll`. Its `after_text` also references nonexistent `_targetSpread` inside
+`Configuration`, while its Spread change sets `_targetSpread = 0.0f` and then
+still overwrites the game-supplied raw `crosshairSize` with
+`GetCrosshairSize()`. The raw response is therefore not a semantically valid
+zero-model `GeneratedPatch` materialization reference.
+
+Active `EVID-007` is now the first owner: the formal
+Findings/Coverage/Planning authority-completeness boundary admitted Patch with
+an incomplete set of physical change sites. The next slice is a bounded
+read-only/test-first owner audit over the frozen actual15 FeatureSpec, Coverage,
+Evidence, original and rebuilt Plans, 4B raw response, and canonical source. It
+must determine whether the exact defect belongs to Findings, Coverage
+materialization, or Planner admission before any code/test checkpoint is
+formed. `EVID-006` remains an active secondary response-contract/model-role
+Issue, blocked by `EVID-007`; reducing model ownership is directionally valid
+only after complete edit authority exists. GPT Pro's direction to preserve the
+current control plane and reduce model ownership cannot override the physical
+authority facts.
 
 The current code lineage is compact Patch input checkpoint
 `05bbca578baad23403d3ab7fc3327755592e3ac8`, sealed run-family continuation
@@ -101,10 +124,13 @@ Current execution order:
 -> actual15 Patch request admitted; real initial_patch call formed; EVID-004 closes
 -> authorized-once frozen 27B Patch-only replay repeats provider timeout; EVID-005 remains active
 -> replay verifies three-to-two physical edit-unit normalization; PLAN-002 closes
--> isolated 4B probe returns a complete response but exact-binding admission rejects it
--> EVID-006 owns the bounded response-contract/materialization and initial Patch-role routing boundary
--> form a bounded code/test checkpoint that deterministically injects authoritative binding fields
--> review that checkpoint, then decide whether to authorize a fresh Patch-only probe
+-> isolated 4B probe returns a complete but semantically invalid response; exact-binding admission correctly rejects it
+-> EVID-007 owns the incomplete physical edit-authority completeness boundary
+-> read-only/test-first audit maps every actual15 change obligation to all required physical edit sites
+-> decide the exact owner among Findings, Coverage materialization, and Planner admission
+-> only then form and review an actual15-shaped deterministic positive/negative code/test checkpoint
+-> after complete edit authority is proven, resume secondary EVID-006 response-contract/model-role work
+-> only after both boundaries are reviewed, decide whether to authorize a fresh Patch-only probe
 -> do not repeat the same 27B call, increase timeout, run a 4B correction, or prepare actual16
 -> PatchProposal -> ProposalReview
 -> complete Dry-run diff -> wait for human exact-diff approval

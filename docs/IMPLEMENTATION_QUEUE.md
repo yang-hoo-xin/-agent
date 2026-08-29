@@ -10,14 +10,14 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: form and review the bounded EVID-006 response-contract/materialization code/test checkpoint
+current_queue: perform the bounded EVID-007 read-only/test-first physical edit-authority completeness owner audit
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: the consumed frozen 27B Patch-only replay closed PLAN-002 but repeated EVID-005 provider timeout; the isolated 4B probe returned a complete response and entered the parser but failed exact-binding admission, activating EVID-006; no further model call, fresh preflight, or actual16 is authorized
+queue_status: actual15 recorded sufficient Coverage and non-blocking Planning even though its physical edit authority omitted required Configuration property and BindAll sites; the frozen 4B response crossed edit_binding_001, was correctly rejected, and is also semantically invalid; EVID-007 is the first owner and no model call, fresh preflight, code checkpoint, or actual16 is authorized before exact owner localization
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
-last_task_status: P2_empirical_path_27b_replay_provider_timeout_and_isolated_4b_probe_exact_binding_admission_rejected
+last_task_status: P2_empirical_path_4b_probe_exposed_incomplete_physical_edit_authority_and_semantically_invalid_patch
 current_product_code_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
 current_product_code_checkpoint_claim: deterministic orchestration, nested physical change-unit normalization, and tests only; not model, Patch, or Build success
 product_code_lineage: 05bbca578baad23403d3ab7fc3327755592e3ac8 -> d353bd0cf4750e8c902f1639c7787fed4b6afa20 -> 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
@@ -33,7 +33,8 @@ EVID-002_status: closed
 EVID-003_status: closed
 EVID-004_status: closed
 EVID-005_status: active_same_configuration_27b_replay_repeated_provider_timeout
-current_issue: EVID-006_active_response_contract_materialization_and_initial_patch_role_routing
+EVID-006_status: active_secondary_response_contract_and_initial_patch_role_routing_blocked_by_EVID-007
+current_issue: EVID-007_active_formal_authority_completeness_owner_audit
 PLAN-002_status: closed_by_frozen_27b_replay_pre_call_reconstruction
 issue_register: docs/audits/ENGINEERING_ISSUE_REGISTER.md
 internal_alpha_hard_gates: false/false
@@ -41,8 +42,9 @@ internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: bounded EVID-006 code/test checkpoint using deterministic authoritative binding-field materialization
-post_checkpoint_route: checkpoint review -> decide whether to authorize a fresh Patch-only probe
+next_eligible_slice: bounded read-only/test-first audit of actual15 FeatureSpec, Coverage, Evidence, original/rebuilt Plan, frozen 4B raw response, and canonical source
+post_audit_route: localize exact owner as Findings, Coverage materialization, or Planner admission -> form one owner-local actual15-shaped deterministic positive/negative code/test checkpoint
+post_checkpoint_route: checkpoint review -> only after complete edit authority exists, resume secondary EVID-006 work -> separately decide whether to authorize a fresh Patch-only probe
 post_approval_route: isolated Apply -> changed-product Build
 patch_only_replay_authorized: consumed_once_by_completed_27b_replay
 activation_required: any further model call, fresh Patch-only probe, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
@@ -56,24 +58,36 @@ P0 remains completed and the selected product remains on the P2 empirical path;
 P1 code structure is not product completion. The consumed frozen 27B replay
 again timed out at the provider boundary, so `EVID-005` remains active. Its
 deterministic pre-call reconstruction closed `PLAN-002`. The isolated 4B probe
-proved bounded liveness but failed exact-binding admission and formed no
-`GeneratedPatch`; active `EVID-006` owns the response-contract/materialization
-and initial Patch-role routing boundary. See the Issue Register for detailed
+proved bounded liveness but its exact-binding rejection was correct:
+`edit_binding_001` authorizes only `Configuration.cs` `OnFileChanged` span
+35-55, while the requested behavior also needs a property declaration and
+`BindAll` default binding. Its response also references `_targetSpread` in the
+wrong class and fails to retain the game-supplied raw `crosshairSize`.
+`EVID-007` therefore owns the first authority-completeness audit; `EVID-006`
+remains secondary and blocked by it. See the Issue Register for detailed
 evidence and exact triggers.
 
 Current execution order:
 
 1. This docs-only state synchronization is complete.
-2. Form a bounded `EVID-006` code/test checkpoint in the existing
-   `LLMExactPatchGenerator` response-contract/materialization boundary.
-3. Remove authoritative `before_text`, path, hash, and `expected_occurrences`
-   from native model responsibility; deterministically inject them from the
-   exact binding/source excerpt while retaining existing admission.
-4. Use the frozen 4B raw response or an equivalent exact fixture in a zero-model
-   replay to form a two-change `GeneratedPatch`; invalid binding, change, or
-   after text must remain fail closed.
-5. Review the checkpoint, then decide whether to authorize a fresh Patch-only
-   probe.
+2. Read only the frozen actual15 FeatureSpec, formal Coverage, EvidencePack,
+   original and rebuilt Implementation Plans, 4B raw response, and canonical
+   source. Map every change obligation to the necessary physical sites:
+   `Configuration` property declaration, `OnFileChanged` reload, `BindAll`
+   default binding, and the Spread bypass that preserves incoming raw
+   `crosshairSize`.
+3. Prove whether each site has exact path/hash/span/symbol edit authority or can
+   be completed inside one already authorized outer span. Preservation and
+   supporting evidence do not grant edit authority.
+4. Localize the exact first defect to Findings, Coverage materialization, or
+   Planner admission. Do not presuppose a retrieval repair.
+5. Only then form one owner-local code/test checkpoint with actual15-shaped
+   deterministic positive and negative tests. Missing any required site must
+   fail closed before Patch provider invocation, and no model may fill an
+   authority gap.
+6. After complete authority is proven and the checkpoint is reviewed, resume
+   the secondary `EVID-006` direction of reducing model ownership without
+   adding an Artifact, Graph branch, Approval, or second control plane.
 
 Do not rerun the same 27B call, increase timeout, perform a 4B correction, or
 prepare actual16. No fresh Patch-only probe, fresh preflight, actual16 packet,
