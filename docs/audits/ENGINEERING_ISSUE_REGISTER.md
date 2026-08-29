@@ -399,33 +399,71 @@ owner: src/mod_agent/proposal/code_generator.py::LLMExactPatchGenerator.generate
 evidence_level: real_run
 severity: S1
 decision_priority: P0
-status: active
+status: closed
 first_seen: p2_ac_20260825_012/actual_12
 latest_evidence: >-
-  actual12 reached generate_patch_proposal after sufficient Coverage and non-blocking Planning, then failed at source_node=generate_patch_proposal, stage=generate_patch_proposal_execution, owner=platform, with OllamaLLMError: [Ollama] Structured request exceeds the configured pre-call context budget.
+  actual13, actual14, and actual15 did not reproduce the old pre-call context-budget signature. Their Patch requests were admitted and formed real Patch model calls. Actual15 admitted a 26,440-byte body with conservative_required_context=30,536 under configured_num_ctx=40,960 and num_predict=4,096 before reaching the independent EVID-005 provider invocation/response timeout.
 actual_result: 'C:\Users\10160\Documents\Codex\2026-08-28\accurate-crosshair-actual12-fresh-preflight\outputs\actual_p2_ac_20260825_012_actual_12\e\p\p2_ac_20260825_012\run_result.json'
 actual_result_sha256: 8b4f5388109519bd686091e768eb4f5c630e309eb3ff560d65c9428771ac395c
-consumption: consumed_once
-failure_boundary: the third model role was Patch generation, but structured pre-call admission rejected its provider body before the Patch request was sent; total model_call_count=2 for requirement_projection and requirement_findings, Patch model calls=0, and patch_payload_parser_entered=false
-unreached_effects: no Patch Artifact, ProposalReview, Dry-run, diff or approval, Apply, changed-product Build, Repair, Revalidation, or Runtime; the passed Build was baseline-only
-physical_cause: the Patch request projected full Evidence together with edit_binding_contexts, including repeated declared_members and related facts, so the 46,968-byte body required a conservative 51,064 against configured num_ctx 40,960 with num_predict 4,096
+consumption: actual12_consumed_once
+historical_failure_boundary: the actual12 third model role was Patch generation, but structured pre-call admission rejected its provider body before the Patch request was sent; total model_call_count=2 for requirement_projection and requirement_findings, Patch model calls=0, and patch_payload_parser_entered=false
+historical_physical_cause: the actual12 Patch request projected full Evidence together with edit_binding_contexts, including repeated declared_members and related facts, so the 46,968-byte body required a conservative 51,064 against configured num_ctx 40,960 with num_predict 4,096
 implementation_checkpoint: 05bbca578baad23403d3ab7fc3327755592e3ac8
-implementation_checkpoint_status: accepted_for_deterministic_code_and_tests_pending_fresh_preflight_and_actual
+implementation_checkpoint_status: accepted_for_deterministic_code_and_tests_and_validated_by_actual13_actual14_actual15_close_evidence
 checkpoint_evidence: deterministic reconstruction of frozen actual12 data reduced the provider body from 46,968 to 26,440 bytes and conservative required context from 51,064 to 30,536 under the same num_ctx 40,960 and num_predict 4,096, changing admission from false to true; all six required edit/support excerpts remain present; missing or drifted authoritative input fails before the provider call; independent regressions report Patch plus ProductExecution plus Planning 169 passed and Local Entry 126 passed
 checkpoint_claim_boundary: the model now receives only a deterministic compressed view while the complete EvidencePack and Binding Registry remain in process for post-response validation; this checkpoint does not prove a real Patch provider call, model output, schema or semantic admission, Review, or Dry-run
-current_effect: only the Patch model call is blocked before provider admission. Retrieval, Findings, Coverage, and Planning already passed and are not owned by this Issue. No Patch output existed, so Qwen output quality is not implicated
-workaround: preserve actual12 as consumed immutable evidence; do not infer retry authority from the checkpoint or treat deterministic reconstruction as a real Patch call
+close_evidence: actual13, actual14, and actual15 met the recorded close trigger because the old structured pre-call budget signature was absent, the Patch provider request was admitted, and a real Patch model call formed; the later no-response timeout is assigned to EVID-005 and does not keep EVID-004 open
+current_effect: the old Patch pre-call input-projection/admission owner is closed. Retrieval, Findings, Coverage, Planning, provider response, parser admission, Review, and Dry-run remain outside this Issue
+workaround: none required for EVID-004; preserve actual12 as consumed immutable evidence and do not assign later provider-response failures back to this owner
 reopen_trigger: after closure, a fresh selected actual bound to the same compact-projection lineage again reproduces the old structured pre-call budget signature before a Patch provider call
 close_trigger: a new fresh preflight bound to checkpoint 05bbca578baad23403d3ab7fc3327755592e3ac8 passes; a separately authorized new actual does not reproduce the old pre-call budget signature; and the Patch provider request is admitted and forms a real Patch model call. Any later model-output schema or semantic failure, ProposalReview result, or Dry-run failure belongs to the newly reached physical owner and does not keep EVID-004 open
-next_action: a fresh sealed checkpoint-bound preflight requires separate user authorization; after receipt review, actual13 packet preparation and actual13 execution require separate authorizations. Neither actual13 nor any later attempt is pre-authorized
-last_reviewed: 2026-08-28
-required_before_stage: next P2 Patch provider call
+next_action: none; reopen only on the recorded reopen_trigger
+last_reviewed: 2026-08-29
+required_before_stage: none_closed
 minimum_acceptance:
-  - the fresh preflight is sealed against checkpoint 05bbca578baad23403d3ab7fc3327755592e3ac8 and passes
-  - the separately authorized fresh actual does not reproduce the old structured pre-call budget signature
-  - the Patch provider request is admitted and a real Patch model call is formed
+  - the old structured pre-call budget signature is absent
+  - the Patch provider request is admitted and a real Patch model call forms
   - any failure after response arrival is assigned to its reached schema, semantic, Review, or Dry-run owner rather than retained under EVID-004
-  - no fresh preflight, packet, actual, exact-diff approval, Apply, or changed-product Build is inferred from this Issue
+  - no model run, fresh preflight, packet, actual, exact-diff approval, Apply, or changed-product Build is inferred from this Issue
+```
+
+### EVID-005
+
+```yaml
+issue_id: EVID-005
+title: Admitted initial_patch provider invocation returns no complete response before the 600.0-second timeout
+scope: Main Ollama Patch provider invocation/response boundary after structured request admission
+owner: main Ollama Patch provider invocation/response boundary through LLMExactPatchGenerator.generate
+evidence_level: real_run
+severity: S1
+decision_priority: P0
+status: active
+first_seen: actual14
+observed_twice: actual14 and p2_ac_20260825_015/actual_15 reached the same admitted initial_patch provider invocation/response boundary and returned no complete response before the 600.0-second timeout
+latest_evidence: >-
+  p2_ac_20260825_015/actual_15 was consumed by one RUN. Its wrapper reached terminal with ProductExecution partial after Entry, continuation-packet revalidation, baseline Build, compiled-plugin inspection, requirement_projection, requirement_findings, sufficient Coverage with six Evidence items, three requirements/findings, and three edit targets, and non-blocking Planning with three changes and three bindings. The third model invocation formed with role=initial_patch, but no response arrived before the 600.0-second timeout and patch_payload_parser_entered=false.
+actual_result: 'C:\Users\10160\Documents\Codex\2026-08-29\accurate-crosshair-actual15-continuation-preflight\outputs\actual_p2_ac_20260825_015_actual_15\e\p\p2_ac_20260825_015\run_result.json'
+actual_result_sha256: 3a7cbebe50a21c4fcfd7634dea2f9bac5a3fd0bdcb9278514cd0342abb92c5c6
+consumption: consumed_once
+provider_request_admission: body=26440 bytes; conservative_required_context=30536; configured_num_ctx=40960; num_predict=4096
+failure_boundary: the admitted third model call had role=initial_patch and timed out after 600.0 seconds with no response; patch_payload_parser_entered=false
+owner_exclusions: Retrieval, Findings, Coverage, Planning, and the Patch payload parser had either already passed or were not entered and do not own this timeout
+unreached_effects: no PatchProposal, ProposalReview, Dry-run, diff or approval, Apply, changed-product Build, Repair, Revalidation, or Runtime
+filesystem_effect: canonical source was unchanged; the only new isolated file was the baseline Build nuget.config, not an Apply result
+attempt_boundary: no retry, fallback, model switch, or actual16 occurred
+current_effect: the current hardware, model, and request-interface combination cannot serve as a stable Patch production path at this observed boundary; this does not prove that qwen3.6:27b is generally incapable
+workaround: do not infer authority for another model run or actual16; do not add retries, fallback, a model switch, or a longer timeout under this Issue
+reopen_trigger: after closure, the same explicitly bound configuration again admits the initial_patch request but produces no complete response before the 600.0-second timeout
+close_trigger: one separately authorized frozen-input single-call Patch-only replay or a later fresh actual, under the same explicit configuration, obtains a complete provider response and enters the Patch payload parser; if the same boundary still times out, stop extending timeout and enter a Patch-role model/responsibility routing decision
+next_action: separately authorize one actual15 frozen-input plus 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 deterministic two-unit Plan Patch-only replay with exactly one qwen3.6:27b initial_patch call at num_ctx=40960, num_predict=4096, and timeout=600.0 seconds; do not run Graph, Build, Apply, or actual16 and do not retry, fall back, or switch models
+last_reviewed: 2026-08-29
+required_before_stage: next P2 stable Patch provider response path
+minimum_acceptance:
+  - the replay or fresh actual is explicitly authorized and bound to one frozen input and the same 40960/4096/600 configuration
+  - exactly one qwen3.6:27b initial_patch invocation occurs with no retry, fallback, or model switch
+  - a complete provider response arrives and patch_payload_parser_entered=true to close this Issue
+  - a repeated timeout routes to a Patch-role model/responsibility decision instead of another timeout increase
+  - no Graph, Build, Apply, actual16, or later product-stage authority is inferred from this Issue
 ```
 
 ### PLAN-001
@@ -458,6 +496,39 @@ minimum_acceptance:
   - legacy non-selected Planner and Graph behavior remains compatible
   - the selected ProductExecution path/Review negative passes
   - no new Artifact, Graph branch, Approval, or control plane
+```
+
+### PLAN-002
+
+```yaml
+issue_id: PLAN-002
+title: Planning emits nested physical edit units for the same source identity
+scope: Planning and change-unit composition when multiple authorized changes target overlapping spans of one exact source identity
+owner: Planning change-unit composition and nested physical edit-unit normalization
+evidence_level: real_run
+severity: S1
+decision_priority: P1
+status: mitigated_for_current_scope
+first_seen: p2_ac_20260825_015/actual_15
+latest_evidence: actual15 formed one Configuration physical edit unit and two nested units for the same SpreadPatches.OverrideCrosshairSize source identity and source hash at spans 115-155 and 115-160
+implementation_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
+implementation_checkpoint_status: accepted_for_deterministic_code_and_tests_pending_patch_only_replay_or_later_actual_close_evidence
+checkpoint_evidence: checkpoint 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 normalizes the frozen actual15 three-change/three-edit input to two physical change/edit units; it preserves the existing authorized outer 115-160 SpreadPatches.OverrideCrosshairSize unit and moves the inner 115-155 Evidence into the existing supporting binding and the change supporting refs
+reconstruction_evidence: frozen request reconstruction reduced body bytes from 26,440 to 26,097 and conservative required context from 30,536 to 30,193; 74 focused tests passed
+checkpoint_claim_boundary: deterministic Planning/change-unit normalization and focused tests only; no real-run closure, complete provider response, parser admission, PatchProposal, Review, Dry-run, Apply, or changed-product Build is proven
+current_effect: the code/test checkpoint is formed and accepted for the bounded nested-unit defect, but real-run close evidence still requires one Patch-only replay or a later actual; this Issue does not claim to solve the EVID-005 600.0-second provider timeout
+workaround: preserve the outer authorized 115-160 physical unit and retain the inner Evidence only through the existing supporting binding and change supporting refs; do not treat timeout behavior as normalization evidence
+reopen_trigger: after closure, the same exact source identity and source hash again materialize the nested 115-155 and 115-160 spans as separate physical edit units, or normalization drops the outer authorization, supporting binding, or change supporting refs
+close_trigger: one separately authorized actual15 frozen-input Patch-only replay or a later fresh actual bound to checkpoint 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 observes the three-change/three-edit input normalize to two physical change/edit units, preserves the outer authorized 115-160 unit, and retains the inner Evidence in the existing supporting binding and change supporting refs; provider response completion is not part of this Issue's close trigger
+next_action: use the separately authorized single actual15 frozen-input Patch-only replay to verify the deterministic two-unit Plan before the provider invocation; no actual16, Graph, Build, Apply, retry, fallback, model switch, or timeout increase is authorized
+last_reviewed: 2026-08-29
+required_before_stage: next P2 deterministic Patch request construction
+minimum_acceptance:
+  - the Configuration edit remains one physical unit
+  - SpreadPatches.OverrideCrosshairSize retains only the outer authorized 115-160 physical unit for the exact source identity and source hash
+  - the inner 115-155 Evidence is retained through the existing supporting binding and change supporting refs
+  - the normalized Plan and Patch request contain two physical change/edit units rather than three
+  - provider response or timeout behavior cannot close or reopen this Issue by itself
 ```
 
 ### ISO-001

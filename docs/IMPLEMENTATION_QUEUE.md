@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -10,61 +10,72 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: fresh sealed checkpoint-bound preflight requires separate user authorization
+current_queue: separate authorization required for one actual15 frozen-input Patch-only replay bound to the 53d228fa deterministic two-unit Plan
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: actual12 closed EVID-003 and stopped before the Patch model call under active EVID-004; no fresh preflight, receipt, actual13 packet, or actual13 execution is authorized
+queue_status: actual15 closed the old EVID-004 pre-call owner, repeated the EVID-005 admitted-provider timeout, and exposed the separately mitigated PLAN-002 nested edit-unit issue; no replay, fresh preflight, or actual16 is authorized
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
-last_task_status: P2_empirical_path_reached_non_blocking_planning_and_patch_then_blocked_at_patch_pre_call_admission
-current_product_code_checkpoint: 05bbca578baad23403d3ab7fc3327755592e3ac8
-current_product_code_checkpoint_claim: deterministic Patch input projection/admission code and tests only
+last_task_status: P2_empirical_path_reached_admitted_initial_patch_provider_call_then_600.0_second_no_response_timeout
+current_product_code_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
+current_product_code_checkpoint_claim: deterministic orchestration, nested physical change-unit normalization, and tests only; not model, Patch, or Build success
+product_code_lineage: 05bbca578baad23403d3ab7fc3327755592e3ac8 -> d353bd0cf4750e8c902f1639c7787fed4b6afa20 -> 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
 P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed
 P1_product_completion_claim: false
-latest_actual_identity: p2_ac_20260825_012/actual_12
-latest_actual_status: Entry_baseline_Build_compiled_plugin_inspection_Projection_RgLive_Retrieval_Findings_passed_Coverage_sufficient_Planning_non_blocking_Patch_pre_call_blocked
-latest_actual_model_calls: 2_total_0_Patch
+latest_actual_identity: p2_ac_20260825_015/actual_15
+latest_actual_status: wrapper_terminal_ProductExecution_partial_Entry_through_Planning_passed_initial_patch_admitted_then_provider_timeout
+latest_actual_model_calls: 3_total_1_initial_patch
 latest_actual_unreached: Patch Artifact/ProposalReview/Dry-run/approval/Apply/changed-product Build/Repair/Revalidation/Runtime
 EVID-002_status: closed
 EVID-003_status: closed
-current_issue: EVID-004_active_patch_pre_call_context_admission
+EVID-004_status: closed
+current_issue: EVID-005_active_initial_patch_provider_invocation_response_timeout
+PLAN-002_status: mitigated_for_current_scope_pending_real_run_close_evidence
 issue_register: docs/audits/ENGINEERING_ISSUE_REGISTER.md
 internal_alpha_hard_gates: false/false
 internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: fresh sealed checkpoint-bound preflight requires separate user authorization
-post_checkpoint_route: separate preflight authorization -> fresh sealed checkpoint-bound preflight -> receipt review -> separately authorized actual13 packet preparation -> separately authorized actual13 execution
-actual13_acceptance_route: Entry -> Projection -> RgLive Retrieval -> Findings -> Coverage sufficient -> non-blocking Planning -> old Patch pre-call signature absent -> Patch provider request admitted -> Patch model call formed -> PatchProposal -> ProposalReview -> complete Dry-run diff -> wait for human exact-diff approval
+next_eligible_slice: separately authorized one-shot actual15 frozen-input Patch-only replay with the 53d228fa deterministic two-unit Plan
+successful_replay_route: complete provider response -> provider-response/parser boundary review -> decide durable response checkpoint and fresh preflight
+timeout_replay_route: stop timeout extension -> Patch-role model/responsibility strategy decision
 post_approval_route: isolated Apply -> changed-product Build
-activation_required: preflight, receipt review, actual13 packet preparation, actual13 execution, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
-automatic_actual13_authorized: false
+activation_required: Patch-only replay, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
+automatic_actual16_authorized: false
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
 P0 remains completed and the selected product remains on the P2 empirical path;
-P1 code structure is not product completion. Actual12 passed Entry, baseline
-Build, compiled-plugin inspection, Projection, RgLive Retrieval, and Findings;
-formed sufficient Coverage with non-empty authorized edit targets; and entered
-non-blocking Planning and Patch. The Build was baseline-only. `EVID-003` is
-closed because its exact real-run close trigger was met. Active `EVID-004` owns
-only the Patch pre-call input-projection/admission failure; it does not belong
-to Retrieval, Findings, Coverage, Planning, or Patch-model output quality. The
-current checkpoint is bounded deterministic code/test evidence, not proof of a
-real Patch call or output. See the Issue Register for exact evidence and close
-triggers.
+P1 code structure is not product completion. Actual15 passed the deterministic
+path through non-blocking Planning and formed a real admitted `initial_patch`
+call, then received no provider response before timeout. `EVID-004` is closed;
+active `EVID-005` owns only the provider invocation/response boundary.
+`PLAN-002` independently records nested physical edit-unit composition and is
+mitigated by the current deterministic checkpoint pending real-run close
+evidence. See the Issue Register for detailed evidence and exact triggers.
 
-No fresh checkpoint-bound preflight, receipt, actual13 packet, or actual13
-execution has been created or authorized. Fresh preflight requires separate
-user authorization; receipt review does not authorize packet preparation; and
-actual13 packet preparation and execution remain separate authorization
-decisions. Exact-diff approval must follow a complete Dry-run diff; without that
-approval, isolated Apply and changed-product Build are not eligible. No next
-attempt is pre-authorized.
+Current execution order:
+
+1. This docs-only state synchronization is complete.
+2. Separately authorize one Patch-only replay using actual15 frozen input plus
+   the `53d228fa14e00ebd2fcbc64cc1ba331623668fd4` deterministic two-unit Plan.
+3. The replay makes exactly one `qwen3.6:27b` `initial_patch` call with the same
+   `40960/4096/600` configuration, with no retry, fallback, model switch,
+   Graph, Build, Apply, or actual16.
+4. If a complete response arrives, review the provider-response/parser
+   boundary, then decide whether to form a durable response checkpoint and a
+   fresh preflight.
+5. If the replay still times out, stop extending the timeout and enter a
+   Patch-role model/responsibility strategy decision.
+
+No Patch-only replay, fresh preflight, actual16 packet, or actual16 execution
+has been created or authorized. Exact-diff approval still requires a complete
+Dry-run diff. Without that approval, isolated Apply and changed-product Build
+are not eligible. No next attempt is pre-authorized.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

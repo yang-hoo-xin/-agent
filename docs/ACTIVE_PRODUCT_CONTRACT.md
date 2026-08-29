@@ -51,57 +51,58 @@ P0 false-sufficiency closure remains completed, and the current product stage
 remains the P2 empirical path. P1 code structure does not by itself establish
 product completion.
 
-The latest real ProductExecution is `p2_ac_20260825_012/actual_12`, consumed
-once. It passed Entry, baseline Build, compiled-plugin inspection, Requirement
-Projection, RgLive Retrieval, and Findings. Coverage was sufficient,
-`edit_target_evidence_ids` contained three entries, the EvidencePack had
-`can_generate_patch=true`, and the ImplementationPlan was non-blocking with no
-blockers. It entered `generate_patch_proposal`, then stopped at the platform
-Patch pre-call context-admission boundary. The Build that passed was the
-baseline Build, not a changed-product Build. Detailed run and Issue evidence is
-kept only in `docs/audits/ENGINEERING_ISSUE_REGISTER.md`.
+The latest real ProductExecution is `p2_ac_20260825_015/actual_15`, consumed
+once. Its wrapper reached terminal while ProductExecution remained `partial`.
+It passed Entry, continuation-packet revalidation, baseline Build,
+compiled-plugin inspection, `requirement_projection`, `requirement_findings`,
+sufficient Coverage, and non-blocking Planning. The `initial_patch` request was
+admitted and the third real model call formed, but the provider returned no
+response before the 600.0-second timeout. The Patch payload parser was not
+entered. Detailed run evidence and exact Issue triggers are kept only in
+`docs/audits/ENGINEERING_ISSUE_REGISTER.md`.
 
-Actual12 satisfies the recorded close trigger for `EVID-003`: a fresh actual
-formed sufficient Coverage, retained non-empty authorized edit targets, and
-entered non-blocking Planning and Patch while the existing missing, conflict,
-`pre_patch_evidence`, and preservation gates remained fail closed. `EVID-003`
-is therefore closed. This is bounded real-run validation of the expected-delta
-semantics; it is not product success.
+`EVID-003` remains closed. `EVID-004` is now closed because actual13, actual14,
+and actual15 no longer reproduced its old pre-call context signature: the
+Patch request was admitted and a real Patch model call formed. The current
+physical blocker is active Issue `EVID-005`, owned by the main Ollama Patch
+provider invocation/response boundary reached through
+`LLMExactPatchGenerator.generate`. It is not owned by Retrieval, Findings,
+Coverage, Planning, or the Patch payload parser, and it does not establish that
+`qwen3.6:27b` is generally incapable.
 
-The current physical blocker is active Issue `EVID-004`. The Patch model input
-projection in
-`src/mod_agent/proposal/code_generator.py::LLMExactPatchGenerator.generate`,
-combined with the existing Ollama structured pre-call admission, rejected the
-Patch request before it was sent to the model. Actual12 made two model calls,
-for Projection and Findings, and made zero Patch model calls. It created no
-Patch Artifact, ProposalReview, Dry-run diff, approval, Apply, changed-product
-Build, Repair, Revalidation, or Runtime result. The failure does not establish
-anything about Patch-model output quality.
+Actual15 Planning also exposed the independent `PLAN-002` physical edit-unit
+composition issue: two nested units targeted the same
+`SpreadPatches.OverrideCrosshairSize` source identity. Checkpoint
+`53d228fa14e00ebd2fcbc64cc1ba331623668fd4` normalizes that frozen three-change,
+three-binding input to two physical change/edit units while retaining the
+outer authorized unit and folding the inner evidence into supporting refs.
+`PLAN-002` is mitigated for the current scope but awaits real-run close evidence;
+it does not claim to solve the 600.0-second provider timeout.
 
-Checkpoint `48eac8e08da6cc795c6a6b8f51f66ffa12f0ccbe` repaired the actual11
-pre-Graph dependency-root caller and is part of the current HEAD lineage rather
-than a separate product-completion claim. Current product-code checkpoint
-`05bbca578baad23403d3ab7fc3327755592e3ac8` records bounded deterministic
-code/test evidence for compact Patch model-input projection and pre-call
-admission. The complete EvidencePack and Binding Registry remain in process for
-post-response validation; the model receives a deterministic compressed view,
-and missing or drifted authority inputs fail before the provider call. This
-checkpoint does not prove a real Patch model call, model output, Review,
-Dry-run, or later product stage.
+The current code lineage is compact Patch input checkpoint
+`05bbca578baad23403d3ab7fc3327755592e3ac8`, sealed run-family continuation
+orchestration checkpoint `d353bd0cf4750e8c902f1639c7787fed4b6afa20`, and
+nested physical edit-unit normalization checkpoint
+`53d228fa14e00ebd2fcbc64cc1ba331623668fd4`. Its claim is bounded to
+deterministic orchestration, change-unit normalization, and tests. It is not a
+claim of model, Patch, or Build success; actual15's baseline Build is separate
+run evidence. It also does not prove Review, Dry-run, Apply, or a
+changed-product Build.
 
 Current execution order:
 
 ```text
 -> P0 false-sufficiency closure complete
 -> P1a structural coverage and P1b formal provider entry complete
--> actual12 passes Entry, baseline Build, compiled-plugin inspection, Projection, RgLive Retrieval, and Findings
--> actual12 Coverage sufficient; non-empty authorized edit targets; non-blocking Planning; EVID-003 closes
--> actual12 enters Patch and stops before the Patch model call; EVID-004 remains active
--> fresh sealed preflight bound to checkpoint 05bbca578baad23403d3ab7fc3327755592e3ac8 requires separate user authorization
--> receipt review
--> separately authorized actual13 packet preparation
--> separately authorized actual13 execution
--> Patch provider request admitted and Patch model call formed
+-> actual15 passes Entry through sufficient Coverage and non-blocking Planning
+-> actual15 Patch request admitted; real initial_patch call formed; EVID-004 closes
+-> actual15 returns no provider response before 600.0 seconds; EVID-005 remains active
+-> checkpoint 53d228fa normalizes the frozen Plan to two physical edit units; PLAN-002 awaits real-run close evidence
+-> this docs-only state synchronization completes
+-> separately authorize one actual15 frozen-input Patch-only replay bound to the deterministic two-unit Plan
+-> replay exactly one qwen3.6:27b initial_patch call at 40960/4096/600 with no retry, fallback, model switch, Graph, Build, Apply, or actual16
+-> complete response: review the provider-response/parser boundary before deciding any durable response checkpoint or fresh preflight
+-> repeated timeout: stop increasing timeout and decide Patch-role model/responsibility routing
 -> PatchProposal -> ProposalReview
 -> complete Dry-run diff -> wait for human exact-diff approval
 -> only after approval: isolated Apply -> changed-product Build
@@ -109,16 +110,14 @@ Current execution order:
 -> Coding Agent v0 internal alpha checkpoint
 ```
 
-No fresh checkpoint-bound preflight, receipt, actual13 packet, or actual13
-execution is authorized or created. Preflight, packet preparation, and
-execution remain separate authorization decisions, and no next attempt is
-pre-authorized. Exact-diff approval can be requested only after a complete
-Dry-run diff. The current product stage remains the P2 empirical path; `P0`
-decision priority in the Issue Register is work priority, not a product stage.
-The two Internal Alpha hard gates remain false: actual-only changed-product
-Build/Test success and Failure -> Different Repair -> Revalidation. Coding
-Agent v0 internal alpha, Runtime, stable Agent capability, and Public Alpha all
-remain false or unauthorized.
+No Patch-only replay, fresh preflight, actual16 packet, or actual16 execution is
+authorized or created. Exact-diff approval can be requested only after a
+complete Dry-run diff. The current product stage remains the P2 empirical path;
+`P0` decision priority in the Issue Register is work priority, not a product
+stage. The two Internal Alpha hard gates remain false: actual-only
+changed-product Build/Test success and Failure -> Different Repair ->
+Revalidation. Coding Agent v0 internal alpha, Runtime, stable Agent capability,
+and Public Alpha all remain false or unauthorized.
 
 ## 2. Current Verified Capability
 

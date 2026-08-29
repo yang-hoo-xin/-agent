@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -11,13 +11,14 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: fresh sealed checkpoint-bound preflight requires separate user authorization
+current_dependency: separate authorization required for one actual15 frozen-input Patch-only replay bound to the 53d228fa deterministic two-unit Plan
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
-current_product_code_checkpoint: 05bbca578baad23403d3ab7fc3327755592e3ac8
-current_product_code_checkpoint_claim: deterministic Patch input projection/admission code and tests only
-actual11_pre_graph_dependency_root_caller_checkpoint: 48eac8e08da6cc795c6a6b8f51f66ffa12f0ccbe
-actual11_pre_graph_dependency_root_caller_claim: current HEAD lineage only
+current_product_code_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
+current_product_code_checkpoint_claim: deterministic orchestration, nested physical change-unit normalization, and tests only; not model, Patch, or Build success
+compact_patch_input_checkpoint: 05bbca578baad23403d3ab7fc3327755592e3ac8
+sealed_run_family_continuation_orchestration_checkpoint: d353bd0cf4750e8c902f1639c7787fed4b6afa20
+nested_physical_edit_unit_normalization_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
 protected_user_wip: four independent documentation changes, unchanged and unstaged
 selected_actual_only_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 P0_status: completed_at_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
@@ -25,24 +26,25 @@ P1a_status: completed_at_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_at_32a939b3f217721b076704cd7e701369fef532ed
 P1_product_completion_claim: false
 P2_product_path_admission: admitted
-P2_sealed_entry_admission: requires_new_authorized_checkpoint_bound_preflight
 ENTRY-002_status: closed
-latest_accurate_crosshair_identity: p2_ac_20260825_012/actual_12
-latest_accurate_crosshair_status: partial_patch_pre_call_context_admission_blocked
+latest_accurate_crosshair_identity: p2_ac_20260825_015/actual_15
+latest_accurate_crosshair_wrapper_status: terminal
+latest_accurate_crosshair_product_execution_status: partial
+latest_accurate_crosshair_status: initial_patch_provider_response_timeout_after_admission
 latest_accurate_crosshair_entry: passed
+latest_accurate_crosshair_continuation_packet_revalidation: passed
 latest_accurate_crosshair_baseline_build: passed_baseline_only
 latest_accurate_crosshair_compiled_plugin_inspection: passed
-latest_accurate_crosshair_projection: passed
-latest_accurate_crosshair_rg_live_retrieval: passed
-latest_accurate_crosshair_findings: reached
-latest_accurate_crosshair_coverage: sufficient
-latest_accurate_crosshair_edit_target_evidence_ids_count: 3
-latest_accurate_crosshair_evidence_pack_can_generate_patch: true
-latest_accurate_crosshair_implementation_plan_blocking: false
-latest_accurate_crosshair_implementation_plan_blockers: []
+latest_accurate_crosshair_requirement_projection: passed
+latest_accurate_crosshair_requirement_findings: passed
+latest_accurate_crosshair_coverage: sufficient_6_evidence_items_3_requirements_findings_3_edit_targets
+latest_accurate_crosshair_implementation_plan: non_blocking_3_changes_3_bindings
 latest_accurate_crosshair_generate_patch_proposal: entered
-latest_accurate_crosshair_model_call_count: 2
-latest_accurate_crosshair_patch_model_call_count: 0
+latest_accurate_crosshair_initial_patch_request: admitted
+latest_accurate_crosshair_model_call_count: 3
+latest_accurate_crosshair_patch_model_call_count: 1
+latest_accurate_crosshair_patch_model_role: initial_patch
+latest_accurate_crosshair_patch_model_result: no_response_before_600.0_second_timeout
 latest_accurate_crosshair_patch_payload_parser_entered: false
 latest_accurate_crosshair_patch_proposal: not_created
 latest_accurate_crosshair_proposal_review: not_reached
@@ -53,14 +55,18 @@ latest_accurate_crosshair_changed_product_build: not_reached
 latest_accurate_crosshair_repair: not_reached
 latest_accurate_crosshair_revalidation: not_reached
 latest_accurate_crosshair_runtime: not_reached
-latest_accurate_crosshair_actual_write_performed: false
-latest_accurate_crosshair_issue_record: docs/audits/ENGINEERING_ISSUE_REGISTER.md EVID-004
+latest_accurate_crosshair_canonical_source_changed: false
+latest_accurate_crosshair_isolated_new_file: baseline_Build_nuget.config_only_not_Apply
+latest_accurate_crosshair_issue_records: docs/audits/ENGINEERING_ISSUE_REGISTER.md EVID-004/EVID-005/PLAN-002
 EVID-002_status: closed_by_actual10_projection_to_findings_evidence
 EVID-003_status: closed_by_actual12_expected_delta_real_run_validation
-current_failure_issue_id: EVID-004_active_patch_pre_call_context_admission
-current_failure_owner: src/mod_agent/proposal/code_generator.py::LLMExactPatchGenerator.generate Patch input projection plus Ollama structured pre-call admission
+EVID-004_status: closed_by_actual13_actual14_actual15_patch_request_admission_and_real_patch_call
+EVID-005_status: active_initial_patch_provider_invocation_response_timeout
+current_failure_issue_id: EVID-005
+current_failure_owner: main Ollama Patch provider invocation/response boundary through LLMExactPatchGenerator.generate
 current_issue_decision_priority: P0_current_work_priority_not_product_stage
 PLAN-001_status: closed_at_61a4df677ad39ca87ec9486ec0556481778c9c36
+PLAN-002_status: mitigated_for_current_scope_at_53d228fa_pending_real_run_close_evidence
 actual_only_build_test_success: false
 failure_different_repair_revalidation_success: false
 runtime_verified: false
@@ -68,16 +74,15 @@ general_harness_validated: false
 stable_agent_capability: false
 coding_agent_v0_internal_alpha_status: false
 public_alpha_authorized: false
+patch_only_replay_created: false
+patch_only_replay_authorized: false
 fresh_preflight_created: false
 fresh_preflight_authorized: false
-fresh_preflight_receipt_created: false
-actual13_packet_created: false
-actual13_execution_created: false
-actual13_packet_preparation_authorized: false
-actual13_execution_authorized: false
+actual16_packet_created: false
+actual16_execution_created: false
 complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
-next_capability_step: separately authorize a fresh sealed checkpoint-bound preflight; review its receipt; separately authorize actual13 packet preparation and actual13 execution
+next_capability_step: separately authorize one actual15 frozen-input plus 53d228fa two-unit Plan Patch-only replay with exactly one qwen3.6:27b initial_patch call at 40960/4096/600 and no retry, fallback, model switch, Graph, Build, Apply, or actual16
 next_attempt_pre_authorized: false
 ```
 
