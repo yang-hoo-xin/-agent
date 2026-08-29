@@ -398,6 +398,220 @@ class StrictGitAdmission:
             )
         )
 
+    def verify_platform_code_checkpoint(
+        self,
+        *,
+        repository: Path,
+        current_head: str,
+        platform_code_checkpoint: str,
+        allowed_post_checkpoint_paths: Sequence[str],
+    ) -> dict[str, object]:
+        """Verify one exact commit and every path touched after it."""
+
+        object_pattern = r"[0-9a-f]{40}|[0-9a-f]{64}"
+        if re.fullmatch(object_pattern, current_head) is None:
+            raise GitAdmissionError(
+                "PLATFORM_CURRENT_HEAD_INVALID",
+                "Current platform HEAD is not an exact Git object id.",
+            )
+        if self.platform_text(repository, "rev-parse", "HEAD") != current_head:
+            raise GitAdmissionError(
+                "PLATFORM_HEAD_DRIFT",
+                "Platform HEAD changed before code-checkpoint verification.",
+            )
+        if re.fullmatch(object_pattern, platform_code_checkpoint) is None:
+            raise GitAdmissionError(
+                "PLATFORM_CODE_CHECKPOINT_INVALID",
+                "Platform code checkpoint is not an exact Git object id.",
+            )
+        normalized_allowed: list[str] = []
+        for value in allowed_post_checkpoint_paths:
+            if not isinstance(value, str) or not value or "\\" in value:
+                raise GitAdmissionError(
+                    "PLATFORM_CODE_CHECKPOINT_ALLOWED_PATH_INVALID",
+                    "An allowed post-checkpoint path is invalid.",
+                )
+            selected = PurePosixPath(value)
+            if (
+                not selected.parts
+                or selected.is_absolute()
+                or any(part in {"", ".", ".."} for part in selected.parts)
+                or selected.as_posix() != value
+            ):
+                raise GitAdmissionError(
+                    "PLATFORM_CODE_CHECKPOINT_ALLOWED_PATH_INVALID",
+                    "An allowed post-checkpoint path is not normalized.",
+                )
+            normalized_allowed.append(value)
+        if len(normalized_allowed) != len(set(normalized_allowed)):
+            raise GitAdmissionError(
+                "PLATFORM_CODE_CHECKPOINT_ALLOWED_PATH_DUPLICATE",
+                "Allowed post-checkpoint paths contain a duplicate.",
+            )
+
+        try:
+            resolved = str(
+                self._run(
+                    self._platform_command(
+                        repository,
+                        "rev-parse",
+                        "--verify",
+                        f"{platform_code_checkpoint}^{{commit}}",
+                    ),
+                    (
+                        "rev-parse",
+                        "--verify",
+                        f"{platform_code_checkpoint}^{{commit}}",
+                    ),
+                    raw=False,
+                    controlled_environment=False,
+                )
+            )
+        except GitAdmissionError as exc:
+            raise GitAdmissionError(
+                "PLATFORM_CODE_CHECKPOINT_OBJECT_INVALID",
+                "Platform code checkpoint does not resolve to an exact commit object.",
+                diagnostics={"cause_code": exc.code},
+            ) from exc
+        if resolved != platform_code_checkpoint:
+            raise GitAdmissionError(
+                "PLATFORM_CODE_CHECKPOINT_OBJECT_NOT_EXACT_COMMIT",
+                "Platform code checkpoint resolves through a different Git object.",
+                diagnostics={"resolved_commit": resolved},
+            )
+
+        try:
+            merge_base = str(
+                self._run(
+                    self._platform_command(
+                        repository,
+                        "merge-base",
+                        platform_code_checkpoint,
+                        current_head,
+                    ),
+                    ("merge-base", platform_code_checkpoint, current_head),
+                    raw=False,
+                    controlled_environment=False,
+                )
+            )
+        except GitAdmissionError as exc:
+            raise GitAdmissionError(
+                "PLATFORM_CODE_CHECKPOINT_NOT_ANCESTOR",
+                "Platform code checkpoint is not an ancestor of platform HEAD.",
+                diagnostics={"cause_code": exc.code},
+            ) from exc
+        if merge_base != platform_code_checkpoint:
+            raise GitAdmissionError(
+                "PLATFORM_CODE_CHECKPOINT_NOT_ANCESTOR",
+                "Platform code checkpoint is not an ancestor of platform HEAD.",
+                diagnostics={"merge_base": merge_base},
+            )
+
+        revision_text = str(
+            self._run(
+                self._platform_command(
+                    repository,
+                    "rev-list",
+                    "--reverse",
+                    f"{platform_code_checkpoint}..{current_head}",
+                ),
+                (
+                    "rev-list",
+                    "--reverse",
+                    f"{platform_code_checkpoint}..{current_head}",
+                ),
+                raw=False,
+                controlled_environment=False,
+            )
+        )
+        commits = tuple(line for line in revision_text.splitlines() if line)
+        if any(re.fullmatch(object_pattern, item) is None for item in commits):
+            raise GitAdmissionError(
+                "PLATFORM_CODE_CHECKPOINT_REVISION_LIST_INVALID",
+                "Post-checkpoint revision list contains an invalid object id.",
+            )
+
+        touched: set[str] = set()
+        for commit in commits:
+            raw_paths = bytes(
+                self._run(
+                    self._platform_command(
+                        repository,
+                        "diff-tree",
+                        "--root",
+                        "--no-commit-id",
+                        "--name-only",
+                        "-r",
+                        "-m",
+                        "-z",
+                        commit,
+                    ),
+                    (
+                        "diff-tree",
+                        "--root",
+                        "--no-commit-id",
+                        "--name-only",
+                        "-r",
+                        "-m",
+                        "-z",
+                        commit,
+                    ),
+                    raw=True,
+                    controlled_environment=False,
+                )
+            )
+            if raw_paths and not raw_paths.endswith(b"\0"):
+                raise GitAdmissionError(
+                    "PLATFORM_CODE_CHECKPOINT_PATH_OUTPUT_INVALID",
+                    "Post-checkpoint path output is not NUL terminated.",
+                )
+            for raw_path in raw_paths.split(b"\0"):
+                if not raw_path:
+                    continue
+                try:
+                    path_text = raw_path.decode("utf-8", errors="strict")
+                except UnicodeDecodeError as exc:
+                    raise GitAdmissionError(
+                        "PLATFORM_CODE_CHECKPOINT_PATH_ENCODING_INVALID",
+                        "A post-checkpoint path is not valid UTF-8.",
+                    ) from exc
+                selected = PurePosixPath(path_text)
+                if (
+                    not selected.parts
+                    or selected.is_absolute()
+                    or any(part in {"", ".", ".."} for part in selected.parts)
+                    or selected.as_posix() != path_text
+                ):
+                    raise GitAdmissionError(
+                        "PLATFORM_CODE_CHECKPOINT_PATH_INVALID",
+                        "A post-checkpoint path is not normalized.",
+                    )
+                touched.add(path_text)
+
+        unauthorized = sorted(
+            touched.difference(normalized_allowed),
+            key=lambda item: item.encode("utf-8"),
+        )
+        if unauthorized:
+            raise GitAdmissionError(
+                "PLATFORM_CODE_CHECKPOINT_UNAUTHORIZED_PATH",
+                "A post-checkpoint commit touched a path outside the typed allowance.",
+                diagnostics={"unauthorized_paths": unauthorized},
+            )
+        return {
+            "platform_HEAD": current_head,
+            "platform_code_checkpoint": platform_code_checkpoint,
+            "exact_commit_object": True,
+            "ancestor_of_platform_HEAD": True,
+            "allowed_post_checkpoint_paths": list(normalized_allowed),
+            "post_checkpoint_commits": list(commits),
+            "observed_post_checkpoint_paths": sorted(
+                touched,
+                key=lambda item: item.encode("utf-8"),
+            ),
+            "only_allowed_post_checkpoint_paths": True,
+        }
+
     def source_text(self, repository: Path, *arguments: str) -> str:
         project_prefix = "HEAD:"
         allowed = {

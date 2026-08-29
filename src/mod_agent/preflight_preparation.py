@@ -19,7 +19,11 @@ from src.mod_agent.entry_admission import (
     EntryAdmissionRequestV1,
     EntryAdmissionResultV1,
 )
-from src.mod_agent.git.admission import GitExecutableIdentityV1, StrictGitAdmission
+from src.mod_agent.git.admission import (
+    GitAdmissionError,
+    GitExecutableIdentityV1,
+    StrictGitAdmission,
+)
 from src.mod_agent.model_admission import (
     read_ollama_model_identity,
     read_ollama_server_version,
@@ -143,11 +147,34 @@ def _strict_posix_path(value: str, field: str) -> PurePosixPath:
     if not value or "\\" in value:
         raise ValueError(f"Preflight preparation {field} must be a POSIX path.")
     selected = PurePosixPath(value)
-    if selected.is_absolute() or any(part in {"", ".."} for part in selected.parts):
+    if (
+        not selected.parts
+        or selected.is_absolute()
+        or any(part in {"", ".", ".."} for part in selected.parts)
+    ):
         raise ValueError(f"Preflight preparation {field} escapes the source repository.")
     if selected.as_posix() != value:
         raise ValueError(f"Preflight preparation {field} is not normalized.")
     return selected
+
+
+def _normalized_posix_path_list(value: object) -> bool:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        return False
+    if len(value) != len(set(value)):
+        return False
+    for item in value:
+        if not item or "\\" in item:
+            return False
+        selected = PurePosixPath(item)
+        if (
+            not selected.parts
+            or selected.is_absolute()
+            or any(part in {"", ".", ".."} for part in selected.parts)
+            or selected.as_posix() != item
+        ):
+            return False
+    return True
 
 
 def _resolve_existing_file(value: str, role: str) -> Path:
@@ -495,6 +522,229 @@ class RejectedPreflightIdentityReservationV1:
 
 
 @dataclass(frozen=True)
+class RunFamilyContinuationProfileV1:
+    """One finite Actual-anchor set plus a platform-code checkpoint policy."""
+
+    contract_version: Literal["1"]
+    packet_date: str
+    anchor_actual_packet_paths: tuple[str, ...]
+    platform_code_checkpoint: str
+    allowed_post_checkpoint_paths: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1":
+            raise ValueError("Run-family continuation profile version is invalid.")
+        try:
+            parsed_date = date.fromisoformat(
+                _required_text(self.packet_date, "packet_date")
+            )
+        except ValueError as exc:
+            raise ValueError("Run-family continuation packet_date is invalid.") from exc
+        if parsed_date.isoformat() != self.packet_date:
+            raise ValueError("Run-family continuation packet_date is not normalized.")
+        if (
+            not isinstance(self.anchor_actual_packet_paths, tuple)
+            or not self.anchor_actual_packet_paths
+            or len(set(self.anchor_actual_packet_paths))
+            != len(self.anchor_actual_packet_paths)
+        ):
+            raise ValueError("Run-family continuation anchors are invalid.")
+        for value in self.anchor_actual_packet_paths:
+            if (
+                not isinstance(value, str)
+                or not value
+                or not Path(value).is_absolute()
+                or ".." in Path(value).parts
+            ):
+                raise ValueError(
+                    "Run-family continuation anchor path must be absolute and normalized."
+                )
+        if not _git_object_id(self.platform_code_checkpoint):
+            raise ValueError(
+                "Run-family continuation platform_code_checkpoint is invalid."
+            )
+        if (
+            not isinstance(self.allowed_post_checkpoint_paths, tuple)
+            or len(set(self.allowed_post_checkpoint_paths))
+            != len(self.allowed_post_checkpoint_paths)
+        ):
+            raise ValueError(
+                "Run-family continuation allowed_post_checkpoint_paths are invalid."
+            )
+        for value in self.allowed_post_checkpoint_paths:
+            _strict_posix_path(value, "allowed_post_checkpoint_paths")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "contract_version": self.contract_version,
+            "packet_date": self.packet_date,
+            "anchor_actual_packet_paths": list(self.anchor_actual_packet_paths),
+            "platform_code_checkpoint": self.platform_code_checkpoint,
+            "allowed_post_checkpoint_paths": list(
+                self.allowed_post_checkpoint_paths
+            ),
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> "RunFamilyContinuationProfileV1":
+        expected = {
+            "contract_version",
+            "packet_date",
+            "anchor_actual_packet_paths",
+            "platform_code_checkpoint",
+            "allowed_post_checkpoint_paths",
+        }
+        if set(value) != expected:
+            raise ValueError("Run-family continuation profile shape is invalid.")
+        anchors = value["anchor_actual_packet_paths"]
+        allowed = value["allowed_post_checkpoint_paths"]
+        if not isinstance(anchors, list) or not isinstance(allowed, list):
+            raise ValueError("Run-family continuation profile lists are invalid.")
+        return cls(
+            contract_version=value["contract_version"],
+            packet_date=value["packet_date"],
+            anchor_actual_packet_paths=tuple(anchors),
+            platform_code_checkpoint=value["platform_code_checkpoint"],
+            allowed_post_checkpoint_paths=tuple(allowed),
+        )
+
+
+@dataclass(frozen=True)
+class RunFamilyContinuationRequestV1:
+    """Prepare through one profile without caller-supplied identities or lineage."""
+
+    contract_version: Literal["1"]
+    packet_root: str
+    profile: RunFamilyContinuationProfileV1
+
+    def __post_init__(self) -> None:
+        if self.contract_version != "1":
+            raise ValueError("Run-family continuation request version is invalid.")
+        _required_text(self.packet_root, "packet_root")
+        if not isinstance(self.profile, RunFamilyContinuationProfileV1):
+            raise ValueError("Run-family continuation profile is invalid.")
+
+
+@dataclass(frozen=True)
+class SealedEntryReceiptReviewV1:
+    """Verified read-only projection of one existing Entry receipt truth."""
+
+    status: Literal["ready", "blocked"]
+    hashes: Mapping[str, Any]
+    identities: Mapping[str, Any]
+    gates: tuple[Mapping[str, Any], ...]
+    first_blocker: Mapping[str, Any] | None
+    attempt_consumed: Literal[False]
+    actual_authorized: Literal[False]
+    counts: Mapping[str, Any]
+    platform_HEAD: str
+    platform_code_checkpoint: Mapping[str, Any]
+
+    def __post_init__(self) -> None:
+        if self.status not in {"ready", "blocked"}:
+            raise ValueError("Entry receipt review status is invalid.")
+        for name in ("hashes", "identities", "counts", "platform_code_checkpoint"):
+            if not isinstance(getattr(self, name), Mapping):
+                raise ValueError(f"Entry receipt review {name} is invalid.")
+        if (
+            not isinstance(self.gates, tuple)
+            or any(not isinstance(gate, Mapping) for gate in self.gates)
+            or [gate.get("gate") for gate in self.gates]
+            != ["platform", "source", "model"]
+        ):
+            raise ValueError("Entry receipt review gates are invalid.")
+        if self.status == "ready" and self.first_blocker is not None:
+            raise ValueError("Ready receipt review cannot contain a blocker.")
+        if self.status == "blocked" and not isinstance(
+            self.first_blocker,
+            Mapping,
+        ):
+            raise ValueError("Blocked receipt review lacks its first blocker.")
+        if self.attempt_consumed is not False or self.actual_authorized is not False:
+            raise ValueError("Entry receipt review crossed its authority boundary.")
+        if not _git_object_id(self.platform_HEAD):
+            raise ValueError("Entry receipt review platform HEAD is invalid.")
+        counts = dict(self.counts)
+        numeric_count_names = {
+            "generation_calls",
+            "model_calls",
+            "ProductExecution_runs",
+            "Builds",
+            "Runtime_runs",
+            "Apply_runs",
+        }
+        if (
+            set(counts) != {*numeric_count_names, "execution_root_created"}
+            or any(
+                type(counts[name]) is not int or counts[name] != 0
+                for name in numeric_count_names
+            )
+            or counts["execution_root_created"] is not False
+        ):
+            raise ValueError("Entry receipt review counts crossed the zero boundary.")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "review_version": "sealed_entry_receipt_review_v1",
+            "status": self.status,
+            "hashes": dict(self.hashes),
+            "identities": dict(self.identities),
+            "gates": [dict(item) for item in self.gates],
+            "first_blocker": (
+                None if self.first_blocker is None else dict(self.first_blocker)
+            ),
+            "attempt_consumed": self.attempt_consumed,
+            "actual_authorized": self.actual_authorized,
+            "counts": dict(self.counts),
+            "platform_HEAD": self.platform_HEAD,
+            "platform_code_checkpoint": dict(self.platform_code_checkpoint),
+        }
+
+
+@dataclass(frozen=True)
+class _PreparedRunFamilyContinuationV1:
+    profile: RunFamilyContinuationProfileV1
+    selected_anchor_path: str
+    selected_anchor_sha256: str
+    expected_dirty_status: tuple[tuple[str, str], ...]
+    expected_dirty_sha256: tuple[tuple[str, str], ...]
+    legacy_dirty_status_unavailable: bool
+    expected_source_snapshot_sha256: str
+    expected_source_revision_binding: Mapping[str, Any]
+    expected_model_facts: Mapping[str, Any]
+    receipt_review: SealedEntryReceiptReviewV1
+
+    def to_dict(self, platform_code_checkpoint: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "continuation_version": "run_family_continuation_v1",
+            "selected_anchor": {
+                "path": self.selected_anchor_path,
+                "sha256": self.selected_anchor_sha256,
+            },
+            "anchor_profile": self.profile.to_dict(),
+            "dirty_binding": {
+                "status": {path: status for path, status in self.expected_dirty_status},
+                "sha256": {path: digest for path, digest in self.expected_dirty_sha256},
+                "legacy_status_unavailable": self.legacy_dirty_status_unavailable,
+            },
+            "stable_fact_reuse": {
+                "source_snapshot_sha256": self.expected_source_snapshot_sha256,
+                "source_revision_binding_sha256": _canonical_json_sha256(
+                    self.expected_source_revision_binding
+                ),
+                "model": dict(self.expected_model_facts),
+            },
+            "platform_code_checkpoint": dict(platform_code_checkpoint),
+            "accepted_receipt_review": self.receipt_review.to_dict(),
+            "caller_supplied_identity_sequence": False,
+            "caller_supplied_full_lineage": False,
+        }
+
+
+@dataclass(frozen=True)
 class SealedPreflightPreparationRequestV1:
     contract_version: Literal["1"]
     packet_root: str
@@ -522,6 +772,7 @@ class SealedPreflightPreparationRequestV1:
     rejected_preflight_identity_reservations: tuple[
         RejectedPreflightIdentityReservationV1, ...
     ]
+    continuation: _PreparedRunFamilyContinuationV1 | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != "1":
@@ -598,6 +849,11 @@ class SealedPreflightPreparationRequestV1:
             raise ValueError(
                 "Preflight preparation rejected identity reservations are invalid."
             )
+        if self.continuation is not None and not isinstance(
+            self.continuation,
+            _PreparedRunFamilyContinuationV1,
+        ):
+            raise ValueError("Prepared run-family continuation binding is invalid.")
         for selected in self.allowed_dirty_paths:
             _strict_posix_path(selected, "allowed_dirty_paths")
         _strict_posix_path(self.project_file, "project_file")
@@ -637,9 +893,10 @@ class SealedPreflightPreparationResultV1:
     Apply_runs: Literal[0] = 0
     execution_root_created: Literal[False] = False
     apply_workspace_created: Literal[False] = False
+    continuation_audit: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        value = {
             "status": self.status,
             "packet_root": self.packet_root,
             "identities": self.identities.to_dict(),
@@ -662,6 +919,9 @@ class SealedPreflightPreparationResultV1:
             "execution_root_created": self.execution_root_created,
             "apply_workspace_created": self.apply_workspace_created,
         }
+        if self.continuation_audit is not None:
+            value["continuation_audit"] = dict(self.continuation_audit)
+        return value
 
 
 @dataclass(frozen=True)
@@ -1099,6 +1359,363 @@ def _verify_preflight_receipt(
     return receipt_sha256, _file_sha256(receipt_manifest_path)
 
 
+def project_sealed_entry_receipt_review(
+    preflight_packet_path: str,
+) -> SealedEntryReceiptReviewV1:
+    """Verify and project one receipt without creating authorization or state."""
+
+    preflight = _load_preflight_record(preflight_packet_path)
+    receipt_sha256, receipt_manifest_sha256 = _verify_preflight_receipt(
+        preflight,
+        receipt_path_value=preflight.receipt_path.as_posix(),
+        receipt_manifest_path_value=preflight.receipt_manifest_path.as_posix(),
+        require_ready=False,
+    )
+    packet = _read_json_object(preflight.packet_path, "receipt review packet")
+    receipt = _read_json_object(preflight.receipt_path, "receipt review receipt")
+    receipt_manifest = _read_json_object(
+        preflight.receipt_manifest_path,
+        "receipt review manifest",
+    )
+    try:
+        result_value = receipt["result"]
+        if not isinstance(result_value, Mapping):
+            raise ValueError("receipt result is not an object")
+        result = EntryAdmissionResultV1.from_dict(result_value)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _fail(
+            "RECEIPT_REVIEW_RESULT_INVALID",
+            "The Entry receipt result cannot be projected.",
+            stage="receipt_review",
+            diagnostics={"error_type": type(exc).__name__},
+        ) from exc
+
+    gate_by_name: dict[str, Mapping[str, Any]] = {}
+    for gate in result.gate_receipts:
+        name = gate.get("gate") if isinstance(gate, Mapping) else None
+        decision = gate.get("decision") if isinstance(gate, Mapping) else None
+        facts = gate.get("facts") if isinstance(gate, Mapping) else None
+        if (
+            name not in {"platform", "source", "model"}
+            or name in gate_by_name
+            or decision != "passed"
+            or not isinstance(facts, Mapping)
+        ):
+            raise _fail(
+                "RECEIPT_REVIEW_GATE_INVALID",
+                "The Entry receipt gate projection is invalid or ambiguous.",
+                stage="receipt_review",
+            )
+        gate_by_name[str(name)] = gate
+    if result.status == "ready" and set(gate_by_name) != {
+        "platform",
+        "source",
+        "model",
+    }:
+        raise _fail(
+            "RECEIPT_REVIEW_READY_GATES_INCOMPLETE",
+            "A ready Entry receipt does not contain all three passed gates.",
+            stage="receipt_review",
+        )
+    gates: list[dict[str, Any]] = []
+    for name in ("platform", "source", "model"):
+        gate = gate_by_name.get(name)
+        gates.append(
+            {
+                "gate": name,
+                "decision": "not_reached" if gate is None else "passed",
+                "facts_sha256": (
+                    None
+                    if gate is None
+                    else _canonical_json_sha256(dict(gate["facts"]))
+                ),
+            }
+        )
+
+    first_blocker: Mapping[str, Any] | None = None
+    if result.status == "blocked":
+        first_blocker = result.blockers[0].to_dict()
+        if (
+            first_blocker["stage"] != result.first_failure_stage
+            or first_blocker["code"] != result.first_failure_code
+            or first_blocker["message"] != result.first_failure_message
+        ):
+            raise _fail(
+                "RECEIPT_REVIEW_FIRST_BLOCKER_CONTRADICTORY",
+                "The first blocker differs from the Entry first-failure fields.",
+                stage="receipt_review",
+            )
+
+    generation_calls = 0
+    model_gate = gate_by_name.get("model")
+    if model_gate is not None:
+        generation_calls = model_gate["facts"].get("generation_calls")
+        if generation_calls != 0 or isinstance(generation_calls, bool):
+            raise _fail(
+                "RECEIPT_REVIEW_GENERATION_COUNT_INVALID",
+                "Entry model gate crossed its zero-generation boundary.",
+                stage="receipt_review",
+            )
+
+    platform = packet.get("platform")
+    if not isinstance(platform, Mapping):
+        raise _fail(
+            "RECEIPT_REVIEW_PLATFORM_INVALID",
+            "The sealed packet platform projection is missing.",
+            stage="receipt_review",
+        )
+    platform_head = platform.get("current_checkpoint")
+    if not _git_object_id(platform_head):
+        raise _fail(
+            "RECEIPT_REVIEW_PLATFORM_HEAD_INVALID",
+            "The sealed packet platform HEAD is invalid.",
+            stage="receipt_review",
+        )
+    platform_gate = gate_by_name.get("platform")
+    if platform_gate is not None:
+        platform_facts = platform_gate["facts"]
+        dirty_records = platform_facts.get("dirty_records")
+        if not isinstance(dirty_records, list) or any(
+            not isinstance(item, Mapping)
+            or set(item) != {"path", "status"}
+            or not isinstance(item.get("path"), str)
+            or item.get("status") not in {" M", "??"}
+            for item in dirty_records
+        ):
+            raise _fail(
+                "RECEIPT_REVIEW_PLATFORM_GATE_INVALID",
+                "The receipt platform gate facts are invalid.",
+                stage="receipt_review",
+            )
+        observed_dirty_status = {
+            item["path"]: item["status"] for item in dirty_records
+        }
+        allowed_dirty_paths = platform.get("allowed_dirty_paths")
+        sealed_dirty_status = platform.get("allowed_dirty_status_at_seal")
+        if (
+            set(platform_facts) != {"head", "branch", "dirty_records"}
+            or platform_facts.get("head") != platform_head
+            or platform_facts.get("branch") != platform.get("branch")
+            or not _normalized_posix_path_list(allowed_dirty_paths)
+            or set(observed_dirty_status) != set(allowed_dirty_paths)
+            or len(observed_dirty_status) != len(dirty_records)
+            or (
+                sealed_dirty_status is not None
+                and (
+                    not isinstance(sealed_dirty_status, Mapping)
+                    or observed_dirty_status != dict(sealed_dirty_status)
+                )
+            )
+        ):
+            raise _fail(
+                "RECEIPT_REVIEW_PLATFORM_GATE_CONTRADICTORY",
+                "The receipt platform gate contradicts the sealed packet.",
+                stage="receipt_review",
+            )
+
+    source_gate = gate_by_name.get("source")
+    source_identity = packet.get("source_identity")
+    if source_gate is not None:
+        source_facts = source_gate["facts"]
+        binding = (
+            source_identity.get("source_revision_binding")
+            if isinstance(source_identity, Mapping)
+            else None
+        )
+        if (
+            not isinstance(source_identity, Mapping)
+            or not isinstance(binding, Mapping)
+            or source_facts
+            != {
+                "repository_root": source_identity.get("canonical_root"),
+                "repository_head": binding.get("repository_head"),
+                "repository_tree": binding.get("repository_tree"),
+                "project_root": binding.get("project_root"),
+                "project_tree": binding.get("project_tree"),
+                "snapshot_sha256": source_identity.get("snapshot_sha256"),
+            }
+        ):
+            raise _fail(
+                "RECEIPT_REVIEW_SOURCE_GATE_CONTRADICTORY",
+                "The receipt source gate contradicts the sealed packet.",
+                stage="receipt_review",
+            )
+
+    model_gate = gate_by_name.get("model")
+    model_identity = packet.get("model_identity")
+    if model_gate is not None:
+        if (
+            not isinstance(model_identity, Mapping)
+            or model_gate["facts"]
+            != {
+                "model": model_identity.get("model"),
+                "digest": model_identity.get("digest"),
+                "server_version": model_identity.get("server_version"),
+                "context_limit": model_identity.get("context_limit"),
+                "configured_context": model_identity.get("configured_num_ctx"),
+                "output_budget": model_identity.get("output_budget"),
+                "generation_calls": 0,
+            }
+        ):
+            raise _fail(
+                "RECEIPT_REVIEW_MODEL_GATE_CONTRADICTORY",
+                "The receipt model gate contradicts the sealed packet.",
+                stage="receipt_review",
+            )
+    platform_code_checkpoint_value = platform.get("platform_code_checkpoint")
+    if platform_code_checkpoint_value is None:
+        platform_code_checkpoint = {
+            "status": "legacy_packet_without_platform_code_checkpoint",
+            "platform_HEAD": platform_head,
+            "platform_code_checkpoint": None,
+            "verified": False,
+        }
+    else:
+        expected_checkpoint_fields = {
+            "platform_HEAD",
+            "platform_code_checkpoint",
+            "exact_commit_object",
+            "ancestor_of_platform_HEAD",
+            "allowed_post_checkpoint_paths",
+            "post_checkpoint_commits",
+            "observed_post_checkpoint_paths",
+            "only_allowed_post_checkpoint_paths",
+        }
+        allowed_post_checkpoint_paths = (
+            platform_code_checkpoint_value.get("allowed_post_checkpoint_paths")
+            if isinstance(platform_code_checkpoint_value, Mapping)
+            else None
+        )
+        observed_post_checkpoint_paths = (
+            platform_code_checkpoint_value.get("observed_post_checkpoint_paths")
+            if isinstance(platform_code_checkpoint_value, Mapping)
+            else None
+        )
+        post_checkpoint_commits = (
+            platform_code_checkpoint_value.get("post_checkpoint_commits")
+            if isinstance(platform_code_checkpoint_value, Mapping)
+            else None
+        )
+        if (
+            not isinstance(platform_code_checkpoint_value, Mapping)
+            or set(platform_code_checkpoint_value) != expected_checkpoint_fields
+            or platform_code_checkpoint_value.get("platform_HEAD") != platform_head
+            or not _git_object_id(
+                platform_code_checkpoint_value.get("platform_code_checkpoint")
+            )
+            or platform_code_checkpoint_value.get("exact_commit_object") is not True
+            or platform_code_checkpoint_value.get("ancestor_of_platform_HEAD") is not True
+            or platform_code_checkpoint_value.get(
+                "only_allowed_post_checkpoint_paths"
+            )
+            is not True
+            or not _normalized_posix_path_list(allowed_post_checkpoint_paths)
+            or not _normalized_posix_path_list(observed_post_checkpoint_paths)
+            or not set(observed_post_checkpoint_paths).issubset(
+                set(allowed_post_checkpoint_paths)
+            )
+            or not isinstance(post_checkpoint_commits, list)
+            or any(not _git_object_id(item) for item in post_checkpoint_commits)
+            or len(post_checkpoint_commits) != len(set(post_checkpoint_commits))
+        ):
+            raise _fail(
+                "RECEIPT_REVIEW_PLATFORM_CODE_CHECKPOINT_INVALID",
+                "The sealed platform code checkpoint projection is invalid.",
+                stage="receipt_review",
+            )
+        platform_code_checkpoint = {
+            "status": "verified",
+            **dict(platform_code_checkpoint_value),
+            "verified": True,
+        }
+
+    packet_file_record = _read_json_object(
+        preflight.preflight_path,
+        "receipt review preflight",
+    ).get("files", {}).get(PACKET_FILENAME)
+    if (
+        not isinstance(packet_file_record, Mapping)
+        or packet_file_record.get("sha256") != preflight.packet_sha256
+    ):
+        raise _fail(
+            "RECEIPT_REVIEW_PACKET_HASH_DRIFT",
+            "Packet SHA256 differs from PREFLIGHT.json.",
+            stage="receipt_review",
+        )
+    hashes = {
+        "packet": {
+            "path": preflight.packet_path.as_posix(),
+            "sha256": preflight.packet_sha256,
+        },
+        "PREFLIGHT": {
+            "path": preflight.preflight_path.as_posix(),
+            "sha256": preflight.preflight_sha256,
+        },
+        "payload_manifest": {
+            "sha256": preflight.payload_manifest_sha256,
+        },
+        "receipt": {
+            "path": preflight.receipt_path.as_posix(),
+            "sha256": receipt_sha256,
+        },
+        "receipt_manifest": {
+            "path": preflight.receipt_manifest_path.as_posix(),
+            "sha256": receipt_manifest_sha256,
+        },
+        "matches": {
+            "packet_to_PREFLIGHT": True,
+            "payload_to_PREFLIGHT": True,
+            "payload_to_receipt": (
+                result.payload_manifest_sha256 == preflight.payload_manifest_sha256
+            ),
+            "payload_to_receipt_manifest": (
+                receipt_manifest.get("payload_manifest_sha256")
+                == preflight.payload_manifest_sha256
+            ),
+            "receipt_to_receipt_manifest": (
+                receipt_manifest.get("receipt_sha256") == receipt_sha256
+            ),
+            "receipt_identity_to_packet": (
+                result.outer_run_id == preflight.outer_run_id
+                and result.attempt_id == preflight.attempt_id
+            ),
+        },
+    }
+    if not all(hashes["matches"].values()):
+        raise _fail(
+            "RECEIPT_REVIEW_HASH_BINDING_DRIFT",
+            "One or more receipt review hash bindings do not match.",
+            stage="receipt_review",
+            diagnostics={"matches": dict(hashes["matches"])},
+        )
+    return SealedEntryReceiptReviewV1(
+        status=result.status,
+        hashes=hashes,
+        identities={
+            "outer_run_id": result.outer_run_id,
+            "preflight_attempt_id": result.attempt_id,
+            "preflight_id": preflight.preflight_id,
+            "future_canary_number": preflight.future_canary_number,
+            "future_actual_id": preflight.future_actual_id,
+        },
+        gates=tuple(gates),
+        first_blocker=first_blocker,
+        attempt_consumed=result.attempt_consumed,
+        actual_authorized=result.actual_authorized,
+        counts={
+            "generation_calls": generation_calls,
+            "model_calls": result.model_calls,
+            "ProductExecution_runs": result.ProductExecution_runs,
+            "Builds": result.Builds,
+            "Runtime_runs": 0,
+            "Apply_runs": 0,
+            "execution_root_created": result.execution_root_created,
+        },
+        platform_HEAD=platform_head,
+        platform_code_checkpoint=platform_code_checkpoint,
+    )
+
+
 def _load_rejected_preflight_reservation(
     value: RejectedPreflightIdentityReservationV1,
 ) -> _RejectedPreflightReservationRecord:
@@ -1534,6 +2151,898 @@ def _admit_lineage(
     )
 
 
+_CONTINUATION_SOURCE_ROLES = {
+    "preflight_packet",
+    "preflight_seal",
+    "predecessor_receipt",
+    "predecessor_receipt_manifest",
+    "actual_packet",
+    "rejected_preflight_reservation_packet",
+    "rejected_preflight_reservation_seal",
+    "rejected_preflight_reservation_receipt",
+    "rejected_preflight_reservation_receipt_manifest",
+}
+
+
+def _verified_continuation_sources(
+    packet: Mapping[str, Any],
+) -> tuple[dict[str, str], ...]:
+    lineage = packet.get("identity_lineage")
+    sources = lineage.get("unused_check_sources") if isinstance(
+        lineage,
+        Mapping,
+    ) else None
+    if not isinstance(sources, list) or not sources:
+        raise _fail(
+            "RUN_FAMILY_LINEAGE_MISSING",
+            "The anchor preflight lacks its finite sealed lineage sources.",
+            stage="continuation_lineage",
+        )
+    verified: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for source in sources:
+        if (
+            not isinstance(source, Mapping)
+            or set(source) != {"role", "path", "sha256"}
+            or source.get("role") not in _CONTINUATION_SOURCE_ROLES
+            or not isinstance(source.get("path"), str)
+            or not _hash_string(source.get("sha256"))
+        ):
+            raise _fail(
+                "RUN_FAMILY_LINEAGE_SOURCE_INVALID",
+                "A sealed lineage source has an unknown shape or role.",
+                stage="continuation_lineage",
+            )
+        role = str(source["role"])
+        selected = _resolve_existing_file(str(source["path"]), role)
+        path = selected.as_posix()
+        key = (role, path)
+        if key in seen:
+            raise _fail(
+                "RUN_FAMILY_LINEAGE_SOURCE_DUPLICATE",
+                "A sealed lineage source is repeated.",
+                stage="continuation_lineage",
+                diagnostics={"role": role, "path": path},
+            )
+        seen.add(key)
+        observed = _file_sha256(selected)
+        if observed != source["sha256"]:
+            raise _fail(
+                "RUN_FAMILY_LINEAGE_SOURCE_HASH_DRIFT",
+                "A sealed lineage source no longer matches its recorded SHA256.",
+                stage="continuation_lineage",
+                diagnostics={"role": role, "path": path},
+            )
+        verified.append({"role": role, "path": path, "sha256": observed})
+    return tuple(verified)
+
+
+def _verify_continuation_preflight_chain(paths: tuple[str, ...]) -> None:
+    if not paths:
+        raise _fail(
+            "RUN_FAMILY_PREFLIGHT_CHAIN_EMPTY",
+            "The reconstructed preflight chain is empty.",
+            stage="continuation_lineage",
+        )
+    records = tuple(_load_preflight_record(path) for path in paths)
+    for previous, current in zip(records, records[1:]):
+        packet = _read_json_object(current.packet_path, "continuation preflight chain")
+        lineage = packet.get("identity_lineage")
+        if not isinstance(lineage, Mapping):
+            raise _fail(
+                "RUN_FAMILY_PREFLIGHT_CHAIN_LINK_MISSING",
+                "A non-root preflight lacks its predecessor link.",
+                stage="continuation_lineage",
+            )
+        receipt_sha256, receipt_manifest_sha256 = _verify_preflight_receipt(
+            previous,
+            receipt_path_value=previous.receipt_path.as_posix(),
+            receipt_manifest_path_value=previous.receipt_manifest_path.as_posix(),
+            require_ready=True,
+        )
+        if (
+            lineage.get("predecessor_packet_path")
+            != previous.packet_path.as_posix()
+            or lineage.get("predecessor_packet_sha256")
+            != previous.packet_sha256
+            or lineage.get("predecessor_payload_manifest_sha256")
+            != previous.payload_manifest_sha256
+            or lineage.get("predecessor_attempt_id") != previous.attempt_id
+            or lineage.get("predecessor_preflight_id") != previous.preflight_id
+            or lineage.get("predecessor_receipt_sha256") != receipt_sha256
+            or lineage.get("predecessor_receipt_manifest_sha256")
+            != receipt_manifest_sha256
+            or current.identity_series != previous.identity_series
+            or current.identity_sequence != previous.identity_sequence + 1
+            or current.attempt_number <= previous.attempt_number
+        ):
+            raise _fail(
+                "RUN_FAMILY_PREFLIGHT_CHAIN_CONTRADICTORY",
+                "A reconstructed preflight predecessor link is contradictory.",
+                stage="continuation_lineage",
+                diagnostics={
+                    "previous_preflight_id": previous.preflight_id,
+                    "current_preflight_id": current.preflight_id,
+                },
+            )
+
+
+def _verify_continuation_consumption(lineage: _LineageAdmission) -> None:
+    for preflight in lineage.preflight_records:
+        matching = [
+            actual
+            for actual in lineage.actual_records
+            if actual.accepted_preflight_attempt_id == preflight.attempt_id
+            and actual.accepted_preflight_id == preflight.preflight_id
+            and actual.outer_run_id == preflight.outer_run_id
+            and actual.actual_id == preflight.future_actual_id
+        ]
+        if len(matching) != 1:
+            raise _fail(
+                "RUN_FAMILY_PREFLIGHT_CONSUMPTION_CHAIN_BROKEN",
+                "A reconstructed accepted preflight is not consumed exactly once.",
+                stage="continuation_lineage",
+                diagnostics={"preflight_id": preflight.preflight_id},
+            )
+    sequences = [record.identity_sequence for record in lineage.actual_records]
+    if sequences != list(range(min(sequences), max(sequences) + 1)):
+        raise _fail(
+            "RUN_FAMILY_ACTUAL_SEQUENCE_CHAIN_BROKEN",
+            "The reconstructed Actual sequence is not ordered and contiguous.",
+            stage="continuation_lineage",
+            diagnostics={"identity_sequences": sequences},
+        )
+
+
+def _selected_configuration_from_anchor(
+    value: object,
+    *,
+    model: Mapping[str, Any],
+    current_head: str,
+) -> SelectedPreflightConfigurationV1:
+    if not isinstance(value, Mapping):
+        raise _fail(
+            "RUN_FAMILY_CONFIGURATION_INVALID",
+            "The anchor selected configuration is missing.",
+            stage="continuation_projection",
+        )
+    expected = {
+        "configuration_id",
+        "route",
+        "main_ollama_timeout_seconds",
+        "timeout_owner",
+        "repair_ollama_timeout_seconds",
+        "repair_timeout_selection",
+        "projection_contract_checkpoint",
+        "model_projection_fields",
+        "model_relations_authorized",
+        "deterministic_relation_completion",
+        "deterministic_relation_rule",
+        "deterministic_post_change",
+        "initial_projection_attempts",
+        "maximum_correction_attempts_after_initial",
+        "provider_fallback",
+        "automatic_retry",
+        "external_disclosure",
+        "configuration_source",
+        "model",
+        "model_digest",
+        "configured_num_ctx",
+        "output_budget",
+        "canary_authorized",
+    }
+    post_change = value.get("deterministic_post_change")
+    if (
+        set(value) != expected
+        or not isinstance(post_change, Mapping)
+        or set(post_change)
+        != {
+            "only_unaccounted",
+            "required_before_patch_policy",
+            "allowed_dispositions_exact",
+            "all_other_omissions",
+        }
+        or value.get("model") != model.get("model")
+        or value.get("model_digest") != model.get("digest")
+        or value.get("configured_num_ctx") != model.get("configured_num_ctx")
+        or value.get("output_budget") != model.get("output_budget")
+        or value.get("canary_authorized") is not False
+    ):
+        raise _fail(
+            "RUN_FAMILY_CONFIGURATION_CONTRADICTORY",
+            "The anchor selected configuration contradicts its sealed model facts.",
+            stage="continuation_projection",
+        )
+    try:
+        fields_value = value["model_projection_fields"]
+        dispositions = post_change["allowed_dispositions_exact"]
+        if not isinstance(fields_value, list) or not isinstance(dispositions, list):
+            raise ValueError("configuration list shape changed")
+        return SelectedPreflightConfigurationV1(
+            configuration_id=value["configuration_id"],
+            route=value["route"],
+            main_ollama_timeout_seconds=value["main_ollama_timeout_seconds"],
+            timeout_owner=value["timeout_owner"],
+            repair_ollama_timeout_seconds=value["repair_ollama_timeout_seconds"],
+            repair_timeout_selection=value["repair_timeout_selection"],
+            projection_contract_checkpoint=current_head,
+            model_projection_fields=tuple(fields_value),
+            model_relations_authorized=value["model_relations_authorized"],
+            deterministic_relation_completion=value[
+                "deterministic_relation_completion"
+            ],
+            deterministic_relation_rule=value["deterministic_relation_rule"],
+            deterministic_post_change=DeterministicPostChangeConditionsV1(
+                only_unaccounted=post_change["only_unaccounted"],
+                required_before_patch_policy=post_change[
+                    "required_before_patch_policy"
+                ],
+                allowed_dispositions_exact=tuple(dispositions),
+                all_other_omissions=post_change["all_other_omissions"],
+            ),
+            initial_projection_attempts=value["initial_projection_attempts"],
+            maximum_correction_attempts_after_initial=value[
+                "maximum_correction_attempts_after_initial"
+            ],
+            provider_fallback=value["provider_fallback"],
+            automatic_retry=value["automatic_retry"],
+            external_disclosure=value["external_disclosure"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _fail(
+            "RUN_FAMILY_CONFIGURATION_INVALID",
+            "The anchor selected configuration cannot be reconstructed.",
+            stage="continuation_projection",
+            diagnostics={"error_type": type(exc).__name__},
+        ) from exc
+
+
+def _verify_stable_actual_anchor(
+    actual: _ActualLineageRecord,
+    actual_packet: Mapping[str, Any],
+    preflight: _PreflightLineageRecord,
+    preflight_packet: Mapping[str, Any],
+    *,
+    receipt_sha256: str,
+    receipt_manifest_sha256: str,
+    lineage_actual_sources: tuple[dict[str, str], ...],
+) -> None:
+    try:
+        physical_bindings_match = (
+            os.path.samefile(
+                actual.accepted_preflight_root,
+                preflight.packet_path.parent,
+            )
+            and os.path.samefile(
+                actual.accepted_receipt_path,
+                preflight.receipt_path,
+            )
+            and os.path.samefile(
+                actual.accepted_receipt_manifest_path,
+                preflight.receipt_manifest_path,
+            )
+        )
+    except OSError as exc:
+        raise _fail(
+            "RUN_FAMILY_ANCHOR_BINDING_UNVERIFIABLE",
+            "The Actual anchor physical bindings cannot be revalidated.",
+            stage="continuation_anchor",
+            diagnostics={"error_type": type(exc).__name__},
+        ) from exc
+    if (
+        actual.accepted_preflight_attempt_id != preflight.attempt_id
+        or actual.accepted_preflight_id != preflight.preflight_id
+        or actual.outer_run_id != preflight.outer_run_id
+        or actual.actual_id != preflight.future_actual_id
+        or actual.accepted_payload_manifest_sha256
+        != preflight.payload_manifest_sha256
+        or actual.accepted_receipt_sha256 != receipt_sha256
+        or actual.accepted_receipt_manifest_sha256 != receipt_manifest_sha256
+        or not physical_bindings_match
+    ):
+        raise _fail(
+            "RUN_FAMILY_ANCHOR_BINDING_CONTRADICTORY",
+            "The sealed Actual anchor contradicts its accepted preflight or receipt.",
+            stage="continuation_anchor",
+        )
+    if actual_packet.get("packet_version") != "p2_receipt_bound_actual_packet_v7":
+        return
+    spec = actual_packet.get("actual_run_spec")
+    accepted = spec.get("accepted_preflight") if isinstance(spec, Mapping) else None
+    seal_status = actual_packet.get("seal_status")
+    if (
+        set(actual_packet)
+        != {
+            "packet_version",
+            "outer_run_id",
+            "actual_attempt_id",
+            "accepted_entry_receipt",
+            "seal_status",
+            "actual_run_spec",
+            "preparation_only",
+            "actual_authorized",
+            "execution_owner",
+            "feature_spec_identity_owner",
+        }
+        or actual_packet.get("preparation_only") is not True
+        or actual_packet.get("actual_authorized") is not False
+        or not isinstance(seal_status, Mapping)
+        or seal_status
+        != {
+            "packet_prepared": True,
+            "packet_sealed": True,
+            "execution_root_created": False,
+            "model_calls": 0,
+            "ProductExecution_runs": 0,
+            "Builds": 0,
+            "Runtime_runs": 0,
+        }
+        or not isinstance(spec, Mapping)
+        or set(spec)
+        != {
+            "contract_version",
+            "packet_root",
+            "outer_run_id",
+            "actual_attempt_id",
+            "request",
+            "platform",
+            "source",
+            "git_executable_identity",
+            "model",
+            "selected_configuration",
+            "accepted_preflight",
+            "actual_lineage",
+            "product_execution",
+        }
+        or spec.get("contract_version") != "1"
+        or spec.get("packet_root") != actual.packet_path.parent.as_posix()
+        or not isinstance(accepted, Mapping)
+    ):
+        raise _fail(
+            "RUN_FAMILY_STABLE_ACTUAL_SPEC_INVALID",
+            "The stable Actual anchor or typed run specification is invalid.",
+            stage="continuation_anchor",
+        )
+    expected_actual_lineage = [
+        {
+            "packet_path": source["path"],
+            "packet_sha256": source["sha256"],
+        }
+        for source in lineage_actual_sources
+    ]
+    spec_lineage = spec.get("actual_lineage")
+    if not isinstance(spec_lineage, list):
+        raise _fail(
+            "RUN_FAMILY_STABLE_ACTUAL_SPEC_CONTRADICTORY",
+            "The stable Actual run specification lineage is invalid.",
+            stage="continuation_anchor",
+        )
+    observed_actual_lineage = []
+    for item in spec_lineage:
+        if (
+            not isinstance(item, Mapping)
+            or set(item)
+            != {
+                "packet_path",
+                "packet_sha256",
+                "outer_run_id",
+                "actual_attempt_id",
+                "accepted_preflight_attempt_id",
+                "accepted_preflight_id",
+            }
+        ):
+            raise _fail(
+                "RUN_FAMILY_STABLE_ACTUAL_SPEC_CONTRADICTORY",
+                "The stable Actual run specification lineage is invalid.",
+                stage="continuation_anchor",
+            )
+        observed_actual_lineage.append(
+            {
+                "packet_path": item.get("packet_path"),
+                "packet_sha256": item.get("packet_sha256"),
+            }
+        )
+    platform = preflight_packet.get("platform")
+    source = preflight_packet.get("source_identity")
+    model = preflight_packet.get("model_identity")
+    spec_platform = spec.get("platform")
+    spec_source = spec.get("source")
+    spec_model = spec.get("model")
+    expected_accepted_fields = {
+        "packet_path",
+        "packet_sha256",
+        "preflight_manifest_path",
+        "preflight_manifest_sha256",
+        "payload_manifest_sha256",
+        "preflight_attempt_id",
+        "preflight_id",
+        "receipt_path",
+        "receipt_sha256",
+        "receipt_manifest_path",
+        "receipt_manifest_sha256",
+        "receipt_status",
+        "receipt_actual_authorized",
+    }
+    if (
+        spec.get("outer_run_id") != actual.outer_run_id
+        or spec.get("actual_attempt_id") != actual.actual_id
+        or spec.get("request") != preflight_packet.get("request")
+        or set(accepted) != expected_accepted_fields
+        or accepted.get("packet_path") != preflight.packet_path.as_posix()
+        or accepted.get("packet_sha256") != preflight.packet_sha256
+        or accepted.get("preflight_manifest_path")
+        != preflight.preflight_path.as_posix()
+        or accepted.get("preflight_manifest_sha256")
+        != preflight.preflight_sha256
+        or accepted.get("payload_manifest_sha256")
+        != preflight.payload_manifest_sha256
+        or accepted.get("receipt_sha256") != receipt_sha256
+        or accepted.get("receipt_path") != preflight.receipt_path.as_posix()
+        or accepted.get("receipt_manifest_sha256") != receipt_manifest_sha256
+        or accepted.get("receipt_manifest_path")
+        != preflight.receipt_manifest_path.as_posix()
+        or accepted.get("receipt_status") != "ready"
+        or accepted.get("receipt_actual_authorized") is not False
+        or observed_actual_lineage != expected_actual_lineage
+        or not isinstance(platform, Mapping)
+        or not isinstance(spec_platform, Mapping)
+        or set(spec_platform)
+        != {
+            "repository_root",
+            "branch",
+            "HEAD",
+            "allowed_dirty_paths",
+            "allowed_dirty_path_sha256",
+        }
+        or spec_platform.get("repository_root") != platform.get("repository_root")
+        or spec_platform.get("branch") != platform.get("branch")
+        or spec_platform.get("HEAD") != platform.get("current_checkpoint")
+        or spec_platform.get("allowed_dirty_paths")
+        != platform.get("allowed_dirty_paths")
+        or spec_platform.get("allowed_dirty_path_sha256")
+        != platform.get("allowed_dirty_path_sha256_at_seal")
+        or not isinstance(source, Mapping)
+        or not isinstance(spec_source, Mapping)
+        or set(spec_source)
+        != {
+            "declared_root",
+            "canonical_root",
+            "target_project",
+            "snapshot_sha256",
+            "source_revision_binding",
+        }
+        or spec_source.get("declared_root") != source.get("declared_root")
+        or spec_source.get("canonical_root") != source.get("canonical_root")
+        or spec_source.get("target_project") != source.get("target_project")
+        or spec_source.get("snapshot_sha256") != source.get("snapshot_sha256")
+        or spec_source.get("source_revision_binding")
+        != source.get("source_revision_binding")
+        or not isinstance(model, Mapping)
+        or not isinstance(spec_model, Mapping)
+        or set(spec_model)
+        != {
+            "provider",
+            "base_url",
+            "model",
+            "digest",
+            "quantization_level",
+            "server_version",
+            "context_limit",
+            "configured_context",
+            "output_budget",
+            "local_only",
+        }
+        or spec_model.get("provider") != model.get("provider")
+        or spec_model.get("base_url") != model.get("base_url")
+        or spec_model.get("model") != model.get("model")
+        or spec_model.get("digest") != model.get("digest")
+        or spec_model.get("quantization_level") != model.get("quantization_level")
+        or spec_model.get("server_version") != model.get("server_version")
+        or spec_model.get("context_limit") != model.get("context_limit")
+        or spec_model.get("configured_context") != model.get("configured_num_ctx")
+        or spec_model.get("output_budget") != model.get("output_budget")
+        or spec_model.get("local_only") != model.get("local_only")
+        or spec.get("git_executable_identity")
+        != preflight_packet.get("git_executable_identity")
+        or spec.get("selected_configuration")
+        != preflight_packet.get("selected_configuration")
+    ):
+        raise _fail(
+            "RUN_FAMILY_STABLE_ACTUAL_SPEC_CONTRADICTORY",
+            "The stable Actual run specification contradicts the accepted seal.",
+            stage="continuation_anchor",
+        )
+
+
+def _project_run_family_continuation_request(
+    request: RunFamilyContinuationRequestV1,
+    *,
+    dependencies: PreflightPreparationDependenciesV1 | None,
+) -> SealedPreflightPreparationRequestV1:
+    profile = request.profile
+    anchor_records = tuple(
+        _load_actual_record(value) for value in profile.anchor_actual_packet_paths
+    )
+    canonical_anchor_paths = [record.packet_path.as_posix() for record in anchor_records]
+    if len(canonical_anchor_paths) != len(set(canonical_anchor_paths)):
+        raise _fail(
+            "RUN_FAMILY_ANCHOR_DUPLICATE",
+            "The finite anchor profile repeats one physical Actual packet.",
+            stage="continuation_anchor",
+        )
+    series = {record.identity_series for record in anchor_records}
+    if len(series) != 1:
+        raise _fail(
+            "RUN_FAMILY_SERIES_AMBIGUOUS",
+            "The finite anchor profile contains more than one identity series.",
+            stage="continuation_anchor",
+        )
+    latest_sequence = max(record.identity_sequence for record in anchor_records)
+    latest = [
+        record
+        for record in anchor_records
+        if record.identity_sequence == latest_sequence
+    ]
+    if len(latest) != 1:
+        raise _fail(
+            "RUN_FAMILY_LATEST_LINEAGE_AMBIGUOUS",
+            "More than one equally latest accepted Actual lineage is present.",
+            stage="continuation_anchor",
+            diagnostics={
+                "identity_sequence": latest_sequence,
+                "anchor_paths": [record.packet_path.as_posix() for record in latest],
+            },
+        )
+    anchor = latest[0]
+    actual_packet = _read_json_object(anchor.packet_path, "continuation Actual anchor")
+    accepted_preflight_path = anchor.accepted_preflight_root / PACKET_FILENAME
+    preflight = _load_preflight_record(accepted_preflight_path.as_posix())
+    receipt_sha256, receipt_manifest_sha256 = _verify_preflight_receipt(
+        preflight,
+        receipt_path_value=anchor.accepted_receipt_path.as_posix(),
+        receipt_manifest_path_value=anchor.accepted_receipt_manifest_path.as_posix(),
+        require_ready=True,
+    )
+    receipt_review = project_sealed_entry_receipt_review(
+        preflight.packet_path.as_posix()
+    )
+    if receipt_review.status != "ready":
+        raise _fail(
+            "RUN_FAMILY_RECEIPT_NOT_READY",
+            "The selected Actual anchor receipt is not ready.",
+            stage="continuation_anchor",
+        )
+    preflight_packet = _read_json_object(
+        preflight.packet_path,
+        "continuation accepted preflight",
+    )
+    sources = _verified_continuation_sources(preflight_packet)
+    actual_sources = tuple(
+        source for source in sources if source["role"] == "actual_packet"
+    )
+    _verify_stable_actual_anchor(
+        anchor,
+        actual_packet,
+        preflight,
+        preflight_packet,
+        receipt_sha256=receipt_sha256,
+        receipt_manifest_sha256=receipt_manifest_sha256,
+        lineage_actual_sources=actual_sources,
+    )
+
+    preflight_paths = [
+        source["path"] for source in sources if source["role"] == "preflight_packet"
+    ]
+    actual_paths = [source["path"] for source in actual_sources]
+    lower_profile_paths = {
+        record.packet_path.as_posix() for record in anchor_records if record is not anchor
+    }
+    if not lower_profile_paths.issubset(set(actual_paths)):
+        raise _fail(
+            "RUN_FAMILY_ANCHOR_LINEAGE_CONTRADICTORY",
+            "A supplied earlier anchor is absent from the latest sealed lineage.",
+            stage="continuation_anchor",
+        )
+    if preflight.packet_path.as_posix() in preflight_paths:
+        raise _fail(
+            "RUN_FAMILY_ACCEPTED_PREFLIGHT_DUPLICATE",
+            "The accepted anchor preflight is already present in its prior lineage.",
+            stage="continuation_lineage",
+        )
+    preflight_paths.append(preflight.packet_path.as_posix())
+    _verify_continuation_preflight_chain(tuple(preflight_paths))
+    if anchor.packet_path.as_posix() in actual_paths:
+        raise _fail(
+            "RUN_FAMILY_ANCHOR_ALREADY_IN_LINEAGE",
+            "The selected anchor Actual packet already appears in its prior lineage.",
+            stage="continuation_lineage",
+        )
+    actual_paths.append(anchor.packet_path.as_posix())
+
+    rejected: list[RejectedPreflightIdentityReservationV1] = []
+    source_keys = {(item["role"], item["path"], item["sha256"]) for item in sources}
+    for source_record in sources:
+        if source_record["role"] != "rejected_preflight_reservation_packet":
+            continue
+        record = _load_preflight_record(
+            source_record["path"],
+            require_consistent_future_identity=False,
+        )
+        required = {
+            (
+                "rejected_preflight_reservation_seal",
+                record.preflight_path.as_posix(),
+                record.preflight_sha256,
+            ),
+            (
+                "rejected_preflight_reservation_receipt",
+                record.receipt_path.as_posix(),
+                _file_sha256(record.receipt_path),
+            ),
+            (
+                "rejected_preflight_reservation_receipt_manifest",
+                record.receipt_manifest_path.as_posix(),
+                _file_sha256(record.receipt_manifest_path),
+            ),
+        }
+        if not required.issubset(source_keys):
+            raise _fail(
+                "RUN_FAMILY_REJECTED_RESERVATION_CHAIN_BROKEN",
+                "A rejected preflight reservation is missing a sealed reference.",
+                stage="continuation_lineage",
+            )
+        rejected.append(
+            RejectedPreflightIdentityReservationV1(
+                packet_path=record.packet_path.as_posix(),
+                receipt_path=record.receipt_path.as_posix(),
+                receipt_manifest_path=record.receipt_manifest_path.as_posix(),
+            )
+        )
+
+    platform = preflight_packet.get("platform")
+    source = preflight_packet.get("source_identity")
+    model = preflight_packet.get("model_identity")
+    git_value = preflight_packet.get("git_executable_identity")
+    if not all(
+        isinstance(item, Mapping) for item in (platform, source, model, git_value)
+    ):
+        raise _fail(
+            "RUN_FAMILY_STABLE_FACTS_MISSING",
+            "The anchor lacks stable platform, source, model, or Git facts.",
+            stage="continuation_projection",
+        )
+    try:
+        git_identity = GitExecutableIdentityV1.from_dict(git_value)
+        current_git_identity = GitExecutableIdentityV1.read(
+            git_identity.declared_textual_path
+        )
+        if current_git_identity != git_identity:
+            raise ValueError("Git executable identity drifted")
+        platform_root = Path(platform["repository_root"]).resolve(strict=True)
+        Path(source["canonical_root"]).resolve(strict=True)
+        admission = StrictGitAdmission(
+            executable_identity=git_identity,
+            source_declared_root=source["declared_root"],
+            source_canonical_root=source["canonical_root"],
+        )
+        current_head = admission.platform_text(platform_root, "rev-parse", "HEAD")
+        allowed_dirty_paths = platform["allowed_dirty_paths"]
+        dirty_sha256 = platform["allowed_dirty_path_sha256_at_seal"]
+        if not isinstance(allowed_dirty_paths, list) or not isinstance(
+            dirty_sha256,
+            Mapping,
+        ):
+            raise ValueError("dirty binding shape changed")
+        if set(allowed_dirty_paths) != set(dirty_sha256):
+            raise ValueError("dirty binding paths contradict hashes")
+        try:
+            current_platform_facts = admission.verify_platform(
+                repository=platform_root,
+                expected_head=current_head,
+                expected_branch=platform["branch"],
+                allowed_dirty_paths=tuple(allowed_dirty_paths),
+            )
+        except GitAdmissionError as exc:
+            if exc.code == "PLATFORM_DIRTY_PATH_UNEXPECTED":
+                raise _fail(
+                    "RUN_FAMILY_DIRTY_PATH_DRIFT",
+                    "Current dirty paths differ from the sealed run-family binding.",
+                    stage="continuation_projection",
+                    diagnostics=exc.diagnostics,
+                ) from exc
+            raise
+        observed_dirty_paths = {
+            record["path"] for record in current_platform_facts["dirty_records"]
+        }
+        if observed_dirty_paths != set(allowed_dirty_paths):
+            raise _fail(
+                "RUN_FAMILY_DIRTY_PATH_DRIFT",
+                "Current dirty paths differ from the sealed run-family binding.",
+                stage="continuation_projection",
+                diagnostics={
+                    "expected_paths": sorted(allowed_dirty_paths),
+                    "observed_paths": sorted(observed_dirty_paths),
+                },
+            )
+        dirty_status_value = platform.get("allowed_dirty_status_at_seal")
+        legacy_dirty_status_unavailable = dirty_status_value is None
+        if dirty_status_value is None:
+            dirty_status: Mapping[str, Any] = {}
+        elif not isinstance(dirty_status_value, Mapping) or set(
+            dirty_status_value
+        ) != set(allowed_dirty_paths):
+            raise ValueError("dirty status binding shape changed")
+        else:
+            dirty_status = dirty_status_value
+        if any(
+            not isinstance(path, str)
+            or not path
+            or not _hash_string(dirty_sha256.get(path))
+            for path in allowed_dirty_paths
+        ):
+            raise ValueError("dirty SHA256 binding is invalid")
+        if not legacy_dirty_status_unavailable and any(
+            dirty_status.get(path) not in {" M", "??"}
+            for path in allowed_dirty_paths
+        ):
+            raise ValueError("dirty status binding is invalid")
+        observed_status = {
+            record["path"]: record["status"]
+            for record in current_platform_facts["dirty_records"]
+        }
+        if not legacy_dirty_status_unavailable and observed_status != dict(
+            dirty_status
+        ):
+            raise _fail(
+                "RUN_FAMILY_DIRTY_STATUS_DRIFT",
+                "Current dirty statuses differ from the sealed run-family binding.",
+                stage="continuation_projection",
+                diagnostics={
+                    "expected_status": dict(dirty_status),
+                    "observed_status": observed_status,
+                },
+            )
+        observed_hashes: dict[str, str] = {}
+        for path_text in allowed_dirty_paths:
+            selected_path = (
+                platform_root / Path(*PurePosixPath(path_text).parts)
+            ).resolve(strict=True)
+            selected_path.relative_to(platform_root)
+            if not selected_path.is_file():
+                raise ValueError("dirty binding path is not a file")
+            observed_hashes[path_text] = _file_sha256(selected_path)
+        if observed_hashes != dict(dirty_sha256):
+            raise _fail(
+                "RUN_FAMILY_DIRTY_HASH_DRIFT",
+                "Current dirty bytes differ from the sealed run-family binding.",
+                stage="continuation_projection",
+                diagnostics={
+                    "expected_sha256": dict(dirty_sha256),
+                    "observed_sha256": observed_hashes,
+                },
+            )
+        try:
+            admission.verify_platform_code_checkpoint(
+                repository=platform_root,
+                current_head=current_head,
+                platform_code_checkpoint=profile.platform_code_checkpoint,
+                allowed_post_checkpoint_paths=profile.allowed_post_checkpoint_paths,
+            )
+        except GitAdmissionError as exc:
+            raise _fail(
+                exc.code,
+                str(exc),
+                stage="platform_code_checkpoint",
+                diagnostics=exc.diagnostics,
+            ) from exc
+        source_binding = source["source_revision_binding"]
+        if not isinstance(source_binding, Mapping):
+            raise ValueError("source revision binding shape changed")
+        primary_sources_value = source_binding["primary_sources"]
+        if not isinstance(primary_sources_value, list) or not primary_sources_value:
+            raise ValueError("primary source binding is empty")
+        primary_sources: list[str] = []
+        for item in primary_sources_value:
+            if not isinstance(item, Mapping) or set(item) != {"path", "sha256"}:
+                raise ValueError("primary source binding item changed")
+            primary_sources.append(item["path"])
+        selected_configuration = _selected_configuration_from_anchor(
+            preflight_packet.get("selected_configuration"),
+            model=model,
+            current_head=current_head,
+        )
+        prepared_continuation = _PreparedRunFamilyContinuationV1(
+            profile=profile,
+            selected_anchor_path=anchor.packet_path.as_posix(),
+            selected_anchor_sha256=anchor.packet_sha256,
+            expected_dirty_status=tuple(
+                (path, dirty_status[path])
+                for path in allowed_dirty_paths
+                if path in dirty_status
+            ),
+            expected_dirty_sha256=tuple(
+                (path, dirty_sha256[path]) for path in allowed_dirty_paths
+            ),
+            legacy_dirty_status_unavailable=legacy_dirty_status_unavailable,
+            expected_source_snapshot_sha256=source["snapshot_sha256"],
+            expected_source_revision_binding=dict(source_binding),
+            expected_model_facts={
+                "base_url": model["base_url"],
+                "model": model["model"],
+                "digest": model["digest"],
+                "quantization_level": model.get("quantization_level"),
+                "server_version": model["server_version"],
+                "context_limit": model["context_limit"],
+                "configured_num_ctx": model["configured_num_ctx"],
+                "output_budget": model["output_budget"],
+            },
+            receipt_review=receipt_review,
+        )
+        projected = SealedPreflightPreparationRequestV1(
+            contract_version="1",
+            packet_root=request.packet_root,
+            packet_date=profile.packet_date,
+            task_id=preflight_packet["task_id"],
+            request_text=preflight_packet["request"],
+            identity_series=anchor.identity_series,
+            identity_sequence=anchor.identity_sequence + 1,
+            selected_configuration=selected_configuration,
+            platform_root=platform["repository_root"],
+            allowed_dirty_paths=tuple(allowed_dirty_paths),
+            source_root=source["declared_root"],
+            target_project=source["target_project"],
+            project_file=source_binding["project_file"],
+            primary_source_paths=tuple(primary_sources),
+            git_executable=git_identity.declared_textual_path,
+            ollama_base_url=model["base_url"],
+            ollama_model=model["model"],
+            ollama_context_window=model["configured_num_ctx"],
+            ollama_output_budget=model["output_budget"],
+            preflight_lineage_packet_paths=tuple(preflight_paths),
+            predecessor_receipt_path=anchor.accepted_receipt_path.as_posix(),
+            predecessor_receipt_manifest_path=(
+                anchor.accepted_receipt_manifest_path.as_posix()
+            ),
+            actual_lineage_packet_paths=tuple(actual_paths),
+            rejected_preflight_identity_reservations=tuple(rejected),
+            continuation=prepared_continuation,
+        )
+        projected_identities = derive_run_identities(
+            identity_series=projected.identity_series,
+            identity_sequence=projected.identity_sequence,
+        )
+        projected_lineage = _admit_lineage(projected, projected_identities)
+        _verify_continuation_consumption(projected_lineage)
+        projected_current = _read_current_facts(
+            projected,
+            dependencies or PreflightPreparationDependenciesV1(),
+        )
+        _verify_prepared_continuation_current_facts(
+            projected,
+            projected_current,
+        )
+        return projected
+    except PreflightPreparationError:
+        raise
+    except (
+        GitAdmissionError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise _fail(
+            "RUN_FAMILY_PROJECTION_FAILED",
+            "Stable run-family facts could not be projected from the sealed anchor.",
+            stage="continuation_projection",
+            diagnostics={
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            },
+        ) from exc
+
+
 def _validate_packet_root(value: str) -> Path:
     selected = Path(value)
     if not selected.is_absolute() or ".." in selected.parts:
@@ -1703,8 +3212,10 @@ def _read_current_facts(
             },
         ) from exc
     dirty_hashes: dict[str, str] = {}
+    dirty_status: dict[str, str] = {}
     for record in platform_facts["dirty_records"]:
         path_text = record["path"]
+        dirty_status[path_text] = record["status"]
         selected = (platform_root / Path(*PurePosixPath(path_text).parts)).resolve(
             strict=True
         )
@@ -1729,6 +3240,7 @@ def _read_current_facts(
         "platform_branch": platform_branch,
         "platform_facts": platform_facts,
         "allowed_dirty_hashes": dirty_hashes,
+        "allowed_dirty_status": dirty_status,
         "source_root": source_root,
         "target_project": target_project,
         "snapshot": snapshot,
@@ -1741,7 +3253,134 @@ def _read_current_facts(
         "quantization_level": quantization_level,
         "server_version": server_version,
         "context_limit": context_limit,
+        "git_admission": admission,
     }
+
+
+def _verify_prepared_continuation_current_facts(
+    request: SealedPreflightPreparationRequestV1,
+    current: Mapping[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    continuation = request.continuation
+    if continuation is None:
+        return None, None
+    anchor_path = _resolve_existing_file(
+        continuation.selected_anchor_path,
+        "selected continuation anchor",
+    )
+    if (
+        anchor_path.as_posix() != continuation.selected_anchor_path
+        or _file_sha256(anchor_path) != continuation.selected_anchor_sha256
+    ):
+        raise _fail(
+            "RUN_FAMILY_ANCHOR_HASH_DRIFT",
+            "The selected Actual anchor changed before owner admission.",
+            stage="continuation_current_facts",
+        )
+    expected_status = dict(continuation.expected_dirty_status)
+    expected_hashes = dict(continuation.expected_dirty_sha256)
+    observed_status = dict(current["allowed_dirty_status"])
+    observed_hashes = dict(current["allowed_dirty_hashes"])
+    if (
+        current["snapshot_hash"]
+        != continuation.expected_source_snapshot_sha256
+        or dict(current["source_binding"])
+        != dict(continuation.expected_source_revision_binding)
+    ):
+        raise _fail(
+            "RUN_FAMILY_SOURCE_FACT_DRIFT",
+            "Current source identity differs from the sealed run-family binding.",
+            stage="continuation_current_facts",
+            diagnostics={
+                "expected_snapshot_sha256": (
+                    continuation.expected_source_snapshot_sha256
+                ),
+                "observed_snapshot_sha256": current["snapshot_hash"],
+            },
+        )
+    observed_model_facts = {
+        "base_url": request.ollama_base_url,
+        "model": request.ollama_model,
+        "digest": current["model_digest"],
+        "quantization_level": current["quantization_level"],
+        "server_version": current["server_version"],
+        "context_limit": current["context_limit"],
+        "configured_num_ctx": request.ollama_context_window,
+        "output_budget": request.ollama_output_budget,
+    }
+    if observed_model_facts != dict(continuation.expected_model_facts):
+        raise _fail(
+            "RUN_FAMILY_MODEL_FACT_DRIFT",
+            "Current model identity differs from the sealed run-family binding.",
+            stage="continuation_current_facts",
+            diagnostics={
+                "expected_model": dict(continuation.expected_model_facts),
+                "observed_model": observed_model_facts,
+            },
+        )
+    if set(observed_hashes) != set(expected_hashes):
+        raise _fail(
+            "RUN_FAMILY_DIRTY_PATH_DRIFT",
+            "Current dirty paths differ from the sealed run-family binding.",
+            stage="continuation_current_facts",
+            diagnostics={
+                "expected_paths": sorted(expected_hashes),
+                "observed_paths": sorted(observed_hashes),
+            },
+        )
+    if not continuation.legacy_dirty_status_unavailable and (
+        observed_status != expected_status
+    ):
+        raise _fail(
+            "RUN_FAMILY_DIRTY_STATUS_DRIFT",
+            "Current dirty statuses differ from the sealed run-family binding.",
+            stage="continuation_current_facts",
+            diagnostics={
+                "expected_status": expected_status,
+                "observed_status": observed_status,
+            },
+        )
+    if observed_hashes != expected_hashes:
+        raise _fail(
+            "RUN_FAMILY_DIRTY_HASH_DRIFT",
+            "Current dirty bytes differ from the sealed run-family binding.",
+            stage="continuation_current_facts",
+            diagnostics={
+                "expected_sha256": expected_hashes,
+                "observed_sha256": observed_hashes,
+            },
+        )
+    try:
+        platform_code_checkpoint_facts = current[
+            "git_admission"
+        ].verify_platform_code_checkpoint(
+            repository=current["platform_root"],
+            current_head=current["platform_head"],
+            platform_code_checkpoint=(
+                continuation.profile.platform_code_checkpoint
+            ),
+            allowed_post_checkpoint_paths=(
+                continuation.profile.allowed_post_checkpoint_paths
+            ),
+        )
+    except GitAdmissionError as exc:
+        raise _fail(
+            exc.code,
+            str(exc),
+            stage="platform_code_checkpoint",
+            diagnostics=exc.diagnostics,
+        ) from exc
+    fresh_review = project_sealed_entry_receipt_review(
+        str(continuation.receipt_review.hashes["packet"]["path"])
+    )
+    if fresh_review.to_dict() != continuation.receipt_review.to_dict():
+        raise _fail(
+            "RUN_FAMILY_RECEIPT_REVIEW_DRIFT",
+            "The accepted receipt review changed before owner admission.",
+            stage="continuation_current_facts",
+        )
+    audit = continuation.to_dict(platform_code_checkpoint_facts)
+    return platform_code_checkpoint_facts, audit
 
 
 def _runner_source() -> str:
@@ -1941,11 +3580,23 @@ def _materialize_seal(packet_root: Path, files_to_write: Mapping[str, bytes]) ->
 
 
 def prepare_sealed_entry_preflight(
-    request: SealedPreflightPreparationRequestV1,
+    request: SealedPreflightPreparationRequestV1 | RunFamilyContinuationRequestV1,
     *,
     dependencies: PreflightPreparationDependenciesV1 | None = None,
 ) -> SealedPreflightPreparationResultV1:
     """Prepare one five-file, preflight-only seal without executing Entry Admission."""
+
+    if isinstance(request, RunFamilyContinuationRequestV1):
+        projected_request = _project_run_family_continuation_request(
+            request,
+            dependencies=dependencies,
+        )
+        return prepare_sealed_entry_preflight(
+            projected_request,
+            dependencies=dependencies,
+        )
+    if not isinstance(request, SealedPreflightPreparationRequestV1):
+        raise ValueError("Preflight preparation request type is invalid.")
 
     packet_root = _validate_packet_root(request.packet_root)
     run_identities = derive_run_identities(
@@ -1954,6 +3605,8 @@ def prepare_sealed_entry_preflight(
     )
     try:
         lineage = _admit_lineage(request, run_identities)
+        if request.continuation is not None:
+            _verify_continuation_consumption(lineage)
     except PreflightPreparationError:
         raise
     except Exception as exc:
@@ -1965,6 +3618,9 @@ def prepare_sealed_entry_preflight(
         ) from exc
     selected_dependencies = dependencies or PreflightPreparationDependenciesV1()
     current = _read_current_facts(request, selected_dependencies)
+    platform_code_checkpoint, continuation_audit = (
+        _verify_prepared_continuation_current_facts(request, current)
+    )
     if (
         request.selected_configuration.projection_contract_checkpoint
         != current["platform_head"]
@@ -2030,7 +3686,11 @@ def prepare_sealed_entry_preflight(
     entry_request_fields = [field.name for field in fields(EntryAdmissionRequestV1)]
     selected_configuration = {
         **request.selected_configuration.to_dict(),
-        "configuration_source": "typed_input_and_current_platform_checkpoint",
+        "configuration_source": (
+            "run_family_anchor_and_current_platform_checkpoint"
+            if request.continuation is not None
+            else "typed_input_and_current_platform_checkpoint"
+        ),
         "model": request.ollama_model,
         "model_digest": current["model_digest"],
         "configured_num_ctx": request.ollama_context_window,
@@ -2050,6 +3710,16 @@ def prepare_sealed_entry_preflight(
         }
         for record in lineage.reservation_records
     ]
+    platform_projection = {
+        "repository_root": current["platform_root"].as_posix(),
+        "branch": current["platform_branch"],
+        "current_checkpoint": current["platform_head"],
+        "allowed_dirty_paths": list(request.allowed_dirty_paths),
+        "allowed_dirty_status_at_seal": current["allowed_dirty_status"],
+        "allowed_dirty_path_sha256_at_seal": current["allowed_dirty_hashes"],
+    }
+    if platform_code_checkpoint is not None:
+        platform_projection["platform_code_checkpoint"] = dict(platform_code_checkpoint)
     packet = {
         "packet_version": "p2_thin_entry_admission_packet_v6",
         "preparation_owner": (
@@ -2066,13 +3736,7 @@ def prepare_sealed_entry_preflight(
         "preflight_id": identities.preflight_id,
         "request": request.request_text,
         "identity_allocation": identities.to_dict(),
-        "platform": {
-            "repository_root": current["platform_root"].as_posix(),
-            "branch": current["platform_branch"],
-            "current_checkpoint": current["platform_head"],
-            "allowed_dirty_paths": list(request.allowed_dirty_paths),
-            "allowed_dirty_path_sha256_at_seal": current["allowed_dirty_hashes"],
-        },
+        "platform": platform_projection,
         "delivery": {
             "packet_root_text": str(packet_root),
             "packet_root_canonical_text": packet_root.as_posix(),
@@ -2123,7 +3787,11 @@ def prepare_sealed_entry_preflight(
             "execution_root": None,
         },
         "identity_lineage": {
-            "boundary": "explicit_finite_paths_only",
+            "boundary": (
+                "anchor_reconstructed_finite_paths"
+                if request.continuation is not None
+                else "explicit_finite_paths_only"
+            ),
             "predecessor_packet_path": lineage.predecessor.packet_path.as_posix(),
             "predecessor_packet_sha256": lineage.predecessor.packet_sha256,
             "predecessor_payload_manifest_sha256": (
@@ -2191,6 +3859,8 @@ def prepare_sealed_entry_preflight(
             "runner_owns_retry": False,
         },
     }
+    if continuation_audit is not None:
+        packet["run_family_continuation"] = dict(continuation_audit)
     packet_bytes = _json_bytes(packet)
     runner_bytes = _runner_source().encode("utf-8")
     payload_files = {
@@ -2202,6 +3872,11 @@ def prepare_sealed_entry_preflight(
         platform_root=current["platform_root"],
         packet_root=packet_root,
         payload_manifest_sha256=payload_manifest_sha256,
+    )
+    lineage_description = (
+        "anchor-reconstructed finite lineage"
+        if request.continuation is not None
+        else "explicit finite lineage"
     )
     run_text = (
         f"# Sealed Entry Preflight {preflight_attempt_id}\n\n"
@@ -2219,7 +3894,8 @@ def prepare_sealed_entry_preflight(
         f"# Fresh Entry Preflight Prompt: {preflight_attempt_id}\n\n"
         f"The sealed packet derives canary {identities.future_canary_number}, "
         f"`{identities.outer_run_id}`, and `{identities.future_actual_id}` from the "
-        "single canonical sequence. Its explicit finite lineage has been hash-checked.\n\n"
+        f"single canonical sequence. Its {lineage_description} has been "
+        "hash-checked.\n\n"
         "If separately authorized, invoke exactly this preflight-only command once:\n\n"
         "```powershell\n"
         f"{authorized_run_command}\n"
@@ -2236,6 +3912,18 @@ def prepare_sealed_entry_preflight(
         FRESH_PREFLIGHT_PROMPT_FILENAME: hashlib.sha256(prompt_bytes).hexdigest(),
     }
     delivery_manifest_sha256 = _canonical_json_sha256(delivery_files)
+    platform_identity_at_seal = {
+        "root": current["platform_root"].as_posix(),
+        "branch": current["platform_branch"],
+        "HEAD": current["platform_head"],
+        "allowed_dirty_paths": list(request.allowed_dirty_paths),
+        "allowed_dirty_status": current["allowed_dirty_status"],
+        "allowed_dirty_path_sha256": current["allowed_dirty_hashes"],
+    }
+    if platform_code_checkpoint is not None:
+        platform_identity_at_seal["platform_code_checkpoint"] = dict(
+            platform_code_checkpoint
+        )
     preflight = {
         "preflight_version": "sealed_entry_preparation_v1",
         "status": "sealed_ready_for_preflight_only",
@@ -2254,7 +3942,11 @@ def prepare_sealed_entry_preflight(
             ),
         },
         "unused_identity_check": {
-            "boundary": "explicit_finite_paths_only",
+            "boundary": (
+                "anchor_reconstructed_finite_paths"
+                if request.continuation is not None
+                else "explicit_finite_paths_only"
+            ),
             "sources": [dict(item) for item in lineage.sources],
             "rejected_preflight_identity_reservations": rejected_reservations,
             "rejected_reservations_consume_future_run_identity": False,
@@ -2263,13 +3955,7 @@ def prepare_sealed_entry_preflight(
             "preflight_attempt_id": "unused",
             "preflight_id": "unused",
         },
-        "platform_identity_at_seal": {
-            "root": current["platform_root"].as_posix(),
-            "branch": current["platform_branch"],
-            "HEAD": current["platform_head"],
-            "allowed_dirty_paths": list(request.allowed_dirty_paths),
-            "allowed_dirty_path_sha256": current["allowed_dirty_hashes"],
-        },
+        "platform_identity_at_seal": platform_identity_at_seal,
         "source_identity_at_seal": {
             **current["source_facts"],
             "snapshot_file_count": len(current["snapshot"]),
@@ -2355,6 +4041,8 @@ def prepare_sealed_entry_preflight(
         "delivery_manifest_material": list(DELIVERY_MANIFEST_MATERIAL),
         "delivery_manifest_sha256": delivery_manifest_sha256,
     }
+    if continuation_audit is not None:
+        preflight["run_family_continuation"] = dict(continuation_audit)
     preflight_bytes = _json_bytes(preflight)
     packet_sha256 = payload_files[PACKET_FILENAME]
     preflight_sha256 = hashlib.sha256(preflight_bytes).hexdigest()
@@ -2366,7 +4054,7 @@ def prepare_sealed_entry_preflight(
         FRESH_PREFLIGHT_PROMPT_FILENAME: prompt_bytes,
     }
     _materialize_seal(packet_root, files_to_write)
-    audit_summary = (
+    audit_lines = [
         (
             f"Derived canary {identities.future_canary_number}, outer run "
             f"{identities.outer_run_id}, and future actual {identities.future_actual_id} "
@@ -2385,8 +4073,13 @@ def prepare_sealed_entry_preflight(
             "and the deterministic projection contract into packet payload bytes."
         ),
         (
-            "Checked identity non-use only against the explicitly supplied, hash-bound "
-            f"lineage sources ({len(lineage.sources)} files)."
+            (
+                "Automatically reconstructed and hash-checked"
+                if request.continuation is not None
+                else "Checked identity non-use only against the explicitly supplied, "
+                "hash-bound"
+            )
+            + f" finite lineage sources ({len(lineage.sources)} files)."
         ),
         (
             f"Sealed packet SHA256 {packet_sha256}, "
@@ -2397,7 +4090,25 @@ def prepare_sealed_entry_preflight(
             "Granted no model generation, ProductExecution, Build, Runtime, Apply, "
             "Apply workspace, canary, or actual authority."
         ),
-    )
+    ]
+    if continuation_audit is not None and platform_code_checkpoint is not None:
+        audit_lines.insert(
+            4,
+            (
+                f"Verified platform code checkpoint {platform_code_checkpoint['platform_code_checkpoint']} "
+                f"as an exact ancestor of platform HEAD "
+                f"{platform_code_checkpoint['platform_HEAD']} with only typed "
+                "post-checkpoint paths."
+            ),
+        )
+        audit_lines.insert(
+            5,
+            (
+                "Projected the ready predecessor receipt with five hash identities, "
+                "three admission gates, and zero execution authority."
+            ),
+        )
+    audit_summary = tuple(audit_lines)
     return SealedPreflightPreparationResultV1(
         status="sealed",
         packet_root=packet_root.as_posix(),
@@ -2411,4 +4122,5 @@ def prepare_sealed_entry_preflight(
         delivery_manifest_sha256=delivery_manifest_sha256,
         authorized_run_command=authorized_run_command,
         audit_summary=audit_summary,
+        continuation_audit=continuation_audit,
     )

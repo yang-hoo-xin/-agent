@@ -40,6 +40,8 @@ from .preflight_preparation import (
     DeterministicPostChangeConditionsV1,
     PreflightPreparationError,
     RejectedPreflightIdentityReservationV1,
+    RunFamilyContinuationProfileV1,
+    RunFamilyContinuationRequestV1,
     SelectedPreflightConfigurationV1,
     SealedPreflightPreparationRequestV1,
     prepare_sealed_entry_preflight,
@@ -368,7 +370,10 @@ def _add_stagger_diagnostic_diff_arguments(
     parser.add_argument("--source-root", required=True)
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(
+    *,
+    _prepare_continuation: bool = False,
+) -> argparse.ArgumentParser:
     """Build the command line parser."""
 
     parser = argparse.ArgumentParser(
@@ -392,133 +397,152 @@ def build_parser() -> argparse.ArgumentParser:
             "preflight-only Entry packet."
         ),
     )
+    explicit_required = not _prepare_continuation
     prepare_entry_parser.add_argument("--packet-root", required=True)
-    prepare_entry_parser.add_argument("--packet-date", required=True)
-    prepare_entry_parser.add_argument("--task-id", required=True)
-    prepare_entry_parser.add_argument("--request-text", required=True)
-    prepare_entry_parser.add_argument("--identity-series", required=True)
-    prepare_entry_parser.add_argument("--identity-sequence", required=True, type=int)
-    prepare_entry_parser.add_argument("--configuration-id", required=True)
-    prepare_entry_parser.add_argument("--route", required=True)
+    prepare_entry_parser.add_argument(
+        "--run-family-continuation-profile",
+        help=(
+            "Use one typed finite-anchor profile; when present, all explicit "
+            "identity, lineage, platform, source, model, and configuration "
+            "arguments are forbidden."
+        ),
+    )
+    prepare_entry_parser.add_argument("--packet-date", required=explicit_required)
+    prepare_entry_parser.add_argument("--task-id", required=explicit_required)
+    prepare_entry_parser.add_argument("--request-text", required=explicit_required)
+    prepare_entry_parser.add_argument("--identity-series", required=explicit_required)
+    prepare_entry_parser.add_argument(
+        "--identity-sequence",
+        required=explicit_required,
+        type=int,
+    )
+    prepare_entry_parser.add_argument("--configuration-id", required=explicit_required)
+    prepare_entry_parser.add_argument("--route", required=explicit_required)
     prepare_entry_parser.add_argument(
         "--main-ollama-timeout-seconds",
-        required=True,
+        required=explicit_required,
         type=float,
     )
-    prepare_entry_parser.add_argument("--timeout-owner", required=True)
+    prepare_entry_parser.add_argument("--timeout-owner", required=explicit_required)
     prepare_entry_parser.add_argument(
         "--repair-ollama-timeout-seconds",
         type=float,
     )
-    prepare_entry_parser.add_argument("--repair-timeout-selection", required=True)
+    prepare_entry_parser.add_argument(
+        "--repair-timeout-selection",
+        required=explicit_required,
+    )
     prepare_entry_parser.add_argument(
         "--projection-contract-checkpoint",
-        required=True,
+        required=explicit_required,
     )
     prepare_entry_parser.add_argument(
         "--model-projection-field",
         action="append",
-        required=True,
+        required=explicit_required,
     )
     prepare_entry_parser.add_argument(
         "--model-relations-authorized",
-        required=True,
+        required=explicit_required,
         type=_strict_cli_bool,
     )
     prepare_entry_parser.add_argument(
         "--deterministic-relation-completion",
-        required=True,
+        required=explicit_required,
         type=_strict_cli_bool,
     )
     prepare_entry_parser.add_argument(
         "--deterministic-relation-rule",
-        required=True,
+        required=explicit_required,
     )
     prepare_entry_parser.add_argument(
         "--deterministic-post-change-only-unaccounted",
-        required=True,
+        required=explicit_required,
         type=_strict_cli_bool,
     )
     prepare_entry_parser.add_argument(
         "--deterministic-post-change-required-before-patch-policy",
-        required=True,
+        required=explicit_required,
         type=_strict_cli_bool,
     )
     prepare_entry_parser.add_argument(
         "--deterministic-post-change-allowed-disposition",
         action="append",
-        required=True,
+        required=explicit_required,
     )
     prepare_entry_parser.add_argument(
         "--deterministic-post-change-all-other-omissions",
-        required=True,
+        required=explicit_required,
     )
     prepare_entry_parser.add_argument(
         "--initial-projection-attempts",
-        required=True,
+        required=explicit_required,
         type=int,
     )
     prepare_entry_parser.add_argument(
         "--maximum-correction-attempts-after-initial",
-        required=True,
+        required=explicit_required,
         type=int,
     )
     prepare_entry_parser.add_argument(
         "--provider-fallback",
-        required=True,
+        required=explicit_required,
         type=_strict_cli_bool,
     )
     prepare_entry_parser.add_argument(
         "--automatic-retry",
-        required=True,
+        required=explicit_required,
         type=_strict_cli_bool,
     )
     prepare_entry_parser.add_argument(
         "--external-disclosure",
-        required=True,
+        required=explicit_required,
         type=_strict_cli_bool,
     )
-    prepare_entry_parser.add_argument("--platform-root", required=True)
+    prepare_entry_parser.add_argument("--platform-root", required=explicit_required)
     prepare_entry_parser.add_argument(
         "--allowed-dirty-path",
         action="append",
         default=[],
     )
-    prepare_entry_parser.add_argument("--source-root", required=True)
-    prepare_entry_parser.add_argument("--target-project", required=True)
-    prepare_entry_parser.add_argument("--project-file", required=True)
+    prepare_entry_parser.add_argument("--source-root", required=explicit_required)
+    prepare_entry_parser.add_argument("--target-project", required=explicit_required)
+    prepare_entry_parser.add_argument("--project-file", required=explicit_required)
     prepare_entry_parser.add_argument(
         "--primary-source",
         action="append",
-        required=True,
+        required=explicit_required,
     )
-    prepare_entry_parser.add_argument("--git-executable", required=True)
-    prepare_entry_parser.add_argument("--ollama-base-url", required=True)
-    prepare_entry_parser.add_argument("--ollama-model", required=True)
+    prepare_entry_parser.add_argument("--git-executable", required=explicit_required)
+    prepare_entry_parser.add_argument("--ollama-base-url", required=explicit_required)
+    prepare_entry_parser.add_argument("--ollama-model", required=explicit_required)
     prepare_entry_parser.add_argument(
         "--ollama-context-window",
-        required=True,
+        required=explicit_required,
         type=int,
     )
     prepare_entry_parser.add_argument(
         "--ollama-output-budget",
-        required=True,
+        required=explicit_required,
         type=int,
     )
     prepare_entry_parser.add_argument(
         "--preflight-lineage-packet",
         action="append",
-        required=True,
+        required=explicit_required,
     )
-    prepare_entry_parser.add_argument("--predecessor-receipt", required=True)
+    prepare_entry_parser.add_argument(
+        "--predecessor-receipt",
+        required=explicit_required,
+    )
     prepare_entry_parser.add_argument(
         "--predecessor-receipt-manifest",
-        required=True,
+        required=explicit_required,
     )
     prepare_entry_parser.add_argument(
         "--actual-lineage-packet",
         action="append",
-        required=True,
+        required=explicit_required,
     )
     prepare_entry_parser.add_argument(
         "--rejected-preflight-identity-reservation",
@@ -1109,11 +1133,89 @@ def _run_resume_runtime_command(args: argparse.Namespace) -> int:
     return _verification_operation_exit_code(result)
 
 
+def _explicit_preflight_request_from_args(
+    args: argparse.Namespace,
+) -> SealedPreflightPreparationRequestV1:
+    return SealedPreflightPreparationRequestV1(
+        contract_version="1",
+        packet_root=args.packet_root,
+        packet_date=args.packet_date,
+        task_id=args.task_id,
+        request_text=args.request_text,
+        identity_series=args.identity_series,
+        identity_sequence=args.identity_sequence,
+        selected_configuration=SelectedPreflightConfigurationV1(
+            configuration_id=args.configuration_id,
+            route=args.route,
+            main_ollama_timeout_seconds=args.main_ollama_timeout_seconds,
+            timeout_owner=args.timeout_owner,
+            repair_ollama_timeout_seconds=args.repair_ollama_timeout_seconds,
+            repair_timeout_selection=args.repair_timeout_selection,
+            projection_contract_checkpoint=args.projection_contract_checkpoint,
+            model_projection_fields=tuple(args.model_projection_field),
+            model_relations_authorized=args.model_relations_authorized,
+            deterministic_relation_completion=(
+                args.deterministic_relation_completion
+            ),
+            deterministic_relation_rule=args.deterministic_relation_rule,
+            deterministic_post_change=DeterministicPostChangeConditionsV1(
+                only_unaccounted=(
+                    args.deterministic_post_change_only_unaccounted
+                ),
+                required_before_patch_policy=(
+                    args.deterministic_post_change_required_before_patch_policy
+                ),
+                allowed_dispositions_exact=tuple(
+                    args.deterministic_post_change_allowed_disposition
+                ),
+                all_other_omissions=(
+                    args.deterministic_post_change_all_other_omissions
+                ),
+            ),
+            initial_projection_attempts=args.initial_projection_attempts,
+            maximum_correction_attempts_after_initial=(
+                args.maximum_correction_attempts_after_initial
+            ),
+            provider_fallback=args.provider_fallback,
+            automatic_retry=args.automatic_retry,
+            external_disclosure=args.external_disclosure,
+        ),
+        platform_root=args.platform_root,
+        allowed_dirty_paths=tuple(args.allowed_dirty_path),
+        source_root=args.source_root,
+        target_project=args.target_project,
+        project_file=args.project_file,
+        primary_source_paths=tuple(args.primary_source),
+        git_executable=args.git_executable,
+        ollama_base_url=args.ollama_base_url,
+        ollama_model=args.ollama_model,
+        ollama_context_window=args.ollama_context_window,
+        ollama_output_budget=args.ollama_output_budget,
+        preflight_lineage_packet_paths=tuple(args.preflight_lineage_packet),
+        predecessor_receipt_path=args.predecessor_receipt,
+        predecessor_receipt_manifest_path=args.predecessor_receipt_manifest,
+        actual_lineage_packet_paths=tuple(args.actual_lineage_packet),
+        rejected_preflight_identity_reservations=tuple(
+            RejectedPreflightIdentityReservationV1(
+                packet_path=values[0],
+                receipt_path=values[1],
+                receipt_manifest_path=values[2],
+            )
+            for values in args.rejected_preflight_identity_reservation
+        ),
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the local controlled-development CLI."""
 
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    selected_argv = tuple(sys.argv[1:] if argv is None else argv)
+    prepare_continuation = (
+        "prepare-sealed-entry-preflight" in selected_argv
+        and "--run-family-continuation-profile" in selected_argv
+    )
+    parser = build_parser(_prepare_continuation=prepare_continuation)
+    args = parser.parse_args(selected_argv)
 
     if args.command == "plan-request":
         result = plan_request(
@@ -1126,90 +1228,74 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "prepare-sealed-entry-preflight":
         try:
-            request = SealedPreflightPreparationRequestV1(
-                contract_version="1",
-                packet_root=args.packet_root,
-                packet_date=args.packet_date,
-                task_id=args.task_id,
-                request_text=args.request_text,
-                identity_series=args.identity_series,
-                identity_sequence=args.identity_sequence,
-                selected_configuration=SelectedPreflightConfigurationV1(
-                    configuration_id=args.configuration_id,
-                    route=args.route,
-                    main_ollama_timeout_seconds=(
-                        args.main_ollama_timeout_seconds
-                    ),
-                    timeout_owner=args.timeout_owner,
-                    repair_ollama_timeout_seconds=(
-                        args.repair_ollama_timeout_seconds
-                    ),
-                    repair_timeout_selection=args.repair_timeout_selection,
-                    projection_contract_checkpoint=(
-                        args.projection_contract_checkpoint
-                    ),
-                    model_projection_fields=tuple(args.model_projection_field),
-                    model_relations_authorized=(
-                        args.model_relations_authorized
-                    ),
-                    deterministic_relation_completion=(
-                        args.deterministic_relation_completion
-                    ),
-                    deterministic_relation_rule=(
-                        args.deterministic_relation_rule
-                    ),
-                    deterministic_post_change=(
-                        DeterministicPostChangeConditionsV1(
-                            only_unaccounted=(
-                                args.deterministic_post_change_only_unaccounted
-                            ),
-                            required_before_patch_policy=(
-                                args.deterministic_post_change_required_before_patch_policy
-                            ),
-                            allowed_dispositions_exact=tuple(
-                                args.deterministic_post_change_allowed_disposition
-                            ),
-                            all_other_omissions=(
-                                args.deterministic_post_change_all_other_omissions
-                            ),
-                        )
-                    ),
-                    initial_projection_attempts=args.initial_projection_attempts,
-                    maximum_correction_attempts_after_initial=(
-                        args.maximum_correction_attempts_after_initial
-                    ),
-                    provider_fallback=args.provider_fallback,
-                    automatic_retry=args.automatic_retry,
-                    external_disclosure=args.external_disclosure,
-                ),
-                platform_root=args.platform_root,
-                allowed_dirty_paths=tuple(args.allowed_dirty_path),
-                source_root=args.source_root,
-                target_project=args.target_project,
-                project_file=args.project_file,
-                primary_source_paths=tuple(args.primary_source),
-                git_executable=args.git_executable,
-                ollama_base_url=args.ollama_base_url,
-                ollama_model=args.ollama_model,
-                ollama_context_window=args.ollama_context_window,
-                ollama_output_budget=args.ollama_output_budget,
-                preflight_lineage_packet_paths=tuple(
-                    args.preflight_lineage_packet
-                ),
-                predecessor_receipt_path=args.predecessor_receipt,
-                predecessor_receipt_manifest_path=(
-                    args.predecessor_receipt_manifest
-                ),
-                actual_lineage_packet_paths=tuple(args.actual_lineage_packet),
-                rejected_preflight_identity_reservations=tuple(
-                    RejectedPreflightIdentityReservationV1(
-                        packet_path=values[0],
-                        receipt_path=values[1],
-                        receipt_manifest_path=values[2],
+            if args.run_family_continuation_profile:
+                explicit_fields = (
+                    "packet_date",
+                    "task_id",
+                    "request_text",
+                    "identity_series",
+                    "identity_sequence",
+                    "configuration_id",
+                    "route",
+                    "main_ollama_timeout_seconds",
+                    "timeout_owner",
+                    "repair_ollama_timeout_seconds",
+                    "repair_timeout_selection",
+                    "projection_contract_checkpoint",
+                    "model_projection_field",
+                    "model_relations_authorized",
+                    "deterministic_relation_completion",
+                    "deterministic_relation_rule",
+                    "deterministic_post_change_only_unaccounted",
+                    "deterministic_post_change_required_before_patch_policy",
+                    "deterministic_post_change_allowed_disposition",
+                    "deterministic_post_change_all_other_omissions",
+                    "initial_projection_attempts",
+                    "maximum_correction_attempts_after_initial",
+                    "provider_fallback",
+                    "automatic_retry",
+                    "external_disclosure",
+                    "platform_root",
+                    "allowed_dirty_path",
+                    "source_root",
+                    "target_project",
+                    "project_file",
+                    "primary_source",
+                    "git_executable",
+                    "ollama_base_url",
+                    "ollama_model",
+                    "ollama_context_window",
+                    "ollama_output_budget",
+                    "preflight_lineage_packet",
+                    "predecessor_receipt",
+                    "predecessor_receipt_manifest",
+                    "actual_lineage_packet",
+                    "rejected_preflight_identity_reservation",
+                )
+                supplied = [
+                    name
+                    for name in explicit_fields
+                    if getattr(args, name) not in (None, [], ())
+                ]
+                if supplied:
+                    raise ValueError(
+                        "Continuation mode forbids explicit identity, lineage, "
+                        "platform, source, model, and selected-configuration inputs: "
+                        + ", ".join(supplied)
                     )
-                    for values in args.rejected_preflight_identity_reservation
-                ),
-            )
+                profile_value = _read_typed_json_object_file(
+                    args.run_family_continuation_profile,
+                    "Run-family continuation profile",
+                )
+                request = RunFamilyContinuationRequestV1(
+                    contract_version="1",
+                    packet_root=args.packet_root,
+                    profile=RunFamilyContinuationProfileV1.from_dict(
+                        profile_value
+                    ),
+                )
+            else:
+                request = _explicit_preflight_request_from_args(args)
             result = prepare_sealed_entry_preflight(request)
         except PreflightPreparationError as exc:
             print(
