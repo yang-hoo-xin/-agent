@@ -261,6 +261,7 @@ the interface:
 - `src/mod_agent/build/**`
 - `src/mod_agent/runtime/**`
 - `src/mod_agent/execution/**`
+- `src/mod_agent/repair/**`
 - `src/mod_agent/edit_authority_capabilities.py`
 
 Later pages may add owner-specific adapters, fixtures, exporters, or rebuild
