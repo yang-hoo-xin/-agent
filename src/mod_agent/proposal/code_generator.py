@@ -110,17 +110,19 @@ class LLMExactPatchGenerator:
             )
             for binding_id, values in required_validation.items()
         }
-        unknown_required_bindings = set(required_validation) - allowed_bindings
-        if unknown_required_bindings:
-            raise PatchGenerationError(
-                "Required validation references an unknown edit binding id."
-            )
         normalized_required_changes = _normalize_required_change_units(
             required_change_units,
             allowed_bindings=allowed_bindings,
             supporting_bindings=set(supporting_bindings_by_id),
             require_native_contract=require_native_schema,
         )
+        unknown_required_bindings = set(required_validation) - allowed_bindings
+        if unknown_required_bindings:
+            raise _projection_error(
+                "Required validation references an unknown edit binding id.",
+                failure_classification="required_validation_binding_unknown",
+                binding_ids=sorted(unknown_required_bindings),
+            )
         _validate_required_change_input_coverage(
             normalized_required_changes,
             allowed_bindings=allowed_bindings,

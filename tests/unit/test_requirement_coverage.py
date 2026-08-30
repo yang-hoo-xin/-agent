@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 from copy import deepcopy
@@ -8,8 +9,10 @@ from pathlib import Path
 
 import pytest
 
+from src.libs.llm import BaseLLM, ChatResponse, Message
 from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.evidence import (
+    EvidenceItem,
     EvidencePack,
     RequirementCoverageEvidenceProvider,
     RgLiveEvidenceProvider,
@@ -39,9 +42,60 @@ from src.mod_agent.evidence.requirement_coverage_provider import (
     requirement_projection_response_schema,
 )
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
-from src.mod_agent.planning import FeatureSpec, ImplementationPlanner
-from src.mod_agent.proposal import PatchProposalBuilder, ProposalReviewer
+from src.mod_agent.planning import (
+    FeatureSpec,
+    ImplementationPlan,
+    ImplementationPlanner,
+)
+from src.mod_agent.proposal import (
+    LLMExactPatchGenerator,
+    PatchGenerationError,
+    PatchProposalBuilder,
+    ProposalReviewer,
+)
 from src.mod_agent.workflow import build_graph, create_initial_state
+
+
+class _RecordingPatchLLM(BaseLLM):
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.messages: list[Message] = []
+        self.kwargs: dict[str, object] = {}
+
+    def chat(self, messages: list[Message], trace=None, **kwargs) -> ChatResponse:
+        self.validate_messages(messages)
+        self.messages = messages
+        self.kwargs = kwargs
+        recorder = kwargs.get("provider_request_recorder")
+        if callable(recorder):
+            recorder({"body_sha256": "bound", "body_utf8": "{}"})
+        return ChatResponse(
+            content=self.content,
+            model="deterministic-four-site-fixture",
+            usage={"prompt_tokens": 10, "completion_tokens": 20},
+            raw_response={"done": True, "done_reason": "stop"},
+        )
+
+
+def _frozen_actual15_source_lines(
+    *,
+    filename: str,
+    expected_sha256: str,
+    fixture_has_added_final_lf: bool = False,
+) -> list[str]:
+    fixture = (
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "actual15_four_site_source"
+        / filename
+    )
+    payload = fixture.read_bytes()
+    if fixture_has_added_final_lf:
+        assert payload.endswith(b"\n")
+        payload = payload[:-1]
+    physical_bytes = codecs.BOM_UTF8 + payload
+    assert hashlib.sha256(physical_bytes).hexdigest() == expected_sha256
+    return payload.decode("utf-8").splitlines(keepends=True)
 
 
 def _feature_data() -> dict[str, object]:
@@ -763,9 +817,16 @@ def test_v2_change_support_with_physical_authority_gap_blocks_patch(
     )
 
 
-def test_v2_complete_multi_site_change_authority_reaches_nonblocking_planning(
+def _actual15_v2_complete_four_site_plan(
     tmp_path: Path,
-) -> None:
+) -> tuple[
+    dict[str, object],
+    tuple[EvidenceItem, ...],
+    EvidencePack,
+    ImplementationPlan,
+    dict[str, str],
+]:
+    """Build a frozen contract fixture, never a production Patch fallback."""
     (
         feature,
         materialized,
@@ -775,32 +836,89 @@ def test_v2_complete_multi_site_change_authority_reaches_nonblocking_planning(
         findings,
         _,
     ) = _actual10_expected_delta_inputs(tmp_path)
+    configuration_hash = (
+        "f77ba2545051aa9fd4b31f8822fa53a47dd671a522124fc19ec2f6a3810b5601"
+    )
+    spread_hash = (
+        "2f2478edadb40bf105f182c77c3e1909d42f6e9fa39deff2ae28c4babd987a30"
+    )
+    configuration_lines = _frozen_actual15_source_lines(
+        filename="Configuration.cs",
+        expected_sha256=configuration_hash,
+    )
+    spread_lines = _frozen_actual15_source_lines(
+        filename="SpreadPatches.cs",
+        expected_sha256=spread_hash,
+        fixture_has_added_final_lf=True,
+    )
+    configuration_doc_hash = hashlib.sha256(
+        "".join(configuration_lines).encode("utf-8")
+    ).hexdigest()
+    spread_doc_hash = hashlib.sha256(
+        "".join(spread_lines).encode("utf-8")
+    ).hexdigest()
+    property_before = "".join(configuration_lines[11:17])
+    reload_before = "".join(configuration_lines[34:48])
+    bind_before = "".join(configuration_lines[49:78])
+    spread_before = "".join(spread_lines[114:145])
     property_site = replace(
         configuration,
         evidence_id="rg_fixture_configuration_property",
+        source_hash=configuration_hash,
+        file_hash=configuration_hash,
+        doc_hash=configuration_doc_hash,
         symbol="Configuration",
-        span={"start_line": 4, "end_line": 6},
+        span={"start_line": 12, "end_line": 17},
         method_name=None,
+        parameter_types=None,
+        return_type=None,
+        method_kind=None,
+        excerpt=property_before,
         claim_supported="Current Configuration property declaration block.",
     )
     reload_site = replace(
         configuration,
         evidence_id="rg_fixture_configuration_reload",
+        source_hash=configuration_hash,
+        file_hash=configuration_hash,
+        doc_hash=configuration_doc_hash,
         symbol="OnFileChanged",
-        span={"start_line": 7, "end_line": 12},
+        span={"start_line": 35, "end_line": 48},
         method_name="OnFileChanged",
+        parameter_types=None,
+        return_type="void",
+        method_kind="method",
+        excerpt=reload_before,
         claim_supported="Current Configuration reload method.",
     )
     bind_site = replace(
         configuration,
         evidence_id="rg_fixture_configuration_bind",
+        source_hash=configuration_hash,
+        file_hash=configuration_hash,
+        doc_hash=configuration_doc_hash,
         symbol="BindAll",
+        span={"start_line": 50, "end_line": 78},
         method_name="BindAll",
+        parameter_types=None,
+        return_type="void",
+        method_kind="method",
+        excerpt=bind_before,
         claim_supported="Current Configuration default binding method.",
     )
     spread_site = replace(
         spread,
         evidence_id="rg_fixture_spread_bypass",
+        source_hash=spread_hash,
+        file_hash=spread_hash,
+        doc_hash=spread_doc_hash,
+        symbol="OverrideCrosshairSize",
+        span={"start_line": 115, "end_line": 145},
+        method_name="OverrideCrosshairSize",
+        parameter_types=None,
+        return_type="bool",
+        method_kind="method",
+        excerpt=spread_before,
         claim_supported="Current raw crosshair size override method.",
     )
     complete_items = (property_site, reload_site, bind_site, spread_site)
@@ -823,6 +941,97 @@ def test_v2_complete_multi_site_change_authority_reaches_nonblocking_planning(
         formal_requirement_coverage_required=True,
     )
 
+    after_by_evidence_id = {
+        property_site.evidence_id: property_before.replace(
+            "        public static bool FollowsRecoil { get; private set; } = true;\n",
+            "        public static bool FollowsRecoil { get; private set; } = true;\n"
+            "        public static bool AccurateSpreadEnabled { get; private set; } = true;\n",
+            1,
+        ),
+        reload_site.evidence_id: reload_before.replace(
+            "            FollowsRecoil = (bool)configFile[section, \"Follow Recoil\"].BoxedValue;\n",
+            "            FollowsRecoil = (bool)configFile[section, \"Follow Recoil\"].BoxedValue;\n"
+            "            AccurateSpreadEnabled = (bool)configFile[section, \"Accurate Spread Enabled\"].BoxedValue;\n",
+            1,
+        ),
+        bind_site.evidence_id: bind_before.replace(
+            "            FollowsRecoil = config.Bind(section, key, FollowsRecoil, description).Value;\n",
+            "            FollowsRecoil = config.Bind(section, key, FollowsRecoil, description).Value;\n"
+            "            key = \"Accurate Spread Enabled\";\n"
+            "            description = \"Enables or disables the accurate spread size override.\";\n"
+            "            AccurateSpreadEnabled = config.Bind(section, key, AccurateSpreadEnabled, description).Value;\n",
+            1,
+        ),
+        spread_site.evidence_id: spread_before.replace(
+            "            _validGun = false;\n",
+            "            _validGun = false;\n"
+            "            if (!Configuration.AccurateSpreadEnabled) return false;\n",
+            1,
+        ),
+    }
+    return feature, complete_items, pack, implementation, after_by_evidence_id
+
+
+def _required_patch_inputs(implementation: ImplementationPlan) -> tuple[
+    list[dict[str, object]],
+    dict[str, list[str]],
+]:
+    changes = list(implementation.proposed_changes)
+    required_change_units = [
+        {
+            key: item.get(key)
+            for key in (
+                "change_id",
+                "change_type",
+                "edit_binding_id",
+                "hook_target_binding_id",
+                "supporting_binding_ids",
+                "operation",
+            )
+        }
+        for item in changes
+    ]
+    required_validation_by_binding = {
+        str(item["edit_binding_id"]): [
+            str(value) for value in item.get("expected_validation") or []
+        ]
+        for item in changes
+    }
+    return required_change_units, required_validation_by_binding
+
+
+def _native_four_site_response(
+    *,
+    implementation: ImplementationPlan,
+    after_by_evidence_id: dict[str, str],
+) -> dict[str, object]:
+    evidence_id_by_binding = {
+        str(binding["binding_id"]): str(binding["evidence_id"])
+        for binding in implementation.binding_registry["edit_bindings"]
+    }
+    return {
+        "changes": [
+            {
+                "change_id": str(change["change_id"]),
+                "edit_binding_id": str(change["edit_binding_id"]),
+                "rationale": "Bounded four-site AccurateCrosshair change.",
+                "rollback_hint": "Restore the exact authorized source excerpt.",
+                "after_text": after_by_evidence_id[
+                    evidence_id_by_binding[str(change["edit_binding_id"])]
+                ],
+            }
+            for change in implementation.proposed_changes
+        ]
+    }
+
+
+def test_v2_complete_multi_site_change_authority_reaches_nonblocking_planning(
+    tmp_path: Path,
+) -> None:
+    _, complete_items, pack, implementation, _ = (
+        _actual15_v2_complete_four_site_plan(tmp_path)
+    )
+
     expected_ids = frozenset(item.evidence_id for item in complete_items)
     view = validated_requirement_coverage_view(pack.to_artifact_payload())
     assert view is not None
@@ -835,6 +1044,173 @@ def test_v2_complete_multi_site_change_authority_reaches_nonblocking_planning(
         for binding in implementation.binding_registry["edit_bindings"]
     } == expected_ids
     assert len(implementation.proposed_changes) == 4
+
+
+def test_v2_four_site_plan_projects_and_materializes_canned_native_response(
+    tmp_path: Path,
+) -> None:
+    feature, complete_items, pack, implementation, after_by_evidence_id = (
+        _actual15_v2_complete_four_site_plan(tmp_path)
+    )
+    required_change_units, required_validation_by_binding = (
+        _required_patch_inputs(implementation)
+    )
+    response = _native_four_site_response(
+        implementation=implementation,
+        after_by_evidence_id=after_by_evidence_id,
+    )
+    llm = _RecordingPatchLLM(json.dumps(response))
+    provider_requests: list[dict[str, object]] = []
+
+    generated = LLMExactPatchGenerator(llm).generate(
+        user_request=str(feature["user_request"]),
+        evidence_items=[item.to_dict() for item in complete_items],
+        binding_registry=deepcopy(implementation.binding_registry),
+        constraints=list(implementation.side_effect_boundaries),
+        required_change_units=required_change_units,
+        required_validation_by_binding=required_validation_by_binding,
+        require_native_schema=True,
+        provider_request_recorder=provider_requests.append,
+    )
+
+    assert pack.readiness == "sufficient"
+    assert pack.can_generate_patch is True
+    assert implementation.blocking is False
+    assert [
+        (item["change_id"], item["edit_binding_id"])
+        for item in implementation.proposed_changes
+    ] == [
+        ("chg_001", "edit_binding_001"),
+        ("chg_002", "edit_binding_002"),
+        ("chg_003", "edit_binding_003"),
+        ("chg_004", "edit_binding_004"),
+    ]
+    schema_fields = set(
+        llm.kwargs["response_format"]["properties"]["changes"]["items"][
+            "properties"
+        ]
+    )
+    assert schema_fields == {
+        "change_id",
+        "edit_binding_id",
+        "rationale",
+        "rollback_hint",
+        "after_text",
+    }
+    assert provider_requests == [{"body_sha256": "bound", "body_utf8": "{}"}]
+    evidence_by_id = {item.evidence_id: item for item in complete_items}
+    binding_by_id = {
+        str(binding["binding_id"]): binding
+        for binding in implementation.binding_registry["edit_bindings"]
+    }
+    required_by_binding = {
+        str(item["edit_binding_id"]): item for item in required_change_units
+    }
+    prompt_payload = json.loads(llm.messages[1].content)
+    assert [
+        (
+            item["change_id"],
+            item["change_type"],
+            item["edit_binding_id"],
+            item["supporting_binding_ids"],
+            item["operation"],
+        )
+        for item in prompt_payload["required_change_units"]
+    ] == [
+        (
+            item["change_id"],
+            item["change_type"],
+            item["edit_binding_id"],
+            item["supporting_binding_ids"],
+            item["operation"],
+        )
+        for item in required_change_units
+    ]
+    assert set(prompt_payload["edit_binding_contexts"]) == set(binding_by_id)
+    for binding_id, binding in binding_by_id.items():
+        evidence = evidence_by_id[str(binding["evidence_id"])]
+        context = prompt_payload["edit_binding_contexts"][binding_id]
+        assert context["binding_id"] == binding_id
+        assert context["evidence_id"] == evidence.evidence_id
+        assert context["canonical_target_path"] == evidence.source_path
+        assert context["source_hash"] == evidence.source_hash
+        assert context["target_symbol"] == evidence.symbol
+        assert context["target_span"] == evidence.span
+        assert context["source_excerpt"] == evidence.excerpt
+    assert len(generated.changes) == 4
+    for change in generated.changes:
+        binding_id = str(change["edit_binding_id"])
+        binding = binding_by_id[binding_id]
+        evidence = evidence_by_id[str(binding["evidence_id"])]
+        required = required_by_binding[binding_id]
+        assert change["change_type"] == required["change_type"]
+        assert change["operation"] == "exact_text_replace"
+        assert change["supporting_binding_ids"] == required[
+            "supporting_binding_ids"
+        ]
+        assert change["expected_validation"] == required_validation_by_binding[
+            binding_id
+        ]
+        assert change["patch"] == {
+            "kind": "exact_text_replace",
+            "before_text": evidence.excerpt,
+            "after_text": after_by_evidence_id[evidence.evidence_id],
+            "expected_occurrences": 1,
+        }
+
+
+@pytest.mark.parametrize(
+    "missing_binding_id",
+    [
+        "edit_binding_001",
+        "edit_binding_002",
+        "edit_binding_003",
+        "edit_binding_004",
+    ],
+)
+def test_v2_four_site_missing_authority_blocks_before_native_provider(
+    tmp_path: Path,
+    missing_binding_id: str,
+) -> None:
+    feature, complete_items, _, implementation, after_by_evidence_id = (
+        _actual15_v2_complete_four_site_plan(tmp_path)
+    )
+    required_change_units, required_validation_by_binding = (
+        _required_patch_inputs(implementation)
+    )
+    response = _native_four_site_response(
+        implementation=implementation,
+        after_by_evidence_id=after_by_evidence_id,
+    )
+    llm = _RecordingPatchLLM(json.dumps(response))
+    provider_requests: list[dict[str, object]] = []
+    registry = deepcopy(implementation.binding_registry)
+    registry["edit_bindings"] = [
+        binding
+        for binding in registry["edit_bindings"]
+        if binding["binding_id"] != missing_binding_id
+    ]
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(llm).generate(
+            user_request=str(feature["user_request"]),
+            evidence_items=[item.to_dict() for item in complete_items],
+            binding_registry=registry,
+            constraints=list(implementation.side_effect_boundaries),
+            required_change_units=required_change_units,
+            required_validation_by_binding=required_validation_by_binding,
+            require_native_schema=True,
+            provider_request_recorder=provider_requests.append,
+        )
+
+    assert exc_info.value.diagnostics["failure_boundary"] == (
+        "patch_model_input_projection"
+    )
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "required_change_unit_binding_unknown"
+    )
+    assert llm.messages == []
+    assert provider_requests == []
 
 
 def test_v1_change_expected_delta_gap_remains_readable_as_legacy_history(
