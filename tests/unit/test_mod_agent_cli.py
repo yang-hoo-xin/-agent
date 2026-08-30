@@ -1875,16 +1875,11 @@ def test_cli_run_request_real_public_product_executor_compile_success(
                 },
                 raw_response={"done": True, "done_reason": "stop"},
             )
-        evidence_by_id = {
-            item["evidence_id"]: item
-            for item in request["evidence"]
-            if isinstance(item, dict) and item.get("evidence_id")
-        }
         changes = []
         for unit in request["required_change_units"]:
             binding_id = unit["edit_binding_id"]
             context = request["edit_binding_contexts"][binding_id]
-            before = evidence_by_id[context["evidence_id"]]["excerpt"]
+            before = context["source_excerpt"]
             markers = request["required_validation_by_binding"].get(binding_id) or []
             marker_text = " ".join(
                 item for item in markers if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", item)
@@ -1899,18 +1894,10 @@ def test_cli_run_request_real_public_product_executor_compile_success(
             changes.append(
                 {
                     "change_id": unit["change_id"],
-                    "change_type": "modify_behavior",
                     "edit_binding_id": binding_id,
-                    "operation": "exact_text_replace",
                     "rationale": "Deterministic evidence-bound CLI integration change.",
-                    "expected_validation": markers or ["dotnet build"],
                     "rollback_hint": "Restore the exact prior source text.",
-                    "patch": {
-                        "kind": "exact_text_replace",
-                        "before_text": before,
-                        "after_text": after,
-                        "expected_occurrences": 1,
-                    },
+                    "after_text": after,
                 }
             )
         recorder = kwargs.get("provider_request_recorder")
@@ -2161,16 +2148,11 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
                 },
                 raw_response={"done": True, "done_reason": "stop"},
             )
-        evidence_by_id = {
-            item["evidence_id"]: item
-            for item in request["evidence"]
-            if isinstance(item, dict) and item.get("evidence_id")
-        }
         changes = []
         for unit in request["required_change_units"]:
             binding_id = unit["edit_binding_id"]
             context = request["edit_binding_contexts"][binding_id]
-            before = evidence_by_id[context["evidence_id"]]["excerpt"]
+            before = context["source_excerpt"]
             markers = request["required_validation_by_binding"].get(binding_id) or []
             marker_text = " ".join(
                 item for item in markers if re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", item)
@@ -2185,18 +2167,10 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
             changes.append(
                 {
                     "change_id": unit["change_id"],
-                    "change_type": "modify_behavior",
                     "edit_binding_id": binding_id,
-                    "operation": "exact_text_replace",
                     "rationale": "Deterministic evidence-bound Runtime CLI change.",
-                    "expected_validation": markers or ["dotnet build"],
                     "rollback_hint": "Restore the exact prior source text.",
-                    "patch": {
-                        "kind": "exact_text_replace",
-                        "before_text": before,
-                        "after_text": after,
-                        "expected_occurrences": 1,
-                    },
+                    "after_text": after,
                 }
             )
         recorder = kwargs.get("provider_request_recorder")

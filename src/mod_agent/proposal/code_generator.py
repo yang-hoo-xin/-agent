@@ -72,6 +72,13 @@ class LLMExactPatchGenerator:
         allowed_bindings = set(edit_bindings_by_id)
         if not allowed_bindings:
             raise PatchGenerationError("No editable binding is available for generation.")
+        if require_native_schema and required_change_units is None:
+            raise _projection_error(
+                "Native patch materialization requires Plan-bound change units.",
+                failure_classification=(
+                    "native_patch_contract_requires_plan_bound_changes"
+                ),
+            )
 
         evidence_by_id = _index_evidence_items(evidence_items)
         binding_contexts: dict[str, dict[str, Any]] = {}
@@ -176,25 +183,8 @@ class LLMExactPatchGenerator:
             [
                 Message(
                     role="system",
-                    content=(
-                        "Generate a minimal exact-text code patch from verified evidence. "
-                        "Return strict JSON only. Never invent a file path, symbol, API, or "
-                        "binding id. Each change must use one allowed edit_binding_id and an "
-                        "exact_text_replace patch whose before_text is copied verbatim from "
-                        "the source_excerpt in the matching edit_binding_context, including "
-                        "its exact line endings. supporting_evidence is read-only context "
-                        "and never authorizes an edit target. Return exactly one change for every "
-                        "required_change_units entry and preserve its exact change_id and "
-                        "edit_binding_id. Any "
-                        "required_validation_by_binding entries are authoritative upstream "
-                        "requirements and must all be copied into the matching change's "
-                        "expected_validation list. Any "
-                        "non-Boolean bound receiver may be used as a Boolean operand only "
-                        "through an exact verified_member_accesses entry. Do not invent "
-                        "API members. Any "
-                        "expected_validation entry formatted as an uppercase identifier is "
-                        "a literal marker and must appear in after_text. Do not include "
-                        "markdown fences."
+                    content=_patch_system_prompt(
+                        require_native_schema=require_native_schema
                     ),
                 ),
                 Message(
@@ -227,23 +217,51 @@ class LLMExactPatchGenerator:
             if post_response_admission is not None:
                 post_response_admission(response)
             payload = _parse_json_object(response.content)
+            if require_native_schema and set(payload) != {"changes"}:
+                raise _native_validation_error(
+                    "Native Patch response root does not match its schema.",
+                    failure_classification="native_response_fields_invalid",
+                    missing_fields=sorted({"changes"} - set(payload)),
+                    unexpected_fields=sorted(set(payload) - {"changes"}),
+                )
             raw_changes = payload.get("changes")
             if not isinstance(raw_changes, list) or not raw_changes:
                 raise PatchGenerationError(
                     "Model output must contain a non-empty changes list."
                 )
-            changes = tuple(
-                _validate_change(
-                    item,
-                    allowed_bindings=allowed_bindings,
-                    evidence_excerpts=evidence_excerpts,
-                    binding_evidence_excerpts=binding_evidence_excerpts,
-                    required_validation=required_validation,
-                    binding_contexts=binding_contexts,
-                    index=index,
+            if require_native_schema:
+                required_changes_by_identity = {
+                    (
+                        str(item["change_id"]),
+                        str(item["edit_binding_id"]),
+                    ): item
+                    for item in normalized_required_changes
+                }
+                changes = tuple(
+                    _materialize_native_change(
+                        item,
+                        allowed_bindings=allowed_bindings,
+                        binding_evidence_excerpts=binding_evidence_excerpts,
+                        required_changes_by_identity=required_changes_by_identity,
+                        required_validation=required_validation,
+                        binding_contexts=binding_contexts,
+                        index=index,
+                    )
+                    for index, item in enumerate(raw_changes, start=1)
                 )
-                for index, item in enumerate(raw_changes, start=1)
-            )
+            else:
+                changes = tuple(
+                    _validate_change(
+                        item,
+                        allowed_bindings=allowed_bindings,
+                        evidence_excerpts=evidence_excerpts,
+                        binding_evidence_excerpts=binding_evidence_excerpts,
+                        required_validation=required_validation,
+                        binding_contexts=binding_contexts,
+                        index=index,
+                    )
+                    for index, item in enumerate(raw_changes, start=1)
+                )
             _validate_required_change_coverage(
                 changes,
                 required_change_units=normalized_required_changes,
@@ -710,6 +728,39 @@ def _validate_required_change_input_coverage(
         )
 
 
+def _patch_system_prompt(*, require_native_schema: bool) -> str:
+    shared = (
+        "Generate a minimal exact-text code patch from verified evidence. "
+        "Return strict JSON only. Never invent a file path, symbol, API, or "
+        "binding id. supporting_evidence is read-only context and never "
+        "authorizes an edit target. Return exactly one change for every "
+        "required_change_units entry and preserve its exact change_id and "
+        "edit_binding_id. Any non-Boolean bound receiver may be used as a "
+        "Boolean operand only through an exact verified_member_accesses entry. "
+        "Do not invent API members. Any required_validation_by_binding entry "
+        "formatted as an uppercase identifier is a literal marker and must "
+        "appear in after_text. Do not include markdown fences. "
+    )
+    if require_native_schema:
+        return shared + (
+            "For each authorized edit binding, after_text must replace the entire "
+            "source_excerpt in its matching edit_binding_context, preserving all "
+            "unrelated text. Return only the schema fields. Do not return or copy "
+            "before_text, a file path, a source hash, patch kind, occurrence count, "
+            "change type, operation, or expected validation; deterministic code "
+            "materializes those authoritative fields from the verified binding and "
+            "Plan."
+        )
+    return shared + (
+        "Each change must use one allowed edit_binding_id and an "
+        "exact_text_replace patch whose before_text is copied verbatim from the "
+        "source_excerpt in the matching edit_binding_context, including its exact "
+        "line endings. Any required_validation_by_binding entries are authoritative "
+        "upstream requirements and must all be copied into the matching change's "
+        "expected_validation list."
+    )
+
+
 def _patch_response_schema(
     allowed_bindings: set[str],
     *,
@@ -735,45 +786,20 @@ def _patch_response_schema(
                     "additionalProperties": False,
                     "required": [
                         "change_id",
-                        "change_type",
                         "edit_binding_id",
-                        "operation",
                         "rationale",
-                        "expected_validation",
                         "rollback_hint",
-                        "patch",
+                        "after_text",
                     ],
                     "properties": {
                         "change_id": {"type": "string", "minLength": 1},
-                        "change_type": {"const": "modify_behavior"},
                         "edit_binding_id": {
                             "type": "string",
                             "enum": sorted(allowed_bindings),
                         },
-                        "operation": {"const": "exact_text_replace"},
                         "rationale": {"type": "string", "minLength": 1},
-                        "expected_validation": {
-                            "type": "array",
-                            "minItems": 1,
-                            "items": {"type": "string", "minLength": 1},
-                        },
                         "rollback_hint": {"type": "string", "minLength": 1},
-                        "patch": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "required": [
-                                "kind",
-                                "before_text",
-                                "after_text",
-                                "expected_occurrences",
-                            ],
-                            "properties": {
-                                "kind": {"const": "exact_text_replace"},
-                                "before_text": {"type": "string", "minLength": 1},
-                                "after_text": {"type": "string", "minLength": 1},
-                                "expected_occurrences": {"const": 1},
-                            },
-                        },
+                        "after_text": {"type": "string", "minLength": 1},
                     },
                 },
             }
@@ -952,6 +978,161 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise PatchGenerationError("Model output root must be an object.")
     return value
+
+
+def _native_validation_error(
+    message: str,
+    *,
+    failure_classification: str,
+    **diagnostics: Any,
+) -> PatchGenerationError:
+    return PatchGenerationError(
+        message,
+        diagnostics={
+            "failure_boundary": "deterministic_patch_validation",
+            "failure_classification": failure_classification,
+            **diagnostics,
+        },
+    )
+
+
+def _materialize_native_change(
+    raw: Any,
+    *,
+    allowed_bindings: set[str],
+    binding_evidence_excerpts: Mapping[str, str],
+    required_changes_by_identity: Mapping[
+        tuple[str, str], Mapping[str, Any]
+    ],
+    required_validation: Mapping[str, tuple[str, ...]],
+    binding_contexts: Mapping[str, Mapping[str, Any]],
+    index: int,
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise _native_validation_error(
+            f"Change {index} must be an object.",
+            failure_classification="native_response_fields_invalid",
+            change_index=index,
+        )
+    required_fields = {
+        "change_id",
+        "edit_binding_id",
+        "rationale",
+        "rollback_hint",
+        "after_text",
+    }
+    actual_fields = set(raw)
+    if actual_fields != required_fields:
+        raise _native_validation_error(
+            f"Change {index} does not match the native Patch response contract.",
+            failure_classification="native_response_fields_invalid",
+            change_index=index,
+            missing_fields=sorted(required_fields - actual_fields),
+            unexpected_fields=sorted(actual_fields - required_fields),
+        )
+
+    change_id = raw["change_id"]
+    binding_id = raw["edit_binding_id"]
+    rationale = raw["rationale"]
+    rollback_hint = raw["rollback_hint"]
+    after = raw["after_text"]
+    for field, value in (
+        ("change_id", change_id),
+        ("edit_binding_id", binding_id),
+        ("rationale", rationale),
+        ("rollback_hint", rollback_hint),
+    ):
+        if not isinstance(value, str) or not value:
+            raise _native_validation_error(
+                f"Change {index} {field} must be a non-empty string.",
+                failure_classification="native_response_fields_invalid",
+                change_index=index,
+                field=field,
+            )
+    if binding_id not in allowed_bindings:
+        raise _native_validation_error(
+            f"Change {index} uses an unknown edit binding id.",
+            failure_classification="native_change_binding_unknown",
+            change_index=index,
+            binding_id=binding_id,
+        )
+    required_change = required_changes_by_identity.get((change_id, binding_id))
+    if required_change is None:
+        raise _native_validation_error(
+            f"Change {index} is not a required Plan change identity.",
+            failure_classification="native_change_identity_unknown",
+            change_index=index,
+            change_id=change_id,
+            binding_id=binding_id,
+        )
+    if not isinstance(after, str) or not after:
+        raise _native_validation_error(
+            f"Change {index} after_text must be non-empty.",
+            failure_classification="native_after_text_invalid",
+            change_index=index,
+            change_id=change_id,
+            binding_id=binding_id,
+        )
+    before = binding_evidence_excerpts.get(binding_id)
+    if not isinstance(before, str) or not before:
+        raise _native_validation_error(
+            f"Change {index} has no exact authoritative source excerpt.",
+            failure_classification="native_binding_excerpt_missing",
+            change_index=index,
+            change_id=change_id,
+            binding_id=binding_id,
+        )
+    if after == before:
+        raise _native_validation_error(
+            f"Change {index} after_text must be a real replacement.",
+            failure_classification="native_after_text_not_replacement",
+            change_index=index,
+            change_id=change_id,
+            binding_id=binding_id,
+        )
+
+    _validate_bound_language_semantics(
+        after=after,
+        binding_id=binding_id,
+        binding_contexts=binding_contexts,
+        index=index,
+    )
+    expected_validation = list(required_validation.get(binding_id, ()))
+    missing_markers = [
+        marker
+        for marker in expected_validation
+        if _LITERAL_VALIDATION_MARKER_RE.fullmatch(marker) and marker not in after
+    ]
+    if missing_markers:
+        raise _native_validation_error(
+            f"Change {index} after_text is missing Plan validation marker(s): "
+            + ", ".join(missing_markers),
+            failure_classification="declared_validation_marker_missing",
+            change_index=index,
+            change_id=change_id,
+            binding_id=binding_id,
+            missing_validation_markers=missing_markers,
+        )
+
+    return {
+        "change_id": change_id,
+        "change_type": str(required_change.get("change_type") or "modify_behavior"),
+        "edit_binding_id": binding_id,
+        "supporting_binding_ids": list(
+            required_change.get("supporting_binding_ids") or []
+        ),
+        "operation": "exact_text_replace",
+        "rationale": rationale,
+        "risk_tags": ["medium"],
+        "expected_validation": expected_validation,
+        "rollback_hint": rollback_hint,
+        "patch": {
+            "kind": "exact_text_replace",
+            "before_text": before,
+            "after_text": after,
+            "expected_occurrences": 1,
+        },
+    }
 
 
 def _validate_change(

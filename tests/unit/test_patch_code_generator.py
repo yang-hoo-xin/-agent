@@ -273,18 +273,13 @@ def _large_projection_fixture() -> dict[str, object]:
         response_changes.append(
             {
                 "change_id": f"change_{index:03d}",
-                "change_type": "modify_behavior",
                 "edit_binding_id": binding_id,
-                "operation": "exact_text_replace",
                 "rationale": "Apply the bounded behavior change.",
-                "expected_validation": ["behavior evidence observed"],
                 "rollback_hint": "Restore the exact prior source text.",
-                "patch": {
-                    "kind": "exact_text_replace",
-                    "before_text": before_text,
-                    "after_text": f"ApplyUpdatedFeature{index}();",
-                    "expected_occurrences": 1,
-                },
+                "after_text": excerpt.replace(
+                    before_text,
+                    f"ApplyUpdatedFeature{index}();",
+                ),
             }
         )
 
@@ -498,6 +493,32 @@ def test_patch_model_projection_admits_actual_scale_generic_fixture() -> None:
         assert admission["conservative_required_context"] <= context_window
 
     assert len(generated.changes) == len(expected_edit_ids)
+    required_by_pair = {
+        (item["change_id"], item["edit_binding_id"]): item
+        for item in fixture["required_change_units"]
+    }
+    for change in generated.changes:
+        required = required_by_pair[
+            (change["change_id"], change["edit_binding_id"])
+        ]
+        binding = next(
+            item
+            for item in edit_bindings
+            if item["binding_id"] == change["edit_binding_id"]
+        )
+        evidence = evidence_by_id[binding["evidence_id"]]
+        assert change["change_type"] == required["change_type"]
+        assert change["operation"] == "exact_text_replace"
+        assert change["supporting_binding_ids"] == required[
+            "supporting_binding_ids"
+        ]
+        assert change["expected_validation"] == fixture[
+            "required_validation_by_binding"
+        ][change["edit_binding_id"]]
+        assert change["patch"]["kind"] == "exact_text_replace"
+        assert change["patch"]["before_text"] == evidence["excerpt"]
+        assert change["patch"]["after_text"] != evidence["excerpt"]
+        assert change["patch"]["expected_occurrences"] == 1
 
 
 @pytest.mark.parametrize(
@@ -574,19 +595,15 @@ def test_patch_model_projection_fails_closed_before_provider_call(
     )
 
 
-def test_post_response_validation_uses_authoritative_binding_evidence() -> None:
+def test_native_response_does_not_repair_legacy_authoritative_patch_fields() -> None:
     fixture = _large_projection_fixture()
-    supporting_evidence = next(
-        item
-        for item in fixture["evidence_items"]
-        if item["evidence_id"] == "support_evidence_001"
-    )
-    fixture["response"]["changes"][0]["patch"]["before_text"] = (
-        supporting_evidence["excerpt"].splitlines()[-1]
-    )
-    fixture["response"]["changes"][0]["patch"]["after_text"] = (
-        "ChangedSupportOnly();"
-    )
+    first = fixture["response"]["changes"][0]
+    first["patch"] = {
+        "kind": "exact_text_replace",
+        "before_text": "frozen 4B copied text outside the binding",
+        "after_text": first.pop("after_text"),
+        "expected_occurrences": 1,
+    }
     llm = _RecordingLLM(json.dumps(fixture["response"]))
 
     with pytest.raises(PatchGenerationError) as exc_info:
@@ -605,7 +622,7 @@ def test_post_response_validation_uses_authoritative_binding_evidence() -> None:
 
     assert llm.messages
     assert exc_info.value.diagnostics["failure_classification"] == (
-        "before_text_outside_edit_binding"
+        "native_response_fields_invalid"
     )
 
 
@@ -1528,22 +1545,17 @@ def test_generator_still_rejects_missing_behavior_validation_after_inheritance()
 
 
 def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
+    source_hash = "1" * 64
+    source_path = "Patches/Behavior.cs"
+    source_span = {"start_line": 1, "end_line": 1}
     payload = {
         "changes": [
             {
                 "change_id": "change_001",
-                "change_type": "modify_behavior",
                 "edit_binding_id": "edit_binding_001",
-                "operation": "exact_text_replace",
                 "rationale": "bounded",
-                "expected_validation": ["dotnet build"],
                 "rollback_hint": "restore",
-                "patch": {
-                    "kind": "exact_text_replace",
-                    "before_text": "old",
-                    "after_text": "new",
-                    "expected_occurrences": 1,
-                },
+                "after_text": "new",
             }
         ]
     }
@@ -1553,9 +1565,41 @@ def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
 
     generated = LLMExactPatchGenerator(llm).generate(
         user_request="change it",
-        evidence_items=[{"excerpt": "old"}],
-        binding_registry=_registry(),
+        evidence_items=[
+            {
+                "evidence_id": "ev_001",
+                "source_path": source_path,
+                "source_hash": source_hash,
+                "symbol": "Behavior.Apply",
+                "span": source_span,
+                "excerpt": "old",
+            }
+        ],
+        binding_registry={
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "ev_001",
+                    "canonical_target_path": source_path,
+                    "source_hash": source_hash,
+                    "target_symbol": "Behavior.Apply",
+                    "target_span": source_span,
+                }
+            ]
+        },
         constraints=[],
+        required_change_units=[
+            {
+                "change_id": "change_001",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_001",
+                "supporting_binding_ids": [],
+                "operation": "minimal_evidence_bound_change",
+            }
+        ],
+        required_validation_by_binding={
+            "edit_binding_001": ["compile or static validation"]
+        },
         require_native_schema=True,
         provider_request_recorder=recorded_requests.append,
         post_response_admission=post_admission_calls.append,
@@ -1566,9 +1610,117 @@ def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
     assert llm.kwargs["response_format"]["properties"]["changes"]["items"][
         "properties"
     ]["edit_binding_id"]["enum"] == ["edit_binding_001"]
+    item_schema = llm.kwargs["response_format"]["properties"]["changes"][
+        "items"
+    ]
+    assert item_schema["required"] == [
+        "change_id",
+        "edit_binding_id",
+        "rationale",
+        "rollback_hint",
+        "after_text",
+    ]
+    assert set(item_schema["properties"]) == set(item_schema["required"])
+    assert "patch" not in item_schema["properties"]
+    assert "expected_validation" not in item_schema["properties"]
+    assert "before_text" not in json.dumps(item_schema)
+    assert "kind" not in json.dumps(item_schema)
+    assert "expected_occurrences" not in json.dumps(item_schema)
     assert recorded_requests == [{"body_sha256": "bound", "body_utf8": "{}"}]
     assert len(post_admission_calls) == 1
     assert generated.changes[0]["patch"]["after_text"] == "new"
+    assert generated.changes[0]["patch"]["before_text"] == "old"
+    assert generated.changes[0]["patch"]["kind"] == "exact_text_replace"
+    assert generated.changes[0]["patch"]["expected_occurrences"] == 1
+    assert generated.changes[0]["expected_validation"] == [
+        "compile or static validation"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("failure_case", "expected_classification"),
+    [
+        ("unknown_binding", "native_change_binding_unknown"),
+        ("unknown_change", "native_change_identity_unknown"),
+        ("missing_change", "plan_change_coverage_incomplete"),
+        ("duplicate_change", "plan_change_coverage_incomplete"),
+        ("empty_after_text", "native_after_text_invalid"),
+        ("same_after_text", "native_after_text_not_replacement"),
+        ("unverified_member_access", "csharp_unverified_boolean_member_operand"),
+        ("unexpected_root_field", "native_response_fields_invalid"),
+    ],
+)
+def test_native_materialization_fails_closed_for_invalid_model_semantics(
+    failure_case: str,
+    expected_classification: str,
+) -> None:
+    fixture = json.loads(json.dumps(_large_projection_fixture()))
+    changes = fixture["response"]["changes"]
+    if failure_case == "unknown_binding":
+        changes[0]["edit_binding_id"] = "edit_binding_unknown"
+    elif failure_case == "unknown_change":
+        changes[0]["change_id"] = "change_unknown"
+    elif failure_case == "missing_change":
+        changes.pop()
+    elif failure_case == "duplicate_change":
+        changes[-1] = dict(changes[0])
+    elif failure_case == "empty_after_text":
+        changes[0]["after_text"] = ""
+    elif failure_case == "same_after_text":
+        first_binding = fixture["binding_registry"]["edit_bindings"][0]
+        first_evidence = next(
+            item
+            for item in fixture["evidence_items"]
+            if item["evidence_id"] == first_binding["evidence_id"]
+        )
+        changes[0]["after_text"] = first_evidence["excerpt"]
+    elif failure_case == "unverified_member_access":
+        changes[0]["after_text"] += "\nif (!Setting1.IsReady) { return; }"
+    elif failure_case == "unexpected_root_field":
+        fixture["response"]["copied_source_hash"] = "not model authority"
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        _generate_projection_fixture(fixture)
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        expected_classification
+    )
+
+
+def test_native_materialization_requires_plan_bound_complete_authority_input() -> None:
+    llm = _RecordingLLM(
+        json.dumps(
+            {
+                "changes": [
+                    {
+                        "change_id": "change_001",
+                        "edit_binding_id": "edit_binding_001",
+                        "rationale": "bounded",
+                        "rollback_hint": "restore",
+                        "after_text": "new",
+                    }
+                ]
+            }
+        )
+    )
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(llm).generate(
+            user_request="change it",
+            evidence_items=[{"excerpt": "old"}],
+            binding_registry=_registry(),
+            constraints=[],
+            require_native_schema=True,
+            provider_request_recorder=lambda _: None,
+        )
+
+    assert llm.messages == []
+    assert exc_info.value.diagnostics["failure_boundary"] == (
+        "patch_model_input_projection"
+    )
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "native_patch_contract_requires_plan_bound_changes"
+    )
 
 
 def test_normalized_nested_region_requires_two_patch_replacements() -> None:
@@ -1673,35 +1825,19 @@ def test_normalized_nested_region_requires_two_patch_replacements() -> None:
         "changes": [
             {
                 "change_id": "chg_001",
-                "change_type": "modify_behavior",
                 "edit_binding_id": "edit_binding_001",
-                "operation": "exact_text_replace",
                 "rationale": "bounded configuration change",
-                "expected_validation": ["static validation"],
                 "rollback_hint": "restore configuration",
-                "patch": {
-                    "kind": "exact_text_replace",
-                    "before_text": configuration_excerpt,
-                    "after_text": "ReloadConfigurationAndSpreadSetting();",
-                    "expected_occurrences": 1,
-                },
+                "after_text": "ReloadConfigurationAndSpreadSetting();",
             },
             {
                 "change_id": "chg_002",
-                "change_type": "modify_behavior",
                 "edit_binding_id": "edit_binding_002",
-                "operation": "exact_text_replace",
                 "rationale": "bounded spread change",
-                "expected_validation": ["static validation"],
                 "rollback_hint": "restore spread method",
-                "patch": {
-                    "kind": "exact_text_replace",
-                    "before_text": spread_outer_excerpt,
-                    "after_text": (
-                        "if (enabled) crosshairSize = GetCrosshairSize();\nreturn true;"
-                    ),
-                    "expected_occurrences": 1,
-                },
+                "after_text": (
+                    "if (enabled) crosshairSize = GetCrosshairSize();\nreturn true;"
+                ),
             },
         ]
     }
@@ -1713,6 +1849,10 @@ def test_normalized_nested_region_requires_two_patch_replacements() -> None:
         binding_registry=binding_registry,
         constraints=[],
         required_change_units=required_change_units,
+        required_validation_by_binding={
+            "edit_binding_001": ["static validation"],
+            "edit_binding_002": ["static validation"],
+        },
         require_native_schema=True,
         provider_request_recorder=lambda _: None,
     )
@@ -1730,6 +1870,13 @@ def test_normalized_nested_region_requires_two_patch_replacements() -> None:
     assert response_schema["properties"]["changes"]["minItems"] == 2
     assert response_schema["properties"]["changes"]["maxItems"] == 2
     assert len(generated.changes) == 2
+    assert generated.changes[0]["patch"] == {
+        "kind": "exact_text_replace",
+        "before_text": configuration_excerpt,
+        "after_text": "ReloadConfigurationAndSpreadSetting();",
+        "expected_occurrences": 1,
+    }
+    assert generated.changes[1]["patch"]["before_text"] == spread_outer_excerpt
 
 
 def test_malformed_patch_json_preserves_diagnostics_without_repairing_content() -> None:
