@@ -1300,6 +1300,7 @@ def test_implementation_plan_keeps_distinct_nonoverlapping_edit_units() -> None:
     )
     different_hash = _authoritative_item(
         evidence_id="ev_third",
+        source_path="mods/BetterHitFeedback/Other.cs",
         symbol="Third",
         method_name="Third",
         span={"start_line": 50, "end_line": 60},
@@ -1324,6 +1325,44 @@ def test_implementation_plan_keeps_distinct_nonoverlapping_edit_units() -> None:
     assert len(implementation.binding_registry["edit_bindings"]) == 3
     assert len(implementation.proposed_changes) == 3
     assert implementation.binding_registry["supporting_bindings"] == []
+
+
+def test_nonoverlapping_same_path_different_revisions_fail_closed() -> None:
+    plan = RequestPlanner().plan("change two methods", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(
+                evidence_id="ev_first",
+                symbol="First",
+                method_name="First",
+                span={"start_line": 10, "end_line": 20},
+            ),
+            _authoritative_item(
+                evidence_id="ev_second",
+                symbol="Second",
+                method_name="Second",
+                span={"start_line": 30, "end_line": 40},
+                source_hash="file_hash_002",
+                file_hash="file_hash_002",
+            ),
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.proposed_changes == ()
+    assert implementation.blockers[0]["code"] == "EDIT_TARGET_NORMALIZATION_UNSAFE"
+    assert implementation.blockers[0]["evidence_ids"] == ["ev_first", "ev_second"]
 
 
 def test_implementation_plan_fails_closed_for_partially_overlapping_edit_units() -> None:

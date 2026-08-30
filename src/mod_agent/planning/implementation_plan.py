@@ -443,6 +443,25 @@ class ImplementationPlanner:
                     "revision hash before change-unit normalization."
                 ),
             )
+        items_by_path: dict[str, list[dict[str, Any]]] = {}
+        for _, item in original_items:
+            items_by_path.setdefault(
+                str(item.get("source_path") or ""),
+                [],
+            ).append(item)
+        for path_items in items_by_path.values():
+            revisions = {
+                cls._physical_source_revision_hash(item)
+                for item in path_items
+            }
+            if len(revisions) > 1:
+                return (), cls._normalization_blocker(
+                    items=path_items,
+                    message=(
+                        "Editable evidence for one source path cannot bind "
+                        "multiple physical source revisions."
+                    ),
+                )
         paths_with_multiple_items = {
             str(item.get("source_path") or "")
             for _, item in original_items
