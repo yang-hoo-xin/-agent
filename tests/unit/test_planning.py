@@ -922,6 +922,367 @@ def test_implementation_plan_normalizes_actual15_nested_edit_evidence() -> None:
     ]
 
 
+def test_implementation_plan_collapses_exact_duplicate_physical_region() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    symbol_exact = _authoritative_item(
+        evidence_id="ev_symbol_exact",
+        retrieval_method="symbol_exact",
+    )
+    text_match = _authoritative_item(
+        evidence_id="ev_text_match",
+        retrieval_method="text_match",
+        symbol=None,
+        declaring_type=None,
+        declaring_type_full_name=None,
+        method_name=None,
+        parameter_types=None,
+        return_type=None,
+        method_kind=None,
+    )
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [symbol_exact, text_match],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is False
+    assert implementation.evidence_refs == (
+        "ev_symbol_exact",
+        "ev_text_match",
+    )
+    assert len(implementation.binding_registry["edit_bindings"]) == 1
+    assert len(implementation.proposed_changes) == 1
+    assert implementation.binding_registry["edit_bindings"][0]["evidence_id"] == (
+        "ev_symbol_exact"
+    )
+    support = next(
+        binding
+        for binding in implementation.binding_registry["supporting_bindings"]
+        if binding["evidence_id"] == "ev_text_match"
+    )
+    assert implementation.proposed_changes[0]["supporting_binding_ids"] == [
+        support["binding_id"]
+    ]
+
+
+def test_implementation_plan_fails_closed_for_exact_span_different_hashes() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(evidence_id="ev_first"),
+            _authoritative_item(
+                evidence_id="ev_second",
+                source_hash="file_hash_002",
+                file_hash="file_hash_002",
+            ),
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.proposed_changes == ()
+    assert implementation.blockers[0]["code"] == "EDIT_TARGET_NORMALIZATION_UNSAFE"
+    assert implementation.blockers[0]["evidence_ids"] == ["ev_first", "ev_second"]
+
+
+def test_implementation_plan_fails_closed_for_conflicting_source_hash_aliases() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(
+                evidence_id="ev_conflicting_aliases",
+                file_hash="file_hash_002",
+            ),
+            _authoritative_item(evidence_id="ev_other"),
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.proposed_changes == ()
+    assert implementation.blockers[0]["code"] == "EDIT_TARGET_NORMALIZATION_UNSAFE"
+    assert implementation.blockers[0]["evidence_ids"] == [
+        "ev_conflicting_aliases"
+    ]
+
+
+def test_overlap_does_not_treat_doc_hash_as_physical_source_revision() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(
+                evidence_id="ev_doc_only_first",
+                source_hash=None,
+                file_hash=None,
+                doc_hash="canonical_text_hash",
+            ),
+            _authoritative_item(
+                evidence_id="ev_doc_only_second",
+                source_hash=None,
+                file_hash=None,
+                doc_hash="canonical_text_hash",
+                retrieval_method="text_match",
+            ),
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.proposed_changes == ()
+    assert implementation.blockers[0]["code"] == "EDIT_TARGET_NORMALIZATION_UNSAFE"
+    assert implementation.blockers[0]["evidence_ids"] == [
+        "ev_doc_only_first",
+        "ev_doc_only_second",
+    ]
+
+
+def test_single_doc_hash_only_item_cannot_grant_edit_authority() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(
+                evidence_id="ev_doc_only",
+                source_hash=None,
+                file_hash=None,
+                doc_hash="canonical_text_hash",
+            )
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.binding_registry is None
+    assert implementation.proposed_changes == ()
+    assert implementation.blockers[0]["code"] == "EDIT_TARGET_NORMALIZATION_UNSAFE"
+    assert implementation.blockers[0]["evidence_ids"] == ["ev_doc_only"]
+
+
+def test_implementation_plan_fails_closed_for_duplicate_region_identity_conflict() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [
+            _authoritative_item(evidence_id="ev_load"),
+            _authoritative_item(
+                evidence_id="ev_save",
+                symbol="Save",
+                method_name="Save",
+            ),
+        ],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.proposed_changes == ()
+    assert implementation.blockers[0]["code"] == "EDIT_TARGET_NORMALIZATION_UNSAFE"
+    assert implementation.blockers[0]["evidence_ids"] == ["ev_load", "ev_save"]
+
+
+def test_exact_duplicate_inner_keeps_all_lineage_when_outer_is_retained() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    inner = _authoritative_item(
+        evidence_id="ev_inner",
+        span={"start_line": 10, "end_line": 20},
+    )
+    inner_duplicate = _authoritative_item(
+        evidence_id="ev_inner_text_match",
+        retrieval_method="text_match",
+        span={"start_line": 10, "end_line": 20},
+        symbol=None,
+        declaring_type=None,
+        declaring_type_full_name=None,
+        method_name=None,
+        parameter_types=None,
+        return_type=None,
+        method_kind=None,
+    )
+    outer = _authoritative_item(
+        evidence_id="ev_outer",
+        span={"start_line": 5, "end_line": 25},
+    )
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [inner, inner_duplicate, outer],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is False
+    assert len(implementation.binding_registry["edit_bindings"]) == 1
+    edit_binding = implementation.binding_registry["edit_bindings"][0]
+    assert edit_binding["evidence_id"] == "ev_outer"
+    assert edit_binding["target_span"] == {"start_line": 5, "end_line": 25}
+    support_by_evidence = {
+        binding["evidence_id"]: binding["binding_id"]
+        for binding in implementation.binding_registry["supporting_bindings"]
+    }
+    assert implementation.proposed_changes[0]["supporting_binding_ids"] == [
+        support_by_evidence["ev_inner"],
+        support_by_evidence["ev_inner_text_match"],
+    ]
+
+
+def test_nested_merge_preserves_original_supporting_evidence_order() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    outer = _authoritative_item(
+        evidence_id="ev_outer",
+        span={"start_line": 5, "end_line": 25},
+    )
+    inner = _authoritative_item(
+        evidence_id="ev_inner",
+        span={"start_line": 10, "end_line": 20},
+    )
+    outer_duplicate = _authoritative_item(
+        evidence_id="ev_outer_text_match",
+        retrieval_method="text_match",
+        span={"start_line": 5, "end_line": 25},
+        symbol=None,
+        declaring_type=None,
+        declaring_type_full_name=None,
+        method_name=None,
+        parameter_types=None,
+        return_type=None,
+        method_kind=None,
+    )
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [outer, inner, outer_duplicate],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is False
+    support_by_evidence = {
+        binding["evidence_id"]: binding["binding_id"]
+        for binding in implementation.binding_registry["supporting_bindings"]
+    }
+    assert implementation.proposed_changes[0]["supporting_binding_ids"] == [
+        support_by_evidence["ev_inner"],
+        support_by_evidence["ev_outer_text_match"],
+    ]
+
+
+def test_duplicate_lineage_is_preserved_when_later_overlap_blocks() -> None:
+    plan = RequestPlanner().plan("change Load", target_mod="Example")
+    spec = FeatureSpecBuilder().build(plan)
+    first = _authoritative_item(
+        evidence_id="ev_first",
+        span={"start_line": 10, "end_line": 20},
+    )
+    duplicate = _authoritative_item(
+        evidence_id="ev_duplicate",
+        retrieval_method="text_match",
+        span={"start_line": 10, "end_line": 20},
+        symbol=None,
+        declaring_type=None,
+        declaring_type_full_name=None,
+        method_name=None,
+        parameter_types=None,
+        return_type=None,
+        method_kind=None,
+    )
+    partial_overlap = _authoritative_item(
+        evidence_id="ev_partial_overlap",
+        span={"start_line": 15, "end_line": 25},
+    )
+    evidence_pack = {
+        "readiness": "sufficient",
+        "can_generate_patch": True,
+        "authority": "mod_agent_deterministic_evidence",
+        "authoritative_for_patch": True,
+        **_identity_schema_payload(),
+        "items": [first, duplicate, partial_overlap],
+    }
+
+    implementation = ImplementationPlanner().build(
+        feature_spec=spec,
+        evidence_pack=evidence_pack,
+    )
+
+    assert implementation.blocking is True
+    assert implementation.proposed_changes == ()
+    assert implementation.blockers[0]["code"] == "EDIT_TARGET_NORMALIZATION_UNSAFE"
+    assert implementation.blockers[0]["evidence_ids"] == [
+        "ev_first",
+        "ev_duplicate",
+        "ev_partial_overlap",
+    ]
+
+
 def test_implementation_plan_keeps_distinct_nonoverlapping_edit_units() -> None:
     plan = RequestPlanner().plan("change two methods", target_mod="Example")
     spec = FeatureSpecBuilder().build(plan)

@@ -392,21 +392,69 @@ class ImplementationPlanner:
         tuple[tuple[dict[str, Any], tuple[str, ...]], ...],
         dict[str, Any] | None,
     ]:
-        """Collapse only nested spans with one exact physical method identity."""
+        """Collapse exact physical duplicates, then safe nested method spans."""
 
-        indexed_items = list(enumerate(items))
+        original_items = list(enumerate(items))
+        evidence_order: dict[str, int] = {}
+        for index, item in original_items:
+            if item.get("evidence_id"):
+                evidence_order.setdefault(str(item["evidence_id"]), index)
+
+        def ordered_evidence_ids(
+            units: list[tuple[dict[str, Any], tuple[str, ...]]],
+        ) -> tuple[str, ...]:
+            values: list[str] = []
+            for item, merged_ids in units:
+                if item.get("evidence_id"):
+                    values.append(str(item["evidence_id"]))
+                values.extend(merged_ids)
+            return tuple(
+                sorted(
+                    dict.fromkeys(values),
+                    key=lambda evidence_id: evidence_order.get(
+                        evidence_id,
+                        len(original_items),
+                    ),
+                )
+            )
+        hash_alias_conflicts = [
+            item
+            for _, item in original_items
+            if cls._source_revision_hash_aliases_conflict(item)
+        ]
+        if hash_alias_conflicts:
+            return (), cls._normalization_blocker(
+                items=hash_alias_conflicts,
+                message=(
+                    "Editable evidence source hash aliases do not identify "
+                    "one exact source revision."
+                ),
+            )
+        missing_physical_revision = [
+            item
+            for _, item in original_items
+            if cls._physical_source_revision_hash(item) is None
+        ]
+        if missing_physical_revision:
+            return (), cls._normalization_blocker(
+                items=missing_physical_revision,
+                message=(
+                    "Editable evidence requires an exact physical source "
+                    "revision hash before change-unit normalization."
+                ),
+            )
         paths_with_multiple_items = {
             str(item.get("source_path") or "")
-            for _, item in indexed_items
+            for _, item in original_items
             if sum(
                 1
-                for _, other in indexed_items
+                for _, other in original_items
                 if other.get("source_path") == item.get("source_path")
             )
             > 1
         }
-        spans: dict[int, tuple[int, int]] = {}
-        for index, item in indexed_items:
+        original_spans: dict[int, tuple[int, int]] = {}
+        for index, item in original_items:
             path = str(item.get("source_path") or "")
             if path not in paths_with_multiple_items:
                 continue
@@ -419,37 +467,144 @@ class ImplementationPlanner:
                         "valid exact line spans before physical change-unit normalization."
                     ),
                 )
+            original_spans[index] = span
+
+        duplicate_regions: dict[
+            tuple[str, str, int, int],
+            list[tuple[int, dict[str, Any]]],
+        ] = {}
+        for index, item in original_items:
+            path = str(item.get("source_path") or "")
+            source_hash = cls._physical_source_revision_hash(item)
+            span = original_spans.get(index)
+            if path and span is not None:
+                duplicate_regions.setdefault(
+                    (path, str(source_hash), span[0], span[1]),
+                    [],
+                ).append((index, item))
+
+        consumed_indexes: set[int] = set()
+        indexed_units: list[
+            tuple[int, dict[str, Any], tuple[str, ...]]
+        ] = []
+        for region_items in duplicate_regions.values():
+            if len(region_items) < 2:
+                continue
+            ordered_region = sorted(region_items, key=lambda entry: entry[0])
+            if cls._duplicate_logical_identity_conflicts(
+                [item for _, item in ordered_region]
+            ):
+                return (), cls._normalization_blocker(
+                    items=[item for _, item in ordered_region],
+                    message=(
+                        "Exact duplicate editable regions contain conflicting "
+                        "non-empty logical identities."
+                    ),
+                )
+            complete_entries = [
+                entry
+                for entry in ordered_region
+                if cls._exact_edit_identity(entry[1]) is not None
+            ]
+            retained_index, retained_item = (
+                complete_entries[0]
+                if complete_entries
+                else ordered_region[0]
+            )
+            merged_evidence_ids = tuple(
+                dict.fromkeys(
+                    str(item["evidence_id"])
+                    for index, item in ordered_region
+                    if index != retained_index and item.get("evidence_id")
+                )
+            )
+            indexed_units.append(
+                (
+                    min(index for index, _ in ordered_region),
+                    retained_item,
+                    merged_evidence_ids,
+                )
+            )
+            consumed_indexes.update(index for index, _ in ordered_region)
+
+        indexed_units.extend(
+            (index, item, ())
+            for index, item in original_items
+            if index not in consumed_indexes
+        )
+        indexed_units.sort(key=lambda entry: entry[0])
+        paths_with_multiple_units = {
+            str(item.get("source_path") or "")
+            for _, item, _ in indexed_units
+            if sum(
+                1
+                for _, other, _ in indexed_units
+                if other.get("source_path") == item.get("source_path")
+            )
+            > 1
+        }
+        spans: dict[int, tuple[int, int]] = {}
+        for index, item, _ in indexed_units:
+            if str(item.get("source_path") or "") not in paths_with_multiple_units:
+                continue
+            span = cls._exact_line_span(item.get("span"))
+            if span is None:
+                return (), cls._normalization_blocker(
+                    items=[item],
+                    message=(
+                        "Multiple editable evidence items for one path require "
+                        "valid exact line spans before physical change-unit normalization."
+                    ),
+                )
             spans[index] = span
 
-        for left_index, left in indexed_items:
-            for right_index, right in indexed_items[left_index + 1 :]:
+        for position, (left_index, left, left_merged) in enumerate(indexed_units):
+            for right_index, right, right_merged in indexed_units[position + 1 :]:
                 if left.get("source_path") != right.get("source_path"):
                     continue
                 left_span = spans[left_index]
                 right_span = spans[right_index]
                 if not cls._spans_overlap(left_span, right_span):
                     continue
+                left_source_hash = cls._physical_source_revision_hash(left)
+                right_source_hash = cls._physical_source_revision_hash(right)
                 left_identity = cls._exact_edit_identity(left)
                 right_identity = cls._exact_edit_identity(right)
-                if left_identity is None or left_identity != right_identity:
+                if (
+                    left_source_hash is None
+                    or left_source_hash != right_source_hash
+                    or left_identity is None
+                    or left_identity != right_identity
+                ):
                     return (), cls._normalization_blocker(
                         items=[left, right],
+                        evidence_ids=ordered_evidence_ids(
+                            [
+                                (left, left_merged),
+                                (right, right_merged),
+                            ]
+                        ),
                         message=(
                             "Overlapping editable evidence for one path does not "
                             "share one complete exact source and method identity."
                         ),
                     )
 
-        grouped: dict[tuple[Any, ...], list[tuple[int, dict[str, Any]]]] = {}
+        grouped: dict[
+            tuple[Any, ...],
+            list[tuple[int, dict[str, Any], tuple[str, ...]]],
+        ] = {}
         standalone: list[tuple[int, dict[str, Any], tuple[str, ...]]] = []
-        for index, item in indexed_items:
+        for index, item, merged_evidence_ids in indexed_units:
             identity = cls._exact_edit_identity(item)
             if identity is None or str(item.get("source_path") or "") not in (
-                paths_with_multiple_items
+                paths_with_multiple_units
             ):
-                standalone.append((index, item, ()))
+                standalone.append((index, item, merged_evidence_ids))
                 continue
-            grouped.setdefault(identity, []).append((index, item))
+            grouped.setdefault(identity, []).append(
+                (index, item, merged_evidence_ids)
+            )
 
         normalized: list[tuple[int, dict[str, Any], tuple[str, ...]]] = standalone
         for identity_items in grouped.values():
@@ -469,8 +624,7 @@ class ImplementationPlanner:
                             remaining.remove(entry)
                             changed = True
                 if len(component) == 1:
-                    index, item = component[0]
-                    normalized.append((index, item, ()))
+                    normalized.append(component[0])
                     continue
                 outer_entries = [
                     entry
@@ -482,39 +636,122 @@ class ImplementationPlanner:
                 ]
                 if not outer_entries:
                     return (), cls._normalization_blocker(
-                        items=[item for _, item in component],
+                        items=[item for _, item, _ in component],
+                        evidence_ids=ordered_evidence_ids(
+                            [
+                                (item, merged_ids)
+                                for _, item, merged_ids in component
+                            ]
+                        ),
                         message=(
                             "Overlapping editable spans cannot be represented by "
                             "one independently authorized outer span."
                         ),
                     )
-                retained_index, retained_item = min(
+                retained_index, retained_item, _ = min(
                     outer_entries,
                     key=lambda entry: entry[0],
                 )
-                merged_evidence_ids = tuple(
-                    str(item["evidence_id"])
-                    for index, item in sorted(component, key=lambda entry: entry[0])
-                    if index != retained_index and item.get("evidence_id")
+                merged_evidence_ids: list[str] = []
+                for index, item, existing_merged_ids in sorted(
+                    component,
+                    key=lambda entry: entry[0],
+                ):
+                    if index != retained_index and item.get("evidence_id"):
+                        merged_evidence_ids.append(str(item["evidence_id"]))
+                    merged_evidence_ids.extend(existing_merged_ids)
+                normalized_merged_ids = tuple(
+                    dict.fromkeys(merged_evidence_ids)
                 )
                 normalized.append(
                     (
-                        min(index for index, _ in component),
+                        min(index for index, _, _ in component),
                         retained_item,
-                        merged_evidence_ids,
+                        normalized_merged_ids,
                     )
                 )
 
         normalized.sort(key=lambda entry: entry[0])
-        return tuple((item, merged) for _, item, merged in normalized), None
+        return tuple(
+            (
+                item,
+                tuple(
+                    sorted(
+                        merged,
+                        key=lambda evidence_id: evidence_order.get(
+                            evidence_id,
+                            len(original_items),
+                        ),
+                    )
+                ),
+            )
+            for _, item, merged in normalized
+        ), None
+
+    @staticmethod
+    def _physical_source_revision_hash(item: dict[str, Any]) -> str | None:
+        value = item.get("source_hash") or item.get("file_hash")
+        return value if isinstance(value, str) and value else None
+
+    @staticmethod
+    def _source_revision_hash_aliases_conflict(item: dict[str, Any]) -> bool:
+        values: dict[str, str] = {}
+        for field in ("source_hash", "file_hash"):
+            value = item.get(field)
+            if value in (None, ""):
+                continue
+            if not isinstance(value, str):
+                return True
+            values[field] = value
+        doc_hash = item.get("doc_hash")
+        if doc_hash not in (None, "") and not isinstance(doc_hash, str):
+            return True
+        return (
+            "source_hash" in values
+            and "file_hash" in values
+            and values["source_hash"] != values["file_hash"]
+        )
+
+    @staticmethod
+    def _duplicate_logical_identity_conflicts(
+        items: list[dict[str, Any]],
+    ) -> bool:
+        for field in (
+            "source_type",
+            "authority",
+            "symbol",
+            "declaring_type",
+            "declaring_type_full_name",
+            "method_name",
+            "return_type",
+            "method_kind",
+        ):
+            values: set[str] = set()
+            for item in items:
+                value = item.get(field)
+                if value in (None, ""):
+                    continue
+                if not isinstance(value, str):
+                    return True
+                values.add(value)
+            if len(values) > 1:
+                return True
+
+        parameter_values: set[tuple[str, ...]] = set()
+        for item in items:
+            value = item.get("parameter_types")
+            if value is None:
+                continue
+            if not isinstance(value, (list, tuple)) or not all(
+                isinstance(parameter, str) for parameter in value
+            ):
+                return True
+            parameter_values.add(tuple(value))
+        return len(parameter_values) > 1
 
     @staticmethod
     def _exact_edit_identity(item: dict[str, Any]) -> tuple[Any, ...] | None:
-        source_hash = (
-            item.get("source_hash")
-            or item.get("file_hash")
-            or item.get("doc_hash")
-        )
+        source_hash = ImplementationPlanner._physical_source_revision_hash(item)
         required_identity = (
             item.get("source_path"),
             source_hash,
@@ -566,15 +803,20 @@ class ImplementationPlanner:
         *,
         items: list[dict[str, Any]],
         message: str,
+        evidence_ids: tuple[str, ...] | None = None,
     ) -> dict[str, Any]:
         return {
             "code": "EDIT_TARGET_NORMALIZATION_UNSAFE",
             "message": message,
-            "evidence_ids": [
-                str(item["evidence_id"])
-                for item in items
-                if item.get("evidence_id")
-            ],
+            "evidence_ids": (
+                list(evidence_ids)
+                if evidence_ids is not None
+                else [
+                    str(item["evidence_id"])
+                    for item in items
+                    if item.get("evidence_id")
+                ]
+            ),
         }
 
     @staticmethod
@@ -587,10 +829,8 @@ class ImplementationPlanner:
         return {
             "binding_id": binding_id,
             "evidence_id": item.get("evidence_id"),
-            "source_hash": (
-                item.get("source_hash")
-                or item.get("file_hash")
-                or item.get("doc_hash")
+            "source_hash": ImplementationPlanner._physical_source_revision_hash(
+                item
             ),
             "canonical_target_path": item.get("source_path"),
             "source_type": item.get("source_type"),

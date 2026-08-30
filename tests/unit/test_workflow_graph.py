@@ -5668,7 +5668,14 @@ def test_evidence_backed_path_reaches_done(tmp_path: Path) -> None:
     )
     assert proposal["context_pack"]["allowed_edit_binding_ids"] == [
         "edit_binding_001",
-        "edit_binding_002",
+    ]
+    text_match_support = next(
+        binding
+        for binding in implementation["binding_registry"]["supporting_bindings"]
+        if binding["retrieval_method"] == "text_match"
+    )
+    assert implementation["proposed_changes"][0]["supporting_binding_ids"] == [
+        text_match_support["binding_id"]
     ]
     assert proposal["context_pack"]["display_fields_authority"] == (
         "derived_non_authoritative"
