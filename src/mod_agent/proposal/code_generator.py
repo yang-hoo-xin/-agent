@@ -14,6 +14,11 @@ _LITERAL_VALIDATION_MARKER_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 _DETERMINISTICALLY_INHERITED_VALIDATION = frozenset(
     {"compile or static validation"}
 )
+_NATIVE_PLAN_CHANGE_TYPE = "modify_behavior"
+_NATIVE_PLAN_OPERATION_TO_PATCH_OPERATION = {
+    "minimal_evidence_bound_change": "exact_text_replace",
+}
+_LEGACY_GENERATED_PATCH_RISK_TAGS = ("medium",)
 
 
 class PatchGenerationError(RuntimeError):
@@ -114,6 +119,7 @@ class LLMExactPatchGenerator:
             required_change_units,
             allowed_bindings=allowed_bindings,
             supporting_bindings=set(supporting_bindings_by_id),
+            require_native_contract=require_native_schema,
         )
         _validate_required_change_input_coverage(
             normalized_required_changes,
@@ -812,6 +818,7 @@ def _normalize_required_change_units(
     *,
     allowed_bindings: set[str],
     supporting_bindings: set[str],
+    require_native_contract: bool = False,
 ) -> tuple[dict[str, Any], ...]:
     if raw_units is None:
         return ()
@@ -839,6 +846,31 @@ def _normalize_required_change_units(
                 failure_classification="required_change_unit_binding_unknown",
                 change_index=index,
                 binding_id=binding_id,
+            )
+        change_type = raw.get("change_type")
+        if require_native_contract and change_type != _NATIVE_PLAN_CHANGE_TYPE:
+            raise _projection_error(
+                "Native required change unit has an invalid Plan change_type.",
+                failure_classification="required_change_unit_change_type_invalid",
+                change_index=index,
+                change_id=change_id,
+                expected_change_type=_NATIVE_PLAN_CHANGE_TYPE,
+                observed_change_type=change_type,
+            )
+        operation = raw.get("operation")
+        if (
+            require_native_contract
+            and operation not in _NATIVE_PLAN_OPERATION_TO_PATCH_OPERATION
+        ):
+            raise _projection_error(
+                "Native required change unit has an invalid Plan operation.",
+                failure_classification="required_change_unit_operation_invalid",
+                change_index=index,
+                change_id=change_id,
+                allowed_operations=sorted(
+                    _NATIVE_PLAN_OPERATION_TO_PATCH_OPERATION
+                ),
+                observed_operation=operation,
             )
         pair = (change_id, binding_id)
         if change_id in seen_ids or pair in seen_pairs:
@@ -900,11 +932,11 @@ def _normalize_required_change_units(
         normalized.append(
             {
                 "change_id": raw.get("change_id"),
-                "change_type": raw.get("change_type"),
+                "change_type": change_type,
                 "edit_binding_id": raw.get("edit_binding_id"),
                 "hook_target_binding_id": hook_target_binding_id,
                 "supporting_binding_ids": normalized_supporting_ids,
-                "operation": raw.get("operation"),
+                "operation": operation,
             }
         )
     return tuple(normalized)
@@ -1114,16 +1146,20 @@ def _materialize_native_change(
             missing_validation_markers=missing_markers,
         )
 
+    plan_operation = required_change["operation"]
+    patch_operation = _NATIVE_PLAN_OPERATION_TO_PATCH_OPERATION[plan_operation]
     return {
         "change_id": change_id,
-        "change_type": str(required_change.get("change_type") or "modify_behavior"),
+        "change_type": required_change["change_type"],
         "edit_binding_id": binding_id,
         "supporting_binding_ids": list(
             required_change.get("supporting_binding_ids") or []
         ),
-        "operation": "exact_text_replace",
+        "operation": patch_operation,
         "rationale": rationale,
-        "risk_tags": ["medium"],
+        # Compatibility metadata only. local_entry preserves authoritative Plan
+        # risk_tags when it overlays this generated patch onto the planned change.
+        "risk_tags": list(_LEGACY_GENERATED_PATCH_RISK_TAGS),
         "expected_validation": expected_validation,
         "rollback_hint": rollback_hint,
         "patch": {

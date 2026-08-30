@@ -1723,6 +1723,69 @@ def test_native_materialization_requires_plan_bound_complete_authority_input() -
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "expected_classification"),
+    [
+        ("change_type", None, "required_change_unit_change_type_invalid"),
+        (
+            "change_type",
+            "repair",
+            "required_change_unit_change_type_invalid",
+        ),
+        ("operation", None, "required_change_unit_operation_invalid"),
+        (
+            "operation",
+            "replace_unbounded_source",
+            "required_change_unit_operation_invalid",
+        ),
+    ],
+)
+def test_native_plan_authority_fields_fail_closed_before_provider_call(
+    field: str,
+    value: str | None,
+    expected_classification: str,
+) -> None:
+    fixture = json.loads(json.dumps(_large_projection_fixture()))
+    required_change = fixture["required_change_units"][0]
+    if value is None:
+        required_change.pop(field)
+    else:
+        required_change[field] = value
+    llm = _RecordingLLM(json.dumps(fixture["response"]))
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(llm).generate(
+            user_request=str(fixture["user_request"]),
+            evidence_items=list(fixture["evidence_items"]),
+            binding_registry=dict(fixture["binding_registry"]),
+            constraints=list(fixture["constraints"]),
+            required_change_units=list(fixture["required_change_units"]),
+            required_validation_by_binding=dict(
+                fixture["required_validation_by_binding"]
+            ),
+            require_native_schema=True,
+            provider_request_recorder=lambda _: None,
+        )
+
+    assert llm.messages == []
+    assert exc_info.value.diagnostics["failure_boundary"] == (
+        "patch_model_input_projection"
+    )
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        expected_classification
+    )
+
+
+def test_native_generated_patch_keeps_legacy_non_authoritative_risk_metadata() -> None:
+    fixture = _large_projection_fixture()
+    _, generated = _generate_projection_fixture(fixture)
+
+    assert all(
+        "risk_tags" not in item for item in fixture["required_change_units"]
+    )
+    assert all(change["risk_tags"] == ["medium"] for change in generated.changes)
+
+
 def test_normalized_nested_region_requires_two_patch_replacements() -> None:
     configuration_excerpt = "ReloadConfiguration();"
     spread_inner_excerpt = "crosshairSize = GetCrosshairSize();"
