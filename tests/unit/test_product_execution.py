@@ -39,6 +39,7 @@ from src.mod_agent.product_execution import (
     PRODUCT_EXECUTION_DECLARATION,
     ProductExecutionContractError,
     ProductExecutionInputBindingV1,
+    ProductExecutionOutputV1,
     ProductExecutionRequestV1,
     ProductExecutionResultV1,
 )
@@ -54,6 +55,12 @@ from src.mod_agent.product_executor import (
     preflight_product_execution,
     source_snapshot,
     source_snapshot_sha256,
+)
+from src.non_authoritative_projection import (
+    EdgeReporterV1,
+    ExplicitEdgeV1,
+    OwnerFactV1,
+    ProjectionViewV1,
 )
 
 
@@ -1222,23 +1229,12 @@ def test_public_product_executor_runs_real_graph_and_strict_store_chain(
     assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
 
 
-@pytest.mark.parametrize(
-    "observer_mode",
-    ("success", "return_value", "exception", "mutate_copy"),
-)
-def test_result_observer_preserves_complete_product_graph_store_and_result(
+def test_external_post_return_projection_rebuild_preserves_product_and_store(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    observer_mode: str,
 ) -> None:
     original_build_graph = product_executor_module.build_graph
     graph_invoke_count = 0
-    uuid_counter = 0
-
-    def deterministic_uuid4() -> SimpleNamespace:
-        nonlocal uuid_counter
-        uuid_counter += 1
-        return SimpleNamespace(hex=f"{uuid_counter:032x}")
 
     def tracked_build_graph(*args, **kwargs):
         graph = original_build_graph(*args, **kwargs)
@@ -1252,170 +1248,135 @@ def test_result_observer_preserves_complete_product_graph_store_and_result(
         return TrackedGraph()
 
     monkeypatch.setattr(product_executor_module, "build_graph", tracked_build_graph)
-    monkeypatch.setattr(
-        "src.mod_agent.workflow.nodes.uuid4",
-        deterministic_uuid4,
+    request, store = _request(tmp_path)
+    adapters = _blocked_evidence_adapters()
+    store_counts = {"read": 0, "write": 0}
+    original_read = store.read
+    original_write = store.write_with_result
+
+    def tracked_read(ref):
+        store_counts["read"] += 1
+        return original_read(ref)
+
+    def tracked_write(**kwargs):
+        store_counts["write"] += 1
+        return original_write(**kwargs)
+
+    monkeypatch.setattr(store, "read", tracked_read)
+    monkeypatch.setattr(store, "write_with_result", tracked_write)
+    result = execute_product_execution(
+        preflight_product_execution(request, adapters, store),
+        adapters,
+        store,
     )
-    monkeypatch.setattr(
-        "src.mod_agent.workflow.graph.uuid4",
-        deterministic_uuid4,
-    )
-    execution_root = tmp_path / "observer-invariance"
+    assert graph_invoke_count == 1
+    assert ProductExecutionResultV1.from_dict(
+        copy.deepcopy(result.to_dict())
+    ) == result
 
-    def run(mode: str | None) -> dict[str, object]:
-        nonlocal uuid_counter
-        uuid_counter = 0
-        if execution_root.exists():
-            shutil.rmtree(execution_root)
-        request, store = _request(execution_root)
-        adapters = _blocked_evidence_adapters()
-        store_counts = {"read": 0, "write": 0}
-        original_read = store.read
-        original_write = store.write_with_result
+    readback = result.validation_facts.details[0].payload
+    assert isinstance(readback, list)
+    envelope_by_hash = {item["artifact_hash"]: item for item in readback}
 
-        def tracked_read(ref):
-            store_counts["read"] += 1
-            return original_read(ref)
-
-        def tracked_write(**kwargs):
-            store_counts["write"] += 1
-            return original_write(**kwargs)
-
-        monkeypatch.setattr(store, "read", tracked_read)
-        monkeypatch.setattr(store, "write_with_result", tracked_write)
-        invoke_start = graph_invoke_count
-        observed_results: list[ProductExecutionResultV1] = []
-        observer_boundary: list[tuple[int, int, int]] = []
-
-        def observer(observed: ProductExecutionResultV1) -> object:
-            assert ProductExecutionResultV1.from_dict(
-                copy.deepcopy(observed.to_dict())
-            ) == observed
-            observed_results.append(observed)
-            observer_boundary.append(
-                (
-                    store_counts["read"],
-                    store_counts["write"],
-                    graph_invoke_count - invoke_start,
-                )
-            )
-            if mode == "exception":
-                raise RuntimeError("injected observer delivery failure")
-            if mode == "mutate_copy":
-                object.__setattr__(observed, "terminal_node", None)
-                payload = observed.validation_facts.details[0].payload
-                assert isinstance(payload, list)
-                payload.clear()
-            if mode == "return_value":
-                return object()
-            return None
-
-        result = execute_product_execution(
-            preflight_product_execution(request, adapters, store),
-            adapters,
-            store,
-            result_observer=(None if mode is None else observer),
+    def product_fact(output: ProductExecutionOutputV1) -> OwnerFactV1:
+        envelope = envelope_by_hash[output.artifact_ref.artifact_hash]
+        assert envelope["artifact_type"] == output.artifact_ref.artifact_type
+        assert envelope["feature_id"] == output.artifact_ref.feature_id
+        return OwnerFactV1(
+            schema_version="1",
+            owner="product_execution",
+            fact_type="product_execution_output_v1",
+            fact_ref=output.artifact_ref.path,
+            payload_sha256=output.artifact_ref.artifact_hash,
+            payload_schema_version=envelope["schema_version"],
+            owner_sequence=output.sequence,
         )
-        revision_files = frozenset(
-            path.relative_to(store.root).as_posix()
-            for path in store.root.rglob("*.json")
+
+    def artifact_fact(output: ProductExecutionOutputV1) -> OwnerFactV1:
+        envelope = envelope_by_hash[output.artifact_ref.artifact_hash]
+        assert envelope["artifact_type"] == output.artifact_ref.artifact_type
+        assert envelope["feature_id"] == output.artifact_ref.feature_id
+        return OwnerFactV1(
+            schema_version="1",
+            owner="artifact_store",
+            fact_type="artifact_revision_v1",
+            fact_ref=output.artifact_ref.path,
+            payload_sha256=envelope["artifact_hash"],
+            payload_schema_version=envelope["schema_version"],
+            owner_sequence=None,
+        )
+
+    source_fact = product_fact(result.outputs[0])
+    target_fact = product_fact(result.outputs[1])
+    store_fact = artifact_fact(result.outputs[2])
+
+    def edge(relation: str, target: OwnerFactV1) -> ExplicitEdgeV1:
+        assert source_fact.owner_sequence is not None
+        return ExplicitEdgeV1(
+            schema_version="1",
+            relation=relation,
+            source=source_fact.ref,
+            target=target.ref,
+            reporter=EdgeReporterV1(
+                fact=source_fact.ref,
+                payload_sha256=source_fact.payload_sha256,
+                owner_sequence=source_fact.owner_sequence,
+            ),
+        )
+
+    def snapshot() -> dict[str, object]:
+        immutable_revisions = tuple(
+            (path.as_posix(), path.read_bytes())
+            for path in sorted(store.root.rglob("*.json"))
             if "r" in path.relative_to(store.root).parts
         )
-        if mode is not None:
-            assert len(observed_results) == 1
-            assert observer_boundary == [
-                (
-                    store_counts["read"],
-                    store_counts["write"],
-                    graph_invoke_count - invoke_start,
-                )
-            ]
-            assert observer_boundary[0][2] == 1
-            assert observed_results[0] is not result
-            assert observed_results[0].validation_facts is not result.validation_facts
-            assert (
-                observed_results[0].validation_facts.details[0].payload
-                is not result.validation_facts.details[0].payload
-            )
         return {
-            "result": result,
-            "canonical_bytes": _canonical_product_result_bytes(result),
+            "canonical_result": _canonical_product_result_bytes(result),
             "terminal": result.terminal_node,
             "blockers": tuple(item.to_dict() for item in result.blockers),
             "store_attempts": tuple(
                 item.to_dict() for item in result.store_attempts
             ),
             "effect_events": tuple(item.to_dict() for item in result.effect_events),
-            "revision_set": _product_result_revision_set(result),
-            "revision_files": revision_files,
+            "artifact_refs_and_hashes": _product_result_revision_set(result),
+            "graph_invoke_count": graph_invoke_count,
+            "store_counts": dict(store_counts),
+            "immutable_revision_paths_and_bytes": immutable_revisions,
         }
 
-    unconfigured = run(None)
-    with_observer = run(observer_mode)
-    baseline_result = unconfigured["result"]
-    observed_result = with_observer["result"]
-    assert isinstance(baseline_result, ProductExecutionResultV1)
-    assert isinstance(observed_result, ProductExecutionResultV1)
-    assert tuple(baseline_result.to_dict()) == (
-        "contract_version",
-        "run_id",
-        "request_id",
-        "feature_id",
-        "requested_completion_scope",
-        "platform_status",
-        "execution_disposition",
-        "failure_stage",
-        "side_effects_may_have_started",
-        "terminal_node",
-        "store_attempts",
-        "outputs",
-        "effect_events",
-        "validation_facts",
-        "blockers",
-        "variant_result",
+    baseline = snapshot()
+    normal = ProjectionViewV1.rebuild(
+        (source_fact, target_fact),
+        (edge("references", target_fact),),
     )
-    assert ProductExecutionResultV1.from_dict(
-        copy.deepcopy(observed_result.to_dict())
-    ) == observed_result
-    assert {
-        key: value for key, value in unconfigured.items() if key != "result"
-    } == {key: value for key, value in with_observer.items() if key != "result"}
+    assert normal.diagnostics == ()
+    assert snapshot() == baseline
+
+    missing = ProjectionViewV1.rebuild(
+        (source_fact,),
+        (edge("references", target_fact),),
+    )
+    assert [item.code for item in missing.diagnostics] == ["missing_target_fact"]
+    assert snapshot() == baseline
+
+    conflict = ProjectionViewV1.rebuild(
+        (source_fact, store_fact),
+        (edge("conflicts_with", store_fact),),
+    )
+    assert [item.code for item in conflict.diagnostics] == ["explicit_conflict"]
+    assert {item.owner for item in conflict.facts} == {
+        "artifact_store",
+        "product_execution",
+    }
+    assert snapshot() == baseline
 
 
-@pytest.mark.parametrize("process_signal", (KeyboardInterrupt, SystemExit))
-def test_result_observer_does_not_swallow_process_control_signals(
-    tmp_path: Path,
-    process_signal: type[BaseException],
-) -> None:
-    request, store = _request(tmp_path)
-    adapters = _blocked_evidence_adapters()
+def test_product_executor_has_no_projection_callback_or_reverse_dependency() -> None:
+    signature = inspect.signature(execute_product_execution)
+    source = inspect.getsource(product_executor_module)
 
-    def observer(_result: ProductExecutionResultV1) -> None:
-        raise process_signal("stop observer delivery")
-
-    with pytest.raises(process_signal, match="stop observer delivery"):
-        execute_product_execution(
-            preflight_product_execution(request, adapters, store),
-            adapters,
-            store,
-            result_observer=observer,
-        )
-
-
-def test_result_observer_call_is_the_final_effectful_executor_statement() -> None:
-    import ast
-
-    function = ast.parse(inspect.getsource(execute_product_execution)).body[0]
-    assert isinstance(function, ast.FunctionDef)
-    observer_statement = function.body[-2]
-    return_statement = function.body[-1]
-    assert isinstance(observer_statement, ast.Expr)
-    assert isinstance(observer_statement.value, ast.Call)
-    assert isinstance(observer_statement.value.func, ast.Name)
-    assert observer_statement.value.func.id == "_observe_product_execution_result"
-    assert isinstance(return_statement, ast.Return)
-    assert isinstance(return_statement.value, ast.Name)
-    assert return_statement.value.id == "machine_result"
+    assert "result_observer" not in signature.parameters
+    assert "non_authoritative_projection" not in source
 
 
 def test_preflight_and_execute_repeat_the_same_strict_git_admission(

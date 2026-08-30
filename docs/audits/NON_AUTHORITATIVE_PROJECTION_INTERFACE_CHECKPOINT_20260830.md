@@ -1,8 +1,9 @@
 # Non-authoritative Projection Interface Checkpoint
 
-Status: code/test checkpoint awaiting macro-page review
+Status: corrective code/test checkpoint awaiting macro-page review
 
-Implementation base: `d6753f50aa879408dc1adc345e0a5c3c6c31589e`
+Original interface checkpoint:
+`4469279de886f5eba22d451dd215837c3e8fc389`
 
 Responsibility authority:
 `docs/audits/NON_AUTHORITATIVE_PROJECTION_RESPONSIBILITY_BOUNDARY_20260830.md`
@@ -10,9 +11,10 @@ Responsibility authority:
 This checkpoint freezes one read-only, rebuildable interface for Thin Lineage,
 owner-test migration, a future Langfuse exporter, and ProjectionRebuild. It does
 not merge either rejected whole-commit design and does not create an Artifact,
-Graph branch, Approval, Gateway, queue, fact owner, or execution decision.
+Graph branch, Approval, Gateway, queue, fact owner, production consumer, or
+execution decision.
 
-## 1. Package and exact public surface
+## 1. Exact public surface and owner-fact admission
 
 The independent package is `src.non_authoritative_projection`. It uses only the
 Python standard library and its own modules. Its public surface is:
@@ -24,7 +26,7 @@ Python standard library and its own modules. Its public surface is:
 - `ProjectionDiagnosticV1`
 - `ProjectionViewV1`
 - `ProjectionContractError`
-- the frozen relation, direction, diagnostic-code, and schema-version constants
+- the frozen admission, relation, direction, diagnostic-code, and schema-version constants
 
 `OwnerFactV1` has exactly these fields, in this serialized order:
 
@@ -36,59 +38,114 @@ Python standard library and its own modules. Its public surface is:
 6. `payload_schema_version`
 7. `owner_sequence`
 
-It contains no owner payload and no extensible metadata map. `owner`,
-`fact_type`, and `payload_schema_version` are exact lowercase schema tokens.
-The shared package does not register, translate, or reinterpret their values;
-each future owner-specific adapter must copy its exact owner-issued identifiers.
-This prevents the projection package from becoming a second owner taxonomy.
+It contains no owner payload and no extensible metadata map. Admission is the
+closed, versioned `owner_fact_admission_v1` table:
 
-An owner fact is unique only by `owner` plus `fact_ref`. A duplicate pair is a
-contract error even when all other bytes match. `owner_sequence` is interpreted
-only within the named owner.
+| `owner` | `fact_type` | payload schema | sequence mode |
+| --- | --- | --- | --- |
+| `artifact_store` | `artifact_revision_v1` | exact `1.0` | `unavailable`; serialized only as `null`; cannot report an edge |
+| `product_execution` | `product_execution_output_v1` | exact `1.0` | `required`; exact integer `>= 0` |
 
-## 2. Explicit edges
+Callers cannot register a pair. `OwnerFactV1` validates the table in its
+constructor and `from_dict`; `FactRefV1` rejects owners outside the table.
+Unknown owners, responsibility owners not admitted by this checkpoint,
+cross-paired fact types, status/claim-like fact types, wrong payload schema,
+and invented/missing sequence values fail before a View can accept them.
+
+### 1.1 Exact current owner field sources
+
+`product_execution/product_execution_output_v1` is admitted only for one
+Artifact output contained in a completely returned and strictly replayable
+`ProductExecutionResultV1`:
+
+| projection field | current owner source |
+| --- | --- |
+| `fact_ref` | `ProductExecutionOutputV1.artifact_ref.path` |
+| `payload_sha256` | `ProductExecutionOutputV1.artifact_ref.artifact_hash` |
+| `payload_schema_version` | the matching validated output-readback envelope's `schema_version` |
+| `owner_sequence` | `ProductExecutionOutputV1.sequence` |
+
+The current ProductExecution strict replay already binds the output ref/hash to
+the matching output-readback envelope. The projection test copies these fields
+only after `execute_product_execution` returns.
+
+`artifact_store/artifact_revision_v1` is admitted from one immutable revision:
+
+| projection field | current owner source |
+| --- | --- |
+| `fact_ref` | `ArtifactRef.path` |
+| `payload_sha256` | `ArtifactRef.artifact_hash`, equal to `ArtifactEnvelope.artifact_hash` |
+| `payload_schema_version` | `ArtifactEnvelope.schema_version` |
+| `owner_sequence` | `null`; ArtifactStore exposes no revision-local integer sequence |
+
+The missing ArtifactStore sequence is represented, not fabricated. The
+admission table makes this pair endpoint-only, so a caller cannot put `0` in
+the field and use it as an edge reporter.
+
+## 2. Explicit exclusions
+
+The table is deliberately smaller than the responsibility-owner list:
+
+| excluded owner/fact | exact missing representation |
+| --- | --- |
+| `EntryAdmissionResultV1` / `EntryAdmissionRunV1` | no exact owner-local integer sequence tied to the receipt ref/hash/schema |
+| `ActualRunResultV1` | journal ref/hash exist, but the result has no contract/schema version and no exact owner-local integer sequence; `actual_attempt_id` is not parsed into one |
+| top-level `ProductExecutionResultV1` | no exact fact ref, payload hash, or owner-local sequence |
+| LangGraph `TraceEvent` / `ModAgentState` | no single owner-issued schema, payload hash, and owner-local sequence tuple |
+| `BuildResult` | no owner-issued fact ref, payload hash, schema version, or owner-local sequence |
+| Runtime evidence payload builders | no frozen Runtime owner-result contract carrying the complete tuple |
+| human exact-diff and authority decisions | no current owner record carrying the complete ref/hash/schema/owner-local sequence tuple |
+
+No fixture value, concatenated identity, parsed numeric suffix, status, claim,
+or default `0` substitutes for these missing owner fields.
+
+## 3. Explicit edge semantics
 
 Each endpoint is an exact `FactRefV1` containing `owner` and `fact_ref`.
-`EdgeReporterV1` binds the issuing fact's full `FactRefV1`, exact
-`payload_sha256`, and exact `owner_sequence`. Rebuild checks that source, target,
-and reporter facts exist and that the reporter hash and sequence equal the
-referenced owner fact.
+`EdgeReporterV1` binds the source fact's full `FactRefV1`, exact
+`payload_sha256`, and exact `owner_sequence`.
 
-The finite relations and directions are:
+The interface mechanically enforces `reporter.fact == source`. There is no
+third-party reporter form. Source is therefore both the directional source
+endpoint and the fact that explicitly signs the relation; target is only the
+directional target endpoint. Rebuild checks that source/reporter and target
+facts exist and that reporter hash and sequence equal the admitted source fact.
+
+The finite relations and exact directions are:
 
 | `relation` | direction |
 | --- | --- |
-| `references` | source is the owner fact containing an explicit reference to target |
-| `derived_from` | source is the owner fact explicitly produced from target |
-| `caused_by` | source is the owner fact explicitly declaring target as its cause |
-| `conflicts_with` | source is explicitly reported as conflicting with target; direction conveys no priority |
+| `references` | source is the reporter fact explicitly signing source -> target as a reference |
+| `derived_from` | source is the reporter fact explicitly signing source as derived from target |
+| `caused_by` | source is the reporter fact explicitly signing source as caused by target |
+| `conflicts_with` | source is the reporter fact explicitly signing a conflict with target; direction conveys no priority |
 
 No relation is inferred from a timestamp, input order, write order, path,
 filename, similar identifier, owner sequence, or payload hash.
 
-## 3. Rebuild, serialization, and diagnostics
+## 4. Rebuild, serialization, and diagnostics
 
 `ProjectionViewV1.rebuild(facts, edges)` treats collection order as
 non-semantic, rejects duplicate fact refs and duplicate edges, sorts only for
 serialization, and derives every diagnostic from the complete supplied facts
 and edges. Facts sort by `(owner, fact_ref)`. Edges sort by their exact endpoint,
-relation, and reporter binding fields. Diagnostics sort by their canonical
+relation, and source-reporter binding fields. Diagnostics sort by canonical
 bytes.
 
 These sort orders are not an event order, cross-owner order, causal order,
 failure order, or priority order. `owner_sequence` is never compared between
 different owners.
 
-Canonical bytes are compact UTF-8 JSON with the exact contract field order,
+Canonical bytes are compact UTF-8 JSON with exact contract field order,
 `ensure_ascii=False`, `allow_nan=False`, and separators `(',', ':')`.
 `canonical_sha256()` hashes those bytes as 64 lowercase hexadecimal
-characters. `from_dict` accepts only the canonical field and collection order.
+characters. `from_dict` accepts only canonical field and collection order.
 Unknown fields, reordered fields or collections, duplicate refs, duplicate
 edges, duplicate diagnostics, malformed hashes, unsupported versions,
-unsupported owner/fact pairs, unsupported relations, and diagnostics not
-exactly regenerated from the inputs all fail explicitly.
+unadmitted owner/fact pairs, unsupported relations, and diagnostics not exactly
+regenerated from the inputs all fail explicitly.
 
-The only diagnostic codes are:
+The diagnostic codes remain item-level only:
 
 - `missing_source_fact`
 - `missing_target_fact`
@@ -97,37 +154,37 @@ The only diagnostic codes are:
 - `reporter_owner_sequence_mismatch`
 - `explicit_conflict`
 
-A valid `conflicts_with` edge retains both facts and produces one
-`explicit_conflict` diagnostic. It does not select a winner. Missing and
-reporter-mismatch diagnostics describe only this read model. There is no
+A valid cross-owner `conflicts_with` edge retains both facts and produces one
+`explicit_conflict` diagnostic. It does not select a winner. There is no
 aggregate projection-integrity result, product status, route result, retry
 decision, failure chain, first-failure result, claim-impact result, or
 authorization field.
 
-## 4. Optional ProductExecution observer seam
+## 5. No observer and no production consumer
 
-Zero consumers alone cannot prove behavior when a consumer is later attached,
-so `execute_product_execution` now has the optional keyword-only parameter:
+The synchronous ProductExecutor callback added by the original checkpoint is
+removed. `execute_product_execution` has no projection/callback parameter and
+`src.mod_agent.product_executor` does not import this package. An arbitrary
+callable could capture Store, Graph, files, network clients, or process-control
+capabilities through a closure; copying only the result object cannot prove
+capability or Store isolation.
 
-```python
-result_observer: Callable[[ProductExecutionResultV1], object] | None = None
+The invariance test instead performs this sequence:
+
+```text
+execute_product_execution returns completely
+-> copy exact fields from current owner contracts into admitted facts
+-> snapshot the complete ProductExecutionResult and Store revisions
+-> call pure ProjectionViewV1.rebuild for normal input
+-> call pure ProjectionViewV1.rebuild for missing input
+-> call pure ProjectionViewV1.rebuild for cross-owner conflict input
+-> compare the unchanged owner result, Graph count, Store counters, refs, paths, and bytes
 ```
 
-The executor first finishes Graph invocation, Store operations, output
-readback, product validation, variant classification, and
-`project_product_execution_result`. It then deep-copies the complete result
-dictionary and requires `ProductExecutionResultV1.from_dict` to replay that
-copy before invoking the observer. The callback receives only that deeply
-separated result object. It receives no Store, Graph, adapters, Runner, route,
-or permission object.
+There is no production consumer, callback, file writer, network exporter, or
+runtime integration in this checkpoint.
 
-The callback return value is ignored. Ordinary `Exception` is fail-open.
-`KeyboardInterrupt` and `SystemExit` are not swallowed. After the observer call,
-the executor's only remaining statement returns the original frozen machine
-result. No production observer is configured by this checkpoint, and the
-checkpoint performs no observer network or filesystem I/O.
-
-## 5. Dependency and capability isolation
+## 6. Dependency and capability isolation
 
 The dependency direction is:
 
@@ -141,68 +198,73 @@ src.non_authoritative_projection
           read-only future consumers
 ```
 
-`src.mod_agent` dynamically remains on the forbidden side of the reverse
-dependency guard. The generic observer seam does not import the projection
-package. The guard resolves absolute and relative imports across every current
-and future Python module under `src/mod_agent`. Its prefix matcher does not
-reject the existing, separate `src.observability` package.
+`src.mod_agent` remains on the forbidden side of the reverse dependency guard.
+The guard resolves absolute and relative imports across every current and
+future Python module under `src/mod_agent`; it does not reject the separate
+existing `src.observability` package.
 
 The projection package's dependency allowlist contains only `__future__`,
 `collections`, `dataclasses`, `hashlib`, `json`, `typing`, and its own package.
-It therefore cannot import Graph, Actual execution, ArtifactStore, Repair,
-Apply, UI, Langfuse, tests, or any other product module.
+It cannot import Graph, Actual execution, ArtifactStore, ProductExecution,
+Repair, Apply, UI, Langfuse, tests, or another product module.
 
-## 6. Verification evidence
+## 7. Verification evidence
 
-All commands ran locally with repository test doubles. No real model, network,
-product preflight, packet, Actual, Build, Apply, Repair, or Runtime operation was
+All commands use repository test doubles. No real model, network, product
+preflight, packet, Actual, Build, Apply, Repair, or Runtime operation is
 started.
 
 | command | result |
 | --- | --- |
-| `python -m pytest tests/unit/test_non_authoritative_projection.py tests/unit/test_non_authoritative_projection_boundary.py tests/unit/test_product_execution.py -k "non_authoritative or result_observer" -q` | `32 passed, 105 deselected` |
-| `python -m pytest tests/unit/test_product_execution.py -q` | `112 passed` |
+| `python -m pytest tests/unit/test_non_authoritative_projection.py tests/unit/test_non_authoritative_projection_boundary.py tests/unit/test_product_execution.py -k "non_authoritative or external_post_return or no_projection_callback" -q` | `42 passed, 105 deselected` |
+| `python -m pytest tests/unit/test_product_execution.py -q` | `107 passed` |
 | `python -m pytest tests/unit/test_workflow_graph.py -q` | `135 passed` |
-| `python -m pytest tests/unit/test_mod_agent_cli.py::test_cli_run_request_uses_real_public_product_executor_and_graph tests/unit/test_mod_agent_cli.py::test_cli_run_request_real_public_product_executor_compile_success tests/unit/test_mod_agent_cli.py::test_cli_run_request_real_public_product_executor_runtime_success -q` | `3 passed` |
 
-Observer invariance compares an unconfigured observer with successful,
-arbitrary-return, ordinary-exception, and deep-copy-mutation observers. The
-test freezes the existing owner-generated trace UUIDs so the two independent
-Graph runs have the same owner inputs; it does not remove or normalize any
-ProductExecutionResult field. Canonical result bytes, terminal, blockers,
-Store-attempt sequence, effect-event sequence, Artifact revision refs/hashes,
-and immutable revision file set are equal in every mode. Runtime counters also
-show one Graph invocation and no Store read/write or Graph invocation after the
-observer boundary.
+The post-return test snapshots complete ProductExecutionResult canonical bytes,
+terminal, blockers, Store-attempt sequence, effect-event sequence, every output
+Artifact ref/hash, Graph invocation count, Store read/write counters, and each
+immutable revision's exact path and complete bytes. All three pure rebuilds
+leave the snapshot byte-for-byte equal.
 
-## 7. Claim boundary
+## 8. Claim boundary
 
-This evidence proves the tested in-memory contract, strict parsing,
-deterministic rebuild/serialization, mechanical diagnostics, conflict
-non-adjudication, dependency guards, and observer isolation. It does not prove
-that any owner payload bytes are available or semantically true, that a future
-export succeeds, that telemetry is delivered, that historical data can be
-rebuilt, or that any product, Build, Runtime, approval, retry, or execution
-decision is valid.
+This evidence proves only the tested admission table, strict parsing,
+deterministic rebuild/serialization, mechanical item diagnostics, conflict
+non-adjudication, reverse dependency guard, and post-return no-mutation
+behavior. It does not prove owner payload truth, a production adapter, export,
+telemetry delivery, historical rebuild, or any product, Build, Runtime,
+approval, retry, or execution decision.
 
-## 8. Shared-file no-edit rule for the four later pages
+## 9. Shared-file no-edit rule for the four later pages
 
 Thin Lineage, owner-test migration, Langfuse export, and ProjectionRebuild must
-start from the same accepted checkpoint and treat these shared surfaces as
-read-only:
+start from the same accepted corrective checkpoint and treat these shared
+surfaces as read-only:
 
+- `docs/audits/NON_AUTHORITATIVE_PROJECTION_RESPONSIBILITY_BOUNDARY_20260830.md`
 - `src/non_authoritative_projection/__init__.py`
 - `src/non_authoritative_projection/contracts.py`
 - `tests/unit/test_non_authoritative_projection.py`
 - `tests/unit/test_non_authoritative_projection_boundary.py`
-- the `_observe_product_execution_result` helper, `result_observer` parameter,
-  and final observer/return statements in `src/mod_agent/product_executor.py`
-- the `test_result_observer_*` tests and their comparison helpers in
-  `tests/unit/test_product_execution.py`
+- the post-return invariance tests in `tests/unit/test_product_execution.py`
 - this audit document
 
+They also must not modify existing owner or control contracts to accommodate
+the interface:
+
+- `src/mod_agent/entry_admission.py`
+- `src/mod_agent/actual_execution.py`
+- `src/mod_agent/product_execution.py`
+- `src/mod_agent/product_executor.py`
+- `src/mod_agent/artifacts/**`
+- `src/mod_agent/workflow/**`
+- `src/mod_agent/build/**`
+- `src/mod_agent/runtime/**`
+- `src/mod_agent/execution/**`
+- `src/mod_agent/edit_authority_capabilities.py`
+
 Later pages may add owner-specific adapters, fixtures, exporters, or rebuild
-logic outside those shared surfaces. If one page finds the frozen interface
+logic outside these shared surfaces. If one page finds the frozen interface
 insufficient, it must stop and return the exact missing representation to the
-macro review page. It must not locally revise the interface, weaken a guard, or
-create a divergent copy.
+macro review page. It must not revise the shared interface, weaken a guard,
+modify an owner contract, or create a divergent copy.

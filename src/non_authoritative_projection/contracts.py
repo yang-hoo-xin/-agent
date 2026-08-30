@@ -14,6 +14,24 @@ from typing import Any, Literal
 
 
 PROJECTION_SCHEMA_VERSION_V1 = "1"
+OWNER_FACT_ADMISSION_VERSION_V1 = "owner_fact_admission_v1"
+
+OwnerSequenceModeV1 = Literal["required", "unavailable"]
+
+# Exact field order: owner, fact_type, payload_schema_version,
+# owner_sequence_mode. This is a closed table; callers cannot extend it.
+_OWNER_FACT_ADMISSION_V1: tuple[
+    tuple[str, str, str, OwnerSequenceModeV1], ...
+] = (
+    ("artifact_store", "artifact_revision_v1", "1.0", "unavailable"),
+    (
+        "product_execution",
+        "product_execution_output_v1",
+        "1.0",
+        "required",
+    ),
+)
+OWNER_FACT_ADMISSION_V1 = _OWNER_FACT_ADMISSION_V1
 
 RelationV1 = Literal[
     "references",
@@ -32,19 +50,19 @@ RELATIONS_V1: tuple[RelationV1, ...] = (
 RELATION_DIRECTIONS_V1: tuple[tuple[RelationV1, str], ...] = (
     (
         "references",
-        "source is the owner fact containing an explicit reference to target",
+        "source is the reporter fact explicitly signing source -> target as a reference",
     ),
     (
         "derived_from",
-        "source is the owner fact explicitly produced from target",
+        "source is the reporter fact explicitly signing source as derived from target",
     ),
     (
         "caused_by",
-        "source is the owner fact explicitly declaring target as its cause",
+        "source is the reporter fact explicitly signing source as caused by target",
     ),
     (
         "conflicts_with",
-        "source is explicitly reported as conflicting with target; direction conveys no priority",
+        "source is the reporter fact explicitly signing a conflict with target; direction conveys no priority",
     ),
 )
 
@@ -66,8 +84,28 @@ DIAGNOSTIC_CODES_V1: tuple[DiagnosticCodeV1, ...] = (
     "explicit_conflict",
 )
 
-_TOKEN_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789._-")
-_TOKEN_INITIAL_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789")
+_ADMITTED_OWNERS = frozenset(
+    owner for owner, _fact_type, _schema, _mode in _OWNER_FACT_ADMISSION_V1
+)
+
+
+def _owner_fact_admission(
+    owner: str,
+    fact_type: str,
+) -> tuple[str, OwnerSequenceModeV1] | None:
+    for admitted_owner, admitted_type, payload_schema, sequence_mode in (
+        _OWNER_FACT_ADMISSION_V1
+    ):
+        if (owner, fact_type) == (admitted_owner, admitted_type):
+            return payload_schema, sequence_mode
+    return None
+
+
+_REPORTER_CAPABLE_OWNERS = frozenset(
+    owner
+    for owner, _fact_type, _schema, mode in _OWNER_FACT_ADMISSION_V1
+    if mode == "required"
+)
 
 
 class ProjectionContractError(ValueError):
@@ -90,16 +128,6 @@ def _require_text(value: Any, name: str) -> str:
     ):
         raise ProjectionContractError(f"{name} must be an exact non-empty string.")
     return value
-
-
-def _require_token(value: Any, name: str) -> str:
-    selected = _require_text(value, name)
-    if (
-        selected[0] not in _TOKEN_INITIAL_CHARS
-        or any(character not in _TOKEN_CHARS for character in selected)
-    ):
-        raise ProjectionContractError(f"{name} must be a lowercase schema token.")
-    return selected
 
 
 def _require_sha256(value: Any, name: str) -> str:
@@ -140,7 +168,8 @@ class FactRefV1:
     fact_ref: str
 
     def __post_init__(self) -> None:
-        _require_token(self.owner, "FactRefV1.owner")
+        if self.owner not in _ADMITTED_OWNERS:
+            raise ProjectionContractError("FactRefV1 owner is not admitted.")
         _require_text(self.fact_ref, "FactRefV1.fact_ref")
 
     def to_dict(self) -> dict[str, Any]:
@@ -163,20 +192,29 @@ class OwnerFactV1:
     fact_ref: str
     payload_sha256: str
     payload_schema_version: str
-    owner_sequence: int
+    owner_sequence: int | None
 
     def __post_init__(self) -> None:
         if self.schema_version != PROJECTION_SCHEMA_VERSION_V1:
             raise ProjectionContractError("OwnerFactV1 schema version is unsupported.")
-        _require_token(self.owner, "OwnerFactV1.owner")
-        _require_token(self.fact_type, "OwnerFactV1.fact_type")
+        admission = _owner_fact_admission(self.owner, self.fact_type)
+        if admission is None:
+            raise ProjectionContractError(
+                "OwnerFactV1 owner plus fact_type pair is not admitted."
+            )
+        expected_payload_schema, owner_sequence_mode = admission
+        if self.payload_schema_version != expected_payload_schema:
+            raise ProjectionContractError(
+                "OwnerFactV1 payload schema version does not match its admission."
+            )
         _require_text(self.fact_ref, "OwnerFactV1.fact_ref")
         _require_sha256(self.payload_sha256, "OwnerFactV1.payload_sha256")
-        _require_token(
-            self.payload_schema_version,
-            "OwnerFactV1.payload_schema_version",
-        )
-        _require_sequence(self.owner_sequence, "OwnerFactV1.owner_sequence")
+        if owner_sequence_mode == "required":
+            _require_sequence(self.owner_sequence, "OwnerFactV1.owner_sequence")
+        elif self.owner_sequence is not None:
+            raise ProjectionContractError(
+                "OwnerFactV1 owner sequence must be null for this admission."
+            )
 
     @property
     def ref(self) -> FactRefV1:
@@ -271,6 +309,14 @@ class ExplicitEdgeV1:
         if not isinstance(self.reporter, EdgeReporterV1):
             raise ProjectionContractError(
                 "ExplicitEdgeV1 reporter must be EdgeReporterV1."
+            )
+        if self.reporter.fact != self.source:
+            raise ProjectionContractError(
+                "ExplicitEdgeV1 reporter fact must equal its source endpoint."
+            )
+        if self.source.owner not in _REPORTER_CAPABLE_OWNERS:
+            raise ProjectionContractError(
+                "ExplicitEdgeV1 source owner cannot issue a sequence-bound edge."
             )
         if self.relation == "conflicts_with" and self.source == self.target:
             raise ProjectionContractError(
