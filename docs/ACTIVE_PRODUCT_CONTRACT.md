@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-29
+Last updated: 2026-08-30
 
 ## 1. Product
 
@@ -101,17 +101,36 @@ ignored. Coverage v2 now reserves `unresolved_gaps` for missing evidence,
 current-source facts, or edit authority required before Patch. Any such gap
 clears edit targets and blocks before Patch; the requested behavior's expected
 implementation delta is carried by the change requirement instead. Historical
-v1 Artifacts retain their original semantics. `EVID-006` is now the next active
-response-contract/model-role boundary.
+v1 Artifacts retain their original semantics.
+
+`EVID-006` is closed at code/test checkpoint
+`2b0925ca4d9d32fd6ffd728749614b77247ba60e`. The native response schema now
+leaves authoritative before text, path, source hash, Patch kind, occurrence
+count, Plan change type, operation, validation, and supporting bindings to
+deterministic materialization. A frozen four-site fixture reconstructs the
+exact BOM-bound source hashes and line slices for the Configuration property,
+`OnFileChanged`, `BindAll`, and Spread bypass; it proves Plan-to-provider input
+projection and canned-response materialization with zero real model calls.
+Removing any one site blocks before the fake provider is invoked. This is not
+evidence that a real model can generate the change or that the result builds.
+
+The inherited default-Graph regression is separately closed as `PLAN-003` by
+checkpoints `c6e00b8` and `55b51bb`: exact duplicate retrieval lanes now form
+one physical edit unit, all supporting Evidence remains in lineage, one path
+cannot bind multiple physical source revisions, and `doc_hash` cannot substitute
+for byte-level edit authority. The complete Workflow Graph suite is again
+`135 passed`.
 
 The current code lineage is compact Patch input checkpoint
 `05bbca578baad23403d3ab7fc3327755592e3ac8`, sealed run-family continuation
 orchestration checkpoint `d353bd0cf4750e8c902f1639c7787fed4b6afa20`, and
 nested physical edit-unit normalization checkpoint
 `53d228fa14e00ebd2fcbc64cc1ba331623668fd4`, and Coverage gap-semantics
-checkpoint `d80a188bd694f07dc725590b76f959514102d3c9`. Its claim is bounded to
+checkpoint `d80a188bd694f07dc725590b76f959514102d3c9`, deterministic native Patch
+materialization lineage `bbdc463 -> 6534a99 -> 2b0925c`, and default-Graph
+physical identity repair `c6e00b8 -> 55b51bb`. Its claim is bounded to
 deterministic orchestration, change-unit normalization, authority-gap
-admission, and tests. It is not a
+admission, native Patch contract/materialization, and tests. It is not a
 claim of model, Patch, or Build success; actual15's baseline Build is separate
 run evidence. It also does not prove Review, Dry-run, Apply, or a
 changed-product Build.
@@ -128,8 +147,9 @@ Current execution order:
 -> isolated 4B probe returns a complete but semantically invalid response; exact-binding admission correctly rejects it
 -> EVID-007 owner audit localizes the loss to Coverage v1 change-gap semantics
 -> checkpoint d80a188 introduces versioned v2 semantics and closes EVID-007
--> EVID-006 becomes the next response-contract/model-role code/test boundary
--> only after both boundaries are reviewed, decide whether to authorize a fresh Patch-only probe
+-> checkpoint 2b0925c closes EVID-006's bounded code/test trigger with a byte-bound four-site fixture
+-> c6e00b8 and 55b51bb close PLAN-003 and restore the complete default Workflow Graph suite
+-> separately decide whether to authorize one fresh Patch-only probe
 -> do not repeat the same 27B call, increase timeout, run a 4B correction, or prepare actual16
 -> PatchProposal -> ProposalReview
 -> complete Dry-run diff -> wait for human exact-diff approval
@@ -137,6 +157,13 @@ Current execution order:
 -> complete one actual-only Build/Test success and one Failure -> Different Repair -> Revalidation
 -> Coding Agent v0 internal alpha checkpoint
 ```
+
+The parallel Execution Lineage, historical replay, engineering-worktree, and
+Langfuse checkpoints remain unmerged. Review found that the Lineage and Replay
+branches recompute cross-owner `first_failure`, claim, or fresh-Actual status;
+those derived decisions are not product facts and are not accepted as a second
+control plane. A future observability integration must consume exact owner
+refs/hashes/events without reordering them or granting run authority.
 
 The one bounded Patch-only replay authorization has been consumed. No fresh
 Patch-only probe, fresh preflight, actual16 packet, or actual16 execution is

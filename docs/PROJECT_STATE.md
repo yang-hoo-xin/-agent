@@ -11,15 +11,17 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: form and review the bounded EVID-006 response-contract/materialization code/test checkpoint
+current_dependency: separately decide whether to authorize one fresh Patch-only probe against the accepted EVID-006 and PLAN-003 lineage
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
-current_product_code_checkpoint: d80a188bd694f07dc725590b76f959514102d3c9
-current_product_code_checkpoint_claim: deterministic orchestration, nested physical change-unit normalization, versioned unresolved authority-gap admission, and tests only; not model, Patch, or Build success
+current_product_code_checkpoint: 2b0925ca4d9d32fd6ffd728749614b77247ba60e
+current_product_code_checkpoint_claim: deterministic orchestration, physical edit identity normalization, versioned authority-gap admission, native Patch materialization, and tests only; not real model, PatchProposal, or Build success
 compact_patch_input_checkpoint: 05bbca578baad23403d3ab7fc3327755592e3ac8
 sealed_run_family_continuation_orchestration_checkpoint: d353bd0cf4750e8c902f1639c7787fed4b6afa20
 nested_physical_edit_unit_normalization_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
 coverage_authority_gap_semantics_checkpoint: d80a188bd694f07dc725590b76f959514102d3c9
+default_graph_physical_identity_checkpoints: c6e00b8751576ee8c1f4c377b4932601a3dfd054 -> 55b51bb625c66d6cd96b144162fdeae2d123e95b
+native_patch_materialization_checkpoints: bbdc4634c2f918c9a34f74c19a65dfc128ec6be1 -> 6534a992379752f65a4124d6992b330f3cabf62c -> 2b0925ca4d9d32fd6ffd728749614b77247ba60e
 protected_user_wip: four independent documentation changes, unchanged and unstaged
 selected_actual_only_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 P0_status: completed_at_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
@@ -58,21 +60,22 @@ latest_accurate_crosshair_revalidation: not_reached
 latest_accurate_crosshair_runtime: not_reached
 latest_accurate_crosshair_canonical_source_changed: false
 latest_accurate_crosshair_isolated_new_file: baseline_Build_nuget.config_only_not_Apply
-latest_accurate_crosshair_issue_records: docs/audits/ENGINEERING_ISSUE_REGISTER.md EVID-004/EVID-005/EVID-006/EVID-007/PLAN-002
+latest_accurate_crosshair_issue_records: docs/audits/ENGINEERING_ISSUE_REGISTER.md EVID-004/EVID-005/EVID-006/EVID-007/PLAN-002/PLAN-003
 EVID-002_status: closed_by_actual10_projection_to_findings_evidence
 EVID-003_status: closed_by_actual12_expected_delta_real_run_validation
 EVID-004_status: closed_by_actual13_actual14_actual15_patch_request_admission_and_real_patch_call
 EVID-005_status: active_same_configuration_27b_patch_only_replay_repeated_provider_timeout
 current_provider_failure_issue_id: EVID-005
-current_failure_issue_id: EVID-006
-current_failure_owner: LLMExactPatchGenerator response contract/materialization and initial Patch-role routing boundary
+current_failure_issue_id: EVID-005
+current_failure_owner: same-configuration 27B initial Patch provider response liveness
 current_issue_decision_priority: P0_current_work_priority_not_product_stage
-EVID-006_status: active_response_contract_and_initial_patch_role_routing
+EVID-006_status: closed_at_2b0925c_deterministic_native_materialization
 EVID-007_status: closed_at_d80a188_versioned_coverage_gap_semantics
 current_owner_audit_issue_id: none_closed
-current_code_test_checkpoint: d80a188bd694f07dc725590b76f959514102d3c9
+current_code_test_checkpoint: 2b0925ca4d9d32fd6ffd728749614b77247ba60e
 PLAN-001_status: closed_at_61a4df677ad39ca87ec9486ec0556481778c9c36
 PLAN-002_status: closed_by_frozen_27b_patch_only_replay_pre_call_reconstruction
+PLAN-003_status: closed_by_exact_duplicate_evidence_normalization_and_single_revision_per_path
 actual_only_build_test_success: false
 failure_different_repair_revalidation_success: false
 runtime_verified: false
@@ -92,7 +95,8 @@ actual16_packet_created: false
 actual16_execution_created: false
 complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
-next_capability_step: form and review the bounded EVID-006 checkpoint that removes deterministic binding fields from model responsibility only after complete v2 edit authority exists
+next_capability_step: separately decide whether to authorize one fresh Patch-only probe; no model, preflight, packet, or actual is pre-authorized
+parallel_observability_checkpoints: unmerged_due_to_shadow_fact_recomputation_and_namespace_conflict
 next_attempt_pre_authorized: false
 ```
 

@@ -477,10 +477,10 @@ issue_id: EVID-006
 title: Native Patch response contract assigns authoritative binding fields to the model
 scope: LLMExactPatchGenerator native response through deterministic GeneratedPatch construction and initial Patch-role routing, after complete edit authority already exists
 owner: LLMExactPatchGenerator response contract/materialization and initial Patch-role routing boundary
-evidence_level: real_run
+evidence_level: real_run_and_checkpoint_tests
 severity: S1
 decision_priority: P0
-status: active
+status: closed
 dependency: satisfied_by EVID-007 checkpoint d80a188bd694f07dc725590b76f959514102d3c9
 first_seen: 2026-08-29 frozen 27B Patch-only replay plus isolated 4B Patch-role probe
 latest_evidence: >-
@@ -498,15 +498,21 @@ admission_evidence: the 4B response contained two changes but deterministic admi
 semantic_limit: the 4B Configuration change omits the required property declaration, references nonexistent Configuration._targetSpread, and crosses into BindAll; its Spread change still assigns crosshairSize=GetCrosshairSize() after the disabled branch and therefore does not preserve the game-supplied raw crosshairSize
 probe_authority_boundary: the 4B probe was not an actual and not a fallback, did not alter Projection or Findings model decisions, and does not establish a 4B production Patch role
 owner_exclusions: EVID-006 does not own the missing property/BindAll edit authority or decide whether Findings, Coverage materialization, or Planner admission admitted an incomplete site set; ProposalReview, Apply, and later product stages remain unreached
-current_effect: EVID-007 is closed and this response-contract/model-role Issue is now the first current owner; a faster model response still cannot repair or bypass missing binding authority
+implementation_checkpoint: 2b0925ca4d9d32fd6ffd728749614b77247ba60e
+implementation_lineage: bbdc4634c2f918c9a34f74c19a65dfc128ec6be1 -> 6534a992379752f65a4124d6992b330f3cabf62c -> 2b0925ca4d9d32fd6ffd728749614b77247ba60e
+close_evidence: >-
+  The native model schema contains only change_id, edit_binding_id, rationale, rollback_hint, and after_text. Deterministic materialization derives before_text, path, physical source hash, Patch kind, expected occurrence count, Plan change type, operation, validation, and supporting bindings from the exact Plan/binding/Evidence inputs. Frozen Configuration.cs and SpreadPatches.cs fixture bytes reconstruct the exact BOM-bound actual15 source SHA256 values and the property, OnFileChanged, BindAll, and OverrideCrosshairSize line slices. One canned fake-LLM response projects all four Plan units and materializes four GeneratedPatch changes; deleting any one exact binding blocks before the fake provider and records required_change_unit_binding_unknown. There were zero real model or network calls. The combined Planning, Patch, Coverage, Review, ProductExecution, Local Entry, CLI, Artifact, and Workflow Graph verification reports 707 passed.
+checkpoint_claim_boundary: deterministic response contract, provider-input projection, canned-response materialization, physical source/lineage admission, and tests only; no real model generation, PatchProposal, Dry-run, Apply, changed-product Build, Repair, or Runtime is proven
+current_effect: EVID-006 code/test trigger is closed. A real Patch-role model result remains a separate empirical decision; the repeated same-configuration 27B provider timeout remains active under EVID-005
 minimum_solution_direction: remove authoritative before_text, path, hash, and expected_occurrences from native model responsibility; the model returns bounded replacement or after text for each already complete selected change/edit binding plus only fields requiring semantic judgment, while deterministic materialization injects authoritative fields from those exact bindings and source excerpts
 contract_reuse: reuse the existing GeneratedPatch, PatchProposal, Binding, and Review contracts; add no Artifact, Graph branch, Approval, Gateway, or second control plane
 directional_review: GPT Pro supports keeping the stronger existing control plane and reducing model responsibility, but that review is direction only; it cannot override EVID-007 physical authority facts or prove semantic correctness
-workaround: do not repeat the same 27B call, increase timeout, run a 4B correction, route 4B directly into production Patch, or prepare actual16
+workaround: none for EVID-006; do not repeat the same 27B call, increase timeout, route the rejected 4B response into production Patch, or prepare actual16 without separate authorization
 reopen_trigger: after closure, the native model schema again requires authoritative before_text, path, hash, or expected_occurrences, or deterministic materialization accepts an invalid binding/change/after_text or fails to preserve existing admission
 close_trigger: after EVID-007 closes, a bounded code/test checkpoint proves the native model schema does not require authoritative before_text, path, hash, or expected_occurrences; deterministic materialization attaches those fields only from an already complete exact binding set while preserving every existing admission check; a semantically valid, fully authorized actual15-shaped positive fixture materializes without a model call; and invalid binding, change identity, after_text, or incomplete authority remains fail closed. The frozen 4B raw response is negative evidence and is not required to form a valid GeneratedPatch
 real_model_close_evidence: separate from the code/test close trigger and requires later explicit authorization
-next_action: form and review only the bounded response-contract/model-role checkpoint, then decide separately whether to authorize a fresh Patch-only probe
+close_evidence_status: met_at_2b0925ca4d9d32fd6ffd728749614b77247ba60e
+next_action: none; reopen only on the recorded trigger; a fresh Patch-only probe is a separate user decision under EVID-005
 last_reviewed: 2026-08-30
 required_before_stage: next P2 complete Patch materialization attempt
 minimum_acceptance:
@@ -561,8 +567,8 @@ implementation_summary: >-
 close_evidence: >-
   Requirement Coverage, Planning, ProductExecution, Artifact contract/Store, and Local Entry regressions report 421 passed. An actual15-shaped negative clears edit targets and reaches a blocking ImplementationPlan with Patch/Dry-run/Apply/Build calls all zero. A complete four-site positive forms four exact edit bindings and a non-blocking Plan. A v1 history fixture roundtrips under legacy semantics.
 regression_boundary: >-
-  The full Workflow Graph suite remains non-green with 80 inherited failures at ImplementationPlanner EDIT_TARGET_NORMALIZATION_UNSAFE from checkpoint 53d228fa; d80a188 does not modify that Planner owner and does not claim full-repository green status.
-current_effect: EVID-007 is closed. EVID-006 becomes the next response-contract/model-role owner; EVID-005 remains active for the separate 27B response timeout; PLAN-002 remains closed.
+  Checkpoint d80a188 did not modify the inherited ImplementationPlanner owner. That separate 80-failure default-Graph cascade is now closed under PLAN-003 by c6e00b8 and 55b51bb, with the complete Workflow Graph suite at 135 passed.
+current_effect: EVID-007 remains closed. EVID-006 is also closed for its bounded deterministic response-contract trigger; EVID-005 remains active for the separate 27B response timeout; PLAN-002 and PLAN-003 remain closed.
 preservation_boundary: preservation obligations and supporting evidence constrain allowed behavior but never grant permission to edit an uncovered site
 contract_reuse: reuse the existing EditAuthorityRequest, EditAuthorityApproval, BindingResolver, ResolvedRepairTarget, Binding, GeneratedPatch, and Artifact contracts; add no Artifact type, Graph branch, Approval type, Gateway, or second control plane
 directional_review: GPT Pro's direction to lower model ownership and preserve the existing control plane remains direction only and cannot override these physical path/hash/span/symbol facts
@@ -650,6 +656,38 @@ minimum_acceptance:
   - the inner 115-155 Evidence is retained through the existing supporting binding and change supporting refs
   - the normalized Plan and Patch request contain two physical change/edit units rather than three
   - provider response or timeout behavior cannot close or reopen this Issue by itself
+```
+
+### PLAN-003
+
+```yaml
+issue_id: PLAN-003
+title: Default Graph treated duplicate physical source regions as multiple unsafe edit targets
+scope: Evidence-to-Planning physical edit-unit normalization for multiple retrieval representations of one source region and one source path revision
+owner: src/mod_agent/planning/implementation_plan.py::ImplementationPlanner._normalize_edit_units
+evidence_level: inherited_production_regression_and_checkpoint_tests
+severity: S1
+decision_priority: P1
+status: closed
+first_seen: checkpoint 53d228fa14e00ebd2fcbc64cc1ba331623668fd4; independently classified by the 2026-08-30 complete Workflow Graph replay
+latest_evidence: the unmodified 6e66b0a lineage collected 135 Workflow Graph tests with 55 passed and 80 failed; all 80 failures cascaded from EDIT_TARGET_NORMALIZATION_UNSAFE before downstream Artifacts formed
+root_cause: symbol_exact and text_match described the same Plugin.cs physical source hash and exact 3-3 span, but the old overlap rule required both representations to carry one complete identical method identity and blocked before collapsing exact physical duplicates
+implementation_checkpoints: c6e00b8751576ee8c1f4c377b4932601a3dfd054 -> 55b51bb625c66d6cd96b144162fdeae2d123e95b
+close_evidence: exact duplicate path/source-hash/span regions now form one edit binding while every non-retained Evidence id remains in supporting lineage and blocker diagnostics; nested authorized spans still normalize; true partial overlap still blocks; doc_hash cannot stand in for a byte-level source revision; source_hash and file_hash aliases must agree; and one source path cannot bind multiple physical revisions in one Plan. Planning reports 44 passed and the complete Workflow Graph reports 135 passed
+checkpoint_claim_boundary: deterministic Planning and default-Graph composition only; no real model, PatchProposal, Build, Apply, Repair, or Runtime evidence
+current_effect: the default Graph compatibility regression is closed and no longer blocks combined code/test integration; actual15 historical run facts remain unchanged
+workaround: none
+reopen_trigger: any current Planner again creates multiple edit bindings for the same exact physical region, drops merged Evidence lineage, permits one path to bind multiple physical revisions, or treats doc_hash as physical edit authority
+next_action: none; reopen only on the recorded trigger
+last_reviewed: 2026-08-30
+required_before_stage: none_closed
+minimum_acceptance:
+  - exact duplicate retrieval lanes form one physical edit unit
+  - every merged Evidence id remains in supporting lineage and failure diagnostics
+  - actual15 nested three-to-two normalization remains intact
+  - partial overlap and source-revision conflicts remain fail closed
+  - one source path binds exactly one physical revision
+  - the complete Workflow Graph suite passes
 ```
 
 ### ISO-001

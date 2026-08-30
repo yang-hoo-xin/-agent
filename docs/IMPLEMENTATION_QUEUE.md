@@ -10,17 +10,17 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: form and review the bounded EVID-006 response-contract/materialization code/test checkpoint
+current_queue: user decision on whether to authorize one fresh Patch-only probe against the accepted EVID-006 and PLAN-003 lineage
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: EVID-007 is closed at d80a188 after Coverage v1 change-gap semantics were localized and versioned; unresolved v2 evidence/authority gaps now block before Patch while complete multi-site authority remains non-blocking; EVID-006 is next and no model call, fresh probe, or actual16 is authorized
+queue_status: EVID-006 is closed at 2b0925c after authoritative Patch fields moved to deterministic materialization and a byte-bound four-site fixture passed; PLAN-003 restores the default Workflow Graph suite to 135 passed; no model call, fresh probe, preflight, packet, or actual16 is authorized
 ```
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 last_task_status: P2_empirical_path_4b_probe_exposed_incomplete_physical_edit_authority_and_semantically_invalid_patch
-current_product_code_checkpoint: d80a188bd694f07dc725590b76f959514102d3c9
-current_product_code_checkpoint_claim: deterministic orchestration, nested physical change-unit normalization, versioned unresolved authority-gap admission, and tests only; not model, Patch, or Build success
-product_code_lineage: 05bbca578baad23403d3ab7fc3327755592e3ac8 -> d353bd0cf4750e8c902f1639c7787fed4b6afa20 -> 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 -> d80a188bd694f07dc725590b76f959514102d3c9
+current_product_code_checkpoint: 2b0925ca4d9d32fd6ffd728749614b77247ba60e
+current_product_code_checkpoint_claim: deterministic orchestration, physical edit identity normalization, versioned authority-gap admission, native Patch materialization, and tests only; not real model, PatchProposal, or Build success
+product_code_lineage: 05bbca578baad23403d3ab7fc3327755592e3ac8 -> d353bd0cf4750e8c902f1639c7787fed4b6afa20 -> 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 -> d80a188bd694f07dc725590b76f959514102d3c9 -> bbdc4634c2f918c9a34f74c19a65dfc128ec6be1 -> 6534a992379752f65a4124d6992b330f3cabf62c -> c6e00b8751576ee8c1f4c377b4932601a3dfd054 -> 55b51bb625c66d6cd96b144162fdeae2d123e95b -> 2b0925ca4d9d32fd6ffd728749614b77247ba60e
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
 P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed
@@ -33,18 +33,19 @@ EVID-002_status: closed
 EVID-003_status: closed
 EVID-004_status: closed
 EVID-005_status: active_same_configuration_27b_replay_repeated_provider_timeout
-EVID-006_status: active_response_contract_and_initial_patch_role_routing
+EVID-006_status: closed_2b0925c_deterministic_native_materialization
 EVID-007_status: closed_d80a188_versioned_coverage_gap_semantics
-current_issue: EVID-006_active_response_contract_and_initial_patch_role_routing
+current_issue: EVID-005_active_same_configuration_27b_provider_liveness
 PLAN-002_status: closed_by_frozen_27b_replay_pre_call_reconstruction
+PLAN-003_status: closed_default_Graph_135_passed
 issue_register: docs/audits/ENGINEERING_ISSUE_REGISTER.md
 internal_alpha_hard_gates: false/false
 internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: bounded EVID-006 code/test checkpoint that deterministically materializes authoritative binding fields after v2 complete edit authority
-post_checkpoint_route: checkpoint review -> separately decide whether to authorize one fresh Patch-only probe
+next_eligible_slice: none_without_user_authorization; one fresh Patch-only probe is the next bounded empirical option
+post_checkpoint_route: separately decide whether to authorize one fresh Patch-only probe
 post_approval_route: isolated Apply -> changed-product Build
 patch_only_replay_authorized: consumed_once_by_completed_27b_replay
 activation_required: any further model call, fresh Patch-only probe, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
@@ -67,18 +68,24 @@ Checkpoint `d80a188` closes `EVID-007`: v2 treats non-empty change-support
 `unresolved_gaps` as missing pre-Patch evidence or authority, clears edit
 targets, and reaches a blocking Plan with zero Patch effects. Complete
 multi-site authority remains non-blocking, and v1 history remains readable.
-`EVID-006` is now the next owner. See the Issue Register for detailed evidence
-and exact triggers.
+`EVID-006` is closed at `2b0925c`: the native schema excludes authoritative
+binding fields, deterministic materialization restores them from exact bindings,
+and a frozen full-byte fixture projects four authorized sites through the fake
+provider seam. `PLAN-003` is also closed after the default Workflow Graph suite
+returned to `135 passed`. Neither checkpoint proves a real model response,
+PatchProposal, Dry-run, Apply, or Build.
+
+The parallel Lineage/Replay/Langfuse/worktree checkpoints remain unmerged.
+Lineage and Replay currently recompute cross-owner failure, claim, or run-status
+facts and therefore cannot become a second queue or truth owner. Langfuse remains
+an optional future projection only after a thin owner-ref interface exists.
 
 Current execution order:
 
-1. This docs-only state synchronization is complete.
-2. Form one bounded `EVID-006` code/test checkpoint that reduces model Patch
-   responsibility only after v2 complete edit authority is admitted.
-3. Preserve existing GeneratedPatch, Binding, Review, and fail-closed contracts;
+1. Accept the bounded EVID-006 and PLAN-003 code/test checkpoints.
+2. Preserve existing GeneratedPatch, Binding, Review, and fail-closed contracts;
    add no Artifact, Graph branch, Approval, Gateway, or second control plane.
-4. Review that checkpoint, then separately decide whether to authorize one
-   fresh Patch-only probe.
+3. Separately decide whether to authorize one fresh Patch-only probe.
 
 Do not rerun the same 27B call, increase timeout, perform a 4B correction, or
 prepare actual16. No fresh Patch-only probe, fresh preflight, actual16 packet,
