@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: freeze one shared non-authoritative fact and explicit-edge interface after responsibility boundary checkpoint 4ba735e
+current_dependency: non-authoritative projection interface serial gate completed; P2 product execution still requires a separately authorized fresh Patch-only probe
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: 2b0925ca4d9d32fd6ffd728749614b77247ba60e
@@ -95,13 +95,36 @@ actual16_packet_created: false
 actual16_execution_created: false
 complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
-next_capability_step: separately decide whether to authorize one fresh Patch-only probe; no model, preflight, packet, or actual is pre-authorized
-parallel_observability_checkpoints: unmerged_due_to_shadow_fact_recomputation_and_namespace_conflict
+next_capability_step: four independent P2 fit-audit worktrees are eligible from the same final HEAD; fresh Patch-only probe remains separately not authorized and not created
+parallel_observability_checkpoints: rejected_whole_commits_remain_unmerged_accepted_interface_integrated
 non_authoritative_projection_responsibility_boundary: accepted_at_7f49d1e_then_hardened_at_4ba735e
 rejected_whole_commits: 1275e87_execution_lineage_and_7a6c96f_historical_replay
-projection_interface_status: not_implemented_next_serial_gate
+projection_interface_status: accepted_reviewed_integrated_exact_admission_no_observer_no_production_consumer
 next_attempt_pre_authorized: false
 ```
+
+The accepted interface source lineage
+`4469279de886f5eba22d451dd215837c3e8fc389 -> 889ecd54e51db4d0882df0c4cc2b0d66850fb167 -> be8a91077e0ec28fdbf72ee5d5fa063f700ed41a`
+is integrated on this mainline as
+`c2c8e31abaed1b795d61c5b62e5d39defcb984da -> 7576d86853f77acba6b73f5ace07e4ccb3755297 -> 36d51d897ab6d329c5efac7d6012d8837d9cd772`.
+It retains existing owner responsibility, admits only the exact owner/fact pairs
+frozen by the checkpoint, requires source-bound explicit edges, and provides no
+observer or production consumer. Its test claim is only the recorded
+repository-test-double results (`42 passed, 105 deselected`; `107 passed`; `135
+passed`) in
+`docs/audits/NON_AUTHORITATIVE_PROJECTION_INTERFACE_CHECKPOINT_20260830.md`.
+They were not rerun by this integration and do not establish model, Patch,
+product, Build, or Runtime success.
+
+Thin Lineage, owner-test migration, a Langfuse exporter, and ProjectionRebuild
+may now each be created in an independent worktree from the same final HEAD.
+Their initial fit audits are read-only and may not modify Graph, EvidencePack,
+Prompt, or config. This integration creates none of those pages and records no
+status for them. A fresh Patch-only probe remains separately unauthorized and
+uncreated. `EVID-005` remains the current real product Issue; both Internal
+Alpha hard gates remain false. No Dense/RRF/reranker, Self-RAG training,
+generic PDF, UI, Actual or actual16, model, Apply, Build, or Runtime work is
+activated.
 
 The detailed current target and exact non-completion boundaries are in
 `docs/CODING_AGENT_V0_INTERNAL_ALPHA.md` and

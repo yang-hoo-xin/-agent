@@ -10,9 +10,9 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: freeze one shared non-authoritative fact/explicit-edge projection interface on top of responsibility boundary checkpoint 4ba735e
+current_queue: accepted non-authoritative projection interface serial gate complete; four independent P2 fit-audit worktrees are eligible from the same final HEAD, and none is created here
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: projection responsibility is frozen and the rejected whole commits remain unmerged; no projection interface exists yet; only after one interface checkpoint may Thin Lineage, owner-test migration, Langfuse export, and read-only ProjectionRebuild start from the same HEAD; no model call, fresh probe, preflight, packet, or actual16 is authorized
+queue_status: responsibility boundary plus exact admission and no-observer interface source lineage 4469279 -> 889ecd5 -> be8a910 is integrated as c2c8e31 -> 7576d86 -> 36d51d8; rejected whole commits remain unmerged; no model call, fresh probe, preflight, packet, or actual16 is authorized
 ```
 
 ```text
@@ -44,8 +44,8 @@ internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: one bounded non-authoritative projection interface checkpoint with no runtime consumer or execution authority
-post_checkpoint_route: checkpoint review -> create four new parallel implementation pages from the same accepted interface HEAD; Patch-only probe remains a separate authorization decision
+next_eligible_slice: independent Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild worktrees from one final HEAD; each begins with a read-only fit audit and may not modify Graph, EvidencePack, Prompt, or config
+post_checkpoint_route: four independent worktrees are eligible from the same final HEAD but none is created here; Patch-only probe remains a separate authorization decision
 post_approval_route: isolated Apply -> changed-product Build
 patch_only_replay_authorized: consumed_once_by_completed_27b_replay
 activation_required: any further model call, fresh Patch-only probe, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
@@ -75,23 +75,35 @@ provider seam. `PLAN-003` is also closed after the default Workflow Graph suite
 returned to `135 passed`. Neither checkpoint proves a real model response,
 PatchProposal, Dry-run, Apply, or Build.
 
-The parallel Lineage/Replay/Langfuse/worktree checkpoints remain unmerged.
-Lineage and Replay currently recompute cross-owner failure, claim, or run-status
-facts and therefore cannot become a second queue or truth owner. Langfuse remains
-an optional future projection only after a thin owner-ref interface exists.
+The rejected whole Lineage and Replay commits remain unmerged because their
+cross-owner failure, claim, or run-status derivations cannot become a second
+queue or truth owner. The accepted interface lineage through `be8a910` is now
+integrated with closed exact admission, source-bound explicit edges, and no
+observer or production consumer. Its repository-test-double claim remains only
+the bounded results recorded in
+`docs/audits/NON_AUTHORITATIVE_PROJECTION_INTERFACE_CHECKPOINT_20260830.md`;
+fake/canned/unit results, a green Graph suite, and baseline Build evidence are
+not product success.
 
 Current execution order:
 
-1. Accept the bounded EVID-006 and PLAN-003 code/test checkpoints.
-2. Preserve existing GeneratedPatch, Binding, Review, and fail-closed contracts;
-   add no Artifact, Graph branch, Approval, Gateway, or second control plane.
-3. Separately decide whether to authorize one fresh Patch-only probe.
+1. Preserve the accepted responsibility, exact-admission, explicit-edge, and
+   no-observer interface checkpoint without adding execution authority.
+2. Thin Lineage, owner-test migration, a Langfuse exporter, and
+   ProjectionRebuild may each start in an independent worktree from the same
+   final HEAD; no such page is created here.
+3. Treat each initial fit audit as read-only: do not modify Graph, EvidencePack,
+   Prompt, or config, and do not infer another page's status here.
+4. Separately decide whether to authorize one fresh Patch-only probe.
 
 Do not rerun the same 27B call, increase timeout, perform a 4B correction, or
 prepare actual16. No fresh Patch-only probe, fresh preflight, actual16 packet,
 or actual16 execution is authorized. Exact-diff approval still requires a
 complete Dry-run diff. Without that approval, isolated Apply and
-changed-product Build are not eligible.
+changed-product Build are not eligible. `EVID-005` remains the current real
+product Issue and both Internal Alpha hard gates remain false. Dense/RRF/
+reranker, Self-RAG training, generic PDF, UI, Actual or actual16, model, Apply,
+Build, and Runtime work are not activated by this queue update.
 
 ### 1.1 Prior BetterHitFeedback Product Slice Record
 

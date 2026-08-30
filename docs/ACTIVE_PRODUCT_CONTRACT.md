@@ -135,6 +135,15 @@ claim of model, Patch, or Build success; actual15's baseline Build is separate
 run evidence. It also does not prove Review, Dry-run, Apply, or a
 changed-product Build.
 
+The accepted non-authoritative projection interface source lineage
+`4469279 -> 889ecd5 -> be8a910` is now integrated on this mainline as
+`c2c8e31 -> 7576d86 -> 36d51d8`. It keeps the existing responsibility owners
+authoritative, uses closed exact owner/fact admission plus source-bound explicit
+edges, and exposes no ProductExecutor observer or production consumer. Its test
+claim is limited to the repository-test-double results recorded in
+`docs/audits/NON_AUTHORITATIVE_PROJECTION_INTERFACE_CHECKPOINT_20260830.md`;
+those results do not establish model, Patch, product, Build, or Runtime success.
+
 Current execution order:
 
 ```text
@@ -149,6 +158,8 @@ Current execution order:
 -> checkpoint d80a188 introduces versioned v2 semantics and closes EVID-007
 -> checkpoint 2b0925c closes EVID-006's bounded code/test trigger with a byte-bound four-site fixture
 -> c6e00b8 and 55b51bb close PLAN-003 and restore the complete default Workflow Graph suite
+-> accepted projection interface lineage through be8a910 is integrated with exact admission and no observer
+-> Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild are eligible as independent worktrees from the same final HEAD; their fit audits are read-only
 -> separately decide whether to authorize one fresh Patch-only probe
 -> do not repeat the same 27B call, increase timeout, run a 4B correction, or prepare actual16
 -> PatchProposal -> ProposalReview
@@ -158,14 +169,17 @@ Current execution order:
 -> Coding Agent v0 internal alpha checkpoint
 ```
 
-The parallel Execution Lineage, historical replay, engineering-worktree, and
-Langfuse checkpoints remain unmerged. Responsibility boundary lineage
-`7f49d1e -> 4ba735e` rejects whole-commit merge or original cherry-pick of Lineage
-`1275e87` and Replay `7a6c96f`: their cross-owner `first_failure`, claim, replay
-promotion, and fresh-Actual decisions are not product facts. Selective migration
-remains possible only after a shared non-authoritative interface is frozen.
-Graph, Actual, Apply, Repair, and product-result owners may not depend on the
-projection or telemetry implementation. The detailed boundary is
+Responsibility boundary lineage `7f49d1e -> 4ba735e` still rejects whole-commit
+merge or original cherry-pick of Lineage `1275e87` and Replay `7a6c96f`: their
+cross-owner `first_failure`, claim, replay promotion, and fresh-Actual decisions
+are not product facts. The accepted interface does not change that boundary.
+Thin Lineage, owner-test migration, a Langfuse exporter, and ProjectionRebuild
+may now each be created in an independent worktree from the same final HEAD.
+Their initial fit audits are a read-only quality line and may not modify Graph,
+EvidencePack, Prompt, or config. This integration creates none of those pages
+and assigns no further page status. Graph, Actual, Apply, Repair, and
+product-result owners may not depend on the projection or telemetry
+implementation. The detailed boundary is
 `docs/audits/NON_AUTHORITATIVE_PROJECTION_RESPONSIBILITY_BOUNDARY_20260830.md`.
 
 The one bounded Patch-only replay authorization has been consumed. No fresh
@@ -176,7 +190,10 @@ complete Dry-run diff. The current product stage remains the P2 empirical path;
 stage. The two Internal Alpha hard gates remain false: actual-only
 changed-product Build/Test success and Failure -> Different Repair ->
 Revalidation. Coding Agent v0 internal alpha, Runtime, stable Agent capability,
-and Public Alpha all remain false or unauthorized.
+and Public Alpha all remain false or unauthorized. `EVID-005` remains the
+current real product Issue. This integration does not activate Dense/RRF/
+reranker, Self-RAG training, generic PDF, UI, Actual or actual16, a model call,
+Apply, Build, or Runtime.
 
 ## 2. Current Verified Capability
 

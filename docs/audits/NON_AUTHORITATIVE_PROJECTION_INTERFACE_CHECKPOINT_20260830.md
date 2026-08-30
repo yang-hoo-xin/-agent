@@ -1,9 +1,13 @@
 # Non-authoritative Projection Interface Checkpoint
 
-Status: corrective code/test checkpoint awaiting macro-page review
+Status: accepted corrective code/test checkpoint integrated on
+`codex/rag-capability-mainline`
 
-Original interface checkpoint:
-`4469279de886f5eba22d451dd215837c3e8fc389`
+Accepted source lineage:
+`4469279de886f5eba22d451dd215837c3e8fc389 -> 889ecd54e51db4d0882df0c4cc2b0d66850fb167 -> be8a91077e0ec28fdbf72ee5d5fa063f700ed41a`
+
+Integrated mainline lineage:
+`c2c8e31abaed1b795d61c5b62e5d39defcb984da -> 7576d86853f77acba6b73f5ace07e4ccb3755297 -> 36d51d897ab6d329c5efac7d6012d8837d9cd772`
 
 Responsibility authority:
 `docs/audits/NON_AUTHORITATIVE_PROJECTION_RESPONSIBILITY_BOUNDARY_20260830.md`
@@ -238,8 +242,9 @@ approval, retry, or execution decision.
 ## 9. Shared-file no-edit rule for the four later pages
 
 Thin Lineage, owner-test migration, Langfuse export, and ProjectionRebuild must
-start from the same accepted corrective checkpoint and treat these shared
-surfaces as read-only:
+each start in an independent worktree from the same final mainline HEAD that
+contains this accepted checkpoint and its docs-only integration state. They
+must treat these shared surfaces as read-only:
 
 - `docs/audits/NON_AUTHORITATIVE_PROJECTION_RESPONSIBILITY_BOUNDARY_20260830.md`
 - `src/non_authoritative_projection/__init__.py`
