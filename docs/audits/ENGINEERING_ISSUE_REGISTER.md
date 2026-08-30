@@ -481,7 +481,7 @@ evidence_level: real_run
 severity: S1
 decision_priority: P0
 status: active
-dependency: blocked_by EVID-007 authority-completeness owner
+dependency: satisfied_by EVID-007 checkpoint d80a188bd694f07dc725590b76f959514102d3c9
 first_seen: 2026-08-29 frozen 27B Patch-only replay plus isolated 4B Patch-role probe
 latest_evidence: >-
   The frozen 27B replay used the reconstructed two-unit Plan but returned no complete response. The isolated qwen3:4b-instruct probe used the same canonical user, system, schema, constraints, and generation-input hashes and an identical provider body after model normalization; its one call returned a complete response in 208.046 seconds, persisted it before parsing, and entered the parser, but deterministic admission correctly rejected edit_binding_001 with before_text_outside_edit_binding. The raw response contained two changes and GeneratedPatch count was zero. Independent canonical-source comparison shows that response also lacks complete edit authority and contains substantive semantic errors, so it is not EVID-006 close evidence.
@@ -498,16 +498,16 @@ admission_evidence: the 4B response contained two changes but deterministic admi
 semantic_limit: the 4B Configuration change omits the required property declaration, references nonexistent Configuration._targetSpread, and crosses into BindAll; its Spread change still assigns crosshairSize=GetCrosshairSize() after the disabled branch and therefore does not preserve the game-supplied raw crosshairSize
 probe_authority_boundary: the 4B probe was not an actual and not a fallback, did not alter Projection or Findings model decisions, and does not establish a 4B production Patch role
 owner_exclusions: EVID-006 does not own the missing property/BindAll edit authority or decide whether Findings, Coverage materialization, or Planner admission admitted an incomplete site set; ProposalReview, Apply, and later product stages remain unreached
-current_effect: this is a secondary response-contract/model-role Issue. EVID-007 must first prove complete physical edit authority and localize its owner; a faster model response cannot repair or bypass missing binding authority
-minimum_solution_direction: only after EVID-007 closes, remove authoritative before_text, path, hash, and expected_occurrences from native model responsibility; the model returns bounded replacement or after text for each already complete selected change/edit binding plus only fields requiring semantic judgment, while deterministic materialization injects authoritative fields from those exact bindings and source excerpts
+current_effect: EVID-007 is closed and this response-contract/model-role Issue is now the first current owner; a faster model response still cannot repair or bypass missing binding authority
+minimum_solution_direction: remove authoritative before_text, path, hash, and expected_occurrences from native model responsibility; the model returns bounded replacement or after text for each already complete selected change/edit binding plus only fields requiring semantic judgment, while deterministic materialization injects authoritative fields from those exact bindings and source excerpts
 contract_reuse: reuse the existing GeneratedPatch, PatchProposal, Binding, and Review contracts; add no Artifact, Graph branch, Approval, Gateway, or second control plane
 directional_review: GPT Pro supports keeping the stronger existing control plane and reducing model responsibility, but that review is direction only; it cannot override EVID-007 physical authority facts or prove semantic correctness
 workaround: do not repeat the same 27B call, increase timeout, run a 4B correction, route 4B directly into production Patch, or prepare actual16
 reopen_trigger: after closure, the native model schema again requires authoritative before_text, path, hash, or expected_occurrences, or deterministic materialization accepts an invalid binding/change/after_text or fails to preserve existing admission
 close_trigger: after EVID-007 closes, a bounded code/test checkpoint proves the native model schema does not require authoritative before_text, path, hash, or expected_occurrences; deterministic materialization attaches those fields only from an already complete exact binding set while preserving every existing admission check; a semantically valid, fully authorized actual15-shaped positive fixture materializes without a model call; and invalid binding, change identity, after_text, or incomplete authority remains fail closed. The frozen 4B raw response is negative evidence and is not required to form a valid GeneratedPatch
 real_model_close_evidence: separate from the code/test close trigger and requires later explicit authorization
-next_action: wait until EVID-007 localizes and closes the authority-completeness boundary; then form and review only the bounded response-contract/model-role checkpoint and decide separately whether to authorize a fresh Patch-only probe
-last_reviewed: 2026-08-29
+next_action: form and review only the bounded response-contract/model-role checkpoint, then decide separately whether to authorize a fresh Patch-only probe
+last_reviewed: 2026-08-30
 required_before_stage: next P2 complete Patch materialization attempt
 minimum_acceptance:
   - EVID-007 is closed with complete physical edit authority for every required site
@@ -526,11 +526,11 @@ minimum_acceptance:
 issue_id: EVID-007
 title: Formal Coverage and Planning admit Patch with an incomplete physical edit-authority site set
 scope: actual15 Findings-to-Coverage edit-target materialization and Planner admission for complete physical change-site authority before Patch provider invocation
-owner: formal Findings/Coverage/Planning authority-completeness boundary; exact owner among Findings, Coverage materialization, or Planner admission remains to be localized by the bounded audit
+owner: src/mod_agent/evidence/requirement_coverage.py::resolve_requirement_coverage versioned change-gap sufficiency and edit-target derivation
 evidence_level: real_run_and_comparison
 severity: S1
 decision_priority: P0
-status: active
+status: closed
 first_seen: p2_ac_20260825_015/actual_15; physical incompleteness and its effect were exposed by the 2026-08-29 isolated 4B Patch-role probe
 id_allocation: mechanical Register header scan found EVID-001 through EVID-006 and PLAN-001 through PLAN-002; EVID-007 was unused
 actual15_feature_spec_artifact_hash: fe2af71f9f5baf2c8d3163f62cff93a9e1b977a978ae0170fdabe852dfff48b3
@@ -553,27 +553,34 @@ canonical_change_sites: >-
 probe_evidence: >-
   The 4B before_text crossed from OnFileChanged into BindAll and was correctly rejected as before_text_outside_edit_binding before any GeneratedPatch was formed. Its Configuration after_text omitted the required property declaration and referenced _targetSpread, which exists only in SpreadPatches. Its Spread after_text set _targetSpread=0.0f in the disabled branch and then still assigned crosshairSize=GetCrosshairSize(), so it did not retain the game-supplied raw value. Deterministic injection of before_text cannot make those bytes authoritative or semantically correct.
 failure_boundary: formal change-obligation-to-physical-edit-site completeness before Patch provider invocation; the parser correctly enforced the incomplete binding it received
-exact_owner_status: unresolved within the bounded boundary until frozen actual15-shaped data localizes the first loss to Findings, Coverage materialization, or Planner admission
+exact_owner_status: localized_to_Coverage_materialization_v1_change_support_gap_exception
 owner_exclusions: do not preset Retrieval as the repair; EVID-006 owns only the later response-contract/model-role boundary; ProposalReview, Apply, Build, Repair, and Runtime were not reached
-current_effect: EVID-007 is the first current owner. EVID-006 is active but blocked by it; EVID-005 remains active for the separate 27B response timeout; PLAN-002 remains closed because nested-unit normalization does not prove authority completeness
+implementation_checkpoint: d80a188bd694f07dc725590b76f959514102d3c9
+implementation_summary: >-
+  Coverage v2 reserves unresolved_gaps for missing evidence, current-source facts, or edit authority required before Patch. Non-empty change-support gaps no longer produce support sufficiency or edit targets. Expected implementation delta remains in the change requirement and is not represented as an unresolved evidence gap. Coverage v1 remains readable with its historical semantics.
+close_evidence: >-
+  Requirement Coverage, Planning, ProductExecution, Artifact contract/Store, and Local Entry regressions report 421 passed. An actual15-shaped negative clears edit targets and reaches a blocking ImplementationPlan with Patch/Dry-run/Apply/Build calls all zero. A complete four-site positive forms four exact edit bindings and a non-blocking Plan. A v1 history fixture roundtrips under legacy semantics.
+regression_boundary: >-
+  The full Workflow Graph suite remains non-green with 80 inherited failures at ImplementationPlanner EDIT_TARGET_NORMALIZATION_UNSAFE from checkpoint 53d228fa; d80a188 does not modify that Planner owner and does not claim full-repository green status.
+current_effect: EVID-007 is closed. EVID-006 becomes the next response-contract/model-role owner; EVID-005 remains active for the separate 27B response timeout; PLAN-002 remains closed.
 preservation_boundary: preservation obligations and supporting evidence constrain allowed behavior but never grant permission to edit an uncovered site
 contract_reuse: reuse the existing EditAuthorityRequest, EditAuthorityApproval, BindingResolver, ResolvedRepairTarget, Binding, GeneratedPatch, and Artifact contracts; add no Artifact type, Graph branch, Approval type, Gateway, or second control plane
 directional_review: GPT Pro's direction to lower model ownership and preserve the existing control plane remains direction only and cannot override these physical path/hash/span/symbol facts
-workaround: make no model call and no actual16; perform only the bounded read-only/test-first owner audit, then form one owner-local deterministic checkpoint if the audit identifies the exact loss
+workaround: none required for EVID-007; preserve v1 history semantics and use v2 for new formal Coverage
 reopen_trigger: after closure, any selected formal path again invokes a Patch provider while one necessary physical change site lacks exact edit authority, treats preservation/supporting evidence as edit authority, or permits a model to supply the missing authority
 close_trigger: >-
   The exact owner is localized and one bounded checkpoint proves that the Configuration property declaration, OnFileChanged reload, BindAll default binding, and Spread raw-size bypass each have exact path/hash/span/symbol edit authority or are explicitly proven implementable within one already authorized outer span; preservation remains non-authoritative; absence of any site fails closed before Patch provider invocation; actual15-shaped deterministic positive and negative tests pass; and no model output can cross a binding or fill missing authority.
-close_evidence_status: not_met
-next_action: read only the frozen actual15 FeatureSpec, Coverage, EvidencePack, original/rebuilt Plan, 4B raw response, and canonical source; map each obligation to its physical sites; decide the exact owner among Findings, Coverage materialization, and Planner admission; only then select the code/test checkpoint
-last_reviewed: 2026-08-29
-required_before_stage: next P2 Patch provider invocation
+close_evidence_status: met_at_d80a188
+next_action: none; reopen only on the recorded trigger
+last_reviewed: 2026-08-30
+required_before_stage: none_closed
 minimum_acceptance:
   - property declaration, OnFileChanged reload, BindAll default binding, and Spread raw-size bypass each have exact path/hash/span/symbol edit authority or explicit proof that one already authorized outer span contains the complete edit
   - preservation and supporting evidence remain constraints only and never become edit authority
   - missing any required site blocks before Patch provider invocation with zero model calls
   - actual15-shaped deterministic positive and negative tests pass at the localized owner boundary
   - no model response may cross an edit binding or manufacture authority for a missing site
-  - the Spread false branch retains the incoming game-supplied raw crosshairSize instead of recomputing it from _targetSpread
+  - the complete positive fixture carries exact authority for the Spread bypass site; semantic correctness of generated replacement bytes remains outside this authority Issue
   - no new Artifact, Graph branch, Approval, Gateway, or control plane
 ```
 

@@ -92,25 +92,26 @@ still overwrites the game-supplied raw `crosshairSize` with
 `GetCrosshairSize()`. The raw response is therefore not a semantically valid
 zero-model `GeneratedPatch` materialization reference.
 
-Active `EVID-007` is now the first owner: the formal
-Findings/Coverage/Planning authority-completeness boundary admitted Patch with
-an incomplete set of physical change sites. The next slice is a bounded
-read-only/test-first owner audit over the frozen actual15 FeatureSpec, Coverage,
-Evidence, original and rebuilt Plans, 4B raw response, and canonical source. It
-must determine whether the exact defect belongs to Findings, Coverage
-materialization, or Planner admission before any code/test checkpoint is
-formed. `EVID-006` remains an active secondary response-contract/model-role
-Issue, blocked by `EVID-007`; reducing model ownership is directionally valid
-only after complete edit authority exists. GPT Pro's direction to preserve the
-current control plane and reduce model ownership cannot override the physical
-authority facts.
+`EVID-007` is closed by checkpoint
+`d80a188bd694f07dc725590b76f959514102d3c9`. The frozen owner audit localized
+the defect to `resolve_requirement_coverage`: v1 treated every
+change-plus-support `unresolved_gaps` entry as an expected implementation delta,
+so the actual15 Finding's missing Configuration property/BindAll authority was
+ignored. Coverage v2 now reserves `unresolved_gaps` for missing evidence,
+current-source facts, or edit authority required before Patch. Any such gap
+clears edit targets and blocks before Patch; the requested behavior's expected
+implementation delta is carried by the change requirement instead. Historical
+v1 Artifacts retain their original semantics. `EVID-006` is now the next active
+response-contract/model-role boundary.
 
 The current code lineage is compact Patch input checkpoint
 `05bbca578baad23403d3ab7fc3327755592e3ac8`, sealed run-family continuation
 orchestration checkpoint `d353bd0cf4750e8c902f1639c7787fed4b6afa20`, and
 nested physical edit-unit normalization checkpoint
-`53d228fa14e00ebd2fcbc64cc1ba331623668fd4`. Its claim is bounded to
-deterministic orchestration, change-unit normalization, and tests. It is not a
+`53d228fa14e00ebd2fcbc64cc1ba331623668fd4`, and Coverage gap-semantics
+checkpoint `d80a188bd694f07dc725590b76f959514102d3c9`. Its claim is bounded to
+deterministic orchestration, change-unit normalization, authority-gap
+admission, and tests. It is not a
 claim of model, Patch, or Build success; actual15's baseline Build is separate
 run evidence. It also does not prove Review, Dry-run, Apply, or a
 changed-product Build.
@@ -125,11 +126,9 @@ Current execution order:
 -> authorized-once frozen 27B Patch-only replay repeats provider timeout; EVID-005 remains active
 -> replay verifies three-to-two physical edit-unit normalization; PLAN-002 closes
 -> isolated 4B probe returns a complete but semantically invalid response; exact-binding admission correctly rejects it
--> EVID-007 owns the incomplete physical edit-authority completeness boundary
--> read-only/test-first audit maps every actual15 change obligation to all required physical edit sites
--> decide the exact owner among Findings, Coverage materialization, and Planner admission
--> only then form and review an actual15-shaped deterministic positive/negative code/test checkpoint
--> after complete edit authority is proven, resume secondary EVID-006 response-contract/model-role work
+-> EVID-007 owner audit localizes the loss to Coverage v1 change-gap semantics
+-> checkpoint d80a188 introduces versioned v2 semantics and closes EVID-007
+-> EVID-006 becomes the next response-contract/model-role code/test boundary
 -> only after both boundaries are reviewed, decide whether to authorize a fresh Patch-only probe
 -> do not repeat the same 27B call, increase timeout, run a 4B correction, or prepare actual16
 -> PatchProposal -> ProposalReview

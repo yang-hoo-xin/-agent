@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-08-29
+Last updated: 2026-08-30
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -11,14 +11,15 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: complete the bounded EVID-007 read-only/test-first authority-completeness owner audit
+current_dependency: form and review the bounded EVID-006 response-contract/materialization code/test checkpoint
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
-current_product_code_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
-current_product_code_checkpoint_claim: deterministic orchestration, nested physical change-unit normalization, and tests only; not model, Patch, or Build success
+current_product_code_checkpoint: d80a188bd694f07dc725590b76f959514102d3c9
+current_product_code_checkpoint_claim: deterministic orchestration, nested physical change-unit normalization, versioned unresolved authority-gap admission, and tests only; not model, Patch, or Build success
 compact_patch_input_checkpoint: 05bbca578baad23403d3ab7fc3327755592e3ac8
 sealed_run_family_continuation_orchestration_checkpoint: d353bd0cf4750e8c902f1639c7787fed4b6afa20
 nested_physical_edit_unit_normalization_checkpoint: 53d228fa14e00ebd2fcbc64cc1ba331623668fd4
+coverage_authority_gap_semantics_checkpoint: d80a188bd694f07dc725590b76f959514102d3c9
 protected_user_wip: four independent documentation changes, unchanged and unstaged
 selected_actual_only_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 P0_status: completed_at_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
@@ -63,13 +64,13 @@ EVID-003_status: closed_by_actual12_expected_delta_real_run_validation
 EVID-004_status: closed_by_actual13_actual14_actual15_patch_request_admission_and_real_patch_call
 EVID-005_status: active_same_configuration_27b_patch_only_replay_repeated_provider_timeout
 current_provider_failure_issue_id: EVID-005
-current_failure_issue_id: EVID-007
-current_failure_owner: formal Findings/Coverage/Planning physical edit-authority completeness admission boundary pending exact owner localization
+current_failure_issue_id: EVID-006
+current_failure_owner: LLMExactPatchGenerator response contract/materialization and initial Patch-role routing boundary
 current_issue_decision_priority: P0_current_work_priority_not_product_stage
-EVID-006_status: active_secondary_response_contract_and_initial_patch_role_routing_blocked_by_EVID-007
-EVID-007_status: active_primary_authority_completeness_owner_audit
-current_owner_audit_issue_id: EVID-007
-current_code_test_checkpoint: not_selected_until_EVID-007_owner_audit_localizes_Findings_or_Coverage_materialization_or_Planner_admission
+EVID-006_status: active_response_contract_and_initial_patch_role_routing
+EVID-007_status: closed_at_d80a188_versioned_coverage_gap_semantics
+current_owner_audit_issue_id: none_closed
+current_code_test_checkpoint: d80a188bd694f07dc725590b76f959514102d3c9
 PLAN-001_status: closed_at_61a4df677ad39ca87ec9486ec0556481778c9c36
 PLAN-002_status: closed_by_frozen_27b_patch_only_replay_pre_call_reconstruction
 actual_only_build_test_success: false
@@ -91,7 +92,7 @@ actual16_packet_created: false
 actual16_execution_created: false
 complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
-next_capability_step: read-only/test-first EVID-007 audit maps the actual15 FeatureSpec/Coverage/Evidence/Plan and frozen 4B response to property declaration, OnFileChanged reload, BindAll default binding, and Spread raw-size bypass sites; localize the exact owner before forming an actual15-shaped deterministic positive/negative code/test checkpoint
+next_capability_step: form and review the bounded EVID-006 checkpoint that removes deterministic binding fields from model responsibility only after complete v2 edit authority exists
 next_attempt_pre_authorized: false
 ```
 
