@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.mod_agent import product_executor as product_executor_module
 from src.mod_agent.artifacts import ArtifactStore, ArtifactWriteResult
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.evidence import (
@@ -1171,6 +1172,29 @@ def _execute_store_role_scenario(
     )
 
 
+def _canonical_product_result_bytes(result: ProductExecutionResultV1) -> bytes:
+    return json.dumps(
+        result.to_dict(),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _product_result_revision_set(
+    result: ProductExecutionResultV1,
+) -> frozenset[tuple[str, str, str]]:
+    return frozenset(
+        (
+            output.artifact_role,
+            output.artifact_ref.path,
+            output.artifact_ref.artifact_hash,
+        )
+        for output in result.outputs
+    )
+
+
 def test_public_product_executor_runs_real_graph_and_strict_store_chain(
     tmp_path: Path,
 ) -> None:
@@ -1196,6 +1220,202 @@ def test_public_product_executor_runs_real_graph_and_strict_store_chain(
         item.store_result.outcome == "committed" for item in result.store_attempts
     )
     assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
+
+
+@pytest.mark.parametrize(
+    "observer_mode",
+    ("success", "return_value", "exception", "mutate_copy"),
+)
+def test_result_observer_preserves_complete_product_graph_store_and_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    observer_mode: str,
+) -> None:
+    original_build_graph = product_executor_module.build_graph
+    graph_invoke_count = 0
+    uuid_counter = 0
+
+    def deterministic_uuid4() -> SimpleNamespace:
+        nonlocal uuid_counter
+        uuid_counter += 1
+        return SimpleNamespace(hex=f"{uuid_counter:032x}")
+
+    def tracked_build_graph(*args, **kwargs):
+        graph = original_build_graph(*args, **kwargs)
+
+        class TrackedGraph:
+            def invoke(self, state):
+                nonlocal graph_invoke_count
+                graph_invoke_count += 1
+                return graph.invoke(state)
+
+        return TrackedGraph()
+
+    monkeypatch.setattr(product_executor_module, "build_graph", tracked_build_graph)
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.nodes.uuid4",
+        deterministic_uuid4,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.graph.uuid4",
+        deterministic_uuid4,
+    )
+    execution_root = tmp_path / "observer-invariance"
+
+    def run(mode: str | None) -> dict[str, object]:
+        nonlocal uuid_counter
+        uuid_counter = 0
+        if execution_root.exists():
+            shutil.rmtree(execution_root)
+        request, store = _request(execution_root)
+        adapters = _blocked_evidence_adapters()
+        store_counts = {"read": 0, "write": 0}
+        original_read = store.read
+        original_write = store.write_with_result
+
+        def tracked_read(ref):
+            store_counts["read"] += 1
+            return original_read(ref)
+
+        def tracked_write(**kwargs):
+            store_counts["write"] += 1
+            return original_write(**kwargs)
+
+        monkeypatch.setattr(store, "read", tracked_read)
+        monkeypatch.setattr(store, "write_with_result", tracked_write)
+        invoke_start = graph_invoke_count
+        observed_results: list[ProductExecutionResultV1] = []
+        observer_boundary: list[tuple[int, int, int]] = []
+
+        def observer(observed: ProductExecutionResultV1) -> object:
+            assert ProductExecutionResultV1.from_dict(
+                copy.deepcopy(observed.to_dict())
+            ) == observed
+            observed_results.append(observed)
+            observer_boundary.append(
+                (
+                    store_counts["read"],
+                    store_counts["write"],
+                    graph_invoke_count - invoke_start,
+                )
+            )
+            if mode == "exception":
+                raise RuntimeError("injected observer delivery failure")
+            if mode == "mutate_copy":
+                object.__setattr__(observed, "terminal_node", None)
+                payload = observed.validation_facts.details[0].payload
+                assert isinstance(payload, list)
+                payload.clear()
+            if mode == "return_value":
+                return object()
+            return None
+
+        result = execute_product_execution(
+            preflight_product_execution(request, adapters, store),
+            adapters,
+            store,
+            result_observer=(None if mode is None else observer),
+        )
+        revision_files = frozenset(
+            path.relative_to(store.root).as_posix()
+            for path in store.root.rglob("*.json")
+            if "r" in path.relative_to(store.root).parts
+        )
+        if mode is not None:
+            assert len(observed_results) == 1
+            assert observer_boundary == [
+                (
+                    store_counts["read"],
+                    store_counts["write"],
+                    graph_invoke_count - invoke_start,
+                )
+            ]
+            assert observer_boundary[0][2] == 1
+            assert observed_results[0] is not result
+            assert observed_results[0].validation_facts is not result.validation_facts
+            assert (
+                observed_results[0].validation_facts.details[0].payload
+                is not result.validation_facts.details[0].payload
+            )
+        return {
+            "result": result,
+            "canonical_bytes": _canonical_product_result_bytes(result),
+            "terminal": result.terminal_node,
+            "blockers": tuple(item.to_dict() for item in result.blockers),
+            "store_attempts": tuple(
+                item.to_dict() for item in result.store_attempts
+            ),
+            "effect_events": tuple(item.to_dict() for item in result.effect_events),
+            "revision_set": _product_result_revision_set(result),
+            "revision_files": revision_files,
+        }
+
+    unconfigured = run(None)
+    with_observer = run(observer_mode)
+    baseline_result = unconfigured["result"]
+    observed_result = with_observer["result"]
+    assert isinstance(baseline_result, ProductExecutionResultV1)
+    assert isinstance(observed_result, ProductExecutionResultV1)
+    assert tuple(baseline_result.to_dict()) == (
+        "contract_version",
+        "run_id",
+        "request_id",
+        "feature_id",
+        "requested_completion_scope",
+        "platform_status",
+        "execution_disposition",
+        "failure_stage",
+        "side_effects_may_have_started",
+        "terminal_node",
+        "store_attempts",
+        "outputs",
+        "effect_events",
+        "validation_facts",
+        "blockers",
+        "variant_result",
+    )
+    assert ProductExecutionResultV1.from_dict(
+        copy.deepcopy(observed_result.to_dict())
+    ) == observed_result
+    assert {
+        key: value for key, value in unconfigured.items() if key != "result"
+    } == {key: value for key, value in with_observer.items() if key != "result"}
+
+
+@pytest.mark.parametrize("process_signal", (KeyboardInterrupt, SystemExit))
+def test_result_observer_does_not_swallow_process_control_signals(
+    tmp_path: Path,
+    process_signal: type[BaseException],
+) -> None:
+    request, store = _request(tmp_path)
+    adapters = _blocked_evidence_adapters()
+
+    def observer(_result: ProductExecutionResultV1) -> None:
+        raise process_signal("stop observer delivery")
+
+    with pytest.raises(process_signal, match="stop observer delivery"):
+        execute_product_execution(
+            preflight_product_execution(request, adapters, store),
+            adapters,
+            store,
+            result_observer=observer,
+        )
+
+
+def test_result_observer_call_is_the_final_effectful_executor_statement() -> None:
+    import ast
+
+    function = ast.parse(inspect.getsource(execute_product_execution)).body[0]
+    assert isinstance(function, ast.FunctionDef)
+    observer_statement = function.body[-2]
+    return_statement = function.body[-1]
+    assert isinstance(observer_statement, ast.Expr)
+    assert isinstance(observer_statement.value, ast.Call)
+    assert isinstance(observer_statement.value.func, ast.Name)
+    assert observer_statement.value.func.id == "_observe_product_execution_result"
+    assert isinstance(return_statement, ast.Return)
+    assert isinstance(return_statement.value, ast.Name)
+    assert return_statement.value.id == "machine_result"
 
 
 def test_preflight_and_execute_repeat_the_same_strict_git_admission(

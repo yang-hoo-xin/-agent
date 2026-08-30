@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import subprocess
@@ -1324,12 +1325,31 @@ def validate_product_execution_outputs(
     )
 
 
+def _observe_product_execution_result(
+    machine_result: ProductExecutionResultV1,
+    result_observer: Callable[[ProductExecutionResultV1], object] | None,
+) -> None:
+    """Hand a strict, deeply separated result copy to one in-memory observer."""
+
+    if result_observer is None:
+        return
+    observer_result = ProductExecutionResultV1.from_dict(
+        copy.deepcopy(machine_result.to_dict())
+    )
+    try:
+        result_observer(observer_result)
+    except Exception:
+        # Projection delivery cannot alter the already-frozen product result.
+        return
+
+
 def execute_product_execution(
     preflight: ProductExecutionPreflightResultV1,
     adapters: ProductExecutionAdaptersV1,
     artifact_store: ArtifactStore,
     *,
     strict_git_admission: StrictGitAdmission | None = None,
+    result_observer: Callable[[ProductExecutionResultV1], object] | None = None,
 ) -> ProductExecutionResultV1:
     """Execute the existing StateGraph exactly once and freeze one machine result."""
 
@@ -1461,7 +1481,7 @@ def execute_product_execution(
         if request.requested_completion_scope == "compile_only"
         else _runtime_completion(artifact_store, outputs)
     )
-    return project_product_execution_result(
+    machine_result = project_product_execution_result(
         ProductExecutionFactsV1(
             request=request,
             feature_id=(
@@ -1478,3 +1498,5 @@ def execute_product_execution(
             failure_stage=failure_stage,
         )
     )
+    _observe_product_execution_result(machine_result, result_observer)
+    return machine_result

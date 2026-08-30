@@ -6,12 +6,24 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parents[2]
 MOD_AGENT_ROOT = PROJECT_ROOT / "src" / "mod_agent"
+PROJECTION_ROOT = PROJECT_ROOT / "src" / "non_authoritative_projection"
 
-FORBIDDEN_DEPENDENCY_PREFIXES = (
+FORBIDDEN_CONTROL_DEPENDENCY_PREFIXES = (
+    "src.non_authoritative_projection",
     "src.mod_agent.observability",
     "src.mod_agent.projections",
     "langfuse",
     "tests.conformance.historical_actual_replay",
+)
+
+ALLOWED_PROJECTION_DEPENDENCY_PREFIXES = (
+    "__future__",
+    "collections",
+    "dataclasses",
+    "hashlib",
+    "json",
+    "src.non_authoritative_projection",
+    "typing",
 )
 
 REJECTED_TREE_PATHS = (
@@ -42,10 +54,12 @@ def _resolve_import_from(current_module: str, node: ast.ImportFrom) -> str:
     return ".".join(anchor)
 
 
-def _imported_names(path: Path) -> set[str]:
-    current_module = _module_name(path)
+def _imported_names_from_tree(
+    current_module: str,
+    tree: ast.Module,
+) -> set[str]:
     imported: set[str] = set()
-    for node in ast.walk(_tree(path)):
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
@@ -59,15 +73,64 @@ def _imported_names(path: Path) -> set[str]:
     return imported
 
 
-def test_current_mod_agent_tree_has_no_rejected_projection_dependency() -> None:
+def _imported_names(path: Path) -> set[str]:
+    return _imported_names_from_tree(_module_name(path), _tree(path))
+
+
+def _imported_names_from_source(current_module: str, source: str) -> set[str]:
+    return _imported_names_from_tree(current_module, ast.parse(source))
+
+
+def _matches_prefix(name: str, prefixes: tuple[str, ...]) -> bool:
+    return any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes)
+
+
+def test_complete_current_and_future_mod_agent_tree_has_no_reverse_projection_dependency() -> None:
     violations: list[str] = []
     for path in sorted(MOD_AGENT_ROOT.rglob("*.py")):
         relative_path = path.relative_to(PROJECT_ROOT).as_posix()
         for imported in sorted(_imported_names(path)):
-            if any(
-                imported == prefix or imported.startswith(prefix + ".")
-                for prefix in FORBIDDEN_DEPENDENCY_PREFIXES
-            ):
+            if _matches_prefix(imported, FORBIDDEN_CONTROL_DEPENDENCY_PREFIXES):
+                violations.append(f"{relative_path}: {imported}")
+
+    assert violations == []
+
+
+def test_reverse_dependency_guard_resolves_absolute_and_relative_imports_exactly() -> None:
+    absolute = _imported_names_from_source(
+        "src.mod_agent.future_control",
+        "from src.non_authoritative_projection import ProjectionViewV1",
+    )
+    relative = _imported_names_from_source(
+        "src.mod_agent.workflow.future_control",
+        "from ...non_authoritative_projection import ProjectionViewV1",
+    )
+    existing_observability = _imported_names_from_source(
+        "src.mod_agent.workflow.future_control",
+        "from ...observability import logger",
+    )
+
+    assert any(
+        _matches_prefix(name, FORBIDDEN_CONTROL_DEPENDENCY_PREFIXES)
+        for name in absolute
+    )
+    assert any(
+        _matches_prefix(name, FORBIDDEN_CONTROL_DEPENDENCY_PREFIXES)
+        for name in relative
+    )
+    assert "src.observability" in existing_observability
+    assert not any(
+        _matches_prefix(name, FORBIDDEN_CONTROL_DEPENDENCY_PREFIXES)
+        for name in existing_observability
+    )
+
+
+def test_projection_contract_package_has_only_stdlib_and_self_dependencies() -> None:
+    violations: list[str] = []
+    for path in sorted(PROJECTION_ROOT.rglob("*.py")):
+        relative_path = path.relative_to(PROJECT_ROOT).as_posix()
+        for imported in sorted(_imported_names(path)):
+            if not _matches_prefix(imported, ALLOWED_PROJECTION_DEPENDENCY_PREFIXES):
                 violations.append(f"{relative_path}: {imported}")
 
     assert violations == []
