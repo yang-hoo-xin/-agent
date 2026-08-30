@@ -15,7 +15,14 @@ from .models import (
     EvidencePack,
 )
 
-REQUIREMENT_COVERAGE_SCHEMA_VERSION = "evidence_requirement_coverage_v1"
+LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION = "evidence_requirement_coverage_v1"
+REQUIREMENT_COVERAGE_SCHEMA_VERSION = "evidence_requirement_coverage_v2"
+_SUPPORTED_REQUIREMENT_COVERAGE_SCHEMA_VERSIONS = frozenset(
+    {
+        LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+        REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    }
+)
 REQUIREMENT_ROLES = frozenset(
     {"change", "pre_patch_evidence", "preservation", "post_change_acceptance"}
 )
@@ -187,6 +194,7 @@ def materialize_requirement_coverage_projection(
         input_obligations=_input_obligations(feature_data),
         request=request,
         projection=projection,
+        schema_version=REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     )
 
 
@@ -197,9 +205,12 @@ def _materialize_requirement_coverage_projection(
     input_obligations: list[dict[str, object]],
     request: str,
     projection: Mapping[str, Any],
+    schema_version: str,
 ) -> dict[str, object]:
     """Materialize from identity inputs owned by deterministic code."""
 
+    if schema_version not in _SUPPORTED_REQUIREMENT_COVERAGE_SCHEMA_VERSIONS:
+        raise ValueError("REQUIREMENT_COVERAGE_SCHEMA_VERSION_INVALID")
     if set(projection) != {"requirements", "relations", "input_dispositions"}:
         raise ValueError("REQUIREMENT_COVERAGE_PROJECTION_SHAPE_INVALID")
     raw_requirements = projection.get("requirements")
@@ -295,7 +306,7 @@ def _materialize_requirement_coverage_projection(
     }:
         raise ValueError("REQUIREMENT_COVERAGE_RELATION_COVERAGE_INVALID")
     return {
-        "schema_version": REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "feature_spec_identity": {
             "feature_id": feature_id,
             "feature_spec_sha256": feature_spec_sha256,
@@ -394,6 +405,10 @@ def resolve_requirement_coverage(
     dict[str, object], str, bool, tuple[dict[str, Any], ...], tuple[str, ...]
 ]:
     _validate_materialized_projection(query, materialized_projection)
+    legacy_gap_semantics = (
+        materialized_projection["schema_version"]
+        == LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION
+    )
     if set(findings) != {"findings"} or not isinstance(findings["findings"], list):
         raise ValueError("REQUIREMENT_COVERAGE_FINDINGS_SHAPE_INVALID")
     item_by_id = {item.evidence_id: item for item in items}
@@ -475,7 +490,7 @@ def resolve_requirement_coverage(
             for finding in relevant
             if finding["relationship"] == "support"
             and (
-                requirement_role == "change"
+                legacy_gap_semantics and requirement_role == "change"
                 or not finding["unresolved_gaps"]
             )
             for evidence_id in finding["evidence_ids"]
@@ -490,7 +505,8 @@ def resolve_requirement_coverage(
         if any(
             finding["unresolved_gaps"]
             and not (
-                requirement_role == "change"
+                legacy_gap_semantics
+                and requirement_role == "change"
                 and finding["relationship"] == "support"
             )
             for finding in relevant
@@ -506,6 +522,7 @@ def resolve_requirement_coverage(
         for finding in normalized_findings
         if finding["relationship"] == "support"
         and change_ids.intersection(finding["parent_requirement_ids"])
+        and (legacy_gap_semantics or not finding["unresolved_gaps"])
         for evidence_id in finding["evidence_ids"]
     }
     edit_target_evidence_ids = sorted(
@@ -560,7 +577,9 @@ def _validate_materialized_projection(
         "requirements",
         "relations",
         "queries",
-    } or value.get("schema_version") != REQUIREMENT_COVERAGE_SCHEMA_VERSION:
+    } or value.get(
+        "schema_version"
+    ) not in _SUPPORTED_REQUIREMENT_COVERAGE_SCHEMA_VERSIONS:
         raise ValueError("REQUIREMENT_COVERAGE_MATERIALIZED_SHAPE_INVALID")
     feature_identity = value.get("feature_spec_identity")
     request_identity = value.get("request_identity")
@@ -651,6 +670,7 @@ def _validate_materialized_projection(
         input_obligations=input_obligations,
         request=query,
         projection=normalized_projection,
+        schema_version=str(value["schema_version"]),
     )
     rematerialized["feature_spec_identity"] = dict(feature_identity)
     if rematerialized != dict(value):
@@ -1164,6 +1184,7 @@ def _rematerialize_stored_requirement_coverage(
     input_obligations: object,
     request: str,
     projection: Mapping[str, Any],
+    schema_version: str,
 ) -> dict[str, object]:
     """Rebuild persisted coverage without pretending it is FeatureSpec data."""
 
@@ -1184,6 +1205,7 @@ def _rematerialize_stored_requirement_coverage(
         ),
         request=request,
         projection=projection,
+        schema_version=schema_version,
     )
 
 

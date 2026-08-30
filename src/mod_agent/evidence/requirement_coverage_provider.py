@@ -738,6 +738,9 @@ class StructuredModelRequirementCoverageProvider:
         )
         payload = {
             "message_type": "product_requirement_findings",
+            "coverage_schema_version": materialized_projection[
+                "schema_version"
+            ],
             "request_sha256": hashlib.sha256(
                 request.strip().encode("utf-8")
             ).hexdigest(),
@@ -787,8 +790,16 @@ class StructuredModelRequirementCoverageProvider:
                     "and use conflict when the cited Evidence conflicts."
                 ),
                 (
-                    "A supported change may retain unresolved gaps that describe "
-                    "the requested expected delta; preserve those gaps verbatim."
+                    "For role=change, cited support must cover every known exact "
+                    "physical modification location needed by the change; preserve "
+                    "any missing current-source or edit-authority location in "
+                    "unresolved_gaps."
+                ),
+                (
+                    "unresolved_gaps describe only missing evidence, current-source "
+                    "facts, or edit authority required before Patch. Do not list the "
+                    "requested behavior's expected implementation delta as an "
+                    "unresolved gap."
                 ),
             ],
         }

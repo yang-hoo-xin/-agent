@@ -28,6 +28,8 @@ from src.mod_agent.evidence.identity import (
     request_relation_identity,
 )
 from src.mod_agent.evidence.requirement_coverage import (
+    LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     RequirementCoverageProjectionError,
     requirement_input_obligation_model_view,
 )
@@ -670,7 +672,7 @@ def test_actual10_method_spans_allow_existing_coverage_to_derive_edit_target(
     }
 
 
-def test_actual10_expected_delta_gaps_preserve_change_edit_targets_and_roundtrip(
+def test_actual10_expected_delta_is_not_an_unresolved_evidence_gap(
     tmp_path: Path,
 ) -> None:
     (
@@ -682,6 +684,7 @@ def test_actual10_expected_delta_gaps_preserve_change_edit_targets_and_roundtrip
         findings,
         expected_delta_gaps,
     ) = _actual10_expected_delta_inputs(tmp_path)
+    findings["findings"][0]["unresolved_gaps"] = []
 
     pack = build_requirement_coverage_pack(
         query=str(feature["user_request"]),
@@ -704,9 +707,169 @@ def test_actual10_expected_delta_gaps_preserve_change_edit_targets_and_roundtrip
     assert coverage["edit_target_evidence_ids"] == sorted(
         [spread.evidence_id, configuration.evidence_id]
     )
-    assert coverage["findings"][0]["unresolved_gaps"] == expected_delta_gaps
+    assert coverage["schema_version"] == REQUIREMENT_COVERAGE_SCHEMA_VERSION
+    assert coverage["findings"][0]["unresolved_gaps"] == []
+    assert all(gap not in str(coverage) for gap in expected_delta_gaps)
     payload = pack.to_artifact_payload()
     assert payload["authoritative_for_patch"] is True
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+
+
+def test_v2_change_support_with_physical_authority_gap_blocks_patch(
+    tmp_path: Path,
+) -> None:
+    (
+        feature,
+        materialized,
+        retrieved,
+        _,
+        _,
+        findings,
+        _,
+    ) = _actual10_expected_delta_inputs(tmp_path)
+    authority_gaps = [
+        (
+            "The specific code location where the new 'Accurate Spread Enabled' "
+            "boolean setting is defined and bound in Configuration.cs is not yet "
+            "present; it must be added to BindAll and OnFileChanged."
+        ),
+        (
+            "The exact modification point in OverrideCrosshairSize "
+            "(SpreadPatches.cs) where the override logic `crosshairSize = "
+            "GetCrosshairSize();` needs to be wrapped or bypassed based on the new "
+            "setting is identified but the implementation delta is pending."
+        ),
+    ]
+    findings["findings"][0]["unresolved_gaps"] = list(authority_gaps)
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        findings=findings,
+    )
+
+    change_requirement_id = materialized["requirements"][0]["requirement_id"]
+    assert materialized["schema_version"] == REQUIREMENT_COVERAGE_SCHEMA_VERSION
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+    assert pack.requirement_coverage["edit_target_evidence_ids"] == []
+    assert all(
+        gap in str(pack.requirement_coverage["findings"])
+        for gap in authority_gaps
+    )
+    assert f"required_requirement_unresolved:{change_requirement_id}" in (
+        pack.requirement_coverage["sufficiency"]["reasons"]
+    )
+
+
+def test_v2_complete_multi_site_change_authority_reaches_nonblocking_planning(
+    tmp_path: Path,
+) -> None:
+    (
+        feature,
+        materialized,
+        retrieved,
+        spread,
+        configuration,
+        findings,
+        _,
+    ) = _actual10_expected_delta_inputs(tmp_path)
+    property_site = replace(
+        configuration,
+        evidence_id="rg_fixture_configuration_property",
+        symbol="Configuration",
+        span={"start_line": 4, "end_line": 6},
+        method_name=None,
+        claim_supported="Current Configuration property declaration block.",
+    )
+    reload_site = replace(
+        configuration,
+        evidence_id="rg_fixture_configuration_reload",
+        symbol="OnFileChanged",
+        span={"start_line": 7, "end_line": 12},
+        method_name="OnFileChanged",
+        claim_supported="Current Configuration reload method.",
+    )
+    bind_site = replace(
+        configuration,
+        evidence_id="rg_fixture_configuration_bind",
+        symbol="BindAll",
+        method_name="BindAll",
+        claim_supported="Current Configuration default binding method.",
+    )
+    spread_site = replace(
+        spread,
+        evidence_id="rg_fixture_spread_bypass",
+        claim_supported="Current raw crosshair size override method.",
+    )
+    complete_items = (property_site, reload_site, bind_site, spread_site)
+    retrieved = replace(retrieved, items=complete_items)
+    findings["findings"][0]["evidence_ids"] = [
+        item.evidence_id for item in complete_items
+    ]
+    findings["findings"][0]["unresolved_gaps"] = []
+    findings["findings"][1]["evidence_ids"] = [bind_site.evidence_id]
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        findings=findings,
+    )
+    implementation = ImplementationPlanner().build(
+        feature_spec=_feature_spec(feature),
+        evidence_pack=pack.to_artifact_payload(),
+        formal_requirement_coverage_required=True,
+    )
+
+    expected_ids = frozenset(item.evidence_id for item in complete_items)
+    view = validated_requirement_coverage_view(pack.to_artifact_payload())
+    assert view is not None
+    assert pack.readiness == "sufficient"
+    assert pack.can_generate_patch is True
+    assert view.authorized_edit_target_ids == expected_ids
+    assert implementation.blocking is False
+    assert {
+        binding["evidence_id"]
+        for binding in implementation.binding_registry["edit_bindings"]
+    } == expected_ids
+    assert len(implementation.proposed_changes) == 4
+
+
+def test_v1_change_expected_delta_gap_remains_readable_as_legacy_history(
+    tmp_path: Path,
+) -> None:
+    (
+        feature,
+        materialized,
+        retrieved,
+        spread,
+        configuration,
+        findings,
+        expected_delta_gaps,
+    ) = _actual10_expected_delta_inputs(tmp_path)
+    materialized["schema_version"] = LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        findings=findings,
+    )
+
+    assert pack.readiness == "sufficient"
+    assert pack.can_generate_patch is True
+    assert pack.requirement_coverage["schema_version"] == (
+        LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION
+    )
+    assert pack.requirement_coverage["edit_target_evidence_ids"] == sorted(
+        [spread.evidence_id, configuration.evidence_id]
+    )
+    assert pack.requirement_coverage["findings"][0]["unresolved_gaps"] == (
+        expected_delta_gaps
+    )
+    payload = pack.to_artifact_payload()
     assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
 
 
@@ -857,7 +1020,10 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
         request=str(feature["user_request"]),
     ) == findings
 
-    assert payloads[0]["rules"][-3:] == [
+    assert payloads[0]["coverage_schema_version"] == (
+        REQUIREMENT_COVERAGE_SCHEMA_VERSION
+    )
+    assert payloads[0]["rules"][-4:] == [
         (
             "For role=change, support means the cited Evidence proves the current "
             "implementation and exact modification location; it does not require "
@@ -869,8 +1035,14 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
             "the cited Evidence conflicts."
         ),
         (
-            "A supported change may retain unresolved gaps that describe the "
-            "requested expected delta; preserve those gaps verbatim."
+            "For role=change, cited support must cover every known exact physical "
+            "modification location needed by the change; preserve any missing "
+            "current-source or edit-authority location in unresolved_gaps."
+        ),
+        (
+            "unresolved_gaps describe only missing evidence, current-source facts, "
+            "or edit authority required before Patch. Do not list the requested "
+            "behavior's expected implementation delta as an unresolved gap."
         ),
     ]
 

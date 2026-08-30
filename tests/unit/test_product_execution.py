@@ -567,6 +567,7 @@ def _formal_coverage_vertical_scenario(
     search_root: str = "generated_mods/Example",
     remove_requirement_coverage: bool = False,
     requirement_coverage_completion=None,
+    change_unresolved_gaps: tuple[str, ...] = (),
 ) -> SimpleNamespace:
     request, store = _request(tmp_path)
     workspace_root = Path(request.isolated_workspace_root)
@@ -671,13 +672,24 @@ def _formal_coverage_vertical_scenario(
             }
         if role == "requirement_findings":
             evidence_id = payload["source_observations"][0]["evidence_id"]
+            change_requirement_ids = {
+                requirement["requirement_id"]
+                for requirement in payload["requirements"]
+                if requirement["role"] == "change"
+            }
             return {
                 "findings": [
                     {
                         "relation_index": relation["relation_index"],
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
-                        "unresolved_gaps": [],
+                        "unresolved_gaps": (
+                            list(change_unresolved_gaps)
+                            if change_requirement_ids.intersection(
+                                relation["parent_requirement_ids"]
+                            )
+                            else []
+                        ),
                     }
                     for relation in payload["relations"]
                 ]
@@ -1493,6 +1505,70 @@ def test_product_execution_formal_coverage_vertical_reaches_changed_bytes_and_bu
     assert build["verified_artifacts"][0]["path"] == "bin/Debug/Example.dll"
     assert "runtime_evidence" not in refs
     assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
+
+
+def test_product_execution_blocks_unresolved_change_authority_before_patch(
+    tmp_path: Path,
+) -> None:
+    authority_gap = (
+        "A required physical edit site is not covered by exact current-source "
+        "edit authority."
+    )
+    scenario = _formal_coverage_vertical_scenario(
+        tmp_path,
+        change_unresolved_gaps=(authority_gap,),
+    )
+
+    result = execute_product_execution(
+        preflight_product_execution(
+            scenario.request,
+            scenario.adapters,
+            scenario.store,
+        ),
+        scenario.adapters,
+        scenario.store,
+    )
+
+    assert result.platform_status == "completed"
+    assert result.execution_disposition == "domain_blocked"
+    assert result.terminal_node == "blocked"
+    assert scenario.trace["completion_roles"] == [
+        "requirement_projection",
+        "requirement_findings",
+    ]
+    assert (
+        scenario.trace["patch_calls"],
+        scenario.trace["dry_run_calls"],
+        scenario.trace["apply_calls"],
+        scenario.trace["build_calls"],
+    ) == (0, 0, 0, 0)
+    assert scenario.trace["coverage_edit_target_ids"] == ()
+
+    refs = {item.artifact_role: item.artifact_ref for item in result.outputs}
+    evidence = scenario.store.read(refs["evidence_pack"])["data"]
+    implementation = scenario.store.read(refs["implementation_plan"])["data"]
+    change_requirement_id = next(
+        requirement["requirement_id"]
+        for requirement in evidence["requirement_coverage"]["requirements"]
+        if requirement["role"] == "change"
+    )
+    assert evidence["readiness"] == "insufficient"
+    assert evidence["can_generate_patch"] is False
+    assert evidence["requirement_coverage"]["edit_target_evidence_ids"] == []
+    assert authority_gap in str(evidence["requirement_coverage"]["findings"])
+    assert f"required_requirement_unresolved:{change_requirement_id}" in (
+        evidence["requirement_coverage"]["sufficiency"]["reasons"]
+    )
+    assert implementation["blocking"] is True
+    assert implementation["proposed_changes"] == []
+    assert tuple(item.artifact_role for item in result.outputs) == (
+        "request_planning_report",
+        "mod_planning_brief",
+        "feature_spec",
+        "evidence_pack",
+        "implementation_plan",
+        "blocked_report",
+    )
 
 
 def test_product_execution_actual8_projection_correction_no_progress_fails_closed(
