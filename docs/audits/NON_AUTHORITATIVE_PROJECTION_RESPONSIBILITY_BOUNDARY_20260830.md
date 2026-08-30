@@ -79,10 +79,16 @@ The reverse dependency is forbidden. Graph, Actual, Apply, Repair, approval, and
 product-result owners must not import or consume the projection or telemetry
 implementation. Production code must not import historical test replay runners.
 
-The machine guard is
-`tests/unit/test_non_authoritative_projection_boundary.py`. It intentionally does
-not ban legitimate owner fields such as `first_failure_stage`, `failure_stage`,
-`platform_status`, or `execution_disposition`.
+The current-tree dependency guard is
+`tests/unit/test_non_authoritative_projection_boundary.py`. It dynamically scans
+the complete `src/mod_agent` tree, resolves absolute and relative imports, and
+rejects dependencies on the rejected projection/replay namespaces or Langfuse.
+It also confirms that the rejected whole-commit module paths are absent. This
+static guard does not prove behavior-level route invariance or prevent an
+arbitrary injected callback from carrying authority; those are mandatory tests
+for the next shared-interface checkpoint. Legitimate owner fields such as
+`first_failure_stage`, `failure_stage`, `platform_status`, and
+`execution_disposition` are not prohibited by string matching.
 
 ## 5. Selective reuse boundary
 
@@ -106,8 +112,11 @@ The following must not migrate:
 
 No new projection interface or runtime observer is implemented by this decision.
 The next serial task is to freeze one minimal, non-authoritative fact and explicit
-edge interface that obeys this boundary. Only after that interface checkpoint is
-accepted may Thin Lineage, owner test migration, Langfuse export, and read-only
+edge interface that obeys this boundary. Its acceptance must add route/result/
+Store invariance, conflict-no-adjudication, deterministic serialization, and
+capability-isolation tests rather than claiming that the static import guard
+proves those behaviors. Only after that interface checkpoint is accepted may
+Thin Lineage, owner test migration, Langfuse export, and read-only
 ProjectionRebuild proceed in parallel from the same HEAD.
 
 This decision does not permanently reject complete observability capabilities.
