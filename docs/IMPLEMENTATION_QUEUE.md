@@ -10,9 +10,9 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: user decision on whether to authorize one fresh Patch-only probe against the accepted EVID-006 and PLAN-003 lineage
+current_queue: freeze one shared non-authoritative fact/explicit-edge projection interface on top of responsibility boundary checkpoint 4ba735e
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: EVID-006 is closed at 2b0925c after authoritative Patch fields moved to deterministic materialization and a byte-bound four-site fixture passed; PLAN-003 restores the default Workflow Graph suite to 135 passed; no model call, fresh probe, preflight, packet, or actual16 is authorized
+queue_status: projection responsibility is frozen and the rejected whole commits remain unmerged; no projection interface exists yet; only after one interface checkpoint may Thin Lineage, owner-test migration, Langfuse export, and read-only ProjectionRebuild start from the same HEAD; no model call, fresh probe, preflight, packet, or actual16 is authorized
 ```
 
 ```text
@@ -44,8 +44,8 @@ internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: none_without_user_authorization; one fresh Patch-only probe is the next bounded empirical option
-post_checkpoint_route: separately decide whether to authorize one fresh Patch-only probe
+next_eligible_slice: one bounded non-authoritative projection interface checkpoint with no runtime consumer or execution authority
+post_checkpoint_route: checkpoint review -> create four new parallel implementation pages from the same accepted interface HEAD; Patch-only probe remains a separate authorization decision
 post_approval_route: isolated Apply -> changed-product Build
 patch_only_replay_authorized: consumed_once_by_completed_27b_replay
 activation_required: any further model call, fresh Patch-only probe, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now

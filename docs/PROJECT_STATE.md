@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: separately decide whether to authorize one fresh Patch-only probe against the accepted EVID-006 and PLAN-003 lineage
+current_dependency: freeze one shared non-authoritative fact and explicit-edge interface after responsibility boundary checkpoint 4ba735e
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: 2b0925ca4d9d32fd6ffd728749614b77247ba60e
@@ -97,6 +97,9 @@ complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
 next_capability_step: separately decide whether to authorize one fresh Patch-only probe; no model, preflight, packet, or actual is pre-authorized
 parallel_observability_checkpoints: unmerged_due_to_shadow_fact_recomputation_and_namespace_conflict
+non_authoritative_projection_responsibility_boundary: accepted_at_7f49d1e_then_hardened_at_4ba735e
+rejected_whole_commits: 1275e87_execution_lineage_and_7a6c96f_historical_replay
+projection_interface_status: not_implemented_next_serial_gate
 next_attempt_pre_authorized: false
 ```
 

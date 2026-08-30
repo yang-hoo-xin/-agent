@@ -159,11 +159,14 @@ Current execution order:
 ```
 
 The parallel Execution Lineage, historical replay, engineering-worktree, and
-Langfuse checkpoints remain unmerged. Review found that the Lineage and Replay
-branches recompute cross-owner `first_failure`, claim, or fresh-Actual status;
-those derived decisions are not product facts and are not accepted as a second
-control plane. A future observability integration must consume exact owner
-refs/hashes/events without reordering them or granting run authority.
+Langfuse checkpoints remain unmerged. Responsibility boundary lineage
+`7f49d1e -> 4ba735e` rejects whole-commit merge or original cherry-pick of Lineage
+`1275e87` and Replay `7a6c96f`: their cross-owner `first_failure`, claim, replay
+promotion, and fresh-Actual decisions are not product facts. Selective migration
+remains possible only after a shared non-authoritative interface is frozen.
+Graph, Actual, Apply, Repair, and product-result owners may not depend on the
+projection or telemetry implementation. The detailed boundary is
+`docs/audits/NON_AUTHORITATIVE_PROJECTION_RESPONSIBILITY_BOUNDARY_20260830.md`.
 
 The one bounded Patch-only replay authorization has been consumed. No fresh
 Patch-only probe, fresh preflight, actual16 packet, or actual16 execution is
