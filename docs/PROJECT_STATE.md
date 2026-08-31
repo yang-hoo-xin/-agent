@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: occurrence-aware and scope-compatible non-authoritative Projection V2 serial gate completed; EVID-005 remains open after the terminal one-call 27B replay/probe and no second probe or Actual is authorized
+current_dependency: bounded A/B/D/C non-authoritative Projection V2 serial migration completed with local unit/test-double evidence only; EVID-005 remains open after the terminal one-call 27B replay/probe and no second probe or Actual is authorized
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: 2b0925ca4d9d32fd6ffd728749614b77247ba60e
@@ -95,8 +95,8 @@ actual16_packet_created: false
 actual16_execution_created: false
 complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
-next_capability_step: bounded migration of reviewed A/B/D/C checkpoints only from this docs integration's final HEAD; no direct merge or cherry-pick, second probe, or Actual
-parallel_observability_checkpoints: reviewed_A_e9d798b_scope_compatible_B_97082dd_reverify_and_bind_gitattributes_D_94e80d7_exact_reverse_import_guard_C_65ea636_identity_redacted_explicit_edges_and_no_cooperative_timeout_claim_promotion
+next_capability_step: no additional Projection V2 migration is authorized by this completed page; no second probe or Actual
+serial_observability_checkpoints: A_d506b043c9d1c7f35e78f1f08aad8583eefdc35b_to_e341166b9c0f88ad857f6d1f0f7f696bfee595ee_B_131a72575428896c8af313d272ac3c38b30344f1_to_41eb055ef9eea477cf5b349ad0e19828c4736efa_D_cd165ac502d0e196c4d50ce677438391e7b84c87_to_3f1d7759737e28972003f1171bb6cd6edcc85ac3_C_c6d376d3d07bc6fba626cdf46c94eedf9f4a5358_to_5083bdd6f40dcd6fb6a9db9e7cc07228f53e2573
 non_authoritative_projection_responsibility_boundary: accepted_at_7f49d1e_then_hardened_at_4ba735e
 rejected_whole_commits: 1275e87_execution_lineage_and_7a6c96f_historical_replay
 projection_interface_status: v1_exact_api_bytes_hashes_and_read_compatibility_preserved_v2_accepted_reviewed_integrated_through_b040555_to_4aafa0c_occurrence_aware_scope_compatible_shared_interface_no_observer_no_production_consumer
@@ -129,15 +129,17 @@ They remain local repository test/test-double evidence; this integration did
 not rerun them and they do not establish model, Patch, product, Build, or
 Runtime success.
 
-The reviewed A/B/D/C checkpoint commits are `e9d798b`, `97082dd`, `94e80d7`,
-and `65ea636`. They are not accepted for direct merge or cherry-pick. Bounded
-migrations must start from this docs integration's final HEAD: A must preserve
-owner-compatible scope, B must reverify fixture bytes and retain its
-`.gitattributes` binding, D must add the exact reverse-import guard, and C must
-emit identity-redacted explicit edges without upgrading its cooperative sink
-timeout to an enforced timeout claim. The V2 shared module, tests, and audit
-plus all V1 no-edit surfaces remain read-only. This integration creates no
-migration page. The existing 27B replay/probe is terminal after exactly one
+The bounded A/B/D/C serial migration began at `6e11a67` and is integrated as
+`d506b043 -> e341166`, `131a7257 -> 41eb055`, `cd165ac -> 3f1d775`, and
+`c6d376d -> 5083bdd`. It preserves owner-compatible scope, binds B fixture
+bytes through `.gitattributes`, proves D's exact reverse-import guard, and
+exports C's identity-redacted explicit edges. C `timeout_millis` remains a
+cooperative injected-sink argument, not a hard cancellation claim. The V2
+shared module, tests, and audit plus all V1 no-edit surfaces remain read-only.
+The commands recorded in the V2 audit returned A `38 passed`, B `128 passed`,
+D `77 passed`, and final combined `183 passed`, each with the existing one
+`jieba` deprecation warning; these are local unit/test-double evidence only.
+The existing 27B replay/probe is terminal after exactly one
 600-second-timeout call with no complete response or parser entry;
 `EVID-005` remains open and no second probe or Actual may be created. Both
 Internal Alpha hard gates remain false. No Dense/RRF/reranker, Self-RAG

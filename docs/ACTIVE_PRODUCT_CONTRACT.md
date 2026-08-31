@@ -170,8 +170,8 @@ Current execution order:
 -> c6e00b8 and 55b51bb close PLAN-003 and restore the complete default Workflow Graph suite
 -> accepted Projection V1 lineage through be8a910 remains integrated and read-compatible
 -> accepted/reviewed Projection V2 lineage d9c9a65 -> 99c2faa -> b040555 is integrated as 163595b -> fc555a8 -> 4aafa0c
--> reviewed A/B/D/C checkpoints remain migration evidence only and must not be merged or cherry-picked directly
--> bounded A/B/D/C migration may start only from this docs integration's same final HEAD: A preserves owner-compatible scope, B revalidates fixtures with its .gitattributes binding, D adds the exact reverse-import guard, and C emits identity-redacted explicit edges without promoting its cooperative timeout claim
+-> bounded A/B/D/C serial migration completes from 6e11a67: A d506b043 -> e341166, B 131a7257 -> 41eb055, D cd165ac -> 3f1d775, C c6d376d -> 5083bdd
+-> the four local migration pages preserve owner-compatible scope, bind B fixture bytes through .gitattributes, prove D's exact contracts_v2 reverse-import guard, and export C's identity-redacted explicit edges; C timeout_millis remains a cooperative injected-sink argument only
 -> the existing 27B Patch-only replay/probe is terminal after exactly one 600-second-timeout call with no complete response or parser entry; EVID-005 remains open and no second probe or Actual may be created from this state
 -> do not repeat the same 27B call, increase timeout, run a 4B correction, or prepare actual16
 -> PatchProposal -> ProposalReview
@@ -185,15 +185,19 @@ Responsibility boundary lineage `7f49d1e -> 4ba735e` still rejects whole-commit
 merge or original cherry-pick of Lineage `1275e87` and Replay `7a6c96f`: their
 cross-owner `first_failure`, claim, replay promotion, and fresh-Actual decisions
 are not product facts. Neither the accepted V1 interface nor the accepted V2
-checkpoint changes that boundary. The reviewed A/B/D/C commits
-`e9d798b`, `97082dd`, `94e80d7`, and `65ea636` were each built from the prior
-`ccfd8e4` baseline. They are not direct integration inputs; each capability
-requires a bounded migration from the final HEAD produced by this integration.
-A must preserve owner-compatible scope, B must reverify and bind its fixture
-bytes with `.gitattributes`, D must add the exact reverse-import guard, and C
-must include identity-redacted explicit edges while retaining only a
-cooperative sink-timeout claim. The V2 module/tests/audit and every V1 no-edit
-surface remain read-only. This integration creates none of those pages.
+checkpoint changes that boundary. From parent `6e11a67`, the separately
+reviewed bounded migration inputs were serially integrated as A
+`d506b043c9d1c7f35e78f1f08aad8583eefdc35b -> e341166b9c0f88ad857f6d1f0f7f696bfee595ee`,
+B `131a72575428896c8af313d272ac3c38b30344f1 -> 41eb055ef9eea477cf5b349ad0e19828c4736efa`,
+D `cd165ac502d0e196c4d50ce677438391e7b84c87 -> 3f1d7759737e28972003f1171bb6cd6edcc85ac3`,
+and C `c6d376d3d07bc6fba626cdf46c94eedf9f4a5358 -> 5083bdd6f40dcd6fb6a9db9e7cc07228f53e2573`.
+Each source and resulting commit changed only its reviewed file set. The V2
+module/tests/audit and every V1 no-edit surface remain read-only. The focused
+local unit results were A `38 passed`, B `128 passed`, D `77 passed`, and the
+final combined A/B/D/C + V2 regression `183 passed`, each with the existing
+single `jieba` deprecation warning. This is unit/test-double evidence only; it
+does not prove product success, actual execution, Build, telemetry delivery,
+or a hard exporter timeout.
 Graph, Actual, Apply, Repair, and product-result owners may not depend on the
 projection or telemetry implementation. The exact shared-file boundary is in
 `docs/audits/NON_AUTHORITATIVE_PROJECTION_IDENTITY_V2_CHECKPOINT_20260830.md`;

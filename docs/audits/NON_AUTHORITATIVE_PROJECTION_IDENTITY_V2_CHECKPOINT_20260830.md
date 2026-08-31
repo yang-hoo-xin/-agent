@@ -350,38 +350,30 @@ historical Projection rebuild, export, telemetry delivery, model behavior,
 Patch success, product success, Build success, Runtime behavior, approval,
 retry, promotion, queue state, or execution authority.
 
-## 9. Integrated restart and shared-file boundary
+## 9. A/B/D/C serial integration and shared-file boundary
 
-Four bounded checkpoints created from parent
-`ccfd8e4a0ab8ffe479e620dba5dc8ad2bb0755d0` have now been reviewed as
-migration evidence. They are not accepted integration commits and must not be
-merged or cherry-picked directly:
+The four bounded source checkpoints all have parent
+`6e11a67dd31f721c4257f0b231dcbf1b291d1222` and were integrated serially with
+zero conflicts. Their exact source-to-mainline mapping is:
 
-- A, Thin Lineage: `e9d798b8c8c08445fb60e966902f86eb8bd059be`;
-- B, owner-test assets: `97082dd14619aaf41bc965e2fff4c197294ed7a5`;
-- D, ProjectionRebuild: `94e80d7b608868a12af291c4bf78a43d6876ff13`;
-- C, Langfuse exporter: `65ea6363f9a058404c7a14df2347f48baae8f5a1`.
+- A, Thin Lineage: `d506b043c9d1c7f35e78f1f08aad8583eefdc35b -> e341166b9c0f88ad857f6d1f0f7f696bfee595ee`;
+- B, owner-test assets: `131a72575428896c8af313d272ac3c38b30344f1 -> 41eb055ef9eea477cf5b349ad0e19828c4736efa`;
+- D, ProjectionRebuild: `cd165ac502d0e196c4d50ce677438391e7b84c87 -> 3f1d7759737e28972003f1171bb6cd6edcc85ac3`;
+- C, exporter: `c6d376d3d07bc6fba626cdf46c94eedf9f4a5358 -> 5083bdd6f40dcd6fb6a9db9e7cc07228f53e2573`.
 
-Each capability requires a bounded migration from the final mainline HEAD
-created by this docs-only integration. A must preserve every owner-legal
-`ProductExecutionResultV1.run_id` and `request_id` value exactly through Thin
-Lineage; its old scope-rejection test cannot be copied unchanged. B must
-reverify its raw and canonical fixture hashes on the new baseline and keep the
-fixture bytes bound by
+A preserves every owner-legal `ProductExecutionResultV1.run_id` and
+`request_id` value exactly through Thin Lineage. B revalidates raw and canonical
+fixture hashes, including the fixture bytes bound by
 `tests/fixtures/non_authoritative_projection/v2_owner_migration/.gitattributes`.
-D must add an exact reverse-import guard proving that
+D proves the exact reverse-import guard that
 `src.non_authoritative_projection.contracts_v2` does not import
-`src.observability.non_authoritative_projection_v2_rebuild`. C must export an
-allowlisted, identity-redacted representation of the existing
-`ExplicitEdgeV2` relation, endpoints, and reporter rather than dropping all
-explicit edges. C's `timeout_millis` remains only a cooperative sink argument:
-the old checkpoint does not enforce cancellation or a deadline and therefore
-does not support a stronger timeout claim.
+`src.observability.non_authoritative_projection_v2_rebuild`. C exports an
+allowlisted, identity-redacted representation of existing `ExplicitEdgeV2`
+relations, endpoints, and reporters. C `timeout_millis` remains only a
+cooperative injected-sink argument; it does not enforce cancellation or a
+deadline.
 
-No A/B/D/C migration page is created here. Any later page must start from the
-same final mainline HEAD, and the occurrence-aware, scope-compatible V2
-identity is its shared interface. It must treat these V2 shared surfaces as
-read-only:
+The completed integration keeps these V2 shared surfaces read-only:
 
 - `src/non_authoritative_projection/contracts_v2.py`
 - `tests/unit/test_non_authoritative_projection_v2.py`
@@ -390,9 +382,28 @@ read-only:
 
 Every V1 no-edit surface listed in section 9 of
 `docs/audits/NON_AUTHORITATIVE_PROJECTION_INTERFACE_CHECKPOINT_20260830.md`
-also remains read-only. A page that finds either shared interface insufficient
-must stop and return the exact missing representation; it may not revise those
-surfaces in its own worktree.
+also remains read-only. Graph, Actual, Apply, Repair, product-result owners,
+and product control paths do not depend on the projection or exporter.
+
+### 9.1 Integration verification evidence
+
+All commands below are local unit/test-double checks. No model, network,
+product preflight, packet, Actual, Build, Apply, Repair, Runtime, game process,
+game-directory write, external disclosure, real Langfuse SDK, or consumer was
+used.
+
+| integration step | command | result |
+| --- | --- | --- |
+| A | `python -m pytest tests/unit/test_thin_lineage_projection_v2.py tests/unit/test_non_authoritative_projection_v2.py tests/unit/test_product_execution_projection_v2.py tests/unit/test_non_authoritative_projection_boundary.py -q` | `38 passed, 1 warning` |
+| B | `python -m pytest tests/unit/test_non_authoritative_projection_v2_owner_assets.py tests/unit/test_non_authoritative_projection_v2.py tests/unit/test_non_authoritative_projection_v2_scope_compatibility.py tests/unit/test_product_execution_projection_v2.py tests/unit/test_non_authoritative_projection_boundary.py -q` | `128 passed, 1 warning` |
+| D | `python -m pytest tests/unit/test_non_authoritative_projection_v2_rebuild.py tests/unit/test_non_authoritative_projection_v2.py tests/unit/test_non_authoritative_projection_v2_scope_compatibility.py tests/unit/test_product_execution_projection_v2.py tests/unit/test_non_authoritative_projection_boundary.py -q` | `77 passed, 1 warning` |
+| C/final | `python -m pytest tests/unit/test_thin_lineage_projection_v2.py tests/unit/test_non_authoritative_projection_v2_owner_assets.py tests/unit/test_non_authoritative_projection_v2_rebuild.py tests/unit/test_non_authoritative_projection_v2_langfuse_exporter.py tests/unit/test_non_authoritative_projection_v2.py tests/unit/test_non_authoritative_projection_v2_scope_compatibility.py tests/unit/test_product_execution_projection_v2.py tests/unit/test_non_authoritative_projection_boundary.py -q` | `183 passed, 1 warning` |
+
+The warning is the existing `jieba` import of deprecated `pkg_resources`; it is
+not a projection or owner-contract failure. These results prove only the bound
+local unit/test-double behaviors. They do not prove product success, telemetry
+delivery, a hard exporter timeout, complete Lineage/UI, Actual, Build, Apply,
+Repair, or Runtime success.
 
 The existing bounded 27B Patch-only replay/probe is terminal: it made exactly
 one `qwen3.6:27b` `initial_patch` invocation with a 600-second configured

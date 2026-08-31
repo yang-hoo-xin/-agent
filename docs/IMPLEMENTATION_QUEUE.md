@@ -10,9 +10,9 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: accepted/reviewed occurrence-aware and scope-compatible non-authoritative Projection V2 serial gate complete; reviewed A/B/D/C checkpoints require bounded migration from this docs integration's final HEAD, and none is created here
+current_queue: bounded occurrence-aware and scope-compatible non-authoritative Projection V2 A/B/D/C serial migration complete with local unit/test-double evidence only; no further Projection V2 migration is queued here
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: Projection V1 remains read-compatible; Projection V2 source lineage d9c9a65 -> 99c2faa -> b040555 is integrated as 163595b -> fc555a8 -> 4aafa0c with occurrence-aware scope-compatible identity, exact admission, and no observer; A/B/D/C old checkpoints are reviewed migration evidence only and may not be merged or cherry-picked directly; no second probe, Actual, model call, preflight, packet, or actual16 is authorized
+queue_status: Projection V1 remains read-compatible; Projection V2 source lineage d9c9a65 -> 99c2faa -> b040555 is integrated as 163595b -> fc555a8 -> 4aafa0c with occurrence-aware scope-compatible identity, exact admission, and no observer; bounded migration mappings are A d506b043 -> e341166, B 131a7257 -> 41eb055, D cd165ac -> 3f1d775, C c6d376d -> 5083bdd; no second probe, Actual, model call, preflight, packet, or actual16 is authorized
 ```
 
 ```text
@@ -44,8 +44,8 @@ internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: bounded A/B/D/C migrations from this docs integration's final HEAD; A preserves owner-compatible scope, B revalidates fixtures and binds .gitattributes, D adds the exact reverse-import guard, C emits identity-redacted explicit edges without promoting its cooperative timeout claim; V2 shared surfaces and V1 no-edit surfaces are read-only
-post_checkpoint_route: reviewed e9d798b/97082dd/94e80d7/65ea636 are migration evidence only and are not direct merge or cherry-pick inputs; no second Patch-only probe or Actual may be created
+next_eligible_slice: no additional Projection V2 migration is authorized by this completed page; V2 shared surfaces and V1 no-edit surfaces remain read-only
+post_checkpoint_route: A d506b043 -> e341166, B 131a7257 -> 41eb055, D cd165ac -> 3f1d775, and C c6d376d -> 5083bdd completed serially; no second Patch-only probe or Actual may be created
 post_approval_route: isolated Apply -> changed-product Build
 patch_only_replay_authorized: consumed_once_by_completed_27b_replay
 activation_required: any second Patch-only probe, Actual, further model call, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
@@ -98,15 +98,15 @@ Current execution order:
 1. Preserve the accepted responsibility, V1 compatibility, V2 occurrence-aware
    identity, exact-admission, explicit-edge, and no-observer boundaries without
    adding execution authority.
-2. Treat reviewed checkpoints A `e9d798b`, B `97082dd`, D `94e80d7`, and C
-   `65ea636` as bounded migration evidence only; do not merge or cherry-pick
-   them directly.
-3. Migrate only from this docs integration's final HEAD: A must preserve
-   owner-compatible scope; B must reverify fixtures and retain
-   `tests/fixtures/non_authoritative_projection/v2_owner_migration/.gitattributes`;
-   D must add the exact reverse-import guard; C must export identity-redacted
-   explicit edges and retain only a cooperative sink-timeout claim. No
-   migration page is created here.
+2. Record the completed serial mappings from `6e11a67`: A `d506b043 ->
+   e341166`, B `131a7257 -> 41eb055`, D `cd165ac -> 3f1d775`, and C
+   `c6d376d -> 5083bdd`. Local commands returned `38 passed`, `128 passed`,
+   `77 passed`, and final combined `183 passed`, with the existing one `jieba`
+   deprecation warning; this is unit/test-double evidence only.
+3. Preserve the completed boundaries: owner-compatible scope, B fixture-byte
+   and `.gitattributes` binding, D's exact reverse-import guard, and C's
+   identity-redacted explicit edges. C's injected-sink timeout remains
+   cooperative and is not a hard cancellation claim.
 4. Treat the V2 shared module/tests/audit and every V1 no-edit surface as
    read-only, along with Graph, EvidencePack, Prompt, and config.
 5. Preserve the terminal one-call 27B replay/probe evidence and create no
