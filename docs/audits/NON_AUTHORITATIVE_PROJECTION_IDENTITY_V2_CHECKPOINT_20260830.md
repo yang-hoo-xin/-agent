@@ -3,10 +3,10 @@
 Status: accepted/reviewed/integrated on `codex/rag-capability-mainline`
 
 Accepted source lineage:
-`d9c9a65aaccd093ba0bf45453b104fbd4d5a6f1b -> 99c2faa2f651832b8b994d81b2170bfbb15d32fa`
+`d9c9a65aaccd093ba0bf45453b104fbd4d5a6f1b -> 99c2faa2f651832b8b994d81b2170bfbb15d32fa -> b0405555588846ff1bb4602c92088d84fb3ef010`
 
 Integrated mainline lineage:
-`163595ba3c6658a5e9a3d95128a94f0f0d3149c0 -> fc555a8439642bdb61fc8548ba8d7045cfda9340`
+`163595ba3c6658a5e9a3d95128a94f0f0d3149c0 -> fc555a8439642bdb61fc8548ba8d7045cfda9340 -> 4aafa0cd6a918e0a2069448b7ec550727b3b431d`
 
 Initial checkpoint parent:
 `a79565197e7c5242f5f22b6ff6ddfe75db94f7ed`
@@ -352,15 +352,36 @@ retry, promotion, queue state, or execution authority.
 
 ## 9. Integrated restart and shared-file boundary
 
-The former A/B/C/D worktrees stopped after the V1 path-only identity gap was
-established. They produced no accepted commit, and their staged or untracked
-files are not inputs to this mainline integration.
+Four bounded checkpoints created from parent
+`ccfd8e4a0ab8ffe479e620dba5dc8ad2bb0755d0` have now been reviewed as
+migration evidence. They are not accepted integration commits and must not be
+merged or cherry-picked directly:
 
-Fresh Thin Lineage, owner-test migration, Langfuse exporter, and
-ProjectionRebuild worktrees must be created from one same final mainline HEAD
-that contains both mapped V2 commits and the docs-only integration state. The
-occurrence-aware V2 identity is their shared interface. They must treat these
-V2 shared surfaces as read-only:
+- A, Thin Lineage: `e9d798b8c8c08445fb60e966902f86eb8bd059be`;
+- B, owner-test assets: `97082dd14619aaf41bc965e2fff4c197294ed7a5`;
+- D, ProjectionRebuild: `94e80d7b608868a12af291c4bf78a43d6876ff13`;
+- C, Langfuse exporter: `65ea6363f9a058404c7a14df2347f48baae8f5a1`.
+
+Each capability requires a bounded migration from the final mainline HEAD
+created by this docs-only integration. A must preserve every owner-legal
+`ProductExecutionResultV1.run_id` and `request_id` value exactly through Thin
+Lineage; its old scope-rejection test cannot be copied unchanged. B must
+reverify its raw and canonical fixture hashes on the new baseline and keep the
+fixture bytes bound by
+`tests/fixtures/non_authoritative_projection/v2_owner_migration/.gitattributes`.
+D must add an exact reverse-import guard proving that
+`src.non_authoritative_projection.contracts_v2` does not import
+`src.observability.non_authoritative_projection_v2_rebuild`. C must export an
+allowlisted, identity-redacted representation of the existing
+`ExplicitEdgeV2` relation, endpoints, and reporter rather than dropping all
+explicit edges. C's `timeout_millis` remains only a cooperative sink argument:
+the old checkpoint does not enforce cancellation or a deadline and therefore
+does not support a stronger timeout claim.
+
+No A/B/D/C migration page is created here. Any later page must start from the
+same final mainline HEAD, and the occurrence-aware, scope-compatible V2
+identity is its shared interface. It must treat these V2 shared surfaces as
+read-only:
 
 - `src/non_authoritative_projection/contracts_v2.py`
 - `tests/unit/test_non_authoritative_projection_v2.py`
@@ -373,17 +394,22 @@ also remains read-only. A page that finds either shared interface insufficient
 must stop and return the exact missing representation; it may not revise those
 surfaces in its own worktree.
 
-This integration creates no A/B/C/D page and no fresh Patch-only probe. The
-probe still requires separate authorization and remains uncreated. `EVID-005`
-and both false Internal Alpha hard gates are unchanged. No Actual or actual16,
-model, Apply, Build, Runtime, Dense/RRF/reranker, Self-RAG, PDF, UI, or other
-backlog work is activated.
+The existing bounded 27B Patch-only replay/probe is terminal: it made exactly
+one `qwen3.6:27b` `initial_patch` invocation with a 600-second configured
+timeout, ended with `complete_response_absent=true`, and did not enter the
+Patch payload parser. `EVID-005` remains open. This integration creates or
+authorizes no second probe and no Actual. Both false Internal Alpha hard gates
+and every unactivated item remain unchanged; no actual16, model, Apply, Build,
+Runtime, Dense/RRF/reranker, Self-RAG, PDF, UI, or other backlog work is
+activated.
 
 ## 10. ProductExecution scope compatibility correction (2026-08-31)
 
 This correction starts from exact detached parent
 `ccfd8e4a0ab8ffe479e620dba5dc8ad2bb0755d0`. It is the shared Projection V2
-interface's last field-level compatibility closure.
+interface's last field-level compatibility closure. Accepted source commit
+`b0405555588846ff1bb4602c92088d84fb3ef010` is integrated on the mainline as
+`4aafa0cd6a918e0a2069448b7ec550727b3b431d` with an equivalent commit tree.
 
 ### 10.1 Exact owner rule and lossless scope representation
 
@@ -450,7 +476,9 @@ field-by-field compatibility patch is authorized by this checkpoint.
 
 ### 10.4 Verification evidence
 
-All commands remained local and used repository tests or test doubles. No
+The source implementation page recorded the three pytest results below, and
+the read-only macro review page reproduced all three. They are local repository
+test or test-double evidence. This integration page did not rerun them. No
 model, network, Actual, Build, Apply, Repair, Runtime, game process, or external
 disclosure occurred.
 

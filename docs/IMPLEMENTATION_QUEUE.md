@@ -10,9 +10,9 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: accepted/reviewed occurrence-aware non-authoritative Projection V2 serial gate complete; fresh Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild worktrees may start only from this integration's same final HEAD, and none is created here
+current_queue: accepted/reviewed occurrence-aware and scope-compatible non-authoritative Projection V2 serial gate complete; reviewed A/B/D/C checkpoints require bounded migration from this docs integration's final HEAD, and none is created here
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: Projection V1 remains read-compatible; Projection V2 source lineage d9c9a65 -> 99c2faa is integrated as 163595b -> fc555a8 with occurrence-aware identity, exact admission, and no observer; prior A/B/C/D stopped with no accepted commit and their staged/untracked files are not inputs; no model call, fresh probe, preflight, packet, or actual16 is authorized
+queue_status: Projection V1 remains read-compatible; Projection V2 source lineage d9c9a65 -> 99c2faa -> b040555 is integrated as 163595b -> fc555a8 -> 4aafa0c with occurrence-aware scope-compatible identity, exact admission, and no observer; A/B/D/C old checkpoints are reviewed migration evidence only and may not be merged or cherry-picked directly; no second probe, Actual, model call, preflight, packet, or actual16 is authorized
 ```
 
 ```text
@@ -44,11 +44,11 @@ internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: fresh independent Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild worktrees from this integration's same final HEAD; V2 shared surfaces and V1 no-edit surfaces are read-only
-post_checkpoint_route: former A/B/C/D worktrees stopped on the V1 path-only identity gap with no accepted commit and no staged/untracked inputs; create fresh worktrees only from the same final HEAD; Patch-only probe remains a separate authorization decision
+next_eligible_slice: bounded A/B/D/C migrations from this docs integration's final HEAD; A preserves owner-compatible scope, B revalidates fixtures and binds .gitattributes, D adds the exact reverse-import guard, C emits identity-redacted explicit edges without promoting its cooperative timeout claim; V2 shared surfaces and V1 no-edit surfaces are read-only
+post_checkpoint_route: reviewed e9d798b/97082dd/94e80d7/65ea636 are migration evidence only and are not direct merge or cherry-pick inputs; no second Patch-only probe or Actual may be created
 post_approval_route: isolated Apply -> changed-product Build
 patch_only_replay_authorized: consumed_once_by_completed_27b_replay
-activation_required: any further model call, fresh Patch-only probe, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
+activation_required: any second Patch-only probe, Actual, further model call, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
 same_27b_replay_authorized: false
 isolated_4b_correction_authorized: false
 automatic_actual16_authorized: false
@@ -56,8 +56,11 @@ completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
 P0 remains completed and the selected product remains on the P2 empirical path;
-P1 code structure is not product completion. The consumed frozen 27B replay
-again timed out at the provider boundary, so `EVID-005` remains active. Its
+P1 code structure is not product completion. The consumed frozen 27B
+replay/probe made exactly one `qwen3.6:27b` `initial_patch` call with a
+600-second configured timeout, ended with no complete response, and never
+entered the Patch payload parser, so `EVID-005` remains active. No second probe
+or Actual is eligible. Its
 deterministic pre-call reconstruction closed `PLAN-002`. The isolated 4B probe
 proved bounded liveness but its exact-binding rejection was correct:
 `edit_binding_001` authorizes only `Configuration.cs` `OnFileChanged` span
@@ -79,30 +82,39 @@ The rejected whole Lineage and Replay commits remain unmerged because their
 cross-owner failure, claim, or run-status derivations cannot become a second
 queue or truth owner. Projection V1 through `be8a910` remains exactly readable,
 but its path-only identity is not used by new Thin Lineage producers. The
-accepted/reviewed V2 lineage `d9c9a65 -> 99c2faa`, integrated as `163595b ->
-fc555a8`, supplies the occurrence-aware shared interface without an observer or
-production consumer. Its `61 passed` and `108 passed` results are original-page
-and macro-page local test-double evidence, were not rerun here, and are not
-product success.
+accepted/reviewed V2 lineage `d9c9a65 -> 99c2faa -> b040555`, integrated as
+`163595b -> fc555a8 -> 4aafa0c`, supplies the occurrence-aware,
+scope-compatible shared interface without an observer or production consumer.
+For ProductExecution scope it mirrors the owner's exact non-empty `str` rule
+and preserves the original `run_id` and `request_id` values without cleaning.
+This is the final field-level V2 compatibility closure; another owner-legal
+representation gap requires re-auditing the V2 abstraction. The `43 passed`,
+`61 passed`, and `108 passed` results were recorded by the implementation page
+and reproduced by the macro review page; they were not rerun here, remain local
+evidence, and are not product success.
 
 Current execution order:
 
 1. Preserve the accepted responsibility, V1 compatibility, V2 occurrence-aware
    identity, exact-admission, explicit-edge, and no-observer boundaries without
    adding execution authority.
-2. Discard the former A/B/C/D worktrees as integration inputs: they stopped on
-   the V1 gap, have no accepted commit, and their staged/untracked files are not
-   referenced.
-3. Start fresh Thin Lineage, owner-test migration, Langfuse exporter, and
-   ProjectionRebuild worktrees only from this integration's same final HEAD;
-   no such page is created here.
+2. Treat reviewed checkpoints A `e9d798b`, B `97082dd`, D `94e80d7`, and C
+   `65ea636` as bounded migration evidence only; do not merge or cherry-pick
+   them directly.
+3. Migrate only from this docs integration's final HEAD: A must preserve
+   owner-compatible scope; B must reverify fixtures and retain
+   `tests/fixtures/non_authoritative_projection/v2_owner_migration/.gitattributes`;
+   D must add the exact reverse-import guard; C must export identity-redacted
+   explicit edges and retain only a cooperative sink-timeout claim. No
+   migration page is created here.
 4. Treat the V2 shared module/tests/audit and every V1 no-edit surface as
    read-only, along with Graph, EvidencePack, Prompt, and config.
-5. Separately decide whether to authorize one fresh Patch-only probe.
+5. Preserve the terminal one-call 27B replay/probe evidence and create no
+   second probe or Actual.
 
 Do not rerun the same 27B call, increase timeout, perform a 4B correction, or
-prepare actual16. No fresh Patch-only probe, fresh preflight, actual16 packet,
-or actual16 execution is authorized. Exact-diff approval still requires a
+prepare actual16. No second Patch-only probe, Actual, fresh preflight, actual16
+packet, or actual16 execution is authorized. Exact-diff approval still requires a
 complete Dry-run diff. Without that approval, isolated Apply and
 changed-product Build are not eligible. `EVID-005` remains the current real
 product Issue and both Internal Alpha hard gates remain false. Dense/RRF/

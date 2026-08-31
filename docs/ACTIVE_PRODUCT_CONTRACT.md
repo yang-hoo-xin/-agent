@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-30
+Last updated: 2026-08-31
 
 ## 1. Product
 
@@ -142,14 +142,17 @@ hashes, and strict read compatibility, but its path-only fact identity is not
 the interface for new Thin Lineage producers.
 
 The accepted/reviewed Projection V2 source lineage
-`d9c9a65 -> 99c2faa` is integrated here as `163595b -> fc555a8`. Its
-occurrence-aware identity is the shared interface for restarting Thin Lineage,
-owner-test migration, a Langfuse exporter, and ProjectionRebuild. It preserves
-the existing responsibility owners, closed admission, source-bound explicit
-edges, and no-observer/no-production-consumer boundary. The recorded `61
-passed` and `108 passed` results are local test-double evidence reproduced by
-the original implementation and macro review pages; this integration did not
-rerun them, and they do not establish product success.
+`d9c9a65 -> 99c2faa -> b040555` is integrated here as
+`163595b -> fc555a8 -> 4aafa0c`. The last commit is the shared V2 interface's
+final field-level scope-compatibility closure: ProductExecution `run_id` and
+`request_id` now mirror the owner's exact non-empty-string rule and retain the
+original value without trimming or normalization. Its occurrence-aware,
+scope-compatible identity remains the shared interface for bounded Thin
+Lineage, owner-test asset, Langfuse exporter, and ProjectionRebuild migration.
+The `43 passed`, `61 passed`, and `108 passed` results were recorded by the
+implementation page and reproduced by the read-only macro review page; this
+integration did not rerun them, and they are local evidence rather than product
+success.
 
 Current execution order:
 
@@ -166,10 +169,10 @@ Current execution order:
 -> checkpoint 2b0925c closes EVID-006's bounded code/test trigger with a byte-bound four-site fixture
 -> c6e00b8 and 55b51bb close PLAN-003 and restore the complete default Workflow Graph suite
 -> accepted Projection V1 lineage through be8a910 remains integrated and read-compatible
--> accepted/reviewed Projection V2 lineage d9c9a65 -> 99c2faa is integrated as 163595b -> fc555a8
--> former A/B/C/D worktrees stopped on the V1 path-only identity gap and produced no accepted commit; their staged/untracked files are not inputs
--> fresh Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild worktrees may restart only from this integration's same final HEAD; V2 shared surfaces and the V1 no-edit surfaces are read-only
--> separately decide whether to authorize one fresh Patch-only probe
+-> accepted/reviewed Projection V2 lineage d9c9a65 -> 99c2faa -> b040555 is integrated as 163595b -> fc555a8 -> 4aafa0c
+-> reviewed A/B/D/C checkpoints remain migration evidence only and must not be merged or cherry-picked directly
+-> bounded A/B/D/C migration may start only from this docs integration's same final HEAD: A preserves owner-compatible scope, B revalidates fixtures with its .gitattributes binding, D adds the exact reverse-import guard, and C emits identity-redacted explicit edges without promoting its cooperative timeout claim
+-> the existing 27B Patch-only replay/probe is terminal after exactly one 600-second-timeout call with no complete response or parser entry; EVID-005 remains open and no second probe or Actual may be created from this state
 -> do not repeat the same 27B call, increase timeout, run a 4B correction, or prepare actual16
 -> PatchProposal -> ProposalReview
 -> complete Dry-run diff -> wait for human exact-diff approval
@@ -182,21 +185,25 @@ Responsibility boundary lineage `7f49d1e -> 4ba735e` still rejects whole-commit
 merge or original cherry-pick of Lineage `1275e87` and Replay `7a6c96f`: their
 cross-owner `first_failure`, claim, replay promotion, and fresh-Actual decisions
 are not product facts. Neither the accepted V1 interface nor the accepted V2
-checkpoint changes that boundary. The former A/B/C/D worktrees stopped after
-the V1 identity gap and have no accepted commit; their staged or untracked
-files are not integration inputs. Fresh Thin Lineage, owner-test migration, a
-Langfuse exporter, and ProjectionRebuild worktrees may each be created only
-from the same final HEAD produced by this integration. Their initial fit audits,
-the V2 module/tests/audit, and every V1 no-edit surface remain read-only. This
-integration creates none of those pages and assigns no further page status.
+checkpoint changes that boundary. The reviewed A/B/D/C commits
+`e9d798b`, `97082dd`, `94e80d7`, and `65ea636` were each built from the prior
+`ccfd8e4` baseline. They are not direct integration inputs; each capability
+requires a bounded migration from the final HEAD produced by this integration.
+A must preserve owner-compatible scope, B must reverify and bind its fixture
+bytes with `.gitattributes`, D must add the exact reverse-import guard, and C
+must include identity-redacted explicit edges while retaining only a
+cooperative sink-timeout claim. The V2 module/tests/audit and every V1 no-edit
+surface remain read-only. This integration creates none of those pages.
 Graph, Actual, Apply, Repair, and product-result owners may not depend on the
 projection or telemetry implementation. The exact shared-file boundary is in
 `docs/audits/NON_AUTHORITATIVE_PROJECTION_IDENTITY_V2_CHECKPOINT_20260830.md`;
 the responsibility boundary remains
 `docs/audits/NON_AUTHORITATIVE_PROJECTION_RESPONSIBILITY_BOUNDARY_20260830.md`.
 
-The one bounded Patch-only replay authorization has been consumed. No fresh
-Patch-only probe, fresh preflight, actual16 packet, or actual16 execution is
+The one bounded 27B Patch-only replay/probe authorization has been consumed.
+Its only call used the 600-second timeout, returned no complete response, and
+never entered the Patch payload parser. `EVID-005` remains open; no second
+probe, fresh preflight, Actual, actual16 packet, or actual16 execution is
 authorized or created. Exact-diff approval can be requested only after a
 complete Dry-run diff. The current product stage remains the P2 empirical path;
 `P0` decision priority in the Issue Register is work priority, not a product

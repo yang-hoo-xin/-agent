@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: occurrence-aware non-authoritative Projection V2 serial gate completed; P2 product execution still requires a separately authorized fresh Patch-only probe
+current_dependency: occurrence-aware and scope-compatible non-authoritative Projection V2 serial gate completed; EVID-005 remains open after the terminal one-call 27B replay/probe and no second probe or Actual is authorized
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: 2b0925ca4d9d32fd6ffd728749614b77247ba60e
@@ -85,7 +85,7 @@ coding_agent_v0_internal_alpha_status: false
 public_alpha_authorized: false
 patch_only_replay_created: true
 patch_only_replay_authorized: consumed_once_by_completed_27b_replay
-patch_only_replay_result: provider_timeout_complete_response_absent_parser_not_entered
+patch_only_replay_result: exactly_one_qwen3.6_27b_initial_patch_call_600_second_timeout_complete_response_absent_parser_not_entered
 isolated_4b_patch_role_probe_result: complete_response_parser_entered_before_text_outside_edit_binding_GeneratedPatch_0
 isolated_4b_patch_role_probe_authority: not_actual_not_fallback_not_production_role
 isolated_4b_patch_role_probe_semantics: invalid_reference_missing_Configuration_property_authority_nonexistent_Configuration._targetSpread_and_raw_crosshair_size_not_preserved
@@ -95,11 +95,11 @@ actual16_packet_created: false
 actual16_execution_created: false
 complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
-next_capability_step: create fresh Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild worktrees only from this integration's same final HEAD; fresh Patch-only probe remains separately not authorized and not created
-parallel_observability_checkpoints: prior_A_B_C_D_stopped_on_v1_path_only_identity_gap_no_accepted_commit_staged_untracked_not_inputs_fresh_pages_require_same_final_HEAD
+next_capability_step: bounded migration of reviewed A/B/D/C checkpoints only from this docs integration's final HEAD; no direct merge or cherry-pick, second probe, or Actual
+parallel_observability_checkpoints: reviewed_A_e9d798b_scope_compatible_B_97082dd_reverify_and_bind_gitattributes_D_94e80d7_exact_reverse_import_guard_C_65ea636_identity_redacted_explicit_edges_and_no_cooperative_timeout_claim_promotion
 non_authoritative_projection_responsibility_boundary: accepted_at_7f49d1e_then_hardened_at_4ba735e
 rejected_whole_commits: 1275e87_execution_lineage_and_7a6c96f_historical_replay
-projection_interface_status: v1_exact_api_bytes_hashes_and_read_compatibility_preserved_v2_accepted_reviewed_integrated_occurrence_aware_shared_interface_no_observer_no_production_consumer
+projection_interface_status: v1_exact_api_bytes_hashes_and_read_compatibility_preserved_v2_accepted_reviewed_integrated_through_b040555_to_4aafa0c_occurrence_aware_scope_compatible_shared_interface_no_observer_no_production_consumer
 next_attempt_pre_authorized: false
 ```
 
@@ -112,27 +112,36 @@ unchanged. Its path-only fact identity is not used by new Thin Lineage
 producers.
 
 The accepted/reviewed Projection V2 source lineage
-`d9c9a65aaccd093ba0bf45453b104fbd4d5a6f1b -> 99c2faa2f651832b8b994d81b2170bfbb15d32fa`
+`d9c9a65aaccd093ba0bf45453b104fbd4d5a6f1b -> 99c2faa2f651832b8b994d81b2170bfbb15d32fa -> b0405555588846ff1bb4602c92088d84fb3ef010`
 is integrated as
-`163595ba3c6658a5e9a3d95128a94f0f0d3149c0 -> fc555a8439642bdb61fc8548ba8d7045cfda9340`.
-Its occurrence-aware identity is now the shared interface for the four restart
-pages. Existing owner responsibility, closed admission, source-bound explicit
-edges, and the no-observer/no-production-consumer boundary remain unchanged.
-The `61 passed` and `108 passed` results recorded by the original implementation
-page and reproduced by the macro read-only review page are local test-double
-evidence only. This integration did not rerun them, and they do not establish
-model, Patch, product, Build, or Runtime success.
+`163595ba3c6658a5e9a3d95128a94f0f0d3149c0 -> fc555a8439642bdb61fc8548ba8d7045cfda9340 -> 4aafa0cd6a918e0a2069448b7ec550727b3b431d`.
+The final mapping is accepted/reviewed/integrated and is the shared V2
+interface's last field-level compatibility closure. For ProductExecution scope,
+`run_id` and `request_id` accept exactly a `str` whose `strip()` is non-empty
+and retain the original string; they are not trimmed, normalized, rewritten,
+concatenated, or case-folded. If another owner-legal state cannot be represented
+losslessly, V2 abstraction and information representation must be re-audited
+instead of adding another field-level compatibility patch.
 
-The former A/B/C/D worktrees stopped after exposing the V1 path-only identity
-gap and produced no accepted commit. Their staged and untracked files are not
-inputs to this mainline. Fresh Thin Lineage, owner-test migration, a Langfuse
-exporter, and ProjectionRebuild worktrees must all start from the same final
-HEAD produced by this integration. The V2 shared module, tests, and audit plus
-all V1 no-edit surfaces are read-only for those pages. This integration creates
-none of them. A fresh Patch-only probe remains separately unauthorized and
-uncreated. `EVID-005` remains the current real product Issue; both Internal
-Alpha hard gates remain false. No Dense/RRF/reranker, Self-RAG training,
-generic PDF, UI, Actual or actual16, model, Apply, Build, or Runtime work is
+The `43 passed`, `61 passed`, and `108 passed` results were recorded by the
+source implementation page and reproduced by the read-only macro review page.
+They remain local repository test/test-double evidence; this integration did
+not rerun them and they do not establish model, Patch, product, Build, or
+Runtime success.
+
+The reviewed A/B/D/C checkpoint commits are `e9d798b`, `97082dd`, `94e80d7`,
+and `65ea636`. They are not accepted for direct merge or cherry-pick. Bounded
+migrations must start from this docs integration's final HEAD: A must preserve
+owner-compatible scope, B must reverify fixture bytes and retain its
+`.gitattributes` binding, D must add the exact reverse-import guard, and C must
+emit identity-redacted explicit edges without upgrading its cooperative sink
+timeout to an enforced timeout claim. The V2 shared module, tests, and audit
+plus all V1 no-edit surfaces remain read-only. This integration creates no
+migration page. The existing 27B replay/probe is terminal after exactly one
+600-second-timeout call with no complete response or parser entry;
+`EVID-005` remains open and no second probe or Actual may be created. Both
+Internal Alpha hard gates remain false. No Dense/RRF/reranker, Self-RAG
+training, generic PDF, UI, actual16, model, Apply, Build, or Runtime work is
 activated.
 
 The detailed current target and exact non-completion boundaries are in
