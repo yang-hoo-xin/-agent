@@ -55,6 +55,8 @@ automatic_actual16_authorized: false
 completion_authority: docs/CODING_AGENT_V0_INTERNAL_ALPHA.md
 ```
 
+The local owner-serialization integration `d417e04db64e3203ffbbf2f413a49389c140a4da -> 8a48b621bbb10a964d606d66c24f03458f5684a9` is not a product owner or queue item. It preserves future writer-produced `run_result.json` owner-subtree order and strict `ProductExecutionResultV1` replay rejection, but creates no historical adapter, probe, or Actual. The unchanged actual15 SHA256 is `3a7cbebe50a21c4fcfd7634dea2f9bac5a3fd0bdcb9278514cd0342abb92c5c6`; `c5226322517b71f7819f4acbbba07451df8c45a0` remains an unadopted duplicate checkpoint, not lineage. Its `238 passed` and `57 passed` local unit results do not alter `EVID-005` or any existing authorization boundary.
+
 P0 remains completed and the selected product remains on the P2 empirical path;
 P1 code structure is not product completion. The consumed frozen 27B
 replay/probe made exactly one `qwen3.6:27b` `initial_patch` call with a

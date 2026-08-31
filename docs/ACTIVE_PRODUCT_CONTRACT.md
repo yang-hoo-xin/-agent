@@ -154,6 +154,22 @@ implementation page and reproduced by the read-only macro review page; this
 integration did not rerun them, and they are local evidence rather than product
 success.
 
+The local owner-serialization integration maps source commit
+`d417e04db64e3203ffbbf2f413a49389c140a4da` to mainline commit
+`8a48b621bbb10a964d606d66c24f03458f5684a9`. Future writer-produced
+`run_result.json` files retain the complete `ProductExecutionResultV1.to_dict()`
+subtree field order and strictly round-trip through `ProductExecutionResultV1.from_dict()`;
+unknown, missing, reordered, and duplicate Mapping fields remain rejected.
+The historical actual15 `run_result.json` remains unchanged at SHA256
+`3a7cbebe50a21c4fcfd7634dea2f9bac5a3fd0bdcb9278514cd0342abb92c5c6` and
+remains `blocked_real_historical_input`; this integration includes no historical
+adapter. `c5226322517b71f7819f4acbbba07451df8c45a0` is an unadopted duplicate
+checkpoint and is not lineage. The local commands returned `238 passed` and
+`57 passed`, each with the existing one `jieba` deprecation warning. This is
+code/test evidence only: it does not prove an Actual, model, Build, product
+success, or historical linkage. `EVID-005` and all existing product-authorization
+boundaries remain unchanged; no second probe or Actual is created.
+
 Current execution order:
 
 ```text

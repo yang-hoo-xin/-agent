@@ -100,6 +100,11 @@ serial_observability_checkpoints: A_d506b043c9d1c7f35e78f1f08aad8583eefdc35b_to_
 non_authoritative_projection_responsibility_boundary: accepted_at_7f49d1e_then_hardened_at_4ba735e
 rejected_whole_commits: 1275e87_execution_lineage_and_7a6c96f_historical_replay
 projection_interface_status: v1_exact_api_bytes_hashes_and_read_compatibility_preserved_v2_accepted_reviewed_integrated_through_b040555_to_4aafa0c_occurrence_aware_scope_compatible_shared_interface_no_observer_no_production_consumer
+run_result_owner_serialization_source_to_mainline: d417e04db64e3203ffbbf2f413a49389c140a4da_to_8a48b621bbb10a964d606d66c24f03458f5684a9
+run_result_owner_serialization_claim: future_writer_run_result_json_retains_complete_ProductExecutionResultV1_to_dict_subtree_order_and_strict_from_dict_roundtrip; unknown_missing_reordered_and_duplicate_Mapping_admission_remains_rejected
+actual15_run_result_sha256: 3a7cbebe50a21c4fcfd7634dea2f9bac5a3fd0bdcb9278514cd0342abb92c5c6_unchanged_blocked_real_historical_input_no_historical_adapter
+unadopted_duplicate_checkpoint: c5226322517b71f7819f4acbbba07451df8c45a0_not_lineage
+run_result_owner_serialization_verification: local_unit_tests_238_passed_and_57_passed_existing_one_jieba_deprecation_warning_only_not_Actual_model_Build_product_success_or_historical_linkage
 next_attempt_pre_authorized: false
 ```
 
@@ -128,6 +133,11 @@ source implementation page and reproduced by the read-only macro review page.
 They remain local repository test/test-double evidence; this integration did
 not rerun them and they do not establish model, Patch, product, Build, or
 Runtime success.
+
+The local owner-serialization integration does not change `EVID-005`, the
+existing product authorization boundary, or the prohibition on a second probe
+or Actual. It did not create a historical adapter and does not link the
+unchanged actual15 historical input to a new result.
 
 The bounded A/B/D/C serial migration began at `6e11a67` and is integrated as
 `d506b043 -> e341166`, `131a7257 -> 41eb055`, `cd165ac -> 3f1d775`, and
