@@ -10,10 +10,25 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: bounded occurrence-aware and scope-compatible non-authoritative Projection V2 A/B/D/C serial migration complete with local unit/test-double evidence only; no further Projection V2 migration is queued here
+current_queue: Coding Agent v0 Wave 2 next product action is the wrong-4B-Patch semantic Review negative case; Wave 1 A/B final-net integration is complete with local unit/test-double evidence only
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: Projection V1 remains read-compatible; Projection V2 source lineage d9c9a65 -> 99c2faa -> b040555 is integrated as 163595b -> fc555a8 -> 4aafa0c with occurrence-aware scope-compatible identity, exact admission, and no observer; bounded migration mappings are A d506b043 -> e341166, B 131a7257 -> 41eb055, D cd165ac -> 3f1d775, C c6d376d -> 5083bdd; no second probe, Actual, model call, preflight, packet, or actual16 is authorized
+queue_status: Wave 1 A source 79b6d052 -> 4fc04ffb -> e50394bb -> 3fe93ea6 -> 65b17600 is integrated as one final-net commit 6326c86; B source e956fcb is integrated as 5956e29 and its two blobs equal reviewed 2113005; no second model call, preflight, packet, Actual, Apply, Build, or Runtime is authorized
 ```
+
+Wave 1 A carries the Feature-wide target behavior, acceptance, runtime, and
+preservation contract into Patch provider input without fabricating per-change
+business ownership. Plan-local validation is restored deterministically for
+native and non-native responses, and external disclosure is exact and
+fail-closed. Per-change business semantic ownership remains unrepresented, and
+no model run proves that a model follows the obligations.
+
+Wave 1 B records honest measurement states and denominators and pre-filters
+direct `CompositeEvaluator` children. It is not a real RAGAS run, a four-target
+closed loop, or product success. Nested Composite evaluators, unknown child
+metric declarations, and subclass overrides remain outside the verified
+boundary. Local evidence is A `533 passed`, A+B `735 passed`, `compileall`
+passed, and bounded `git diff --check` passed, with the existing one `jieba`
+warning in each pytest run.
 
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
@@ -44,8 +59,8 @@ internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: no additional Projection V2 migration is authorized by this completed page; V2 shared surfaces and V1 no-edit surfaces remain read-only
-post_checkpoint_route: A d506b043 -> e341166, B 131a7257 -> 41eb055, D cd165ac -> 3f1d775, and C c6d376d -> 5083bdd completed serially; no second Patch-only probe or Actual may be created
+next_eligible_slice: Wave 2 wrong-4B-Patch semantic Review negative case only; V2 shared surfaces and V1 no-edit surfaces remain read-only
+post_checkpoint_route: preserve Wave 1 A/B claim boundaries and execute no second model call, preflight, packet, Actual, Apply, Build, or Runtime from this state
 post_approval_route: isolated Apply -> changed-product Build
 patch_only_replay_authorized: consumed_once_by_completed_27b_replay
 activation_required: any second Patch-only probe, Actual, further model call, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now

@@ -51,6 +51,37 @@ P0 false-sufficiency closure remains completed, and the current product stage
 remains the P2 empirical path. P1 code structure does not by itself establish
 product completion.
 
+Coding Agent v0 Wave 1 is integrated on this mainline as two bounded code/test
+commits. A source lineage `79b6d052 -> 4fc04ffb -> e50394bb -> 3fe93ea6 ->
+65b17600` is represented by the single final-net mainline commit
+`6326c86e3035a4004285b052c7b80e29af488f5b`. It preserves Feature-wide
+`target_behavior`, acceptance, runtime-verification, and preservation
+obligations without assigning a false business obligation to each Plan change;
+it deterministically restores Plan-local validation for native and non-native
+Patch responses and fails closed when an external Patch payload lacks exact
+disclosure approval. It still has no representation for per-change business
+semantic ownership. No model was run, so the local evidence cannot establish
+that a model follows any of these obligations.
+
+B source checkpoint `e956fcbf730095be7c74a084bef31eb48f037878`, whose two
+file blobs equal reviewed checkpoint `2113005ab5f02d442d2164fbf353aae9427088b4`,
+is represented by mainline commit
+`5956e2900e7f85d2209d9bbb5ac5a2b5311ccaae`. It establishes honest
+measurement states and metric denominators plus direct `CompositeEvaluator`
+child pre-filtering. It is not a real RAGAS run, a four-target closed loop, or
+product success. Nested Composite evaluators, children whose metrics are not
+declared through the recognized interfaces, and subclass overrides remain
+outside this proof boundary.
+
+The recorded Wave 1 verification is local code/test evidence only: A regression
+returned `533 passed` with the existing one `jieba` warning; the A+B Eval,
+vertical, Review, ProductExecution, CLI, and complete WorkflowGraph regression
+returned `735 passed` with the same warning; `python -m compileall -q src` and
+the bounded A+B `git diff --check` passed. The next product action is the Wave 2
+wrong-4B-Patch semantic Review negative case. This checkpoint authorizes no
+second model call, fresh preflight, continuation packet, Actual, Apply, Build,
+or Runtime operation.
+
 The latest real ProductExecution is `p2_ac_20260825_015/actual_15`, consumed
 once. Its wrapper reached terminal while ProductExecution remained `partial`.
 It passed Entry, continuation-packet revalidation, baseline Build,
