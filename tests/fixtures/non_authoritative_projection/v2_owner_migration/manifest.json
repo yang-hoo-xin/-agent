@@ -1,0 +1,24 @@
+{
+  "schema_version": "non_authoritative_projection_v2_owner_asset_manifest_v1",
+  "asset_scope": "synthetic_unit_test_assets_only_not_historical_or_product_facts",
+  "canonical_fixture_format": "projection_view_v2_canonical_utf8_plus_terminal_lf",
+  "payload": {
+    "path": "shared_revision_payload.txt",
+    "sha256": "649376e3d70c8c7f334ff7adf0267df7bfea31f32a0ec58527ba9f000c544c31",
+    "byte_length": 130
+  },
+  "fixtures": [
+    {
+      "fixture_id": "same_revision_different_sequence",
+      "fixture_path": "same_revision_different_sequence.json",
+      "fixture_sha256": "f2f7de073016a18f86a9726e33de53c9d6de825df1deef8d2b3513032687cc11",
+      "canonical_projection_sha256": "f055b8ccf3383d97cc5883f25215baefb9a9f481737b6f44d62e8c487fcba7b6"
+    },
+    {
+      "fixture_id": "cross_run_scope",
+      "fixture_path": "cross_run_scope.json",
+      "fixture_sha256": "505641ca07f277176dc2b4bff84fe9db358c3c95fdd457428d1ee79fc28b9ff5",
+      "canonical_projection_sha256": "23abfc18de639770351b15dae7dc39c361509d58b363cf3769f73fff07451314"
+    }
+  ]
+}
