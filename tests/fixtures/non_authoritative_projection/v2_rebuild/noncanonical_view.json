@@ -1,0 +1,221 @@
+{
+  "schema_version": "2",
+  "facts": [
+    {
+      "schema_version": "2",
+      "fact": {
+        "owner": "artifact_store",
+        "fact_type": "artifact_revision_v1",
+        "run_id": null,
+        "request_id": null,
+        "owner_sequence": null,
+        "artifact_ref": {
+          "feature_id": "feature_projection_v2_rebuild_001",
+          "artifact_type": "patch_proposal",
+          "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "payload_schema_version": "1.0"
+    },
+    {
+      "schema_version": "2",
+      "fact": {
+        "owner": "product_execution",
+        "fact_type": "product_execution_output_v1",
+        "run_id": "run_projection_rebuild_001",
+        "request_id": "request_projection_rebuild_001",
+        "owner_sequence": 4,
+        "artifact_ref": {
+          "feature_id": "feature_projection_v2_rebuild_001",
+          "artifact_type": "patch_proposal",
+          "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "payload_schema_version": "1.0"
+    },
+    {
+      "schema_version": "2",
+      "fact": {
+        "owner": "product_execution",
+        "fact_type": "product_execution_output_v1",
+        "run_id": "run_projection_rebuild_001",
+        "request_id": "request_projection_rebuild_001",
+        "owner_sequence": 5,
+        "artifact_ref": {
+          "feature_id": "feature_projection_v2_rebuild_001",
+          "artifact_type": "patch_proposal",
+          "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "payload_schema_version": "1.0"
+    },
+    {
+      "schema_version": "2",
+      "fact": {
+        "owner": "product_execution",
+        "fact_type": "product_execution_output_v1",
+        "run_id": "run_projection_rebuild_002",
+        "request_id": "request_projection_rebuild_002",
+        "owner_sequence": 4,
+        "artifact_ref": {
+          "feature_id": "feature_projection_v2_rebuild_001",
+          "artifact_type": "patch_proposal",
+          "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "payload_schema_version": "1.0"
+    }
+  ],
+  "edges": [
+    {
+      "schema_version": "2",
+      "relation": "references",
+      "source": {
+        "owner": "product_execution",
+        "fact_type": "product_execution_output_v1",
+        "run_id": "run_projection_rebuild_001",
+        "request_id": "request_projection_rebuild_001",
+        "owner_sequence": 4,
+        "artifact_ref": {
+          "feature_id": "feature_projection_v2_rebuild_001",
+          "artifact_type": "patch_proposal",
+          "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "target": {
+        "owner": "artifact_store",
+        "fact_type": "artifact_revision_v1",
+        "run_id": null,
+        "request_id": null,
+        "owner_sequence": null,
+        "artifact_ref": {
+          "feature_id": "feature_projection_v2_rebuild_001",
+          "artifact_type": "patch_proposal",
+          "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "reporter": {
+        "fact": {
+          "owner": "product_execution",
+          "fact_type": "product_execution_output_v1",
+          "run_id": "run_projection_rebuild_001",
+          "request_id": "request_projection_rebuild_001",
+          "owner_sequence": 4,
+          "artifact_ref": {
+            "feature_id": "feature_projection_v2_rebuild_001",
+            "artifact_type": "patch_proposal",
+            "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+            "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        "payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "owner_sequence": 4
+      }
+    },
+    {
+      "schema_version": "2",
+      "relation": "references",
+      "source": {
+        "owner": "product_execution",
+        "fact_type": "product_execution_output_v1",
+        "run_id": "run_projection_rebuild_001",
+        "request_id": "request_projection_rebuild_001",
+        "owner_sequence": 5,
+        "artifact_ref": {
+          "feature_id": "feature_projection_v2_rebuild_001",
+          "artifact_type": "patch_proposal",
+          "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "target": {
+        "owner": "artifact_store",
+        "fact_type": "artifact_revision_v1",
+        "run_id": null,
+        "request_id": null,
+        "owner_sequence": null,
+        "artifact_ref": {
+          "feature_id": "feature_projection_v2_rebuild_001",
+          "artifact_type": "patch_proposal",
+          "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "reporter": {
+        "fact": {
+          "owner": "product_execution",
+          "fact_type": "product_execution_output_v1",
+          "run_id": "run_projection_rebuild_001",
+          "request_id": "request_projection_rebuild_001",
+          "owner_sequence": 5,
+          "artifact_ref": {
+            "feature_id": "feature_projection_v2_rebuild_001",
+            "artifact_type": "patch_proposal",
+            "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+            "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        "payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "owner_sequence": 5
+      }
+    },
+    {
+      "schema_version": "2",
+      "relation": "references",
+      "source": {
+        "owner": "product_execution",
+        "fact_type": "product_execution_output_v1",
+        "run_id": "run_projection_rebuild_002",
+        "request_id": "request_projection_rebuild_002",
+        "owner_sequence": 4,
+        "artifact_ref": {
+          "feature_id": "feature_projection_v2_rebuild_001",
+          "artifact_type": "patch_proposal",
+          "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "target": {
+        "owner": "artifact_store",
+        "fact_type": "artifact_revision_v1",
+        "run_id": null,
+        "request_id": null,
+        "owner_sequence": null,
+        "artifact_ref": {
+          "feature_id": "feature_projection_v2_rebuild_001",
+          "artifact_type": "patch_proposal",
+          "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+          "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "reporter": {
+        "fact": {
+          "owner": "product_execution",
+          "fact_type": "product_execution_output_v1",
+          "run_id": "run_projection_rebuild_002",
+          "request_id": "request_projection_rebuild_002",
+          "owner_sequence": 4,
+          "artifact_ref": {
+            "feature_id": "feature_projection_v2_rebuild_001",
+            "artifact_type": "patch_proposal",
+            "path": "C:/store/features/feature_projection_v2_rebuild_001/r/patch_proposal/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+            "artifact_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        },
+        "payload_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "owner_sequence": 4
+      }
+    }
+  ],
+  "diagnostics": []
+}
