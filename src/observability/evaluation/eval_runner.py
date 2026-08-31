@@ -14,14 +14,62 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from src.libs.evaluator.base_evaluator import BaseEvaluator
 
 logger = logging.getLogger(__name__)
+
+OBSERVED = "observed"
+FAILED_TO_MEASURE = "failed_to_measure"
+NOT_APPLICABLE = "not_applicable"
+_MEASUREMENT_STATUSES = {OBSERVED, FAILED_TO_MEASURE, NOT_APPLICABLE}
+_ANSWER_OVERRIDE_MISSING = object()
+
+# These names are the exact metrics implemented by CustomEvaluator and
+# RagasEvaluator.  The runner uses them only to express prerequisites; it does
+# not combine or reinterpret their scores.
+_CUSTOM_RETRIEVAL_METRICS = {"hit_rate", "mrr"}
+_RAGAS_ANSWER_METRICS = {
+    "faithfulness",
+    "answer_relevancy",
+    "context_precision",
+}
+
+
+@dataclass(frozen=True)
+class MeasurementState:
+    """Serializable state for one evaluation stage."""
+
+    status: str
+    mode: Optional[str] = None
+    error_category: Optional[str] = None
+    error_message: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.status not in _MEASUREMENT_STATUSES:
+            raise ValueError(f"Unsupported measurement status: {self.status}")
+
+    def to_dict(self) -> Dict[str, Optional[str]]:
+        return {
+            "status": self.status,
+            "mode": self.mode,
+            "error_category": self.error_category,
+            "error_message": self.error_message,
+        }
+
+    @classmethod
+    def from_exception(cls, exc: Exception, *, mode: str) -> MeasurementState:
+        return cls(
+            status=FAILED_TO_MEASURE,
+            mode=mode,
+            error_category=type(exc).__name__,
+            error_message=str(exc),
+        )
 
 
 @dataclass
@@ -55,10 +103,15 @@ class QueryResult:
     """Result of evaluating a single test case.
 
     Attributes:
+        case_index: Zero-based position in the loaded golden test set.
         query: The test query.
         retrieved_chunk_ids: IDs of chunks actually retrieved.
         generated_answer: The generated answer (if applicable).
         metrics: Evaluation metrics for this query.
+        metric_measurements: Per-metric measurement status.
+        retrieval_measurement: Retrieval stage measurement state.
+        answer_measurement: Answer stage measurement state and provenance.
+        evaluator_measurement: Evaluator stage measurement state.
         elapsed_ms: Time taken for retrieval + evaluation.
     """
 
@@ -67,6 +120,17 @@ class QueryResult:
     generated_answer: Optional[str] = None
     metrics: Dict[str, float] = field(default_factory=dict)
     elapsed_ms: float = 0.0
+    case_index: Optional[int] = None
+    metric_measurements: Dict[str, str] = field(default_factory=dict)
+    retrieval_measurement: MeasurementState = field(
+        default_factory=lambda: MeasurementState(status=NOT_APPLICABLE)
+    )
+    answer_measurement: MeasurementState = field(
+        default_factory=lambda: MeasurementState(status=NOT_APPLICABLE)
+    )
+    evaluator_measurement: MeasurementState = field(
+        default_factory=lambda: MeasurementState(status=NOT_APPLICABLE)
+    )
 
 
 @dataclass
@@ -76,6 +140,8 @@ class EvalReport:
     Attributes:
         query_results: Per-query evaluation results.
         aggregate_metrics: Averaged metrics across all queries.
+        metric_measurements: Per-metric denominator metadata.
+        expected_metrics: Declared and observed metric names.
         total_elapsed_ms: Total time for the entire evaluation.
         evaluator_name: Name of the evaluator used.
         test_set_path: Path to the golden test set file.
@@ -86,6 +152,8 @@ class EvalReport:
     total_elapsed_ms: float = 0.0
     evaluator_name: str = ""
     test_set_path: str = ""
+    metric_measurements: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    expected_metrics: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialise report to dictionary."""
@@ -96,13 +164,23 @@ class EvalReport:
             "aggregate_metrics": {
                 k: round(v, 4) for k, v in self.aggregate_metrics.items()
             },
+            "metric_measurements": {
+                metric: dict(counts)
+                for metric, counts in self.metric_measurements.items()
+            },
+            "expected_metrics": list(self.expected_metrics),
             "query_count": len(self.query_results),
             "query_results": [
                 {
+                    "case_index": qr.case_index,
                     "query": qr.query,
                     "retrieved_chunk_ids": qr.retrieved_chunk_ids,
                     "generated_answer": qr.generated_answer,
                     "metrics": {k: round(v, 4) for k, v in qr.metrics.items()},
+                    "metric_measurements": dict(qr.metric_measurements),
+                    "retrieval_measurement": qr.retrieval_measurement.to_dict(),
+                    "answer_measurement": qr.answer_measurement.to_dict(),
+                    "evaluator_measurement": qr.evaluator_measurement.to_dict(),
                     "elapsed_ms": round(qr.elapsed_ms, 1),
                 }
                 for qr in self.query_results
@@ -165,8 +243,9 @@ class EvalRunner:
         hybrid_search: Any = None,
         evaluator: Optional[BaseEvaluator] = None,
         answer_generator: Any = None,
-        answer_overrides: Optional[Dict[int, str]] = None,
+        answer_overrides: Optional[Dict[int, Any]] = None,
         reranker: Any = None,
+        expected_metrics: Optional[Sequence[str]] = None,
     ) -> None:
         """Initialize EvalRunner.
 
@@ -178,9 +257,12 @@ class EvalRunner:
                 for generating answers. If None, a simple concatenation
                 is used as a placeholder.
             answer_overrides: Optional dict mapping test case index (0-based)
-                to a user-provided answer string. When present, the override
-                answer is used instead of auto-generation for that test case.
+                to a user-provided answer value. Only an exact, non-empty str
+                is accepted; an invalid present override is a measurement
+                failure and is not replaced by auto-generation.
             reranker: Optional CoreReranker instance for reranking results.
+            expected_metrics: Optional exact metric names expected from a
+                BaseEvaluator whose abstract interface does not declare them.
         """
         self.settings = settings
         self.hybrid_search = hybrid_search
@@ -188,6 +270,7 @@ class EvalRunner:
         self.answer_generator = answer_generator
         self.answer_overrides = answer_overrides or {}
         self.reranker = reranker
+        self.expected_metrics = self._validated_metric_names(expected_metrics or [])
 
     def run(
         self,
@@ -226,23 +309,39 @@ class EvalRunner:
             evaluator_name=type(self.evaluator).__name__,
             test_set_path=str(test_set_path),
         )
+        declared_metrics = self._declared_metric_names()
 
         t0 = time.monotonic()
 
         for idx, tc in enumerate(test_cases):
             logger.info("Evaluating [%d/%d]: %s", idx + 1, len(test_cases), tc.query[:60])
             # Use user-provided answer override if available for this index
-            answer_override = self.answer_overrides.get(idx)
+            answer_override = self.answer_overrides.get(
+                idx,
+                _ANSWER_OVERRIDE_MISSING,
+            )
             qr = self._evaluate_single(
                 tc, top_k=top_k, collection=collection,
                 answer_override=answer_override,
+                case_index=idx,
+                expected_metrics=declared_metrics,
             )
             report.query_results.append(qr)
 
         elapsed_ms = (time.monotonic() - t0) * 1000.0
         query_elapsed_ms = sum(qr.elapsed_ms for qr in report.query_results)
         report.total_elapsed_ms = max(elapsed_ms, query_elapsed_ms, 0.001)
+        all_metric_names = self._all_metric_names(
+            report.query_results,
+            declared_metrics,
+        )
+        self._finalise_metric_measurements(report.query_results, all_metric_names)
+        report.expected_metrics = all_metric_names
         report.aggregate_metrics = self._aggregate_metrics(report.query_results)
+        report.metric_measurements = self._aggregate_metric_measurements(
+            report.query_results,
+            all_metric_names,
+        )
 
         logger.info(
             "Evaluation complete: %d queries, aggregate=%s",
@@ -257,7 +356,9 @@ class EvalRunner:
         test_case: GoldenTestCase,
         top_k: int = 10,
         collection: Optional[str] = None,
-        answer_override: Optional[str] = None,
+        answer_override: Any = _ANSWER_OVERRIDE_MISSING,
+        case_index: Optional[int] = None,
+        expected_metrics: Optional[Sequence[str]] = None,
     ) -> QueryResult:
         """Evaluate a single test case.
 
@@ -265,26 +366,45 @@ class EvalRunner:
             test_case: The test case to evaluate.
             top_k: Number of results to retrieve.
             collection: Optional collection filter.
-            answer_override: User-provided answer text. When set, used
-                instead of auto-generated answer from chunks.
+            answer_override: User-provided answer value. When present, it must
+                be an exact, non-empty str and is never silently replaced.
+            case_index: Zero-based identity in the loaded golden test set.
+            expected_metrics: Exact metric names expected for this run.
 
         Returns:
             QueryResult with metrics for this test case.
         """
         t0 = time.monotonic()
-        qr = QueryResult(query=test_case.query)
+        qr = QueryResult(query=test_case.query, case_index=case_index)
+        expected = self._validated_metric_names(expected_metrics or [])
 
         # Step 1: Retrieve chunks
-        retrieved_chunks = self._retrieve(test_case.query, top_k, collection)
+        retrieved_chunks, qr.retrieval_measurement = self._retrieve(
+            test_case.query,
+            top_k,
+            collection,
+        )
         qr.retrieved_chunk_ids = [
             self._get_chunk_id(c) for c in retrieved_chunks
         ]
 
         # Step 2: Generate answer — prefer user override, then generator, then fallback
-        if answer_override:
-            answer = answer_override
+        if qr.retrieval_measurement.status == FAILED_TO_MEASURE:
+            answer = None
+            qr.answer_measurement = MeasurementState(
+                status=NOT_APPLICABLE,
+                mode="retrieval_failure",
+            )
+        elif answer_override is not _ANSWER_OVERRIDE_MISSING:
+            answer, qr.answer_measurement = self._measure_answer_value(
+                answer_override,
+                mode="answer_override",
+            )
         else:
-            answer = self._generate_answer(test_case.query, retrieved_chunks)
+            answer, qr.answer_measurement = self._generate_answer(
+                test_case.query,
+                retrieved_chunks,
+            )
         qr.generated_answer = answer
 
         # Step 3: Build ground truth
@@ -294,18 +414,145 @@ class EvalRunner:
             else None
         )
 
-        # Step 4: Evaluate
+        prerequisite_statuses: Dict[str, Optional[str]] = {
+            metric: self._metric_prerequisite_status(metric, test_case, qr)
+            for metric in expected
+        }
+        qr.metric_measurements.update(
+            {
+                metric: status
+                for metric, status in prerequisite_statuses.items()
+                if status is not None
+            }
+        )
+
+        # Step 4: Evaluate. A retrieval failure blocks every current evaluator
+        # because BaseEvaluator.evaluate requires retrieved_chunks. If every
+        # declared metric is not applicable, do not invoke an evaluator merely
+        # to manufacture scores outside its prerequisites.
+        should_evaluate = qr.retrieval_measurement.status != FAILED_TO_MEASURE
+        if expected and all(
+            status in {FAILED_TO_MEASURE, NOT_APPLICABLE}
+            for status in prerequisite_statuses.values()
+        ):
+            should_evaluate = False
+
+        composite_children = self._applicable_composite_children(
+            test_case,
+            qr,
+        )
+        if composite_children == []:
+            should_evaluate = False
+
+        if not should_evaluate:
+            qr.evaluator_measurement = MeasurementState(
+                status=NOT_APPLICABLE,
+                mode=(
+                    "retrieval_failure"
+                    if qr.retrieval_measurement.status == FAILED_TO_MEASURE
+                    else "metric_prerequisites"
+                ),
+            )
+            qr.elapsed_ms = (time.monotonic() - t0) * 1000.0
+            return qr
+
         try:
-            metrics = self.evaluator.evaluate(  # type: ignore[union-attr]
+            metrics, child_errors = self._invoke_evaluator(
                 query=test_case.query,
                 retrieved_chunks=retrieved_chunks,
                 generated_answer=answer,
                 ground_truth=ground_truth,
+                composite_children=composite_children,
             )
-            qr.metrics = metrics
+            if not isinstance(metrics, dict):
+                raise TypeError(
+                    "Evaluator must return a dictionary of metric scores."
+                )
+
+            invalid_metrics: List[str] = []
+            for metric, value in metrics.items():
+                if not isinstance(metric, str) or not metric:
+                    raise TypeError(
+                        "Evaluator metric names must be non-empty strings."
+                    )
+                metric_name = metric
+                prerequisite = prerequisite_statuses.get(metric_name)
+                if prerequisite in {FAILED_TO_MEASURE, NOT_APPLICABLE}:
+                    qr.metric_measurements[metric_name] = prerequisite
+                    continue
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                ):
+                    qr.metric_measurements[metric_name] = FAILED_TO_MEASURE
+                    invalid_metrics.append(metric_name)
+                    continue
+                qr.metrics[metric_name] = float(value)
+                qr.metric_measurements[metric_name] = OBSERVED
+
+            missing = [
+                metric
+                for metric in expected
+                if qr.metric_measurements.get(metric) not in {
+                    OBSERVED,
+                    NOT_APPLICABLE,
+                    FAILED_TO_MEASURE,
+                }
+            ]
+            for metric in missing:
+                qr.metric_measurements[metric] = FAILED_TO_MEASURE
+
+            applicable_expected = [
+                metric
+                for metric in expected
+                if prerequisite_statuses.get(metric) is None
+            ]
+            failed_expected = [
+                metric
+                for metric in applicable_expected
+                if qr.metric_measurements.get(metric) != OBSERVED
+            ]
+            if (
+                child_errors
+                or invalid_metrics
+                or failed_expected
+                or (not metrics and not expected)
+            ):
+                if child_errors:
+                    category, message = self._composite_child_error_details(
+                        child_errors
+                    )
+                elif invalid_metrics:
+                    category = "InvalidMetricValue"
+                    message = "Invalid metric values: " + ", ".join(invalid_metrics)
+                elif failed_expected:
+                    category = "MissingMetrics"
+                    message = "Evaluator did not measure: " + ", ".join(failed_expected)
+                else:
+                    category = "EmptyMetrics"
+                    message = "Evaluator returned no metrics."
+                qr.evaluator_measurement = MeasurementState(
+                    status=FAILED_TO_MEASURE,
+                    mode="evaluation",
+                    error_category=category,
+                    error_message=message,
+                )
+            else:
+                qr.evaluator_measurement = MeasurementState(
+                    status=OBSERVED,
+                    mode="evaluation",
+                )
         except Exception as exc:
             logger.warning("Evaluation failed for '%s': %s", test_case.query[:40], exc)
             qr.metrics = {}
+            qr.evaluator_measurement = MeasurementState.from_exception(
+                exc,
+                mode="evaluation",
+            )
+            for metric in expected:
+                if prerequisite_statuses.get(metric) != NOT_APPLICABLE:
+                    qr.metric_measurements[metric] = FAILED_TO_MEASURE
 
         qr.elapsed_ms = (time.monotonic() - t0) * 1000.0
         return qr
@@ -315,14 +562,18 @@ class EvalRunner:
         query: str,
         top_k: int,
         collection: Optional[str],
-    ) -> List[Any]:
+    ) -> tuple[List[Any], MeasurementState]:
         """Retrieve chunks using HybridSearch + optional Reranking.
 
-        Falls back to an empty list if search is not configured.
+        An unconfigured retriever is not applicable. A successful empty search
+        is observed and remains distinct from a retrieval exception.
         """
         if self.hybrid_search is None:
             logger.warning("No HybridSearch configured; returning empty results.")
-            return []
+            return [], MeasurementState(
+                status=NOT_APPLICABLE,
+                mode="not_configured",
+            )
 
         try:
             # Retrieve more candidates if reranker is enabled
@@ -340,22 +591,37 @@ class EvalRunner:
                 rerank_result = self.reranker.rerank(query=query, results=results, top_k=top_k)
                 results = rerank_result.results
 
-            return results
+            return results, MeasurementState(
+                status=OBSERVED,
+                mode="empty" if not results else "results",
+            )
         except Exception as exc:
             logger.warning("Retrieval failed for '%s': %s", query[:40], exc)
-            return []
+            return [], MeasurementState.from_exception(exc, mode="retrieval")
 
-    def _generate_answer(self, query: str, chunks: List[Any]) -> str:
+    def _generate_answer(
+        self,
+        query: str,
+        chunks: List[Any],
+    ) -> tuple[Optional[str], MeasurementState]:
         """Generate an answer from retrieved chunks.
 
         If a custom answer_generator is provided, use it.
-        Otherwise, concatenate chunk texts as a simple placeholder.
+        Otherwise, concatenate chunk texts as an explicitly synthetic fallback.
+        A configured generator failure is not replaced by the fallback.
         """
         if self.answer_generator is not None:
             try:
-                return self.answer_generator(query, chunks)
+                return self._measure_answer_value(
+                    self.answer_generator(query, chunks),
+                    mode="answer_generator",
+                )
             except Exception as exc:
                 logger.warning("Answer generation failed: %s", exc)
+                return None, MeasurementState.from_exception(
+                    exc,
+                    mode="answer_generator",
+                )
 
         # Fallback: concatenate chunk texts
         texts = []
@@ -369,7 +635,292 @@ class EvalRunner:
             else:
                 texts.append(str(c))
 
-        return " ".join(texts[:5])  # first 5 chunks
+        return " ".join(texts[:5]), MeasurementState(
+            status=NOT_APPLICABLE,
+            mode="synthetic_fallback",
+        )
+
+    @staticmethod
+    def _measure_answer_value(
+        value: Any,
+        *,
+        mode: str,
+    ) -> tuple[Optional[str], MeasurementState]:
+        """Accept only an exact, non-empty str as an observed answer."""
+        if type(value) is str and value.strip():
+            return value, MeasurementState(status=OBSERVED, mode=mode)
+
+        if type(value) is str:
+            detail = "received an empty or whitespace-only str"
+        else:
+            detail = f"received type {type(value).__name__}"
+        return None, MeasurementState(
+            status=FAILED_TO_MEASURE,
+            mode=mode,
+            error_category="InvalidAnswerValue",
+            error_message=f"Answer must be an exact, non-empty str; {detail}.",
+        )
+
+    def _applicable_composite_children(
+        self,
+        test_case: GoldenTestCase,
+        result: QueryResult,
+    ) -> Optional[List[BaseEvaluator]]:
+        """Select Composite children before any evaluator side effect occurs.
+
+        ``None`` means the configured evaluator is not Composite. An empty
+        list means Composite has no child whose declared metrics are safe and
+        applicable for this case. Children without metrics exposed by the
+        current evaluator interfaces retain Composite's ordinary behavior.
+        """
+        from src.observability.evaluation.composite_evaluator import CompositeEvaluator
+
+        if not isinstance(self.evaluator, CompositeEvaluator):
+            return None
+
+        selected: List[BaseEvaluator] = []
+        for child in self.evaluator.evaluators:
+            metrics = self._metric_names_from_evaluator(child)
+            if not metrics:
+                selected.append(child)
+                continue
+
+            prerequisites = {
+                metric: self._metric_prerequisite_status(
+                    metric,
+                    test_case,
+                    result,
+                )
+                for metric in metrics
+            }
+            blocked_answer_metric = any(
+                metric in _RAGAS_ANSWER_METRICS
+                and prerequisites[metric] in {FAILED_TO_MEASURE, NOT_APPLICABLE}
+                for metric in metrics
+            )
+            all_metrics_blocked = all(
+                status in {FAILED_TO_MEASURE, NOT_APPLICABLE}
+                for status in prerequisites.values()
+            )
+            if blocked_answer_metric or all_metrics_blocked:
+                continue
+            selected.append(child)
+
+        return selected
+
+    def _invoke_evaluator(
+        self,
+        *,
+        query: str,
+        retrieved_chunks: List[Any],
+        generated_answer: Optional[str],
+        ground_truth: Optional[Any],
+        composite_children: Optional[Sequence[BaseEvaluator]],
+    ) -> tuple[Dict[str, float], List[tuple[str, Exception]]]:
+        """Invoke one evaluator or the preselected Composite child sequence."""
+        if composite_children is None:
+            metrics = self.evaluator.evaluate(  # type: ignore[union-attr]
+                query=query,
+                retrieved_chunks=retrieved_chunks,
+                generated_answer=generated_answer,
+                ground_truth=ground_truth,
+            )
+            return metrics, []
+
+        # Match CompositeEvaluator's validation, merge order, duplicate-key
+        # overwrite behavior, partial-failure tolerance, and all-failed error.
+        self.evaluator.validate_query(query)  # type: ignore[union-attr]
+        self.evaluator.validate_retrieved_chunks(retrieved_chunks)  # type: ignore[union-attr]
+        merged: Dict[str, float] = {}
+        errors: List[tuple[str, Exception]] = []
+
+        for child in composite_children:
+            name = type(child).__name__
+            try:
+                child_metrics = child.evaluate(
+                    query=query,
+                    retrieved_chunks=retrieved_chunks,
+                    generated_answer=generated_answer,
+                    ground_truth=ground_truth,
+                )
+                for key, value in child_metrics.items():
+                    if key in merged:
+                        logger.warning(
+                            "Metric '%s' produced by multiple evaluators; "
+                            "overwriting with value from %s",
+                            key,
+                            name,
+                        )
+                    merged[key] = value
+            except Exception as exc:
+                logger.warning("%s failed: %s", name, exc)
+                errors.append((name, exc))
+
+        if not merged and errors:
+            raise RuntimeError(
+                "All sub-evaluators failed:\n"
+                + "\n".join(f"{name} failed: {exc}" for name, exc in errors)
+            )
+
+        return merged, errors
+
+    @staticmethod
+    def _composite_child_error_details(
+        errors: Sequence[tuple[str, Exception]],
+    ) -> tuple[str, str]:
+        """Preserve exact child exception details in one measurement slot."""
+        if len(errors) == 1:
+            name, exc = errors[0]
+            return type(exc).__name__, f"{name} failed: {exc}"
+
+        return (
+            "CompositeChildFailures",
+            "\n".join(
+                f"{name} failed [{type(exc).__name__}]: {exc}"
+                for name, exc in errors
+            ),
+        )
+
+    def _declared_metric_names(self) -> List[str]:
+        """Read exact metric declarations exposed by current evaluators."""
+        names = list(self.expected_metrics)
+        evaluator_metrics = self._metric_names_from_evaluator(self.evaluator)
+        if evaluator_metrics:
+            names.extend(evaluator_metrics)
+        else:
+            evaluation_settings = getattr(self.settings, "evaluation", None)
+            configured = getattr(evaluation_settings, "metrics", None)
+            if isinstance(configured, (list, tuple)):
+                names.extend(configured)
+        return self._validated_metric_names(names)
+
+    @classmethod
+    def _metric_names_from_evaluator(
+        cls,
+        evaluator: Optional[BaseEvaluator],
+    ) -> List[str]:
+        if evaluator is None:
+            return []
+
+        from src.libs.evaluator.custom_evaluator import CustomEvaluator
+        from src.observability.evaluation.composite_evaluator import CompositeEvaluator
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        if isinstance(evaluator, CustomEvaluator):
+            return cls._validated_metric_names(evaluator.metrics)
+        if isinstance(evaluator, RagasEvaluator):
+            return cls._validated_metric_names(evaluator._metric_names)
+        if isinstance(evaluator, CompositeEvaluator):
+            names: List[str] = []
+            for child in evaluator.evaluators:
+                names.extend(cls._metric_names_from_evaluator(child))
+            return cls._validated_metric_names(names)
+        return []
+
+    @staticmethod
+    def _validated_metric_names(metrics: Sequence[str]) -> List[str]:
+        names: List[str] = []
+        for metric in metrics:
+            if not isinstance(metric, str) or not metric:
+                raise ValueError("Metric names must be non-empty strings.")
+            if metric not in names:
+                names.append(metric)
+        return names
+
+    @staticmethod
+    def _metric_prerequisite_status(
+        metric: str,
+        test_case: GoldenTestCase,
+        result: QueryResult,
+    ) -> Optional[str]:
+        if result.retrieval_measurement.status == FAILED_TO_MEASURE:
+            return FAILED_TO_MEASURE
+        if result.retrieval_measurement.status == NOT_APPLICABLE:
+            return NOT_APPLICABLE
+        if metric in _CUSTOM_RETRIEVAL_METRICS and not test_case.expected_chunk_ids:
+            return NOT_APPLICABLE
+        if metric in _RAGAS_ANSWER_METRICS:
+            if result.answer_measurement.status == FAILED_TO_MEASURE:
+                return FAILED_TO_MEASURE
+            if result.answer_measurement.mode == "synthetic_fallback":
+                return NOT_APPLICABLE
+        return None
+
+    @staticmethod
+    def _all_metric_names(
+        results: Sequence[QueryResult],
+        declared_metrics: Sequence[str],
+    ) -> List[str]:
+        names = list(declared_metrics)
+        for result in results:
+            names.extend(result.metrics.keys())
+            names.extend(result.metric_measurements.keys())
+        return sorted(set(names))
+
+    @staticmethod
+    def _finalise_metric_measurements(
+        results: Sequence[QueryResult],
+        metric_names: Sequence[str],
+    ) -> None:
+        """Backfill every case/metric denominator position."""
+        for result in results:
+            for metric in metric_names:
+                status = result.metric_measurements.get(metric)
+                if status is None:
+                    if metric in result.metrics:
+                        status = OBSERVED
+                    elif result.retrieval_measurement.status == FAILED_TO_MEASURE:
+                        status = FAILED_TO_MEASURE
+                    elif result.retrieval_measurement.status == NOT_APPLICABLE:
+                        status = NOT_APPLICABLE
+                    elif (
+                        metric in _RAGAS_ANSWER_METRICS
+                        and result.answer_measurement.status == FAILED_TO_MEASURE
+                    ):
+                        status = FAILED_TO_MEASURE
+                    elif (
+                        metric in _RAGAS_ANSWER_METRICS
+                        and result.answer_measurement.mode == "synthetic_fallback"
+                    ):
+                        status = NOT_APPLICABLE
+                    elif result.evaluator_measurement.status == NOT_APPLICABLE:
+                        status = NOT_APPLICABLE
+                    else:
+                        status = FAILED_TO_MEASURE
+                    result.metric_measurements[metric] = status
+
+                if status != OBSERVED:
+                    result.metrics.pop(metric, None)
+
+    @staticmethod
+    def _aggregate_metric_measurements(
+        results: Sequence[QueryResult],
+        metric_names: Sequence[str],
+    ) -> Dict[str, Dict[str, int]]:
+        details: Dict[str, Dict[str, int]] = {}
+        total = len(results)
+        for metric in metric_names:
+            observed = sum(
+                result.metric_measurements.get(metric) == OBSERVED
+                for result in results
+            )
+            failed = sum(
+                result.metric_measurements.get(metric) == FAILED_TO_MEASURE
+                for result in results
+            )
+            not_applicable = sum(
+                result.metric_measurements.get(metric) == NOT_APPLICABLE
+                for result in results
+            )
+            details[metric] = {
+                "total": total,
+                "applicable": observed + failed,
+                "observed": observed,
+                "scored": observed,
+                "failed_to_measure": failed,
+                "not_applicable": not_applicable,
+            }
+        return details
 
     def _get_chunk_id(self, chunk: Any) -> str:
         """Extract chunk ID from various representations."""
@@ -404,10 +955,16 @@ class EvalRunner:
         for qr in results:
             all_keys.update(qr.metrics.keys())
 
-        # Average each metric
+        # Average each metric over observed scores only. Measurement failures
+        # remain in EvalReport.metric_measurements and are never coerced to 0.
         averages: Dict[str, float] = {}
         for key in sorted(all_keys):
-            values = [qr.metrics[key] for qr in results if key in qr.metrics]
+            values = [
+                qr.metrics[key]
+                for qr in results
+                if key in qr.metrics
+                and qr.metric_measurements.get(key, OBSERVED) == OBSERVED
+            ]
             averages[key] = sum(values) / len(values) if values else 0.0
 
         return averages
