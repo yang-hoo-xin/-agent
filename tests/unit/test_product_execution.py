@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 import copy
 import hashlib
@@ -56,6 +57,7 @@ from src.mod_agent.product_executor import (
     source_snapshot,
     source_snapshot_sha256,
 )
+from src.mod_agent.local_entry import _persist_graph_terminal_result
 from src.non_authoritative_projection import (
     EdgeReporterV1,
     ExplicitEdgeV1,
@@ -1200,6 +1202,122 @@ def _product_result_revision_set(
         )
         for output in result.outputs
     )
+
+
+class _DuplicateFieldMapping(Mapping[str, object]):
+    def __init__(self, value: dict[str, object], duplicate_field: str) -> None:
+        self._value = value
+        self._duplicate_field = duplicate_field
+
+    def __getitem__(self, key: str) -> object:
+        return self._value[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter((*self._value, self._duplicate_field))
+
+    def __len__(self) -> int:
+        return len(self._value) + 1
+
+
+def test_graph_terminal_persistence_preserves_owner_result_strict_roundtrip(
+    tmp_path: Path,
+) -> None:
+    result = _execute_store_role_scenario(tmp_path, scenario="blocked")
+    owner_projection = result.to_dict()
+    assert list(owner_projection) == [
+        "contract_version",
+        "run_id",
+        "request_id",
+        "feature_id",
+        "requested_completion_scope",
+        "platform_status",
+        "execution_disposition",
+        "failure_stage",
+        "side_effects_may_have_started",
+        "terminal_node",
+        "store_attempts",
+        "outputs",
+        "effect_events",
+        "validation_facts",
+        "blockers",
+        "variant_result",
+    ]
+    assert result.store_attempts
+    assert result.outputs
+    assert result.effect_events
+    assert result.validation_facts.details
+    assert result.blockers
+    manifest_path = tmp_path / "run_manifest.json"
+    manifest_path.write_text(
+        json.dumps({"run_id": result.run_id, "request_id": result.request_id}),
+        encoding="utf-8",
+    )
+    summary = {
+        "run_id": result.run_id,
+        "current_stage": result.terminal_node,
+        "z_outer": {"z": 1, "a": {"z": 2, "a": 3}},
+        "product_execution_result": owner_projection,
+        "a_outer": {"z": 4, "a": 5},
+    }
+
+    _persist_graph_terminal_result(
+        run_root=tmp_path,
+        run_id=result.run_id,
+        request_id=result.request_id,
+        summary=summary,
+        model_call_count=0,
+        patch_payload_parser_entered=False,
+        actual_write_performed=False,
+    )
+
+    result_path = tmp_path / "run_result.json"
+    result_bytes = result_path.read_bytes()
+    persisted = json.loads(result_bytes)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    persisted_owner = persisted["product_execution_result"]
+    assert list(persisted) == sorted(summary)
+    assert list(persisted["z_outer"]) == ["a", "z"]
+    assert list(persisted["z_outer"]["a"]) == ["a", "z"]
+    assert list(persisted_owner) == list(owner_projection)
+    assert ProductExecutionResultV1.from_dict(persisted_owner) == result
+    assert manifest["terminal_record"] == {
+        "path": str(result_path),
+        "sha256": hashlib.sha256(result_bytes).hexdigest(),
+    }
+
+
+@pytest.mark.parametrize("mutation", ("missing", "unknown", "reordered"))
+def test_strict_result_replay_rejects_changed_owner_fields(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    result = _execute_store_role_scenario(tmp_path, scenario="blocked")
+    projection = result.to_dict()
+    if mutation == "missing":
+        projection.pop("run_id")
+    elif mutation == "unknown":
+        projection["unexpected_owner_field"] = None
+    else:
+        projection = {key: projection[key] for key in reversed(projection)}
+
+    with pytest.raises(
+        ProductExecutionContractError,
+        match="ProductExecutionResultV1 fields changed",
+    ):
+        ProductExecutionResultV1.from_dict(projection)
+
+
+def test_strict_result_mapping_boundary_rejects_duplicate_owner_field(
+    tmp_path: Path,
+) -> None:
+    result = _execute_store_role_scenario(tmp_path, scenario="blocked")
+    duplicate_mapping = _DuplicateFieldMapping(result.to_dict(), "run_id")
+
+    with pytest.raises(
+        ProductExecutionContractError,
+        match="ProductExecutionResultV1 fields changed",
+    ):
+        ProductExecutionResultV1.from_dict(duplicate_mapping)
 
 
 def test_public_product_executor_runs_real_graph_and_strict_store_chain(

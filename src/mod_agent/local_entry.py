@@ -3328,8 +3328,16 @@ def _persist_graph_terminal_result(
     if manifest.get("run_id") != run_id or manifest.get("request_id") != request_id:
         raise LocalEntryError("Run manifest identity changed before terminal projection.")
     result_path = run_root / "run_result.json"
+    ordered_summary: dict[str, Any] = {}
+    for key in sorted(summary):
+        value = summary[key]
+        ordered_summary[key] = (
+            value
+            if key == "product_execution_result"
+            else _sort_graph_terminal_json_objects(value)
+        )
     result_bytes = (
-        json.dumps(dict(summary), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        json.dumps(ordered_summary, ensure_ascii=False, indent=2) + "\n"
     ).encode("utf-8")
     result_path.write_bytes(result_bytes)
     terminal_stage = str(summary.get("current_stage") or "unknown")
@@ -3351,6 +3359,21 @@ def _persist_graph_terminal_result(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _sort_graph_terminal_json_objects(value: Any) -> Any:
+    """Retain legacy recursive key ordering outside the owner result subtree."""
+
+    if isinstance(value, dict):
+        return {
+            key: _sort_graph_terminal_json_objects(value[key])
+            for key in sorted(value)
+        }
+    if isinstance(value, list):
+        return [_sort_graph_terminal_json_objects(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sort_graph_terminal_json_objects(item) for item in value)
+    return value
 
 
 def _persist_graph_terminal_failure(
