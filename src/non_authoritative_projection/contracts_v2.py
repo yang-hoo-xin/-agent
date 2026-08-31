@@ -340,6 +340,15 @@ class EdgeReporterV2:
     def __post_init__(self) -> None:
         if not isinstance(self.fact, FactRefV2):
             raise ProjectionContractError("EdgeReporterV2.fact must be FactRefV2.")
+        admission = _owner_fact_admission(self.fact.owner, self.fact.fact_type)
+        if (
+            admission is None
+            or admission[2] != "required"
+            or self.fact.owner_sequence is None
+        ):
+            raise ProjectionContractError(
+                "EdgeReporterV2 fact cannot report without an owner sequence."
+            )
         _require_sha256(self.payload_sha256, "EdgeReporterV2.payload_sha256")
         _require_sequence(self.owner_sequence, "EdgeReporterV2.owner_sequence")
 

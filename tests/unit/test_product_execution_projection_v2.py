@@ -329,6 +329,37 @@ def test_strict_product_result_reused_revision_projects_two_lossless_occurrences
         patch_outputs[0],
         envelope_by_sequence[patch_outputs[0].sequence],
     )
+    first_envelope = envelope_by_sequence[patch_outputs[0].sequence]
+    output_projection = patch_outputs[0].to_dict()
+    occurrence_record_sha256 = hashlib.sha256(
+        json.dumps(
+            output_projection,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    assert "owner" not in output_projection
+    assert "fact_type" not in output_projection
+    assert "owner" not in patch_outputs[0].artifact_ref.__dict__
+    assert "fact_type" not in patch_outputs[0].artifact_ref.__dict__
+    assert "owner" not in first_envelope
+    assert "fact_type" not in first_envelope
+    assert first.ref.owner == "product_execution"
+    assert first.ref.fact_type == "product_execution_output_v1"
+    assert first.ref.run_id == result.run_id
+    assert first.ref.request_id == result.request_id
+    assert first.ref.owner_sequence == patch_outputs[0].sequence
+    assert first.ref.artifact_ref.to_dict() == {
+        "feature_id": patch_outputs[0].artifact_ref.feature_id,
+        "artifact_type": patch_outputs[0].artifact_ref.artifact_type,
+        "path": patch_outputs[0].artifact_ref.path,
+        "artifact_hash": patch_outputs[0].artifact_ref.artifact_hash,
+    }
+    assert first.payload_schema_version == first_envelope["schema_version"]
+    assert first.payload_sha256 == patch_outputs[0].artifact_ref.artifact_hash
+    assert first.payload_sha256 != occurrence_record_sha256
     edges = (_references(first, revision), _references(second, revision))
 
     view = ProjectionViewV2.rebuild(

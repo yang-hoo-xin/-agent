@@ -1,9 +1,12 @@
 # Non-authoritative Projection Identity V2 Checkpoint
 
-Status: code/test checkpoint for occurrence-aware identity
+Status: code/test checkpoint with bounded reporter-admission correction
 
-Checkpoint parent:
+Initial checkpoint parent:
 `a79565197e7c5242f5f22b6ff6ddfe75db94f7ed`
+
+Corrective checkpoint parent:
+`d9c9a65aaccd093ba0bf45453b104fbd4d5a6f1b`
 
 Responsibility authority:
 `docs/audits/NON_AUTHORITATIVE_PROJECTION_RESPONSIBILITY_BOUNDARY_20260830.md`
@@ -17,7 +20,7 @@ pure `src.non_authoritative_projection.contracts_v2` module and focused tests.
 It creates no Artifact, Graph branch, Approval, Gateway, queue, observer,
 exporter, production adapter, production consumer, or execution decision.
 
-## 1. Verified first physical failure
+## 1. Verified reachable contract counterexample
 
 The current owner contracts permit this complete combination:
 
@@ -43,6 +46,14 @@ retaining both causes its duplicate-ref rejection, while retaining one loses
 an owner-issued occurrence. Changing ProductExecution, Recorder, or
 ArtifactStore would move a projection limitation into an authoritative owner,
 so those modules remain unchanged.
+
+The evidence level is a reachable contract counterexample, not an observed
+public/default Graph production event. It combines the real
+`ArtifactStore.write_with_result` idempotent committed-ref mechanism and its
+focused test, the real `_ProductStoreRecorder` and ProductExecution contracts,
+and one strictly replayable synthetic composition of those contracts. It does
+not claim that a public/default Graph `ProductExecutionResultV1` has physically
+emitted the same `patch_proposal` revision twice in one recorded run.
 
 ## 2. Independent V2 surface
 
@@ -77,6 +88,25 @@ The closed admission table, in exact row and field order, is:
 
 Callers cannot register another row by rebinding the public constant.
 
+`owner` and `fact_type` are Projection V2 closed-admission labels. They are not
+native owner-issued fields of `ProductExecutionOutputV1`, `ArtifactRef`, or
+`ArtifactEnvelope`. The current exact owner-contract sources are limited to:
+
+| Projection V2 field | exact current source |
+| --- | --- |
+| `run_id` | enclosing `ProductExecutionResultV1.run_id` |
+| `request_id` | enclosing `ProductExecutionResultV1.request_id` |
+| `owner_sequence` for a ProductExecution occurrence | `ProductExecutionOutputV1.sequence` |
+| `artifact_ref.feature_id` | `ProductExecutionOutputV1.artifact_ref.feature_id` / matching `ArtifactRef.feature_id` |
+| `artifact_ref.artifact_type` | `ProductExecutionOutputV1.artifact_ref.artifact_type` / matching `ArtifactRef.artifact_type` |
+| `artifact_ref.path` | `ProductExecutionOutputV1.artifact_ref.path` / matching `ArtifactRef.path` |
+| `artifact_ref.artifact_hash` | `ProductExecutionOutputV1.artifact_ref.artifact_hash` / matching `ArtifactRef.artifact_hash` and readback `ArtifactEnvelope.artifact_hash` |
+| `payload_sha256` | the same referenced `ArtifactRef.artifact_hash`; not an occurrence-record hash |
+| `payload_schema_version` | matching validated output-readback `ArtifactEnvelope.schema_version` |
+
+The Projection labels add no owner authority and do not assert that the owner
+contracts natively serialize those labels.
+
 ## 3. Exact serialized fields
 
 `ArtifactRefV2` is the structured copy of the exact owner-issued `ArtifactRef`.
@@ -108,6 +138,13 @@ fields are:
 `OwnerFactV2.fact.artifact_ref.artifact_hash`. The payload schema must equal the
 closed admission row's exact `1.0`.
 
+For `product_execution/product_execution_output_v1`, that
+`payload_sha256` currently binds the referenced Artifact payload. It is not a
+hash of the complete `ProductExecutionOutputV1` occurrence record, the enclosing
+result, or the structured occurrence identity. Scope and sequence are preserved
+as explicit identity fields; this checkpoint makes no complete occurrence
+content-integrity claim.
+
 `EdgeReporterV2` has exactly:
 
 1. `fact`
@@ -125,7 +162,11 @@ closed admission row's exact `1.0`.
 Both edge endpoints and `reporter.fact` carry the complete `FactRefV2` rather
 than a path-only reference. Construction requires `reporter.fact == source`.
 ArtifactStore revisions have no owner sequence and cannot be a source or
-reporter.
+reporter. `EdgeReporterV2` itself rejects every sequence-unavailable admission,
+including direct construction and `from_dict`; this does not defer solely to
+`ExplicitEdgeV2`. For a sequence-required ProductExecution fact, the reporter's
+separate `owner_sequence` and `payload_sha256` may remain inconsistent long
+enough for `ProjectionViewV2` to emit the exact item-level mismatch diagnostic.
 
 `ProjectionDiagnosticV2` preserves the V1 item-level diagnostic structure with
 complete V2 fact identities:
@@ -252,10 +293,11 @@ V1 types retain their exact API, serialized bytes, hashes, and strict parsing.
 `ProjectionViewV2.from_dict` does not accept a V1 View. There is no automatic
 conversion or migration.
 
-There was no production projection consumer and no persistent Projection
-Artifact before this checkpoint. This checkpoint creates neither one. It also
-does not assert that a persistent V1 Artifact or a prior P2 projection commit
-exists.
+Within the current repository, current Artifact registry, and the worktree and
+consumer references inspected for this page, no production projection consumer
+or persistent Projection Artifact was found. This checkpoint creates neither
+one. This bounded check does not claim that repository-external data, deleted
+data, another host, or uninspected history contains no V1 projection data.
 
 ## 7. Verification evidence
 
@@ -265,19 +307,21 @@ Runtime, game process, game-directory write, or external disclosure occurred.
 
 | command | result |
 | --- | --- |
-| `python -m pytest tests/unit/test_non_authoritative_projection.py tests/unit/test_non_authoritative_projection_v2.py tests/unit/test_product_execution_projection_v2.py tests/unit/test_non_authoritative_projection_boundary.py -q` | `49 passed, 1 warning` |
+| `python -m pytest tests/unit/test_non_authoritative_projection.py tests/unit/test_non_authoritative_projection_v2.py tests/unit/test_product_execution_projection_v2.py tests/unit/test_non_authoritative_projection_boundary.py -q` | `61 passed, 1 warning` |
 | `python -m pytest tests/unit/test_product_execution.py tests/unit/test_artifact_store.py::test_write_with_result_reuses_preexisting_committed_identity_without_writes -q` | `108 passed, 1 warning` |
 
 The warning in both commands is the environment's existing `jieba` import of
 the deprecated `pkg_resources` API; it is not a projection or owner-contract
 test failure.
 
-The focused V2 integration fixture builds a strictly replayable
-`ProductExecutionResultV1`. Its Recorder retains two committed
+The focused V2 integration fixture builds a strictly replayable synthetic
+`ProductExecutionResultV1` composition. Its real Recorder contract retains two committed
 `patch_proposal` outputs with different owner sequences and one exact
 ArtifactRef; the second Store result has `commit_started=False`. The V2 View
 retains both occurrences, two source-bound `references` edges, and one shared
-ArtifactStore revision target without mutating the owner result.
+ArtifactStore revision target without mutating the owner result. This fixture
+proves contract representability and replay, not a physical duplicate revision
+from a public/default Graph execution.
 
 ## 8. Claim boundary
 

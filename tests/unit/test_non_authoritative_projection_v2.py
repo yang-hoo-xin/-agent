@@ -24,6 +24,7 @@ from src.non_authoritative_projection.contracts_v2 import (
     ExplicitEdgeV2,
     FactRefV2,
     OwnerFactV2,
+    ProjectionDiagnosticV2,
     ProjectionViewV2,
 )
 
@@ -124,6 +125,12 @@ def test_v2_admission_and_exact_structured_identity_shape_are_frozen() -> None:
     artifact_ref = _artifact("a")
     product = _product_fact(sequence=4, artifact_ref=artifact_ref)
     revision = _artifact_fact(artifact_ref)
+    conflict_edge = _edge("conflicts_with", product, revision)
+    conflict_view = ProjectionViewV2.rebuild(
+        (product, revision),
+        (conflict_edge,),
+    )
+    diagnostic = conflict_view.diagnostics[0]
 
     assert OWNER_FACT_ADMISSION_VERSION_V2 == "owner_fact_admission_v2"
     assert OWNER_FACT_ADMISSION_V2 == (
@@ -162,6 +169,36 @@ def test_v2_admission_and_exact_structured_identity_shape_are_frozen() -> None:
         "payload_sha256",
         "payload_schema_version",
     )
+    assert tuple(conflict_edge.reporter.to_dict()) == (
+        "fact",
+        "payload_sha256",
+        "owner_sequence",
+    )
+    assert tuple(conflict_edge.to_dict()) == (
+        "schema_version",
+        "relation",
+        "source",
+        "target",
+        "reporter",
+    )
+    assert tuple(diagnostic.to_dict()) == (
+        "schema_version",
+        "code",
+        "edge_sha256",
+        "primary_fact",
+        "related_fact",
+        "fact_payload_sha256",
+        "reporter_payload_sha256",
+        "fact_owner_sequence",
+        "reporter_owner_sequence",
+    )
+    assert tuple(conflict_view.to_dict()) == (
+        "schema_version",
+        "facts",
+        "edges",
+        "diagnostics",
+    )
+    assert ProjectionDiagnosticV2.from_dict(diagnostic.to_dict()) == diagnostic
     assert product.ref.run_id == "run_projection_v2_001"
     assert product.ref.request_id == "request_projection_v2_001"
     assert product.ref.owner_sequence == 4
@@ -169,6 +206,91 @@ def test_v2_admission_and_exact_structured_identity_shape_are_frozen() -> None:
     assert revision.ref.request_id is None
     assert revision.ref.owner_sequence is None
     assert product.ref.artifact_ref == revision.ref.artifact_ref
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("owner", "projection"),
+        ("fact_type", "product_status_v1"),
+    ),
+)
+def test_v2_fact_ref_rejects_unregistered_owner_or_fact_type(
+    field: str,
+    value: object,
+) -> None:
+    serialized = _product_fact(
+        sequence=4,
+        artifact_ref=_artifact("a"),
+    ).ref.to_dict()
+    serialized[field] = value
+
+    with pytest.raises(ProjectionContractError, match="pair is not admitted"):
+        FactRefV2.from_dict(serialized)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("run_id", "run_not_owned_by_artifact_store"),
+        ("request_id", "request_not_owned_by_artifact_store"),
+        ("owner_sequence", 0),
+    ),
+)
+def test_artifact_revision_rejects_invented_scope_and_sequence(
+    field: str,
+    value: object,
+) -> None:
+    serialized = _artifact_fact(_artifact("a")).ref.to_dict()
+    serialized[field] = value
+
+    with pytest.raises(ProjectionContractError, match="must be null"):
+        FactRefV2.from_dict(serialized)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("run_id", None),
+        ("request_id", None),
+        ("owner_sequence", None),
+        ("owner_sequence", True),
+    ),
+)
+def test_product_occurrence_rejects_missing_scope_sequence_and_bool_sequence(
+    field: str,
+    value: object,
+) -> None:
+    serialized = _product_fact(
+        sequence=4,
+        artifact_ref=_artifact("a"),
+    ).ref.to_dict()
+    serialized[field] = value
+
+    with pytest.raises(ProjectionContractError):
+        FactRefV2.from_dict(serialized)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("payload_schema_version", "1", "schema version"),
+        ("payload_sha256", "b" * 64, "must equal its exact ArtifactRef hash"),
+    ),
+)
+def test_owner_fact_rejects_wrong_payload_schema_and_artifact_hash_drift(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    serialized = _product_fact(
+        sequence=4,
+        artifact_ref=_artifact("a"),
+    ).to_dict()
+    serialized[field] = value
+
+    with pytest.raises(ProjectionContractError, match=message):
+        OwnerFactV2.from_dict(serialized)
 
 
 def test_same_revision_different_occurrences_coexist_and_each_references_revision() -> None:
@@ -262,24 +384,69 @@ def test_reporter_is_full_source_identity_and_artifact_revision_cannot_report() 
     with pytest.raises(ProjectionContractError, match="must equal its source"):
         _edge("references", first, revision, reporter_fact=second.ref)
 
-    with pytest.raises(ProjectionContractError, match="cannot issue a sequence-bound edge"):
-        ExplicitEdgeV2(
-            schema_version="2",
-            relation="references",
-            source=revision.ref,
-            target=first.ref,
-            reporter=EdgeReporterV2(
-                fact=revision.ref,
-                payload_sha256=revision.payload_sha256,
-                owner_sequence=0,
-            ),
+    serialized_reporter = {
+        "fact": revision.ref.to_dict(),
+        "payload_sha256": revision.payload_sha256,
+        "owner_sequence": 0,
+    }
+    with pytest.raises(ProjectionContractError, match="cannot report without"):
+        EdgeReporterV2(
+            fact=revision.ref,
+            payload_sha256=revision.payload_sha256,
+            owner_sequence=0,
         )
+    with pytest.raises(ProjectionContractError, match="cannot report without"):
+        EdgeReporterV2.from_dict(serialized_reporter)
+
+
+def test_product_reporter_wrong_sequence_remains_an_item_level_diagnostic() -> None:
+    artifact_ref = _artifact("a")
+    product = _product_fact(sequence=4, artifact_ref=artifact_ref)
+    revision = _artifact_fact(artifact_ref)
+    with pytest.raises(ProjectionContractError, match="exact integer"):
+        EdgeReporterV2(
+            fact=product.ref,
+            payload_sha256=product.payload_sha256,
+            owner_sequence=True,
+        )
+    edge = _edge(
+        "references",
+        product,
+        revision,
+        reporter_owner_sequence=5,
+    )
+
+    view = ProjectionViewV2.rebuild((product, revision), (edge,))
+    payload_mismatch = ProjectionViewV2.rebuild(
+        (product, revision),
+        (
+            _edge(
+                "references",
+                product,
+                revision,
+                reporter_payload_sha256="0" * 64,
+            ),
+        ),
+    )
+
+    assert [item.code for item in view.diagnostics] == [
+        "reporter_owner_sequence_mismatch"
+    ]
+    diagnostic = view.diagnostics[0]
+    assert diagnostic.fact_owner_sequence == 4
+    assert diagnostic.reporter_owner_sequence == 5
+    assert diagnostic.fact_payload_sha256 is None
+    assert diagnostic.reporter_payload_sha256 is None
+    assert [item.code for item in payload_mismatch.diagnostics] == [
+        "reporter_payload_sha256_mismatch"
+    ]
 
 
 def test_missing_mismatch_and_conflict_remain_item_level_without_adjudication() -> None:
     artifact_ref = _artifact("a")
     product = _product_fact(sequence=4, artifact_ref=artifact_ref)
     revision = _artifact_fact(artifact_ref)
+    references_edge = _edge("references", product, revision)
     mismatch_edge = _edge(
         "references",
         product,
@@ -291,11 +458,27 @@ def test_missing_mismatch_and_conflict_remain_item_level_without_adjudication() 
     mismatch = ProjectionViewV2.rebuild((product, revision), (mismatch_edge,))
     missing = ProjectionViewV2.rebuild(
         (product,),
-        (_edge("references", product, revision),),
+        (references_edge,),
     )
+    missing_source_and_reporter = ProjectionViewV2.rebuild(
+        (revision,),
+        (references_edge,),
+    )
+    conflict_edge = _edge("conflicts_with", product, revision)
     conflict = ProjectionViewV2.rebuild(
         (product, revision),
-        (_edge("conflicts_with", product, revision),),
+        (conflict_edge,),
+    )
+    mismatched_conflict = ProjectionViewV2.rebuild(
+        (product, revision),
+        (
+            _edge(
+                "conflicts_with",
+                product,
+                revision,
+                reporter_owner_sequence=5,
+            ),
+        ),
     )
 
     assert {item.code for item in mismatch.diagnostics} == {
@@ -303,7 +486,19 @@ def test_missing_mismatch_and_conflict_remain_item_level_without_adjudication() 
         "reporter_owner_sequence_mismatch",
     }
     assert [item.code for item in missing.diagnostics] == ["missing_target_fact"]
+    assert {item.code for item in missing_source_and_reporter.diagnostics} == {
+        "missing_source_fact",
+        "missing_reporter_fact",
+    }
+    assert len(missing_source_and_reporter.diagnostics) == 2
     assert [item.code for item in conflict.diagnostics] == ["explicit_conflict"]
+    conflict_diagnostic = conflict.diagnostics[0]
+    assert conflict_diagnostic.primary_fact == conflict_edge.source
+    assert conflict_diagnostic.related_fact == conflict_edge.target
+    assert conflict_diagnostic.edge_sha256 == conflict_edge.canonical_sha256()
+    assert [item.code for item in mismatched_conflict.diagnostics] == [
+        "reporter_owner_sequence_mismatch"
+    ]
     assert set(item.code for item in mismatch.diagnostics).issubset(
         DIAGNOSTIC_CODES_V2
     )
@@ -325,6 +520,14 @@ def test_missing_mismatch_and_conflict_remain_item_level_without_adjudication() 
             "projection_integrity",
             "winner",
             "final_status",
+            "status",
+            "authority",
+            "retry",
+            "pause",
+            "resume",
+            "apply",
+            "repair",
+            "recovery",
         }
     )
 
