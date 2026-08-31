@@ -264,6 +264,11 @@ def _large_projection_fixture() -> dict[str, object]:
                 "hook_target_binding_id": None,
                 "supporting_binding_ids": [],
                 "operation": "minimal_evidence_bound_change",
+                "rationale": f"Implement the bounded behavior for change {index}.",
+                "expected_validation": [
+                    "compile or static validation",
+                    "behavior evidence observed",
+                ],
             }
         )
         required_validation_by_binding[binding_id] = [
@@ -402,6 +407,65 @@ def _generate_projection_fixture(
     return llm, generated
 
 
+def _non_native_plan_response_changes(
+    fixture: dict[str, object],
+) -> list[dict[str, object]]:
+    evidence_by_id = {
+        item["evidence_id"]: item for item in fixture["evidence_items"]
+    }
+    binding_by_id = {
+        item["binding_id"]: item
+        for item in fixture["binding_registry"]["edit_bindings"]
+    }
+    native_by_identity = {
+        (item["change_id"], item["edit_binding_id"]): item
+        for item in fixture["response"]["changes"]
+    }
+    changes: list[dict[str, object]] = []
+    for required in fixture["required_change_units"]:
+        identity = (required["change_id"], required["edit_binding_id"])
+        native = native_by_identity[identity]
+        binding = binding_by_id[required["edit_binding_id"]]
+        evidence = evidence_by_id[binding["evidence_id"]]
+        changes.append(
+            {
+                "change_id": required["change_id"],
+                "change_type": "modify_behavior",
+                "edit_binding_id": required["edit_binding_id"],
+                "operation": "exact_text_replace",
+                "rationale": native["rationale"],
+                "rollback_hint": native["rollback_hint"],
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": evidence["excerpt"],
+                    "after_text": native["after_text"],
+                    "expected_occurrences": 1,
+                },
+            }
+        )
+    return changes
+
+
+def _generate_non_native_plan_fixture(
+    fixture: dict[str, object],
+    response_changes: list[dict[str, object]],
+) -> tuple[_RecordingLLM, object]:
+    llm = _RecordingLLM(json.dumps({"changes": response_changes}))
+    generated = LLMExactPatchGenerator(llm).generate(
+        user_request=str(fixture["user_request"]),
+        evidence_items=list(fixture["evidence_items"]),
+        binding_registry=dict(fixture["binding_registry"]),
+        constraints=list(fixture["constraints"]),
+        target_behavior="Implement the feature-level behavior.",
+        acceptance_criteria=["Observe the feature-level behavior."],
+        runtime_verification_plan=["Restart and observe the feature."],
+        required_change_units=list(fixture["required_change_units"]),
+        required_validation_by_binding={},
+        require_native_schema=False,
+    )
+    return llm, generated
+
+
 def test_patch_model_projection_admits_actual_scale_generic_fixture() -> None:
     fixture = _large_projection_fixture()
     llm, generated = _generate_projection_fixture(fixture)
@@ -448,8 +512,13 @@ def test_patch_model_projection_admits_actual_scale_generic_fixture() -> None:
         assert projected["target_span"] == binding["target_span"]
         assert projected["excerpt"] == evidence["excerpt"]
 
-    assert prompt_payload["required_change_units"] == fixture[
-        "required_change_units"
+    assert prompt_payload["required_change_units"] == [
+        {
+            key: value
+            for key, value in item.items()
+            if key not in {"rationale", "expected_validation"}
+        }
+        for item in fixture["required_change_units"]
     ]
     assert prompt_payload["required_validation_by_binding"] == {
         binding_id: ["behavior evidence observed"]
@@ -683,7 +752,6 @@ def test_generator_rejects_incomplete_plan_change_coverage() -> None:
                 "edit_binding_id": "edit_binding_001",
                 "operation": "exact_text_replace",
                 "rationale": "Implement the first planned operation.",
-                "expected_validation": ["dotnet build"],
                 "rollback_hint": "Restore the first source text.",
                 "patch": {
                     "kind": "exact_text_replace",
@@ -723,11 +791,13 @@ def test_generator_rejects_incomplete_plan_change_coverage() -> None:
                     "change_id": "chg_001",
                     "edit_binding_id": "edit_binding_001",
                     "operation": "Change the first behavior.",
+                    "expected_validation": ["Validate the first Plan change."],
                 },
                 {
                     "change_id": "chg_002",
                     "edit_binding_id": "edit_binding_002",
                     "operation": "Change the second behavior.",
+                    "expected_validation": ["Validate the second Plan change."],
                 },
             ],
         )
@@ -776,7 +846,6 @@ def test_generator_rejects_before_text_from_another_binding() -> None:
                 "edit_binding_id": "edit_binding_001",
                 "operation": "exact_text_replace",
                 "rationale": "Claim the first binding while editing the second.",
-                "expected_validation": ["dotnet build"],
                 "rollback_hint": "Restore source.",
                 "patch": {
                     "kind": "exact_text_replace",
@@ -821,6 +890,7 @@ def test_generator_rejects_before_text_from_another_binding() -> None:
                 {
                     "change_id": "chg_001",
                     "edit_binding_id": "edit_binding_001",
+                    "expected_validation": ["Validate the exact Plan change."],
                 }
             ],
         )
@@ -1544,6 +1614,97 @@ def test_generator_still_rejects_missing_behavior_validation_after_inheritance()
     )
 
 
+def test_external_non_native_plan_validation_is_hidden_and_materialized() -> None:
+    fixture = _large_projection_fixture()
+    hidden_validation = "Plan-only validation must be restored internally."
+    for index, required in enumerate(fixture["required_change_units"], start=1):
+        required["expected_validation"] = [f"{hidden_validation} {index}"]
+    response_changes = _non_native_plan_response_changes(fixture)
+
+    llm, generated = _generate_non_native_plan_fixture(
+        fixture,
+        response_changes,
+    )
+
+    prompt_payload = json.loads(llm.messages[1].content)
+    assert prompt_payload["required_validation_by_binding"] == {}
+    assert all(
+        "expected_validation" not in item
+        for item in prompt_payload["required_change_units"]
+    )
+    assert "expected_validation" not in prompt_payload["required_output"][
+        "changes"
+    ][0]
+    provider_visible_messages = "\n".join(
+        message.content for message in llm.messages
+    )
+    assert hidden_validation not in provider_visible_messages
+    assert all("expected_validation" not in item for item in response_changes)
+    expected_by_identity = {
+        (item["change_id"], item["edit_binding_id"]): item[
+            "expected_validation"
+        ]
+        for item in fixture["required_change_units"]
+    }
+    assert {
+        (item["change_id"], item["edit_binding_id"]): item[
+            "expected_validation"
+        ]
+        for item in generated.changes
+    } == expected_by_identity
+
+
+def test_external_non_native_plan_response_rejects_forged_validation_field() -> None:
+    fixture = _large_projection_fixture()
+    response_changes = _non_native_plan_response_changes(fixture)
+    response_changes[0]["expected_validation"] = ["model-authored validation"]
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        _generate_non_native_plan_fixture(fixture, response_changes)
+
+    assert exc_info.value.diagnostics["failure_boundary"] == (
+        "deterministic_patch_validation"
+    )
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "plan_bound_non_native_response_fields_invalid"
+    )
+    assert exc_info.value.diagnostics["unexpected_fields"] == [
+        "expected_validation"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("failure_case", "expected_classification"),
+    [
+        ("missing", "plan_change_coverage_incomplete"),
+        ("duplicate", "plan_change_coverage_incomplete"),
+        (
+            "mismatched_identity",
+            "plan_bound_non_native_change_identity_unknown",
+        ),
+    ],
+)
+def test_external_non_native_plan_identity_fails_closed(
+    failure_case: str,
+    expected_classification: str,
+) -> None:
+    fixture = _large_projection_fixture()
+    response_changes = _non_native_plan_response_changes(fixture)
+    if failure_case == "missing":
+        response_changes.pop()
+    elif failure_case == "duplicate":
+        response_changes[-1] = dict(response_changes[0])
+    else:
+        response_changes[0]["change_id"] = "change_unknown"
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        _generate_non_native_plan_fixture(fixture, response_changes)
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        expected_classification
+    )
+
+
 def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
     source_hash = "1" * 64
     source_path = "Patches/Behavior.cs"
@@ -1595,6 +1756,8 @@ def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
                 "edit_binding_id": "edit_binding_001",
                 "supporting_binding_ids": [],
                 "operation": "minimal_evidence_bound_change",
+                "rationale": "Implement the bounded behavior.",
+                "expected_validation": ["compile or static validation"],
             }
         ],
         required_validation_by_binding={
@@ -1873,15 +2036,23 @@ def test_normalized_nested_region_requires_two_patch_replacements() -> None:
             "change_id": "chg_001",
             "change_type": "modify_behavior",
             "edit_binding_id": "edit_binding_001",
+            "hook_target_binding_id": None,
             "supporting_binding_ids": [],
             "operation": "minimal_evidence_bound_change",
+            "rationale": "  Implement the configuration behavior only.  ",
+            "expected_validation": ["  Validate configuration behavior.  "],
         },
         {
             "change_id": "chg_002",
             "change_type": "modify_behavior",
             "edit_binding_id": "edit_binding_002",
+            "hook_target_binding_id": None,
             "supporting_binding_ids": ["support_binding_ev_spread_inner"],
             "operation": "minimal_evidence_bound_change",
+            "rationale": (
+                "Preserve the existing enabled spread behavior at this binding only."
+            ),
+            "expected_validation": ["Validate enabled spread preservation."],
         },
     ]
     response = {
@@ -1911,10 +2082,14 @@ def test_normalized_nested_region_requires_two_patch_replacements() -> None:
         evidence_items=evidence_items,
         binding_registry=binding_registry,
         constraints=[],
+        acceptance_criteria=[
+            "Validate configuration behavior.",
+            "Validate enabled spread preservation.",
+        ],
         required_change_units=required_change_units,
         required_validation_by_binding={
-            "edit_binding_001": ["static validation"],
-            "edit_binding_002": ["static validation"],
+            "edit_binding_001": ["  Validate configuration behavior.  "],
+            "edit_binding_002": ["Validate enabled spread preservation."],
         },
         require_native_schema=True,
         provider_request_recorder=lambda _: None,
@@ -1930,6 +2105,18 @@ def test_normalized_nested_region_requires_two_patch_replacements() -> None:
     assert prompt_payload["required_change_units"][1]["supporting_binding_ids"] == [
         "support_binding_ev_spread_inner"
     ]
+    assert prompt_payload["required_change_units"] == [
+        {
+            key: value
+            for key, value in item.items()
+            if key not in {"rationale", "expected_validation"}
+        }
+        for item in required_change_units
+    ]
+    assert prompt_payload["acceptance_criteria"] == [
+        "Validate configuration behavior.",
+        "Validate enabled spread preservation.",
+    ]
     assert response_schema["properties"]["changes"]["minItems"] == 2
     assert response_schema["properties"]["changes"]["maxItems"] == 2
     assert len(generated.changes) == 2
@@ -1940,6 +2127,138 @@ def test_normalized_nested_region_requires_two_patch_replacements() -> None:
         "expected_occurrences": 1,
     }
     assert generated.changes[1]["patch"]["before_text"] == spread_outer_excerpt
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_classification"),
+    [
+        ("rationale", None, "required_change_unit_rationale_invalid"),
+        ("rationale", "", "required_change_unit_rationale_invalid"),
+        (
+            "expected_validation",
+            None,
+            "required_change_unit_expected_validation_invalid",
+        ),
+        (
+            "expected_validation",
+            [""],
+            "required_change_unit_expected_validation_invalid",
+        ),
+    ],
+)
+def test_native_change_semantic_obligations_fail_closed_before_provider_call(
+    field: str,
+    value: object,
+    expected_classification: str,
+) -> None:
+    fixture = json.loads(json.dumps(_large_projection_fixture()))
+    fixture["required_change_units"][0][field] = value
+    llm = _RecordingLLM(json.dumps(fixture["response"]))
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(llm).generate(
+            user_request=str(fixture["user_request"]),
+            evidence_items=list(fixture["evidence_items"]),
+            binding_registry=dict(fixture["binding_registry"]),
+            constraints=list(fixture["constraints"]),
+            required_change_units=list(fixture["required_change_units"]),
+            required_validation_by_binding=dict(
+                fixture["required_validation_by_binding"]
+            ),
+            require_native_schema=True,
+            provider_request_recorder=lambda _: None,
+        )
+
+    assert llm.messages == []
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        expected_classification
+    )
+
+
+@pytest.mark.parametrize(
+    ("argument_name", "value", "expected_classification"),
+    [
+        ("constraints", [""], "constraints_invalid"),
+        ("constraints", "preserve", "constraints_invalid"),
+        ("target_behavior", "", "target_behavior_invalid"),
+        ("target_behavior", 1, "target_behavior_invalid"),
+        ("acceptance_criteria", [], "acceptance_criteria_invalid"),
+        ("acceptance_criteria", [""], "acceptance_criteria_invalid"),
+        ("acceptance_criteria", "observe", "acceptance_criteria_invalid"),
+        (
+            "runtime_verification_plan",
+            [],
+            "runtime_verification_plan_invalid",
+        ),
+        (
+            "runtime_verification_plan",
+            [""],
+            "runtime_verification_plan_invalid",
+        ),
+    ],
+)
+def test_provider_semantic_obligation_collections_fail_closed_before_call(
+    argument_name: str,
+    value: object,
+    expected_classification: str,
+) -> None:
+    fixture = json.loads(json.dumps(_large_projection_fixture()))
+    llm = _RecordingLLM(json.dumps(fixture["response"]))
+    arguments = {
+        "user_request": str(fixture["user_request"]),
+        "evidence_items": list(fixture["evidence_items"]),
+        "binding_registry": dict(fixture["binding_registry"]),
+        "constraints": list(fixture["constraints"]),
+        "target_behavior": "Implement the requested behavior.",
+        "acceptance_criteria": ["Observe the requested behavior."],
+        "runtime_verification_plan": ["Restart and observe the behavior."],
+        "required_change_units": list(fixture["required_change_units"]),
+        "required_validation_by_binding": dict(
+            fixture["required_validation_by_binding"]
+        ),
+        "require_native_schema": True,
+        "provider_request_recorder": lambda _: None,
+    }
+    arguments[argument_name] = value
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(llm).generate(**arguments)
+
+    assert llm.messages == []
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        expected_classification
+    )
+
+
+def test_native_change_semantic_obligations_are_optional_compatibility_fields() -> None:
+    fixture = json.loads(json.dumps(_large_projection_fixture()))
+    for required_change in fixture["required_change_units"]:
+        required_change.pop("rationale")
+        required_change.pop("expected_validation")
+    llm = _RecordingLLM(json.dumps(fixture["response"]))
+
+    generated = LLMExactPatchGenerator(llm).generate(
+        user_request=str(fixture["user_request"]),
+        evidence_items=list(fixture["evidence_items"]),
+        binding_registry=dict(fixture["binding_registry"]),
+        constraints=list(fixture["constraints"]),
+        target_behavior="Implement the requested behavior.",
+        acceptance_criteria=["Observe the requested behavior."],
+        runtime_verification_plan=["Restart and observe the behavior."],
+        required_change_units=list(fixture["required_change_units"]),
+        required_validation_by_binding=dict(
+            fixture["required_validation_by_binding"]
+        ),
+        require_native_schema=True,
+        provider_request_recorder=lambda _: None,
+    )
+
+    prompt_payload = json.loads(llm.messages[1].content)
+    assert all(
+        "rationale" not in item and "expected_validation" not in item
+        for item in prompt_payload["required_change_units"]
+    )
+    assert len(generated.changes) == len(fixture["required_change_units"])
 
 
 def test_malformed_patch_json_preserves_diagnostics_without_repairing_content() -> None:

@@ -80,6 +80,7 @@ from src.mod_agent.model_admission import (
     validate_ollama_model_identity as _shared_validate_ollama_model_identity,
 )
 from src.mod_agent.product_executor import (
+    PATCH_PROVIDER_PAYLOAD_DISCLOSURE_BINDINGS,
     SOURCE_DISCLOSURE_DATA_CLASSES,
     LocalEntryError,
     ProductExecutionAdaptersV1,
@@ -1754,6 +1755,202 @@ def _repair_provider_constraints(
         projected.append(message)
     projected.extend(history_constraints)
     return projected
+
+
+def _patch_generation_obligation_projection(
+    *,
+    feature_spec: Mapping[str, Any],
+    implementation: Mapping[str, Any],
+    planned_changes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Project exact feature-wide obligations and evidence-bound change identities."""
+
+    def exact_string_list(
+        owner: Mapping[str, Any],
+        field_name: str,
+        *,
+        allow_empty: bool,
+    ) -> list[str]:
+        raw = owner.get(field_name)
+        if not isinstance(raw, (list, tuple)) or (
+            not allow_empty and not raw
+        ):
+            raise LocalEntryError(
+                f"Patch generation {field_name} must be a"
+                + (" list." if allow_empty else " non-empty list.")
+            )
+        if any(
+            not isinstance(item, str) or not item.strip()
+            for item in raw
+        ):
+            raise LocalEntryError(
+                f"Patch generation {field_name} must contain only non-empty strings."
+            )
+        return list(raw)
+
+    target_behavior = feature_spec.get("target_behavior")
+    if not isinstance(target_behavior, str) or not target_behavior.strip():
+        raise LocalEntryError(
+            "Patch generation target_behavior must be a non-empty string."
+        )
+    acceptance_criteria = exact_string_list(
+        feature_spec,
+        "acceptance_criteria",
+        allow_empty=False,
+    )
+    runtime_verification_plan = exact_string_list(
+        feature_spec,
+        "runtime_verification_plan",
+        allow_empty=False,
+    )
+    side_effect_boundaries = exact_string_list(
+        implementation,
+        "side_effect_boundaries",
+        allow_empty=True,
+    )
+    if not planned_changes:
+        raise LocalEntryError(
+            "Patch generation requires at least one proposed change."
+        )
+
+    required_change_units: list[dict[str, Any]] = []
+    seen_change_ids: set[str] = set()
+    seen_identities: set[tuple[str, str]] = set()
+    for index, item in enumerate(planned_changes, start=1):
+        identity, expected_validation = (
+            _validated_plan_change_identity_and_validation(item, index=index)
+        )
+        if identity[0] in seen_change_ids or identity in seen_identities:
+            raise LocalEntryError(
+                "Patch generation Plan change identity is duplicated."
+            )
+        seen_change_ids.add(identity[0])
+        seen_identities.add(identity)
+        required_change_units.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "change_id",
+                    "change_type",
+                    "edit_binding_id",
+                    "hook_target_binding_id",
+                    "supporting_binding_ids",
+                    "operation",
+                )
+            }
+            | {"expected_validation": expected_validation}
+        )
+
+    return {
+        "target_behavior": target_behavior,
+        "required_change_units": required_change_units,
+        "side_effect_boundaries": side_effect_boundaries,
+        "acceptance_criteria": acceptance_criteria,
+        "runtime_verification_plan": runtime_verification_plan,
+    }
+
+
+def _validated_plan_change_identity_and_validation(
+    item: Mapping[str, Any],
+    *,
+    index: int,
+) -> tuple[tuple[str, str], list[str]]:
+    change_id = item.get("change_id")
+    edit_binding_id = item.get("edit_binding_id")
+    if not isinstance(change_id, str) or not change_id:
+        raise LocalEntryError(
+            f"Patch generation proposed change {index} change_id is invalid."
+        )
+    if not isinstance(edit_binding_id, str) or not edit_binding_id:
+        raise LocalEntryError(
+            f"Patch generation proposed change {index} edit_binding_id is invalid."
+        )
+    raw_validation = item.get("expected_validation")
+    if not isinstance(raw_validation, (list, tuple)) or not raw_validation:
+        raise LocalEntryError(
+            f"Patch generation proposed change {index} expected_validation "
+            "must be a non-empty list."
+        )
+    if any(
+        not isinstance(value, str) or not value.strip()
+        for value in raw_validation
+    ):
+        raise LocalEntryError(
+            f"Patch generation proposed change {index} expected_validation "
+            "must contain only non-empty strings."
+        )
+    expected_validation = list(raw_validation)
+    if len(set(expected_validation)) != len(expected_validation):
+        raise LocalEntryError(
+            f"Patch generation proposed change {index} expected_validation "
+            "must not contain duplicates."
+        )
+    return (change_id, edit_binding_id), expected_validation
+
+
+def _overlay_generated_patch_changes_on_plan(
+    *,
+    planned_changes: list[dict[str, Any]],
+    generated_changes: tuple[dict[str, Any], ...],
+) -> tuple[dict[str, Any], ...]:
+    """Bind generated patch bytes to exact Plan identity and validation."""
+
+    planned_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
+    seen_change_ids: set[str] = set()
+    for index, planned in enumerate(planned_changes, start=1):
+        identity, _ = _validated_plan_change_identity_and_validation(
+            planned,
+            index=index,
+        )
+        if identity[0] in seen_change_ids or identity in planned_by_identity:
+            raise LocalEntryError(
+                "Patch generation Plan change identity is duplicated."
+            )
+        seen_change_ids.add(identity[0])
+        planned_by_identity[identity] = planned
+
+    overlaid: list[dict[str, Any]] = []
+    generated_identities: set[tuple[str, str]] = set()
+    for index, generated in enumerate(generated_changes, start=1):
+        change_id = generated.get("change_id")
+        edit_binding_id = generated.get("edit_binding_id")
+        if not isinstance(change_id, str) or not isinstance(edit_binding_id, str):
+            raise LocalEntryError(
+                f"Generated patch change {index} identity is invalid."
+            )
+        identity = (change_id, edit_binding_id)
+        planned = planned_by_identity.get(identity)
+        if planned is None:
+            raise LocalEntryError(
+                "Generated patch is outside implementation-plan change units."
+            )
+        if identity in generated_identities:
+            raise LocalEntryError("Generated patch change identity is duplicated.")
+        generated_identities.add(identity)
+        _, expected_validation = _validated_plan_change_identity_and_validation(
+            planned,
+            index=index,
+        )
+        if generated.get("expected_validation") != expected_validation:
+            raise LocalEntryError(
+                "Generated patch expected_validation does not match its exact "
+                "implementation-plan change identity."
+            )
+        overlaid.append(
+            {
+                **planned,
+                "rationale": generated["rationale"],
+                "expected_validation": expected_validation,
+                "rollback_hint": generated["rollback_hint"],
+                "patch": generated["patch"],
+            }
+        )
+
+    if generated_identities != set(planned_by_identity):
+        raise LocalEntryError(
+            "Generated patch does not cover every implementation-plan change identity."
+        )
+    return tuple(overlaid)
 
 
 @dataclass(frozen=True)
@@ -4630,11 +4827,6 @@ def run_local_request(
                 current_identity,
                 requested_context_window=ollama_context_window,
             )
-        else:
-            _verify_source_disclosure(
-                source_disclosure,
-                requested_data_classes=SOURCE_DISCLOSURE_DATA_CLASSES,
-            )
         external_evidence = _external_evidence_items(
             list(evidence_pack.get("items") or [])
         )
@@ -4646,6 +4838,25 @@ def run_local_request(
             for item in implementation.get("proposed_changes") or []
             if isinstance(item, dict)
         ]
+        feature_spec_ref_path = state.get("artifacts", {}).get("feature_spec")
+        feature_spec_ref_hash = state.get("artifact_hashes", {}).get(
+            "feature_spec"
+        )
+        if not isinstance(feature_spec_ref_path, str) or not isinstance(
+            feature_spec_ref_hash,
+            str,
+        ):
+            raise LocalEntryError(
+                "Patch generation requires the committed FeatureSpec."
+            )
+        feature_spec = artifact_store.read(
+            ArtifactRef(
+                feature_id=str(state.get("feature_id") or state["request_id"]),
+                artifact_type="feature_spec",
+                path=feature_spec_ref_path,
+                artifact_hash=feature_spec_ref_hash,
+            )
+        )["data"]
         repair_plan: dict[str, Any] | None = None
         repair_observation: dict[str, Any] | None = None
         repair_history_constraints: tuple[str, ...] = ()
@@ -4869,22 +5080,17 @@ def run_local_request(
             }
             runtime_repair_bindings = tuple(dict(item) for item in revised_bindings)
             runtime_repair_evidence = tuple(dict(item) for item in repair_evidence)
-        required_change_units = [
-            {
-                key: item.get(key)
-                for key in (
-                    "change_id",
-                    "change_type",
-                    "edit_binding_id",
-                    "hook_target_binding_id",
-                    "supporting_binding_ids",
-                    "operation",
-                )
-            }
-            for item in planned_changes
-        ]
-        side_effect_boundaries = [
-            str(item) for item in implementation.get("side_effect_boundaries") or []
+        obligation_projection = _patch_generation_obligation_projection(
+            feature_spec=feature_spec,
+            implementation=implementation,
+            planned_changes=planned_changes,
+        )
+        required_change_units = obligation_projection["required_change_units"]
+        side_effect_boundaries = obligation_projection["side_effect_boundaries"]
+        target_behavior = obligation_projection["target_behavior"]
+        acceptance_criteria = obligation_projection["acceptance_criteria"]
+        runtime_verification_plan = obligation_projection[
+            "runtime_verification_plan"
         ]
         if repair_observation is not None:
             side_effect_boundaries = _repair_provider_constraints(
@@ -4898,17 +5104,33 @@ def run_local_request(
             "binding_registry": generation_binding_registry,
             "required_change_units": required_change_units,
             "side_effect_boundaries": side_effect_boundaries,
+            "target_behavior": target_behavior,
+            "acceptance_criteria": acceptance_criteria,
+            "runtime_verification_plan": runtime_verification_plan,
             "repair_observation": repair_observation,
             "repair_span_inventory": [
                 span.model_view() for span in repair_spans
             ],
         }
+        patch_disclosure_data_classes = (
+            _patch_model_input_disclosure_data_classes(model_input)
+        )
+        if not local_ollama:
+            _verify_patch_model_input_disclosure(
+                source_disclosure,
+                model_input=model_input,
+            )
         _assert_no_absolute_local_paths(model_input)
         model_input_audit = {
             "approval_id": source_disclosure.get("approval_id"),
             "provider_adapter": model_admission.get("provider_adapter"),
             "destination": model_admission.get("destination"),
             "approved_data_classes": source_disclosure.get("approved_data_classes"),
+            "requested_data_classes": (
+                []
+                if local_ollama
+                else list(patch_disclosure_data_classes)
+            ),
             "payload_sha256": _sha256_json(model_input),
             "absolute_local_paths_present": False,
             "api_key_in_payload": False,
@@ -5060,13 +5282,7 @@ def run_local_request(
                 requested_context_window=ollama_context_window,
             )
 
-        required_validation_by_binding = {
-            str(item["edit_binding_id"]): [
-                str(value) for value in item.get("expected_validation") or []
-            ]
-            for item in planned_changes
-            if item.get("edit_binding_id")
-        }
+        required_validation_by_binding: dict[str, list[str]] = {}
         generation_constraints = list(model_input["side_effect_boundaries"])
 
         def generate_span_repair(selected_constraints: list[str]):
@@ -5128,13 +5344,12 @@ def run_local_request(
                 encoding="utf-8",
             )
             required_change = required_change_units[0]
-            binding_id = str(required_change.get("edit_binding_id") or "")
             materialized_change = _materialize_repair_span_change(
                 response.content,
                 spans=repair_spans,
                 required_change=required_change,
                 expected_validation=tuple(
-                    required_validation_by_binding.get(binding_id) or ()
+                    required_change.get("expected_validation") or ()
                 ),
             )
             materialized_response = ChatResponse(
@@ -5154,6 +5369,11 @@ def run_local_request(
                 evidence_items=list(model_input["evidence"]),
                 binding_registry=dict(model_input["binding_registry"]),
                 constraints=selected_constraints,
+                target_behavior=str(model_input["target_behavior"]),
+                acceptance_criteria=list(model_input["acceptance_criteria"]),
+                runtime_verification_plan=list(
+                    model_input["runtime_verification_plan"]
+                ),
                 required_change_units=required_change_units,
                 required_validation_by_binding=required_validation_by_binding,
                 require_native_schema=False,
@@ -5167,6 +5387,11 @@ def run_local_request(
                 evidence_items=list(model_input["evidence"]),
                 binding_registry=dict(model_input["binding_registry"]),
                 constraints=selected_constraints,
+                target_behavior=str(model_input["target_behavior"]),
+                acceptance_criteria=list(model_input["acceptance_criteria"]),
+                runtime_verification_plan=list(
+                    model_input["runtime_verification_plan"]
+                ),
                 required_change_units=required_change_units,
                 required_validation_by_binding=required_validation_by_binding,
                 require_native_schema=local_ollama,
@@ -5230,31 +5455,15 @@ def run_local_request(
             )
         if local_ollama and generated.model != selected_model:
             raise LocalEntryError("OLLAMA_RESPONSE_MODEL_IDENTITY_MISMATCH")
-        planned_by_unit = {
-            (
-                str(item.get("change_id") or ""),
-                str(item.get("edit_binding_id") or ""),
-            ): item
-            for item in planned_changes
-            if item.get("change_id")
-            and item.get("edit_binding_id")
-        }
+        overlaid_changes = _overlay_generated_patch_changes_on_plan(
+            planned_changes=planned_changes,
+            generated_changes=generated.changes,
+        )
         changes: list[dict[str, Any]] = []
-        for generated_change in generated.changes:
-            binding_id = str(generated_change["edit_binding_id"])
-            change_id = str(generated_change["change_id"])
-            planned = planned_by_unit.get((change_id, binding_id))
-            if planned is None:
-                raise LocalEntryError(
-                    "Generated patch is outside implementation-plan change units."
-                )
+        for overlaid_change in overlaid_changes:
             changes.append(
                 {
-                    **planned,
-                    "rationale": generated_change["rationale"],
-                    "expected_validation": generated_change["expected_validation"],
-                    "rollback_hint": generated_change["rollback_hint"],
-                    "patch": generated_change["patch"],
+                    **overlaid_change,
                     "generation": {
                         "provider": settings.llm.provider,
                         "model": generated.model,
@@ -11586,6 +11795,45 @@ def _verify_source_disclosure(
         raise LocalEntryError(
             "Source disclosure does not approve requested data classes: "
             + ", ".join(unapproved)
+        )
+
+
+def _patch_model_input_disclosure_data_classes(
+    model_input: Mapping[str, Any],
+) -> tuple[str, ...]:
+    required: set[str] = set()
+    for model_input_fields, _, data_classes in (
+        PATCH_PROVIDER_PAYLOAD_DISCLOSURE_BINDINGS
+    ):
+        if all(field in model_input for field in model_input_fields):
+            required.update(data_classes)
+    return tuple(
+        data_class
+        for data_class in SOURCE_DISCLOSURE_DATA_CLASSES
+        if data_class in required
+    )
+
+
+def _verify_patch_model_input_disclosure(
+    record: dict[str, Any],
+    *,
+    model_input: Mapping[str, Any],
+) -> None:
+    requested_data_classes = _patch_model_input_disclosure_data_classes(model_input)
+    recorded_requested = record.get("requested_data_classes")
+    if recorded_requested != list(requested_data_classes):
+        raise LocalEntryError(
+            "Source disclosure requested_data_classes do not match the actual "
+            "Patch provider payload fields."
+        )
+    _verify_source_disclosure(
+        record,
+        requested_data_classes=requested_data_classes,
+    )
+    if record.get("approved_data_classes") != list(requested_data_classes):
+        raise LocalEntryError(
+            "Source disclosure approved_data_classes do not match the actual "
+            "Patch provider payload fields."
         )
 
 

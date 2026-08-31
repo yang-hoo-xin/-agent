@@ -42,6 +42,7 @@ from src.mod_agent.evidence.requirement_coverage_provider import (
     requirement_projection_response_schema,
 )
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.local_entry import _patch_generation_obligation_projection
 from src.mod_agent.planning import (
     FeatureSpec,
     ImplementationPlan,
@@ -441,11 +442,25 @@ def _actual10_method_coverage_inputs(tmp_path: Path):
 
 def _actual10_expected_delta_inputs(tmp_path: Path):
     feature, _, _, _, _, _ = _actual10_method_coverage_inputs(tmp_path)
-    feature["non_goals"] = []
+    feature["non_goals"] = [
+        "Preserve all unrelated configuration and crosshair behavior."
+    ]
     feature["target_behavior"] = (
         "Add Accurate Spread Enabled with default true; when false after restart, "
-        "stop overriding the raw crosshair size with accurate spread data."
+        "stop overriding the raw crosshair size with accurate spread data; when "
+        "true, preserve the existing shotgun, hip-fire, and aimed spread behavior."
     )
+    feature["acceptance_criteria"] = [
+        (
+            "After restart with Accurate Spread Enabled false, the raw crosshair "
+            "size is not replaced by accurate spread data."
+        ),
+        (
+            "After restart with Accurate Spread Enabled true, the existing shotgun, "
+            "hip-fire, and aimed spread behavior is preserved."
+        ),
+    ]
+    feature["runtime_verification_plan"] = list(feature["acceptance_criteria"])
     feature["evidence_requirements"] = [
         "Provide target source/API and current configuration schema evidence."
     ]
@@ -469,9 +484,23 @@ def _actual10_expected_delta_inputs(tmp_path: Path):
                 ],
             },
             {
+                "role": "preservation",
+                "text": str(feature["non_goals"][0]),
+                "input_obligation_indexes": [4],
+                "query_leads": [
+                    "AccurateCrosshair source code spread calculation logic"
+                ],
+            },
+            {
                 "role": "post_change_acceptance",
-                "text": "Validate the requested behavior after the change.",
-                "input_obligation_indexes": [4, 5],
+                "text": str(feature["acceptance_criteria"][0]),
+                "input_obligation_indexes": [5, 7],
+                "query_leads": ["AccurateCrosshair runtime verification plan"],
+            },
+            {
+                "role": "post_change_acceptance",
+                "text": str(feature["acceptance_criteria"][1]),
+                "input_obligation_indexes": [6, 8],
                 "query_leads": ["AccurateCrosshair runtime verification plan"],
             },
         ],
@@ -480,7 +509,7 @@ def _actual10_expected_delta_inputs(tmp_path: Path):
                 "parent_requirement_indexes": [index],
                 "meaning": f"Evidence disposition for requirement {index}.",
             }
-            for index in range(1, 4)
+            for index in range(1, 6)
         ],
         "input_dispositions": [],
     }
@@ -526,11 +555,24 @@ def _actual10_expected_delta_inputs(tmp_path: Path):
             },
             {
                 "relation_index": 3,
+                "relationship": "support",
+                "evidence_ids": [spread.evidence_id],
+                "unresolved_gaps": [],
+            },
+            {
+                "relation_index": 4,
                 "relationship": "missing",
                 "evidence_ids": [],
                 "unresolved_gaps": [
-                    "No evidence of post-change validation or compile/static "
-                    "analysis output is provided."
+                    "No evidence of disabled post-change validation is provided."
+                ],
+            },
+            {
+                "relation_index": 5,
+                "relationship": "missing",
+                "evidence_ids": [],
+                "unresolved_gaps": [
+                    "No evidence of enabled preservation validation is provided."
                 ],
             },
         ]
@@ -756,6 +798,8 @@ def test_actual10_expected_delta_is_not_an_unresolved_evidence_gap(
     ] == [
         ("change", True),
         ("pre_patch_evidence", True),
+        ("preservation", True),
+        ("post_change_acceptance", False),
         ("post_change_acceptance", False),
     ]
     assert coverage["edit_target_evidence_ids"] == sorted(
@@ -928,6 +972,7 @@ def _actual15_v2_complete_four_site_plan(
     ]
     findings["findings"][0]["unresolved_gaps"] = []
     findings["findings"][1]["evidence_ids"] = [bind_site.evidence_id]
+    findings["findings"][2]["evidence_ids"] = [spread_site.evidence_id]
 
     pack = build_requirement_coverage_pack(
         query=str(feature["user_request"]),
@@ -972,32 +1017,20 @@ def _actual15_v2_complete_four_site_plan(
     return feature, complete_items, pack, implementation, after_by_evidence_id
 
 
-def _required_patch_inputs(implementation: ImplementationPlan) -> tuple[
-    list[dict[str, object]],
+def _required_patch_inputs(
+    feature: dict[str, object],
+    implementation: ImplementationPlan,
+) -> tuple[
+    dict[str, object],
     dict[str, list[str]],
 ]:
-    changes = list(implementation.proposed_changes)
-    required_change_units = [
-        {
-            key: item.get(key)
-            for key in (
-                "change_id",
-                "change_type",
-                "edit_binding_id",
-                "hook_target_binding_id",
-                "supporting_binding_ids",
-                "operation",
-            )
-        }
-        for item in changes
-    ]
-    required_validation_by_binding = {
-        str(item["edit_binding_id"]): [
-            str(value) for value in item.get("expected_validation") or []
-        ]
-        for item in changes
-    }
-    return required_change_units, required_validation_by_binding
+    projection = _patch_generation_obligation_projection(
+        feature_spec=feature,
+        implementation=implementation.to_artifact_payload(),
+        planned_changes=[dict(item) for item in implementation.proposed_changes],
+    )
+    required_validation_by_binding: dict[str, list[str]] = {}
+    return projection, required_validation_by_binding
 
 
 def _native_four_site_response(
@@ -1028,7 +1061,7 @@ def _native_four_site_response(
 def test_v2_complete_multi_site_change_authority_reaches_nonblocking_planning(
     tmp_path: Path,
 ) -> None:
-    _, complete_items, pack, implementation, _ = (
+    feature, complete_items, pack, implementation, _ = (
         _actual15_v2_complete_four_site_plan(tmp_path)
     )
 
@@ -1044,6 +1077,21 @@ def test_v2_complete_multi_site_change_authority_reaches_nonblocking_planning(
         for binding in implementation.binding_registry["edit_bindings"]
     } == expected_ids
     assert len(implementation.proposed_changes) == 4
+    assert all(
+        change["rationale"]
+        == (
+            f"Contribute within {change['edit_binding_id']} to the Feature-wide "
+            "target behavior without assigning it to this change: "
+            f"{feature['target_behavior']}"
+        )
+        for change in implementation.proposed_changes
+    )
+    assert all(
+        "without assigning it to this change" in change["rationale"]
+        and change["expected_validation"]
+        == ["Validate this bounded edit against the Feature-wide test_plan."]
+        for change in implementation.proposed_changes
+    )
 
 
 def test_v2_four_site_plan_projects_and_materializes_canned_native_response(
@@ -1052,9 +1100,10 @@ def test_v2_four_site_plan_projects_and_materializes_canned_native_response(
     feature, complete_items, pack, implementation, after_by_evidence_id = (
         _actual15_v2_complete_four_site_plan(tmp_path)
     )
-    required_change_units, required_validation_by_binding = (
-        _required_patch_inputs(implementation)
+    obligation_projection, required_validation_by_binding = (
+        _required_patch_inputs(feature, implementation)
     )
+    required_change_units = list(obligation_projection["required_change_units"])
     response = _native_four_site_response(
         implementation=implementation,
         after_by_evidence_id=after_by_evidence_id,
@@ -1066,7 +1115,12 @@ def test_v2_four_site_plan_projects_and_materializes_canned_native_response(
         user_request=str(feature["user_request"]),
         evidence_items=[item.to_dict() for item in complete_items],
         binding_registry=deepcopy(implementation.binding_registry),
-        constraints=list(implementation.side_effect_boundaries),
+        constraints=list(obligation_projection["side_effect_boundaries"]),
+        target_behavior=str(obligation_projection["target_behavior"]),
+        acceptance_criteria=list(obligation_projection["acceptance_criteria"]),
+        runtime_verification_plan=list(
+            obligation_projection["runtime_verification_plan"]
+        ),
         required_change_units=required_change_units,
         required_validation_by_binding=required_validation_by_binding,
         require_native_schema=True,
@@ -1107,25 +1161,51 @@ def test_v2_four_site_plan_projects_and_materializes_canned_native_response(
         str(item["edit_binding_id"]): item for item in required_change_units
     }
     prompt_payload = json.loads(llm.messages[1].content)
-    assert [
-        (
-            item["change_id"],
-            item["change_type"],
-            item["edit_binding_id"],
-            item["supporting_binding_ids"],
-            item["operation"],
-        )
-        for item in prompt_payload["required_change_units"]
-    ] == [
-        (
-            item["change_id"],
-            item["change_type"],
-            item["edit_binding_id"],
-            item["supporting_binding_ids"],
-            item["operation"],
-        )
+    assert prompt_payload["target_behavior"] == feature["target_behavior"]
+    assert prompt_payload["acceptance_criteria"] == feature["acceptance_criteria"]
+    assert prompt_payload["constraints"] == feature["non_goals"]
+    assert prompt_payload["runtime_verification_plan"] == feature[
+        "runtime_verification_plan"
+    ]
+    assert prompt_payload["required_change_units"] == [
+        {
+            key: value
+            for key, value in item.items()
+            if key not in {"rationale", "expected_validation"}
+        }
         for item in required_change_units
     ]
+    assert all(
+        "rationale" not in item and "expected_validation" not in item
+        for item in prompt_payload["required_change_units"]
+    )
+    assert prompt_payload["required_validation_by_binding"] == {}
+    provider_payload_text = llm.messages[1].content
+    assert provider_payload_text.count('"target_behavior"') == 1
+    assert provider_payload_text.count('"acceptance_criteria"') == 1
+    assert provider_payload_text.count('"runtime_verification_plan"') == 1
+    required_change_units_text = json.dumps(
+        prompt_payload["required_change_units"],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    assert all(
+        item not in required_change_units_text
+        for item in feature["runtime_verification_plan"]
+    )
+    assert (
+        "Validate this bounded edit against the Feature-wide test_plan."
+        not in provider_payload_text
+    )
+    system_prompt = llm.messages[0].content
+    assert "feature-level generation contract" in system_prompt
+    assert "does not assign a feature obligation to an individual change" in (
+        system_prompt
+    )
+    assert "rationale is its exact behavior obligation" not in system_prompt
+    assert "expected_validation is its exact validation obligation" not in (
+        system_prompt
+    )
     assert set(prompt_payload["edit_binding_contexts"]) == set(binding_by_id)
     for binding_id, binding in binding_by_id.items():
         evidence = evidence_by_id[str(binding["evidence_id"])]
@@ -1148,9 +1228,16 @@ def test_v2_four_site_plan_projects_and_materializes_canned_native_response(
         assert change["supporting_binding_ids"] == required[
             "supporting_binding_ids"
         ]
-        assert change["expected_validation"] == required_validation_by_binding[
-            binding_id
-        ]
+        planned = next(
+            item
+            for item in implementation.proposed_changes
+            if (
+                item["change_id"],
+                item["edit_binding_id"],
+            )
+            == (change["change_id"], change["edit_binding_id"])
+        )
+        assert change["expected_validation"] == planned["expected_validation"]
         assert change["patch"] == {
             "kind": "exact_text_replace",
             "before_text": evidence.excerpt,
@@ -1175,9 +1262,10 @@ def test_v2_four_site_missing_authority_blocks_before_native_provider(
     feature, complete_items, _, implementation, after_by_evidence_id = (
         _actual15_v2_complete_four_site_plan(tmp_path)
     )
-    required_change_units, required_validation_by_binding = (
-        _required_patch_inputs(implementation)
+    obligation_projection, required_validation_by_binding = (
+        _required_patch_inputs(feature, implementation)
     )
+    required_change_units = list(obligation_projection["required_change_units"])
     response = _native_four_site_response(
         implementation=implementation,
         after_by_evidence_id=after_by_evidence_id,

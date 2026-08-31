@@ -47,17 +47,23 @@ from src.mod_agent.product_execution import (
 from src.mod_agent.product_executor import (
     LocalEntryError,
     ProductExecutionAdaptersV1,
+    SOURCE_DISCLOSURE_DATA_CLASSES,
     _bind_owner_validated_runtime_evidence_factory,
+    _external_model_admission_record,
     _local_model_admission_record,
     _local_no_external_disclosure_record,
     _runtime_admission_record,
+    _source_disclosure_record,
     _verify_source_revision_binding,
     execute_product_execution,
     preflight_product_execution,
     source_snapshot,
     source_snapshot_sha256,
 )
-from src.mod_agent.local_entry import _persist_graph_terminal_result
+from src.mod_agent.local_entry import (
+    _persist_graph_terminal_result,
+    _verify_patch_model_input_disclosure,
+)
 from src.non_authoritative_projection import (
     EdgeReporterV1,
     ExplicitEdgeV1,
@@ -366,6 +372,118 @@ def _blocked_evidence_adapters() -> ProductExecutionAdaptersV1:
         compiled_artifact_verifier=None,
         source_change_verifier=None,
     )
+
+
+def test_external_owner_records_bind_complete_feature_wide_disclosure() -> None:
+    disclosure = _source_disclosure_record(
+        provider="openai",
+        model="qwen3.6-plus",
+        base_url="https://example.invalid/compatible-mode/v1",
+        approved_at="2026-08-31T00:00:00+00:00",
+        approval_id="approval_feature_wide_001",
+        provider_adapter="deterministic_external_test",
+        destination_url=(
+            "https://example.invalid/compatible-mode/v1/chat/completions"
+        ),
+    )
+
+    assert disclosure["requested_data_classes"] == list(
+        SOURCE_DISCLOSURE_DATA_CLASSES
+    )
+    assert disclosure["approved_data_classes"] == list(
+        SOURCE_DISCLOSURE_DATA_CLASSES
+    )
+    admission = _external_model_admission_record(disclosure)
+    assert admission["requested_data_classes"] == list(
+        SOURCE_DISCLOSURE_DATA_CLASSES
+    )
+    assert admission["approved_data_classes"] == list(
+        SOURCE_DISCLOSURE_DATA_CLASSES
+    )
+
+
+@pytest.mark.parametrize(
+    "missing_data_class",
+    [
+        "feature_target_behavior",
+        "feature_acceptance_criteria",
+        "feature_runtime_verification_plan",
+    ],
+)
+def test_external_product_execution_missing_feature_consent_has_zero_patch_calls(
+    tmp_path: Path,
+    missing_data_class: str,
+) -> None:
+    request, store = _request(tmp_path)
+    approved_data_classes = tuple(
+        data_class
+        for data_class in SOURCE_DISCLOSURE_DATA_CLASSES
+        if data_class != missing_data_class
+    )
+    disclosure = _source_disclosure_record(
+        provider="openai",
+        model="qwen3.6-plus",
+        base_url="https://example.invalid/compatible-mode/v1",
+        approved_at="2026-08-31T00:00:00+00:00",
+        approval_id="approval_feature_wide_subset_001",
+        provider_adapter="deterministic_external_test",
+        destination_url=(
+            "https://example.invalid/compatible-mode/v1/chat/completions"
+        ),
+        requested_data_classes=SOURCE_DISCLOSURE_DATA_CLASSES,
+        approved_data_classes=approved_data_classes,
+    )
+    values = request.to_dict()
+    values["input_bindings"][1] = ProductExecutionInputBindingV1.create(
+        "source_disclosure", disclosure
+    ).to_dict()
+    values["input_bindings"][2] = ProductExecutionInputBindingV1.create(
+        "model_admission", _external_model_admission_record(disclosure)
+    ).to_dict()
+    request = ProductExecutionRequestV1.from_dict(values)
+    original_adapters = _successful_compile_adapters(request)
+    patch_provider_calls: list[dict[str, object]] = []
+
+    def patch_change_factory(state, implementation, evidence_pack):
+        model_input = {
+            "request": state["user_request"],
+            "evidence": list(evidence_pack.get("items") or []),
+            "binding_registry": dict(
+                implementation.get("binding_registry") or {}
+            ),
+            "required_change_units": list(
+                implementation.get("proposed_changes") or []
+            ),
+            "side_effect_boundaries": list(
+                implementation.get("side_effect_boundaries") or []
+            ),
+            "target_behavior": "Implement the Feature-wide behavior.",
+            "acceptance_criteria": ["Observe the requested behavior."],
+            "runtime_verification_plan": [
+                "Restart and observe the requested behavior."
+            ],
+        }
+        _verify_patch_model_input_disclosure(
+            disclosure,
+            model_input=model_input,
+        )
+        patch_provider_calls.append({"chat": "called"})
+        return original_adapters.patch_change_factory(
+            state,
+            implementation,
+            evidence_pack,
+        )
+
+    adapters = replace(
+        original_adapters,
+        patch_change_factory=patch_change_factory,
+    )
+    preflight = preflight_product_execution(request, adapters, store)
+
+    assert preflight.preflight_status == "ready"
+    result = execute_product_execution(preflight, adapters, store)
+    assert patch_provider_calls == []
+    assert any(missing_data_class in item.message for item in result.blockers)
 
 
 def _formalize_product_test_pack(

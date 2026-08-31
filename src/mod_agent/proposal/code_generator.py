@@ -57,6 +57,9 @@ class LLMExactPatchGenerator:
         evidence_items: list[dict[str, Any]],
         binding_registry: dict[str, Any],
         constraints: list[str],
+        target_behavior: str | None = None,
+        acceptance_criteria: list[str] | tuple[str, ...] | None = None,
+        runtime_verification_plan: list[str] | tuple[str, ...] | None = None,
         required_change_units: list[dict[str, Any]]
         | tuple[dict[str, Any], ...]
         | None = None,
@@ -99,7 +102,13 @@ class LLMExactPatchGenerator:
                 binding_evidence_excerpts[binding_id] = excerpt
 
         required_validation = {
-            str(binding_id): tuple(str(item) for item in values)
+            str(binding_id): _normalize_semantic_obligation_list(
+                values,
+                field_name="required_validation",
+                supplied=True,
+                allow_empty=True,
+                binding_id=str(binding_id),
+            )
             for binding_id, values in (required_validation_by_binding or {}).items()
         }
         model_required_validation = {
@@ -110,12 +119,56 @@ class LLMExactPatchGenerator:
             )
             for binding_id, values in required_validation.items()
         }
+        normalized_constraints = _normalize_semantic_obligation_list(
+            constraints,
+            field_name="constraints",
+            supplied=True,
+            allow_empty=True,
+        )
+        normalized_target_behavior = _normalize_semantic_obligation_string(
+            target_behavior,
+            field_name="target_behavior",
+            supplied=target_behavior is not None,
+        )
+        normalized_acceptance_criteria = _normalize_semantic_obligation_list(
+            acceptance_criteria,
+            field_name="acceptance_criteria",
+            supplied=acceptance_criteria is not None,
+            allow_empty=False,
+        )
+        normalized_runtime_verification_plan = (
+            _normalize_semantic_obligation_list(
+                runtime_verification_plan,
+                field_name="runtime_verification_plan",
+                supplied=runtime_verification_plan is not None,
+                allow_empty=False,
+            )
+        )
         normalized_required_changes = _normalize_required_change_units(
             required_change_units,
             allowed_bindings=allowed_bindings,
             supporting_bindings=set(supporting_bindings_by_id),
             require_native_contract=require_native_schema,
         )
+        plan_bound_response = required_change_units is not None
+        if require_native_schema:
+            for item in normalized_required_changes:
+                binding_id = str(item["edit_binding_id"])
+                if (
+                    binding_id in required_validation
+                    and "expected_validation" in item
+                    and tuple(item["expected_validation"])
+                    != required_validation[binding_id]
+                ):
+                    raise _projection_error(
+                        "Native required change validation does not match the Plan-bound "
+                        "validation for its edit binding.",
+                        failure_classification=(
+                            "required_change_unit_expected_validation_mismatch"
+                        ),
+                        change_id=item["change_id"],
+                        binding_id=binding_id,
+                    )
         unknown_required_bindings = set(required_validation) - allowed_bindings
         if unknown_required_bindings:
             raise _projection_error(
@@ -150,25 +203,26 @@ class LLMExactPatchGenerator:
             and isinstance((excerpt := item.get("excerpt")), str)
             and excerpt
         )
-        required_output = {
-            "changes": [
-                {
-                    "change_id": "string",
-                    "change_type": "modify_behavior",
-                    "edit_binding_id": "allowed id",
-                    "operation": "exact_text_replace",
-                    "rationale": "string",
-                    "expected_validation": ["dotnet build"],
-                    "rollback_hint": "string",
-                    "patch": {
-                        "kind": "exact_text_replace",
-                        "before_text": "verbatim source text",
-                        "after_text": "replacement text",
-                        "expected_occurrences": 1,
-                    },
-                }
-            ]
+        required_output_change = {
+            "change_id": "string",
+            "change_type": "modify_behavior",
+            "edit_binding_id": "allowed id",
+            "operation": "exact_text_replace",
+            "rationale": "string",
+            **(
+                {}
+                if plan_bound_response
+                else {"expected_validation": ["dotnet build"]}
+            ),
+            "rollback_hint": "string",
+            "patch": {
+                "kind": "exact_text_replace",
+                "before_text": "verbatim source text",
+                "after_text": "replacement text",
+                "expected_occurrences": 1,
+            },
         }
+        required_output = {"changes": [required_output_change]}
         output_contract = (
             {"required_output_schema": response_schema}
             if require_native_schema
@@ -192,7 +246,8 @@ class LLMExactPatchGenerator:
                 Message(
                     role="system",
                     content=_patch_system_prompt(
-                        require_native_schema=require_native_schema
+                        require_native_schema=require_native_schema,
+                        plan_bound_response=plan_bound_response,
                     ),
                 ),
                 Message(
@@ -200,11 +255,26 @@ class LLMExactPatchGenerator:
                     content=json.dumps(
                         {
                             "request": user_request,
-                            "constraints": constraints,
+                            "target_behavior": normalized_target_behavior,
+                            "constraints": list(normalized_constraints),
+                            "acceptance_criteria": list(
+                                normalized_acceptance_criteria
+                            ),
+                            "runtime_verification_plan": list(
+                                normalized_runtime_verification_plan
+                            ),
                             "allowed_edit_binding_ids": sorted(allowed_bindings),
                             **model_input_projection,
                             "required_change_units": [
-                                dict(item) for item in normalized_required_changes
+                                {
+                                    key: value
+                                    for key, value in item.items()
+                                    if key not in {
+                                        "rationale",
+                                        "expected_validation",
+                                    }
+                                }
+                                for item in normalized_required_changes
                             ],
                             "required_validation_by_binding": {
                                 binding_id: list(values)
@@ -258,6 +328,17 @@ class LLMExactPatchGenerator:
                     for index, item in enumerate(raw_changes, start=1)
                 )
             else:
+                required_changes_by_identity = (
+                    {
+                        (
+                            str(item["change_id"]),
+                            str(item["edit_binding_id"]),
+                        ): item
+                        for item in normalized_required_changes
+                    }
+                    if plan_bound_response
+                    else None
+                )
                 changes = tuple(
                     _validate_change(
                         item,
@@ -265,6 +346,7 @@ class LLMExactPatchGenerator:
                         evidence_excerpts=evidence_excerpts,
                         binding_evidence_excerpts=binding_evidence_excerpts,
                         required_validation=required_validation,
+                        required_changes_by_identity=required_changes_by_identity,
                         binding_contexts=binding_contexts,
                         index=index,
                     )
@@ -736,14 +818,24 @@ def _validate_required_change_input_coverage(
         )
 
 
-def _patch_system_prompt(*, require_native_schema: bool) -> str:
+def _patch_system_prompt(
+    *,
+    require_native_schema: bool,
+    plan_bound_response: bool,
+) -> str:
     shared = (
         "Generate a minimal exact-text code patch from verified evidence. "
         "Return strict JSON only. Never invent a file path, symbol, API, or "
         "binding id. supporting_evidence is read-only context and never "
         "authorizes an edit target. Return exactly one change for every "
         "required_change_units entry and preserve its exact change_id and "
-        "edit_binding_id. Any non-Boolean bound receiver may be used as a "
+        "edit_binding_id. target_behavior, constraints, acceptance_criteria, "
+        "and runtime_verification_plan form one feature-level generation contract. "
+        "required_change_units owns only the displayed change identity, operation, "
+        "and binding references; it does not assign a feature obligation to an "
+        "individual change. Combine the feature-level generation contract with "
+        "each matching binding source to implement the feature. Any "
+        "non-Boolean bound receiver may be used as a "
         "Boolean operand only through an exact verified_member_accesses entry. "
         "Do not invent API members. Any required_validation_by_binding entry "
         "formatted as an uppercase identifier is a literal marker and must "
@@ -758,6 +850,14 @@ def _patch_system_prompt(*, require_native_schema: bool) -> str:
             "change type, operation, or expected validation; deterministic code "
             "materializes those authoritative fields from the verified binding and "
             "Plan."
+        )
+    if plan_bound_response:
+        return shared + (
+            "Each change must use one allowed edit_binding_id and an "
+            "exact_text_replace patch whose before_text is copied verbatim from the "
+            "source_excerpt in the matching edit_binding_context, including its exact "
+            "line endings. Do not return expected_validation; deterministic code "
+            "materializes it from the exact Plan change_id and edit_binding_id."
         )
     return shared + (
         "Each change must use one allowed edit_binding_id and an "
@@ -813,6 +913,65 @@ def _patch_response_schema(
             }
         },
     }
+
+
+def _normalize_semantic_obligation_list(
+    raw: Any,
+    *,
+    field_name: str,
+    supplied: bool,
+    allow_empty: bool,
+    required: bool = False,
+    **diagnostics: Any,
+) -> tuple[str, ...]:
+    if not supplied:
+        if required:
+            raise _projection_error(
+                f"Required change unit {field_name} is missing.",
+                failure_classification=(
+                    f"required_change_unit_{field_name}_invalid"
+                ),
+                **diagnostics,
+            )
+        return ()
+    if not isinstance(raw, (list, tuple)) or (not allow_empty and not raw):
+        raise _projection_error(
+            f"{field_name} must be a"
+            + (" list." if allow_empty else " non-empty list."),
+            failure_classification=(
+                f"required_change_unit_{field_name}_invalid"
+                if diagnostics
+                else f"{field_name}_invalid"
+            ),
+            **diagnostics,
+        )
+    if any(not isinstance(item, str) or not item.strip() for item in raw):
+        raise _projection_error(
+            f"{field_name} must contain only non-empty strings.",
+            failure_classification=(
+                f"required_change_unit_{field_name}_invalid"
+                if diagnostics
+                else f"{field_name}_invalid"
+            ),
+            **diagnostics,
+        )
+    return tuple(raw)
+
+
+def _normalize_semantic_obligation_string(
+    raw: Any,
+    *,
+    field_name: str,
+    supplied: bool,
+) -> str:
+    if not supplied:
+        return ""
+    if not isinstance(raw, str) or not raw.strip():
+        raise _projection_error(
+            f"{field_name} must be a non-empty string.",
+            failure_classification=f"{field_name}_invalid",
+        )
+    return raw
 
 
 def _normalize_required_change_units(
@@ -874,6 +1033,24 @@ def _normalize_required_change_units(
                 ),
                 observed_operation=operation,
             )
+        rationale = raw.get("rationale")
+        if "rationale" in raw and (
+            not isinstance(rationale, str) or not rationale.strip()
+        ):
+            raise _projection_error(
+                "Required change unit rationale must be a non-empty string when supplied.",
+                failure_classification="required_change_unit_rationale_invalid",
+                change_index=index,
+                change_id=change_id,
+            )
+        expected_validation = _normalize_semantic_obligation_list(
+            raw.get("expected_validation"),
+            field_name="expected_validation",
+            supplied="expected_validation" in raw,
+            allow_empty=True,
+            change_index=index,
+            change_id=change_id,
+        )
         pair = (change_id, binding_id)
         if change_id in seen_ids or pair in seen_pairs:
             raise _projection_error(
@@ -939,6 +1116,16 @@ def _normalize_required_change_units(
                 "hook_target_binding_id": hook_target_binding_id,
                 "supporting_binding_ids": normalized_supporting_ids,
                 "operation": operation,
+                **(
+                    {"rationale": rationale}
+                    if "rationale" in raw
+                    else {}
+                ),
+                **(
+                    {"expected_validation": list(expected_validation)}
+                    if "expected_validation" in raw
+                    else {}
+                ),
             }
         )
     return tuple(normalized)
@@ -1131,7 +1318,12 @@ def _materialize_native_change(
         binding_contexts=binding_contexts,
         index=index,
     )
-    expected_validation = list(required_validation.get(binding_id, ()))
+    expected_validation = list(
+        required_change.get(
+            "expected_validation",
+            required_validation.get(binding_id, ()),
+        )
+    )
     missing_markers = [
         marker
         for marker in expected_validation
@@ -1180,11 +1372,43 @@ def _validate_change(
     evidence_excerpts: tuple[str, ...],
     binding_evidence_excerpts: Mapping[str, str],
     required_validation: Mapping[str, tuple[str, ...]],
+    required_changes_by_identity: Mapping[
+        tuple[str, str], Mapping[str, Any]
+    ]
+    | None,
     binding_contexts: Mapping[str, Mapping[str, Any]],
     index: int,
 ) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise PatchGenerationError(f"Change {index} must be an object.")
+    required_change: Mapping[str, Any] | None = None
+    if required_changes_by_identity is not None:
+        if "expected_validation" in raw:
+            raise _native_validation_error(
+                f"Change {index} must not return Plan-owned expected_validation.",
+                failure_classification=(
+                    "plan_bound_non_native_response_fields_invalid"
+                ),
+                change_index=index,
+                unexpected_fields=["expected_validation"],
+            )
+        raw_change_id = raw.get("change_id")
+        raw_binding_id = raw.get("edit_binding_id")
+        identity = (
+            raw_change_id if isinstance(raw_change_id, str) else "",
+            raw_binding_id if isinstance(raw_binding_id, str) else "",
+        )
+        required_change = required_changes_by_identity.get(identity)
+        if required_change is None:
+            raise _native_validation_error(
+                f"Change {index} is not a required Plan change identity.",
+                failure_classification=(
+                    "plan_bound_non_native_change_identity_unknown"
+                ),
+                change_index=index,
+                change_id=identity[0],
+                binding_id=identity[1],
+            )
     binding_id = str(raw.get("edit_binding_id") or "")
     if binding_id not in allowed_bindings:
         raise PatchGenerationError(f"Change {index} uses an unknown edit binding id.")
@@ -1227,33 +1451,39 @@ def _validate_change(
     )
     if patch.get("expected_occurrences") != 1:
         raise PatchGenerationError(f"Change {index} expected_occurrences must equal 1.")
-    model_expected_validation = [
-        str(item) for item in raw.get("expected_validation") or ["dotnet build"]
-    ]
-    upstream_validation = required_validation.get(binding_id, ())
-    missing_upstream_validation = [
-        item
-        for item in upstream_validation
-        if item not in _DETERMINISTICALLY_INHERITED_VALIDATION
-        and item not in model_expected_validation
-    ]
-    if missing_upstream_validation:
-        raise PatchGenerationError(
-            f"Change {index} omits upstream validation requirement(s): "
-            + ", ".join(missing_upstream_validation),
-            diagnostics={
-                "failure_boundary": "deterministic_patch_validation",
-                "failure_classification": "upstream_validation_omitted",
-                "missing_upstream_validation": missing_upstream_validation,
-            },
+    if required_change is not None:
+        expected_validation = list(
+            required_change.get("expected_validation") or ()
         )
-    expected_validation = list(model_expected_validation)
-    for item in reversed(upstream_validation):
-        if (
-            item in _DETERMINISTICALLY_INHERITED_VALIDATION
-            and item not in expected_validation
-        ):
-            expected_validation.insert(0, item)
+    else:
+        model_expected_validation = [
+            str(item)
+            for item in raw.get("expected_validation") or ["dotnet build"]
+        ]
+        upstream_validation = required_validation.get(binding_id, ())
+        missing_upstream_validation = [
+            item
+            for item in upstream_validation
+            if item not in _DETERMINISTICALLY_INHERITED_VALIDATION
+            and item not in model_expected_validation
+        ]
+        if missing_upstream_validation:
+            raise PatchGenerationError(
+                f"Change {index} omits upstream validation requirement(s): "
+                + ", ".join(missing_upstream_validation),
+                diagnostics={
+                    "failure_boundary": "deterministic_patch_validation",
+                    "failure_classification": "upstream_validation_omitted",
+                    "missing_upstream_validation": missing_upstream_validation,
+                },
+            )
+        expected_validation = list(model_expected_validation)
+        for item in reversed(upstream_validation):
+            if (
+                item in _DETERMINISTICALLY_INHERITED_VALIDATION
+                and item not in expected_validation
+            ):
+                expected_validation.insert(0, item)
     missing_markers = [
         marker
         for marker in expected_validation
@@ -1270,7 +1500,11 @@ def _validate_change(
             },
         )
     return {
-        "change_id": str(raw.get("change_id") or f"change_{index:03d}"),
+        "change_id": (
+            str(required_change["change_id"])
+            if required_change is not None
+            else str(raw.get("change_id") or f"change_{index:03d}")
+        ),
         "change_type": str(raw.get("change_type") or "modify_behavior"),
         "edit_binding_id": binding_id,
         "supporting_binding_ids": [],

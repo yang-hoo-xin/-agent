@@ -51,6 +51,59 @@ SOURCE_DISCLOSURE_DATA_CLASSES = (
     "run_local_api_member_metadata_facts",
     "binding_registry",
     "side_effect_boundaries",
+    "feature_target_behavior",
+    "feature_acceptance_criteria",
+    "feature_runtime_verification_plan",
+)
+
+
+PATCH_PROVIDER_PAYLOAD_DISCLOSURE_BINDINGS = (
+    (("request",), "request", ("natural_language_request",)),
+    (
+        ("evidence", "binding_registry"),
+        "edit_binding_contexts",
+        (
+            "retrieved_local_source_excerpts",
+            "run_local_api_member_metadata_facts",
+            "binding_registry",
+        ),
+    ),
+    (
+        ("evidence", "binding_registry", "required_change_units"),
+        "supporting_evidence",
+        (
+            "retrieved_local_source_excerpts",
+            "run_local_api_member_metadata_facts",
+            "binding_registry",
+        ),
+    ),
+    (("binding_registry",), "allowed_edit_binding_ids", ("binding_registry",)),
+    (
+        ("required_change_units",),
+        "required_change_units",
+        ("binding_registry",),
+    ),
+    (
+        ("required_change_units",),
+        "required_validation_by_binding",
+        ("binding_registry",),
+    ),
+    (
+        ("side_effect_boundaries",),
+        "constraints",
+        ("side_effect_boundaries",),
+    ),
+    (("target_behavior",), "target_behavior", ("feature_target_behavior",)),
+    (
+        ("acceptance_criteria",),
+        "acceptance_criteria",
+        ("feature_acceptance_criteria",),
+    ),
+    (
+        ("runtime_verification_plan",),
+        "runtime_verification_plan",
+        ("feature_runtime_verification_plan",),
+    ),
 )
 
 
@@ -312,7 +365,22 @@ def _source_disclosure_record(
     approval_id: str | None = None,
     provider_adapter: str | None = None,
     destination_url: str | None = None,
+    requested_data_classes: tuple[str, ...] = SOURCE_DISCLOSURE_DATA_CLASSES,
+    approved_data_classes: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
+    requested = _validated_disclosure_data_classes(
+        requested_data_classes,
+        field_name="requested_data_classes",
+    )
+    approved = _validated_disclosure_data_classes(
+        requested if approved_data_classes is None else approved_data_classes,
+        field_name="approved_data_classes",
+    )
+    if not set(approved).issubset(requested):
+        raise LocalEntryError(
+            "Source disclosure approved_data_classes must be a subset of "
+            "requested_data_classes."
+        )
     return {
         "approved": True,
         "approved_at": approved_at,
@@ -326,10 +394,43 @@ def _source_disclosure_record(
             "base_url": _sanitized_endpoint_url(base_url),
             "request_url": _sanitized_endpoint_url(destination_url),
         },
-        "approved_data_classes": list(SOURCE_DISCLOSURE_DATA_CLASSES),
-        "requested_data_classes": list(SOURCE_DISCLOSURE_DATA_CLASSES),
+        "approved_data_classes": list(approved),
+        "requested_data_classes": list(requested),
         "scope": "this_run_only",
     }
+
+
+def _validated_disclosure_data_classes(
+    values: tuple[str, ...],
+    *,
+    field_name: str,
+) -> tuple[str, ...]:
+    if not isinstance(values, tuple):
+        raise LocalEntryError(f"Source disclosure {field_name} must be a tuple.")
+    if any(not isinstance(item, str) for item in values):
+        raise LocalEntryError(
+            f"Source disclosure {field_name} must contain only strings."
+        )
+    if len(set(values)) != len(values):
+        raise LocalEntryError(
+            f"Source disclosure {field_name} contains duplicate data classes."
+        )
+    unknown = [
+        item for item in values if item not in SOURCE_DISCLOSURE_DATA_CLASSES
+    ]
+    if unknown:
+        raise LocalEntryError(
+            f"Source disclosure {field_name} contains unknown data classes: "
+            + ", ".join(unknown)
+        )
+    canonical = tuple(
+        item for item in SOURCE_DISCLOSURE_DATA_CLASSES if item in values
+    )
+    if values != canonical:
+        raise LocalEntryError(
+            f"Source disclosure {field_name} is not in canonical order."
+        )
+    return values
 
 
 def _local_no_external_disclosure_record() -> dict[str, Any]:
@@ -385,6 +486,12 @@ def _external_model_admission_record(
         "base_url": destination_data.get("base_url"),
         "destination": destination_data.get("request_url"),
         "external_disclosure_occurred": True,
+        "requested_data_classes": list(
+            source_disclosure.get("requested_data_classes") or []
+        ),
+        "approved_data_classes": list(
+            source_disclosure.get("approved_data_classes") or []
+        ),
         "api_key_required": True,
         "api_key_read": True,
         "api_key_persisted": False,
@@ -712,6 +819,12 @@ class ProductExecutionInputBindingResolverV1:
                     approval_id=disclosure.get("approval_id"),
                     provider_adapter=disclosure.get("provider_adapter"),
                     destination_url=destination.get("request_url"),
+                    requested_data_classes=tuple(
+                        disclosure.get("requested_data_classes") or ()
+                    ),
+                    approved_data_classes=tuple(
+                        disclosure.get("approved_data_classes") or ()
+                    ),
                 )
             if disclosure != expected_disclosure:
                 raise LocalEntryError(

@@ -1040,9 +1040,15 @@ class ImplementationPlanner:
             "edit_binding_id": f"edit_binding_{index:03d}",
             "supporting_binding_ids": list(supporting_binding_ids),
             "operation": "minimal_evidence_bound_change",
-            "rationale": feature_spec.target_behavior,
+            "rationale": (
+                f"Contribute within edit_binding_{index:03d} to the Feature-wide "
+                f"target behavior without assigning it to this change: "
+                f"{feature_spec.target_behavior}"
+            ),
             "risk_tags": [feature_spec.risk_level],
-            "expected_validation": list(feature_spec.runtime_verification_plan),
+            "expected_validation": [
+                "Validate this bounded edit against the Feature-wide test_plan."
+            ],
             "rollback_hint": "Revert this change unit or restore previous behavior.",
         }
         if hook_target_binding_id is not None:

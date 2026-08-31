@@ -486,9 +486,12 @@ def test_reviewer_blocks_patch_text_from_another_binding_evidence() -> None:
     )
 
 
-def test_reviewer_blocks_proposal_that_omits_plan_validation_requirement() -> None:
+@pytest.mark.parametrize("declared_validation", [[], ["different validation"]])
+def test_reviewer_blocks_proposal_that_omits_or_mismatches_plan_validation_requirement(
+    declared_validation: list[str],
+) -> None:
     proposal = _proposal_payload()
-    proposal["diff_intent"][0]["expected_validation"] = []
+    proposal["diff_intent"][0]["expected_validation"] = declared_validation
 
     review = ProposalReviewer().review(
         proposal,

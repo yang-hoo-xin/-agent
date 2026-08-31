@@ -48,10 +48,13 @@ from src.mod_agent.local_entry import (
     _materialize_game_folder_build_dependency,
     _materialize_repair_span_change,
     _objective_verification_source_views,
+    _overlay_generated_patch_changes_on_plan,
     _persist_graph_terminal_failure,
     _persist_graph_terminal_result,
     _persist_local_failure_diagnostics,
     _patch_generation_calls_remaining,
+    _patch_model_input_disclosure_data_classes,
+    _patch_generation_obligation_projection,
     _project_text_property,
     _repair_review_context,
     _read_exact_diff_approval,
@@ -82,11 +85,291 @@ from src.mod_agent.local_entry import (
     _validate_ollama_context_window,
     _validate_game_folder_build_binding,
     _windows_extended_length_path,
+    _verify_patch_model_input_disclosure,
     _verify_source_disclosure,
+    PATCH_PROVIDER_PAYLOAD_DISCLOSURE_BINDINGS,
+    SOURCE_DISCLOSURE_DATA_CLASSES,
     run_local_request,
 )
 
 _OLLAMA_DIGEST = "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
+
+
+def _feature_wide_patch_model_input() -> dict[str, object]:
+    return {
+        "request": "Change the behavior.",
+        "evidence": [{"excerpt": "verified source"}],
+        "binding_registry": {"edit_bindings": []},
+        "required_change_units": [],
+        "side_effect_boundaries": ["Preserve unrelated behavior."],
+        "target_behavior": "Implement the Feature-wide behavior.",
+        "acceptance_criteria": ["Observe the requested behavior."],
+        "runtime_verification_plan": ["Restart and observe the behavior."],
+        "repair_observation": None,
+        "repair_span_inventory": [],
+    }
+
+
+def test_patch_provider_payload_fields_bind_to_exact_disclosure_classes() -> None:
+    binding_by_provider_field = {
+        provider_field: data_classes
+        for _, provider_field, data_classes in (
+            PATCH_PROVIDER_PAYLOAD_DISCLOSURE_BINDINGS
+        )
+    }
+
+    assert binding_by_provider_field["target_behavior"] == (
+        "feature_target_behavior",
+    )
+    assert binding_by_provider_field["acceptance_criteria"] == (
+        "feature_acceptance_criteria",
+    )
+    assert binding_by_provider_field["runtime_verification_plan"] == (
+        "feature_runtime_verification_plan",
+    )
+    assert binding_by_provider_field["constraints"] == (
+        "side_effect_boundaries",
+    )
+    assert binding_by_provider_field["edit_binding_contexts"] == (
+        "retrieved_local_source_excerpts",
+        "run_local_api_member_metadata_facts",
+        "binding_registry",
+    )
+    assert binding_by_provider_field["supporting_evidence"] == (
+        "retrieved_local_source_excerpts",
+        "run_local_api_member_metadata_facts",
+        "binding_registry",
+    )
+    assert binding_by_provider_field["allowed_edit_binding_ids"] == (
+        "binding_registry",
+    )
+    assert _patch_model_input_disclosure_data_classes(
+        _feature_wide_patch_model_input()
+    ) == SOURCE_DISCLOSURE_DATA_CLASSES
+
+
+@pytest.mark.parametrize(
+    ("model_input_field", "data_class"),
+    [
+        ("target_behavior", "feature_target_behavior"),
+        ("acceptance_criteria", "feature_acceptance_criteria"),
+        ("runtime_verification_plan", "feature_runtime_verification_plan"),
+        ("side_effect_boundaries", "side_effect_boundaries"),
+    ],
+)
+def test_patch_disclosure_classes_are_presence_bound_to_model_input(
+    model_input_field: str,
+    data_class: str,
+) -> None:
+    model_input = _feature_wide_patch_model_input()
+    model_input.pop(model_input_field)
+
+    assert data_class not in _patch_model_input_disclosure_data_classes(model_input)
+
+
+@pytest.mark.parametrize(
+    "missing_data_class",
+    [
+        "feature_target_behavior",
+        "feature_acceptance_criteria",
+        "feature_runtime_verification_plan",
+    ],
+)
+def test_external_patch_missing_feature_disclosure_fails_before_provider_chat(
+    missing_data_class: str,
+) -> None:
+    record = _source_disclosure_record(
+        provider="openai",
+        model="qwen3.6-plus",
+        base_url="https://example.invalid/compatible-mode/v1",
+        approved_at="2026-08-31T00:00:00+00:00",
+    )
+    record["approved_data_classes"].remove(missing_data_class)
+    provider_calls: list[dict[str, object]] = []
+
+    def invoke_patch_provider() -> None:
+        _verify_patch_model_input_disclosure(
+            record,
+            model_input=_feature_wide_patch_model_input(),
+        )
+        provider_calls.append({"chat": "called"})
+
+    with pytest.raises(LocalEntryError, match=missing_data_class):
+        invoke_patch_provider()
+
+    assert provider_calls == []
+
+
+def test_patch_generation_obligation_projection_preserves_one_feature_contract() -> None:
+    target_behavior = (
+        "  When disabled, retain the game-supplied value without replacement.  "
+    )
+    disabled_acceptance = "Observe the disabled behavior after restart."
+    enabled_acceptance = "Observe the enabled preservation behavior after restart."
+    runtime_verification = "  Restart before observing both modes.  "
+    non_goal = "  Do not change unrelated configuration behavior.  "
+
+    projection = _patch_generation_obligation_projection(
+        feature_spec={
+            "target_behavior": target_behavior,
+            "acceptance_criteria": [disabled_acceptance, enabled_acceptance],
+            "runtime_verification_plan": [runtime_verification],
+        },
+        implementation={"side_effect_boundaries": [non_goal]},
+        planned_changes=[
+            {
+                "change_id": "chg_disabled",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_disabled",
+                "supporting_binding_ids": [],
+                "operation": "minimal_evidence_bound_change",
+                "rationale": target_behavior,
+                "expected_validation": [disabled_acceptance],
+            },
+            {
+                "change_id": "chg_enabled",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_enabled",
+                "supporting_binding_ids": [],
+                "operation": "minimal_evidence_bound_change",
+                "rationale": target_behavior,
+                "expected_validation": [enabled_acceptance],
+            },
+        ],
+    )
+
+    assert projection == {
+        "target_behavior": target_behavior,
+        "required_change_units": [
+            {
+                "change_id": "chg_disabled",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_disabled",
+                "hook_target_binding_id": None,
+                "supporting_binding_ids": [],
+                "operation": "minimal_evidence_bound_change",
+                "expected_validation": [disabled_acceptance],
+            },
+            {
+                "change_id": "chg_enabled",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_enabled",
+                "hook_target_binding_id": None,
+                "supporting_binding_ids": [],
+                "operation": "minimal_evidence_bound_change",
+                "expected_validation": [enabled_acceptance],
+            },
+        ],
+        "side_effect_boundaries": [non_goal],
+        "acceptance_criteria": [disabled_acceptance, enabled_acceptance],
+        "runtime_verification_plan": [runtime_verification],
+    }
+
+
+def test_plan_validation_overlay_requires_exact_change_identity_and_value() -> None:
+    planned_changes = [
+        {
+            "change_id": "chg_001",
+            "edit_binding_id": "edit_binding_001",
+            "expected_validation": [
+                "Validate this bounded edit against the Feature-wide test_plan."
+            ],
+        }
+    ]
+    generated_change = {
+        "change_id": "chg_001",
+        "edit_binding_id": "edit_binding_001",
+        "rationale": "Model-authored explanation only.",
+        "expected_validation": ["forged model validation"],
+        "rollback_hint": "Restore the prior source.",
+        "patch": {"kind": "exact_text_replace"},
+    }
+
+    with pytest.raises(LocalEntryError, match="expected_validation"):
+        _overlay_generated_patch_changes_on_plan(
+            planned_changes=planned_changes,
+            generated_changes=(generated_change,),
+        )
+
+    generated_change["expected_validation"] = list(
+        planned_changes[0]["expected_validation"]
+    )
+    overlaid = _overlay_generated_patch_changes_on_plan(
+        planned_changes=planned_changes,
+        generated_changes=(generated_change,),
+    )
+
+    assert overlaid[0]["expected_validation"] == planned_changes[0][
+        "expected_validation"
+    ]
+
+
+@pytest.mark.parametrize(
+    "expected_validation",
+    [None, [], [""], ["same", "same"]],
+)
+def test_patch_generation_obligation_projection_rejects_invalid_plan_validation(
+    expected_validation: object,
+) -> None:
+    with pytest.raises(LocalEntryError, match="expected_validation"):
+        _patch_generation_obligation_projection(
+            feature_spec={
+                "target_behavior": "Implement the requested behavior.",
+                "acceptance_criteria": ["Observe the behavior."],
+                "runtime_verification_plan": ["Restart and observe the behavior."],
+            },
+            implementation={
+                "side_effect_boundaries": ["Preserve unrelated behavior."]
+            },
+            planned_changes=[
+                {
+                    "change_id": "chg_001",
+                    "change_type": "modify_behavior",
+                    "edit_binding_id": "edit_binding_001",
+                    "supporting_binding_ids": [],
+                    "operation": "minimal_evidence_bound_change",
+                    "expected_validation": expected_validation,
+                }
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("target_behavior", ""),
+        ("target_behavior", 1),
+        ("acceptance_criteria", []),
+        ("acceptance_criteria", [""]),
+        ("runtime_verification_plan", []),
+        ("runtime_verification_plan", [""]),
+    ],
+)
+def test_patch_generation_obligation_projection_rejects_invalid_feature_contract(
+    field: str,
+    value: object,
+) -> None:
+    feature_spec: dict[str, object] = {
+        "target_behavior": "Implement the requested behavior.",
+        "acceptance_criteria": ["Observe the behavior."],
+        "runtime_verification_plan": ["Restart and observe the behavior."],
+    }
+    feature_spec[field] = value
+
+    with pytest.raises(LocalEntryError, match=field):
+        _patch_generation_obligation_projection(
+            feature_spec=feature_spec,
+            implementation={"side_effect_boundaries": ["Preserve unrelated behavior."]},
+            planned_changes=[
+                {
+                    "change_id": "chg_001",
+                    "change_type": "modify_behavior",
+                    "edit_binding_id": "edit_binding_001",
+                    "supporting_binding_ids": [],
+                    "operation": "minimal_evidence_bound_change",
+                }
+            ],
+        )
 
 
 def test_requirement_coverage_model_request_uses_schema_and_admission_recorder() -> None:
@@ -3589,6 +3872,9 @@ def test_source_disclosure_record_is_explicit_and_does_not_contain_api_key() -> 
             "run_local_api_member_metadata_facts",
             "binding_registry",
             "side_effect_boundaries",
+            "feature_target_behavior",
+            "feature_acceptance_criteria",
+            "feature_runtime_verification_plan",
         ],
         "requested_data_classes": [
             "natural_language_request",
@@ -3596,6 +3882,9 @@ def test_source_disclosure_record_is_explicit_and_does_not_contain_api_key() -> 
             "run_local_api_member_metadata_facts",
             "binding_registry",
             "side_effect_boundaries",
+            "feature_target_behavior",
+            "feature_acceptance_criteria",
+            "feature_runtime_verification_plan",
         ],
         "scope": "this_run_only",
     }
@@ -3612,6 +3901,7 @@ def test_local_admission_records_local_execution_without_external_disclosure() -
     assert no_disclosure["occurred"] is False
     assert no_disclosure["approved"] is False
     assert no_disclosure["approved_data_classes"] == []
+    assert no_disclosure["requested_data_classes"] == []
     assert admission == {
         "provider": "ollama",
         "model": "qwen3:4b-instruct",
