@@ -378,3 +378,88 @@ probe still requires separate authorization and remains uncreated. `EVID-005`
 and both false Internal Alpha hard gates are unchanged. No Actual or actual16,
 model, Apply, Build, Runtime, Dense/RRF/reranker, Self-RAG, PDF, UI, or other
 backlog work is activated.
+
+## 10. ProductExecution scope compatibility correction (2026-08-31)
+
+This correction starts from exact detached parent
+`ccfd8e4a0ab8ffe479e620dba5dc8ad2bb0755d0`. It is the shared Projection V2
+interface's last field-level compatibility closure.
+
+### 10.1 Exact owner rule and lossless scope representation
+
+`ProductExecutionResultV1.from_dict` validates both `run_id` and `request_id`
+through the current owner function `_require_non_empty`. Its exact rule is:
+
+```text
+type(value) is str and bool(value.strip())
+```
+
+The function returns the original string. It uses `strip()` only for the
+non-empty predicate; it does not return the stripped value.
+
+Projection V2 now mirrors that rule only for `FactRefV2.run_id` and
+`FactRefV2.request_id` when the closed admission row has
+`scope_mode=product_execution_result`. The dedicated
+`_require_product_execution_scope_text` function returns the original string.
+It does not trim, normalize, rewrite, concatenate, or case-fold the value.
+This is owner-contract compatibility, not identifier cleaning.
+
+Accepted scope values preserve their exact Unicode character sequence.
+Canonical compact UTF-8 JSON uses the required JSON escapes for tab and
+newline, then decodes to the exact original string; reparsing and re-emitting
+produces the same canonical bytes. `ArtifactRefV2` and every other V2 text
+field continue to use the existing strict `_require_text` rule. That rule
+still rejects leading or trailing whitespace and ASCII control characters.
+
+### 10.2 Owner-versus-V2 differential matrix
+
+Every value below is applied independently to `run_id` and `request_id`. The
+test first constructs a valid current-owner result, replaces exactly one scope
+field, and parses it through `ProductExecutionResultV1.from_dict`. It parses
+the same value through `FactRefV2.from_dict` and compares the two outcomes.
+
+| class | exact Python values | ProductExecution owner | Projection V2 |
+| --- | --- | --- | --- |
+| leading/trailing ordinary space | `" leading_scope"`, `"trailing_scope "` | accept, preserve | accept, preserve |
+| tab | `"\tleading_scope"`, `"trailing_scope\t"`, `"scope\tvalue"` | accept, preserve | accept, preserve |
+| newline before/after/internal | `"\nleading_scope"`, `"trailing_scope\n"`, `"scope\nvalue"` | accept, preserve | accept, preserve |
+| Unicode non-ASCII | `"运行_Δ_日本語"` | accept, preserve | accept, preserve |
+| Unicode whitespace around non-empty text | `"\u3000scope\u00a0"` | accept, preserve | accept, preserve |
+| empty or whitespace-only strings | `""`, `"   "`, `"\t\t"`, `"\n\n"`, `"\u3000\u00a0\u2003"` | reject | reject |
+| non-`str` values | `True`, `b"scope"`, `None`, `1` | reject | reject |
+
+For every accepted value, the test proves exact-value and stable canonical-byte
+roundtrips through the current owner result, `FactRefV2`, `OwnerFactV2`, and
+`ProjectionViewV2`. Five additional cases prove owner-compatible whitespace or
+control-bearing strings still fail when placed in `ArtifactRefV2.feature_id`.
+
+### 10.3 Unchanged semantics and stop boundary
+
+This correction does not change the general `_require_text` function,
+`ArtifactRefV2`, closed owner/fact-type admission, ArtifactStore null scope,
+sequence identity, edge or reporter behavior, diagnostics, rebuild ordering,
+or any V1 surface. It adds no owner, relation, diagnostic, Artifact, consumer,
+control decision, or execution behavior. ProductExecution, ArtifactStore,
+Graph, Actual, Apply, Repair, Build, Runtime, and the former A/B/C/D worktrees
+remain unchanged.
+
+If a later differential matrix exposes another owner-legal state that the
+shared V2 representation cannot express losslessly, the next action is to
+re-audit the V2 abstraction and its information model. No further
+field-by-field compatibility patch is authorized by this checkpoint.
+
+### 10.4 Verification evidence
+
+All commands remained local and used repository tests or test doubles. No
+model, network, Actual, Build, Apply, Repair, Runtime, game process, or external
+disclosure occurred.
+
+| command | result |
+| --- | --- |
+| `python -m pytest tests/unit/test_non_authoritative_projection_v2_scope_compatibility.py -q` | `43 passed` |
+| `python -m pytest tests/unit/test_non_authoritative_projection.py tests/unit/test_non_authoritative_projection_v2.py tests/unit/test_product_execution_projection_v2.py tests/unit/test_non_authoritative_projection_boundary.py -q` | `61 passed, 1 warning` |
+| `python -m pytest tests/unit/test_product_execution.py tests/unit/test_artifact_store.py::test_write_with_result_reuses_preexisting_committed_identity_without_writes -q` | `108 passed, 1 warning` |
+| `git diff --check` | exit `0`; no whitespace errors; working-copy LF-to-CRLF warnings only |
+
+Both warnings are the existing `jieba` import of deprecated `pkg_resources`;
+they are not projection, scope, owner-contract, or ArtifactStore test failures.

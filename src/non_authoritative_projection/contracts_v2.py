@@ -130,6 +130,14 @@ def _require_text(value: Any, name: str) -> str:
     return value
 
 
+def _require_product_execution_scope_text(value: Any, name: str) -> str:
+    if type(value) is not str or not value.strip():
+        raise ProjectionContractError(
+            f"{name} must be a ProductExecution non-empty string."
+        )
+    return value
+
+
 def _require_sha256(value: Any, name: str) -> str:
     if (
         type(value) is not str
@@ -221,8 +229,14 @@ class FactRefV2:
             )
         _payload_schema, scope_mode, sequence_mode = admission
         if scope_mode == "product_execution_result":
-            _require_text(self.run_id, "FactRefV2.run_id")
-            _require_text(self.request_id, "FactRefV2.request_id")
+            _require_product_execution_scope_text(
+                self.run_id,
+                "FactRefV2.run_id",
+            )
+            _require_product_execution_scope_text(
+                self.request_id,
+                "FactRefV2.request_id",
+            )
         elif self.run_id is not None or self.request_id is not None:
             raise ProjectionContractError(
                 "FactRefV2 run and request scope must be null for this admission."
