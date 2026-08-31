@@ -1,7 +1,7 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-08-30
+Last updated: 2026-08-31
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: non-authoritative projection interface serial gate completed; P2 product execution still requires a separately authorized fresh Patch-only probe
+current_dependency: occurrence-aware non-authoritative Projection V2 serial gate completed; P2 product execution still requires a separately authorized fresh Patch-only probe
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: 2b0925ca4d9d32fd6ffd728749614b77247ba60e
@@ -95,32 +95,41 @@ actual16_packet_created: false
 actual16_execution_created: false
 complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
-next_capability_step: four independent P2 fit-audit worktrees are eligible from the same final HEAD; fresh Patch-only probe remains separately not authorized and not created
-parallel_observability_checkpoints: rejected_whole_commits_remain_unmerged_accepted_interface_integrated
+next_capability_step: create fresh Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild worktrees only from this integration's same final HEAD; fresh Patch-only probe remains separately not authorized and not created
+parallel_observability_checkpoints: prior_A_B_C_D_stopped_on_v1_path_only_identity_gap_no_accepted_commit_staged_untracked_not_inputs_fresh_pages_require_same_final_HEAD
 non_authoritative_projection_responsibility_boundary: accepted_at_7f49d1e_then_hardened_at_4ba735e
 rejected_whole_commits: 1275e87_execution_lineage_and_7a6c96f_historical_replay
-projection_interface_status: accepted_reviewed_integrated_exact_admission_no_observer_no_production_consumer
+projection_interface_status: v1_exact_api_bytes_hashes_and_read_compatibility_preserved_v2_accepted_reviewed_integrated_occurrence_aware_shared_interface_no_observer_no_production_consumer
 next_attempt_pre_authorized: false
 ```
 
-The accepted interface source lineage
+The accepted Projection V1 source lineage
 `4469279de886f5eba22d451dd215837c3e8fc389 -> 889ecd54e51db4d0882df0c4cc2b0d66850fb167 -> be8a91077e0ec28fdbf72ee5d5fa063f700ed41a`
-is integrated on this mainline as
+remains integrated on this mainline as
 `c2c8e31abaed1b795d61c5b62e5d39defcb984da -> 7576d86853f77acba6b73f5ace07e4ccb3755297 -> 36d51d897ab6d329c5efac7d6012d8837d9cd772`.
-It retains existing owner responsibility, admits only the exact owner/fact pairs
-frozen by the checkpoint, requires source-bound explicit edges, and provides no
-observer or production consumer. Its test claim is only the recorded
-repository-test-double results (`42 passed, 105 deselected`; `107 passed`; `135
-passed`) in
-`docs/audits/NON_AUTHORITATIVE_PROJECTION_INTERFACE_CHECKPOINT_20260830.md`.
-They were not rerun by this integration and do not establish model, Patch,
-product, Build, or Runtime success.
+Its exact API, serialized bytes, hashes, and strict read compatibility remain
+unchanged. Its path-only fact identity is not used by new Thin Lineage
+producers.
 
-Thin Lineage, owner-test migration, a Langfuse exporter, and ProjectionRebuild
-may now each be created in an independent worktree from the same final HEAD.
-Their initial fit audits are read-only and may not modify Graph, EvidencePack,
-Prompt, or config. This integration creates none of those pages and records no
-status for them. A fresh Patch-only probe remains separately unauthorized and
+The accepted/reviewed Projection V2 source lineage
+`d9c9a65aaccd093ba0bf45453b104fbd4d5a6f1b -> 99c2faa2f651832b8b994d81b2170bfbb15d32fa`
+is integrated as
+`163595ba3c6658a5e9a3d95128a94f0f0d3149c0 -> fc555a8439642bdb61fc8548ba8d7045cfda9340`.
+Its occurrence-aware identity is now the shared interface for the four restart
+pages. Existing owner responsibility, closed admission, source-bound explicit
+edges, and the no-observer/no-production-consumer boundary remain unchanged.
+The `61 passed` and `108 passed` results recorded by the original implementation
+page and reproduced by the macro read-only review page are local test-double
+evidence only. This integration did not rerun them, and they do not establish
+model, Patch, product, Build, or Runtime success.
+
+The former A/B/C/D worktrees stopped after exposing the V1 path-only identity
+gap and produced no accepted commit. Their staged and untracked files are not
+inputs to this mainline. Fresh Thin Lineage, owner-test migration, a Langfuse
+exporter, and ProjectionRebuild worktrees must all start from the same final
+HEAD produced by this integration. The V2 shared module, tests, and audit plus
+all V1 no-edit surfaces are read-only for those pages. This integration creates
+none of them. A fresh Patch-only probe remains separately unauthorized and
 uncreated. `EVID-005` remains the current real product Issue; both Internal
 Alpha hard gates remain false. No Dense/RRF/reranker, Self-RAG training,
 generic PDF, UI, Actual or actual16, model, Apply, Build, or Runtime work is

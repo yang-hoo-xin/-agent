@@ -1,6 +1,12 @@
 # Non-authoritative Projection Identity V2 Checkpoint
 
-Status: code/test checkpoint with bounded reporter-admission correction
+Status: accepted/reviewed/integrated on `codex/rag-capability-mainline`
+
+Accepted source lineage:
+`d9c9a65aaccd093ba0bf45453b104fbd4d5a6f1b -> 99c2faa2f651832b8b994d81b2170bfbb15d32fa`
+
+Integrated mainline lineage:
+`163595ba3c6658a5e9a3d95128a94f0f0d3149c0 -> fc555a8439642bdb61fc8548ba8d7045cfda9340`
 
 Initial checkpoint parent:
 `a79565197e7c5242f5f22b6ff6ddfe75db94f7ed`
@@ -291,7 +297,9 @@ This checkpoint does not modify:
 V1 types retain their exact API, serialized bytes, hashes, and strict parsing.
 `ProjectionViewV1.from_dict` does not accept a V2 View, and
 `ProjectionViewV2.from_dict` does not accept a V1 View. There is no automatic
-conversion or migration.
+conversion or migration. V1 remains available for exact historical API/bytes/
+read compatibility, but new Thin Lineage producers must use the V2
+occurrence-aware identity rather than the V1 path-only identity.
 
 Within the current repository, current Artifact registry, and the worktree and
 consumer references inspected for this page, no production projection consumer
@@ -309,6 +317,11 @@ Runtime, game process, game-directory write, or external disclosure occurred.
 | --- | --- |
 | `python -m pytest tests/unit/test_non_authoritative_projection.py tests/unit/test_non_authoritative_projection_v2.py tests/unit/test_product_execution_projection_v2.py tests/unit/test_non_authoritative_projection_boundary.py -q` | `61 passed, 1 warning` |
 | `python -m pytest tests/unit/test_product_execution.py tests/unit/test_artifact_store.py::test_write_with_result_reuses_preexisting_committed_identity_without_writes -q` | `108 passed, 1 warning` |
+
+These are local test-double results from the original implementation page and
+the macro read-only review page's reproduction. This integration page did not
+rerun either command. The results are not model, Patch, product, Build, or
+Runtime success.
 
 The warning in both commands is the environment's existing `jieba` import of
 the deprecated `pkg_resources` API; it is not a projection or owner-contract
@@ -336,3 +349,32 @@ It does not prove owner payload truth, a production adapter or consumer,
 historical Projection rebuild, export, telemetry delivery, model behavior,
 Patch success, product success, Build success, Runtime behavior, approval,
 retry, promotion, queue state, or execution authority.
+
+## 9. Integrated restart and shared-file boundary
+
+The former A/B/C/D worktrees stopped after the V1 path-only identity gap was
+established. They produced no accepted commit, and their staged or untracked
+files are not inputs to this mainline integration.
+
+Fresh Thin Lineage, owner-test migration, Langfuse exporter, and
+ProjectionRebuild worktrees must be created from one same final mainline HEAD
+that contains both mapped V2 commits and the docs-only integration state. The
+occurrence-aware V2 identity is their shared interface. They must treat these
+V2 shared surfaces as read-only:
+
+- `src/non_authoritative_projection/contracts_v2.py`
+- `tests/unit/test_non_authoritative_projection_v2.py`
+- `tests/unit/test_product_execution_projection_v2.py`
+- `docs/audits/NON_AUTHORITATIVE_PROJECTION_IDENTITY_V2_CHECKPOINT_20260830.md`
+
+Every V1 no-edit surface listed in section 9 of
+`docs/audits/NON_AUTHORITATIVE_PROJECTION_INTERFACE_CHECKPOINT_20260830.md`
+also remains read-only. A page that finds either shared interface insufficient
+must stop and return the exact missing representation; it may not revise those
+surfaces in its own worktree.
+
+This integration creates no A/B/C/D page and no fresh Patch-only probe. The
+probe still requires separate authorization and remains uncreated. `EVID-005`
+and both false Internal Alpha hard gates are unchanged. No Actual or actual16,
+model, Apply, Build, Runtime, Dense/RRF/reranker, Self-RAG, PDF, UI, or other
+backlog work is activated.

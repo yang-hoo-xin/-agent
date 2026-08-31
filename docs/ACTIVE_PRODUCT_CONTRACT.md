@@ -135,14 +135,21 @@ claim of model, Patch, or Build success; actual15's baseline Build is separate
 run evidence. It also does not prove Review, Dry-run, Apply, or a
 changed-product Build.
 
-The accepted non-authoritative projection interface source lineage
-`4469279 -> 889ecd5 -> be8a910` is now integrated on this mainline as
-`c2c8e31 -> 7576d86 -> 36d51d8`. It keeps the existing responsibility owners
-authoritative, uses closed exact owner/fact admission plus source-bound explicit
-edges, and exposes no ProductExecutor observer or production consumer. Its test
-claim is limited to the repository-test-double results recorded in
-`docs/audits/NON_AUTHORITATIVE_PROJECTION_INTERFACE_CHECKPOINT_20260830.md`;
-those results do not establish model, Patch, product, Build, or Runtime success.
+The accepted non-authoritative Projection V1 source lineage
+`4469279 -> 889ecd5 -> be8a910` remains integrated on this mainline as
+`c2c8e31 -> 7576d86 -> 36d51d8`. V1 retains its exact API, serialized bytes,
+hashes, and strict read compatibility, but its path-only fact identity is not
+the interface for new Thin Lineage producers.
+
+The accepted/reviewed Projection V2 source lineage
+`d9c9a65 -> 99c2faa` is integrated here as `163595b -> fc555a8`. Its
+occurrence-aware identity is the shared interface for restarting Thin Lineage,
+owner-test migration, a Langfuse exporter, and ProjectionRebuild. It preserves
+the existing responsibility owners, closed admission, source-bound explicit
+edges, and no-observer/no-production-consumer boundary. The recorded `61
+passed` and `108 passed` results are local test-double evidence reproduced by
+the original implementation and macro review pages; this integration did not
+rerun them, and they do not establish product success.
 
 Current execution order:
 
@@ -158,8 +165,10 @@ Current execution order:
 -> checkpoint d80a188 introduces versioned v2 semantics and closes EVID-007
 -> checkpoint 2b0925c closes EVID-006's bounded code/test trigger with a byte-bound four-site fixture
 -> c6e00b8 and 55b51bb close PLAN-003 and restore the complete default Workflow Graph suite
--> accepted projection interface lineage through be8a910 is integrated with exact admission and no observer
--> Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild are eligible as independent worktrees from the same final HEAD; their fit audits are read-only
+-> accepted Projection V1 lineage through be8a910 remains integrated and read-compatible
+-> accepted/reviewed Projection V2 lineage d9c9a65 -> 99c2faa is integrated as 163595b -> fc555a8
+-> former A/B/C/D worktrees stopped on the V1 path-only identity gap and produced no accepted commit; their staged/untracked files are not inputs
+-> fresh Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild worktrees may restart only from this integration's same final HEAD; V2 shared surfaces and the V1 no-edit surfaces are read-only
 -> separately decide whether to authorize one fresh Patch-only probe
 -> do not repeat the same 27B call, increase timeout, run a 4B correction, or prepare actual16
 -> PatchProposal -> ProposalReview
@@ -172,14 +181,18 @@ Current execution order:
 Responsibility boundary lineage `7f49d1e -> 4ba735e` still rejects whole-commit
 merge or original cherry-pick of Lineage `1275e87` and Replay `7a6c96f`: their
 cross-owner `first_failure`, claim, replay promotion, and fresh-Actual decisions
-are not product facts. The accepted interface does not change that boundary.
-Thin Lineage, owner-test migration, a Langfuse exporter, and ProjectionRebuild
-may now each be created in an independent worktree from the same final HEAD.
-Their initial fit audits are a read-only quality line and may not modify Graph,
-EvidencePack, Prompt, or config. This integration creates none of those pages
-and assigns no further page status. Graph, Actual, Apply, Repair, and
-product-result owners may not depend on the projection or telemetry
-implementation. The detailed boundary is
+are not product facts. Neither the accepted V1 interface nor the accepted V2
+checkpoint changes that boundary. The former A/B/C/D worktrees stopped after
+the V1 identity gap and have no accepted commit; their staged or untracked
+files are not integration inputs. Fresh Thin Lineage, owner-test migration, a
+Langfuse exporter, and ProjectionRebuild worktrees may each be created only
+from the same final HEAD produced by this integration. Their initial fit audits,
+the V2 module/tests/audit, and every V1 no-edit surface remain read-only. This
+integration creates none of those pages and assigns no further page status.
+Graph, Actual, Apply, Repair, and product-result owners may not depend on the
+projection or telemetry implementation. The exact shared-file boundary is in
+`docs/audits/NON_AUTHORITATIVE_PROJECTION_IDENTITY_V2_CHECKPOINT_20260830.md`;
+the responsibility boundary remains
 `docs/audits/NON_AUTHORITATIVE_PROJECTION_RESPONSIBILITY_BOUNDARY_20260830.md`.
 
 The one bounded Patch-only replay authorization has been consumed. No fresh

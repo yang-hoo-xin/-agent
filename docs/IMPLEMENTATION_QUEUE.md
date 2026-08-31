@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-08-30
+Last updated: 2026-08-31
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -10,9 +10,9 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: accepted non-authoritative projection interface serial gate complete; four independent P2 fit-audit worktrees are eligible from the same final HEAD, and none is created here
+current_queue: accepted/reviewed occurrence-aware non-authoritative Projection V2 serial gate complete; fresh Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild worktrees may start only from this integration's same final HEAD, and none is created here
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: responsibility boundary plus exact admission and no-observer interface source lineage 4469279 -> 889ecd5 -> be8a910 is integrated as c2c8e31 -> 7576d86 -> 36d51d8; rejected whole commits remain unmerged; no model call, fresh probe, preflight, packet, or actual16 is authorized
+queue_status: Projection V1 remains read-compatible; Projection V2 source lineage d9c9a65 -> 99c2faa is integrated as 163595b -> fc555a8 with occurrence-aware identity, exact admission, and no observer; prior A/B/C/D stopped with no accepted commit and their staged/untracked files are not inputs; no model call, fresh probe, preflight, packet, or actual16 is authorized
 ```
 
 ```text
@@ -44,8 +44,8 @@ internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: independent Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild worktrees from one final HEAD; each begins with a read-only fit audit and may not modify Graph, EvidencePack, Prompt, or config
-post_checkpoint_route: four independent worktrees are eligible from the same final HEAD but none is created here; Patch-only probe remains a separate authorization decision
+next_eligible_slice: fresh independent Thin Lineage, owner-test migration, Langfuse exporter, and ProjectionRebuild worktrees from this integration's same final HEAD; V2 shared surfaces and V1 no-edit surfaces are read-only
+post_checkpoint_route: former A/B/C/D worktrees stopped on the V1 path-only identity gap with no accepted commit and no staged/untracked inputs; create fresh worktrees only from the same final HEAD; Patch-only probe remains a separate authorization decision
 post_approval_route: isolated Apply -> changed-product Build
 patch_only_replay_authorized: consumed_once_by_completed_27b_replay
 activation_required: any further model call, fresh Patch-only probe, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now
@@ -77,24 +77,28 @@ PatchProposal, Dry-run, Apply, or Build.
 
 The rejected whole Lineage and Replay commits remain unmerged because their
 cross-owner failure, claim, or run-status derivations cannot become a second
-queue or truth owner. The accepted interface lineage through `be8a910` is now
-integrated with closed exact admission, source-bound explicit edges, and no
-observer or production consumer. Its repository-test-double claim remains only
-the bounded results recorded in
-`docs/audits/NON_AUTHORITATIVE_PROJECTION_INTERFACE_CHECKPOINT_20260830.md`;
-fake/canned/unit results, a green Graph suite, and baseline Build evidence are
-not product success.
+queue or truth owner. Projection V1 through `be8a910` remains exactly readable,
+but its path-only identity is not used by new Thin Lineage producers. The
+accepted/reviewed V2 lineage `d9c9a65 -> 99c2faa`, integrated as `163595b ->
+fc555a8`, supplies the occurrence-aware shared interface without an observer or
+production consumer. Its `61 passed` and `108 passed` results are original-page
+and macro-page local test-double evidence, were not rerun here, and are not
+product success.
 
 Current execution order:
 
-1. Preserve the accepted responsibility, exact-admission, explicit-edge, and
-   no-observer interface checkpoint without adding execution authority.
-2. Thin Lineage, owner-test migration, a Langfuse exporter, and
-   ProjectionRebuild may each start in an independent worktree from the same
-   final HEAD; no such page is created here.
-3. Treat each initial fit audit as read-only: do not modify Graph, EvidencePack,
-   Prompt, or config, and do not infer another page's status here.
-4. Separately decide whether to authorize one fresh Patch-only probe.
+1. Preserve the accepted responsibility, V1 compatibility, V2 occurrence-aware
+   identity, exact-admission, explicit-edge, and no-observer boundaries without
+   adding execution authority.
+2. Discard the former A/B/C/D worktrees as integration inputs: they stopped on
+   the V1 gap, have no accepted commit, and their staged/untracked files are not
+   referenced.
+3. Start fresh Thin Lineage, owner-test migration, Langfuse exporter, and
+   ProjectionRebuild worktrees only from this integration's same final HEAD;
+   no such page is created here.
+4. Treat the V2 shared module/tests/audit and every V1 no-edit surface as
+   read-only, along with Graph, EvidencePack, Prompt, and config.
+5. Separately decide whether to authorize one fresh Patch-only probe.
 
 Do not rerun the same 27B call, increase timeout, perform a 4B correction, or
 prepare actual16. No fresh Patch-only probe, fresh preflight, actual16 packet,
