@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping
@@ -44,11 +45,187 @@ class GeneratedPatch:
     raw_text: str
 
 
+class _FrozenProviderRequestPrepared(RuntimeError):
+    def __init__(self, provider_request: Mapping[str, Any]) -> None:
+        super().__init__("Native Patch provider request frozen.")
+        self.provider_request = dict(provider_request)
+
+
+class _FreezeOnlyLLM(BaseLLM):
+    """Adapt the existing generator producer to a no-network freeze boundary."""
+
+    def __init__(self, llm: BaseLLM) -> None:
+        self.llm = llm
+
+    def chat(
+        self,
+        messages: list[Message],
+        trace: Any = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        del trace
+        prepare = getattr(self.llm, "prepare_structured_chat", None)
+        if not callable(prepare):
+            raise PatchGenerationError(
+                "The selected provider does not implement structured request freeze."
+            )
+        provider_request: dict[str, Any] = {}
+        prepare(
+            messages,
+            **{
+                **kwargs,
+                "provider_request_recorder": provider_request.update,
+            },
+        )
+        raise _FrozenProviderRequestPrepared(provider_request)
+
+
 class LLMExactPatchGenerator:
     """Generate exact replacements without allowing the model to select paths."""
 
     def __init__(self, llm: BaseLLM) -> None:
         self.llm = llm
+
+    def prepare_frozen_native(
+        self,
+        *,
+        resume_identity: Mapping[str, Any],
+        frozen_attempt_recorder: Callable[[dict[str, Any]], None],
+        **generation_inputs: Any,
+    ) -> dict[str, Any]:
+        """Persist a paused native Patch attempt without provider generation."""
+
+        if not callable(frozen_attempt_recorder):
+            raise ValueError("Frozen Patch attempt recorder must be callable.")
+        if not isinstance(resume_identity, Mapping) or not resume_identity:
+            raise ValueError("Frozen Patch resume identity must be non-empty.")
+        required_validation = _normalize_required_validation_mapping(
+            generation_inputs.get("required_validation_by_binding") or {}
+        )
+        inputs = dict(generation_inputs)
+        inputs["require_native_schema"] = True
+        inputs["provider_request_recorder"] = lambda _: None
+        try:
+            LLMExactPatchGenerator(_FreezeOnlyLLM(self.llm)).generate(**inputs)
+        except _FrozenProviderRequestPrepared as prepared:
+            materialization_context = _native_materialization_context_from_frozen(
+                prepared.provider_request,
+                required_validation=required_validation,
+            )
+            frozen_identity = {
+                "resume_identity": dict(resume_identity),
+                "provider_request": dict(prepared.provider_request),
+                "materialization_context": materialization_context,
+            }
+            attempt = {
+                "schema_version": "frozen_native_patch_attempt_v1",
+                "status": "paused_frozen",
+                "consumed": False,
+                **frozen_identity,
+                "frozen_identity_sha256": _canonical_json_sha256(frozen_identity),
+                "terminal": None,
+            }
+            frozen_attempt_recorder(dict(attempt))
+            return attempt
+        raise PatchGenerationError(
+            "Native Patch freeze did not reach the provider request boundary."
+        )
+
+    def resume_frozen_native(
+        self,
+        *,
+        frozen_attempt_loader: Callable[[], Mapping[str, Any]],
+        frozen_attempt_recorder: Callable[[dict[str, Any]], None],
+        current_resume_identity: Mapping[str, Any],
+        post_response_admission: Callable[[ChatResponse], None] | None = None,
+    ) -> GeneratedPatch:
+        """Consume one persisted frozen attempt without rebuilding provider input."""
+
+        if not callable(frozen_attempt_loader) or not callable(
+            frozen_attempt_recorder
+        ):
+            raise ValueError("Frozen Patch attempt persistence callbacks are required.")
+        attempt = self.validate_frozen_native(
+            frozen_attempt_loader(),
+            current_resume_identity=current_resume_identity,
+        )
+        consuming = {
+            **attempt,
+            "status": "resume_in_progress",
+            "consumed": True,
+            "terminal": None,
+        }
+        frozen_attempt_recorder(dict(consuming))
+        resume = getattr(self.llm, "resume_structured_chat", None)
+        if not callable(resume):
+            error = PatchGenerationError(
+                "The selected provider does not implement structured request resume."
+            )
+            _record_frozen_terminal(
+                consuming,
+                recorder=frozen_attempt_recorder,
+                status="terminal_failed",
+                error=error,
+                failure_boundary="provider_resume",
+            )
+            raise error
+        try:
+            response = resume(dict(attempt["provider_request"]))
+            if not isinstance(response, ChatResponse):
+                raise PatchGenerationError(
+                    "Frozen Patch provider response is invalid."
+                )
+            if post_response_admission is not None:
+                post_response_admission(response)
+            generated = _materialize_frozen_native_response(
+                response,
+                context=attempt["materialization_context"],
+            )
+        except Exception as exc:
+            diagnostics = getattr(exc, "diagnostics", None)
+            boundary = (
+                diagnostics.get("failure_boundary")
+                if isinstance(diagnostics, Mapping)
+                else None
+            )
+            _record_frozen_terminal(
+                consuming,
+                recorder=frozen_attempt_recorder,
+                status="terminal_failed",
+                error=exc,
+                failure_boundary=str(boundary or "frozen_patch_resume"),
+            )
+            raise
+        _record_frozen_terminal(
+            consuming,
+            recorder=frozen_attempt_recorder,
+            status="terminal_succeeded",
+            error=None,
+            failure_boundary=None,
+        )
+        return generated
+
+    def validate_frozen_native(
+        self,
+        frozen_attempt: Mapping[str, Any],
+        *,
+        current_resume_identity: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Perform the complete no-side-effect frozen Patch validation."""
+
+        attempt = _validate_frozen_native_attempt(
+            frozen_attempt,
+            current_resume_identity=current_resume_identity,
+        )
+        validate_provider = getattr(
+            self.llm,
+            "validate_frozen_structured_chat",
+            None,
+        )
+        if callable(validate_provider):
+            validate_provider(attempt["provider_request"])
+        _validate_frozen_materialization_context(attempt)
+        return attempt
 
     def generate(
         self,
@@ -101,16 +278,9 @@ class LLMExactPatchGenerator:
             if isinstance(excerpt, str) and excerpt:
                 binding_evidence_excerpts[binding_id] = excerpt
 
-        required_validation = {
-            str(binding_id): _normalize_semantic_obligation_list(
-                values,
-                field_name="required_validation",
-                supplied=True,
-                allow_empty=True,
-                binding_id=str(binding_id),
-            )
-            for binding_id, values in (required_validation_by_binding or {}).items()
-        }
+        required_validation = _normalize_required_validation_mapping(
+            required_validation_by_binding or {}
+        )
         model_required_validation = {
             binding_id: tuple(
                 item
@@ -294,40 +464,23 @@ class LLMExactPatchGenerator:
         try:
             if post_response_admission is not None:
                 post_response_admission(response)
-            payload = _parse_json_object(response.content)
-            if require_native_schema and set(payload) != {"changes"}:
-                raise _native_validation_error(
-                    "Native Patch response root does not match its schema.",
-                    failure_classification="native_response_fields_invalid",
-                    missing_fields=sorted({"changes"} - set(payload)),
-                    unexpected_fields=sorted(set(payload) - {"changes"}),
-                )
-            raw_changes = payload.get("changes")
-            if not isinstance(raw_changes, list) or not raw_changes:
-                raise PatchGenerationError(
-                    "Model output must contain a non-empty changes list."
-                )
             if require_native_schema:
-                required_changes_by_identity = {
-                    (
-                        str(item["change_id"]),
-                        str(item["edit_binding_id"]),
-                    ): item
-                    for item in normalized_required_changes
-                }
-                changes = tuple(
-                    _materialize_native_change(
-                        item,
-                        allowed_bindings=allowed_bindings,
-                        binding_evidence_excerpts=binding_evidence_excerpts,
-                        required_changes_by_identity=required_changes_by_identity,
-                        required_validation=required_validation,
-                        binding_contexts=binding_contexts,
-                        index=index,
-                    )
-                    for index, item in enumerate(raw_changes, start=1)
+                raw_changes = _parse_native_response_changes(response.content)
+                changes = _materialize_native_changes(
+                    raw_changes,
+                    allowed_bindings=allowed_bindings,
+                    binding_evidence_excerpts=binding_evidence_excerpts,
+                    normalized_required_changes=normalized_required_changes,
+                    required_validation=required_validation,
+                    binding_contexts=binding_contexts,
                 )
             else:
+                payload = _parse_json_object(response.content)
+                raw_changes = payload.get("changes")
+                if not isinstance(raw_changes, list) or not raw_changes:
+                    raise PatchGenerationError(
+                        "Model output must contain a non-empty changes list."
+                    )
                 required_changes_by_identity = (
                     {
                         (
@@ -377,6 +530,370 @@ class LLMExactPatchGenerator:
             usage=response.usage,
             raw_text=response.content,
         )
+
+
+def _normalize_required_validation_mapping(
+    values_by_binding: Mapping[str, list[str] | tuple[str, ...]],
+) -> dict[str, tuple[str, ...]]:
+    return {
+        str(binding_id): _normalize_semantic_obligation_list(
+            values,
+            field_name="required_validation",
+            supplied=True,
+            allow_empty=True,
+            binding_id=str(binding_id),
+        )
+        for binding_id, values in values_by_binding.items()
+    }
+
+
+def _canonical_json_sha256(value: Mapping[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            dict(value),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _native_materialization_context_from_frozen(
+    provider_request: Mapping[str, Any],
+    *,
+    required_validation: Mapping[str, tuple[str, ...]],
+) -> dict[str, Any]:
+    body_utf8 = provider_request.get("body_utf8")
+    if not isinstance(body_utf8, str):
+        raise PatchGenerationError("Frozen Patch provider body is missing.")
+    try:
+        body = json.loads(body_utf8)
+    except json.JSONDecodeError as exc:
+        raise PatchGenerationError("Frozen Patch provider body is invalid JSON.") from exc
+    messages = body.get("messages") if isinstance(body, dict) else None
+    if not isinstance(messages, list) or len(messages) != 2:
+        raise PatchGenerationError("Frozen Patch provider messages are invalid.")
+    user_message = messages[1]
+    if not isinstance(user_message, dict) or user_message.get("role") != "user":
+        raise PatchGenerationError("Frozen Patch user message is invalid.")
+    content = user_message.get("content")
+    if not isinstance(content, str):
+        raise PatchGenerationError("Frozen Patch user message content is invalid.")
+    try:
+        prompt_payload = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise PatchGenerationError("Frozen Patch prompt payload is invalid JSON.") from exc
+    if not isinstance(prompt_payload, dict):
+        raise PatchGenerationError("Frozen Patch prompt payload root is invalid.")
+    allowed_bindings = prompt_payload.get("allowed_edit_binding_ids")
+    binding_contexts = prompt_payload.get("edit_binding_contexts")
+    required_changes = prompt_payload.get("required_change_units")
+    if (
+        not isinstance(allowed_bindings, list)
+        or not allowed_bindings
+        or not all(isinstance(item, str) and item for item in allowed_bindings)
+        or not isinstance(binding_contexts, dict)
+        or set(binding_contexts) != set(allowed_bindings)
+        or not isinstance(required_changes, list)
+        or not required_changes
+    ):
+        raise PatchGenerationError(
+            "Frozen Patch materialization identity is incomplete."
+        )
+    excerpts: dict[str, str] = {}
+    for binding_id, context in binding_contexts.items():
+        if not isinstance(context, dict):
+            raise PatchGenerationError("Frozen Patch binding context is invalid.")
+        excerpt = context.get("source_excerpt")
+        if isinstance(excerpt, str) and excerpt:
+            excerpts[str(binding_id)] = excerpt
+    return {
+        "allowed_bindings": sorted(allowed_bindings),
+        "binding_contexts": binding_contexts,
+        "binding_evidence_excerpts": excerpts,
+        "required_change_units": required_changes,
+        "required_validation_by_binding": {
+            binding_id: list(values)
+            for binding_id, values in sorted(required_validation.items())
+        },
+    }
+
+
+def _validate_frozen_native_attempt(
+    raw_attempt: Mapping[str, Any],
+    *,
+    current_resume_identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    expected_fields = {
+        "schema_version",
+        "status",
+        "consumed",
+        "resume_identity",
+        "provider_request",
+        "materialization_context",
+        "frozen_identity_sha256",
+        "terminal",
+    }
+    if not isinstance(raw_attempt, Mapping) or set(raw_attempt) != expected_fields:
+        raise PatchGenerationError(
+            "Frozen Patch attempt fields are invalid.",
+            diagnostics={
+                "failure_boundary": "frozen_patch_identity_revalidation",
+                "failure_classification": "frozen_patch_attempt_fields_invalid",
+            },
+        )
+    attempt = dict(raw_attempt)
+    if (
+        attempt.get("schema_version") != "frozen_native_patch_attempt_v1"
+        or attempt.get("status") != "paused_frozen"
+        or attempt.get("consumed") is not False
+        or attempt.get("terminal") is not None
+    ):
+        raise PatchGenerationError(
+            "Frozen Patch attempt is not eligible for resume.",
+            diagnostics={
+                "failure_boundary": "frozen_patch_identity_revalidation",
+                "failure_classification": "frozen_patch_attempt_not_resumable",
+            },
+        )
+    frozen_identity = attempt.get("resume_identity")
+    if (
+        not isinstance(frozen_identity, Mapping)
+        or dict(frozen_identity) != dict(current_resume_identity)
+    ):
+        raise PatchGenerationError(
+            "Frozen Patch resume identity has drifted.",
+            diagnostics={
+                "failure_boundary": "frozen_patch_identity_revalidation",
+                "failure_classification": "frozen_patch_resume_identity_mismatch",
+            },
+        )
+    if not isinstance(attempt.get("provider_request"), Mapping) or not isinstance(
+        attempt.get("materialization_context"), Mapping
+    ):
+        raise PatchGenerationError(
+            "Frozen Patch attempt payload is invalid.",
+            diagnostics={
+                "failure_boundary": "frozen_patch_identity_revalidation",
+                "failure_classification": "frozen_patch_attempt_payload_invalid",
+            },
+        )
+    immutable_identity = {
+        "resume_identity": dict(frozen_identity),
+        "provider_request": dict(attempt["provider_request"]),
+        "materialization_context": dict(attempt["materialization_context"]),
+    }
+    if attempt.get("frozen_identity_sha256") != _canonical_json_sha256(
+        immutable_identity
+    ):
+        raise PatchGenerationError(
+            "Frozen Patch attempt hash is invalid.",
+            diagnostics={
+                "failure_boundary": "frozen_patch_identity_revalidation",
+                "failure_classification": "frozen_patch_attempt_hash_mismatch",
+            },
+        )
+    return attempt
+
+
+def _validate_frozen_materialization_context(
+    attempt: Mapping[str, Any],
+) -> None:
+    context = attempt["materialization_context"]
+    expected_context_fields = {
+        "allowed_bindings",
+        "binding_contexts",
+        "binding_evidence_excerpts",
+        "required_change_units",
+        "required_validation_by_binding",
+    }
+    if not isinstance(context, Mapping) or set(context) != expected_context_fields:
+        raise PatchGenerationError(
+            "Frozen Patch materialization context fields are invalid.",
+            diagnostics={
+                "failure_boundary": "frozen_patch_identity_revalidation",
+                "failure_classification": (
+                    "frozen_patch_materialization_context_invalid"
+                ),
+            },
+        )
+    required_validation_raw = context.get("required_validation_by_binding")
+    if not isinstance(required_validation_raw, Mapping) or not all(
+        isinstance(binding_id, str)
+        and binding_id
+        and isinstance(values, list)
+        and all(isinstance(value, str) and value for value in values)
+        for binding_id, values in required_validation_raw.items()
+    ):
+        raise PatchGenerationError(
+            "Frozen Patch required validation context is invalid.",
+            diagnostics={
+                "failure_boundary": "frozen_patch_identity_revalidation",
+                "failure_classification": (
+                    "frozen_patch_materialization_context_invalid"
+                ),
+            },
+        )
+    required_validation = {
+        str(binding_id): tuple(values)
+        for binding_id, values in required_validation_raw.items()
+    }
+    derived = _native_materialization_context_from_frozen(
+        attempt["provider_request"],
+        required_validation=required_validation,
+    )
+    if derived != dict(context):
+        raise PatchGenerationError(
+            "Frozen Patch materialization context does not match its provider body.",
+            diagnostics={
+                "failure_boundary": "frozen_patch_identity_revalidation",
+                "failure_classification": (
+                    "frozen_patch_materialization_context_mismatch"
+                ),
+            },
+        )
+
+
+def _record_frozen_terminal(
+    attempt: Mapping[str, Any],
+    *,
+    recorder: Callable[[dict[str, Any]], None],
+    status: str,
+    error: Exception | None,
+    failure_boundary: str | None,
+) -> None:
+    terminal = {
+        "outcome": "succeeded" if error is None else "failed",
+        "failure_boundary": failure_boundary,
+        "failure_type": None if error is None else type(error).__name__,
+        "failure_message": None if error is None else str(error),
+        "diagnostics": (
+            {}
+            if error is None
+            else dict(getattr(error, "diagnostics", {}) or {})
+        ),
+        "automatic_retry": False,
+        "automatic_correction": False,
+        "automatic_provider_fallback": False,
+        "model_switching": False,
+    }
+    recorder(
+        {
+            **dict(attempt),
+            "status": status,
+            "consumed": True,
+            "terminal": terminal,
+        }
+    )
+
+
+def _parse_native_response_changes(content: str) -> list[Any]:
+    payload = _parse_json_object(content)
+    if set(payload) != {"changes"}:
+        raise _native_validation_error(
+            "Native Patch response root does not match its schema.",
+            failure_classification="native_response_fields_invalid",
+            missing_fields=sorted({"changes"} - set(payload)),
+            unexpected_fields=sorted(set(payload) - {"changes"}),
+        )
+    raw_changes = payload.get("changes")
+    if not isinstance(raw_changes, list) or not raw_changes:
+        raise PatchGenerationError(
+            "Model output must contain a non-empty changes list."
+        )
+    return raw_changes
+
+
+def _materialize_native_changes(
+    raw_changes: list[Any],
+    *,
+    allowed_bindings: set[str],
+    binding_evidence_excerpts: Mapping[str, str],
+    normalized_required_changes: tuple[dict[str, Any], ...],
+    required_validation: Mapping[str, tuple[str, ...]],
+    binding_contexts: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    required_changes_by_identity = {
+        (str(item["change_id"]), str(item["edit_binding_id"])): item
+        for item in normalized_required_changes
+    }
+    return tuple(
+        _materialize_native_change(
+            item,
+            allowed_bindings=allowed_bindings,
+            binding_evidence_excerpts=binding_evidence_excerpts,
+            required_changes_by_identity=required_changes_by_identity,
+            required_validation=required_validation,
+            binding_contexts=binding_contexts,
+            index=index,
+        )
+        for index, item in enumerate(raw_changes, start=1)
+    )
+
+
+def _materialize_frozen_native_response(
+    response: ChatResponse,
+    *,
+    context: Mapping[str, Any],
+) -> GeneratedPatch:
+    expected_context_fields = {
+        "allowed_bindings",
+        "binding_contexts",
+        "binding_evidence_excerpts",
+        "required_change_units",
+        "required_validation_by_binding",
+    }
+    if set(context) != expected_context_fields:
+        raise PatchGenerationError(
+            "Frozen Patch materialization context fields are invalid."
+        )
+    allowed_bindings = set(context["allowed_bindings"])
+    binding_contexts = dict(context["binding_contexts"])
+    binding_evidence_excerpts = dict(context["binding_evidence_excerpts"])
+    normalized_required_changes = tuple(
+        dict(item) for item in context["required_change_units"]
+    )
+    required_validation = {
+        str(binding_id): tuple(values)
+        for binding_id, values in dict(
+            context["required_validation_by_binding"]
+        ).items()
+    }
+    try:
+        raw_changes = _parse_native_response_changes(response.content)
+        changes = _materialize_native_changes(
+            raw_changes,
+            allowed_bindings=allowed_bindings,
+            binding_evidence_excerpts=binding_evidence_excerpts,
+            normalized_required_changes=normalized_required_changes,
+            required_validation=required_validation,
+            binding_contexts=binding_contexts,
+        )
+        _validate_required_change_coverage(
+            changes,
+            required_change_units=normalized_required_changes,
+        )
+    except Exception as exc:
+        diagnostics = _response_diagnostics(response)
+        if isinstance(exc, PatchGenerationError):
+            diagnostics.update(exc.diagnostics)
+            raise PatchGenerationError(
+                str(exc),
+                diagnostic_content=response.content,
+                diagnostics=diagnostics,
+            ) from exc
+        setattr(exc, "diagnostic_content", response.content)
+        existing = getattr(exc, "diagnostics", None)
+        if isinstance(existing, Mapping):
+            diagnostics.update(existing)
+        setattr(exc, "diagnostics", diagnostics)
+        raise
+    return GeneratedPatch(
+        changes=changes,
+        model=response.model,
+        usage=response.usage,
+        raw_text=response.content,
+    )
 
 
 def _projection_error(

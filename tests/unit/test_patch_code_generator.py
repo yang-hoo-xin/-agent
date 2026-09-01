@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.libs.llm import BaseLLM, ChatResponse, Message
+from src.libs.llm import BaseLLM, ChatResponse, Message, OllamaLLM
 from src.libs.llm.ollama_llm import build_ollama_context_admission
 from src.mod_agent.proposal import LLMExactPatchGenerator, PatchGenerationError
 
@@ -37,6 +40,73 @@ class _RecordingLLM(BaseLLM):
             usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
             raw_response={"done": True, "done_reason": "stop"},
         )
+
+
+class _FrozenTestLLM(BaseLLM):
+    def __init__(self, response: ChatResponse) -> None:
+        self.response = response
+        self.chat_count = 0
+        self.prepare_count = 0
+        self.resume_count = 0
+
+    def chat(self, messages: list[Message], trace=None, **kwargs) -> ChatResponse:
+        self.chat_count += 1
+        raise AssertionError("freeze/resume must not call the immediate chat path")
+
+    def prepare_structured_chat(
+        self,
+        messages: list[Message],
+        trace=None,
+        **kwargs,
+    ) -> dict[str, object]:
+        self.prepare_count += 1
+        payload = {
+            "model": "fake-codegen",
+            "messages": [
+                {"role": item.role, "content": item.content} for item in messages
+            ],
+            "stream": False,
+            "options": {
+                "temperature": kwargs["temperature"],
+                "num_predict": 4096,
+            },
+            "think": False,
+            "format": kwargs["response_format"],
+        }
+        body = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        request = {
+            "method": "POST",
+            "destination": "http://127.0.0.1:11434/api/chat",
+            "headers": {"Content-Type": "application/json"},
+            "content_type": "application/json",
+            "body_utf8": body.decode("utf-8"),
+            "body_sha256": hashlib.sha256(body).hexdigest(),
+            "body_size_bytes": len(body),
+            "timeout_seconds": 600.0,
+            "trust_environment": False,
+            "follow_redirects": False,
+            "context_admission": None,
+            "model": "fake-codegen",
+            "output_budget": 4096,
+            "context_window": None,
+        }
+        kwargs["provider_request_recorder"](request)
+        return request
+
+    def resume_structured_chat(
+        self,
+        frozen_request: dict[str, object],
+    ) -> ChatResponse:
+        self.resume_count += 1
+        assert frozen_request["body_sha256"] == hashlib.sha256(
+            frozen_request["body_utf8"].encode("utf-8")
+        ).hexdigest()
+        return self.response
 
 
 def _registry() -> dict[str, object]:
@@ -405,6 +475,261 @@ def _generate_projection_fixture(
         provider_request_recorder=lambda _: None,
     )
     return llm, generated
+
+
+def _frozen_resume_identity() -> dict[str, object]:
+    return {
+        "run_id": "run_001",
+        "request_id": "request_001",
+        "model_role": "initial_patch",
+        "role_ordinal": 1,
+        "remaining_call_budget": 1,
+        "model": "fake-codegen",
+        "output_budget": 4096,
+        "context_window": 32768,
+        "source_snapshot_sha256": "a" * 64,
+        "artifact_bindings": {
+            "feature_spec_ref": "a/feature_spec.json",
+            "feature_spec_hash": "b" * 64,
+            "evidence_pack_ref": "a/evidence_pack.json",
+            "evidence_pack_hash": "c" * 64,
+            "implementation_plan_ref": "a/implementation_plan.json",
+            "implementation_plan_hash": "d" * 64,
+        },
+        "binding_registry_sha256": "e" * 64,
+    }
+
+
+def _prepare_frozen_fixture(
+    fixture: dict[str, object],
+    llm: _FrozenTestLLM,
+    store: dict[str, object],
+) -> LLMExactPatchGenerator:
+    generator = LLMExactPatchGenerator(llm)
+    generator.prepare_frozen_native(
+        resume_identity=_frozen_resume_identity(),
+        frozen_attempt_recorder=lambda value: store.update(value=value),
+        user_request=str(fixture["user_request"]),
+        evidence_items=list(fixture["evidence_items"]),
+        binding_registry=dict(fixture["binding_registry"]),
+        constraints=list(fixture["constraints"]),
+        required_change_units=list(fixture["required_change_units"]),
+        required_validation_by_binding=dict(
+            fixture["required_validation_by_binding"]
+        ),
+    )
+    return generator
+
+
+def test_native_freeze_uses_existing_prompt_schema_and_pauses_without_generation() -> None:
+    fixture = _large_projection_fixture()
+    immediate_llm, _ = _generate_projection_fixture(fixture)
+    frozen_llm = _FrozenTestLLM(
+        ChatResponse(
+            content=json.dumps(fixture["response"]),
+            model="fake-codegen",
+        )
+    )
+    store: dict[str, object] = {}
+
+    _prepare_frozen_fixture(fixture, frozen_llm, store)
+
+    attempt = store["value"]
+    body = json.loads(attempt["provider_request"]["body_utf8"])
+    assert body["messages"] == [
+        {"role": item.role, "content": item.content}
+        for item in immediate_llm.messages
+    ]
+    assert body["format"] == immediate_llm.kwargs["response_format"]
+    assert attempt["status"] == "paused_frozen"
+    assert attempt["consumed"] is False
+    assert attempt["terminal"] is None
+    assert attempt["resume_identity"]["model_role"] == "initial_patch"
+    assert attempt["resume_identity"]["role_ordinal"] == 1
+    assert frozen_llm.prepare_count == 1
+    assert frozen_llm.chat_count == 0
+    assert frozen_llm.resume_count == 0
+
+
+def test_native_frozen_resume_materializes_then_rejects_duplicate_without_call() -> None:
+    fixture = _large_projection_fixture()
+    frozen_llm = _FrozenTestLLM(
+        ChatResponse(
+            content=json.dumps(fixture["response"]),
+            model="fake-codegen",
+            usage={"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+            raw_response={"done": True, "done_reason": "stop"},
+        )
+    )
+    store: dict[str, object] = {}
+    generator = _prepare_frozen_fixture(fixture, frozen_llm, store)
+    admitted: list[ChatResponse] = []
+
+    generated = generator.resume_frozen_native(
+        frozen_attempt_loader=lambda: store["value"],
+        frozen_attempt_recorder=lambda value: store.update(value=value),
+        current_resume_identity=_frozen_resume_identity(),
+        post_response_admission=admitted.append,
+    )
+
+    assert len(generated.changes) == 3
+    assert admitted[0].content == json.dumps(fixture["response"])
+    assert frozen_llm.resume_count == 1
+    assert store["value"]["status"] == "terminal_succeeded"
+    with pytest.raises(PatchGenerationError) as exc_info:
+        generator.resume_frozen_native(
+            frozen_attempt_loader=lambda: store["value"],
+            frozen_attempt_recorder=lambda value: store.update(value=value),
+            current_resume_identity=_frozen_resume_identity(),
+        )
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "frozen_patch_attempt_not_resumable"
+    )
+    assert frozen_llm.resume_count == 1
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "run_id",
+        "request_id",
+        "model",
+        "output_budget",
+        "source_snapshot_sha256",
+        "artifact_bindings",
+        "binding_registry_sha256",
+    ),
+)
+def test_native_frozen_resume_identity_drift_blocks_before_provider(
+    field: str,
+) -> None:
+    fixture = _large_projection_fixture()
+    frozen_llm = _FrozenTestLLM(
+        ChatResponse(content=json.dumps(fixture["response"]), model="fake-codegen")
+    )
+    store: dict[str, object] = {}
+    generator = _prepare_frozen_fixture(fixture, frozen_llm, store)
+    current = _frozen_resume_identity()
+    current[field] = "drift"
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        generator.resume_frozen_native(
+            frozen_attempt_loader=lambda: store["value"],
+            frozen_attempt_recorder=lambda value: store.update(value=value),
+            current_resume_identity=current,
+        )
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "frozen_patch_resume_identity_mismatch"
+    )
+    assert frozen_llm.resume_count == 0
+
+
+def test_native_frozen_file_corruption_hash_mismatch_blocks_before_provider() -> None:
+    fixture = _large_projection_fixture()
+    frozen_llm = _FrozenTestLLM(
+        ChatResponse(content=json.dumps(fixture["response"]), model="fake-codegen")
+    )
+    store: dict[str, object] = {}
+    generator = _prepare_frozen_fixture(fixture, frozen_llm, store)
+    corrupted = json.loads(json.dumps(store["value"]))
+    corrupted["materialization_context"]["allowed_bindings"].append(
+        "edit_binding_forged"
+    )
+    store["value"] = corrupted
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        generator.resume_frozen_native(
+            frozen_attempt_loader=lambda: store["value"],
+            frozen_attempt_recorder=lambda value: store.update(value=value),
+            current_resume_identity=_frozen_resume_identity(),
+        )
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "frozen_patch_attempt_hash_mismatch"
+    )
+    assert frozen_llm.resume_count == 0
+
+
+def test_native_frozen_invalid_response_is_terminal_without_correction() -> None:
+    fixture = _large_projection_fixture()
+    frozen_llm = _FrozenTestLLM(
+        ChatResponse(
+            content='{"changes":[{"change_id":"wrong"}]}',
+            model="fake-codegen",
+            raw_response={"done": True, "done_reason": "stop"},
+        )
+    )
+    store: dict[str, object] = {}
+    generator = _prepare_frozen_fixture(fixture, frozen_llm, store)
+
+    with pytest.raises(PatchGenerationError):
+        generator.resume_frozen_native(
+            frozen_attempt_loader=lambda: store["value"],
+            frozen_attempt_recorder=lambda value: store.update(value=value),
+            current_resume_identity=_frozen_resume_identity(),
+        )
+
+    assert frozen_llm.resume_count == 1
+    assert store["value"]["status"] == "terminal_failed"
+    assert store["value"]["terminal"]["automatic_correction"] is False
+    assert store["value"]["terminal"]["automatic_retry"] is False
+
+
+def test_native_frozen_invalid_response_uses_exactly_one_http_post() -> None:
+    fixture = _large_projection_fixture()
+    settings = SimpleNamespace(
+        llm=SimpleNamespace(
+            model="fake-codegen",
+            temperature=0.0,
+            max_tokens=4096,
+        )
+    )
+    generator = LLMExactPatchGenerator(
+        OllamaLLM(
+            settings,
+            base_url="http://127.0.0.1:11434",
+            timeout=600.0,
+            context_window=200_000,
+        )
+    )
+    store: dict[str, object] = {}
+    resume_identity = _frozen_resume_identity()
+    resume_identity["context_window"] = 200_000
+    generator.prepare_frozen_native(
+        resume_identity=resume_identity,
+        frozen_attempt_recorder=lambda value: store.update(value=value),
+        user_request=str(fixture["user_request"]),
+        evidence_items=list(fixture["evidence_items"]),
+        binding_registry=dict(fixture["binding_registry"]),
+        constraints=list(fixture["constraints"]),
+        required_change_units=list(fixture["required_change_units"]),
+        required_validation_by_binding=dict(
+            fixture["required_validation_by_binding"]
+        ),
+    )
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {
+        "model": "fake-codegen",
+        "message": {"role": "assistant", "content": '{"changes":[]}'},
+        "done": True,
+        "done_reason": "stop",
+    }
+
+    with patch("httpx.Client") as client:
+        post = client.return_value.__enter__.return_value.post
+        post.return_value = response
+        with pytest.raises(PatchGenerationError):
+            generator.resume_frozen_native(
+                frozen_attempt_loader=lambda: store["value"],
+                frozen_attempt_recorder=lambda value: store.update(value=value),
+                current_resume_identity=resume_identity,
+            )
+
+    assert post.call_count == 1
+    assert store["value"]["status"] == "terminal_failed"
+    assert store["value"]["terminal"]["automatic_correction"] is False
 
 
 def _non_native_plan_response_changes(

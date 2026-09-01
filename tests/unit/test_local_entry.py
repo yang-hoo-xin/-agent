@@ -6,13 +6,14 @@ import os
 import shutil
 import stat
 import subprocess
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.libs.llm import ChatResponse, LLMFactory, OllamaLLM
+from src.libs.llm import ChatResponse, LLMFactory, OllamaLLM, OllamaLLMError
 from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.build import BuildAdapter, BuildCommandResult, BuildProfile
 from src.mod_agent.execution import (
@@ -20,7 +21,7 @@ from src.mod_agent.execution import (
     ExactTextPatchApplier,
     PatchApplyError,
 )
-from src.mod_agent.proposal import PatchGenerationError
+from src.mod_agent.proposal import LLMExactPatchGenerator, PatchGenerationError
 from src.mod_agent.local_entry import (
     EXACT_DIFF_REJECTION_TOKEN,
     LOCAL_DIAGNOSTIC_CONTENT_FILENAME,
@@ -31,9 +32,12 @@ from src.mod_agent.local_entry import (
     RunLocalGameFolderBindingV1,
     _assert_no_absolute_local_paths,
     _assert_ollama_model_identity_stable,
+    _atomic_write_frozen_patch_attempt,
     _bind_objective_failure_to_single_changed_file,
     _canonicalize_run_local_build_diagnostic_paths,
     _build_run_local_il_inspector,
+    _build_local_patch_frozen_resume_identity,
+    _claim_local_frozen_patch_resume,
     _create_nuget_isolated_build_profile,
     _create_run_local_member_access_resolver,
     _copy_validated_directory_tree,
@@ -55,15 +59,18 @@ from src.mod_agent.local_entry import (
     _patch_generation_calls_remaining,
     _patch_model_input_disclosure_data_classes,
     _patch_generation_obligation_projection,
+    _prepare_local_frozen_patch_attempt,
     _project_text_property,
     _repair_review_context,
     _read_exact_diff_approval,
+    _read_frozen_patch_attempt,
     _read_ollama_server_version,
     _request_requirement_coverage_model,
     _read_utf8_source_snapshot,
     _repair_history_fact_constraints,
     _repair_provider_constraints,
     _repair_span_response_schema,
+    _resume_local_frozen_patch_attempt,
     _remove_generated_build_directory,
     _resolve_project_path_property,
     _runtime_admission_record,
@@ -3671,6 +3678,503 @@ def test_patch_generation_role_budgets_reject_extra_provider_calls() -> None:
             initial_patch_call_count=0,
             repair_call_count=-1,
         )
+
+
+def _local_frozen_resume_identity() -> dict[str, object]:
+    return _build_local_patch_frozen_resume_identity(
+        run_id="run_001",
+        request_id="request_001",
+        feature_id="feature_001",
+        model_role="initial_patch",
+        model_call_count=2,
+        initial_patch_call_count=0,
+        repair_call_count=0,
+        model="qwen3:4b-instruct",
+        output_budget=4096,
+        context_window=32768,
+        model_context_limit=40960,
+        ollama_server_version="0.32.1",
+        model_identity=_ollama_identity(),
+        source_revision_binding={"revision": "source-revision-001"},
+        source_snapshot_sha256="a" * 64,
+        request_sha256="b" * 64,
+        model_input_payload_sha256="c" * 64,
+        feature_spec_ref="a/feature_spec.json",
+        feature_spec_hash="d" * 64,
+        evidence_pack_ref="a/evidence_pack.json",
+        evidence_pack_hash="e" * 64,
+        implementation_plan_ref="a/implementation_plan.json",
+        implementation_plan_hash="f" * 64,
+        repair_plan_ref=None,
+        repair_plan_hash=None,
+        build_result_ref=None,
+        build_result_hash=None,
+        binding_registry_sha256="1" * 64,
+        evidence_sha256="2" * 64,
+        editable_paths=["generated_mods/Example/Plugin.cs"],
+        change_scope=["Preserve unrelated behavior."],
+    )
+
+
+def test_local_frozen_resume_identity_binds_role_ordinal_budget_and_owner_refs() -> None:
+    identity = _local_frozen_resume_identity()
+
+    assert identity["model_role"] == "initial_patch"
+    assert identity["role_ordinal"] == 1
+    assert identity["model_call_ordinal"] == 3
+    assert identity["remaining_call_budget"] == 2
+    assert identity["frozen_attempt_call_budget"] == 1
+    assert identity["artifact_bindings"] == {
+        "feature_spec_ref": "a/feature_spec.json",
+        "feature_spec_hash": "d" * 64,
+        "evidence_pack_ref": "a/evidence_pack.json",
+        "evidence_pack_hash": "e" * 64,
+        "implementation_plan_ref": "a/implementation_plan.json",
+        "implementation_plan_hash": "f" * 64,
+        "repair_plan_ref": None,
+        "repair_plan_hash": None,
+        "build_result_ref": None,
+        "build_result_hash": None,
+    }
+    assert identity["binding_registry_sha256"] == "1" * 64
+    assert identity["evidence_sha256"] == "2" * 64
+
+
+def test_frozen_patch_attempt_atomic_roundtrip_has_complete_readback(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "frozen_patch_attempt.json"
+    attempt = {
+        "schema_version": "frozen_native_patch_attempt_v1",
+        "status": "paused_frozen",
+        "consumed": False,
+        "resume_identity": _local_frozen_resume_identity(),
+        "provider_request": {
+            "body_utf8": '{"messages":[{"content":"内容"}]}'
+        },
+        "materialization_context": {"binding_contexts": {}},
+        "terminal": None,
+    }
+
+    _atomic_write_frozen_patch_attempt(destination, attempt)
+
+    assert _read_frozen_patch_attempt(destination) == attempt
+    assert list(tmp_path.glob("*.tmp")) == []
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_frozen_patch_attempt_atomic_failure_leaves_no_resumable_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "frozen_patch_attempt.json"
+
+    def fail_replace(*_):
+        raise OSError("replace failed")
+
+    monkeypatch.setattr("src.mod_agent.local_entry.os.replace", fail_replace)
+    with pytest.raises(OSError, match="replace failed"):
+        _atomic_write_frozen_patch_attempt(
+            destination,
+            {
+                "status": "paused_frozen",
+                "resume_identity": _local_frozen_resume_identity(),
+            },
+        )
+
+    assert destination.exists() is False
+    assert list(tmp_path.iterdir()) == []
+
+
+def _prepare_local_resume_order_fixture(
+    tmp_path: Path,
+) -> tuple[LLMExactPatchGenerator, Path, dict[str, object], MagicMock]:
+    source_hash = "3" * 64
+    evidence = {
+        "evidence_id": "evidence_001",
+        "source_path": "generated_mods/Example/Plugin.cs",
+        "source_hash": source_hash,
+        "file_hash": source_hash,
+        "doc_hash": source_hash,
+        "source_type": "target_source",
+        "symbol": "Example.Plugin.Apply",
+        "span": {"start_line": 1, "end_line": 1},
+        "excerpt": "ApplyOld();",
+    }
+    generation_inputs = {
+        "user_request": "Change the bound behavior.",
+        "evidence_items": [evidence],
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "evidence_001",
+                    "canonical_target_path": evidence["source_path"],
+                    "source_hash": source_hash,
+                    "target_symbol": evidence["symbol"],
+                    "target_span": evidence["span"],
+                }
+            ],
+            "supporting_bindings": [],
+        },
+        "constraints": ["Preserve unrelated behavior."],
+        "required_change_units": [
+            {
+                "change_id": "change_001",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_001",
+                "hook_target_binding_id": None,
+                "supporting_binding_ids": [],
+                "operation": "minimal_evidence_bound_change",
+                "rationale": "Apply the bounded change.",
+                "expected_validation": ["compile or static validation"],
+            }
+        ],
+        "required_validation_by_binding": {
+            "edit_binding_001": ["compile or static validation"]
+        },
+    }
+    settings = SimpleNamespace(
+        llm=SimpleNamespace(
+            model="qwen3:4b-instruct",
+            temperature=0.0,
+            max_tokens=4096,
+        )
+    )
+    generator = LLMExactPatchGenerator(
+        OllamaLLM(
+            settings,
+            base_url="http://127.0.0.1:11434",
+            context_window=32768,
+            timeout=600.0,
+        )
+    )
+    attempt_path = tmp_path / "frozen_patch_attempt.json"
+    identity = _local_frozen_resume_identity()
+    _prepare_local_frozen_patch_attempt(
+        generator=generator,
+        destination=attempt_path,
+        resume_identity=identity,
+        generation_inputs=generation_inputs,
+    )
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {
+        "model": "qwen3:4b-instruct",
+        "message": {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "changes": [
+                        {
+                            "change_id": "change_001",
+                            "edit_binding_id": "edit_binding_001",
+                            "rationale": "Apply the bounded change.",
+                            "rollback_hint": "Restore the prior source.",
+                            "after_text": "ApplyNew();",
+                        }
+                    ]
+                }
+            ),
+        },
+        "done": True,
+        "done_reason": "stop",
+    }
+    return generator, attempt_path, identity, response
+
+
+def _rehash_frozen_attempt(attempt: dict[str, object]) -> None:
+    immutable = {
+        "resume_identity": attempt["resume_identity"],
+        "provider_request": attempt["provider_request"],
+        "materialization_context": attempt["materialization_context"],
+    }
+    attempt["frozen_identity_sha256"] = hashlib.sha256(
+        json.dumps(
+            immutable,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def test_wrong_resume_identity_does_not_claim_and_correct_identity_then_succeeds(
+    tmp_path: Path,
+) -> None:
+    generator, attempt_path, identity, response = _prepare_local_resume_order_fixture(
+        tmp_path
+    )
+    wrong_identity = json.loads(json.dumps(identity))
+    wrong_identity["model"] = "wrong-model"
+    claim_path = attempt_path.with_name(f"{attempt_path.name}.resume.claim")
+
+    with patch("httpx.Client") as client:
+        post = client.return_value.__enter__.return_value.post
+        post.return_value = response
+        with pytest.raises(PatchGenerationError):
+            _resume_local_frozen_patch_attempt(
+                generator=generator,
+                source=attempt_path,
+                current_resume_identity=wrong_identity,
+            )
+        assert post.call_count == 0
+        assert claim_path.exists() is False
+        paused = _read_frozen_patch_attempt(attempt_path)
+        assert paused["status"] == "paused_frozen"
+        assert paused["consumed"] is False
+
+        generated = _resume_local_frozen_patch_attempt(
+            generator=generator,
+            source=attempt_path,
+            current_resume_identity=identity,
+        )
+
+    assert len(generated.changes) == 1
+    assert post.call_count == 1
+
+
+def test_corrupted_frozen_provider_body_does_not_create_claim_or_http(
+    tmp_path: Path,
+) -> None:
+    generator, attempt_path, identity, response = _prepare_local_resume_order_fixture(
+        tmp_path
+    )
+    attempt = _read_frozen_patch_attempt(attempt_path)
+    provider_request = attempt["provider_request"]
+    body = json.loads(provider_request["body_utf8"])
+    body["tools"] = []
+    body_utf8 = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    body_bytes = body_utf8.encode("utf-8")
+    provider_request["body_utf8"] = body_utf8
+    provider_request["body_sha256"] = hashlib.sha256(body_bytes).hexdigest()
+    provider_request["body_size_bytes"] = len(body_bytes)
+    admission = provider_request["context_admission"]
+    admission["provider_body_utf8_bytes"] = len(body_bytes)
+    admission["conservative_required_context"] = len(body_bytes) + 4096
+    admission["admitted"] = True
+    _rehash_frozen_attempt(attempt)
+    _atomic_write_frozen_patch_attempt(attempt_path, attempt)
+    claim_path = attempt_path.with_name(f"{attempt_path.name}.resume.claim")
+
+    with patch("httpx.Client") as client:
+        client.return_value.__enter__.return_value.post.return_value = response
+        with pytest.raises(OllamaLLMError):
+            _resume_local_frozen_patch_attempt(
+                generator=generator,
+                source=attempt_path,
+                current_resume_identity=identity,
+            )
+
+    client.assert_not_called()
+    assert claim_path.exists() is False
+
+
+def test_frozen_attempt_reader_rejects_duplicate_json_keys(tmp_path: Path) -> None:
+    _, attempt_path, _, _ = _prepare_local_resume_order_fixture(tmp_path)
+    raw = attempt_path.read_text(encoding="utf-8")
+    raw = raw.replace(
+        '"status": "paused_frozen"',
+        '"status": "paused_frozen",\n  "status": "paused_frozen"',
+        1,
+    )
+    attempt_path.write_text(raw, encoding="utf-8")
+
+    with pytest.raises(LocalEntryError, match="duplicate"):
+        _read_frozen_patch_attempt(attempt_path)
+
+
+def test_post_claim_second_validation_drift_blocks_before_http(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    generator, attempt_path, identity, response = _prepare_local_resume_order_fixture(
+        tmp_path
+    )
+    claim_path = attempt_path.with_name(f"{attempt_path.name}.resume.claim")
+
+    def claim_then_drift(**kwargs):
+        result = _claim_local_frozen_patch_resume(**kwargs)
+        attempt = _read_frozen_patch_attempt(attempt_path)
+        attempt["resume_identity"]["run_id"] = "drift-after-claim"
+        _rehash_frozen_attempt(attempt)
+        _atomic_write_frozen_patch_attempt(attempt_path, attempt)
+        return result
+
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._claim_local_frozen_patch_resume",
+        claim_then_drift,
+    )
+    with patch("httpx.Client") as client:
+        client.return_value.__enter__.return_value.post.return_value = response
+        with pytest.raises(PatchGenerationError):
+            _resume_local_frozen_patch_attempt(
+                generator=generator,
+                source=attempt_path,
+                current_resume_identity=identity,
+            )
+
+    client.assert_not_called()
+    assert claim_path.is_file() is True
+
+
+def test_concurrent_local_frozen_resume_has_one_filesystem_consumer_and_one_post(
+    tmp_path: Path,
+) -> None:
+    source_hash = "3" * 64
+    evidence = {
+        "evidence_id": "evidence_001",
+        "source_path": "generated_mods/Example/Plugin.cs",
+        "source_hash": source_hash,
+        "file_hash": source_hash,
+        "doc_hash": source_hash,
+        "source_type": "target_source",
+        "symbol": "Example.Plugin.Apply",
+        "span": {"start_line": 1, "end_line": 1},
+        "excerpt": "ApplyOld();",
+    }
+    generation_inputs = {
+        "user_request": "Change the bound behavior.",
+        "evidence_items": [evidence],
+        "binding_registry": {
+            "schema_version": "binding_registry_v1",
+            "owner_artifact_type": "implementation_plan",
+            "edit_bindings": [
+                {
+                    "binding_id": "edit_binding_001",
+                    "evidence_id": "evidence_001",
+                    "canonical_target_path": evidence["source_path"],
+                    "source_hash": source_hash,
+                    "target_symbol": evidence["symbol"],
+                    "target_span": evidence["span"],
+                }
+            ],
+            "supporting_bindings": [],
+        },
+        "constraints": ["Preserve unrelated behavior."],
+        "required_change_units": [
+            {
+                "change_id": "change_001",
+                "change_type": "modify_behavior",
+                "edit_binding_id": "edit_binding_001",
+                "hook_target_binding_id": None,
+                "supporting_binding_ids": [],
+                "operation": "minimal_evidence_bound_change",
+                "rationale": "Apply the bounded change.",
+                "expected_validation": ["compile or static validation"],
+            }
+        ],
+        "required_validation_by_binding": {
+            "edit_binding_001": ["compile or static validation"]
+        },
+    }
+    settings = SimpleNamespace(
+        llm=SimpleNamespace(
+            model="qwen3:4b-instruct",
+            temperature=0.0,
+            max_tokens=4096,
+        )
+    )
+    generator = LLMExactPatchGenerator(
+        OllamaLLM(
+            settings,
+            base_url="http://127.0.0.1:11434",
+            context_window=32768,
+            timeout=600.0,
+        )
+    )
+    attempt_path = tmp_path / "frozen_patch_attempt.json"
+    identity = _local_frozen_resume_identity()
+    _prepare_local_frozen_patch_attempt(
+        generator=generator,
+        destination=attempt_path,
+        resume_identity=identity,
+        generation_inputs=generation_inputs,
+    )
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {
+        "model": "qwen3:4b-instruct",
+        "message": {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "changes": [
+                        {
+                            "change_id": "change_001",
+                            "edit_binding_id": "edit_binding_001",
+                            "rationale": "Apply the bounded change.",
+                            "rollback_hint": "Restore the prior source.",
+                            "after_text": "ApplyNew();",
+                        }
+                    ]
+                }
+            ),
+        },
+        "done": True,
+        "done_reason": "stop",
+    }
+    start = threading.Barrier(3)
+    post_entered = threading.Event()
+    release_post = threading.Event()
+    results: list[object] = []
+    errors: list[Exception] = []
+
+    def run_resume() -> None:
+        start.wait()
+        try:
+            results.append(
+                _resume_local_frozen_patch_attempt(
+                    generator=generator,
+                    source=attempt_path,
+                    current_resume_identity=identity,
+                )
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    def post_once(*_, **__) -> MagicMock:
+        post_entered.set()
+        assert release_post.wait(timeout=5.0)
+        return response
+
+    first = threading.Thread(target=run_resume)
+    second = threading.Thread(target=run_resume)
+    with patch("httpx.Client") as client:
+        post = client.return_value.__enter__.return_value.post
+        post.side_effect = post_once
+        first.start()
+        second.start()
+        start.wait()
+        assert post_entered.wait(timeout=5.0)
+        second.join(timeout=0.2)
+        first.join(timeout=0.2)
+        release_post.set()
+        first.join(timeout=5.0)
+        second.join(timeout=5.0)
+
+    assert first.is_alive() is False
+    assert second.is_alive() is False
+    assert post.call_count == 1
+    assert len(results) == 1
+    assert len(errors) == 1
+    assert isinstance(errors[0], LocalEntryError)
+    assert str(errors[0]) == "LOCAL_PATCH_FROZEN_ATTEMPT_CONSUMED_OR_IN_PROGRESS"
+    final_attempt = _read_frozen_patch_attempt(attempt_path)
+    assert final_attempt["status"] == "terminal_succeeded"
+    assert final_attempt["consumed"] is True
+    assert final_attempt["terminal"]["outcome"] == "succeeded"
+    assert (
+        attempt_path.with_name(f"{attempt_path.name}.resume.claim").is_file()
+        is True
+    )
 
 
 def test_local_run_rejects_external_disclosure_boundary_mix(

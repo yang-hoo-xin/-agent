@@ -382,6 +382,359 @@ OllamaModelIdentityReader = Callable[[str, str], dict[str, Any]]
 OllamaServerVersionReader = Callable[[str], str]
 
 
+_LOCAL_PATCH_FROZEN_RESUME_IDENTITY_FIELDS = frozenset(
+    {
+        "run_id",
+        "request_id",
+        "feature_id",
+        "model_role",
+        "role_ordinal",
+        "model_call_ordinal",
+        "remaining_call_budget",
+        "frozen_attempt_call_budget",
+        "model",
+        "output_budget",
+        "context_window",
+        "model_context_limit",
+        "ollama_server_version",
+        "model_identity",
+        "source_revision_binding",
+        "source_snapshot_sha256",
+        "request_sha256",
+        "model_input_payload_sha256",
+        "artifact_bindings",
+        "binding_registry_sha256",
+        "evidence_sha256",
+        "editable_paths",
+        "change_scope",
+    }
+)
+
+
+def _build_local_patch_frozen_resume_identity(
+    *,
+    run_id: str,
+    request_id: str,
+    feature_id: str,
+    model_role: str,
+    model_call_count: int,
+    initial_patch_call_count: int,
+    repair_call_count: int,
+    model: str,
+    output_budget: int,
+    context_window: int,
+    model_context_limit: int,
+    ollama_server_version: str,
+    model_identity: Mapping[str, Any],
+    source_revision_binding: Mapping[str, Any],
+    source_snapshot_sha256: str,
+    request_sha256: str,
+    model_input_payload_sha256: str,
+    feature_spec_ref: str,
+    feature_spec_hash: str,
+    evidence_pack_ref: str,
+    evidence_pack_hash: str,
+    implementation_plan_ref: str,
+    implementation_plan_hash: str,
+    repair_plan_ref: str | None,
+    repair_plan_hash: str | None,
+    build_result_ref: str | None,
+    build_result_hash: str | None,
+    binding_registry_sha256: str,
+    evidence_sha256: str,
+    editable_paths: list[str],
+    change_scope: list[str],
+) -> dict[str, Any]:
+    """Freeze the exact current owners needed for one Patch resume."""
+
+    remaining_call_budget = _patch_generation_calls_remaining(
+        model_role,
+        initial_patch_call_count=initial_patch_call_count,
+        repair_call_count=repair_call_count,
+    )
+    if model_role == "initial_patch":
+        role_ordinal = initial_patch_call_count + 1
+    elif model_role == "repair":
+        role_ordinal = repair_call_count + 1
+    else:
+        raise LocalEntryError("LOCAL_PATCH_GENERATION_MODEL_ROLE_INVALID")
+    identity = {
+        "run_id": run_id,
+        "request_id": request_id,
+        "feature_id": feature_id,
+        "model_role": model_role,
+        "role_ordinal": role_ordinal,
+        "model_call_ordinal": model_call_count + 1,
+        "remaining_call_budget": remaining_call_budget,
+        "frozen_attempt_call_budget": 1,
+        "model": model,
+        "output_budget": output_budget,
+        "context_window": context_window,
+        "model_context_limit": model_context_limit,
+        "ollama_server_version": ollama_server_version,
+        "model_identity": dict(model_identity),
+        "source_revision_binding": dict(source_revision_binding),
+        "source_snapshot_sha256": source_snapshot_sha256,
+        "request_sha256": request_sha256,
+        "model_input_payload_sha256": model_input_payload_sha256,
+        "artifact_bindings": {
+            "feature_spec_ref": feature_spec_ref,
+            "feature_spec_hash": feature_spec_hash,
+            "evidence_pack_ref": evidence_pack_ref,
+            "evidence_pack_hash": evidence_pack_hash,
+            "implementation_plan_ref": implementation_plan_ref,
+            "implementation_plan_hash": implementation_plan_hash,
+            "repair_plan_ref": repair_plan_ref,
+            "repair_plan_hash": repair_plan_hash,
+            "build_result_ref": build_result_ref,
+            "build_result_hash": build_result_hash,
+        },
+        "binding_registry_sha256": binding_registry_sha256,
+        "evidence_sha256": evidence_sha256,
+        "editable_paths": list(editable_paths),
+        "change_scope": list(change_scope),
+    }
+    if set(identity) != _LOCAL_PATCH_FROZEN_RESUME_IDENTITY_FIELDS:
+        raise LocalEntryError("LOCAL_PATCH_FROZEN_RESUME_IDENTITY_FIELDS_INVALID")
+    for field_name in (
+        "run_id",
+        "request_id",
+        "feature_id",
+        "model",
+        "ollama_server_version",
+        "source_snapshot_sha256",
+        "request_sha256",
+        "model_input_payload_sha256",
+        "binding_registry_sha256",
+        "evidence_sha256",
+    ):
+        value = identity[field_name]
+        if not isinstance(value, str) or not value.strip():
+            raise LocalEntryError(
+                f"LOCAL_PATCH_FROZEN_RESUME_{field_name.upper()}_INVALID"
+            )
+    if model_role not in {"initial_patch", "repair"}:
+        raise LocalEntryError("LOCAL_PATCH_GENERATION_MODEL_ROLE_INVALID")
+    for field_name in (
+        "role_ordinal",
+        "model_call_ordinal",
+        "remaining_call_budget",
+        "output_budget",
+        "context_window",
+        "model_context_limit",
+    ):
+        value = identity[field_name]
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise LocalEntryError(
+                f"LOCAL_PATCH_FROZEN_RESUME_{field_name.upper()}_INVALID"
+            )
+    if not identity["model_identity"] or not identity["source_revision_binding"]:
+        raise LocalEntryError("LOCAL_PATCH_FROZEN_RESUME_OWNER_BINDING_INVALID")
+    artifact_bindings = identity["artifact_bindings"]
+    for field_name in (
+        "feature_spec_ref",
+        "feature_spec_hash",
+        "evidence_pack_ref",
+        "evidence_pack_hash",
+        "implementation_plan_ref",
+        "implementation_plan_hash",
+    ):
+        value = artifact_bindings[field_name]
+        if not isinstance(value, str) or not value.strip():
+            raise LocalEntryError(
+                f"LOCAL_PATCH_FROZEN_RESUME_{field_name.upper()}_INVALID"
+            )
+    for ref_field, hash_field in (
+        ("repair_plan_ref", "repair_plan_hash"),
+        ("build_result_ref", "build_result_hash"),
+    ):
+        ref_value = artifact_bindings[ref_field]
+        hash_value = artifact_bindings[hash_field]
+        if (ref_value is None) != (hash_value is None):
+            raise LocalEntryError(
+                "LOCAL_PATCH_FROZEN_RESUME_OPTIONAL_ARTIFACT_IDENTITY_INVALID"
+            )
+        if ref_value is not None and (
+            not isinstance(ref_value, str)
+            or not ref_value.strip()
+            or not isinstance(hash_value, str)
+            or not hash_value.strip()
+        ):
+            raise LocalEntryError(
+                "LOCAL_PATCH_FROZEN_RESUME_OPTIONAL_ARTIFACT_IDENTITY_INVALID"
+            )
+    if not identity["editable_paths"] or not all(
+        isinstance(item, str) and item.strip()
+        for field_name in ("editable_paths", "change_scope")
+        for item in identity[field_name]
+    ):
+        raise LocalEntryError("LOCAL_PATCH_FROZEN_RESUME_SCOPE_INVALID")
+    return identity
+
+
+def _atomic_write_frozen_patch_attempt(
+    destination: Path,
+    attempt: Mapping[str, Any],
+) -> None:
+    """Atomically replace and fully read back one run-local frozen attempt."""
+
+    destination = destination.resolve()
+    if not destination.parent.is_dir():
+        raise LocalEntryError("Frozen Patch attempt directory is missing.")
+    payload = (
+        json.dumps(
+            dict(attempt),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    temporary = destination.with_name(
+        f".{destination.name}.{uuid4().hex}.tmp"
+    )
+    replaced = False
+    try:
+        with temporary.open("xb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, destination)
+        replaced = True
+        if destination.read_bytes() != payload:
+            raise LocalEntryError("Frozen Patch attempt readback mismatch.")
+        loaded = _strict_frozen_patch_attempt_json(payload.decode("utf-8"))
+        if loaded != dict(attempt):
+            raise LocalEntryError("Frozen Patch attempt JSON readback mismatch.")
+    except Exception:
+        if temporary.exists():
+            temporary.unlink()
+        if replaced and destination.exists():
+            destination.unlink()
+        raise
+
+
+def _strict_frozen_patch_attempt_json(text: str) -> Any:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    def reject_nonstandard_number(value: str) -> Any:
+        raise ValueError(f"non-standard JSON number: {value}")
+
+    return json.loads(
+        text,
+        object_pairs_hook=reject_duplicate_keys,
+        parse_constant=reject_nonstandard_number,
+    )
+
+
+def _read_frozen_patch_attempt(source: Path) -> dict[str, Any]:
+    try:
+        raw = source.read_bytes()
+        loaded = _strict_frozen_patch_attempt_json(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise LocalEntryError(
+            f"Frozen Patch attempt cannot be read exactly: {exc}"
+        ) from exc
+    if not isinstance(loaded, dict):
+        raise LocalEntryError("Frozen Patch attempt root must be an object.")
+    return loaded
+
+
+def _prepare_local_frozen_patch_attempt(
+    *,
+    generator: LLMExactPatchGenerator,
+    destination: Path,
+    resume_identity: Mapping[str, Any],
+    generation_inputs: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Create one run-local paused Patch attempt without invoking HTTP."""
+
+    claim_path = destination.with_name(f"{destination.name}.resume.claim")
+    if destination.exists() or claim_path.exists():
+        raise LocalEntryError("Frozen Patch attempt already exists.")
+    if set(resume_identity) != _LOCAL_PATCH_FROZEN_RESUME_IDENTITY_FIELDS:
+        raise LocalEntryError("LOCAL_PATCH_FROZEN_RESUME_IDENTITY_FIELDS_INVALID")
+    return generator.prepare_frozen_native(
+        resume_identity=resume_identity,
+        frozen_attempt_recorder=lambda value: _atomic_write_frozen_patch_attempt(
+            destination,
+            value,
+        ),
+        **dict(generation_inputs),
+    )
+
+
+def _claim_local_frozen_patch_resume(
+    *,
+    source: Path,
+    current_resume_identity: Mapping[str, Any],
+) -> Path:
+    """Acquire the attempt's single-machine filesystem consumption right."""
+
+    claim_path = source.with_name(f"{source.name}.resume.claim")
+    claim = {
+        "schema_version": "frozen_native_patch_resume_claim_v1",
+        "source_name": source.name,
+        "resume_identity_sha256": _sha256_json(dict(current_resume_identity)),
+        "consumed_once": True,
+    }
+    payload = (
+        json.dumps(claim, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    try:
+        with claim_path.open("xb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except FileExistsError as exc:
+        raise LocalEntryError(
+            "LOCAL_PATCH_FROZEN_ATTEMPT_CONSUMED_OR_IN_PROGRESS"
+        ) from exc
+    if claim_path.read_bytes() != payload:
+        raise LocalEntryError("Frozen Patch resume claim readback mismatch.")
+    return claim_path
+
+
+def _resume_local_frozen_patch_attempt(
+    *,
+    generator: LLMExactPatchGenerator,
+    source: Path,
+    current_resume_identity: Mapping[str, Any],
+    post_response_admission: Callable[[ChatResponse], None] | None = None,
+) -> Any:
+    """Resume one run-local frozen attempt through a single provider send."""
+
+    if set(current_resume_identity) != _LOCAL_PATCH_FROZEN_RESUME_IDENTITY_FIELDS:
+        raise LocalEntryError("LOCAL_PATCH_FROZEN_RESUME_IDENTITY_FIELDS_INVALID")
+    generator.validate_frozen_native(
+        _read_frozen_patch_attempt(source),
+        current_resume_identity=current_resume_identity,
+    )
+    _claim_local_frozen_patch_resume(
+        source=source,
+        current_resume_identity=current_resume_identity,
+    )
+    revalidated_attempt = generator.validate_frozen_native(
+        _read_frozen_patch_attempt(source),
+        current_resume_identity=current_resume_identity,
+    )
+    return generator.resume_frozen_native(
+        frozen_attempt_loader=lambda: revalidated_attempt,
+        frozen_attempt_recorder=lambda value: _atomic_write_frozen_patch_attempt(
+            source,
+            value,
+        ),
+        current_resume_identity=current_resume_identity,
+        post_response_admission=post_response_admission,
+    )
+
+
 def _patch_generation_calls_remaining(
     model_role: str,
     *,

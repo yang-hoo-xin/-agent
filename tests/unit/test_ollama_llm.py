@@ -420,6 +420,311 @@ class TestOllamaChat:
         assert recorded["trust_environment"] is False
         assert recorded["follow_redirects"] is False
 
+    def test_prepare_structured_chat_matches_immediate_body_without_http(
+        self,
+        llm,
+    ):
+        schema = {
+            "type": "object",
+            "required": ["changes"],
+            "properties": {"changes": {"type": "array"}},
+        }
+        prepared = {}
+
+        with patch("httpx.Client") as mock_client:
+            frozen = llm.prepare_structured_chat(
+                [Message(role="user", content="return a patch 内容")],
+                temperature=0.0,
+                max_tokens=4096,
+                response_format=schema,
+                provider_request_recorder=prepared.update,
+            )
+
+        mock_client.assert_not_called()
+        assert frozen == prepared
+
+        with patch("httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = (
+                make_ollama_response(content='{"changes":[]}')
+            )
+            llm.chat(
+                [Message(role="user", content="return a patch 内容")],
+                temperature=0.0,
+                max_tokens=4096,
+                response_format=schema,
+                provider_request_recorder=lambda _: None,
+            )
+
+        sent = mock_client.return_value.__enter__.return_value.post.call_args.kwargs[
+            "content"
+        ]
+        assert prepared["body_utf8"].encode("utf-8") == sent
+        assert prepared["body_sha256"] == hashlib.sha256(sent).hexdigest()
+        assert prepared["body_size_bytes"] == len(sent)
+
+    def test_prepare_structured_chat_persistence_failure_has_zero_http(self, llm):
+        def fail_record(_):
+            raise OSError("freeze persistence failed")
+
+        with patch("httpx.Client") as mock_client:
+            with pytest.raises(OllamaLLMError) as exc_info:
+                llm.prepare_structured_chat(
+                    [Message(role="user", content="return a patch")],
+                    response_format={"type": "object"},
+                    provider_request_recorder=fail_record,
+                )
+
+        assert exc_info.value.diagnostics["failure_classification"] == (
+            "durable_provider_request_failure"
+        )
+        mock_client.assert_not_called()
+
+    def test_structured_recorder_nested_mutation_cannot_change_immediate_send(self):
+        settings = MockSettings()
+        llm = OllamaLLM(settings, context_window=32768)
+        response = make_ollama_response(content='{"changes":[]}')
+
+        def mutate_record(record):
+            record["headers"]["Content-Type"] = "text/plain"
+            record["context_admission"]["admitted"] = False
+            record["body_utf8"] = "{}"
+
+        with patch("httpx.Client") as mock_client:
+            post = mock_client.return_value.__enter__.return_value.post
+            post.return_value = response
+            llm.chat(
+                [Message(role="user", content="return a patch")],
+                response_format={"type": "object"},
+                provider_request_recorder=mutate_record,
+            )
+
+        call = post.call_args
+        assert call.kwargs["headers"] == {"Content-Type": "application/json"}
+        assert json.loads(call.kwargs["content"])["messages"] == [
+            {"role": "user", "content": "return a patch"}
+        ]
+
+    def test_structured_recorder_nested_mutation_cannot_change_frozen_return(self):
+        settings = MockSettings()
+        llm = OllamaLLM(settings, context_window=32768)
+
+        def mutate_record(record):
+            record["headers"]["Content-Type"] = "text/plain"
+            record["context_admission"]["admitted"] = False
+            record["body_utf8"] = "{}"
+
+        frozen = llm.prepare_structured_chat(
+            [Message(role="user", content="return a patch")],
+            response_format={"type": "object"},
+            provider_request_recorder=mutate_record,
+        )
+
+        assert frozen["headers"] == {"Content-Type": "application/json"}
+        assert frozen["context_admission"]["admitted"] is True
+        assert json.loads(frozen["body_utf8"])["messages"] == [
+            {"role": "user", "content": "return a patch"}
+        ]
+
+    def test_frozen_request_json_roundtrip_preserves_exact_bytes_and_resume_send(
+        self,
+        llm,
+        tmp_path,
+    ):
+        frozen_path = tmp_path / "frozen.json"
+        frozen = llm.prepare_structured_chat(
+            [Message(role="user", content="return 内容")],
+            temperature=0.0,
+            max_tokens=4096,
+            response_format={"type": "object"},
+            provider_request_recorder=lambda value: frozen_path.write_text(
+                json.dumps(value, ensure_ascii=False),
+                encoding="utf-8",
+            ),
+        )
+        loaded = json.loads(frozen_path.read_text(encoding="utf-8"))
+        expected_bytes = frozen["body_utf8"].encode("utf-8")
+
+        with patch("httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = (
+                make_ollama_response(content='{"changes":[]}')
+            )
+            response = llm.resume_structured_chat(
+                loaded,
+                expected_output_budget=4096,
+            )
+
+        sent = mock_client.return_value.__enter__.return_value.post.call_args.kwargs[
+            "content"
+        ]
+        assert response.content == '{"changes":[]}'
+        assert sent == expected_bytes
+        assert loaded["body_sha256"] == hashlib.sha256(sent).hexdigest()
+        assert loaded["body_size_bytes"] == len(sent)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("body_utf8", "{}"),
+            ("model", "another-model"),
+            ("destination", "http://127.0.0.1:11434/api/chat"),
+            ("output_budget", 1),
+            ("context_window", 1),
+            ("method", "GET"),
+            ("content_type", "text/plain"),
+            ("timeout_seconds", 1.0),
+            ("trust_environment", True),
+            ("follow_redirects", True),
+        ],
+    )
+    def test_resume_structured_chat_rejects_frozen_transport_drift_before_http(
+        self,
+        llm,
+        field,
+        value,
+    ):
+        frozen = llm.prepare_structured_chat(
+            [Message(role="user", content="return a patch")],
+            max_tokens=4096,
+            response_format={"type": "object"},
+            provider_request_recorder=lambda _: None,
+        )
+        frozen[field] = value
+
+        with patch("httpx.Client") as mock_client:
+            with pytest.raises(OllamaLLMError) as exc_info:
+                llm.resume_structured_chat(frozen)
+
+        assert exc_info.value.diagnostics["failure_boundary"] == (
+            "frozen_provider_request_revalidation"
+        )
+        mock_client.assert_not_called()
+
+    @pytest.mark.parametrize("change", ("missing", "extra"))
+    def test_resume_structured_chat_rejects_missing_or_extra_frozen_fields(
+        self,
+        llm,
+        change,
+    ):
+        frozen = llm.prepare_structured_chat(
+            [Message(role="user", content="return a patch")],
+            response_format={"type": "object"},
+            provider_request_recorder=lambda _: None,
+        )
+        if change == "missing":
+            frozen.pop("method")
+        else:
+            frozen["unexpected"] = True
+
+        with patch("httpx.Client") as mock_client:
+            with pytest.raises(OllamaLLMError):
+                llm.resume_structured_chat(frozen)
+
+        mock_client.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "mutation",
+        (
+            "root_missing",
+            "root_extra",
+            "options_missing",
+            "options_extra",
+            "message_extra",
+            "message_count",
+            "message_order",
+            "schema_drift",
+            "tools",
+            "tool_choice",
+            "keep_alive",
+            "duplicate_key",
+            "nan",
+            "infinity",
+        ),
+    )
+    def test_resume_rejects_noncanonical_frozen_body_shape_before_http(
+        self,
+        llm,
+        mutation,
+    ):
+        frozen = llm.prepare_structured_chat(
+            [
+                Message(role="system", content="system"),
+                Message(role="user", content="return a patch"),
+            ],
+            response_format={"type": "object"},
+            provider_request_recorder=lambda _: None,
+        )
+        body = json.loads(frozen["body_utf8"])
+        if mutation == "root_missing":
+            body.pop("messages")
+        elif mutation == "root_extra":
+            body["unexpected"] = True
+        elif mutation == "options_missing":
+            body["options"].pop("temperature")
+        elif mutation == "options_extra":
+            body["options"]["unexpected"] = True
+        elif mutation == "message_extra":
+            body["messages"][0]["name"] = "unexpected"
+        elif mutation == "message_count":
+            body["messages"].append(dict(body["messages"][-1]))
+        elif mutation == "message_order":
+            body["messages"] = list(reversed(body["messages"]))
+        elif mutation == "schema_drift":
+            body["format"] = {"type": "array"}
+        elif mutation in {"tools", "tool_choice", "keep_alive"}:
+            body[mutation] = [] if mutation == "tools" else "unexpected"
+        elif mutation == "nan":
+            body["options"]["temperature"] = float("nan")
+        elif mutation == "infinity":
+            body["options"]["temperature"] = float("inf")
+        body_utf8 = json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if mutation == "duplicate_key":
+            body_utf8 = body_utf8[:-1] + ',"model":"llama3"}'
+        body_bytes = body_utf8.encode("utf-8")
+        frozen["body_utf8"] = body_utf8
+        frozen["body_sha256"] = hashlib.sha256(body_bytes).hexdigest()
+        frozen["body_size_bytes"] = len(body_bytes)
+
+        with patch("httpx.Client") as mock_client:
+            mock_client.return_value.__enter__.return_value.post.return_value = (
+                make_ollama_response(content='{"changes":[]}')
+            )
+            with pytest.raises(OllamaLLMError) as exc_info:
+                llm.resume_structured_chat(frozen)
+
+        assert exc_info.value.diagnostics["failure_classification"] == (
+            "frozen_provider_request_body_shape_invalid"
+        )
+        mock_client.assert_not_called()
+
+    @pytest.mark.parametrize("failure", ("timeout", "http"))
+    def test_resume_structured_chat_failure_has_one_post_without_retry(
+        self,
+        llm,
+        failure,
+    ):
+        import httpx
+
+        frozen = llm.prepare_structured_chat(
+            [Message(role="user", content="return a patch")],
+            response_format={"type": "object"},
+            provider_request_recorder=lambda _: None,
+        )
+        with patch("httpx.Client") as mock_client:
+            post = mock_client.return_value.__enter__.return_value.post
+            if failure == "timeout":
+                post.side_effect = httpx.TimeoutException("timeout")
+            else:
+                post.return_value = make_error_response(status_code=503)
+            with pytest.raises(OllamaLLMError):
+                llm.resume_structured_chat(frozen)
+
+        assert post.call_count == 1
+
     def test_structured_patch_request_sends_and_audits_explicit_num_ctx(self):
         settings = MockSettings()
         llm = OllamaLLM(settings, context_window=32768)

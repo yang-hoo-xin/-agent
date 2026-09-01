@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 from src.libs.llm.base_llm import BaseLLM, ChatResponse, Message
@@ -26,7 +28,39 @@ def ollama_provider_body_utf8_policy_projection(
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
+        allow_nan=False,
     ).encode("utf-8")
+
+
+def _ollama_canonical_json_sha256(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _strict_frozen_provider_json(text: str) -> Any:
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    def reject_nonstandard_number(value: str) -> Any:
+        raise ValueError(f"non-standard JSON number: {value}")
+
+    return json.loads(
+        text,
+        object_pairs_hook=reject_duplicate_keys,
+        parse_constant=reject_nonstandard_number,
+    )
 
 
 def build_ollama_context_admission(
@@ -87,6 +121,7 @@ def _context_request_identity_sha256(payload: Mapping[str, Any]) -> str:
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
+            allow_nan=False,
         ).encode("utf-8")
     ).hexdigest()
 
@@ -131,6 +166,31 @@ class OllamaLLM(BaseLLM):
     
     DEFAULT_BASE_URL = "http://localhost:11434"
     DEFAULT_TIMEOUT = 120.0  # Longer timeout for local inference
+    _FROZEN_STRUCTURED_REQUEST_FIELDS = frozenset(
+        {
+            "method",
+            "destination",
+            "headers",
+            "content_type",
+            "body_utf8",
+            "body_sha256",
+            "body_size_bytes",
+            "timeout_seconds",
+            "trust_environment",
+            "follow_redirects",
+            "context_admission",
+            "model",
+            "output_budget",
+            "context_window",
+            "temperature",
+            "messages_sha256",
+            "response_format_sha256",
+        }
+    )
+    _STRUCTURED_BODY_FIELDS = frozenset(
+        {"model", "messages", "stream", "options", "think", "format"}
+    )
+    _STRUCTURED_MESSAGE_FIELDS = frozenset({"role", "content"})
     
     def __init__(
         self,
@@ -306,6 +366,104 @@ class OllamaLLM(BaseLLM):
                     "failure_classification": "durable_provider_request_failure",
                 },
             ) from e
+
+    def prepare_structured_chat(
+        self,
+        messages: List[Message],
+        trace: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Freeze one structured request durably without opening an HTTP client."""
+
+        del trace
+        self.validate_messages(messages)
+        response_format = kwargs.get("response_format")
+        provider_request_recorder = kwargs.get("provider_request_recorder")
+        if not isinstance(response_format, Mapping):
+            raise ValueError(
+                "Ollama prepare_structured_chat requires a JSON Schema object."
+            )
+        if not callable(provider_request_recorder):
+            raise ValueError(
+                "Ollama prepare_structured_chat requires a durable provider "
+                "request recorder."
+            )
+        temperature = kwargs.get("temperature", self.default_temperature)
+        max_tokens = kwargs.get("max_tokens", self.default_max_tokens)
+        model = kwargs.get("model", self.model)
+        api_messages = [
+            {"role": item.role, "content": item.content} for item in messages
+        ]
+        try:
+            return self._prepare_structured_api_request(
+                messages=api_messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                context_window=self.context_window,
+                response_format=dict(response_format),
+                provider_request_recorder=provider_request_recorder,
+            )
+        except Exception as exc:
+            if isinstance(exc, OllamaLLMError):
+                raise
+            raise OllamaLLMError(
+                f"[Ollama] API call failed: {type(exc).__name__}: {exc}",
+                diagnostics={
+                    "failure_boundary": "provider_request_gate",
+                    "failure_classification": "durable_provider_request_failure",
+                },
+            ) from exc
+
+    def resume_structured_chat(
+        self,
+        frozen_request: Mapping[str, Any],
+        *,
+        expected_output_budget: int | None = None,
+    ) -> ChatResponse:
+        """Send one already-frozen structured request using its original bytes."""
+
+        request = self.validate_frozen_structured_chat(
+            frozen_request,
+            expected_output_budget=(
+                self.default_max_tokens
+                if expected_output_budget is None
+                else expected_output_budget
+            ),
+        )
+        response_data = self._send_api_request(
+            url=str(request["destination"]),
+            headers=dict(request["headers"]),
+            payload=None,
+            frozen_request_bytes=str(request["body_utf8"]).encode("utf-8"),
+        )
+        content, usage = self._admit_chat_response(
+            response_data,
+            expected_model=str(request["model"]),
+        )
+        return ChatResponse(
+            content=content,
+            model=str(response_data.get("model", request["model"])),
+            usage=usage,
+            raw_response=response_data,
+        )
+
+    def validate_frozen_structured_chat(
+        self,
+        frozen_request: Mapping[str, Any],
+        *,
+        expected_output_budget: int | None = None,
+    ) -> dict[str, Any]:
+        """Validate one frozen transport without opening an HTTP client."""
+
+        return self._revalidate_frozen_structured_request(
+            frozen_request,
+            expected_output_budget=(
+                self.default_max_tokens
+                if expected_output_budget is None
+                else expected_output_budget
+            ),
+        )
     
     def _call_api(
         self,
@@ -334,8 +492,6 @@ class OllamaLLM(BaseLLM):
         Raises:
             OllamaLLMError: If the API call fails.
         """
-        import httpx
-        
         url = f"{self.base_url.rstrip('/')}/api/chat"
         headers = {
             "Content-Type": "application/json",
@@ -357,109 +513,295 @@ class OllamaLLM(BaseLLM):
         }
         frozen_request_bytes: bytes | None = None
         if response_format is not None:
-            payload["think"] = False
-            payload["format"] = response_format
-            frozen_request_bytes = ollama_provider_body_utf8_policy_projection(
-                payload
+            frozen_request = self._prepare_structured_api_request(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                context_window=context_window,
+                response_format=response_format,
+                provider_request_recorder=provider_request_recorder,
             )
-            if provider_request_recorder is None:
+            frozen_request_bytes = str(frozen_request["body_utf8"]).encode("utf-8")
+            headers = dict(frozen_request["headers"])
+            url = str(frozen_request["destination"])
+            payload = {}
+
+        return self._send_api_request(
+            url=url,
+            headers=headers,
+            payload=payload,
+            frozen_request_bytes=frozen_request_bytes,
+        )
+
+    def _prepare_structured_api_request(
+        self,
+        *,
+        messages: List[Dict[str, str]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        context_window: int | None,
+        response_format: Dict[str, Any],
+        provider_request_recorder: Callable[[dict[str, Any]], None] | None,
+    ) -> dict[str, Any]:
+        if provider_request_recorder is None:
+            raise OllamaLLMError(
+                "[Ollama] Structured patch generation requires a durable "
+                "provider request recorder.",
+                diagnostics={
+                    "failure_boundary": "provider_request_gate",
+                    "failure_classification": "durable_provider_request_missing",
+                },
+            )
+        options: dict[str, Any] = {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        }
+        if context_window is not None:
+            options["num_ctx"] = context_window
+        payload = {
+            "model": model,
+            "messages": deepcopy(messages),
+            "stream": False,
+            "options": options,
+            "think": False,
+            "format": deepcopy(response_format),
+        }
+        frozen_request_bytes = ollama_provider_body_utf8_policy_projection(payload)
+        context_admission = self._structured_context_admission(
+            payload=payload,
+            frozen_request_bytes=frozen_request_bytes,
+            context_window=context_window,
+            max_tokens=max_tokens,
+        )
+        url = f"{self.base_url.rstrip('/')}/api/chat"
+        headers = {"Content-Type": "application/json"}
+        frozen_request = {
+            "method": "POST",
+            "destination": url,
+            "headers": headers,
+            "content_type": "application/json",
+            "body_utf8": frozen_request_bytes.decode("utf-8"),
+            "body_sha256": hashlib.sha256(frozen_request_bytes).hexdigest(),
+            "body_size_bytes": len(frozen_request_bytes),
+            "timeout_seconds": self.timeout,
+            "trust_environment": False,
+            "follow_redirects": False,
+            "context_admission": context_admission,
+            "model": model,
+            "output_budget": max_tokens,
+            "context_window": context_window,
+            "temperature": temperature,
+            "messages_sha256": _ollama_canonical_json_sha256(payload["messages"]),
+            "response_format_sha256": _ollama_canonical_json_sha256(
+                payload["format"]
+            ),
+        }
+        provider_request_recorder(deepcopy(frozen_request))
+        return frozen_request
+
+    def _structured_context_admission(
+        self,
+        *,
+        payload: Mapping[str, Any],
+        frozen_request_bytes: bytes,
+        context_window: int | None,
+        max_tokens: int,
+    ) -> dict[str, Any] | None:
+        if context_window is None:
+            return None
+        if (
+            isinstance(max_tokens, bool)
+            or not isinstance(max_tokens, int)
+            or max_tokens <= 0
+        ):
+            raise OllamaLLMError(
+                "[Ollama] Structured request output budget must be a positive integer.",
+                diagnostics={
+                    "failure_boundary": "provider_request_gate",
+                    "failure_classification": "provider_request_output_budget_invalid",
+                },
+            )
+        if self.observed_prompt_tokens is None:
+            context_admission = build_ollama_context_admission(
+                payload=payload,
+                configured_num_ctx=context_window,
+                num_predict=max_tokens,
+            )
+        else:
+            observed_identity = _context_request_identity_sha256(payload)
+            if observed_identity != self.observed_prompt_identity_sha256:
                 raise OllamaLLMError(
-                    "[Ollama] Structured patch generation requires a durable "
-                    "provider request recorder.",
+                    "[Ollama] Structured request does not match the bound "
+                    "prompt-token observation.",
                     diagnostics={
                         "failure_boundary": "provider_request_gate",
-                        "failure_classification": "durable_provider_request_missing",
+                        "failure_classification": (
+                            "provider_request_prompt_identity_mismatch"
+                        ),
+                        "expected_prompt_identity_sha256": (
+                            self.observed_prompt_identity_sha256
+                        ),
+                        "observed_prompt_identity_sha256": observed_identity,
                     },
                 )
-            context_admission: dict[str, Any] | None = None
-            if context_window is not None:
-                if (
-                    isinstance(max_tokens, bool)
-                    or not isinstance(max_tokens, int)
-                    or max_tokens <= 0
-                ):
-                    raise OllamaLLMError(
-                        "[Ollama] Structured request output budget must be a "
-                        "positive integer.",
-                        diagnostics={
-                            "failure_boundary": "provider_request_gate",
-                            "failure_classification": (
-                                "provider_request_output_budget_invalid"
-                            ),
-                        },
-                    )
-                provider_body_utf8_bytes = len(frozen_request_bytes)
-                if self.observed_prompt_tokens is None:
-                    context_admission = (
-                        build_ollama_context_admission(
-                            payload=payload,
-                            configured_num_ctx=context_window,
-                            num_predict=max_tokens,
-                        )
-                    )
-                else:
-                    observed_identity = _context_request_identity_sha256(payload)
-                    if observed_identity != self.observed_prompt_identity_sha256:
-                        raise OllamaLLMError(
-                            "[Ollama] Structured request does not match the "
-                            "bound prompt-token observation.",
-                            diagnostics={
-                                "failure_boundary": "provider_request_gate",
-                                "failure_classification": (
-                                    "provider_request_prompt_identity_mismatch"
-                                ),
-                                "expected_prompt_identity_sha256": (
-                                    self.observed_prompt_identity_sha256
-                                ),
-                                "observed_prompt_identity_sha256": (
-                                    observed_identity
-                                ),
-                            },
-                        )
-                    observed_required_context = (
-                        self.observed_prompt_tokens + max_tokens
-                    )
-                    context_admission = {
-                        "mode": (
-                            "bound_observed_prompt_tokens_plus_output_budget_v1"
-                        ),
-                        "exact_prompt_tokens_available_pre_call": True,
-                        "provider_body_utf8_bytes": provider_body_utf8_bytes,
-                        "observed_prompt_tokens": self.observed_prompt_tokens,
-                        "prompt_identity_sha256": observed_identity,
-                        "prompt_token_source": self.observed_prompt_token_source,
-                        "configured_num_ctx": context_window,
-                        "num_predict": max_tokens,
-                        "observed_required_context": observed_required_context,
-                        "admitted": observed_required_context <= context_window,
-                    }
-                if context_admission["admitted"] is not True:
-                    raise OllamaLLMError(
-                        "[Ollama] Structured request exceeds the configured "
-                        "pre-call context budget.",
-                        diagnostics={
-                            "failure_boundary": "provider_request_gate",
-                            "failure_classification": (
-                                "provider_request_context_budget_exceeded"
-                            ),
-                            "context_admission": context_admission,
-                        },
-                    )
-            provider_request_recorder(
-                {
-                    "method": "POST",
-                    "destination": url,
-                    "content_type": "application/json",
-                    "body_utf8": frozen_request_bytes.decode("utf-8"),
-                    "body_sha256": hashlib.sha256(frozen_request_bytes).hexdigest(),
-                    "body_size_bytes": len(frozen_request_bytes),
-                    "timeout_seconds": self.timeout,
-                    "trust_environment": False,
-                    "follow_redirects": False,
+            observed_required_context = self.observed_prompt_tokens + max_tokens
+            context_admission = {
+                "mode": "bound_observed_prompt_tokens_plus_output_budget_v1",
+                "exact_prompt_tokens_available_pre_call": True,
+                "provider_body_utf8_bytes": len(frozen_request_bytes),
+                "observed_prompt_tokens": self.observed_prompt_tokens,
+                "prompt_identity_sha256": observed_identity,
+                "prompt_token_source": self.observed_prompt_token_source,
+                "configured_num_ctx": context_window,
+                "num_predict": max_tokens,
+                "observed_required_context": observed_required_context,
+                "admitted": observed_required_context <= context_window,
+            }
+        if context_admission["admitted"] is not True:
+            raise OllamaLLMError(
+                "[Ollama] Structured request exceeds the configured pre-call "
+                "context budget.",
+                diagnostics={
+                    "failure_boundary": "provider_request_gate",
+                    "failure_classification": (
+                        "provider_request_context_budget_exceeded"
+                    ),
                     "context_admission": context_admission,
-                }
+                },
             )
-        
+        return context_admission
+
+    def _revalidate_frozen_structured_request(
+        self,
+        frozen_request: Mapping[str, Any],
+        *,
+        expected_output_budget: int,
+    ) -> dict[str, Any]:
+        diagnostics = {
+            "failure_boundary": "frozen_provider_request_revalidation",
+            "failure_classification": "frozen_provider_request_identity_mismatch",
+        }
+        if set(frozen_request) != self._FROZEN_STRUCTURED_REQUEST_FIELDS:
+            raise OllamaLLMError(
+                "[Ollama] Frozen provider request fields are invalid.",
+                diagnostics=diagnostics,
+            )
+        request = dict(frozen_request)
+        body_utf8 = request.get("body_utf8")
+        if not isinstance(body_utf8, str):
+            raise OllamaLLMError(
+                "[Ollama] Frozen provider request body is invalid.",
+                diagnostics=diagnostics,
+            )
+        body_bytes = body_utf8.encode("utf-8")
+        if (
+            request.get("method") != "POST"
+            or request.get("destination") != f"{self.base_url.rstrip('/')}/api/chat"
+            or request.get("headers") != {"Content-Type": "application/json"}
+            or request.get("content_type") != "application/json"
+            or request.get("body_sha256")
+            != hashlib.sha256(body_bytes).hexdigest()
+            or request.get("body_size_bytes") != len(body_bytes)
+            or request.get("timeout_seconds") != self.timeout
+            or request.get("trust_environment") is not False
+            or request.get("follow_redirects") is not False
+            or request.get("model") != self.model
+            or request.get("output_budget") != expected_output_budget
+            or request.get("context_window") != self.context_window
+        ):
+            raise OllamaLLMError(
+                "[Ollama] Frozen provider request identity does not match the "
+                "current provider binding.",
+                diagnostics=diagnostics,
+            )
+        try:
+            payload = _strict_frozen_provider_json(body_utf8)
+        except (TypeError, ValueError) as exc:
+            raise OllamaLLMError(
+                "[Ollama] Frozen provider request body shape is invalid.",
+                diagnostics={
+                    **diagnostics,
+                    "failure_classification": (
+                        "frozen_provider_request_body_shape_invalid"
+                    ),
+                },
+            ) from exc
+        body_shape_diagnostics = {
+            **diagnostics,
+            "failure_classification": "frozen_provider_request_body_shape_invalid",
+        }
+        if not isinstance(payload, dict) or set(payload) != self._STRUCTURED_BODY_FIELDS:
+            raise OllamaLLMError(
+                "[Ollama] Frozen provider request body fields are invalid.",
+                diagnostics=body_shape_diagnostics,
+            )
+        options = payload.get("options")
+        messages = payload.get("messages")
+        response_format = payload.get("format")
+        output_budget = request.get("output_budget")
+        expected_option_fields = {"temperature", "num_predict"}
+        if request["context_window"] is not None:
+            expected_option_fields.add("num_ctx")
+        if (
+            not isinstance(options, dict)
+            or set(options) != expected_option_fields
+            or not isinstance(messages, list)
+            or not messages
+            or not all(
+                isinstance(message, dict)
+                and set(message) == self._STRUCTURED_MESSAGE_FIELDS
+                and message.get("role") in {"system", "user", "assistant"}
+                and isinstance(message.get("content"), str)
+                and bool(message["content"].strip())
+                for message in messages
+            )
+            or not isinstance(response_format, dict)
+            or payload.get("model") != request["model"]
+            or payload.get("stream") is not False
+            or payload.get("think") is not False
+            or options.get("num_predict") != output_budget
+            or options.get("num_ctx") != request["context_window"]
+            or (
+                isinstance(options.get("temperature"), bool)
+                or not isinstance(options.get("temperature"), (int, float))
+                or not math.isfinite(options["temperature"])
+                or options["temperature"] != request.get("temperature")
+            )
+            or request.get("messages_sha256")
+            != _ollama_canonical_json_sha256(messages)
+            or request.get("response_format_sha256")
+            != _ollama_canonical_json_sha256(response_format)
+            or ollama_provider_body_utf8_policy_projection(payload) != body_bytes
+        ):
+            raise OllamaLLMError(
+                "[Ollama] Frozen provider request body shape is invalid.",
+                diagnostics=body_shape_diagnostics,
+            )
+        expected_admission = self._structured_context_admission(
+            payload=payload,
+            frozen_request_bytes=body_bytes,
+            context_window=request["context_window"],
+            max_tokens=output_budget,
+        )
+        if request.get("context_admission") != expected_admission:
+            raise OllamaLLMError(
+                "[Ollama] Frozen provider request context admission has drifted.",
+                diagnostics=diagnostics,
+            )
+        return request
+
+    def _send_api_request(
+        self,
+        *,
+        url: str,
+        headers: Mapping[str, str],
+        payload: Mapping[str, Any] | None,
+        frozen_request_bytes: bytes | None,
+    ) -> Dict[str, Any]:
+        import httpx
+
         try:
             with httpx.Client(
                 timeout=self.timeout,
@@ -467,12 +809,12 @@ class OllamaLLM(BaseLLM):
                 follow_redirects=False,
             ) as client:
                 if frozen_request_bytes is None:
-                    response = client.post(url, json=payload, headers=headers)
+                    response = client.post(url, json=payload, headers=dict(headers))
                 else:
                     response = client.post(
                         url,
                         content=frozen_request_bytes,
-                        headers=headers,
+                        headers=dict(headers),
                     )
                 
                 if response.status_code != 200:
