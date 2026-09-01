@@ -1,0 +1,213 @@
+{
+  "dataset_schema_version": "frozen_rag_case_definitions_v1",
+  "dataset_id": "coding_agent_v0_b1_rag_case_definitions_v1",
+  "source_revision": "50b77a56fb759f391d0d3f91b0e6db03d0dd4cd2",
+  "top_k": 3,
+  "development_adjustment_case_ids": [],
+  "case_governance": {
+    "case_scope": "frozen_pre_execution_rag_evaluation",
+    "source_snapshot_policy": "archived_git_revision",
+    "collection_boundary": "The five new queries and seven current-source spans were curated from the named Git revision after the archived eight-case smoke was complete. None of these case IDs, queries, qrels, paths, or spans participated in adjustment of that benchmark.",
+    "annotation_boundary": "expected_relevant_ids and relevance_reasons are frozen IsREL qrels; support and use fields are fixture annotations only. They are not retrieved output, answer judgments, independent adjudication, or execution evidence.",
+    "review_record_status": "b1_internal_definition_checkpoint_only",
+    "prior_benchmark_adjustment_status": "not_participated",
+    "first_execution_status": "not_executed",
+    "held_out_case_ids": [
+      "held_out_semantic_assurance_v0_machine_boundary",
+      "held_out_human_semantic_decision_exact_binding"
+    ],
+    "development_case_ids": [
+      "development_coverage_v2_unresolved_gap_gate",
+      "development_single_physical_revision_per_edit_path",
+      "development_strict_product_execution_result_roundtrip"
+    ],
+    "held_out_access_boundary": "The two held_out cases are excluded from development adjustment and score-guided changes before their single B2 first execution. Their committed definitions and qrels are visible, so this is preregistered holdout governance rather than secret-label blinding.",
+    "held_out_blinding": "not_blind_labels_committed_before_first_execution",
+    "metric_applicability": "Only fixture-qrel IsREL retrieval at top_k=3 is applicable. Retrieve, IsSUP, IsUSE, answer quality, edit authority, Graph routing, Apply, Build, Repair, Runtime, and product success are not measured by these definitions.",
+    "ragas_applicability": "not_applicable_retrieval_only_no_generated_answer_or_llm_judge",
+    "claim_boundary": "B1 establishes only strict schema validity, immutable Git source identity, exact source spans, qrels, annotation rationale, metric definitions, and pre-execution governance. It establishes no retrieval result, score, comparative quality, stable rate, or product capability.",
+    "b2_entry_condition": "B2 must start independently from the clean B1 checkpoint, verify unchanged dataset and source identities plus absent prior observations, declare one first-execution command and output location before running, keep the held_out cases outside adjustment, and stop after recording that single first execution without tuning."
+  },
+  "metric_definitions": {
+    "micro_recall_at_3": "Sum of qrel hits in the first 3 results divided by the sum of qrel counts across observed cases.",
+    "macro_mrr": "Mean per-case reciprocal rank across observed cases.",
+    "macro_ndcg_at_3": "Mean per-case binary nDCG@3 across observed cases.",
+    "nonrelevant_retrieval_rate_at_3": "Non-qrel retrieved results divided by all returned results in the first 3 positions across observed cases."
+  },
+  "corpus": [
+    {
+      "evidence_id": "current:semantic_assurance:v0_unproven_result",
+      "lane": "current_source",
+      "relative_path": "src/mod_agent/proposal/models.py",
+      "source_sha256": "sha256:d81d8a2f43bc3ed55371fa1ee8f593ac914633bb33e62642489f2028ccd7bfc7",
+      "start_line": 64,
+      "end_line": 125
+    },
+    {
+      "evidence_id": "current:patch_apply:semantic_verdict_gate",
+      "lane": "current_source",
+      "relative_path": "src/mod_agent/execution/patch_apply.py",
+      "source_sha256": "sha256:5519aaab588dca389f01e65a89a66f104f0af4a4efe76cb5373df7e39cd986ce",
+      "start_line": 347,
+      "end_line": 395
+    },
+    {
+      "evidence_id": "current:patch_apply:human_decision_binding",
+      "lane": "current_source",
+      "relative_path": "src/mod_agent/execution/patch_apply.py",
+      "source_sha256": "sha256:5519aaab588dca389f01e65a89a66f104f0af4a4efe76cb5373df7e39cd986ce",
+      "start_line": 398,
+      "end_line": 469
+    },
+    {
+      "evidence_id": "current:coverage_provider:v2_gap_instruction",
+      "lane": "current_source",
+      "relative_path": "src/mod_agent/evidence/requirement_coverage_provider.py",
+      "source_sha256": "sha256:fbd3315febf55d01533e66524d5fd55fc8f2db29d6ef997d96449d9cf6840e83",
+      "start_line": 783,
+      "end_line": 803
+    },
+    {
+      "evidence_id": "current:coverage:v2_gap_blocking",
+      "lane": "current_source",
+      "relative_path": "src/mod_agent/evidence/requirement_coverage.py",
+      "source_sha256": "sha256:7e0a77e57d3bd2f32a9ad588d5c0fc6f5dfedb3ffb7ffc2a4f1f84b7dd0c2ceb",
+      "start_line": 480,
+      "end_line": 563
+    },
+    {
+      "evidence_id": "current:implementation_plan:physical_revision_normalization",
+      "lane": "current_source",
+      "relative_path": "src/mod_agent/planning/implementation_plan.py",
+      "source_sha256": "sha256:0e8ff1fb85d1962fd23f7e15df545d241d6c58a1062578ff11ed6d2bceb103b4",
+      "start_line": 420,
+      "end_line": 464
+    },
+    {
+      "evidence_id": "current:product_execution:strict_result_roundtrip",
+      "lane": "current_source",
+      "relative_path": "src/mod_agent/product_execution.py",
+      "source_sha256": "sha256:2165b7314b4a9c8d21fc8fb5ee9f12ad6ad08f29a0044b1e4822286bfad21f0f",
+      "start_line": 1633,
+      "end_line": 1744
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "held_out_semantic_assurance_v0_machine_boundary",
+      "split": "held_out",
+      "category": "correct_rejection",
+      "requirement": "Decide whether Semantic Assurance V0 accepts a machine claim of satisfied or violated semantics and identify the honest result when no verifier is bound.",
+      "query": "May Semantic Assurance V0 accept a machine verdict of satisfied_within_boundary or violated, and what result is required when no applicable verifier is bound?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": [
+        "current:semantic_assurance:v0_unproven_result",
+        "current:patch_apply:semantic_verdict_gate"
+      ],
+      "relevance_reasons": {
+        "current:semantic_assurance:v0_unproven_result": "The immutable SemanticAssuranceV1 source constructs the honest unproven and not_available result when no verifier is bound.",
+        "current:patch_apply:semantic_verdict_gate": "The exact apply-side validation rejects every present V0 semantic contract whose machine verdict is not unproven."
+      },
+      "support_status": "conflict",
+      "support_ids": [
+        "current:semantic_assurance:v0_unproven_result",
+        "current:patch_apply:semantic_verdict_gate"
+      ],
+      "support_rationale": "Both source spans conflict with accepting a machine satisfied or violated promotion under Semantic Assurance V0.",
+      "use_decision": "refuse",
+      "use_rationale": "Refuse the promoted machine claim and report unproven with the exact human-review obligation.",
+      "insufficient_evidence_action": "refuse"
+    },
+    {
+      "case_id": "held_out_human_semantic_decision_exact_binding",
+      "split": "held_out",
+      "category": "exact_code_lookup",
+      "requirement": "Identify every exact identity bound by human_semantic_decision_v1 and the drift check performed before writing.",
+      "query": "Which Feature, Proposal, ProposalReview, semantic assurance, diff, and reviewer identities must human_semantic_decision_v1 bind before write, and how is identity drift rejected?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": [
+        "current:patch_apply:human_decision_binding"
+      ],
+      "relevance_reasons": {
+        "current:patch_apply:human_decision_binding": "The source builds the exact binding fields, requires non-empty identities, validates the reviewer and decision, and rejects any field that differs from the current dry-run binding."
+      },
+      "support_status": "support",
+      "support_ids": [
+        "current:patch_apply:human_decision_binding"
+      ],
+      "support_rationale": "The single source span contains the complete binding construction and validation path.",
+      "use_decision": "answer",
+      "use_rationale": "Answer only with the exact fields and fail-closed comparison visible in the frozen span.",
+      "insufficient_evidence_action": "additional_lookup"
+    },
+    {
+      "case_id": "development_coverage_v2_unresolved_gap_gate",
+      "split": "development",
+      "category": "cross_file_relationship",
+      "requirement": "Explain how Coverage v2 defines unresolved_gaps and how non-empty gaps affect Patch admission and edit-target evidence.",
+      "query": "Under requirement coverage v2, what may unresolved_gaps contain, and how does a non-empty gap affect authoritative support, edit_target_evidence_ids, and can_generate_patch?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": [
+        "current:coverage_provider:v2_gap_instruction",
+        "current:coverage:v2_gap_blocking"
+      ],
+      "relevance_reasons": {
+        "current:coverage_provider:v2_gap_instruction": "The provider instruction limits unresolved_gaps to missing evidence, current-source facts, or edit authority required before Patch and excludes the expected implementation delta.",
+        "current:coverage:v2_gap_blocking": "The deterministic resolver excludes v2 findings with gaps from authoritative support and edit-target derivation, records unresolved blockers, and sets can_generate_patch false when reasons remain."
+      },
+      "support_status": "support",
+      "support_ids": [
+        "current:coverage_provider:v2_gap_instruction",
+        "current:coverage:v2_gap_blocking"
+      ],
+      "support_rationale": "The provider-side meaning and deterministic resolver-side consequence are both required for the cross-file explanation.",
+      "use_decision": "answer",
+      "use_rationale": "Describe the versioned gap semantics and deterministic admission result without treating Coverage as write authority.",
+      "insufficient_evidence_action": "additional_lookup"
+    },
+    {
+      "case_id": "development_single_physical_revision_per_edit_path",
+      "split": "development",
+      "category": "exact_code_lookup",
+      "requirement": "Identify the physical-source checks performed before editable evidence is normalized into change units.",
+      "query": "Which implementation-plan normalization checks reject conflicting source-hash aliases, a missing physical revision, or multiple physical source revisions for one editable path?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": [
+        "current:implementation_plan:physical_revision_normalization"
+      ],
+      "relevance_reasons": {
+        "current:implementation_plan:physical_revision_normalization": "The exact normalization block rejects conflicting aliases, missing physical revision hashes, and more than one revision for a single source path before region merging."
+      },
+      "support_status": "support",
+      "support_ids": [
+        "current:implementation_plan:physical_revision_normalization"
+      ],
+      "support_rationale": "The frozen span contains all three requested pre-normalization checks.",
+      "use_decision": "answer",
+      "use_rationale": "Answer with the three fail-closed checks and do not generalize beyond implementation-plan normalization.",
+      "insufficient_evidence_action": "additional_lookup"
+    },
+    {
+      "case_id": "development_strict_product_execution_result_roundtrip",
+      "split": "development",
+      "category": "exact_code_lookup",
+      "requirement": "Locate the strict ProductExecutionResultV1 serialization field order and reconstruction boundary.",
+      "query": "Where does ProductExecutionResultV1 preserve its complete to_dict field order and require from_dict to receive exactly those fields before reconstructing nested result values?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": [
+        "current:product_execution:strict_result_roundtrip"
+      ],
+      "relevance_reasons": {
+        "current:product_execution:strict_result_roundtrip": "The immutable class span shows the ordered to_dict projection, the identical from_dict fields tuple, exact-field validation, and nested reconstruction calls."
+      },
+      "support_status": "support",
+      "support_ids": [
+        "current:product_execution:strict_result_roundtrip"
+      ],
+      "support_rationale": "The one source span directly contains the serialization and strict reconstruction contract.",
+      "use_decision": "answer",
+      "use_rationale": "Report the exact owner serialization boundary without claiming compatibility for historical inputs outside this contract.",
+      "insufficient_evidence_action": "additional_lookup"
+    }
+  ]
+}
