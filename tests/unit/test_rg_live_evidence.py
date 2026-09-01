@@ -18,6 +18,49 @@ ACTUAL10_QUERY_LEADS = (
     "AccurateCrosshair runtime verification plan",
 )
 
+FRESH_COVERAGE_QUERY_SET = (
+    {
+        "query_id": "query_f954f68f1a95e0a95c2f",
+        "query": "Accurate Spread Enabled configuration",
+        "requirement_id": "requirement_a476d29ffd1c10ad91ee",
+    },
+    {
+        "query_id": "query_facaac1a61d631334397",
+        "query": "crosshairSize raw value retention",
+        "requirement_id": "requirement_a476d29ffd1c10ad91ee",
+    },
+    {
+        "query_id": "query_a74014a840fe9851135b",
+        "query": "accurate spread calculation bypass logic",
+        "requirement_id": "requirement_a476d29ffd1c10ad91ee",
+    },
+    {
+        "query_id": "query_16f168648a21cb04fadc",
+        "query": "existing crosshair behaviors",
+        "requirement_id": "requirement_30da24706aa4de0be3f4",
+    },
+    {
+        "query_id": "query_df1b917fbb0cb15b7ef3",
+        "query": "crosshair rendering logic preservation",
+        "requirement_id": "requirement_30da24706aa4de0be3f4",
+    },
+    {
+        "query_id": "query_4edc6b6e3ef6da6a2039",
+        "query": "source code for spread calculation",
+        "requirement_id": "requirement_d924b496285926bfe2a6",
+    },
+    {
+        "query_id": "query_c5bdbae4734a49d436a6",
+        "query": "configuration schema for crosshair settings",
+        "requirement_id": "requirement_d924b496285926bfe2a6",
+    },
+    {
+        "query_id": "query_291de5e6f9ebf9478095",
+        "query": "API documentation for crosshairSize",
+        "requirement_id": "requirement_d924b496285926bfe2a6",
+    },
+)
+
 
 def _write_actual10_source_fixture(root: Path) -> Path:
     source_root = root / "generated_mods" / "AccurateCrosshair"
@@ -374,6 +417,152 @@ def test_rg_live_query_set_rejects_duplicate_query_id(tmp_path: Path) -> None:
         )
 
 
+def test_rg_live_query_set_uses_spare_budget_for_second_source_occurrences(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "generated_mods" / "Example"
+    root.mkdir(parents=True)
+    behavior = root / "Behavior.cs"
+    behavior.write_text(
+        "namespace Example;\n"
+        "public static class Behavior\n"
+        "{\n"
+        "    public static void ApplyToggle()\n"
+        "    {\n"
+        "        // toggle enabled configuration authority behavior\n"
+        "        // toggle enabled configuration authority behavior\n"
+        "        // toggle enabled configuration authority behavior\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    configuration = root / "Configuration.cs"
+    configuration.write_text(
+        "namespace Example;\n"
+        "public static class Configuration\n"
+        "{\n"
+        "    public static bool ToggleEnabled { get; private set; } = true;\n"
+        "\n"
+        "    private static void OnFileChanged()\n"
+        "    {\n"
+        "        ToggleEnabled = ReadToggleEnabledConfiguration();\n"
+        "    }\n"
+        "\n"
+        "    private static void BindAll()\n"
+        "    {\n"
+        "        ToggleEnabled = BindToggleEnabledConfigurationAuthority();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    queries = (
+        {
+            "query_id": "query_toggle_one",
+            "query": "toggle enabled configuration authority",
+            "requirement_id": "requirement_toggle_one",
+        },
+        {
+            "query_id": "query_toggle_two",
+            "query": "toggle enabled configuration authority",
+            "requirement_id": "requirement_toggle_two",
+        },
+    )
+
+    provider = RgLiveEvidenceProvider(tmp_path)
+    first = provider.collect_query_set(
+        queries=queries,
+        search_root="generated_mods/Example",
+        max_items=4,
+    )
+    second = provider.collect_query_set(
+        queries=queries,
+        search_root="generated_mods/Example",
+        max_items=4,
+    )
+
+    first_identity = [
+        (
+            item.evidence_id,
+            item.source_path,
+            item.method_name,
+            item.span,
+            item.source_hash,
+        )
+        for item in first.items
+    ]
+    assert first_identity == [
+        (
+            item.evidence_id,
+            item.source_path,
+            item.method_name,
+            item.span,
+            item.source_hash,
+        )
+        for item in second.items
+    ]
+    assert len(first.items) == 4
+    assert first.items[0].source_path.endswith("/Behavior.cs")
+    assert {item.method_name for item in first.items} >= {
+        "ApplyToggle",
+        "OnFileChanged",
+        "BindAll",
+    }
+    assert any(
+        "public static bool ToggleEnabled" in item.excerpt
+        for item in first.items
+    )
+    assert all(item.span and item.source_hash for item in first.items)
+    assert len({item.evidence_id for item in first.items}) == len(first.items)
+    expected_ids = [item.evidence_id for item in first.items]
+    assert [
+        row["evidence_ids"]
+        for row in first.budget_summary["per_query_execution"]
+    ] == [expected_ids, expected_ids]
+    assert first.timing["final_count"] == 4.0
+    assert first.budget_summary["max_items"] == 4
+    assert first.readiness == "insufficient"
+    assert first.can_generate_patch is False
+    assert first.to_artifact_payload()["authoritative_for_patch"] is False
+
+
+def test_fresh_coverage_query_set_retains_four_site_current_source_evidence() -> None:
+    fixture_root = Path(__file__).parents[1] / "fixtures"
+    source_root = fixture_root / "actual15_four_site_source"
+    expected_source_hashes = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in source_root.glob("*.cs")
+    }
+
+    pack = RgLiveEvidenceProvider(fixture_root).collect_query_set(
+        queries=FRESH_COVERAGE_QUERY_SET,
+        search_root="actual15_four_site_source",
+        max_items=8,
+    )
+
+    assert len(pack.items) <= 8
+    assert any(
+        "public static bool FollowsRecoil" in item.excerpt
+        for item in pack.items
+    )
+    assert {item.method_name for item in pack.items} >= {
+        "OnFileChanged",
+        "BindAll",
+        "OverrideCrosshairSize",
+    }
+    assert all(
+        item.source_hash
+        == expected_source_hashes[Path(item.source_path).name]
+        for item in pack.items
+    )
+    assert [
+        row["query_id"]
+        for row in pack.budget_summary["per_query_execution"]
+    ] == [row["query_id"] for row in FRESH_COVERAGE_QUERY_SET]
+    assert pack.budget_summary["all_queries_executed"] is True
+    assert pack.readiness == "insufficient"
+    assert pack.can_generate_patch is False
+
+
 def test_rg_live_provider_binds_enclosing_csharp_method_declaration(
     tmp_path: Path,
 ) -> None:
@@ -571,8 +760,16 @@ def test_actual10_query_set_retains_three_files_and_upgrades_method_evidence(
 
     assert pack.budget_summary["query_count"] == 9
     assert pack.budget_summary["all_queries_executed"] is True
+    retained_ids = {item.evidence_id for item in pack.items}
     assert all(
-        len(execution["evidence_ids"]) <= 1
+        execution["evidence_ids"]
+        and len(execution["evidence_ids"])
+        == len(set(execution["evidence_ids"]))
+        and set(execution["evidence_ids"]).issubset(retained_ids)
+        for execution in pack.budget_summary["per_query_execution"]
+    )
+    assert any(
+        len(execution["evidence_ids"]) > 1
         for execution in pack.budget_summary["per_query_execution"]
     )
     assert {
