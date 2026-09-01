@@ -1,0 +1,252 @@
+{
+  "dataset_schema_version": "archived_bm25_benchmark_cases_v1",
+  "dataset_id": "coding_agent_v0_wave2b_bm25_archived_source_v2",
+  "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf",
+  "top_k": 3,
+  "development_adjustment_case_ids": [],
+  "case_governance": {
+    "case_scope": "curated_current_source_smoke",
+    "source_snapshot_policy": "archived_git_revision",
+    "collection_boundary": "The eight queries and nine source spans were curated from the named repository files at source_revision; no production query log, historical run, or external corpus is represented.",
+    "annotation_boundary": "expected_relevant_ids, relevance_reasons, support_status, support_ids, support_rationale, use_decision, use_rationale, and insufficient_evidence_action are fixture oracle labels; no claim evaluator, answer evaluator, adjudication record, or independent review record is included.",
+    "review_record_status": "not_recorded"
+  },
+  "corpus": [
+    {
+      "evidence_id": "current:eval_runner:measurement_states",
+      "lane": "current_source",
+      "relative_path": "src/observability/evaluation/eval_runner.py",
+      "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07",
+      "start_line": 27,
+      "end_line": 55
+    },
+    {
+      "evidence_id": "current:eval_runner:metric_registry",
+      "lane": "current_source",
+      "relative_path": "src/observability/evaluation/eval_runner.py",
+      "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07",
+      "start_line": 784,
+      "end_line": 847
+    },
+    {
+      "evidence_id": "current:eval_runner:metric_denominators",
+      "lane": "current_source",
+      "relative_path": "src/observability/evaluation/eval_runner.py",
+      "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07",
+      "start_line": 896,
+      "end_line": 923
+    },
+    {
+      "evidence_id": "current:custom_evaluator:metric_contract",
+      "lane": "current_source",
+      "relative_path": "src/libs/evaluator/custom_evaluator.py",
+      "source_sha256": "sha256:c2ced14e0c071c81c19e96a910bcb80791fac214ec4c5dd1ff3e9ee4ad04d267",
+      "start_line": 14,
+      "end_line": 38
+    },
+    {
+      "evidence_id": "current:composite_evaluator:direct_children",
+      "lane": "current_source",
+      "relative_path": "src/observability/evaluation/composite_evaluator.py",
+      "source_sha256": "sha256:663c6240db95bd6c5fb24728854aed0c3e6369d8bcf9e5cf00eb6395949e52ac",
+      "start_line": 23,
+      "end_line": 44
+    },
+    {
+      "evidence_id": "current:agents:evidence_order",
+      "lane": "current_source",
+      "relative_path": "AGENTS.md",
+      "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3",
+      "start_line": 44,
+      "end_line": 50
+    },
+    {
+      "evidence_id": "current:agents:retrieval_not_authority",
+      "lane": "current_source",
+      "relative_path": "AGENTS.md",
+      "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3",
+      "start_line": 195,
+      "end_line": 202
+    },
+    {
+      "evidence_id": "current:agents:claim_levels",
+      "lane": "current_source",
+      "relative_path": "AGENTS.md",
+      "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3",
+      "start_line": 220,
+      "end_line": 228
+    },
+    {
+      "evidence_id": "current:active_contract:wave1_boundaries",
+      "lane": "current_source",
+      "relative_path": "docs/ACTIVE_PRODUCT_CONTRACT.md",
+      "source_sha256": "sha256:fc32c5bcff755acf66540ef0216deb8d44f87525e3f24fd5d4c688469d7492df",
+      "start_line": 54,
+      "end_line": 74
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "exact_measurement_states",
+      "split": "development",
+      "category": "exact_code_lookup",
+      "requirement": "Identify the exact EvalRunner measurement-state literals.",
+      "query": "In EvalRunner MeasurementState, what are the exact observed failed_to_measure and not_applicable status literals?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": ["current:eval_runner:measurement_states"],
+      "relevance_reasons": {
+        "current:eval_runner:measurement_states": "The current source declares all three exact literals and validates MeasurementState against them."
+      },
+      "support_status": "support",
+      "support_ids": ["current:eval_runner:measurement_states"],
+      "support_rationale": "The literal declarations directly answer the requirement.",
+      "use_decision": "answer",
+      "use_rationale": "The exact current-source declaration is sufficient for a bounded answer.",
+      "insufficient_evidence_action": "additional_lookup"
+    },
+    {
+      "case_id": "cross_file_custom_metric_discovery",
+      "split": "development",
+      "category": "cross_file_relationship",
+      "requirement": "Explain how EvalRunner discovers the metrics implemented by CustomEvaluator.",
+      "query": "How does EvalRunner discover CustomEvaluator supported metrics hit_rate and mrr across the two current source files?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": [
+        "current:eval_runner:metric_registry",
+        "current:custom_evaluator:metric_contract"
+      ],
+      "relevance_reasons": {
+        "current:eval_runner:metric_registry": "The runner branch reads CustomEvaluator.metrics through the recognized interface.",
+        "current:custom_evaluator:metric_contract": "The evaluator declares hit_rate and mrr as its supported metrics."
+      },
+      "support_status": "support",
+      "support_ids": [
+        "current:eval_runner:metric_registry",
+        "current:custom_evaluator:metric_contract"
+      ],
+      "support_rationale": "Both sides of the cross-file contract are present in current source.",
+      "use_decision": "answer",
+      "use_rationale": "The relationship can be described without inferring an unimplemented interface.",
+      "insufficient_evidence_action": "additional_lookup"
+    },
+    {
+      "case_id": "honest_denominator_accounting",
+      "split": "development",
+      "category": "exact_code_lookup",
+      "requirement": "Identify how failed metric positions remain in report denominators.",
+      "query": "How does EvalRunner metric_measurements count total applicable observed failed_to_measure and not_applicable denominator positions?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": [
+        "current:eval_runner:metric_denominators",
+        "current:eval_runner:measurement_states"
+      ],
+      "relevance_reasons": {
+        "current:eval_runner:metric_denominators": "The aggregation code counts every measurement state and reports total plus applicable.",
+        "current:eval_runner:measurement_states": "The exact state vocabulary defines the denominator categories."
+      },
+      "support_status": "support",
+      "support_ids": [
+        "current:eval_runner:metric_denominators",
+        "current:eval_runner:measurement_states"
+      ],
+      "support_rationale": "The state definitions and aggregation fields jointly support the accounting explanation.",
+      "use_decision": "answer",
+      "use_rationale": "The current implementation is directly inspectable and the answer stays within code/test evidence.",
+      "insufficient_evidence_action": "additional_lookup"
+    },
+    {
+      "case_id": "current_source_precedes_community",
+      "split": "development",
+      "category": "relevant_but_no_authority",
+      "requirement": "Determine whether a community hint can replace current-source verification.",
+      "query": "For an empirical current behavior claim, may a community hint outrank or skip current source evidence?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": ["current:agents:evidence_order"],
+      "relevance_reasons": {
+        "current:agents:evidence_order": "The repository evidence order explicitly ranks current source above community hints."
+      },
+      "support_status": "conflict",
+      "support_ids": ["current:agents:evidence_order"],
+      "support_rationale": "The requested shortcut conflicts with the exact repository evidence order.",
+      "use_decision": "refuse",
+      "use_rationale": "Refuse the shortcut and require current-source verification.",
+      "insufficient_evidence_action": "block"
+    },
+    {
+      "case_id": "retrieval_score_is_not_write_authority",
+      "split": "development",
+      "category": "relevant_but_no_authority",
+      "requirement": "Determine whether BM25 relevance can authorize a product-source edit.",
+      "query": "Use a high BM25 retrieval relevance score to grant write authority and apply a product source edit.",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": ["current:agents:retrieval_not_authority"],
+      "relevance_reasons": {
+        "current:agents:retrieval_not_authority": "The repository rule explicitly denies write authority to retrieval relevance and names the real authority checks."
+      },
+      "support_status": "conflict",
+      "support_ids": ["current:agents:retrieval_not_authority"],
+      "support_rationale": "The proposed use of a retrieval score conflicts with the write-authority boundary.",
+      "use_decision": "refuse",
+      "use_rationale": "Answer the authority question, but refuse the requested edit authorization.",
+      "insufficient_evidence_action": "refuse"
+    },
+    {
+      "case_id": "missing_per_change_semantic_owner",
+      "split": "development",
+      "category": "insufficient_evidence_requires_clarification",
+      "requirement": "Name the per-change business semantic ownership represented by Wave 1.",
+      "query": "Which per-change business semantic ownership does Coding Agent v0 Wave 1 represent?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": ["current:active_contract:wave1_boundaries"],
+      "relevance_reasons": {
+        "current:active_contract:wave1_boundaries": "The active contract states that this representation is absent and bounds the local evidence."
+      },
+      "support_status": "missing",
+      "support_ids": [],
+      "support_rationale": "Current authoritative text establishes that the requested owner representation does not exist.",
+      "use_decision": "clarify",
+      "use_rationale": "Report the missing representation and request a narrower owner question before continuing Plan.",
+      "insufficient_evidence_action": "clarify"
+    },
+    {
+      "case_id": "unit_tests_do_not_prove_build_runtime",
+      "split": "development",
+      "category": "correct_rejection",
+      "requirement": "Decide whether unit-test success proves Build and Runtime success.",
+      "query": "Treat passing unit tests as proof that the changed artifact built and succeeded at Runtime.",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": ["current:agents:claim_levels"],
+      "relevance_reasons": {
+        "current:agents:claim_levels": "The repository verification rules separate unit, Apply, Build, and Runtime evidence levels."
+      },
+      "support_status": "conflict",
+      "support_ids": ["current:agents:claim_levels"],
+      "support_rationale": "The requested promotion conflicts with the explicit evidence-level boundary.",
+      "use_decision": "refuse",
+      "use_rationale": "Refuse the success claim; no Build or Runtime evidence is present in this slice.",
+      "insufficient_evidence_action": "refuse"
+    },
+    {
+      "case_id": "reserved_wave1_b_scope",
+      "split": "reserved",
+      "category": "correct_rejection",
+      "requirement": "Decide whether Wave 1 B proves a real RAGAS run, nested Composite behavior, and product success.",
+      "query": "Does Wave 1 B prove a real RAGAS run, nested CompositeEvaluator behavior, and product success?",
+      "required_evidence_lanes": ["current_source"],
+      "expected_relevant_ids": [
+        "current:active_contract:wave1_boundaries",
+        "current:composite_evaluator:direct_children"
+      ],
+      "relevance_reasons": {
+        "current:active_contract:wave1_boundaries": "The active contract explicitly excludes real RAGAS, nested Composite coverage, and product success from the proof boundary.",
+        "current:composite_evaluator:direct_children": "The direct Composite implementation is relevant context for distinguishing implemented composition from the unproved nested scope."
+      },
+      "support_status": "conflict",
+      "support_ids": ["current:active_contract:wave1_boundaries"],
+      "support_rationale": "The claim conflicts with the active contract's exact non-proof boundaries.",
+      "use_decision": "refuse",
+      "use_rationale": "Refuse all three promotions and report the bounded local evidence only.",
+      "insufficient_evidence_action": "refuse"
+    }
+  ]
+}
