@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-08-31
+Last updated: 2026-09-01
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -10,10 +10,27 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: Coding Agent v0 Wave 2 next product action is the wrong-4B-Patch semantic Review negative case; Wave 1 A/B final-net integration is complete with local unit/test-double evidence only
+current_queue: Coding Agent v0 Gate 1 Semantic plus archived-BM25 integration is complete with local unit/test-double evidence only; no follow-on capability is pre-authorized
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: Wave 1 A source 79b6d052 -> 4fc04ffb -> e50394bb -> 3fe93ea6 -> 65b17600 is integrated as one final-net commit 6326c86; B source e956fcb is integrated as 5956e29 and its two blobs equal reviewed 2113005; no second model call, preflight, packet, Actual, Apply, Build, or Runtime is authorized
+queue_status: Gate 1 Semantic source 50b270a -> c4b8599 -> 112b2c3 is integrated as final-net 16f4237; archived BM25 source 50b270a -> b9b0037 -> 0530ac6 -> 119d8bc is integrated as four-path test-only 2292748; stale E2E expectation is corrected test-only at d53aae7; no model call preflight packet Actual Apply Build Repair Runtime or game operation is authorized
 ```
+
+Gate 1 Semantic Assurance V0 admits only the machine verdict `unproven`.
+Proposal self-reports of `satisfied_within_boundary` or `violated` block.
+Hash-only approval cannot write. A structured human decision binds FeatureSpec,
+Proposal, ProposalReview, assurance, diff, and reviewer; missing, reject, or
+identity drift is zero write, and approval does not become formal proof. The
+legacy exact-diff route applies only when both Proposal and Review physically
+lack the semantic contract.
+
+The archived BM25 slice remains under `tests/tooling`: archived Git blobs,
+curated qrels, and local BM25 metrics only. Retrieve objective, IsSUP, and IsUSE
+are not measured; `reserved` is not formal held-out evidence; RAGAS is not
+applicable; and no Graph or edit-authority consumer exists. The E2E correction
+records the already implemented ordered `symbol_exact`, `text_match` retrieval
+and verifies that only the symbol binding owns edit authority while text match
+remains supporting evidence. The combined suite returned `888 passed` with the
+existing one `jieba` warning; compileall and all bounded diff checks passed.
 
 Wave 1 A carries the Feature-wide target behavior, acceptance, runtime, and
 preservation contract into Patch provider input without fabricating per-change
@@ -33,9 +50,9 @@ warning in each pytest run.
 ```text
 last_task: ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001
 last_task_status: P2_empirical_path_4b_probe_exposed_incomplete_physical_edit_authority_and_semantically_invalid_patch
-current_product_code_checkpoint: 2b0925ca4d9d32fd6ffd728749614b77247ba60e
-current_product_code_checkpoint_claim: deterministic orchestration, physical edit identity normalization, versioned authority-gap admission, native Patch materialization, and tests only; not real model, PatchProposal, or Build success
-product_code_lineage: 05bbca578baad23403d3ab7fc3327755592e3ac8 -> d353bd0cf4750e8c902f1639c7787fed4b6afa20 -> 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 -> d80a188bd694f07dc725590b76f959514102d3c9 -> bbdc4634c2f918c9a34f74c19a65dfc128ec6be1 -> 6534a992379752f65a4124d6992b330f3cabf62c -> c6e00b8751576ee8c1f4c377b4932601a3dfd054 -> 55b51bb625c66d6cd96b144162fdeae2d123e95b -> 2b0925ca4d9d32fd6ffd728749614b77247ba60e
+current_product_code_checkpoint: 16f42375e9774854a34bd994a45d88b857b347c1
+current_product_code_checkpoint_claim: Semantic Assurance V0 fail-closed machine verdict and exact structured human semantic decision binding only; local code/test evidence, not model formal proof product Build or Runtime success
+product_code_lineage: 05bbca578baad23403d3ab7fc3327755592e3ac8 -> d353bd0cf4750e8c902f1639c7787fed4b6afa20 -> 53d228fa14e00ebd2fcbc64cc1ba331623668fd4 -> d80a188bd694f07dc725590b76f959514102d3c9 -> bbdc4634c2f918c9a34f74c19a65dfc128ec6be1 -> 6534a992379752f65a4124d6992b330f3cabf62c -> c6e00b8751576ee8c1f4c377b4932601a3dfd054 -> 55b51bb625c66d6cd96b144162fdeae2d123e95b -> 2b0925ca4d9d32fd6ffd728749614b77247ba60e -> 16f42375e9774854a34bd994a45d88b857b347c1
 P0_status: completed_c8004845fe3f01d844e79ab8b6aba0634b6a5c01
 P1a_status: completed_d377ab466fb3e2c57c4c33e29bc2408864e5976e
 P1b_status: completed_32a939b3f217721b076704cd7e701369fef532ed
@@ -59,8 +76,8 @@ internal_alpha: false
 runtime_verified: false
 stable_agent_capability: false
 public_alpha_authorized: false
-next_eligible_slice: Wave 2 wrong-4B-Patch semantic Review negative case only; V2 shared surfaces and V1 no-edit surfaces remain read-only
-post_checkpoint_route: preserve Wave 1 A/B claim boundaries and execute no second model call, preflight, packet, Actual, Apply, Build, or Runtime from this state
+next_eligible_slice: none_pre_authorized_after_Gate1; a separate selected product capability or recorded failure is required
+post_checkpoint_route: preserve Gate 1 claim boundaries and execute no second model call preflight packet Actual Apply Build Repair Runtime or game operation from this state
 post_approval_route: isolated Apply -> changed-product Build
 patch_only_replay_authorized: consumed_once_by_completed_27b_replay
 activation_required: any second Patch-only probe, Actual, further model call, fresh preflight, actual16, exact-diff approval, Apply, changed-product Build, Repair, Revalidation, and Runtime are unauthorized now

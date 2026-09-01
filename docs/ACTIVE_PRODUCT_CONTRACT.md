@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-08-31
+Last updated: 2026-09-01
 
 ## 1. Product
 
@@ -77,10 +77,34 @@ The recorded Wave 1 verification is local code/test evidence only: A regression
 returned `533 passed` with the existing one `jieba` warning; the A+B Eval,
 vertical, Review, ProductExecution, CLI, and complete WorkflowGraph regression
 returned `735 passed` with the same warning; `python -m compileall -q src` and
-the bounded A+B `git diff --check` passed. The next product action is the Wave 2
-wrong-4B-Patch semantic Review negative case. This checkpoint authorizes no
-second model call, fresh preflight, continuation packet, Actual, Apply, Build,
-or Runtime operation.
+the bounded A+B `git diff --check` passed.
+
+Gate 1 now closes the Wave 2 wrong-4B-Patch semantic Review negative case with
+three bounded mainline commits. Semantic source `50b270a -> c4b8599 -> 112b2c3`
+is represented by final-net commit `16f42375e9774854a34bd994a45d88b857b347c1`:
+Semantic Assurance V0 accepts only the machine verdict `unproven`, rejects a
+Proposal that self-reports `satisfied_within_boundary` or `violated`, and
+requires `human_semantic_decision_v1` to bind the exact FeatureSpec, Proposal,
+ProposalReview, assurance, diff, and reviewer before write. Missing, reject, or
+identity drift is zero write; human approval does not promote the machine result
+to formal proof. `legacy_non_semantic_exact_diff_v0` applies only when both the
+Proposal and Review physically lack the semantic contract.
+
+Archived BM25 source `50b270a -> b9b0037 -> 0530ac6 -> 119d8bc` is represented
+by the four-path test-only commit `2292748cb0244983977bf6fe37bcb6bfd37a1ab2`.
+It is a curated smoke over archived Git blobs, not a production RAG interface:
+Retrieve objective, IsSUP, and IsUSE are not measured; fixture qrels exercise
+IsREL only; `reserved` is not a formal held-out set; RAGAS is not applicable;
+and the harness has no Graph, edit-authority, Apply, Build, or Runtime consumer.
+Test-only correction `d53aae79641e89a50330679cd151d17411b69d65`
+updates the E2E expectation to the existing ordered `symbol_exact`, `text_match`
+retrieval behavior while proving that edit authority remains on the symbol
+binding and text match remains supporting evidence only. The combined local
+unit/test-double suite returned `888 passed` with the existing one `jieba`
+warning; `python -m compileall -q src tests/tooling` and all three bounded
+`git diff --check` ranges passed. No model call, fresh preflight, continuation
+packet, Actual, Apply, Build, Repair, Runtime, or game operation is authorized
+by this Gate 1 closure.
 
 The latest real ProductExecution is `p2_ac_20260825_015/actual_15`, consumed
 once. Its wrapper reached terminal while ProductExecution remained `partial`.
