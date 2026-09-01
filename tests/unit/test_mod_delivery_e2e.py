@@ -110,22 +110,50 @@ def test_e2e_001_minimal_mod_delivery_chain_reaches_handoff_with_current_evidenc
     assert evidence_pack["readiness"] == "sufficient"
     assert evidence_pack["can_generate_patch"] is True
     assert evidence_pack["authoritative_for_patch"] is True
-    assert evidence_pack["retrieval_methods_used"] == ["symbol_exact"]
+    assert evidence_pack["retrieval_methods_used"] == [
+        "symbol_exact",
+        "text_match",
+    ]
     assert evidence_pack["missing_evidence"] == []
-    assert evidence_pack["items"][0]["source_path"] == str(source_file)
-    assert evidence_pack["items"][0]["symbol"] == "Load"
-    assert evidence_pack["items"][0]["authority"] == "mod_agent_deterministic"
+    symbol_evidence, text_evidence = evidence_pack["items"]
+    assert symbol_evidence["retrieval_method"] == "symbol_exact"
+    assert symbol_evidence["source_path"] == source_file.name
+    assert symbol_evidence["symbol"] == "Load"
+    assert symbol_evidence["authority"] == "mod_agent_deterministic"
+    assert text_evidence["retrieval_method"] == "text_match"
+    assert text_evidence["source_path"] == symbol_evidence["source_path"]
+    assert text_evidence["source_type"] == symbol_evidence["source_type"]
+    assert text_evidence["source_hash"] == symbol_evidence["source_hash"]
 
     assert implementation_plan["blocking"] is False
-    assert implementation_plan["evidence_source_paths"] == [str(source_file)]
-    assert implementation_plan["target_files"] == [str(source_file)]
+    assert implementation_plan["evidence_source_paths"] == [source_file.name]
+    assert implementation_plan["target_files"] == [source_file.name]
     assert implementation_plan["target_symbols"] == ["Load"]
     assert implementation_plan["evidence_refs"] == [
-        evidence_pack["items"][0]["evidence_id"]
+        symbol_evidence["evidence_id"],
+        text_evidence["evidence_id"],
     ]
+    binding_registry = implementation_plan["binding_registry"]
+    assert len(binding_registry["edit_bindings"]) == 1
+    edit_binding = binding_registry["edit_bindings"][0]
+    assert edit_binding["evidence_id"] == symbol_evidence["evidence_id"]
+    assert edit_binding["retrieval_method"] == "symbol_exact"
+    assert edit_binding["target_symbol"] == "Load"
+    assert edit_binding["usage"] == "edit_target_scope"
+    assert len(binding_registry["supporting_bindings"]) == 1
+    supporting_binding = binding_registry["supporting_bindings"][0]
+    assert supporting_binding["evidence_id"] == text_evidence["evidence_id"]
+    assert supporting_binding["retrieval_method"] == "text_match"
+    assert supporting_binding["usage"] == "edit_source_evidence"
+    assert supporting_binding["binding_id"] not in {
+        binding["binding_id"] for binding in binding_registry["edit_bindings"]
+    }
+    assert implementation_plan["proposed_changes"][0]["edit_binding_id"] == (
+        edit_binding["binding_id"]
+    )
 
     assert patch_proposal["blocked"] is False
-    assert patch_proposal["files"] == [str(source_file)]
+    assert patch_proposal["files"] == [source_file.name]
     assert patch_proposal["evidence_refs"] == implementation_plan["evidence_refs"]
     assert proposal_review["decision"] == "approve_dry_run"
     assert proposal_review["allowed_next_stage"] == "dry_run_apply"
