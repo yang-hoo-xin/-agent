@@ -106,6 +106,37 @@ warning; `python -m compileall -q src tests/tooling` and all three bounded
 packet, Actual, Apply, Build, Repair, Runtime, or game operation is authorized
 by this Gate 1 closure.
 
+Freeze source lineage `50b77a56 -> 4a959c55 -> c319227c` is represented on
+this mainline by the single final-net commit
+`f7358e0390edcab71b343ce7f600c644b1922608`; the weaker intermediate tree is
+not a separate mainline commit. The dormant internal seam can prepare a native
+structured local Ollama Patch request offline, atomically freeze and read it
+back, strictly validate it, and allow at most one same-specification filesystem
+consumer on one machine to resume the original request bytes. Validation is
+complete before claim and repeated from reloaded bytes after claim; recorder
+input is deeply isolated. Exact body, messages, and options shape, canonical
+bytes, duplicate-key rejection, and non-finite-number rejection are enforced.
+The seam reuses the existing prompt/schema, provider response admission,
+parser, and native materializer. It has no CLI, Graph, ProductExecution, or
+Actual consumer and does not prove run-global or cross-host exactly-once,
+general job recovery, automatic owner-fact reread, or real-model success.
+
+RAG B1 source `38c22c980b32228171afd0d6c30b636d88963220` is represented
+after that final net by the independent test-only commit
+`9f9cdaad258d2eb282d5b7b75e9eafc7cb948a58`. It freezes five
+pre-execution definitions over seven archived source spans: three development
+cases and two visibly labelled preregistered `held_out` cases. Its
+`source_revision` intentionally remains `50b77a56fb759f391d0d3f91b0e6db03d0dd4cd2`
+and `first_execution_status` remains `not_executed`; the older eight-case
+archived smoke is byte-identical. This is no retrieval result, score, RAGAS,
+Graph, product capability, or tuning claim, and B2 remains unauthorized.
+
+The combined local suite returned `873 passed` with the existing one `jieba`
+warning. `python -B -m compileall -q src tests/tooling` and both mapped-commit
+`git diff --check` ranges passed. No model, Ollama identity request, B2 first
+execution, preflight, packet, Actual, Apply, Build, Repair, Runtime, or game
+operation was run or authorized by this integration.
+
 The latest real ProductExecution is `p2_ac_20260825_015/actual_15`, consumed
 once. Its wrapper reached terminal while ProductExecution remained `partial`.
 It passed Entry, continuation-packet revalidation, baseline Build,

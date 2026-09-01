@@ -11,7 +11,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 current_product_milestone: CODING-AGENT-V0
 current_integrated_delivery: CODING-AGENT-V0-INTERNAL-ALPHA
 current_product_stage: P2_empirical_path
-current_dependency: Coding Agent v0 Gate 1 Semantic plus archived-BM25 final-net integration and E2E test correction are complete with local unit/test-double evidence only; no follow-on capability is pre-authorized
+current_dependency: Freeze final-net and RAG B1 test-only definitions are integrated after Gate 1 with local unit/test-double evidence only; B2 and every product execution continuation remain unauthorized
 current_worktree: rag_capability_mainline
 current_branch: codex/rag-capability-mainline
 current_product_code_checkpoint: 16f42375e9774854a34bd994a45d88b857b347c1
@@ -85,7 +85,7 @@ current_issue_decision_priority: P0_current_work_priority_not_product_stage
 EVID-006_status: closed_at_2b0925c_deterministic_native_materialization
 EVID-007_status: closed_at_d80a188_versioned_coverage_gap_semantics
 current_owner_audit_issue_id: none_closed
-current_code_test_checkpoint: d53aae79641e89a50330679cd151d17411b69d65
+current_code_test_checkpoint: 9f9cdaad258d2eb282d5b7b75e9eafc7cb948a58
 PLAN-001_status: closed_at_61a4df677ad39ca87ec9486ec0556481778c9c36
 PLAN-002_status: closed_by_frozen_27b_patch_only_replay_pre_call_reconstruction
 PLAN-003_status: closed_by_exact_duplicate_evidence_normalization_and_single_revision_per_path
@@ -108,7 +108,7 @@ actual16_packet_created: false
 actual16_execution_created: false
 complete_dry_run_diff_available: false
 exact_diff_approval_authorized: false
-next_capability_step: none_pre_authorized_after_Gate1; no second model call preflight packet Actual Apply Build Repair Runtime or game operation is authorized
+next_capability_step: none_pre_authorized_after_Freeze_final_net_and_RAG_B1; B2 model call preflight packet Actual Apply Build Repair Runtime and game operation are unauthorized
 serial_observability_checkpoints: A_d506b043c9d1c7f35e78f1f08aad8583eefdc35b_to_e341166b9c0f88ad857f6d1f0f7f696bfee595ee_B_131a72575428896c8af313d272ac3c38b30344f1_to_41eb055ef9eea477cf5b349ad0e19828c4736efa_D_cd165ac502d0e196c4d50ce677438391e7b84c87_to_3f1d7759737e28972003f1171bb6cd6edcc85ac3_C_c6d376d3d07bc6fba626cdf46c94eedf9f4a5358_to_5083bdd6f40dcd6fb6a9db9e7cc07228f53e2573
 non_authoritative_projection_responsibility_boundary: accepted_at_7f49d1e_then_hardened_at_4ba735e
 rejected_whole_commits: 1275e87_execution_lineage_and_7a6c96f_historical_replay
@@ -120,6 +120,32 @@ unadopted_duplicate_checkpoint: c5226322517b71f7819f4acbbba07451df8c45a0_not_lin
 run_result_owner_serialization_verification: local_unit_tests_238_passed_and_57_passed_existing_one_jieba_deprecation_warning_only_not_Actual_model_Build_product_success_or_historical_linkage
 next_attempt_pre_authorized: false
 ```
+
+Freeze lineage `50b77a56 -> 4a959c55 -> c319227c` is integrated as one
+final-net mainline commit `f7358e0390edcab71b343ce7f600c644b1922608`,
+whose six path blobs equal `c319227c`; `4a959c55` is not a separate mainline
+commit. The result is a dormant internal local-Ollama native structured Patch
+seam: offline prepare, atomic freeze/readback, strict pre-claim validation,
+filesystem claim, reload-based post-claim validation, recorder deep isolation,
+and original-byte resume at most once for same-specification consumers on one
+machine. It enforces exact body/messages/options shape and canonical JSON while
+rejecting duplicate keys and non-finite numbers, then reuses the existing
+provider response admission, parser, and native materializer. There is no CLI,
+Graph, ProductExecution, or Actual consumer and no run-global/cross-host
+exactly-once, general recovery, automatic owner-fact reread, or real-model
+success claim.
+
+RAG B1 source `38c22c980b32228171afd0d6c30b636d88963220` is integrated
+independently as test-only commit
+`9f9cdaad258d2eb282d5b7b75e9eafc7cb948a58`; all three path blobs equal the
+source. It freezes five definitions and seven archived source spans, with three
+development cases and two visibly labelled preregistered `held_out` cases.
+`source_revision` remains the preregistered `50b77a56` identity,
+`first_execution_status=not_executed`, and the old eight-case archived smoke is
+unchanged. No B2 execution, observation, score, retrieval-result, RAGAS, Graph,
+product-capability, or tuning evidence exists. The combined local command
+returned `873 passed` and one existing `jieba` warning; compileall and both
+commit-range diff checks passed.
 
 The accepted Projection V1 source lineage
 `4469279de886f5eba22d451dd215837c3e8fc389 -> 889ecd54e51db4d0882df0c4cc2b0d66850fb167 -> be8a91077e0ec28fdbf72ee5d5fa063f700ed41a`

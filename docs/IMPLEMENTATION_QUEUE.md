@@ -10,10 +10,31 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 ```text
-current_queue: Coding Agent v0 Gate 1 Semantic plus archived-BM25 integration is complete with local unit/test-double evidence only; no follow-on capability is pre-authorized
+current_queue: Freeze final-net and RAG B1 test-only integration are complete with local unit/test-double evidence only; B2 and every product execution continuation require separate authorization
 selected_product_request: add Accurate Spread Enabled with default true and narrow false behavior
-queue_status: Gate 1 Semantic source 50b270a -> c4b8599 -> 112b2c3 is integrated as final-net 16f4237; archived BM25 source 50b270a -> b9b0037 -> 0530ac6 -> 119d8bc is integrated as four-path test-only 2292748; stale E2E expectation is corrected test-only at d53aae7; no model call preflight packet Actual Apply Build Repair Runtime or game operation is authorized
+queue_status: Freeze source 50b77a56 -> 4a959c55 -> c319227c is integrated as one final-net f7358e0 without the weaker intermediate tree in mainline history; RAG B1 source 38c22c98 is integrated independently as three-path test-only 9f9cdaa; 873 tests compileall and both diff checks passed; B2 model call preflight packet Actual Apply Build Repair Runtime and game operation are unauthorized
 ```
+
+Freeze final-net `f7358e0390edcab71b343ce7f600c644b1922608`
+adds only a dormant internal local-Ollama native structured Patch seam. It
+supports offline prepare, atomic freeze/readback, strict validation before
+claim, filesystem claim plus reload validation after claim, deep recorder
+isolation, and original-byte resume at most once for same-specification
+consumers on one machine. Exact body/messages/options shape and canonical bytes
+are enforced; duplicate keys and non-finite numbers are rejected. Existing
+prompt/schema, provider response admission, parser, and native materializer are
+reused. No CLI, Graph, ProductExecution, or Actual consumer exists, and this
+does not establish run-global/cross-host exactly-once, general job recovery,
+automatic owner-fact reread, or real-model success.
+
+RAG B1 test-only checkpoint
+`9f9cdaad258d2eb282d5b7b75e9eafc7cb948a58` freezes five pre-execution case
+definitions across seven archived source spans: three development and two
+visibly labelled preregistered `held_out`. Its `source_revision` remains
+`50b77a56fb759f391d0d3f91b0e6db03d0dd4cd2`,
+`first_execution_status=not_executed`, and the earlier eight-case smoke remains
+unchanged. It records no retrieval result, observation, score, RAGAS, Graph,
+product capability, or tuning result. B2 first execution is not selected.
 
 Gate 1 Semantic Assurance V0 admits only the machine verdict `unproven`.
 Proposal self-reports of `satisfied_within_boundary` or `violated` block.
