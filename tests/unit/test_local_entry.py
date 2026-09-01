@@ -1008,7 +1008,75 @@ def test_exact_diff_rejection_is_distinct_from_hash_mismatch() -> None:
     assert _read_exact_diff_approval(
         lambda _: "sha256:other",
         {"diff_hash": "sha256:displayed"},
-    ) == "sha256:other"
+    ) == ("sha256:other", None)
+
+
+def test_unproven_exact_diff_reader_requires_structured_human_decision() -> None:
+    binding = {
+        "schema_version": "human_semantic_decision_v1",
+        "feature_id": "feature_001",
+        "feature_spec_artifact_hash": "sha256:feature",
+        "proposal_id": "proposal_001",
+        "proposal_payload_sha256": "sha256:proposal",
+        "proposal_review_payload_sha256": "sha256:review",
+        "semantic_assurance_payload_sha256": "sha256:assurance",
+        "diff_hash": "sha256:displayed",
+    }
+    dry_run = {
+        "diff_hash": "sha256:displayed",
+        "human_semantic_review_required": True,
+        "human_semantic_decision_binding": binding,
+    }
+
+    with pytest.raises(LocalEntryError, match="structured human semantic decision"):
+        _read_exact_diff_approval(
+            lambda _: "sha256:displayed",
+            dry_run,
+        )
+    with pytest.raises(LocalEntryError, match="structured reject"):
+        _read_exact_diff_approval(
+            lambda _: EXACT_DIFF_REJECTION_TOKEN,
+            dry_run,
+        )
+
+    decision = {
+        **binding,
+        "decision": "approve",
+        "reviewer_identity": "human:test-reviewer",
+    }
+    assert _read_exact_diff_approval(
+        lambda _: json.dumps(decision),
+        dry_run,
+    ) == ("sha256:displayed", decision)
+
+
+def test_unproven_exact_diff_reader_forwards_structured_reject_for_binding_check() -> None:
+    decision = {
+        "schema_version": "human_semantic_decision_v1",
+        "feature_id": "feature_001",
+        "feature_spec_artifact_hash": "sha256:feature",
+        "proposal_id": "proposal_001",
+        "proposal_payload_sha256": "sha256:proposal",
+        "proposal_review_payload_sha256": "sha256:review",
+        "semantic_assurance_payload_sha256": "sha256:assurance",
+        "diff_hash": "sha256:displayed",
+        "decision": "reject",
+        "reviewer_identity": "human:test-reviewer",
+    }
+    dry_run = {
+        "diff_hash": "sha256:displayed",
+        "human_semantic_review_required": True,
+        "human_semantic_decision_binding": {
+            key: value
+            for key, value in decision.items()
+            if key not in {"decision", "reviewer_identity"}
+        },
+    }
+
+    assert _read_exact_diff_approval(
+        lambda _: decision,
+        dry_run,
+    ) == ("sha256:displayed", decision)
 
 
 def test_final_artifact_verification_requires_real_final_build(tmp_path: Path) -> None:

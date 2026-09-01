@@ -279,6 +279,11 @@ def test_approved_isolated_apply_writes_exactly_once(tmp_path: Path) -> None:
     assert result["real_patch_applied"] is True
     assert result["approved_by_user"] is True
     assert result["approved_diff_hash"] == dry_run["diff_hash"]
+    assert result["semantic_assurance_contract"] == (
+        "legacy_non_semantic_exact_diff_v0"
+    )
+    assert result["human_semantic_review_required"] is False
+    assert result["human_semantic_review_completed"] is False
     assert source.read_text(encoding="utf-8") == "value = Color.Pink;\n"
 
 

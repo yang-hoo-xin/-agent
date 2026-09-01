@@ -26,7 +26,12 @@ from src.mod_agent.artifacts.store import (
     ArtifactStorePreflightError,
     ArtifactWriteResult,
 )
-from src.mod_agent.cli import _edit_authority_review_exit_code, main, plan_request
+from src.mod_agent.cli import (
+    _edit_authority_review_exit_code,
+    _read_exact_diff_approval_from_stdin,
+    main,
+    plan_request,
+)
 from src.mod_agent.edit_authority_capabilities import (
     EDIT_AUTHORITY_CAPABILITIES,
     EditAuthorityStoreStepV1,
@@ -42,6 +47,18 @@ from src.mod_agent.intelligent_evidence_only import (
 )
 from src.mod_agent.local_entry import LocalEntryError
 from src.mod_agent.runtime import RuntimeEvidenceItem, build_real_runtime_evidence_payload
+
+
+def _human_semantic_approval_line(dry_run: dict[str, object]) -> str:
+    binding = dry_run["human_semantic_decision_binding"]
+    assert isinstance(binding, dict)
+    return json.dumps(
+        {
+            **binding,
+            "decision": "approve",
+            "reviewer_identity": "human:cli-integration-test",
+        }
+    ) + "\n"
 
 
 def _successful_edit_authority_cli_result(
@@ -1944,9 +1961,9 @@ def test_cli_run_request_real_public_product_executor_compile_success(
                 except (OSError, ValueError, UnicodeDecodeError):
                     continue
                 if payload.get("artifact_type") == "dry_run_result":
-                    diff_hash = (payload.get("data") or {}).get("diff_hash")
-                    if isinstance(diff_hash, str):
-                        return diff_hash + "\n"
+                    dry_run = payload.get("data") or {}
+                    if dry_run.get("human_semantic_review_required") is True:
+                        return _human_semantic_approval_line(dry_run)
             raise AssertionError("CLI requested approval before durable DryRunResult existed")
 
     monkeypatch.setattr("src.mod_agent.cli.sys.stdin", ExactApprovalInput())
@@ -2260,9 +2277,9 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
                 except (OSError, ValueError, UnicodeDecodeError):
                     continue
                 if payload.get("artifact_type") == "dry_run_result":
-                    diff_hash = (payload.get("data") or {}).get("diff_hash")
-                    if isinstance(diff_hash, str):
-                        return diff_hash + "\n"
+                    dry_run = payload.get("data") or {}
+                    if dry_run.get("human_semantic_review_required") is True:
+                        return _human_semantic_approval_line(dry_run)
             raise AssertionError("CLI requested approval before durable DryRunResult existed")
 
     monkeypatch.setattr("src.mod_agent.cli.sys.stdin", ExactApprovalInput())
@@ -3524,3 +3541,46 @@ def test_cli_stagger_edit_authority_review_preflight_is_no_write(
 def test_cli_has_no_direct_stagger_edit_authority_approval_command() -> None:
     with pytest.raises(SystemExit):
         main(["approve-stagger-edit-authority"])
+
+
+def test_cli_displays_exact_structured_human_semantic_decision_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    binding = {
+        "schema_version": "human_semantic_decision_v1",
+        "feature_id": "feature_001",
+        "feature_spec_artifact_hash": "sha256:feature",
+        "proposal_id": "proposal_001",
+        "proposal_payload_sha256": "sha256:proposal",
+        "proposal_review_payload_sha256": "sha256:review",
+        "semantic_assurance_payload_sha256": "sha256:assurance",
+        "diff_hash": "sha256:diff",
+    }
+    decision_line = json.dumps(
+        {
+            **binding,
+            "decision": "approve",
+            "reviewer_identity": "human:cli-test",
+        }
+    ) + "\n"
+    monkeypatch.setattr(
+        "src.mod_agent.cli.sys.stdin",
+        SimpleNamespace(readline=lambda: decision_line),
+    )
+
+    observed = _read_exact_diff_approval_from_stdin(
+        {
+            "diff_hash": "sha256:diff",
+            "human_semantic_review_required": True,
+            "human_semantic_decision_binding": binding,
+        }
+    )
+
+    stderr = capsys.readouterr().err
+    assert observed == decision_line.strip()
+    assert '"human_semantic_decision_v1"' in stderr
+    assert '"feature_spec_artifact_hash": "sha256:feature"' in stderr
+    assert '"proposal_payload_sha256": "sha256:proposal"' in stderr
+    assert '"semantic_assurance_payload_sha256": "sha256:assurance"' in stderr
+    assert "Exact diff human semantic decision JSON:" in stderr

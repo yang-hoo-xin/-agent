@@ -6401,11 +6401,19 @@ def test_explicit_exact_diff_rejection_is_not_apply_failure(tmp_path: Path) -> N
     completed = graph.invoke(state)
     completed["approvals"]["confirmed_write"] = True
 
+    semantic_reject = {
+        "schema_version": "human_semantic_decision_v1",
+        "decision": "reject",
+        "reviewer_identity": "human:workflow-test",
+    }
     rejected = _run_isolated_apply(
         completed,
         store,
         isolated_apply_factory=lambda *_: (_ for _ in ()).throw(
-            ExactDiffApprovalRejectedError("User rejected the displayed exact diff.")
+            ExactDiffApprovalRejectedError(
+                "User rejected the displayed exact diff.",
+                human_semantic_decision=semantic_reject,
+            )
         ),
     )
 
@@ -6415,10 +6423,53 @@ def test_explicit_exact_diff_rejection_is_not_apply_failure(tmp_path: Path) -> N
     assert apply_envelope["status"] == "blocked"
     assert apply_envelope["data"]["execution_mode"] == "rejected"
     assert apply_envelope["data"]["actual_write_performed"] is False
+    assert apply_envelope["data"]["human_semantic_decision"] == semantic_reject
+    assert apply_envelope["data"]["human_semantic_review_result"] == "rejected"
     assert rejected["blockers"][-1]["code"] == "EXACT_DIFF_REJECTED"
     assert all(
         blocker.get("code") != "ISOLATED_APPLY_FAILED"
         for blocker in rejected["blockers"]
+    )
+
+
+def test_unproven_hash_only_apply_result_cannot_advance_graph(tmp_path: Path) -> None:
+    store = ArtifactStore(tmp_path / "artifacts")
+    graph = build_graph(
+        store,
+        knowledge_database=_knowledge_with_load_symbol(tmp_path),
+    )
+    state = create_initial_state(
+        run_id="run_hash_only_semantic_gate",
+        request_id="req_hash_only_semantic_gate",
+        user_request="make Load enable diagnostics",
+        target_mod="BetterHitFeedback",
+    )
+    completed = graph.invoke(state)
+    completed["approvals"]["confirmed_write"] = True
+
+    blocked = _run_isolated_apply(
+        completed,
+        store,
+        isolated_apply_factory=lambda *_: {
+            "execution_mode": "isolated_apply",
+            "actual_write_performed": False,
+            "real_patch_applied": False,
+            "approved_by_review": True,
+            "approved_by_user": True,
+            "changed_files": [],
+            "diff_hash": "sha256:displayed",
+            "approved_diff_hash": "sha256:displayed",
+        },
+    )
+
+    apply_envelope = store.read(
+        _artifact_ref(store, blocked, "isolated_apply_result")
+    )
+    assert apply_envelope["status"] == "failed"
+    assert apply_envelope["data"]["exact_diff_approved"] is True
+    assert apply_envelope["data"]["human_semantic_review_completed"] is False
+    assert blocked["blockers"][-1]["code"] == (
+        "HUMAN_SEMANTIC_DECISION_MISSING"
     )
 
 
@@ -6735,6 +6786,10 @@ def test_approved_path_writes_explicit_fake_execution_artifacts(tmp_path: Path) 
     assert dry_run["execution_mode"] == "fake"
     assert dry_run["actual_write_performed"] is False
     assert dry_run["real_patch_applied"] is False
+    assert dry_run["semantic_assurance"]["verdict"] == "unproven"
+    assert dry_run["semantic_assurance"]["assurance_method"] == "not_available"
+    assert dry_run["human_semantic_review_required"] is True
+    assert dry_run["human_semantic_review_completed"] is False
     assert build["execution_mode"] == "fake"
     assert build["status"] == "skipped"
     assert build["real_build_performed"] is False

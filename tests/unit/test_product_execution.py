@@ -72,6 +72,52 @@ from src.non_authoritative_projection import (
 )
 
 
+def _sha256_json(value: object) -> str:
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _human_semantic_approve(
+    proposal: dict[str, object],
+    review: dict[str, object],
+    diff_hash: str,
+) -> dict[str, object]:
+    context_pack = proposal["context_pack"]
+    assert isinstance(context_pack, dict)
+    artifact_hashes = context_pack["artifact_hashes"]
+    assert isinstance(artifact_hashes, dict)
+    assurance = proposal["semantic_assurance"]
+    return {
+        "schema_version": "human_semantic_decision_v1",
+        "feature_id": proposal["feature_id"],
+        "feature_spec_artifact_hash": artifact_hashes["feature_spec"],
+        "proposal_id": proposal["proposal_id"],
+        "proposal_payload_sha256": _sha256_json(proposal),
+        "proposal_review_payload_sha256": _sha256_json(review),
+        "semantic_assurance_payload_sha256": _sha256_json(assurance),
+        "diff_hash": diff_hash,
+        "decision": "approve",
+        "reviewer_identity": "human:product-execution-test",
+    }
+
+
+def _human_semantic_approve_from_dry_run(
+    dry_run: dict[str, object],
+) -> dict[str, object]:
+    binding = dry_run["human_semantic_decision_binding"]
+    assert isinstance(binding, dict)
+    return {
+        **binding,
+        "decision": "approve",
+        "reviewer_identity": "human:product-execution-test",
+    }
+
+
 def _git(root: Path, *arguments: str) -> str:
     completed = subprocess.run(
         ("git", "-C", str(root), *arguments),
@@ -627,7 +673,12 @@ def _successful_compile_adapters(
             "changed_files": [source_path],
         }
 
-    def isolated_apply_factory(_proposal, _implementation, _review):
+    def isolated_apply_factory(proposal, _implementation, review):
+        human_decision = _human_semantic_approve(
+            proposal,
+            review,
+            diff_hash,
+        )
         return {
             "execution_mode": "isolated_apply",
             "actual_write_performed": True,
@@ -637,6 +688,9 @@ def _successful_compile_adapters(
             "changed_files": [source_path],
             "diff_hash": diff_hash,
             "approved_diff_hash": diff_hash,
+            "human_semantic_review_completed": True,
+            "human_semantic_review_result": "approved",
+            "human_semantic_decision": human_decision,
         }
 
     def build_result_factory(feature_id, input_execution_mode):
@@ -886,12 +940,15 @@ def _formal_coverage_vertical_scenario(
         )
         assert target.read_bytes() == before == source_before
         trace["dry_run_diff_hash"] = result["diff_hash"]
+        trace["dry_run_result"] = result
         return result
 
     def isolated_apply_factory(proposal, implementation, review):
         trace["apply_calls"] = int(trace["apply_calls"]) + 1
         approved_diff_hash = trace["dry_run_diff_hash"]
         assert isinstance(approved_diff_hash, str)
+        dry_run = trace["dry_run_result"]
+        assert isinstance(dry_run, dict)
         return applier.run(
             workspace_root=workspace_root,
             proposal=proposal,
@@ -899,6 +956,9 @@ def _formal_coverage_vertical_scenario(
             review=review,
             allow_write=True,
             approved_diff_hash=approved_diff_hash,
+            human_semantic_decision=_human_semantic_approve_from_dry_run(
+                dry_run
+            ),
         )
 
     def build_result_factory(feature_id, input_execution_mode):

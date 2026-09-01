@@ -89,6 +89,19 @@ def _strict_cli_bool(value: str) -> bool:
 
 
 def _read_exact_diff_approval_from_stdin(dry_run: dict[str, object]) -> str:
+    semantic_review_required = (
+        dry_run.get("human_semantic_review_required") is True
+    )
+    semantic_binding = dry_run.get("human_semantic_decision_binding")
+    semantic_decision_template = (
+        {
+            **dict(semantic_binding),
+            "decision": "approve_or_reject",
+            "reviewer_identity": "<non-empty human reviewer identity>",
+        }
+        if semantic_review_required and isinstance(semantic_binding, Mapping)
+        else None
+    )
     print(
         json.dumps(
             {
@@ -101,10 +114,21 @@ def _read_exact_diff_approval_from_stdin(dry_run: dict[str, object]) -> str:
                 "diff_stats": dry_run.get("diff_stats"),
                 "static_checks": dry_run.get("static_checks"),
                 "diff_preview": dry_run.get("diff_preview"),
+                "human_semantic_review_required": semantic_review_required,
+                "human_semantic_decision_binding": semantic_binding,
+                "human_semantic_decision_template": semantic_decision_template,
                 "instruction": (
-                    "Paste the exact diff_hash to approve isolated apply; "
-                    "enter REJECTED_BY_USER to explicitly reject it; any "
-                    "other input blocks the write as a hash mismatch."
+                    (
+                        "Paste one JSON object matching human_semantic_decision_template; "
+                        "set decision to approve or reject and provide a non-empty "
+                        "reviewer_identity. Every displayed binding value must remain exact."
+                    )
+                    if semantic_review_required
+                    else (
+                        "Paste the exact diff_hash to approve isolated apply; "
+                        "enter REJECTED_BY_USER to explicitly reject it; any "
+                        "other input blocks the write as a hash mismatch."
+                    )
                 ),
             },
             ensure_ascii=False,
@@ -112,7 +136,12 @@ def _read_exact_diff_approval_from_stdin(dry_run: dict[str, object]) -> str:
         ),
         file=sys.stderr,
     )
-    print("Exact diff hash approval: ", end="", file=sys.stderr, flush=True)
+    prompt = (
+        "Exact diff human semantic decision JSON: "
+        if semantic_review_required
+        else "Exact diff hash approval: "
+    )
+    print(prompt, end="", file=sys.stderr, flush=True)
     return sys.stdin.readline().strip()
 
 

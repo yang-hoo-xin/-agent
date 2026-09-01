@@ -8,9 +8,10 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Mapping
 
 from src.mod_agent.bindings import BindingResolver
+from src.mod_agent.proposal.models import SemanticAssuranceV1
 
 
 class PatchApplyError(RuntimeError):
@@ -19,6 +20,36 @@ class PatchApplyError(RuntimeError):
 
 class ExactDiffApprovalRejectedError(RuntimeError):
     """Raised when the user explicitly rejects the displayed exact diff."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        human_semantic_decision: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.human_semantic_decision = (
+            dict(human_semantic_decision)
+            if human_semantic_decision is not None
+            else None
+        )
+
+
+_HUMAN_SEMANTIC_DECISION_SCHEMA_VERSION = "human_semantic_decision_v1"
+_HUMAN_SEMANTIC_DECISION_BINDING_FIELDS = {
+    "schema_version",
+    "feature_id",
+    "feature_spec_artifact_hash",
+    "proposal_id",
+    "proposal_payload_sha256",
+    "proposal_review_payload_sha256",
+    "semantic_assurance_payload_sha256",
+    "diff_hash",
+}
+_HUMAN_SEMANTIC_DECISION_FIELDS = (
+    _HUMAN_SEMANTIC_DECISION_BINDING_FIELDS
+    | {"decision", "reviewer_identity"}
+)
 
 
 class ExactTextPatchApplier:
@@ -33,9 +64,17 @@ class ExactTextPatchApplier:
         review: dict[str, Any],
         allow_write: bool,
         approved_diff_hash: str | None = None,
+        human_semantic_decision: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         if review.get("allowed_next_stage") != "dry_run_apply":
             raise PatchApplyError("Proposal review did not allow dry-run apply.")
+        semantic_assurance, semantic_contract_present = (
+            _validated_semantic_assurance(proposal, review)
+        )
+        human_semantic_review_required = (
+            semantic_contract_present
+            and semantic_assurance.verdict == "unproven"
+        )
         root = Path(workspace_root).resolve()
         if not root.is_dir():
             raise PatchApplyError("Patch workspace does not exist or is not a directory.")
@@ -189,6 +228,10 @@ class ExactTextPatchApplier:
         diff_stats = _unified_diff_stats(unified_diff)
         context_hashes = {
             "proposal_payload_sha256": _sha256_json(proposal),
+            "proposal_review_payload_sha256": _sha256_json(review),
+            "semantic_assurance_payload_sha256": _sha256_json(
+                semantic_assurance.to_dict()
+            ),
             "implementation_plan_payload_sha256": _sha256_json(implementation_plan),
             "evidence_artifact_hash": _evidence_artifact_hash(proposal),
             "source_snapshot_sha256": _sha256_json(
@@ -206,6 +249,16 @@ class ExactTextPatchApplier:
             diff_preview=diff_preview,
             context_hashes=context_hashes,
         )
+        semantic_decision_binding = (
+            _human_semantic_decision_binding(
+                proposal=proposal,
+                diff_hash=diff_hash,
+                context_hashes=context_hashes,
+            )
+            if human_semantic_review_required
+            else None
+        )
+        validated_human_decision: dict[str, Any] | None = None
         if allow_write:
             if approved_diff_hash is None:
                 raise PatchApplyError("Exact diff hash approval is required before writing.")
@@ -213,6 +266,16 @@ class ExactTextPatchApplier:
                 raise PatchApplyError(
                     "Approved diff hash does not match the current exact patch."
                 )
+            if human_semantic_review_required:
+                validated_human_decision = _validate_human_semantic_decision(
+                    human_semantic_decision,
+                    expected_binding=semantic_decision_binding or {},
+                )
+                if validated_human_decision["decision"] == "reject":
+                    raise ExactDiffApprovalRejectedError(
+                        "User rejected the displayed exact diff after semantic review.",
+                        human_semantic_decision=validated_human_decision,
+                    )
             for target, content in staged.items():
                 temporary = target.with_name(f".{target.name}.v2-codegen.tmp")
                 try:
@@ -240,6 +303,28 @@ class ExactTextPatchApplier:
             "diff_hash": diff_hash,
             "approved_diff_hash": approved_diff_hash,
             "approved_by_user": allow_write and approved_diff_hash == diff_hash,
+            "semantic_assurance": semantic_assurance.to_dict(),
+            "semantic_assurance_contract": (
+                "semantic_assurance_v1"
+                if semantic_contract_present
+                else "legacy_non_semantic_exact_diff_v0"
+            ),
+            "human_semantic_review_required": human_semantic_review_required,
+            "human_semantic_review_completed": (
+                validated_human_decision is not None
+                and validated_human_decision["decision"] == "approve"
+            ),
+            "human_semantic_review_result": (
+                "approved"
+                if validated_human_decision is not None
+                else (
+                    "pending"
+                    if human_semantic_review_required
+                    else "not_required_for_legacy_non_semantic_contract"
+                )
+            ),
+            "human_semantic_decision_binding": semantic_decision_binding,
+            "human_semantic_decision": validated_human_decision,
             "context_hashes": context_hashes,
             "diff_preview": diff_preview,
             "unified_diff": unified_diff,
@@ -257,6 +342,131 @@ class ExactTextPatchApplier:
             "changed_files": sorted({item["path"] for item in file_results}),
             "changes": file_results,
         }
+
+
+def _validated_semantic_assurance(
+    proposal: dict[str, Any],
+    review: dict[str, Any],
+) -> tuple[SemanticAssuranceV1, bool]:
+    proposal_has_contract = "semantic_assurance" in proposal
+    review_has_contract = "semantic_assurance" in review
+    proposal_value = proposal.get("semantic_assurance")
+    review_value = review.get("semantic_assurance")
+    try:
+        proposal_assurance = (
+            SemanticAssuranceV1.from_dict(proposal_value)
+            if proposal_has_contract and isinstance(proposal_value, Mapping)
+            else SemanticAssuranceV1.unproven()
+        )
+        review_assurance = (
+            SemanticAssuranceV1.from_dict(review_value)
+            if review_has_contract and isinstance(review_value, Mapping)
+            else SemanticAssuranceV1.unproven()
+        )
+    except ValueError as exc:
+        raise PatchApplyError(f"Semantic assurance is invalid: {exc}") from exc
+    if proposal_has_contract and not isinstance(proposal_value, Mapping):
+        raise PatchApplyError("Proposal semantic assurance is malformed.")
+    if review_has_contract and not isinstance(review_value, Mapping):
+        raise PatchApplyError("Review semantic assurance is malformed.")
+    if proposal_assurance != review_assurance:
+        raise PatchApplyError(
+            "Proposal and review semantic assurance results do not match."
+        )
+    semantic_contract_present = proposal_has_contract or review_has_contract
+    required = review.get("human_semantic_review_required")
+    if required is not None and not isinstance(required, bool):
+        raise PatchApplyError(
+            "Review human_semantic_review_required must be a boolean."
+        )
+    if semantic_contract_present and proposal_assurance.verdict != "unproven":
+        raise PatchApplyError(
+            "Semantic Assurance V0 accepts only the unproven machine verdict."
+        )
+    if (
+        semantic_contract_present
+        and proposal_assurance.verdict == "unproven"
+        and required is not True
+    ):
+        raise PatchApplyError(
+            "Unproven semantic assurance requires an explicit exact-diff human "
+            "semantic review obligation."
+        )
+    return proposal_assurance, semantic_contract_present
+
+
+def _human_semantic_decision_binding(
+    *,
+    proposal: Mapping[str, Any],
+    diff_hash: str,
+    context_hashes: Mapping[str, Any],
+) -> dict[str, str]:
+    feature_id = proposal.get("feature_id")
+    proposal_id = proposal.get("proposal_id")
+    context_pack = proposal.get("context_pack")
+    artifact_hashes = (
+        context_pack.get("artifact_hashes")
+        if isinstance(context_pack, Mapping)
+        else None
+    )
+    feature_spec_hash = (
+        artifact_hashes.get("feature_spec")
+        if isinstance(artifact_hashes, Mapping)
+        else None
+    )
+    exact_values = {
+        "feature_id": feature_id,
+        "feature_spec_artifact_hash": feature_spec_hash,
+        "proposal_id": proposal_id,
+        "proposal_payload_sha256": context_hashes.get("proposal_payload_sha256"),
+        "proposal_review_payload_sha256": context_hashes.get(
+            "proposal_review_payload_sha256"
+        ),
+        "semantic_assurance_payload_sha256": context_hashes.get(
+            "semantic_assurance_payload_sha256"
+        ),
+        "diff_hash": diff_hash,
+    }
+    if any(not isinstance(value, str) or not value for value in exact_values.values()):
+        raise PatchApplyError(
+            "Human semantic decision binding requires exact non-empty Feature, "
+            "Proposal, assurance, review, and diff identities."
+        )
+    return {
+        "schema_version": _HUMAN_SEMANTIC_DECISION_SCHEMA_VERSION,
+        **exact_values,
+    }
+
+
+def _validate_human_semantic_decision(
+    value: Mapping[str, Any] | None,
+    *,
+    expected_binding: Mapping[str, str],
+) -> dict[str, Any]:
+    if value is None:
+        raise PatchApplyError(
+            "A structured human semantic decision is required before writing."
+        )
+    if not isinstance(value, Mapping) or set(value) != _HUMAN_SEMANTIC_DECISION_FIELDS:
+        raise PatchApplyError(
+            "The human semantic decision fields must exactly match the V1 contract."
+        )
+    decision = value.get("decision")
+    if decision not in {"approve", "reject"}:
+        raise PatchApplyError(
+            "Human semantic decision must be exactly approve or reject."
+        )
+    reviewer_identity = value.get("reviewer_identity")
+    if not isinstance(reviewer_identity, str) or not reviewer_identity.strip():
+        raise PatchApplyError(
+            "Human semantic decision reviewer_identity must be a non-empty string."
+        )
+    for field, expected in expected_binding.items():
+        if value.get(field) != expected:
+            raise PatchApplyError(
+                f"Human semantic decision {field} does not match the current dry-run binding."
+            )
+    return dict(value)
 
 
 def _safe_relative_path(raw: str) -> Path:

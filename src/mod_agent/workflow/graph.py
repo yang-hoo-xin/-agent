@@ -6,7 +6,7 @@ import copy
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -68,6 +68,7 @@ from src.mod_agent.proposal import (
     ProposalCritic,
     ProposalReviewer,
 )
+from src.mod_agent.proposal.models import SemanticAssuranceV1
 from src.mod_agent.repair import RepairPatchProposalBuilder, RepairPlanner
 from src.mod_agent.runtime import (
     build_fake_runtime_evidence_payload,
@@ -1499,6 +1500,16 @@ def _run_generate_patch_proposal(
             repair_plan,
             implementation_plan=implementation,
         )
+        repair_context_pack = dict(proposal.context_pack)
+        repair_context_pack["artifact_hashes"] = {
+            key: value
+            for key, value in state["artifact_hashes"].items()
+            if key in {"feature_spec", "evidence_pack", "implementation_plan"}
+        }
+        repair_context_pack["implementation_plan_hash"] = state[
+            "artifact_hashes"
+        ].get("implementation_plan")
+        proposal = replace(proposal, context_pack=repair_context_pack)
         upstream_refs = [
             _artifact_ref_from_state(state, "implementation_plan"),
             _artifact_ref_from_state(state, "repair_plan"),
@@ -1693,6 +1704,10 @@ def _run_review_proposal(
         "allowed_next_stage": review.allowed_next_stage,
         "num_findings": len(review.findings),
         "critic_gate": dict(review.critic_gate),
+        "semantic_assurance": review.semantic_assurance.to_dict(),
+        "human_semantic_review_required": (
+            review.human_semantic_review_required
+        ),
     }
     _record_artifact(next_state, "proposal_review", artifact_ref)
     if critic_ref is not None:
@@ -2707,6 +2722,12 @@ def _run_dry_run_apply(
     approved = approved_by_review and (
         not require_review_approval or approved_by_human
     )
+    semantic_assurance, semantic_contract_present = (
+        _semantic_assurance_for_execution(proposal, review)
+    )
+    human_semantic_review_required = (
+        semantic_contract_present and semantic_assurance.verdict == "unproven"
+    )
     changed_files = list(proposal.get("files") or [])
     diff_intent = list(proposal.get("diff_intent") or [])
     generated_payload = (
@@ -2734,6 +2755,14 @@ def _run_dry_run_apply(
         "approved_by_human": approved_by_human,
         "proposal_id": proposal.get("proposal_id"),
         "review_decision": review.get("decision"),
+        "semantic_assurance": semantic_assurance.to_dict(),
+        "human_semantic_review_required": human_semantic_review_required,
+        "human_semantic_review_completed": False,
+        "human_semantic_review_result": (
+            "pending" if human_semantic_review_required else "not_required"
+        ),
+        "human_semantic_decision_binding": None,
+        "human_semantic_decision": None,
         "would_write": bool(diff_intent),
         "changed_files": changed_files,
         "diff_stats": {
@@ -4119,6 +4148,12 @@ def _run_isolated_apply(
 ) -> ModAgentState:
     proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
     review = _read_artifact_data(state, artifact_store, "proposal_review")
+    semantic_assurance, semantic_contract_present = (
+        _semantic_assurance_for_execution(proposal, review)
+    )
+    human_semantic_review_required = (
+        semantic_contract_present and semantic_assurance.verdict == "unproven"
+    )
     approved_by_user = state["approvals"].get("confirmed_write") is True
     next_state = _copy_state(state)
     status = "success"
@@ -4154,6 +4189,9 @@ def _run_isolated_apply(
                 == "dry_run_apply",
                 "changed_files": [],
                 "rejection": str(exc),
+                "human_semantic_decision": exc.human_semantic_decision,
+                "human_semantic_review_completed": False,
+                "human_semantic_review_result": "rejected",
             }
             status = "blocked"
             next_state["blockers"].append(
@@ -4184,6 +4222,28 @@ def _run_isolated_apply(
         payload.get("approved_diff_hash")
         and payload.get("approved_diff_hash") == payload.get("diff_hash")
     )
+    human_semantic_decision = payload.get("human_semantic_decision")
+    human_semantic_review_completed = bool(
+        payload.get("human_semantic_review_completed") is True
+        and isinstance(human_semantic_decision, dict)
+        and human_semantic_decision.get("decision") == "approve"
+    )
+    if (
+        status == "success"
+        and human_semantic_review_required
+        and not human_semantic_review_completed
+    ):
+        status = "failed"
+        next_state["blockers"].append(
+            {
+                "stage": "isolated_apply",
+                "code": "HUMAN_SEMANTIC_DECISION_MISSING",
+                "message": (
+                    "Unproven semantic assurance requires a bound structured "
+                    "human approve decision before isolated apply can succeed."
+                ),
+            }
+        )
     complete_payload = {
         "node_name": "isolated_apply",
         "stage": "isolated_apply",
@@ -4198,6 +4258,14 @@ def _run_isolated_apply(
             payload.get("approved_by_user", approved_by_user if status == "success" else False)
         ),
         "exact_diff_approved": exact_diff_approved,
+        "semantic_assurance": semantic_assurance.to_dict(),
+        "human_semantic_review_required": human_semantic_review_required,
+        "human_semantic_review_completed": human_semantic_review_completed,
+        "human_semantic_review_result": payload.get(
+            "human_semantic_review_result",
+            "approved" if human_semantic_review_completed else "missing",
+        ),
+        "human_semantic_decision": human_semantic_decision,
     }
     artifact_ref = artifact_store.write(
         feature_id=proposal["feature_id"],
@@ -4213,6 +4281,47 @@ def _run_isolated_apply(
     next_state["current_stage"] = "isolated_apply"
     _record_artifact(next_state, "isolated_apply_result", artifact_ref)
     return next_state
+
+
+def _semantic_assurance_for_execution(
+    proposal: dict[str, Any],
+    review: dict[str, Any],
+) -> tuple[SemanticAssuranceV1, bool]:
+    proposal_has_contract = "semantic_assurance" in proposal
+    review_has_contract = "semantic_assurance" in review
+    proposal_value = proposal.get("semantic_assurance")
+    review_value = review.get("semantic_assurance")
+    if proposal_has_contract and not isinstance(proposal_value, dict):
+        raise ValueError("Proposal semantic assurance is malformed.")
+    if review_has_contract and not isinstance(review_value, dict):
+        raise ValueError("Review semantic assurance is malformed.")
+    proposal_assurance = (
+        SemanticAssuranceV1.from_dict(proposal_value)
+        if proposal_has_contract
+        else SemanticAssuranceV1.unproven()
+    )
+    review_assurance = (
+        SemanticAssuranceV1.from_dict(review_value)
+        if review_has_contract
+        else SemanticAssuranceV1.unproven()
+    )
+    if proposal_assurance != review_assurance:
+        raise ValueError(
+            "Proposal and review semantic assurance results do not match."
+        )
+    semantic_contract_present = proposal_has_contract or review_has_contract
+    if semantic_contract_present and proposal_assurance.verdict != "unproven":
+        raise ValueError(
+            "Semantic Assurance V0 accepts only the unproven machine verdict."
+        )
+    if (
+        semantic_contract_present
+        and review.get("human_semantic_review_required") is not True
+    ):
+        raise ValueError(
+            "Unproven semantic assurance is missing its human review obligation."
+        )
+    return proposal_assurance, semantic_contract_present
 
 
 def _run_workflow_summary(

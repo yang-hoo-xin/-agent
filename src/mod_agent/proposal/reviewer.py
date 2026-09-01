@@ -15,7 +15,7 @@ from .critic import (
     CRITIC_PASS_THRESHOLD,
     CRITIC_POLICY_VERSION,
 )
-from .models import ProposalReview, ReviewFinding
+from .models import ProposalReview, ReviewFinding, SemanticAssuranceV1
 
 CHECKED_RULES = (
     "schema_validity",
@@ -34,6 +34,7 @@ CHECKED_RULES = (
     "validation_contract",
     "no_op_detection",
     "executable_patch",
+    "semantic_assurance",
 )
 
 
@@ -74,6 +75,36 @@ class ProposalReviewer:
         proposal_evidence_refs = set(proposal.get("evidence_refs") or [])
         allowed_files = set(proposal.get("files") or [])
         checked_rules = CHECKED_RULES
+        semantic_assurance, semantic_contract_finding = (
+            self._semantic_assurance_from_proposal(proposal)
+        )
+        if semantic_contract_finding is not None:
+            findings.append(semantic_contract_finding)
+        if semantic_assurance.verdict == "violated":
+            findings.append(
+                ReviewFinding(
+                    rule_id="semantic_assurance_violation",
+                    level="blocking",
+                    message=(
+                        "A bound semantic verifier or human review reported that "
+                        "the proposal violates the declared Feature boundary."
+                    ),
+                    evidence_refs=semantic_assurance.evidence_refs,
+                )
+            )
+        elif semantic_assurance.verdict == "unproven":
+            findings.append(
+                ReviewFinding(
+                    rule_id="semantic_assurance",
+                    level="warning",
+                    message=(
+                        "Feature-to-code semantics are unproven; human semantic "
+                        "review of the exact dry-run diff is required before "
+                        "isolated apply."
+                    ),
+                    evidence_refs=semantic_assurance.evidence_refs,
+                )
+            )
 
         critic_gate = self._critic_gate(
             critic_assessment=critic_assessment,
@@ -379,6 +410,10 @@ class ProposalReviewer:
                     "num_blocking_findings": len(blocking),
                 },
                 critic_gate=critic_gate,
+                semantic_assurance=semantic_assurance,
+                human_semantic_review_required=(
+                    semantic_assurance.verdict == "unproven"
+                ),
             )
 
         return ProposalReview(
@@ -393,7 +428,54 @@ class ProposalReviewer:
                 "num_blocking_findings": 0,
             },
             critic_gate=critic_gate,
+            semantic_assurance=semantic_assurance,
+            human_semantic_review_required=(
+                semantic_assurance.verdict == "unproven"
+            ),
         )
+
+    @staticmethod
+    def _semantic_assurance_from_proposal(
+        proposal: dict[str, Any],
+    ) -> tuple[SemanticAssuranceV1, ReviewFinding | None]:
+        if "semantic_assurance" not in proposal:
+            return SemanticAssuranceV1.unproven(), None
+        value = proposal.get("semantic_assurance")
+        if not isinstance(value, dict):
+            return (
+                SemanticAssuranceV1.unproven(),
+                ReviewFinding(
+                    rule_id="semantic_assurance_contract",
+                    level="blocking",
+                    message="Proposal semantic_assurance is missing or malformed.",
+                ),
+            )
+        try:
+            assurance = SemanticAssuranceV1.from_dict(value)
+        except ValueError as exc:
+            return (
+                SemanticAssuranceV1.unproven(),
+                ReviewFinding(
+                    rule_id="semantic_assurance_contract",
+                    level="blocking",
+                    message=f"Proposal semantic_assurance is invalid: {exc}",
+                ),
+            )
+        if assurance.verdict != "unproven":
+            return (
+                SemanticAssuranceV1.unproven(),
+                ReviewFinding(
+                    rule_id="semantic_assurance_untrusted_proposal_claim",
+                    level="blocking",
+                    message=(
+                        "Semantic Assurance V0 has no independently registered "
+                        "verifier owner; a Proposal cannot establish a satisfied "
+                        "or violated semantic verdict from its own payload."
+                    ),
+                    evidence_refs=assurance.evidence_refs,
+                ),
+            )
+        return assurance, None
 
     @staticmethod
     def _review_executable_patch(
@@ -1082,6 +1164,8 @@ class ProposalReviewer:
     def _blocked_decision(blocking: list[ReviewFinding]) -> str:
         rule_ids = {finding.rule_id for finding in blocking}
         if rule_ids & {"proposal_critic_unavailable", "proposal_critic_block"}:
+            return "blocked_requires_human"
+        if "semantic_assurance_violation" in rule_ids:
             return "blocked_requires_human"
         if "evidence_binding" in rule_ids:
             return "blocked_insufficient_evidence"

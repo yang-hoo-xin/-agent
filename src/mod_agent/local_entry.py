@@ -3635,13 +3635,50 @@ def _persist_graph_terminal_failure(
 
 
 def _read_exact_diff_approval(
-    reader: Callable[[dict[str, Any]], str],
+    reader: Callable[[dict[str, Any]], str | Mapping[str, Any]],
     dry_run: Mapping[str, Any],
-) -> str:
-    approval = reader(dict(dry_run)).strip()
-    if approval == EXACT_DIFF_REJECTION_TOKEN:
-        raise ExactDiffApprovalRejectedError("User rejected the displayed exact diff.")
-    return approval
+) -> tuple[str, dict[str, Any] | None]:
+    raw_approval = reader(dict(dry_run))
+    if isinstance(raw_approval, Mapping):
+        semantic_decision = dict(raw_approval)
+    elif isinstance(raw_approval, str):
+        approval_text = raw_approval.strip()
+        if approval_text == EXACT_DIFF_REJECTION_TOKEN:
+            if dry_run.get("human_semantic_review_required") is True:
+                raise LocalEntryError(
+                    "Unproven semantic assurance requires a structured reject "
+                    "decision bound to the current exact diff."
+                )
+            raise ExactDiffApprovalRejectedError(
+                "User rejected the displayed exact diff."
+            )
+        semantic_decision = None
+        if dry_run.get("human_semantic_review_required") is True:
+            try:
+                parsed = json.loads(approval_text)
+            except json.JSONDecodeError as exc:
+                raise LocalEntryError(
+                    "Unproven semantic assurance requires one structured human "
+                    "semantic decision JSON object from the exact-diff approval flow."
+                ) from exc
+            if not isinstance(parsed, Mapping):
+                raise LocalEntryError(
+                    "Unproven semantic assurance requires one structured human "
+                    "semantic decision JSON object from the exact-diff approval flow."
+                )
+            semantic_decision = dict(parsed)
+        else:
+            return approval_text, None
+    else:
+        raise LocalEntryError(
+            "Exact-diff approval reader must return a string or JSON object."
+        )
+    approved_diff_hash = semantic_decision.get("diff_hash")
+    if not isinstance(approved_diff_hash, str):
+        raise LocalEntryError(
+            "Structured human semantic decision diff_hash must be a string."
+        )
+    return approved_diff_hash, semantic_decision
 
 
 def _verify_final_compiled_artifact_if_built(
@@ -3883,7 +3920,9 @@ def run_local_request(
     allow_game_launch: bool = False,
     runtime_plugin_destination: str | Path | None = None,
     allow_game_directory_write: bool = False,
-    diff_approval_reader: Callable[[dict[str, Any]], str] | None = None,
+    diff_approval_reader: (
+        Callable[[dict[str, Any]], str | Mapping[str, Any]] | None
+    ) = None,
     source_disclosure_approval_id: str | None = None,
     source_revision_binding: Mapping[str, str] | None = None,
     source_git_admission: StrictGitAdmission | None = None,
@@ -5533,7 +5572,7 @@ def run_local_request(
             if runtime_repair_bindings is not None
             else implementation
         )
-        approved_diff_hash = _read_exact_diff_approval(
+        approved_diff_hash, human_semantic_decision = _read_exact_diff_approval(
             diff_approval_reader,
             pending_dry_run,
         )
@@ -5544,6 +5583,7 @@ def run_local_request(
             review=review,
             allow_write=True,
             approved_diff_hash=approved_diff_hash,
+            human_semantic_decision=human_semantic_decision,
         )
 
     def build_result_factory(feature_id: str, input_execution_mode: str | None):

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal, Mapping
 
 ReviewDecision = Literal[
     "approve_dry_run",
@@ -14,6 +14,175 @@ ReviewDecision = Literal[
     "blocked_requires_human",
     "already_satisfied",
 ]
+
+SemanticAssuranceVerdict = Literal[
+    "satisfied_within_boundary",
+    "violated",
+    "unproven",
+]
+SemanticAssuranceMethod = Literal[
+    "formal_proof",
+    "static_analysis",
+    "unit_test",
+    "build",
+    "runtime_observation",
+    "human_review",
+    "not_available",
+]
+
+_SEMANTIC_ASSURANCE_SCHEMA_VERSION = "semantic_assurance_v1"
+_SEMANTIC_ASSURANCE_FIELDS = {
+    "schema_version",
+    "verdict",
+    "assurance_method",
+    "evidence_refs",
+    "limitations",
+    "assumptions",
+    "applicability",
+    "invalidation_facts",
+}
+_SEMANTIC_ASSURANCE_VERDICTS = {
+    "satisfied_within_boundary",
+    "violated",
+    "unproven",
+}
+_SEMANTIC_ASSURANCE_METHODS = {
+    "formal_proof",
+    "static_analysis",
+    "unit_test",
+    "build",
+    "runtime_observation",
+    "human_review",
+    "not_available",
+}
+_HUMAN_SEMANTIC_REVIEW_NOTE = (
+    "Semantic assurance is unproven; human semantic review of the exact dry-run "
+    "diff is required before isolated apply."
+)
+
+
+@dataclass(frozen=True)
+class SemanticAssuranceV1:
+    """Evidence-bound Feature-to-code semantic assurance result."""
+
+    verdict: SemanticAssuranceVerdict
+    assurance_method: SemanticAssuranceMethod
+    evidence_refs: tuple[str, ...]
+    limitations: tuple[str, ...]
+    assumptions: tuple[str, ...]
+    applicability: tuple[str, ...]
+    invalidation_facts: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.verdict not in _SEMANTIC_ASSURANCE_VERDICTS:
+            raise ValueError("Semantic assurance verdict is unsupported.")
+        if self.assurance_method not in _SEMANTIC_ASSURANCE_METHODS:
+            raise ValueError("Semantic assurance assurance_method is unsupported.")
+        _validate_string_tuple("evidence_refs", self.evidence_refs, allow_empty=True)
+        _validate_string_tuple("limitations", self.limitations)
+        _validate_string_tuple("assumptions", self.assumptions)
+        _validate_string_tuple("applicability", self.applicability)
+        _validate_string_tuple("invalidation_facts", self.invalidation_facts)
+        if self.assurance_method == "not_available":
+            if self.verdict != "unproven":
+                raise ValueError(
+                    "Semantic assurance not_available method requires unproven verdict."
+                )
+            if self.evidence_refs:
+                raise ValueError(
+                    "Semantic assurance not_available method cannot claim evidence_refs."
+                )
+        if self.verdict in {"satisfied_within_boundary", "violated"}:
+            if self.assurance_method == "not_available" or not self.evidence_refs:
+                raise ValueError(
+                    "Semantic assurance satisfied or violated verdict requires "
+                    "an applicable method and evidence_refs."
+                )
+
+    @classmethod
+    def unproven(cls) -> "SemanticAssuranceV1":
+        """Return the honest V0 result when no applicable verifier is bound."""
+
+        return cls(
+            verdict="unproven",
+            assurance_method="not_available",
+            evidence_refs=(),
+            limitations=(
+                "No applicable semantic verifier result is bound to this proposal.",
+            ),
+            assumptions=(
+                "Human review will evaluate Feature-to-code semantics on the exact "
+                "dry-run diff before isolated apply.",
+            ),
+            applicability=(
+                "This result covers only the absence of a bound semantic verifier "
+                "for this proposal.",
+            ),
+            invalidation_facts=(
+                "A verifier result or any proposal, source, binding, or exact-diff "
+                "identity change invalidates this result.",
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the strict versioned JSON projection."""
+
+        return {
+            "schema_version": _SEMANTIC_ASSURANCE_SCHEMA_VERSION,
+            "verdict": self.verdict,
+            "assurance_method": self.assurance_method,
+            "evidence_refs": list(self.evidence_refs),
+            "limitations": list(self.limitations),
+            "assumptions": list(self.assumptions),
+            "applicability": list(self.applicability),
+            "invalidation_facts": list(self.invalidation_facts),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "SemanticAssuranceV1":
+        """Strictly reconstruct a serialized semantic assurance result."""
+
+        if not isinstance(value, Mapping) or set(value) != _SEMANTIC_ASSURANCE_FIELDS:
+            raise ValueError(
+                "Semantic assurance fields must exactly match the V1 contract."
+            )
+        if value.get("schema_version") != _SEMANTIC_ASSURANCE_SCHEMA_VERSION:
+            raise ValueError("Semantic assurance schema_version is unsupported.")
+        list_fields = (
+            "evidence_refs",
+            "limitations",
+            "assumptions",
+            "applicability",
+            "invalidation_facts",
+        )
+        for name in list_fields:
+            if not isinstance(value.get(name), list):
+                raise ValueError(f"Semantic assurance {name} must be a JSON list.")
+        return cls(
+            verdict=value.get("verdict"),
+            assurance_method=value.get("assurance_method"),
+            evidence_refs=tuple(value["evidence_refs"]),
+            limitations=tuple(value["limitations"]),
+            assumptions=tuple(value["assumptions"]),
+            applicability=tuple(value["applicability"]),
+            invalidation_facts=tuple(value["invalidation_facts"]),
+        )
+
+
+def _validate_string_tuple(
+    name: str,
+    value: tuple[str, ...],
+    *,
+    allow_empty: bool = False,
+) -> None:
+    if not isinstance(value, tuple) or (not allow_empty and not value):
+        raise ValueError(
+            f"Semantic assurance {name} must contain non-empty strings."
+        )
+    if any(not isinstance(item, str) or not item.strip() for item in value):
+        raise ValueError(
+            f"Semantic assurance {name} must contain non-empty strings."
+        )
 
 
 @dataclass(frozen=True)
@@ -34,12 +203,21 @@ class PatchProposal:
     no_op_status: dict[str, Any]
     rollback_hints: tuple[dict[str, Any], ...]
     manual_review_notes: tuple[str, ...] = ()
+    semantic_assurance: SemanticAssuranceV1 = field(
+        default_factory=SemanticAssuranceV1.unproven
+    )
     blocked: bool = False
     blockers: tuple[dict[str, Any], ...] = ()
 
     def to_artifact_payload(self) -> dict[str, Any]:
         """Return payload compatible with the patch_proposal contract."""
 
+        manual_review_notes = list(self.manual_review_notes)
+        if (
+            self.semantic_assurance.verdict == "unproven"
+            and _HUMAN_SEMANTIC_REVIEW_NOTE not in manual_review_notes
+        ):
+            manual_review_notes.append(_HUMAN_SEMANTIC_REVIEW_NOTE)
         return {
             "node_name": "generate_patch_proposal",
             "stage": "patch_proposal",
@@ -61,7 +239,8 @@ class PatchProposal:
             "expected_tests": list(self.expected_tests),
             "no_op_status": self.no_op_status,
             "rollback_hints": list(self.rollback_hints),
-            "manual_review_notes": list(self.manual_review_notes),
+            "manual_review_notes": manual_review_notes,
+            "semantic_assurance": self.semantic_assurance.to_dict(),
             "blocked": self.blocked,
             "blockers": list(self.blockers),
         }
@@ -100,6 +279,10 @@ class ProposalReview:
     checked_rules: tuple[str, ...]
     trace_metrics: dict[str, int]
     critic_gate: dict[str, Any]
+    semantic_assurance: SemanticAssuranceV1 = field(
+        default_factory=SemanticAssuranceV1.unproven
+    )
+    human_semantic_review_required: bool = True
 
     def to_artifact_payload(self) -> dict[str, Any]:
         """Return payload compatible with the proposal_review contract."""
@@ -115,6 +298,8 @@ class ProposalReview:
             "checked_rules": list(self.checked_rules),
             "trace_metrics": self.trace_metrics,
             "critic_gate": self.critic_gate,
+            "semantic_assurance": self.semantic_assurance.to_dict(),
+            "human_semantic_review_required": self.human_semantic_review_required,
         }
 
 
