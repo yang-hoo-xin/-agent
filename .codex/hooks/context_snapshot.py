@@ -13,9 +13,9 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
-
+from typing import Any
 
 SCHEMA_VERSION = "codex_context_snapshot_v0"
 STATE_DIRECTORY_RELATIVE_PATH = Path(".codex/.runtime/context-snapshots")

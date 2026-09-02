@@ -13,7 +13,6 @@ from typing import Any
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HOOK_PATH = REPO_ROOT / ".codex" / "hooks" / "context_snapshot.py"
 HOOKS_CONFIG_PATH = REPO_ROOT / ".codex" / "hooks.json"

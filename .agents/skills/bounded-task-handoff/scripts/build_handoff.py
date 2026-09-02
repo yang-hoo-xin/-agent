@@ -12,7 +12,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-
 INPUT_VERSION = "bounded-task-handoff.v1"
 OUTPUT_VERSION = "bounded-task-handoff-output.v1"
 MAX_INPUT_BYTES = 32_768
@@ -197,8 +196,7 @@ def _validate_input(value: dict[str, Any]) -> dict[str, Any]:
 def _git(repo: Path, *arguments: str) -> str:
     completed = subprocess.run(
         ["git", "-C", str(repo), *arguments],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if completed.returncode != 0:

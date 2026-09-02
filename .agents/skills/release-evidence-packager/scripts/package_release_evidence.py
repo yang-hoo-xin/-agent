@@ -12,7 +12,6 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-
 INPUT_VERSION = "release-evidence-input.v1"
 OUTPUT_VERSION = "release-evidence-manifest.v1"
 EVIDENCE_KINDS = ("commit", "test", "ci", "build", "runtime", "trace")
