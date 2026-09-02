@@ -31,6 +31,7 @@ _PROJECTION_SCHEMA_KEYWORDS = frozenset(
         "additionalProperties",
         "minItems",
         "maxItems",
+        "uniqueItems",
         "items",
         "minLength",
         "enum",
@@ -47,13 +48,20 @@ _INITIAL_PRIOR_OUTPUT_RULE = (
 _DETERMINISTIC_POST_CHANGE_DISPOSITION_REASON = (
     "Deterministically deferred to post-change verification."
 )
-
-
 class RequirementProjectionAdmissionError(ValueError):
     """Bounded exact response-schema rejection without retaining raw output."""
 
     def __init__(self, diagnostic: Mapping[str, Any]) -> None:
         self.code = "REQUIREMENT_COVERAGE_PROJECTION_SCHEMA_INVALID"
+        self.diagnostic = dict(diagnostic)
+        super().__init__(self.code)
+
+
+class RequirementFindingsAdmissionError(ValueError):
+    """Reject a findings draft that does not bind every listed relation key."""
+
+    def __init__(self, diagnostic: Mapping[str, Any]) -> None:
+        self.code = "REQUIREMENT_COVERAGE_FINDINGS_SCHEMA_INVALID"
         self.diagnostic = dict(diagnostic)
         super().__init__(self.code)
 
@@ -254,6 +262,25 @@ def _projection_schema_failure(
                 keyword="maxItems",
                 allowed_boundary={"maxItems": maximum},
                 details={"observed_items": len(value)},
+            )
+        unique_items = schema.get("uniqueItems")
+        if unique_items is not None and not isinstance(unique_items, bool):
+            return _schema_diagnostic(
+                category="schema_construct_invalid",
+                path=path,
+                keyword="uniqueItems",
+                allowed_boundary={"uniqueItems_type": "boolean"},
+            )
+        if unique_items is True and any(
+            _json_values_equal(value[left], value[right])
+            for left in range(len(value))
+            for right in range(left + 1, len(value))
+        ):
+            return _schema_diagnostic(
+                category="schema_array_items_not_unique",
+                path=path,
+                keyword="uniqueItems",
+                allowed_boundary={"uniqueItems": True},
             )
         item_schema = schema.get("items")
         if item_schema is not None:
@@ -774,9 +801,16 @@ class StructuredModelRequirementCoverageProvider:
                 for item in retrieved_pack.items
             ],
             "rules": [
-                "Return only support, conflict, or missing findings for listed relation indexes and evidence ids.",
+                (
+                    "Return findings_by_relation with exactly one key for every "
+                    "listed relation_index, using its decimal string form."
+                ),
+                (
+                    "Each keyed value contains only relationship, evidence_ids, "
+                    "and unresolved_gaps; do not repeat relation identity inside it."
+                ),
                 "Semantic findings are proposals; deterministic code validates every identity and derives sufficiency and authority.",
-                "Do not return paths, source refs, stable ids, sufficiency, edit targets, Patch authority, or execution authority.",
+                "Do not return paths, source refs, sufficiency, edit targets, Patch authority, or execution authority.",
                 "State unresolved gaps explicitly and do not infer missing current source as support.",
                 (
                     "For role=change, support means the cited Evidence proves the "
@@ -803,9 +837,17 @@ class StructuredModelRequirementCoverageProvider:
                 ),
             ],
         }
+        raw_findings: Mapping[str, Any] | None = None
         findings: Mapping[str, Any] | None = None
         try:
-            findings = self.complete_json("requirement_findings", payload, schema)
+            raw_findings = self.complete_json(
+                "requirement_findings", payload, schema
+            )
+            findings = _materialize_requirement_findings_response(
+                raw_findings,
+                schema=schema,
+                relation_indexes=relation_indexes,
+            )
             resolve_requirement_coverage(
                 query=request,
                 materialized_projection=materialized_projection,
@@ -817,16 +859,23 @@ class StructuredModelRequirementCoverageProvider:
                 **payload,
                 "message_type": "product_requirement_findings_correction",
                 "rejected_output_sha256": (
-                    _json_sha256(findings) if findings is not None else None
+                    _json_sha256(raw_findings)
+                    if raw_findings is not None
+                    else None
                 ),
                 "error_code": str(exc),
                 "instruction": (
-                    "Return one complete corrected findings object using the same "
-                    "listed identities and schema."
+                    "Return one complete corrected findings object with exactly "
+                    "one findings_by_relation entry per listed relation_index."
                 ),
             }
-            corrected = self.complete_json(
+            raw_corrected = self.complete_json(
                 "requirement_findings_correction", correction, schema
+            )
+            corrected = _materialize_requirement_findings_response(
+                raw_corrected,
+                schema=schema,
+                relation_indexes=relation_indexes,
             )
             resolve_requirement_coverage(
                 query=request,
@@ -836,6 +885,47 @@ class StructuredModelRequirementCoverageProvider:
             )
             return corrected
         return findings
+
+
+def _materialize_requirement_findings_response(
+    value: object,
+    *,
+    schema: Mapping[str, Any],
+    relation_indexes: list[int],
+) -> dict[str, object]:
+    """Bind schema-admitted model semantics to explicit deterministic keys."""
+
+    diagnostic = _projection_schema_failure(value, schema=schema, path="$")
+    if diagnostic is not None:
+        raise RequirementFindingsAdmissionError(diagnostic)
+    if not isinstance(value, Mapping):
+        raise RequirementFindingsAdmissionError(
+            _schema_diagnostic(
+                category="type_mismatch",
+                path="$",
+                keyword="type",
+                allowed_boundary={"expected_type": "object"},
+            )
+        )
+    findings_by_relation = value["findings_by_relation"]
+    if not isinstance(findings_by_relation, Mapping):
+        raise RequirementFindingsAdmissionError(
+            _schema_diagnostic(
+                category="type_mismatch",
+                path="$.findings_by_relation",
+                keyword="type",
+                allowed_boundary={"expected_type": "object"},
+            )
+        )
+    return {
+        "findings": [
+            {
+                "relation_index": relation_index,
+                **deepcopy(findings_by_relation[str(relation_index)]),
+            }
+            for relation_index in relation_indexes
+        ]
+    }
 
 
 class RequirementCoverageEvidenceProvider:
@@ -1138,44 +1228,44 @@ def requirement_projection_response_schema(
 def requirement_findings_response_schema(
     *, relation_indexes: list[int], evidence_ids: list[str]
 ) -> dict[str, object]:
+    finding = {
+        "type": "object",
+        "properties": {
+            "relationship": {
+                "type": "string",
+                "enum": ["support", "conflict", "missing"],
+            },
+            "evidence_ids": {
+                "type": "array",
+                "uniqueItems": True,
+                "items": {"type": "string", "enum": evidence_ids},
+            },
+            "unresolved_gaps": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+            },
+        },
+        "required": [
+            "relationship",
+            "evidence_ids",
+            "unresolved_gaps",
+        ],
+        "additionalProperties": False,
+    }
+    relation_keys = [str(value) for value in relation_indexes]
     return {
         "type": "object",
         "properties": {
-            "findings": {
-                "type": "array",
-                "maxItems": len(relation_indexes),
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "relation_index": {
-                            "type": "integer",
-                            "enum": relation_indexes,
-                        },
-                        "relationship": {
-                            "type": "string",
-                            "enum": ["support", "conflict", "missing"],
-                        },
-                        "evidence_ids": {
-                            "type": "array",
-                            "uniqueItems": True,
-                            "items": {"type": "string", "enum": evidence_ids},
-                        },
-                        "unresolved_gaps": {
-                            "type": "array",
-                            "items": {"type": "string", "minLength": 1},
-                        },
-                    },
-                    "required": [
-                        "relation_index",
-                        "relationship",
-                        "evidence_ids",
-                        "unresolved_gaps",
-                    ],
-                    "additionalProperties": False,
+            "findings_by_relation": {
+                "type": "object",
+                "properties": {
+                    key: deepcopy(finding) for key in relation_keys
                 },
+                "required": relation_keys,
+                "additionalProperties": False,
             }
         },
-        "required": ["findings"],
+        "required": ["findings_by_relation"],
         "additionalProperties": False,
     }
 

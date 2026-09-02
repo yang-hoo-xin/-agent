@@ -1,0 +1,39 @@
+{
+  "findings": [
+    {
+      "evidence_ids": [
+        "rg_live_74ee87bc3e2a0a60",
+        "rg_live_6ef05996a856f8ce",
+        "rg_live_db3796b8fee9e1ab",
+        "rg_live_d578395569040c11",
+        "rg_live_e88e2835b4977490"
+      ],
+      "relation_index": 1,
+      "relationship": "missing",
+      "unresolved_gaps": [
+        "Evidence shows existing configuration structure (Configuration.cs) and spread calculation logic (SpreadPatches.cs), but does not contain the specific 'Accurate Spread Enabled' setting or the conditional logic to bypass accurate spread calculation when false."
+      ]
+    },
+    {
+      "evidence_ids": [
+        "rg_live_81afd3d85745fa94",
+        "rg_live_955ede1a979df7e0"
+      ],
+      "relation_index": 1,
+      "relationship": "missing",
+      "unresolved_gaps": [
+        "Evidence shows AdjustCrosshairSize and FirstShotGuiPatches logic, but does not show the implementation of the bypass mechanism for accurate spread calculation required by the change."
+      ]
+    },
+    {
+      "evidence_ids": [
+        "rg_live_74ee87bc3e2a0a60"
+      ],
+      "relation_index": 1,
+      "relationship": "missing",
+      "unresolved_gaps": [
+        "Evidence shows OverrideCrosshairSize implementation, but lacks the specific toggle setting and bypass logic required for the change."
+      ]
+    }
+  ]
+}

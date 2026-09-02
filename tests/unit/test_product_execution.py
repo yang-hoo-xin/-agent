@@ -860,9 +860,8 @@ def _formal_coverage_vertical_scenario(
                 if requirement["role"] == "change"
             }
             return {
-                "findings": [
-                    {
-                        "relation_index": relation["relation_index"],
+                "findings_by_relation": {
+                    str(relation["relation_index"]): {
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
                         "unresolved_gaps": (
@@ -874,7 +873,7 @@ def _formal_coverage_vertical_scenario(
                         ),
                     }
                     for relation in payload["relations"]
-                ]
+                }
             }
         raise AssertionError(role)
 

@@ -1803,15 +1803,14 @@ def _formal_coverage_model_response(request: dict[str, object]) -> dict[str, obj
     if message_type == "product_requirement_findings":
         evidence_id = request["source_observations"][0]["evidence_id"]
         return {
-            "findings": [
-                {
-                    "relation_index": relation["relation_index"],
+            "findings_by_relation": {
+                str(relation["relation_index"]): {
                     "relationship": "support",
                     "evidence_ids": [evidence_id],
                     "unresolved_gaps": [],
                 }
                 for relation in request["relations"]
-            ]
+            }
         }
     return None
 

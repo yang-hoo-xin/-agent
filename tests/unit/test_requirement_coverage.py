@@ -39,6 +39,7 @@ from src.mod_agent.evidence.requirement_coverage import (
 from src.mod_agent.evidence.requirement_coverage_provider import (
     RequirementProjectionAdmissionError,
     admit_requirement_projection_response,
+    requirement_findings_response_schema,
     requirement_projection_response_schema,
 )
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
@@ -676,6 +677,24 @@ def _positive_findings(materialized, retrieved) -> dict[str, object]:
                 "unresolved_gaps": ["Runtime observation occurs after patching."],
             },
         ]
+    }
+
+
+def _model_findings_response(
+    indexed_findings: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "findings_by_relation": {
+            str(finding["relation_index"]): {
+                key: deepcopy(finding[key])
+                for key in (
+                    "relationship",
+                    "evidence_ids",
+                    "unresolved_gaps",
+                )
+            }
+            for finding in indexed_findings["findings"]
+        }
     }
 
 
@@ -1475,7 +1494,11 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
     def complete_json(role, payload, _schema):
         assert role == "requirement_findings"
         payloads.append(deepcopy(payload))
-        return deepcopy(findings)
+        response = _model_findings_response(findings)
+        response["findings_by_relation"] = dict(
+            reversed(tuple(response["findings_by_relation"].items()))
+        )
+        return response
 
     provider = StructuredModelRequirementCoverageProvider(complete_json)
     assert provider.findings(
@@ -1487,6 +1510,26 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
     assert payloads[0]["coverage_schema_version"] == (
         REQUIREMENT_COVERAGE_SCHEMA_VERSION
     )
+    assert all(
+        set(relation)
+        == {
+            "relation_index",
+            "relation_id",
+            "parent_requirement_ids",
+            "meaning",
+        }
+        for relation in payloads[0]["relations"]
+    )
+    assert payloads[0]["rules"][:2] == [
+        (
+            "Return findings_by_relation with exactly one key for every listed "
+            "relation_index, using its decimal string form."
+        ),
+        (
+            "Each keyed value contains only relationship, evidence_ids, and "
+            "unresolved_gaps; do not repeat relation identity inside it."
+        ),
+    ]
     assert payloads[0]["rules"][-4:] == [
         (
             "For role=change, support means the cited Evidence proves the current "
@@ -1508,6 +1551,178 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
             "or edit authority required before Patch. Do not list the requested "
             "behavior's expected implementation delta as an unresolved gap."
         ),
+    ]
+
+
+def test_findings_provider_rejects_frozen_duplicate_relation_indexes(
+    tmp_path: Path,
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    fixture = (
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "requirement_findings_duplicate_relation_indexes.json"
+    )
+    fixture_bytes = fixture.read_bytes()
+    assert hashlib.sha256(fixture_bytes.removesuffix(b"\n")).hexdigest() == (
+        "f59032fd00e8dac4e31bd52e42507244e8294fff09ae3a9655cfbf01eb2f289b"
+    )
+    frozen = json.loads(fixture_bytes)
+    frozen_before = deepcopy(frozen)
+    evidence_ids = list(
+        dict.fromkeys(
+            evidence_id
+            for finding in frozen["findings"]
+            for evidence_id in finding["evidence_ids"]
+        )
+    )
+    retrieved = replace(
+        retrieved,
+        items=tuple(
+            replace(retrieved.items[0], evidence_id=evidence_id)
+            for evidence_id in evidence_ids
+        ),
+    )
+    roles: list[str] = []
+
+    def complete_json(role, _payload, _schema):
+        roles.append(role)
+        return deepcopy(frozen)
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+
+    with pytest.raises(
+        ValueError,
+        match="REQUIREMENT_COVERAGE_FINDING_INVALID",
+    ):
+        build_requirement_coverage_pack(
+            query=str(feature["user_request"]),
+            materialized_projection=materialized,
+            retrieved_pack=retrieved,
+            findings=frozen,
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="REQUIREMENT_COVERAGE_FINDINGS_SCHEMA_INVALID",
+    ):
+        provider.findings(
+            materialized_projection=materialized,
+            retrieved_pack=retrieved,
+            request=str(feature["user_request"]),
+        )
+
+    assert roles == [
+        "requirement_findings",
+        "requirement_findings_correction",
+    ]
+    assert frozen == frozen_before
+
+
+def test_findings_provider_rejects_complete_unique_legacy_list(
+    tmp_path: Path,
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    legacy_findings = _positive_findings(materialized, retrieved)
+    roles: list[str] = []
+
+    def complete_json(role, _payload, _schema):
+        roles.append(role)
+        return deepcopy(legacy_findings)
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    with pytest.raises(
+        ValueError,
+        match="REQUIREMENT_COVERAGE_FINDINGS_SCHEMA_INVALID",
+    ):
+        provider.findings(
+            materialized_projection=materialized,
+            retrieved_pack=retrieved,
+            request=str(feature["user_request"]),
+        )
+
+    assert roles == [
+        "requirement_findings",
+        "requirement_findings_correction",
+    ]
+
+
+def test_findings_schema_requires_complete_explicit_relation_keys() -> None:
+    schema = requirement_findings_response_schema(
+        relation_indexes=[1, 2, 3],
+        evidence_ids=["evidence_1"],
+    )
+    findings = schema["properties"]["findings_by_relation"]
+
+    assert schema["required"] == ["findings_by_relation"]
+    assert set(findings["properties"]) == {"1", "2", "3"}
+    assert findings["required"] == ["1", "2", "3"]
+    assert findings["additionalProperties"] is False
+    for item in findings["properties"].values():
+        assert set(item["properties"]) == {
+            "relationship",
+            "evidence_ids",
+            "unresolved_gaps",
+        }
+        assert set(item["required"]) == {
+            "relationship",
+            "evidence_ids",
+            "unresolved_gaps",
+        }
+        assert item["additionalProperties"] is False
+
+
+@pytest.mark.parametrize(
+    ("draft_mutation", "error_code"),
+    [
+        ("missing_finding", "REQUIREMENT_COVERAGE_FINDINGS_SCHEMA_INVALID"),
+        ("extra_finding", "REQUIREMENT_COVERAGE_FINDINGS_SCHEMA_INVALID"),
+        ("wrong_shape", "REQUIREMENT_COVERAGE_FINDINGS_SCHEMA_INVALID"),
+    ],
+)
+def test_findings_provider_invalid_keyed_drafts_use_one_correction_then_block(
+    tmp_path: Path,
+    draft_mutation: str,
+    error_code: str,
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    row = {
+        "relationship": "missing",
+        "evidence_ids": [],
+        "unresolved_gaps": ["Current-source evidence is missing."],
+    }
+    draft = {
+        "findings_by_relation": {
+            str(index): deepcopy(row) for index in range(1, 4)
+        }
+    }
+    if draft_mutation == "missing_finding":
+        draft["findings_by_relation"].pop("3")
+    elif draft_mutation == "extra_finding":
+        draft["findings_by_relation"]["4"] = deepcopy(row)
+    elif draft_mutation == "wrong_shape":
+        draft["findings_by_relation"]["2"]["invented_identity"] = (
+            "relation_2"
+        )
+    else:
+        raise AssertionError(draft_mutation)
+    roles: list[str] = []
+
+    def complete_json(role, _payload, _schema):
+        roles.append(role)
+        return deepcopy(draft)
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    with pytest.raises(ValueError, match=error_code):
+        provider.findings(
+            materialized_projection=materialized,
+            retrieved_pack=retrieved,
+            request=str(feature["user_request"]),
+        )
+
+    assert roles == [
+        "requirement_findings",
+        "requirement_findings_correction",
     ]
 
 
@@ -2310,17 +2525,21 @@ def test_actual9_derived_two_requirement_projection_is_completed_before_findings
                 "Evidence disposition for requirement 1.",
                 "Evidence disposition for requirement 2.",
             ]
-            return {
-                "findings": [
-                    {
-                        "relation_index": relation["relation_index"],
-                        "relationship": "missing",
-                        "evidence_ids": [],
-                        "unresolved_gaps": ["No current-source evidence found."],
-                    }
-                    for relation in payload["relations"]
-                ]
-            }
+            return _model_findings_response(
+                {
+                    "findings": [
+                        {
+                            "relation_index": relation["relation_index"],
+                            "relationship": "missing",
+                            "evidence_ids": [],
+                            "unresolved_gaps": [
+                                "No current-source evidence found."
+                            ],
+                        }
+                        for relation in payload["relations"]
+                    ]
+                }
+            )
         raise AssertionError(role)
 
     class EmptySourceProvider:
@@ -3078,17 +3297,21 @@ def test_legal_projection_correction_reaches_findings_consumer(
             )
             return _model_projection()
         if role == "requirement_findings":
-            return {
-                "findings": [
-                    {
-                        "relation_index": relation["relation_index"],
-                        "relationship": "missing",
-                        "evidence_ids": [],
-                        "unresolved_gaps": ["Semantic support is not established."],
-                    }
-                    for relation in payload["relations"]
-                ]
-            }
+            return _model_findings_response(
+                {
+                    "findings": [
+                        {
+                            "relation_index": relation["relation_index"],
+                            "relationship": "missing",
+                            "evidence_ids": [],
+                            "unresolved_gaps": [
+                                "Semantic support is not established."
+                            ],
+                        }
+                        for relation in payload["relations"]
+                    ]
+                }
+            )
         raise AssertionError(role)
 
     provider = make_requirement_coverage_evidence_provider(
@@ -3149,17 +3372,19 @@ def test_overlap_correction_direction_a_reaches_findings_consumer(
             corrected["input_dispositions"] = []
             return corrected
         if role == "requirement_findings":
-            return {
-                "findings": [
-                    {
-                        "relation_index": relation["relation_index"],
-                        "relationship": "missing",
-                        "evidence_ids": [],
-                        "unresolved_gaps": ["Support is not established."],
-                    }
-                    for relation in payload["relations"]
-                ]
-            }
+            return _model_findings_response(
+                {
+                    "findings": [
+                        {
+                            "relation_index": relation["relation_index"],
+                            "relationship": "missing",
+                            "evidence_ids": [],
+                            "unresolved_gaps": ["Support is not established."],
+                        }
+                        for relation in payload["relations"]
+                    ]
+                }
+            )
         raise AssertionError(role)
 
     provider = make_requirement_coverage_evidence_provider(
@@ -3218,17 +3443,19 @@ def test_overlap_correction_direction_b_reaches_findings_when_conditions_hold(
             assert correction_from_previous == corrected
             return correction_from_previous
         if role == "requirement_findings":
-            return {
-                "findings": [
-                    {
-                        "relation_index": relation["relation_index"],
-                        "relationship": "missing",
-                        "evidence_ids": [],
-                        "unresolved_gaps": ["Support is not established."],
-                    }
-                    for relation in payload["relations"]
-                ]
-            }
+            return _model_findings_response(
+                {
+                    "findings": [
+                        {
+                            "relation_index": relation["relation_index"],
+                            "relationship": "missing",
+                            "evidence_ids": [],
+                            "unresolved_gaps": ["Support is not established."],
+                        }
+                        for relation in payload["relations"]
+                    ]
+                }
+            )
         raise AssertionError(role)
 
     provider = make_requirement_coverage_evidence_provider(
@@ -3433,34 +3660,36 @@ def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
                 for value in observations
                 if str(value["source_path"]).endswith("Configuration.cs")
             )
-            return {
-                "findings": [
-                    {
-                        "relation_index": relations[0]["relation_index"],
-                        "relationship": "support",
-                        "evidence_ids": [behavior_id],
-                        "unresolved_gaps": [],
-                    },
-                    {
-                        "relation_index": relations[1]["relation_index"],
-                        "relationship": "support",
-                        "evidence_ids": [behavior_id],
-                        "unresolved_gaps": [],
-                    },
-                    {
-                        "relation_index": relations[2]["relation_index"],
-                        "relationship": "support",
-                        "evidence_ids": [config_id],
-                        "unresolved_gaps": [],
-                    },
-                    {
-                        "relation_index": relations[3]["relation_index"],
-                        "relationship": "missing",
-                        "evidence_ids": [],
-                        "unresolved_gaps": ["Observed after patching."],
-                    },
-                ]
-            }
+            return _model_findings_response(
+                {
+                    "findings": [
+                        {
+                            "relation_index": relations[0]["relation_index"],
+                            "relationship": "support",
+                            "evidence_ids": [behavior_id],
+                            "unresolved_gaps": [],
+                        },
+                        {
+                            "relation_index": relations[1]["relation_index"],
+                            "relationship": "support",
+                            "evidence_ids": [behavior_id],
+                            "unresolved_gaps": [],
+                        },
+                        {
+                            "relation_index": relations[2]["relation_index"],
+                            "relationship": "support",
+                            "evidence_ids": [config_id],
+                            "unresolved_gaps": [],
+                        },
+                        {
+                            "relation_index": relations[3]["relation_index"],
+                            "relationship": "missing",
+                            "evidence_ids": [],
+                            "unresolved_gaps": ["Observed after patching."],
+                        },
+                    ]
+                }
+            )
         raise AssertionError(f"Unexpected role: {role}")
 
     provider = make_requirement_coverage_evidence_provider(
@@ -3692,17 +3921,19 @@ def test_formal_model_provider_graph_path_reaches_positive_plan(
             }
         if role == "requirement_findings":
             evidence_id = payload["source_observations"][0]["evidence_id"]
-            return {
-                "findings": [
-                    {
-                        "relation_index": relation["relation_index"],
-                        "relationship": "support",
-                        "evidence_ids": [evidence_id],
-                        "unresolved_gaps": [],
-                    }
-                    for relation in payload["relations"]
-                ]
-            }
+            return _model_findings_response(
+                {
+                    "findings": [
+                        {
+                            "relation_index": relation["relation_index"],
+                            "relationship": "support",
+                            "evidence_ids": [evidence_id],
+                            "unresolved_gaps": [],
+                        }
+                        for relation in payload["relations"]
+                    ]
+                }
+            )
         raise AssertionError(role)
 
     provider = make_requirement_coverage_evidence_provider(
