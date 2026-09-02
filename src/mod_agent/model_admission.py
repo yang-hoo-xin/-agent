@@ -11,6 +11,10 @@ from src.libs.llm import validate_loopback_http_base_url
 class ModelAdmissionError(RuntimeError):
     """A read-only local model identity or context gate failed."""
 
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
 
 def read_ollama_model_identity(base_url: str, model: str) -> dict[str, Any]:
     normalized = validate_loopback_http_base_url(base_url)
@@ -160,3 +164,57 @@ def validate_ollama_context_window(
     if requested_context_window > context_limit:
         raise ModelAdmissionError("OLLAMA_CONTEXT_WINDOW_EXCEEDS_MODEL_LIMIT")
     return context_limit
+
+
+def assert_ollama_model_identity_stable(
+    *, expected: Mapping[str, Any], observed: Mapping[str, Any]
+) -> None:
+    """Reject exact model-name or digest drift across one admitted run."""
+
+    if expected.get("name") != observed.get("name"):
+        raise ModelAdmissionError("OLLAMA_MODEL_NAME_DRIFT")
+    if expected.get("digest") != observed.get("digest"):
+        raise ModelAdmissionError("OLLAMA_MODEL_DIGEST_DRIFT")
+
+
+def local_no_external_disclosure_record() -> dict[str, Any]:
+    """Expose the existing exact local no-disclosure projection read-only."""
+
+    return {
+        "occurred": False,
+        "approved": False,
+        "approved_at": None,
+        "approval_id": None,
+        "approval_actor_type": None,
+        "consent_mechanism": None,
+        "provider_adapter": None,
+        "destination": None,
+        "approved_data_classes": [],
+        "requested_data_classes": [],
+        "scope": "this_run_only",
+        "reason": "local_model_execution",
+    }
+
+
+def local_model_admission_record(
+    *, model_identity: Mapping[str, Any], provider_adapter: str
+) -> dict[str, Any]:
+    """Expose the existing exact local model-admission projection read-only."""
+
+    base_url = str(model_identity["base_url"])
+    return {
+        "provider": "ollama",
+        "model": str(model_identity["name"]),
+        "model_digest": str(model_identity["digest"]),
+        "provider_adapter": provider_adapter,
+        "execution_locality": "local",
+        "base_url": base_url,
+        "destination": f"{base_url}/api/chat",
+        "external_disclosure_occurred": False,
+        "api_key_required": False,
+        "api_key_read": False,
+        "api_key_persisted": False,
+        "automatic_provider_fallback": False,
+        "automatic_external_retry": False,
+        "data_processing_location": "machine_local",
+    }

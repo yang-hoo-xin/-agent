@@ -73,6 +73,9 @@ from src.mod_agent.product_execution import (
 )
 from src.mod_agent.model_admission import (
     ModelAdmissionError,
+    assert_ollama_model_identity_stable as _shared_assert_ollama_model_identity_stable,
+    local_model_admission_record,
+    local_no_external_disclosure_record,
     read_ollama_model_identity as _shared_read_ollama_model_identity,
     read_ollama_server_version as _shared_read_ollama_server_version,
     select_ollama_model_identity as _shared_select_ollama_model_identity,
@@ -87,8 +90,6 @@ from src.mod_agent.product_executor import (
     ProductExecutionPresentationError,
     _bind_owner_validated_runtime_evidence_factory,
     _external_model_admission_record,
-    _local_model_admission_record,
-    _local_no_external_disclosure_record,
     _runtime_admission_record,
     _sanitized_endpoint_url,
     _source_disclosure_record,
@@ -97,6 +98,10 @@ from src.mod_agent.product_executor import (
     preflight_product_execution,
     source_snapshot as _product_source_snapshot,
     source_snapshot_sha256 as _product_source_snapshot_sha256,
+)
+from src.mod_agent.requirement_coverage_model import (
+    parse_requirement_coverage_json_object,
+    request_requirement_coverage_model,
 )
 from src.mod_agent.runtime import (
     GTFORuntimeAutomationError,
@@ -181,6 +186,10 @@ from src.mod_agent.verification_operations import (
     resolve_verification_operation,
     validate_verification_operation_envelope,
 )
+
+_request_requirement_coverage_model = request_requirement_coverage_model
+_local_model_admission_record = local_model_admission_record
+_local_no_external_disclosure_record = local_no_external_disclosure_record
 
 
 class EditAuthorityPresentationError(LocalEntryError):
@@ -4526,8 +4535,8 @@ def run_local_request(
                 raise LocalEntryError(
                     "Local Repair model selection did not create OllamaLLM."
                 )
-        source_disclosure = _local_no_external_disclosure_record()
-        model_admission = _local_model_admission_record(
+        source_disclosure = local_no_external_disclosure_record()
+        model_admission = local_model_admission_record(
             model_identity=local_model_identity,
             provider_adapter=f"{type(llm).__module__}.{type(llm).__qualname__}",
         )
@@ -5072,7 +5081,7 @@ def run_local_request(
             )
         exact_payload = dict(payload)
         _assert_no_absolute_local_paths(exact_payload)
-        response, provider_request = _request_requirement_coverage_model(
+        response, provider_request = request_requirement_coverage_model(
             llm=llm,
             payload=exact_payload,
             schema=schema,
@@ -5123,13 +5132,7 @@ def run_local_request(
             local_model_input_audit = audit
         else:
             external_model_input_audit = audit
-        try:
-            structured_output = json.loads(response.content)
-        except json.JSONDecodeError as exc:
-            raise ValueError("REQUIREMENT_COVERAGE_MODEL_INVALID_JSON") from exc
-        if not isinstance(structured_output, dict):
-            raise ValueError("REQUIREMENT_COVERAGE_MODEL_OUTPUT_NOT_OBJECT")
-        return structured_output
+        return parse_requirement_coverage_json_object(response.content)
 
     requirement_coverage_provider = make_requirement_coverage_evidence_provider(
         evidence_provider,
@@ -11839,58 +11842,6 @@ def _source_snapshot_sha256(snapshot: list[dict[str, Any]]) -> str:
     return _product_source_snapshot_sha256(snapshot)
 
 
-def _request_requirement_coverage_model(
-    *,
-    llm: Any,
-    payload: Mapping[str, Any],
-    schema: Mapping[str, Any],
-    max_output_tokens: int,
-    capture_provider_request: bool,
-) -> tuple[ChatResponse, dict[str, Any]]:
-    """Execute one strict admitted coverage turn without interpreting semantics."""
-
-    provider_request: dict[str, Any] = {}
-
-    def record_provider_request(value: dict[str, Any]) -> None:
-        provider_request.update(
-            {
-                key: item
-                for key, item in value.items()
-                if key != "body_utf8"
-            }
-        )
-
-    response = llm.chat(
-        [
-            Message(
-                role="system",
-                content=(
-                    "Return one strict JSON object matching the native response "
-                    "schema. Do not return reasoning, markdown, stable identities, "
-                    "sufficiency, edit authority, or execution authority."
-                ),
-            ),
-            Message(
-                role="user",
-                content=json.dumps(
-                    dict(payload),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
-            ),
-        ],
-        temperature=0.0,
-        max_tokens=max_output_tokens,
-        response_format=dict(schema),
-        provider_request_recorder=(
-            record_provider_request if capture_provider_request else None
-        ),
-    )
-    if not isinstance(response, ChatResponse):
-        raise ValueError("REQUIREMENT_COVERAGE_MODEL_RESPONSE_INVALID")
-    return response, provider_request
-
-
 def _sha256_json(value: Any) -> str:
     payload = json.dumps(
         value,
@@ -12167,10 +12118,13 @@ def _assert_ollama_model_identity_stable(
     expected: Mapping[str, Any],
     observed: Mapping[str, Any],
 ) -> None:
-    if expected.get("name") != observed.get("name"):
-        raise LocalEntryError("OLLAMA_MODEL_NAME_DRIFT")
-    if expected.get("digest") != observed.get("digest"):
-        raise LocalEntryError("OLLAMA_MODEL_DIGEST_DRIFT")
+    try:
+        _shared_assert_ollama_model_identity_stable(
+            expected=expected,
+            observed=observed,
+        )
+    except ModelAdmissionError as exc:
+        raise LocalEntryError(str(exc)) from exc
 
 
 def _verify_source_disclosure(

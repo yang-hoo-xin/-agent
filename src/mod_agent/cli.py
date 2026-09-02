@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -22,6 +23,13 @@ from .edit_authority_capabilities import (
 )
 from .evidence import R8EvidenceError, R8ILInspectionError
 from .evidence_only import EvidenceOnlyError, run_gtfo_r8_evidence_only
+from .fresh_coverage import (
+    FreshCoverageError,
+    blocked_fresh_coverage_result,
+    create_local_ollama_requirement_coverage_completion,
+    load_feature_spec_payload,
+    run_fresh_requirement_coverage,
+)
 from .intelligent_evidence_only import (
     IntelligentEvidenceEntryError,
     run_intelligent_evidence_only,
@@ -642,6 +650,42 @@ def build_parser(
     evidence_parser.add_argument("--enemy-animation-fix-path")
     evidence_parser.add_argument("--stuck-enemy-fix-path")
 
+    fresh_coverage_parser = subparsers.add_parser(
+        "fresh-coverage",
+        help=(
+            "Run requirement projection, current-source rg retrieval, findings, "
+            "and deterministic coverage resolution, then stop."
+        ),
+    )
+    fresh_coverage_parser.add_argument("--feature-spec", required=True)
+    fresh_coverage_parser.add_argument("--workspace-root", required=True)
+    fresh_coverage_parser.add_argument("--search-root", required=True)
+    fresh_coverage_parser.add_argument("--artifact-root", required=True)
+    fresh_coverage_parser.add_argument(
+        "--settings", default="config/settings.yaml"
+    )
+    fresh_coverage_parser.add_argument(
+        "--local-ollama",
+        action="store_true",
+        help=(
+            "Explicitly select loopback-only Ollama execution; external model "
+            "disclosure is not admitted by fresh-coverage."
+        ),
+    )
+    fresh_coverage_parser.add_argument(
+        "--ollama-base-url", default="http://127.0.0.1:11434"
+    )
+    fresh_coverage_parser.add_argument("--ollama-model")
+    fresh_coverage_parser.add_argument(
+        "--ollama-context-window", type=int
+    )
+    fresh_coverage_parser.add_argument(
+        "--ollama-output-budget", type=int, default=4096
+    )
+    fresh_coverage_parser.add_argument(
+        "--ollama-timeout-seconds", type=float
+    )
+
     intelligent_evidence_parser = subparsers.add_parser(
         "intelligent-evidence-request",
         help="Let the Evidence specialist select read-only assembly tools and stop after evidence.",
@@ -1245,6 +1289,56 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser = build_parser(_prepare_continuation=prepare_continuation)
     args = parser.parse_args(selected_argv)
+
+    if args.command == "fresh-coverage":
+        fresh_coverage_started = time.perf_counter()
+        try:
+            if not args.local_ollama:
+                raise FreshCoverageError(
+                    "FRESH_COVERAGE_MODEL_BOUNDARY_NOT_AUTHORIZED",
+                    "model_admission",
+                    "fresh-coverage requires explicit --local-ollama.",
+                )
+            feature_data = load_feature_spec_payload(args.feature_spec)
+            completion = create_local_ollama_requirement_coverage_completion(
+                settings_path=args.settings,
+                ollama_base_url=args.ollama_base_url,
+                ollama_model=args.ollama_model,
+                ollama_context_window=args.ollama_context_window,
+                ollama_output_budget=args.ollama_output_budget,
+                ollama_timeout_seconds=args.ollama_timeout_seconds,
+            )
+            result = run_fresh_requirement_coverage(
+                feature_data=feature_data,
+                workspace_root=args.workspace_root,
+                search_root=args.search_root,
+                artifact_root=args.artifact_root,
+                completion=completion,
+            )
+        except (FreshCoverageError, OSError, RuntimeError, ValueError) as exc:
+            failure_code = getattr(
+                exc,
+                "code",
+                "FRESH_COVERAGE_EXECUTION_FAILED",
+            )
+            failure_stage = getattr(exc, "stage", "requirement_coverage")
+            result = blocked_fresh_coverage_result(
+                code=failure_code,
+                stage=failure_stage,
+                reason=failure_code,
+                duration_seconds=time.perf_counter() - fresh_coverage_started,
+            )
+        print(
+            json.dumps(
+                result.to_dict(),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        if result.status == "terminal":
+            return 0
+        return 1 if result.evidence_pack_artifact is not None else 2
 
     if args.command == "plan-request":
         result = plan_request(

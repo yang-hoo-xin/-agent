@@ -43,6 +43,10 @@ from src.mod_agent.product_execution import (
 from src.mod_agent.workflow.graph import build_graph
 from src.mod_agent.workflow.state import create_initial_state
 from src.mod_agent.git.admission import GitAdmissionError, StrictGitAdmission
+from src.mod_agent.model_admission import (
+    local_model_admission_record,
+    local_no_external_disclosure_record,
+)
 
 
 SOURCE_DISCLOSURE_DATA_CLASSES = (
@@ -434,42 +438,16 @@ def _validated_disclosure_data_classes(
 
 
 def _local_no_external_disclosure_record() -> dict[str, Any]:
-    return {
-        "occurred": False,
-        "approved": False,
-        "approved_at": None,
-        "approval_id": None,
-        "approval_actor_type": None,
-        "consent_mechanism": None,
-        "provider_adapter": None,
-        "destination": None,
-        "approved_data_classes": [],
-        "requested_data_classes": [],
-        "scope": "this_run_only",
-        "reason": "local_model_execution",
-    }
+    return local_no_external_disclosure_record()
 
 
 def _local_model_admission_record(
     *, model_identity: Mapping[str, Any], provider_adapter: str
 ) -> dict[str, Any]:
-    base_url = str(model_identity["base_url"])
-    return {
-        "provider": "ollama",
-        "model": str(model_identity["name"]),
-        "model_digest": str(model_identity["digest"]),
-        "provider_adapter": provider_adapter,
-        "execution_locality": "local",
-        "base_url": base_url,
-        "destination": f"{base_url}/api/chat",
-        "external_disclosure_occurred": False,
-        "api_key_required": False,
-        "api_key_read": False,
-        "api_key_persisted": False,
-        "automatic_provider_fallback": False,
-        "automatic_external_retry": False,
-        "data_processing_location": "machine_local",
-    }
+    return local_model_admission_record(
+        model_identity=model_identity,
+        provider_adapter=provider_adapter,
+    )
 
 
 def _external_model_admission_record(

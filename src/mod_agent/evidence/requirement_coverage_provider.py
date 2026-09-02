@@ -495,10 +495,15 @@ class StructuredModelRequirementCoverageProvider:
     def __init__(self, complete_json: StructuredJsonCompletion) -> None:
         self.complete_json = complete_json
         self._projection_attempt_audit: list[dict[str, object]] = []
+        self._findings_attempt_audit: list[dict[str, object]] = []
 
     @property
     def projection_attempt_audit(self) -> tuple[dict[str, object], ...]:
         return tuple(dict(item) for item in self._projection_attempt_audit)
+
+    @property
+    def findings_attempt_audit(self) -> tuple[dict[str, object], ...]:
+        return tuple(dict(item) for item in self._findings_attempt_audit)
 
     def project(
         self,
@@ -754,6 +759,7 @@ class StructuredModelRequirementCoverageProvider:
         retrieved_pack: EvidencePack,
         request: str,
     ) -> Mapping[str, Any]:
+        self._findings_attempt_audit = []
         relation_indexes = [
             int(relation["provenance"]["relation_index"])
             for relation in materialized_projection["relations"]
@@ -855,6 +861,13 @@ class StructuredModelRequirementCoverageProvider:
                 findings=findings,
             )
         except ValueError as exc:
+            self._findings_attempt_audit.append(
+                {
+                    "attempt_index": 1,
+                    "status": "rejected",
+                    "error_code": str(exc),
+                }
+            )
             correction = {
                 **payload,
                 "message_type": "product_requirement_findings_correction",
@@ -869,21 +882,45 @@ class StructuredModelRequirementCoverageProvider:
                     "one findings_by_relation entry per listed relation_index."
                 ),
             }
-            raw_corrected = self.complete_json(
-                "requirement_findings_correction", correction, schema
-            )
-            corrected = _materialize_requirement_findings_response(
-                raw_corrected,
-                schema=schema,
-                relation_indexes=relation_indexes,
-            )
-            resolve_requirement_coverage(
-                query=request,
-                materialized_projection=materialized_projection,
-                items=retrieved_pack.items,
-                findings=corrected,
+            try:
+                raw_corrected = self.complete_json(
+                    "requirement_findings_correction", correction, schema
+                )
+                corrected = _materialize_requirement_findings_response(
+                    raw_corrected,
+                    schema=schema,
+                    relation_indexes=relation_indexes,
+                )
+                resolve_requirement_coverage(
+                    query=request,
+                    materialized_projection=materialized_projection,
+                    items=retrieved_pack.items,
+                    findings=corrected,
+                )
+            except ValueError as corrected_exc:
+                self._findings_attempt_audit.append(
+                    {
+                        "attempt_index": 2,
+                        "status": "rejected",
+                        "error_code": str(corrected_exc),
+                    }
+                )
+                raise
+            self._findings_attempt_audit.append(
+                {
+                    "attempt_index": 2,
+                    "status": "accepted",
+                    "error_code": None,
+                }
             )
             return corrected
+        self._findings_attempt_audit.append(
+            {
+                "attempt_index": 1,
+                "status": "accepted",
+                "error_code": None,
+            }
+        )
         return findings
 
 
@@ -964,6 +1001,7 @@ class RequirementCoverageEvidenceProvider:
         provider_failure_codes: list[str] = []
         provider_failure_diagnostics: list[dict[str, object]] = []
         projection_attempt_audit: list[dict[str, object]] = []
+        findings_attempt_audit: list[dict[str, object]] = []
         if self.semantic_provider is not None:
             try:
                 projection = self.semantic_provider.project(
@@ -1014,6 +1052,14 @@ class RequirementCoverageEvidenceProvider:
                 except ValueError as exc:
                     provider_failure_codes.append(str(exc))
                     findings = {"findings": []}
+            if isinstance(
+                self.semantic_provider,
+                StructuredModelRequirementCoverageProvider,
+            ):
+                findings_attempt_audit = [
+                    dict(item)
+                    for item in self.semantic_provider.findings_attempt_audit
+                ]
         elif self.findings_factory is not None:
             findings = self.findings_factory(materialized, retrieved)
         else:
@@ -1024,7 +1070,11 @@ class RequirementCoverageEvidenceProvider:
             retrieved_pack=retrieved,
             findings=findings,
         )
-        if projection_attempt_audit or provider_failure_diagnostics:
+        if (
+            projection_attempt_audit
+            or findings_attempt_audit
+            or provider_failure_diagnostics
+        ):
             pack = replace(
                 pack,
                 budget_summary={
@@ -1034,6 +1084,9 @@ class RequirementCoverageEvidenceProvider:
                     ),
                     "semantic_provider_failure_diagnostics": (
                         provider_failure_diagnostics
+                    ),
+                    "requirement_findings_attempt_audit": (
+                        findings_attempt_audit
                     ),
                 },
             )
