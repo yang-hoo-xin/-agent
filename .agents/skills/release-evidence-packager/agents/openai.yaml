@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Evidence Packager"
+  short_description: "Package verified release evidence without overstating claims"
+  default_prompt: "Use $release-evidence-packager to generate release artifacts from explicitly supplied evidence."

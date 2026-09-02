@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bounded Task Handoff"
+  short_description: "Create a bounded, evidence-based implementation handoff"
+  default_prompt: "Use $bounded-task-handoff to create one bounded implementation handoff from explicit task inputs."
