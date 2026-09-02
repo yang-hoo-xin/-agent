@@ -31,8 +31,9 @@ dependencies = [
     "mcp>=1.0.0,<2.0.0",
     "jieba>=0.42",
     "markitdown[pdf]>=0.1.0",
+    "pymupdf>=1.24.0",
     "streamlit>=1.39.0",
-    "ragas>=0.1.0",
+    "ragas>=0.4,<0.5",
     "datasets>=2.0.0",
 ]
 
@@ -50,6 +51,9 @@ dev = [
 
 [tool.uv]
 constraint-dependencies = [
+    # Remove when Ragas no longer imports the removed VertexAI shim (#2745/#2753).
+    "langchain-community<0.4.2",
+    # Remove if Python 3.10 support ends or newer ONNX Runtime restores cp310 wheels.
     "onnxruntime<1.24; python_version < '3.11'",
 ]
 

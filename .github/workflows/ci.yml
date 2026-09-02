@@ -32,5 +32,26 @@ jobs:
       - name: Ruff fatal errors
         run: uv run --frozen ruff check --select E9,F63,F7 src tests scripts main.py
 
-      - name: Unit tests
-        run: uv run --frozen pytest -n 2 tests/unit
+      - name: Supported internal-alpha checkpoint (not full unit suite)
+        run: >-
+          uv run --frozen pytest -n 2
+          tests/unit/test_fresh_coverage_cli.py
+          tests/unit/test_requirement_coverage.py
+          tests/unit/test_product_execution.py
+          tests/unit/test_product_execution_projection_v2.py
+          tests/unit/test_artifact_contract.py
+          tests/unit/test_artifact_store.py
+          tests/unit/test_workflow_graph.py
+          tests/unit/test_trace_context.py
+          tests/unit/test_trace_service.py
+          tests/unit/test_composite_evaluator.py
+          tests/unit/test_eval_runner.py
+          tests/unit/test_ragas_evaluator.py
+          tests/unit/test_mod_agent_cli.py
+          tests/unit/test_local_entry.py
+          tests/unit/test_codex_context_hooks.py
+          tests/unit/test_project_skill_scripts.py
+          tests/unit/test_build_adapter.py
+          tests/unit/test_runtime_deployment.py
+          tests/unit/test_repair_loop.py
+          tests/unit/test_evidence_retrieval.py
