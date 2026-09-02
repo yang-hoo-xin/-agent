@@ -1,0 +1,34 @@
+{
+  "description": "Bounded project context snapshots for compaction and resume.",
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "^(manual|auto)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/context_snapshot.py\" pre_compact",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -Command \"$repo = (& git rev-parse --show-toplevel).Trim(); python -B (Join-Path $repo '.codex/hooks/context_snapshot.py') pre_compact\"",
+            "timeout": 10,
+            "statusMessage": "Saving bounded workspace context"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "^(compact|resume)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/context_snapshot.py\" session_start",
+            "commandWindows": "powershell.exe -NoProfile -NonInteractive -Command \"$repo = (& git rev-parse --show-toplevel).Trim(); python -B (Join-Path $repo '.codex/hooks/context_snapshot.py') session_start\"",
+            "timeout": 10,
+            "statusMessage": "Restoring bounded workspace context",
+            "additionalContextLimit": 1200
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -116,6 +116,8 @@ traces.jsonl
 # project-owned workflow skills; keep .github/workflows/ available for CI.
 .claude/
 .github/skills/
+.codex/.runtime/
+.codex/task-packet.json
 
 # Auto-coder skill cache
 .github/skills/auto-coder/.spec_hash
