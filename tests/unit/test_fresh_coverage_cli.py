@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -16,6 +17,7 @@ from src.mod_agent.cli import main
 from src.mod_agent.evidence import EvidencePack
 from src.mod_agent.fresh_coverage import (
     FreshCoverageError,
+    FreshCoverageProgressReporter,
     LocalOllamaRequirementCoverageCompletion,
     create_local_ollama_requirement_coverage_completion,
 )
@@ -86,6 +88,7 @@ def _real_ollama_llm(completion, monkeypatch) -> OllamaLLM:
     )
 
     def chat(messages, **kwargs):
+        assert kwargs.get("stream_response") is True
         payload = json.loads(messages[1].content)
         role = {
             "product_requirement_projection": "requirement_projection",
@@ -101,6 +104,16 @@ def _real_ollama_llm(completion, monkeypatch) -> OllamaLLM:
         recorder = kwargs.get("provider_request_recorder")
         if callable(recorder):
             recorder({"body_sha256": "b" * 64, "body_utf8": "not retained"})
+        activity_recorder = kwargs.get("stream_activity_recorder")
+        if callable(activity_recorder):
+            activity_recorder(
+                {
+                    "chunk_index": 1,
+                    "done": True,
+                    "content_utf8_bytes": 17,
+                    "cumulative_content_utf8_bytes": 17,
+                }
+            )
         return ChatResponse(
             content=json.dumps(value, ensure_ascii=False),
             model="test-coverage-model",
@@ -315,6 +328,122 @@ def test_local_ollama_completion_composes_exact_admission_and_shared_adapter(
     assert completion.model_admission["source_disclosure"]["occurred"] is False
     assert completion.model_admission["automatic_provider_fallback"] is False
     assert completion.model_admission["automatic_external_retry"] is False
+    assert completion.model_admission["response_transport"] == (
+        "ollama_ndjson_stream_v1"
+    )
+    assert completion.model_admission["provider_request_resumable"] is False
+    assert completion.model_admission["stream_content_disclosed"] is False
+
+
+def test_progress_reporter_heartbeats_before_and_after_stream_activity() -> None:
+    events: list[dict[str, object]] = []
+    heartbeat_observed = threading.Event()
+    post_stream_heartbeat_observed = threading.Event()
+
+    def sink(event: dict[str, object]) -> None:
+        events.append(event)
+        if event["event"] == "heartbeat":
+            heartbeat_observed.set()
+            if event["stream_chunk_count"] == 1:
+                post_stream_heartbeat_observed.set()
+
+    reporter = FreshCoverageProgressReporter(
+        sink,
+        heartbeat_interval_seconds=0.01,
+        execution_id="fresh-test-execution",
+    )
+    reporter.start()
+    reporter.model_call_started(
+        role="requirement_projection",
+        attempt_index=1,
+    )
+    assert heartbeat_observed.wait(1.0)
+    reporter.record_stream_activity(
+        {
+            "chunk_index": 1,
+            "done": False,
+            "content_utf8_bytes": 4,
+        }
+    )
+    assert post_stream_heartbeat_observed.wait(1.0)
+    reporter.model_call_finished(status="succeeded", error_code=None)
+    reporter.finish(status="terminal", terminal_stage="requirement_coverage")
+    event_count_after_finish = len(events)
+    threading.Event().wait(0.03)
+
+    assert len(events) == event_count_after_finish
+    heartbeat = next(event for event in events if event["event"] == "heartbeat")
+    assert heartbeat["execution_id"] == "fresh-test-execution"
+    assert heartbeat["claim_scope"] == "operational_liveness_only"
+    assert heartbeat["heartbeat_interval_seconds"] == 0.01
+    assert heartbeat["model_role"] == "requirement_projection"
+    assert heartbeat["attempt_index"] == 1
+    assert heartbeat["stream_chunk_count"] == 0
+    assert heartbeat["stream_content_utf8_bytes"] == 0
+    assert heartbeat["seconds_since_stream_activity"] is None
+    assert "content" not in heartbeat
+    assert [event["sequence"] for event in events] == list(
+        range(1, len(events) + 1)
+    )
+    first_stream_state = next(
+        event for event in events if event["stream_chunk_count"] == 1
+    )
+    assert first_stream_state["event"] == "stream_started"
+    assert events[-1]["event"] == "run_finished"
+
+
+def test_progress_reporter_sink_failure_is_non_authoritative() -> None:
+    reporter = FreshCoverageProgressReporter(
+        lambda _event: (_ for _ in ()).throw(RuntimeError("sink failed")),
+        heartbeat_interval_seconds=0.01,
+        execution_id="fresh-failing-sink",
+    )
+
+    reporter.start()
+    reporter.model_call_started(
+        role="requirement_projection",
+        attempt_index=1,
+    )
+    reporter.record_stream_activity(
+        {
+            "chunk_index": 1,
+            "done": True,
+            "content_utf8_bytes": 1,
+        }
+    )
+    reporter.model_call_finished(status="succeeded", error_code=None)
+    reporter.finish(status="terminal", terminal_stage="requirement_coverage")
+
+
+def test_progress_reporter_thread_start_failure_is_non_authoritative(
+    monkeypatch,
+) -> None:
+    events: list[dict[str, object]] = []
+
+    def fail_start(_thread) -> None:
+        raise RuntimeError("thread start failed")
+
+    monkeypatch.setattr(threading.Thread, "start", fail_start)
+    reporter = FreshCoverageProgressReporter(
+        events.append,
+        heartbeat_interval_seconds=0.01,
+        execution_id="fresh-thread-start-failure",
+    )
+
+    reporter.start()
+    reporter.model_call_started(
+        role="requirement_projection",
+        attempt_index=1,
+    )
+    reporter.model_call_finished(status="succeeded", error_code=None)
+    reporter.finish(status="terminal", terminal_stage="requirement_coverage")
+
+    unavailable = next(
+        event for event in events if event["event"] == "heartbeat_unavailable"
+    )
+    assert unavailable["status"] == "degraded"
+    assert unavailable["error_code"] == "FRESH_COVERAGE_HEARTBEAT_START_FAILED"
+    assert events[-1]["event"] == "run_finished"
 
 
 @pytest.mark.parametrize("drift_read_index", [2, 3])
@@ -451,9 +580,16 @@ def _run_cli(
     monkeypatch,
 ) -> int:
     adapter = _local_completion(completion, monkeypatch)
+
+    def create_completion(**kwargs):
+        adapter.stream_activity_recorder = kwargs.get(
+            "stream_activity_recorder"
+        )
+        return adapter
+
     monkeypatch.setattr(
         "src.mod_agent.cli.create_local_ollama_requirement_coverage_completion",
-        lambda **_kwargs: adapter,
+        create_completion,
     )
     monkeypatch.setattr(
         "src.mod_agent.fresh_coverage.read_ollama_model_identity",
@@ -523,7 +659,11 @@ def test_fresh_coverage_cli_persists_success_and_stops_before_planning(
         monkeypatch=monkeypatch,
     )
 
-    result = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    progress_events = [
+        json.loads(line) for line in captured.err.splitlines() if line.strip()
+    ]
     _assert_result_shape(result)
     assert exit_code == 0
     assert result["status"] == "terminal"
@@ -562,6 +702,31 @@ def test_fresh_coverage_cli_persists_success_and_stops_before_planning(
     assert result["source_modified"] is False
     assert hashlib.sha256(source.read_bytes()).hexdigest() == source_before
     assert roles == result["model_execution"]["roles"]
+    assert progress_events[0]["event"] == "run_started"
+    assert progress_events[-1]["event"] == "run_finished"
+    assert {
+        event["event"] for event in progress_events
+    } >= {
+        "model_call_started",
+        "stream_started",
+        "stream_completed",
+        "model_call_finished",
+    }
+    execution_ids = {event["execution_id"] for event in progress_events}
+    assert len(execution_ids) == 1
+    assert all(
+        event["progress_type"] == "fresh_coverage_progress_v1"
+        for event in progress_events
+    )
+    progress_text = captured.err
+    for forbidden in (
+        "Change the marker to ChangeMarker.",
+        "generated_mods/SyntheticMod",
+        str(workspace),
+        '"message_type"',
+        '"findings_by_relation"',
+    ):
+        assert forbidden not in progress_text
 
     store = ArtifactStore(tmp_path / "artifacts")
     evidence = store.read(ArtifactRef(**result["evidence_pack_artifact"]))["data"]
@@ -803,7 +968,11 @@ def test_fresh_coverage_cli_provider_runtime_error_retains_failed_attempt(
         monkeypatch=monkeypatch,
     )
 
-    result = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    progress_events = [
+        json.loads(line) for line in captured.err.splitlines() if line.strip()
+    ]
     _assert_result_shape(result)
     assert exit_code == 2
     assert result["status"] == "blocked"
@@ -814,6 +983,9 @@ def test_fresh_coverage_cli_provider_runtime_error_retains_failed_attempt(
     }
     assert result["reason"] == "FRESH_COVERAGE_MODEL_COMPLETION_FAILED"
     assert "injected provider failure" not in json.dumps(result)
+    assert "injected provider failure" not in captured.err
+    assert progress_events[-1]["event"] == "run_finished"
+    assert progress_events[-1]["status"] == "blocked"
     assert result["readiness"] is None
     assert result["can_generate_patch"] is False
     assert result["feature_spec_artifact"]["artifact_type"] == "feature_spec"

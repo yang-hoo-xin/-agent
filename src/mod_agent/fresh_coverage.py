@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import threading
 import time
+import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +42,8 @@ StructuredJsonCompletion = Callable[
 ]
 
 FRESH_COVERAGE_RESULT_TYPE = "fresh_requirement_coverage_result_v1"
+FRESH_COVERAGE_PROGRESS_TYPE = "fresh_coverage_progress_v1"
+FRESH_COVERAGE_HEARTBEAT_INTERVAL_SECONDS = 15.0
 FRESH_COVERAGE_MODEL_CALL_BUDGET = {
     "requirement_projection": 1,
     "requirement_projection_correction": 1,
@@ -72,6 +77,209 @@ class FreshCoverageError(ValueError):
         self.code = code
         self.stage = stage
         self.reason = reason
+
+
+class FreshCoverageProgressReporter:
+    """Emit content-free progress plus an independent periodic heartbeat."""
+
+    def __init__(
+        self,
+        sink: Callable[[dict[str, Any]], None],
+        *,
+        heartbeat_interval_seconds: float = (
+            FRESH_COVERAGE_HEARTBEAT_INTERVAL_SECONDS
+        ),
+        execution_id: str | None = None,
+    ) -> None:
+        if not callable(sink):
+            raise ValueError("Fresh coverage progress sink must be callable.")
+        if (
+            isinstance(heartbeat_interval_seconds, bool)
+            or not isinstance(heartbeat_interval_seconds, (int, float))
+            or not math.isfinite(float(heartbeat_interval_seconds))
+            or heartbeat_interval_seconds <= 0
+        ):
+            raise ValueError(
+                "Fresh coverage heartbeat interval must be positive and finite."
+            )
+        if execution_id is not None and (
+            not isinstance(execution_id, str) or not execution_id.strip()
+        ):
+            raise ValueError("Fresh coverage execution_id must be non-empty.")
+        self.execution_id = execution_id or uuid.uuid4().hex
+        self._sink = sink
+        self._interval = float(heartbeat_interval_seconds)
+        self._lock = threading.Lock()
+        self._emit_lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._sequence = 0
+        self._started_at: float | None = None
+        self._stage = "model_admission"
+        self._model_role: str | None = None
+        self._attempt_index: int | None = None
+        self._stream_chunk_count = 0
+        self._stream_content_utf8_bytes = 0
+        self._last_stream_activity_at: float | None = None
+
+    def start(self) -> None:
+        with self._lock:
+            if self._started_at is not None:
+                raise RuntimeError("Fresh coverage progress reporter already started.")
+            self._started_at = time.perf_counter()
+        self._emit("run_started", status="running")
+        try:
+            thread = threading.Thread(
+                target=self._heartbeat_loop,
+                name=f"fresh-coverage-heartbeat-{self.execution_id[:8]}",
+                daemon=True,
+            )
+            thread.start()
+        except RuntimeError:
+            self._emit(
+                "heartbeat_unavailable",
+                status="degraded",
+                extra={
+                    "error_code": "FRESH_COVERAGE_HEARTBEAT_START_FAILED"
+                },
+            )
+            return
+        self._thread = thread
+
+    def set_stage(self, stage: str) -> None:
+        if not isinstance(stage, str) or not stage.strip():
+            raise ValueError("Fresh coverage progress stage must be non-empty.")
+        with self._lock:
+            self._stage = stage
+
+    def model_call_started(self, *, role: str, attempt_index: int) -> None:
+        with self._emit_lock:
+            with self._lock:
+                self._stage = "requirement_coverage"
+                self._model_role = role
+                self._attempt_index = attempt_index
+                self._stream_chunk_count = 0
+                self._stream_content_utf8_bytes = 0
+                self._last_stream_activity_at = None
+            self._emit_locked("model_call_started", status="running")
+
+    def model_call_finished(
+        self,
+        *,
+        status: str,
+        error_code: str | None,
+    ) -> None:
+        with self._emit_lock:
+            self._emit_locked(
+                "model_call_finished",
+                status=status,
+                extra={"error_code": error_code},
+            )
+            with self._lock:
+                self._model_role = None
+                self._attempt_index = None
+
+    def record_stream_activity(self, event: Mapping[str, Any]) -> None:
+        chunk_index = event.get("chunk_index")
+        content_bytes = event.get("content_utf8_bytes")
+        done = event.get("done")
+        if (
+            isinstance(chunk_index, bool)
+            or not isinstance(chunk_index, int)
+            or chunk_index <= 0
+            or isinstance(content_bytes, bool)
+            or not isinstance(content_bytes, int)
+            or content_bytes < 0
+            or type(done) is not bool
+        ):
+            return
+        with self._emit_lock:
+            now = time.perf_counter()
+            with self._lock:
+                first_chunk = self._stream_chunk_count == 0
+                self._stream_chunk_count = chunk_index
+                self._stream_content_utf8_bytes += content_bytes
+                self._last_stream_activity_at = now
+            if first_chunk:
+                self._emit_locked("stream_started", status="running")
+            if done:
+                self._emit_locked("stream_completed", status="running")
+
+    def finish(self, *, status: str, terminal_stage: str) -> None:
+        self.stop_heartbeat()
+        with self._emit_lock:
+            with self._lock:
+                self._stage = terminal_stage
+            self._emit_locked("run_finished", status=status)
+
+    def stop_heartbeat(self) -> None:
+        """Stop periodic emission without claiming that result output succeeded."""
+
+        self._stop.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=max(1.0, self._interval))
+            self._thread = None
+
+    def _heartbeat_loop(self) -> None:
+        while not self._stop.wait(self._interval):
+            self._emit("heartbeat", status="running")
+
+    def _emit(
+        self,
+        event: str,
+        *,
+        status: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        with self._emit_lock:
+            self._emit_locked(event, status=status, extra=extra)
+
+    def _emit_locked(
+        self,
+        event: str,
+        *,
+        status: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        with self._lock:
+            self._sequence += 1
+            started_at = self._started_at
+            now = time.perf_counter()
+            elapsed_seconds = (
+                max(0.0, now - started_at) if started_at is not None else 0.0
+            )
+            seconds_since_stream_activity = (
+                None
+                if self._last_stream_activity_at is None
+                else max(0.0, now - self._last_stream_activity_at)
+            )
+            payload: dict[str, Any] = {
+                "progress_type": FRESH_COVERAGE_PROGRESS_TYPE,
+                "claim_scope": "operational_liveness_only",
+                "event": event,
+                "sequence": self._sequence,
+                "execution_id": self.execution_id,
+                "emitted_at": datetime.now(timezone.utc).isoformat(),
+                "status": status,
+                "stage": self._stage,
+                "heartbeat_interval_seconds": self._interval,
+                "model_role": self._model_role,
+                "attempt_index": self._attempt_index,
+                "elapsed_seconds": elapsed_seconds,
+                "stream_chunk_count": self._stream_chunk_count,
+                "stream_content_utf8_bytes": self._stream_content_utf8_bytes,
+                "seconds_since_stream_activity": (
+                    seconds_since_stream_activity
+                ),
+            }
+        if extra is not None:
+            payload.update(dict(extra))
+        try:
+            self._sink(payload)
+        except Exception:
+            # Operational progress must never change the product result.
+            return
 
 
 @dataclass(frozen=True)
@@ -135,8 +343,14 @@ class FreshCoverageResult:
 
 
 class _ModelCallLedger:
-    def __init__(self, complete_json: StructuredJsonCompletion) -> None:
+    def __init__(
+        self,
+        complete_json: StructuredJsonCompletion,
+        *,
+        progress_reporter: FreshCoverageProgressReporter | None = None,
+    ) -> None:
         self._complete_json = complete_json
+        self._progress_reporter = progress_reporter
         self.attempts: list[dict[str, Any]] = []
 
     @property
@@ -174,6 +388,11 @@ class _ModelCallLedger:
             "output_canonical_sha256": None,
         }
         self.attempts.append(attempt)
+        if self._progress_reporter is not None:
+            self._progress_reporter.model_call_started(
+                role=role,
+                attempt_index=attempt_index,
+            )
         try:
             output = self._complete_json(role, payload, schema)
             attempt["output_canonical_sha256"] = _canonical_sha256(output)
@@ -181,9 +400,19 @@ class _ModelCallLedger:
             attempt["duration_seconds"] = time.perf_counter() - started
             attempt["status"] = "failed"
             attempt["error_code"] = _exception_code(exc)
+            if self._progress_reporter is not None:
+                self._progress_reporter.model_call_finished(
+                    status="failed",
+                    error_code=str(attempt["error_code"]),
+                )
             raise
         attempt["duration_seconds"] = time.perf_counter() - started
         attempt["status"] = "succeeded"
+        if self._progress_reporter is not None:
+            self._progress_reporter.model_call_finished(
+                status="response_received",
+                error_code=None,
+            )
         return output
 
     def to_dict(self, *, admission: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -283,6 +512,9 @@ class LocalOllamaRequirementCoverageCompletion:
         context_window: int,
         output_budget: int,
         server_version: str,
+        stream_activity_recorder: (
+            Callable[[dict[str, Any]], None] | None
+        ) = None,
     ) -> None:
         try:
             normalized_base_url = validate_loopback_http_base_url(base_url)
@@ -307,6 +539,14 @@ class LocalOllamaRequirementCoverageCompletion:
             model_identity,
             requested_context_window=context_window,
         )
+        if stream_activity_recorder is not None and not callable(
+            stream_activity_recorder
+        ):
+            raise FreshCoverageError(
+                "FRESH_COVERAGE_STREAM_ACTIVITY_RECORDER_INVALID",
+                "model_admission",
+                "Fresh coverage stream activity recorder must be callable.",
+            )
         self.llm = llm
         self.base_url = normalized_base_url
         self.model = model
@@ -314,6 +554,7 @@ class LocalOllamaRequirementCoverageCompletion:
         self.context_window = context_window
         self.output_budget = output_budget
         self.server_version = server_version
+        self.stream_activity_recorder = stream_activity_recorder
         self.model_admission = {
             **local_model_admission_record(
                 model_identity=self.model_identity,
@@ -322,6 +563,9 @@ class LocalOllamaRequirementCoverageCompletion:
             "ollama_server_version": server_version,
             "context_window": context_window,
             "output_budget": output_budget,
+            "response_transport": "ollama_ndjson_stream_v1",
+            "provider_request_resumable": False,
+            "stream_content_disclosed": False,
             "source_disclosure": local_no_external_disclosure_record(),
         }
 
@@ -358,6 +602,8 @@ class LocalOllamaRequirementCoverageCompletion:
             schema=schema,
             max_output_tokens=self.output_budget,
             capture_provider_request=True,
+            stream_response=True,
+            stream_activity_recorder=self.stream_activity_recorder,
         )
         _validate_llm_binding(
             self.llm,
@@ -419,6 +665,7 @@ def create_local_ollama_requirement_coverage_completion(
     ollama_context_window: int,
     ollama_output_budget: int,
     ollama_timeout_seconds: float | None = None,
+    stream_activity_recorder: Callable[[dict[str, Any]], None] | None = None,
 ) -> LocalOllamaRequirementCoverageCompletion:
     """Create an explicitly selected local-only coverage completion adapter."""
 
@@ -498,6 +745,7 @@ def create_local_ollama_requirement_coverage_completion(
         context_window=ollama_context_window,
         output_budget=ollama_output_budget,
         server_version=server_version,
+        stream_activity_recorder=stream_activity_recorder,
     )
 
 
@@ -509,6 +757,7 @@ def run_fresh_requirement_coverage(
     artifact_root: str | Path,
     completion: StructuredJsonCompletion,
     rg_executable: str = "rg",
+    progress_reporter: FreshCoverageProgressReporter | None = None,
 ) -> FreshCoverageResult:
     """Run projection, live rg retrieval, findings, and resolution, then stop."""
 
@@ -569,7 +818,11 @@ def run_fresh_requirement_coverage(
             "Fresh coverage requires an unblocked FeatureSpec payload.",
         )
 
+    if progress_reporter is not None:
+        progress_reporter.set_stage("source_integrity")
     source_before = _source_snapshot(search)
+    if progress_reporter is not None:
+        progress_reporter.set_stage("artifact_store")
     store = ArtifactStore(artifact_store_root)
     feature_ref = store.write(
         feature_id=feature_id,
@@ -577,11 +830,16 @@ def run_fresh_requirement_coverage(
         payload=dict(feature_data),
         status="success",
     )
-    ledger = _ModelCallLedger(completion)
+    ledger = _ModelCallLedger(
+        completion,
+        progress_reporter=progress_reporter,
+    )
     provider = make_requirement_coverage_evidence_provider(
         RgLiveEvidenceProvider(workspace, rg_executable=rg_executable),
         complete_json=ledger.complete,
     )
+    if progress_reporter is not None:
+        progress_reporter.set_stage("requirement_coverage")
     try:
         pack = provider.collect(
             query=query,
@@ -624,6 +882,8 @@ def run_fresh_requirement_coverage(
         )
     ledger.apply_provider_attempt_audits(pack.budget_summary)
     model_execution = ledger.to_dict(admission=model_admission)
+    if progress_reporter is not None:
+        progress_reporter.set_stage("source_integrity")
     try:
         source_after = _source_snapshot(search)
     except OSError:
@@ -695,6 +955,8 @@ def run_fresh_requirement_coverage(
         budget_summary=pack.budget_summary,
         roles=ledger.roles,
     )
+    if progress_reporter is not None:
+        progress_reporter.set_stage("evidence_pack_store")
     try:
         evidence_write = store.write_with_result(
             feature_id=feature_id,

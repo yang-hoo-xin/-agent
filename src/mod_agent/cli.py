@@ -25,6 +25,7 @@ from .evidence import R8EvidenceError, R8ILInspectionError
 from .evidence_only import EvidenceOnlyError, run_gtfo_r8_evidence_only
 from .fresh_coverage import (
     FreshCoverageError,
+    FreshCoverageProgressReporter,
     blocked_fresh_coverage_result,
     create_local_ollama_requirement_coverage_completion,
     load_feature_spec_payload,
@@ -1279,6 +1280,14 @@ def _explicit_preflight_request_from_args(
     )
 
 
+def _write_fresh_coverage_progress(event: dict[str, object]) -> None:
+    print(
+        json.dumps(event, ensure_ascii=False, sort_keys=True),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the local controlled-development CLI."""
 
@@ -1292,6 +1301,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "fresh-coverage":
         fresh_coverage_started = time.perf_counter()
+        progress = FreshCoverageProgressReporter(_write_fresh_coverage_progress)
+        progress.start()
+        result = None
         try:
             if not args.local_ollama:
                 raise FreshCoverageError(
@@ -1307,6 +1319,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ollama_context_window=args.ollama_context_window,
                 ollama_output_budget=args.ollama_output_budget,
                 ollama_timeout_seconds=args.ollama_timeout_seconds,
+                stream_activity_recorder=progress.record_stream_activity,
             )
             result = run_fresh_requirement_coverage(
                 feature_data=feature_data,
@@ -1314,6 +1327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 search_root=args.search_root,
                 artifact_root=args.artifact_root,
                 completion=completion,
+                progress_reporter=progress,
             )
         except (FreshCoverageError, OSError, RuntimeError, ValueError) as exc:
             failure_code = getattr(
@@ -1328,13 +1342,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                 reason=failure_code,
                 duration_seconds=time.perf_counter() - fresh_coverage_started,
             )
-        print(
-            json.dumps(
-                result.to_dict(),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
+        except BaseException:
+            progress.finish(
+                status="failed",
+                terminal_stage="execution",
             )
+            raise
+        assert result is not None
+        progress.stop_heartbeat()
+        try:
+            print(
+                json.dumps(
+                    result.to_dict(),
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+        except BaseException:
+            progress.finish(status="failed", terminal_stage="result_output")
+            raise
+        progress.finish(
+            status=result.status,
+            terminal_stage=result.terminal_stage,
         )
         if result.status == "terminal":
             return 0

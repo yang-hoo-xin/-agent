@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
@@ -294,7 +294,8 @@ class OllamaLLM(BaseLLM):
         Args:
             messages: List of conversation messages.
             trace: Optional TraceContext for observability (reserved for Stage F).
-            **kwargs: Override parameters (temperature, max_tokens, etc.).
+            **kwargs: Override parameters. ``stream_response`` is immediate
+                transport only and does not create a resumable frozen request.
         
         Returns:
             ChatResponse with generated content and metadata.
@@ -312,10 +313,22 @@ class OllamaLLM(BaseLLM):
         model = kwargs.get("model", self.model)
         response_format = kwargs.get("response_format")
         provider_request_recorder = kwargs.get("provider_request_recorder")
+        stream_response = kwargs.get("stream_response", False)
+        stream_activity_recorder = kwargs.get("stream_activity_recorder")
         if response_format is not None and not isinstance(response_format, Mapping):
             raise ValueError("Ollama response_format must be a JSON Schema object.")
         if provider_request_recorder is not None and not callable(provider_request_recorder):
             raise ValueError("Ollama provider_request_recorder must be callable.")
+        if type(stream_response) is not bool:
+            raise ValueError("Ollama stream_response must be a boolean.")
+        if stream_activity_recorder is not None and not callable(
+            stream_activity_recorder
+        ):
+            raise ValueError("Ollama stream_activity_recorder must be callable.")
+        if stream_activity_recorder is not None and not stream_response:
+            raise ValueError(
+                "Ollama stream_activity_recorder requires stream_response=true."
+            )
         
         # Convert messages to Ollama API format
         api_messages = [{"role": m.role, "content": m.content} for m in messages]
@@ -332,6 +345,8 @@ class OllamaLLM(BaseLLM):
                     dict(response_format) if response_format is not None else None
                 ),
                 provider_request_recorder=provider_request_recorder,
+                stream_response=stream_response,
+                stream_activity_recorder=stream_activity_recorder,
             )
             if response_format is not None:
                 content, usage = self._admit_chat_response(
@@ -436,6 +451,8 @@ class OllamaLLM(BaseLLM):
             headers=dict(request["headers"]),
             payload=None,
             frozen_request_bytes=str(request["body_utf8"]).encode("utf-8"),
+            stream_response=False,
+            stream_activity_recorder=None,
         )
         content, usage = self._admit_chat_response(
             response_data,
@@ -474,6 +491,8 @@ class OllamaLLM(BaseLLM):
         context_window: int | None = None,
         response_format: Dict[str, Any] | None = None,
         provider_request_recorder: Callable[[dict[str, Any]], None] | None = None,
+        stream_response: bool = False,
+        stream_activity_recorder: Callable[[dict[str, Any]], None] | None = None,
     ) -> Dict[str, Any]:
         """Make the actual API call to Ollama.
         
@@ -508,7 +527,7 @@ class OllamaLLM(BaseLLM):
         payload = {
             "model": model,
             "messages": messages,
-            "stream": False,  # Disable streaming for synchronous response
+            "stream": stream_response,
             "options": options,
         }
         frozen_request_bytes: bytes | None = None
@@ -521,6 +540,7 @@ class OllamaLLM(BaseLLM):
                 context_window=context_window,
                 response_format=response_format,
                 provider_request_recorder=provider_request_recorder,
+                stream_response=stream_response,
             )
             frozen_request_bytes = str(frozen_request["body_utf8"]).encode("utf-8")
             headers = dict(frozen_request["headers"])
@@ -532,6 +552,8 @@ class OllamaLLM(BaseLLM):
             headers=headers,
             payload=payload,
             frozen_request_bytes=frozen_request_bytes,
+            stream_response=stream_response,
+            stream_activity_recorder=stream_activity_recorder,
         )
 
     def _prepare_structured_api_request(
@@ -544,10 +566,17 @@ class OllamaLLM(BaseLLM):
         context_window: int | None,
         response_format: Dict[str, Any],
         provider_request_recorder: Callable[[dict[str, Any]], None] | None,
+        stream_response: bool = False,
     ) -> dict[str, Any]:
+        """Build one exact immediate request and record its transport facts.
+
+        Only ``prepare_structured_chat`` creates a resumable frozen request; it
+        always uses the existing non-streaming transport profile.
+        """
+
         if provider_request_recorder is None:
             raise OllamaLLMError(
-                "[Ollama] Structured patch generation requires a durable "
+                "[Ollama] Structured generation requires a durable "
                 "provider request recorder.",
                 diagnostics={
                     "failure_boundary": "provider_request_gate",
@@ -563,7 +592,7 @@ class OllamaLLM(BaseLLM):
         payload = {
             "model": model,
             "messages": deepcopy(messages),
-            "stream": False,
+            "stream": stream_response,
             "options": options,
             "think": False,
             "format": deepcopy(response_format),
@@ -799,6 +828,8 @@ class OllamaLLM(BaseLLM):
         headers: Mapping[str, str],
         payload: Mapping[str, Any] | None,
         frozen_request_bytes: bytes | None,
+        stream_response: bool,
+        stream_activity_recorder: Callable[[dict[str, Any]], None] | None,
     ) -> Dict[str, Any]:
         import httpx
 
@@ -808,6 +839,41 @@ class OllamaLLM(BaseLLM):
                 trust_env=False,
                 follow_redirects=False,
             ) as client:
+                if stream_response:
+                    if frozen_request_bytes is None:
+                        stream_context = client.stream(
+                            "POST",
+                            url,
+                            json=dict(payload or {}),
+                            headers=dict(headers),
+                        )
+                    else:
+                        stream_context = client.stream(
+                            "POST",
+                            url,
+                            content=frozen_request_bytes,
+                            headers=dict(headers),
+                        )
+                    with stream_context as response:
+                        if response.status_code != 200:
+                            try:
+                                response.read()
+                            except httpx.RequestError:
+                                pass
+                            error_detail = self._parse_error_response(response)
+                            raise OllamaLLMError(
+                                "[Ollama] Streaming API error "
+                                f"(HTTP {response.status_code}): {error_detail}",
+                                diagnostics={
+                                    "failure_boundary": "provider_response_admission",
+                                    "failure_classification": "provider_http_error",
+                                    "http_status": response.status_code,
+                                },
+                            )
+                        return self._collect_streaming_response(
+                            response,
+                            activity_recorder=stream_activity_recorder,
+                        )
                 if frozen_request_bytes is None:
                     response = client.post(url, json=payload, headers=dict(headers))
                 else:
@@ -877,13 +943,216 @@ class OllamaLLM(BaseLLM):
                 },
             ) from e
 
+    def _collect_streaming_response(
+        self,
+        response: Any,
+        *,
+        activity_recorder: Callable[[dict[str, Any]], None] | None,
+    ) -> Dict[str, Any]:
+        """Accumulate one Ollama NDJSON response without exposing its content."""
+
+        content_parts: list[str] = []
+        thinking_parts: list[str] = []
+        tool_calls: list[Any] = []
+        final_chunk: dict[str, Any] | None = None
+        observed_model: str | None = None
+        cumulative_content_bytes = 0
+        chunk_index = 0
+
+        for line in self._iter_strict_stream_lines(response):
+            if not line.strip():
+                continue
+            if final_chunk is not None:
+                raise OllamaLLMError(
+                    "[Ollama] Streaming response continued after completion.",
+                    diagnostics={
+                        "failure_boundary": "provider_response_admission",
+                        "failure_classification": "provider_stream_trailing_data",
+                    },
+                )
+            try:
+                chunk = _strict_frozen_provider_json(line)
+            except (TypeError, ValueError) as exc:
+                raise OllamaLLMError(
+                    "[Ollama] Streaming response chunk is not valid JSON.",
+                    diagnostics={
+                        "failure_boundary": "provider_response_admission",
+                        "failure_classification": (
+                            "provider_stream_json_decoding_failure"
+                        ),
+                    },
+                ) from exc
+            if not isinstance(chunk, dict):
+                raise OllamaLLMError(
+                    "[Ollama] Streaming response chunk must be an object.",
+                    diagnostics={
+                        "failure_boundary": "provider_response_admission",
+                        "failure_classification": "provider_stream_chunk_shape_failure",
+                    },
+                )
+            if "error" in chunk:
+                raise OllamaLLMError(
+                    "[Ollama] Streaming response reported an error.",
+                    diagnostics={
+                        "failure_boundary": "provider_response_admission",
+                        "failure_classification": "provider_stream_error",
+                    },
+                )
+
+            chunk_model = chunk.get("model")
+            if not isinstance(chunk_model, str) or not chunk_model:
+                raise OllamaLLMError(
+                    "[Ollama] Streaming response model is invalid.",
+                    diagnostics={
+                        "failure_boundary": "provider_response_admission",
+                        "failure_classification": "provider_stream_model_shape_failure",
+                    },
+                )
+            if observed_model is None:
+                observed_model = chunk_model
+            elif chunk_model != observed_model:
+                raise OllamaLLMError(
+                    "[Ollama] Streaming response model identity changed.",
+                    diagnostics={
+                        "failure_boundary": "provider_response_admission",
+                        "failure_classification": (
+                            "provider_stream_model_identity_drift"
+                        ),
+                    },
+                )
+
+            done = chunk.get("done")
+            message = chunk.get("message")
+            if type(done) is not bool or not isinstance(message, dict):
+                raise OllamaLLMError(
+                    "[Ollama] Streaming response chunk shape is invalid.",
+                    diagnostics={
+                        "failure_boundary": "provider_response_admission",
+                        "failure_classification": "provider_stream_chunk_shape_failure",
+                    },
+                )
+            content = message.get("content", "")
+            thinking = message.get("thinking", "")
+            raw_tool_calls = message.get("tool_calls", [])
+            if (
+                not isinstance(content, str)
+                or (
+                    thinking is not None
+                    and not isinstance(thinking, str)
+                )
+                or (
+                    raw_tool_calls is not None
+                    and not isinstance(raw_tool_calls, list)
+                )
+            ):
+                raise OllamaLLMError(
+                    "[Ollama] Streaming response message shape is invalid.",
+                    diagnostics={
+                        "failure_boundary": "provider_response_admission",
+                        "failure_classification": "provider_stream_message_shape_failure",
+                    },
+                )
+            content_parts.append(content)
+            if thinking:
+                thinking_parts.append(thinking)
+            if raw_tool_calls:
+                tool_calls.extend(raw_tool_calls)
+            content_bytes = len(content.encode("utf-8"))
+            cumulative_content_bytes += content_bytes
+            chunk_index += 1
+            self._record_stream_activity(
+                activity_recorder,
+                {
+                    "chunk_index": chunk_index,
+                    "done": done,
+                    "content_utf8_bytes": content_bytes,
+                    "cumulative_content_utf8_bytes": cumulative_content_bytes,
+                },
+            )
+            if done:
+                final_chunk = dict(chunk)
+
+        if final_chunk is None:
+            raise OllamaLLMError(
+                "[Ollama] Streaming response ended before completion.",
+                diagnostics={
+                    "failure_boundary": "provider_response_admission",
+                    "failure_classification": "provider_stream_incomplete",
+                },
+            )
+        final_message = dict(final_chunk["message"])
+        final_message["content"] = "".join(content_parts)
+        if thinking_parts:
+            final_message["thinking"] = "".join(thinking_parts)
+        if tool_calls:
+            final_message["tool_calls"] = tool_calls
+        final_chunk["message"] = final_message
+        final_chunk["stream_activity"] = {
+            "chunk_count": chunk_index,
+            "content_utf8_bytes": cumulative_content_bytes,
+        }
+        return final_chunk
+
+    @staticmethod
+    def _iter_strict_stream_lines(response: Any) -> Iterator[str]:
+        """Split NDJSON as bytes so malformed UTF-8 cannot be replaced."""
+
+        buffer = bytearray()
+
+        def decode_line(raw_line: bytes) -> str:
+            try:
+                return raw_line.decode("utf-8", errors="strict")
+            except UnicodeDecodeError as exc:
+                raise OllamaLLMError(
+                    "[Ollama] Streaming response is not valid UTF-8.",
+                    diagnostics={
+                        "failure_boundary": "provider_response_admission",
+                        "failure_classification": (
+                            "provider_stream_utf8_decoding_failure"
+                        ),
+                    },
+                ) from exc
+
+        for raw_chunk in response.iter_bytes():
+            if not isinstance(raw_chunk, (bytes, bytearray)):
+                raise OllamaLLMError(
+                    "[Ollama] Streaming response chunk has an invalid type.",
+                    diagnostics={
+                        "failure_boundary": "provider_response_admission",
+                        "failure_classification": "provider_stream_chunk_shape_failure",
+                    },
+                )
+            buffer.extend(raw_chunk)
+            while True:
+                newline_index = buffer.find(b"\n")
+                if newline_index < 0:
+                    break
+                raw_line = bytes(buffer[:newline_index])
+                del buffer[: newline_index + 1]
+                yield decode_line(raw_line)
+        if buffer:
+            yield decode_line(bytes(buffer))
+
+    @staticmethod
+    def _record_stream_activity(
+        recorder: Callable[[dict[str, Any]], None] | None,
+        event: dict[str, Any],
+    ) -> None:
+        if recorder is None:
+            return
+        try:
+            recorder(dict(event))
+        except Exception:
+            # Progress reporting is deliberately non-authoritative.
+            return
+
     def _admit_chat_response(
         self,
         response_data: Dict[str, Any],
         *,
         expected_model: str,
     ) -> tuple[str, dict[str, int] | None]:
-        """Apply the bounded non-streaming local response profile."""
+        """Apply the bounded complete local response profile."""
 
         response_model = response_data.get("model")
         done = response_data.get("done")
@@ -907,7 +1176,7 @@ class OllamaLLM(BaseLLM):
             )
         if done is not True:
             raise OllamaLLMError(
-                "[Ollama] Response is not a complete non-streaming completion.",
+                "[Ollama] Response is not a complete completion.",
                 diagnostics={
                     **diagnostics,
                     "failure_classification": "provider_response_incomplete",

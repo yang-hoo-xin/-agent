@@ -90,6 +90,32 @@ def make_error_response(
     return response
 
 
+def make_ollama_stream_response(
+    chunks: list[dict[str, Any] | str | bytes],
+    *,
+    status_code: int = 200,
+) -> MagicMock:
+    """Create one mocked NDJSON streaming response."""
+
+    response = MagicMock()
+    response.status_code = status_code
+    response.iter_bytes.return_value = [
+        (
+            item
+            if isinstance(item, bytes)
+            else (
+                item
+                if isinstance(item, str)
+                else json.dumps(item, ensure_ascii=False)
+            ).encode("utf-8")
+        )
+        + b"\n"
+        for item in chunks
+    ]
+    response.read.return_value = b""
+    return response
+
+
 # -----------------------------------------------------------------------------
 # Factory Registration Tests
 # -----------------------------------------------------------------------------
@@ -366,6 +392,200 @@ class TestOllamaChat:
             call_args = mock_client.return_value.__enter__.return_value.post.call_args
             payload = call_args.kwargs["json"]
             assert payload["stream"] is False
+
+    def test_structured_chat_streams_and_accumulates_content(self, llm):
+        schema = {
+            "type": "object",
+            "required": ["changes", "message"],
+            "properties": {
+                "changes": {"type": "array"},
+                "message": {"type": "string"},
+            },
+        }
+        chunks = [
+            {
+                "model": "llama3",
+                "message": {"role": "assistant", "content": '{"changes":[],'},
+                "done": False,
+            },
+            {
+                "model": "llama3",
+                "message": {"role": "assistant", "content": '"message":"完成😀"}'},
+                "done": False,
+            },
+            {
+                "model": "llama3",
+                "message": {"role": "assistant", "content": ""},
+                "done": True,
+                "done_reason": "stop",
+                "total_duration": 4_000_000_000,
+                "load_duration": 500_000_000,
+                "prompt_eval_count": 123,
+                "prompt_eval_duration": 1_000_000_000,
+                "eval_count": 17,
+                "eval_duration": 2_000_000_000,
+            },
+        ]
+        stream_response = make_ollama_stream_response(chunks)
+        activity: list[dict[str, Any]] = []
+        recorded: dict[str, Any] = {}
+
+        with patch("httpx.Client") as mock_client:
+            client = mock_client.return_value.__enter__.return_value
+            client.stream.return_value.__enter__.return_value = stream_response
+            result = llm.chat(
+                [Message(role="user", content="return structured JSON")],
+                temperature=0.0,
+                response_format=schema,
+                provider_request_recorder=recorded.update,
+                stream_response=True,
+                stream_activity_recorder=activity.append,
+            )
+
+        stream_call = client.stream.call_args
+        assert stream_call.args[:2] == (
+            "POST",
+            "http://localhost:11434/api/chat",
+        )
+        payload = json.loads(stream_call.kwargs["content"].decode("utf-8"))
+        assert payload["stream"] is True
+        assert (
+            recorded["body_utf8"].encode("utf-8")
+            == stream_call.kwargs["content"]
+        )
+        assert result.content == '{"changes":[],"message":"完成😀"}'
+        assert result.usage == {
+            "prompt_tokens": 123,
+            "completion_tokens": 17,
+            "total_tokens": 140,
+        }
+        assert result.raw_response["done"] is True
+        assert result.raw_response["done_reason"] == "stop"
+        assert result.raw_response["stream_activity"] == {
+            "chunk_count": 3,
+            "content_utf8_bytes": len(result.content.encode("utf-8")),
+        }
+        assert [item["chunk_index"] for item in activity] == [1, 2, 3]
+        assert [item["done"] for item in activity] == [False, False, True]
+        assert all(
+            set(item)
+            == {
+                "chunk_index",
+                "done",
+                "content_utf8_bytes",
+                "cumulative_content_utf8_bytes",
+            }
+            for item in activity
+        )
+        client.post.assert_not_called()
+
+        with pytest.raises(OllamaLLMError) as exc_info:
+            llm.validate_frozen_structured_chat(recorded)
+        assert exc_info.value.diagnostics["failure_classification"] == (
+            "frozen_provider_request_body_shape_invalid"
+        )
+        assert mock_client.call_count == 1
+
+    @pytest.mark.parametrize(
+        ("chunks", "classification"),
+        [
+            (
+                [
+                    {
+                        "model": "llama3",
+                        "message": {"role": "assistant", "content": "partial"},
+                        "done": False,
+                    },
+                    {"error": "private provider detail"},
+                ],
+                "provider_stream_error",
+            ),
+            (
+                [
+                    {
+                        "model": "llama3",
+                        "message": {"role": "assistant", "content": "partial"},
+                        "done": False,
+                    }
+                ],
+                "provider_stream_incomplete",
+            ),
+            (["not-json"], "provider_stream_json_decoding_failure"),
+            (
+                [b'{"model":"llama3","message":{"content":"\xff"},"done":true}'],
+                "provider_stream_utf8_decoding_failure",
+            ),
+            (
+                [
+                    {
+                        "model": "llama3",
+                        "message": {"role": "assistant", "content": "complete"},
+                        "done": True,
+                        "done_reason": "stop",
+                    },
+                    {
+                        "model": "llama3",
+                        "message": {"role": "assistant", "content": "trailing"},
+                        "done": False,
+                    },
+                ],
+                "provider_stream_trailing_data",
+            ),
+        ],
+    )
+    def test_streaming_response_failures_are_terminal_without_retry(
+        self,
+        llm,
+        chunks,
+        classification,
+    ):
+        stream_response = make_ollama_stream_response(chunks)
+
+        with patch("httpx.Client") as mock_client:
+            client = mock_client.return_value.__enter__.return_value
+            client.stream.return_value.__enter__.return_value = stream_response
+            with pytest.raises(OllamaLLMError) as exc_info:
+                llm.chat(
+                    [Message(role="user", content="return structured JSON")],
+                    response_format={"type": "object"},
+                    provider_request_recorder=lambda _request: None,
+                    stream_response=True,
+                )
+
+        assert (
+            exc_info.value.diagnostics["failure_classification"]
+            == classification
+        )
+        assert "private provider detail" not in str(exc_info.value)
+        assert client.stream.call_count == 1
+        client.post.assert_not_called()
+
+    def test_stream_activity_recorder_failure_does_not_change_result(self, llm):
+        stream_response = make_ollama_stream_response(
+            [
+                {
+                    "model": "llama3",
+                    "message": {"role": "assistant", "content": '{"ok":true}'},
+                    "done": True,
+                    "done_reason": "stop",
+                }
+            ]
+        )
+
+        with patch("httpx.Client") as mock_client:
+            client = mock_client.return_value.__enter__.return_value
+            client.stream.return_value.__enter__.return_value = stream_response
+            result = llm.chat(
+                [Message(role="user", content="return structured JSON")],
+                response_format={"type": "object"},
+                provider_request_recorder=lambda _request: None,
+                stream_response=True,
+                stream_activity_recorder=lambda _event: (_ for _ in ()).throw(
+                    RuntimeError("progress sink failed")
+                ),
+            )
+
+        assert result.content == '{"ok":true}'
 
     def test_structured_patch_request_is_frozen_recorded_then_sent(
         self,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from src.libs.llm import ChatResponse, Message
@@ -58,6 +58,8 @@ def request_requirement_coverage_model(
     schema: Mapping[str, Any],
     max_output_tokens: int,
     capture_provider_request: bool,
+    stream_response: bool = False,
+    stream_activity_recorder: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[ChatResponse, dict[str, Any]]:
     """Execute one strict admitted coverage turn without interpreting semantics."""
 
@@ -68,6 +70,18 @@ def request_requirement_coverage_model(
             {key: item for key, item in value.items() if key != "body_utf8"}
         )
 
+    chat_options: dict[str, Any] = {
+        "temperature": 0.0,
+        "max_tokens": max_output_tokens,
+        "response_format": dict(schema),
+        "provider_request_recorder": (
+            record_provider_request if capture_provider_request else None
+        ),
+    }
+    if stream_response:
+        chat_options["stream_response"] = True
+        if stream_activity_recorder is not None:
+            chat_options["stream_activity_recorder"] = stream_activity_recorder
     response = llm.chat(
         [
             Message(
@@ -87,12 +101,7 @@ def request_requirement_coverage_model(
                 ),
             ),
         ],
-        temperature=0.0,
-        max_tokens=max_output_tokens,
-        response_format=dict(schema),
-        provider_request_recorder=(
-            record_provider_request if capture_provider_request else None
-        ),
+        **chat_options,
     )
     if not isinstance(response, ChatResponse):
         raise ValueError("REQUIREMENT_COVERAGE_MODEL_RESPONSE_INVALID")
