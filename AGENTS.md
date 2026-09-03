@@ -49,6 +49,36 @@ output, community hints, historical artifacts, plans, diagrams, and frozen
 documents. Evidence describes what is true; it does not replace the authority
 order above.
 
+### 2.3 Regenerable Engineering Cognition
+
+- Keep two cognition systems distinct. Codex engineering cognition explains
+  this repository's entry surfaces, workflow and routes, Artifacts, owners,
+  state fields, tests, receipts, and current Git facts. Product Dependency/API
+  Evidence grounds the product Agent's understanding of a target Mod, game,
+  dependency APIs, usage, behavior, and verification. Neither proves the other.
+- For architecture, ownership, route, Artifact, field, or current-status
+  questions, first run
+  `python -m scripts.engineering_cognition --view summary --pretty`, then request
+  only the affected deeper view. Treat every result as a read-only, regenerable
+  projection, not durable state or an authority source.
+- Entry/Surface, Workflow/Route, Artifact DAG, Ownership/Authority,
+  Source/Dependency, API Usage, Behavior/Dataflow, and Verification/Claim are
+  on-demand query views. Do not persist them as eight graphs, add a second
+  `StateGraph`, create a cognition database or shadow registry, or make them a
+  new control plane.
+- Distinguish declarations, current observations, executed verification,
+  stale facts, and unknowns. A source or test reference is not an executed test;
+  a static edge is not a run; and none of these facts grants semantic, route,
+  write, approval, or claim authority.
+- Treat a stale `.codex/task-packet.json` as context only. It cannot select the
+  current task or override the user request, active contract, current source,
+  Git identity, tests, or current-run evidence.
+- Do not infer business semantics, the correct edit target, verified behavior,
+  or an executed Actual from a name, static edge, reachable Graph path,
+  contract declaration, test presence, or historical Artifact. Require an
+  explicit current owner and bound source/test/receipt/trace evidence;
+  otherwise report the limitation or `unknown`.
+
 ## 3. Task Entry And Capability-First Work
 
 - Do not execute platform expansion without a concrete product capability, real

@@ -493,6 +493,56 @@ failed the separate capability, convergence, and semantic gates. This is a
 recorded product failure, not authority to add a provider router, larger budget,
 new evidence tool, or Proposal stage.
 
+### 2.6 Two Cognition Systems And Regenerable Views
+
+Codex engineering cognition and product Dependency/API Evidence are separate
+systems. The former helps Codex navigate and change this platform repository;
+the latter helps the product Agent understand a target Mod, game, dependency,
+API usage, and behavior well enough to ground implementation. Engineering
+orientation is not product evidence, and product relevance is not repository
+or write authority.
+
+`python -m scripts.engineering_cognition --view summary --pretty` projects
+current source, Git, registries, tests, Artifact metadata, and available
+receipts into a bounded read-only orientation. Its query vocabulary is
+Entry/Surface, Workflow/Route, Artifact DAG, Ownership/Authority,
+Source/Dependency, API Usage, Behavior/Dataflow, and Verification/Claim. These
+are eight on-demand projections, not eight stored knowledge graphs or state
+stores. State/field producer-consumer facts are cross-cutting projections
+inside Workflow/Route and Ownership/Authority, not a ninth state machine. The
+default `summary` view is intentionally thin; deeper views run only for the
+selected question.
+
+The projection distinguishes source declarations, current observations,
+executed verification, stale context, and unknowns while retaining source
+references. Those distinctions describe evidence and freshness, not
+authority. Static reachability cannot establish semantic ownership, a correct
+modification target, or proof that an Actual ran. Actual history is reported
+only to the exact boundary supported by available structured run records. A
+task packet whose Git/task identity no longer matches is stale context only.
+
+The projection writes no product Artifact and adds no LangGraph node,
+cognition database, shadow registry, or route authority. The single existing
+LangGraph remains the workflow control plane; current contracts, explicit
+owners, Binding/Review rules, and human approval retain authority.
+
+Product Dependency/API Evidence is currently partial. `fresh-coverage` builds
+coverage from `RgLiveEvidenceProvider` over live target-workspace `*.cs`
+source. The repository separately has bounded assembly metadata/IL discovery
+through `LocalAssemblyEvidenceToolExecutor` and optional run-local direct
+Boolean member-access enrichment through `RunLocalMemberAccessResolver` in
+ProductExecution. Those pieces do not yet form a general documentation or
+reference-usage, call/read/write, lifecycle, or behavior-dataflow path into
+Fresh -> Planning -> Patch. The API views therefore expose current connection
+points and explicit unknowns; they do not claim general API-aware Mod
+implementation. Here, API "write" means generated Mod code invoking a mutating
+API member; it does not grant Evidence, RAG, or cognition tools filesystem-write
+authority.
+
+Current maturity: `implemented` for the tested read-only engineering
+projection; `partial` for product Dependency/API Evidence at the exact
+boundaries above.
+
 ## 3. Workflow, ReAct, And Specialist Roles
 
 The top-level product loop remains a controlled Workflow. This is deliberate:
@@ -764,6 +814,8 @@ Current maturity is split deliberately:
 | LangGraph StateGraph and conditional routing | Tested | One controlled graph owns the implemented route matrix |
 | Structured Evidence Agent turns | Qwen Chat and OpenAI Responses request/response mappings locally tested | Provider-neutral tool/final/usage semantics work inside the Evidence specialist; no real-provider semantic-quality claim |
 | Artifact lineage and hash binding | Tested on focused paths | Registered outputs retain current upstream refs and hashes |
+| Regenerable engineering cognition | Tested read-only projection over current repository facts | Bounded orientation and explicit unknown/stale reporting only; no durable state, product evidence, route, or authority claim |
+| Product Dependency/API Evidence | Partial: live target C# retrieval plus separate bounded metadata/IL and direct Boolean member-access paths | No general API documentation, usage, lifecycle, behavior-dataflow, or cross-Mod correctness claim |
 | Patch review, no-write dry-run, and exact approval | Verified on the narrow real run plus focused tests | Model output cannot directly authorize a write |
 | ProposalCritic local/injected assessment boundary | Tested for explicit not-required, required-success, and required-failure paths | No external-model or semantic-quality-improvement claim |
 | Two-level Critic and same-level specialist fan-out | `documented_only`; `conditional_trigger` not satisfied | No Worker self-check, parallel specialist execution, deterministic fusion, clean-context second-level Critic, or two-level-review claim |
