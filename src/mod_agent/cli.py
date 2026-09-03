@@ -41,6 +41,7 @@ from .fresh_planning_continuation import (
 )
 from .intelligent_evidence_only import (
     IntelligentEvidenceEntryError,
+    make_fresh_assisted_api_source_augmentation_factory,
     make_fresh_api_source_augmentation_factory,
     run_intelligent_evidence_only,
 )
@@ -696,6 +697,14 @@ def build_parser(
         "--ollama-timeout-seconds", type=float
     )
     fresh_coverage_parser.add_argument(
+        "--api-selection-mode",
+        choices=("autonomous", "assisted_explicit"),
+        help=(
+            "Explicitly select model-driven or operator-selected API symbol "
+            "resolution. Requires --api-source-registry and --api-source-id."
+        ),
+    )
+    fresh_coverage_parser.add_argument(
         "--api-source-registry",
         help=(
             "Enable same-run read-only API evidence augmentation from this "
@@ -707,6 +716,15 @@ def build_parser(
         help=(
             "Exact decompiled_api source_id selected for Fresh augmentation. "
             "Requires --api-source-registry."
+        ),
+    )
+    fresh_coverage_parser.add_argument(
+        "--api-symbol",
+        action="append",
+        default=[],
+        help=(
+            "One exact API method symbol selected by the operator. Repeat for "
+            "assisted_explicit mode; forbidden in autonomous mode."
         ),
     )
 
@@ -1375,13 +1393,46 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "model_admission",
                     "fresh-coverage requires explicit --local-ollama.",
                 )
-            if (args.api_source_registry is None) != (
-                args.api_source_id is None
+            api_symbols = tuple(args.api_symbol)
+            api_source_pair_complete = (
+                args.api_source_registry is not None
+                and args.api_source_id is not None
+            )
+            if args.api_selection_mode is None and (
+                args.api_source_registry is not None
+                or args.api_source_id is not None
+                or api_symbols
             ):
+                raise FreshCoverageError(
+                    "FRESH_COVERAGE_API_SELECTION_MODE_REQUIRED",
+                    "request",
+                    "API augmentation requires explicit --api-selection-mode.",
+                )
+            if args.api_selection_mode is not None and not api_source_pair_complete:
                 raise FreshCoverageError(
                     "FRESH_COVERAGE_API_SOURCE_SELECTION_INCOMPLETE",
                     "request",
                     "--api-source-registry and --api-source-id must be provided together.",
+                )
+            if args.api_selection_mode == "autonomous" and api_symbols:
+                raise FreshCoverageError(
+                    "FRESH_COVERAGE_AUTONOMOUS_API_SYMBOL_FORBIDDEN",
+                    "request",
+                    "autonomous API selection does not accept --api-symbol.",
+                )
+            if args.api_selection_mode == "assisted_explicit" and (
+                not api_symbols
+                or len(api_symbols) > 50
+                or any(
+                    not symbol or symbol != symbol.strip()
+                    for symbol in api_symbols
+                )
+                or len(api_symbols) != len(set(api_symbols))
+            ):
+                raise FreshCoverageError(
+                    "FRESH_COVERAGE_ASSISTED_API_SYMBOL_SELECTION_INVALID",
+                    "request",
+                    "assisted_explicit requires one to fifty unique exact --api-symbol values.",
                 )
             feature_data = load_feature_spec_payload(args.feature_spec)
             completion = create_local_ollama_requirement_coverage_completion(
@@ -1394,7 +1445,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 stream_activity_recorder=progress.record_stream_activity,
             )
             source_augmentation_factory = None
-            if args.api_source_registry is not None:
+            if args.api_selection_mode == "autonomous":
                 source_augmentation_factory = (
                     make_fresh_api_source_augmentation_factory(
                         request=str(feature_data["user_request"]),
@@ -1407,6 +1458,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                         ollama_max_output_tokens=completion.output_budget,
                         ollama_context_window=completion.context_window,
                         ollama_request_timeout_seconds=completion.llm.timeout,
+                    )
+                )
+            elif args.api_selection_mode == "assisted_explicit":
+                source_augmentation_factory = (
+                    make_fresh_assisted_api_source_augmentation_factory(
+                        request=str(feature_data["user_request"]),
+                        source_registry_path=args.api_source_registry,
+                        source_id=args.api_source_id,
+                        api_symbols=api_symbols,
                     )
                 )
             result = run_fresh_requirement_coverage(

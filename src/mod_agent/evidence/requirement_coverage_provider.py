@@ -1279,12 +1279,20 @@ def _strict_source_augmentation(
 ) -> EvidencePack:
     if not isinstance(value, EvidencePack):
         raise ValueError("SOURCE_AUGMENTATION_PACK_INVALID")
-    try:
-        admitted = EvidencePack.from_artifact_payload(
-            value.to_artifact_payload()
-        )
-    except (TypeError, ValueError) as exc:
-        raise ValueError("SOURCE_AUGMENTATION_PACK_INVALID") from exc
+    api_selection = value.provenance_validation.get("api_selection")
+    if (
+        isinstance(api_selection, dict)
+        and api_selection.get("mode") == "assisted_explicit"
+    ):
+        admitted = deepcopy(value)
+        _validate_assisted_explicit_source_augmentation(admitted)
+    else:
+        try:
+            admitted = EvidencePack.from_artifact_payload(
+                value.to_artifact_payload()
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("SOURCE_AUGMENTATION_PACK_INVALID") from exc
     if admitted.query != expected_query:
         raise ValueError("SOURCE_AUGMENTATION_QUERY_MISMATCH")
     if admitted.requirement_coverage is not None:
@@ -1296,6 +1304,80 @@ def _strict_source_augmentation(
     if not any(item.source_type == "decompiled_api" for item in admitted.items):
         raise ValueError("SOURCE_AUGMENTATION_API_EVIDENCE_MISSING")
     return admitted
+
+
+def _validate_assisted_explicit_source_augmentation(
+    pack: EvidencePack,
+) -> None:
+    api_selection = pack.provenance_validation.get("api_selection")
+    if not isinstance(api_selection, dict) or set(api_selection) != {
+        "mode",
+        "selector_source",
+        "requested_symbols",
+        "resolved_symbols",
+    }:
+        raise ValueError("SOURCE_AUGMENTATION_ASSISTED_SELECTION_INVALID")
+    requested = api_selection.get("requested_symbols")
+    resolved = api_selection.get("resolved_symbols")
+    if (
+        api_selection.get("mode") != "assisted_explicit"
+        or api_selection.get("selector_source") != "operator"
+        or not isinstance(requested, list)
+        or not requested
+        or any(
+            not isinstance(symbol, str)
+            or not symbol
+            or symbol != symbol.strip()
+            for symbol in requested
+        )
+        or len(requested) != len(set(requested))
+        or resolved != requested
+    ):
+        raise ValueError("SOURCE_AUGMENTATION_ASSISTED_SELECTION_INVALID")
+    if (
+        pack.readiness != "partial"
+        or pack.can_generate_patch is not False
+        or pack.run_status != "completed"
+        or pack.hook_discovery is not None
+        or pack.agent_discovery is not None
+        or pack.requirement_coverage is not None
+        or pack.model_action_trace
+    ):
+        raise ValueError("SOURCE_AUGMENTATION_ASSISTED_BOUNDARY_INVALID")
+    if pack.model_identity != {
+        "execution_kind": "not_invoked",
+        "provider": None,
+        "model": None,
+    }:
+        raise ValueError("SOURCE_AUGMENTATION_ASSISTED_MODEL_IDENTITY_INVALID")
+    if pack.input_audit != {
+        "manual_symbol_count": len(requested),
+        "manual_tool_sequence_count": 0,
+        "precomputed_report_count": 0,
+        "operator_intervention_count": 1,
+    }:
+        raise ValueError("SOURCE_AUGMENTATION_ASSISTED_INPUT_AUDIT_INVALID")
+    if pack.budget_summary != {
+        "api_selection_mode": "assisted_explicit",
+        "selector_source": "operator",
+        "tool_calls_used": len(requested) + 1,
+        "model_steps_used": 0,
+    }:
+        raise ValueError("SOURCE_AUGMENTATION_ASSISTED_BUDGET_INVALID")
+    if (
+        pack.provenance_validation.get(
+            "all_explicit_symbols_resolved_exactly_once"
+        )
+        is not True
+        or pack.provenance_validation.get("target_code_executed") is not False
+    ):
+        raise ValueError("SOURCE_AUGMENTATION_ASSISTED_PROVENANCE_INVALID")
+    item_symbols = [item.symbol for item in pack.items]
+    if item_symbols != requested or any(
+        item.retrieval_method != "operator_selected_cli_metadata_il_read"
+        for item in pack.items
+    ):
+        raise ValueError("SOURCE_AUGMENTATION_ASSISTED_ITEM_SELECTION_INVALID")
 
 
 def _valid_source_augmentation_item(item: EvidenceItem) -> bool:

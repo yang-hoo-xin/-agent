@@ -7,6 +7,7 @@ import json
 import os
 import traceback
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -244,13 +245,202 @@ def make_fresh_api_source_augmentation_factory(
         _materialized_projection: Mapping[str, Any],
         _retrieved_pack: EvidencePack,
     ) -> EvidencePack:
-        return evidence_factory(
+        pack = evidence_factory(
             {
                 "run_id": f"fresh_api_augmentation_{uuid4().hex}",
                 "request_id": f"request_{uuid4().hex}",
                 "user_request": request,
             },
             {"target_behavior": request},
+        )
+        return replace(
+            pack,
+            provenance_validation={
+                **pack.provenance_validation,
+                "api_selection": {
+                    "mode": "autonomous",
+                    "selector_source": "model",
+                },
+            },
+        )
+
+    return augment
+
+
+def make_fresh_assisted_api_source_augmentation_factory(
+    *,
+    request: str,
+    source_registry_path: str | Path,
+    source_id: str,
+    api_symbols: tuple[str, ...],
+    inspector_path: str | Path = _DEFAULT_INSPECTOR,
+) -> Callable[[Mapping[str, Any], EvidencePack], EvidencePack]:
+    """Build one operator-selected, current-assembly API augmentation for Fresh."""
+
+    if not isinstance(request, str) or not request.strip():
+        raise IntelligentEvidenceEntryError(
+            "Fresh API source augmentation requires a non-empty request."
+        )
+    symbols = tuple(api_symbols)
+    if (
+        not symbols
+        or len(symbols) > 50
+        or any(
+            not isinstance(symbol, str)
+            or not symbol
+            or symbol != symbol.strip()
+            for symbol in symbols
+        )
+        or len(symbols) != len(set(symbols))
+    ):
+        raise IntelligentEvidenceEntryError(
+            "Fresh assisted API symbols must be one to fifty unique exact strings."
+        )
+    sources = tuple(
+        source
+        for source in load_evidence_discovery_sources(source_registry_path)
+        if source.source_id == source_id
+    )
+    if len(sources) != 1 or sources[0].source_type != "decompiled_api":
+        raise IntelligentEvidenceEntryError(
+            "Fresh API source_id must select exactly one decompiled_api source."
+        )
+    source = sources[0]
+    if not {
+        "search_dotnet_metadata",
+        "inspect_method_il",
+    }.issubset(source.allowed_tools):
+        raise IntelligentEvidenceEntryError(
+            "Fresh assisted API source must allow metadata search and exact IL inspection."
+        )
+    executor = LocalAssemblyEvidenceToolExecutor.from_inspector(inspector_path)
+
+    def augment(
+        _materialized_projection: Mapping[str, Any],
+        _retrieved_pack: EvidencePack,
+    ) -> EvidencePack:
+        run_id = f"fresh_api_augmentation_{uuid4().hex}"
+        executor.begin_run(run_id=run_id)
+        search_observation = executor.execute(
+            action={
+                "tool": "search_dotnet_metadata",
+                "arguments": {
+                    "queries": list(symbols),
+                    "result_kinds": ["methods"],
+                    "limit_per_kind": 50,
+                },
+            },
+            source=source,
+            observation_id="obs-001",
+        )
+        methods = search_observation.data.get("methods")
+        if not isinstance(methods, list):
+            raise IntelligentEvidenceEntryError(
+                "Fresh assisted API metadata result must contain methods."
+            )
+        if search_observation.data.get("results_truncated") is not False:
+            raise IntelligentEvidenceEntryError(
+                "Fresh assisted API metadata result must be complete."
+            )
+        selected_rows: list[dict[str, object]] = []
+        for symbol in symbols:
+            exact_rows = [
+                row
+                for row in methods
+                if isinstance(row, dict) and row.get("symbol") == symbol
+            ]
+            if len(exact_rows) != 1:
+                raise IntelligentEvidenceEntryError(
+                    "Each Fresh assisted API symbol must resolve exactly once."
+                )
+            selected_rows.append(exact_rows[0])
+
+        inspections = []
+        for index, row in enumerate(selected_rows, start=2):
+            inspection = executor.execute(
+                action={
+                    "tool": "inspect_method_il",
+                    "arguments": {"candidate_ref": row["candidate_ref"]},
+                },
+                source=source,
+                observation_id=f"obs-{index:03d}",
+            )
+            if (
+                len(inspection.evidence_items) != 1
+                or inspection.evidence_items[0].symbol
+                != symbols[index - 2]
+            ):
+                raise IntelligentEvidenceEntryError(
+                    "Fresh assisted API inspection identity did not match its exact symbol."
+                )
+            inspections.append(inspection)
+
+        observations = (search_observation, *inspections)
+        items = tuple(
+            replace(
+                observation.evidence_items[0],
+                retrieval_method="operator_selected_cli_metadata_il_read",
+            )
+            for observation in inspections
+        )
+        return EvidencePack(
+            query=request,
+            readiness="partial",
+            can_generate_patch=False,
+            items=items,
+            retrieval_methods_used=(
+                "search_dotnet_metadata",
+                "inspect_method_il",
+            ),
+            budget_summary={
+                "api_selection_mode": "assisted_explicit",
+                "selector_source": "operator",
+                "tool_calls_used": len(observations),
+                "model_steps_used": 0,
+            },
+            trace_refs=tuple(
+                observation.observation_id for observation in observations
+            ),
+            run_status="completed",
+            tool_trace_summary=tuple(
+                {
+                    "observation_id": observation.observation_id,
+                    "tool": observation.tool,
+                    "source_id": observation.source_id,
+                    "summary": observation.summary,
+                }
+                for observation in observations
+            ),
+            model_identity={
+                "execution_kind": "not_invoked",
+                "provider": None,
+                "model": None,
+            },
+            provenance_validation={
+                "run_id": run_id,
+                "api_selection": {
+                    "mode": "assisted_explicit",
+                    "selector_source": "operator",
+                    "requested_symbols": list(symbols),
+                    "resolved_symbols": [str(item.symbol) for item in items],
+                },
+                "all_explicit_symbols_resolved_exactly_once": True,
+                "target_code_executed": False,
+            },
+            input_audit={
+                "manual_symbol_count": len(symbols),
+                "manual_tool_sequence_count": 0,
+                "precomputed_report_count": 0,
+                "operator_intervention_count": 1,
+            },
+            intelligence_transfer={
+                "symbol_discovery_by_platform": False,
+                "evidence_interpretation_by_platform": False,
+            },
+            message=(
+                "Operator-selected API symbols were resolved against the current "
+                "assembly and inspected without target-code execution."
+            ),
         )
 
     return augment

@@ -14,7 +14,14 @@ from src.core.settings import load_settings
 from src.libs.llm import ChatResponse, OllamaLLM
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.cli import main
-from src.mod_agent.evidence import EvidenceDiscoverySource, EvidencePack
+from src.mod_agent.evidence import (
+    EvidenceDiscoverySource,
+    EvidenceItem,
+    EvidencePack,
+)
+from src.mod_agent.evidence.requirement_coverage_provider import (
+    _strict_source_augmentation,
+)
 from src.mod_agent.fresh_coverage import (
     FreshCoverageError,
     FreshCoverageProgressReporter,
@@ -23,6 +30,8 @@ from src.mod_agent.fresh_coverage import (
     run_fresh_requirement_coverage,
 )
 from src.mod_agent.intelligent_evidence_only import (
+    IntelligentEvidenceEntryError,
+    make_fresh_assisted_api_source_augmentation_factory,
     make_fresh_api_source_augmentation_factory,
 )
 from src.mod_agent.model_admission import ModelAdmissionError
@@ -42,6 +51,105 @@ _MODEL_IDENTITY = {
     "capabilities": ["completion"],
     "base_url": "http://127.0.0.1:11434",
 }
+_API_SYMBOLS = (
+    "CrosshairGuiLayer.ShowSpreadCircle",
+    "GameData.ArchetypeDataBlock.get_AimSpread",
+    "GameData.ArchetypeDataBlock.get_HipFireSpread",
+)
+_API_SOURCE_ARGS = (
+    "--api-source-registry",
+    "source-registry.json",
+    "--api-source-id",
+    "current-interop",
+)
+
+
+def _assisted_api_source(
+    tmp_path: Path,
+    *,
+    allowed_tools: tuple[str, ...] = (
+        "search_dotnet_metadata",
+        "inspect_method_il",
+    ),
+) -> EvidenceDiscoverySource:
+    api_root = tmp_path / "api"
+    api_root.mkdir(exist_ok=True)
+    (api_root / "Modules-ASM.dll").write_bytes(b"managed-test-bytes")
+    return EvidenceDiscoverySource(
+        source_id="current-interop",
+        source_type="decompiled_api",
+        kind="unity_script_assembly",
+        evidence_class="current_interop_assembly",
+        source_authority="authoritative",
+        description="Current generated interop assembly.",
+        root_path=api_root,
+        allowed_tools=allowed_tools,
+        assembly_relative_paths=("Modules-ASM.dll",),
+    )
+
+
+class _AssistedApiExecutor:
+    def __init__(
+        self,
+        returned_symbols: tuple[str, ...] = _API_SYMBOLS,
+        *,
+        results_truncated: bool = False,
+    ) -> None:
+        self.returned_symbols = returned_symbols
+        self.results_truncated = results_truncated
+        self.actions: list[dict[str, object]] = []
+        self.run_id: str | None = None
+
+    def begin_run(self, *, run_id: str) -> None:
+        self.run_id = run_id
+
+    def execute(self, *, action, source, observation_id):
+        self.actions.append(deepcopy(action))
+        if action["tool"] == "search_dotnet_metadata":
+            return SimpleNamespace(
+                observation_id=observation_id,
+                tool="search_dotnet_metadata",
+                source_id=source.source_id,
+                summary="Resolved exact method symbols.",
+                data={
+                    "results_truncated": self.results_truncated,
+                    "methods": [
+                        {"symbol": symbol, "candidate_ref": f"ref-{index}"}
+                        for index, symbol in enumerate(self.returned_symbols)
+                    ],
+                },
+            )
+        reference = str(action["arguments"]["candidate_ref"])
+        index = int(reference.rsplit("-", 1)[1])
+        symbol = self.returned_symbols[index]
+        source_hash = f"{index + 1:064x}"
+        item = EvidenceItem(
+            evidence_id=f"api-evidence-{index + 1}",
+            source_type="decompiled_api",
+            source_path="Modules-ASM.dll",
+            symbol=symbol,
+            span=None,
+            retrieval_method="agent_selected_cli_metadata_il_read",
+            score=1.0,
+            claim_supported="Exact current-assembly method identity and IL.",
+            excerpt="{}",
+            source_ref="source://current-interop/Modules-ASM.dll",
+            source_hash=source_hash,
+            file_hash=source_hash,
+            usage="hook_evidence",
+            module_mvid=f"00000000-0000-0000-0000-{index + 1:012d}",
+            metadata_token=f"0x0600000{index + 1}",
+            signature_blob="20000C",
+            authority="mod_agent_deterministic",
+            source_authority="authoritative",
+        )
+        return SimpleNamespace(
+            observation_id=observation_id,
+            tool="inspect_method_il",
+            source_id=source.source_id,
+            summary=f"Inspected {symbol}.",
+            evidence_items=(item,),
+        )
 
 
 class _ExternalLLM:
@@ -643,7 +751,7 @@ def test_fresh_coverage_api_source_selection_requires_complete_pair(
         workspace=workspace,
         completion=lambda *_args: pytest.fail("Model must not run."),
         monkeypatch=monkeypatch,
-        extra_args=extra_args,
+        extra_args=("--api-selection-mode", "autonomous", *extra_args),
     )
 
     payload = json.loads(capsys.readouterr().out)
@@ -651,16 +759,33 @@ def test_fresh_coverage_api_source_selection_requires_complete_pair(
     assert payload["reason"] == "FRESH_COVERAGE_API_SOURCE_SELECTION_INCOMPLETE"
 
 
-def test_fresh_coverage_cli_passes_explicit_api_augmentation_factory(
+@pytest.mark.parametrize(
+    ("mode", "symbols"),
+    [
+        ("autonomous", ()),
+        (
+            "assisted_explicit",
+            (
+                "CrosshairGuiLayer.ShowSpreadCircle",
+                "GameData.ArchetypeDataBlock.get_AimSpread",
+                "GameData.ArchetypeDataBlock.get_HipFireSpread",
+            ),
+        ),
+    ],
+)
+def test_fresh_coverage_cli_dispatches_explicit_api_selection_mode(
     tmp_path: Path,
     capsys,
     monkeypatch,
+    mode: str,
+    symbols: tuple[str, ...],
 ) -> None:
     workspace, _source_root, _source, feature_path = _write_inputs(tmp_path)
     roles: list[str] = []
     captured: dict[str, object] = {}
 
-    def augmentation_factory(**kwargs):
+    def augmentation_factory(selected_mode, **kwargs):
+        captured["mode"] = selected_mode
         captured["factory_kwargs"] = kwargs
         return lambda _materialized, _retrieved: pytest.fail(
             "CLI wiring test does not execute discovery."
@@ -674,13 +799,20 @@ def test_fresh_coverage_cli_passes_explicit_api_augmentation_factory(
 
     monkeypatch.setattr(
         "src.mod_agent.cli.make_fresh_api_source_augmentation_factory",
-        augmentation_factory,
+        lambda **kwargs: augmentation_factory("autonomous", **kwargs),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.cli.make_fresh_assisted_api_source_augmentation_factory",
+        lambda **kwargs: augmentation_factory("assisted_explicit", **kwargs),
     )
     monkeypatch.setattr(
         "src.mod_agent.cli.run_fresh_requirement_coverage",
         run_with_capture,
     )
 
+    symbol_args = tuple(
+        part for symbol in symbols for part in ("--api-symbol", symbol)
+    )
     exit_code = _run_cli(
         tmp_path=tmp_path,
         feature_path=feature_path,
@@ -688,10 +820,13 @@ def test_fresh_coverage_cli_passes_explicit_api_augmentation_factory(
         completion=_successful_completion(roles),
         monkeypatch=monkeypatch,
         extra_args=(
+            "--api-selection-mode",
+            mode,
             "--api-source-registry",
             "source-registry.json",
             "--api-source-id",
             "current-interop",
+            *symbol_args,
         ),
     )
 
@@ -699,17 +834,94 @@ def test_fresh_coverage_cli_passes_explicit_api_augmentation_factory(
     assert exit_code == 0
     assert payload["status"] == "terminal"
     assert callable(captured["source_augmentation_factory"])
+    assert captured["mode"] == mode
     factory_kwargs = captured["factory_kwargs"]
     assert factory_kwargs["request"] == _feature_payload()["user_request"]
     assert factory_kwargs["source_registry_path"] == "source-registry.json"
     assert factory_kwargs["source_id"] == "current-interop"
-    assert factory_kwargs["workspace_root"] == str(workspace)
-    assert factory_kwargs["search_root"] == "generated_mods/SyntheticMod"
-    assert factory_kwargs["ollama_base_url"] == "http://127.0.0.1:11434"
-    assert factory_kwargs["ollama_model"] == "test-coverage-model"
-    assert factory_kwargs["ollama_max_output_tokens"] == 1024
-    assert factory_kwargs["ollama_context_window"] == 8192
-    assert factory_kwargs["ollama_request_timeout_seconds"] == 120.0
+    if mode == "autonomous":
+        assert factory_kwargs["workspace_root"] == str(workspace)
+        assert factory_kwargs["search_root"] == "generated_mods/SyntheticMod"
+        assert factory_kwargs["ollama_model"] == "test-coverage-model"
+        assert factory_kwargs["ollama_context_window"] == 8192
+    else:
+        assert factory_kwargs["api_symbols"] == symbols
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_reason"),
+    [
+        (
+            (
+                "--api-source-registry",
+                "source-registry.json",
+                "--api-source-id",
+                "current-interop",
+            ),
+            "FRESH_COVERAGE_API_SELECTION_MODE_REQUIRED",
+        ),
+        (
+            (
+                "--api-selection-mode",
+                "autonomous",
+                "--api-source-registry",
+                "source-registry.json",
+                "--api-source-id",
+                "current-interop",
+                "--api-symbol",
+                "CrosshairGuiLayer.ShowSpreadCircle",
+            ),
+            "FRESH_COVERAGE_AUTONOMOUS_API_SYMBOL_FORBIDDEN",
+        ),
+        (
+            (
+                "--api-selection-mode",
+                "assisted_explicit",
+                "--api-source-registry",
+                "source-registry.json",
+                "--api-source-id",
+                "current-interop",
+            ),
+            "FRESH_COVERAGE_ASSISTED_API_SYMBOL_SELECTION_INVALID",
+        ),
+        (
+            (
+                "--api-selection-mode",
+                "assisted_explicit",
+                "--api-source-registry",
+                "source-registry.json",
+                "--api-source-id",
+                "current-interop",
+                "--api-symbol",
+                "CrosshairGuiLayer.ShowSpreadCircle",
+                "--api-symbol",
+                "CrosshairGuiLayer.ShowSpreadCircle",
+            ),
+            "FRESH_COVERAGE_ASSISTED_API_SYMBOL_SELECTION_INVALID",
+        ),
+    ],
+)
+def test_fresh_coverage_api_selection_modes_reject_mixed_or_incomplete_inputs(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+    extra_args: tuple[str, ...],
+    expected_reason: str,
+) -> None:
+    workspace, _source_root, _source, feature_path = _write_inputs(tmp_path)
+
+    exit_code = _run_cli(
+        tmp_path=tmp_path,
+        feature_path=feature_path,
+        workspace=workspace,
+        completion=lambda *_args: pytest.fail("Model must not run."),
+        monkeypatch=monkeypatch,
+        extra_args=extra_args,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["reason"] == expected_reason
 
 
 def test_fresh_api_augmentation_factory_reuses_local_discovery_components(
@@ -833,6 +1045,124 @@ def test_fresh_api_augmentation_factory_reuses_local_discovery_components(
     assert state["request_id"].startswith("request_")
     assert feature_data == {"target_behavior": "Inspect the current crosshair API."}
     assert result.query == "Inspect the current crosshair API."
+    assert result.provenance_validation["api_selection"] == {
+        "mode": "autonomous",
+        "selector_source": "model",
+    }
+
+
+def test_fresh_assisted_api_factory_resolves_exact_symbols_without_model(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    source = _assisted_api_source(tmp_path)
+    executor = _AssistedApiExecutor()
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.load_evidence_discovery_sources",
+        lambda _path: (source,),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.LocalAssemblyEvidenceToolExecutor.from_inspector",
+        classmethod(lambda _cls, _path: executor),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.OllamaChatAgentAdapter",
+        lambda **_kwargs: pytest.fail("Assisted API selection must not call a model."),
+    )
+
+    factory = make_fresh_assisted_api_source_augmentation_factory(
+        request="Inspect current crosshair API behavior.",
+        source_registry_path="source-registry.json",
+        source_id="current-interop",
+        api_symbols=_API_SYMBOLS,
+    )
+    pack = factory({}, EvidencePack.empty(query="ignored", reason="test"))
+    admitted = _strict_source_augmentation(
+        pack,
+        expected_query="Inspect current crosshair API behavior.",
+    )
+
+    assert [item.symbol for item in admitted.items] == list(_API_SYMBOLS)
+    assert {
+        item.retrieval_method for item in admitted.items
+    } == {"operator_selected_cli_metadata_il_read"}
+    assert admitted.provenance_validation["api_selection"] == {
+        "mode": "assisted_explicit",
+        "selector_source": "operator",
+        "requested_symbols": list(_API_SYMBOLS),
+        "resolved_symbols": list(_API_SYMBOLS),
+    }
+    assert admitted.input_audit == {
+        "manual_symbol_count": 3,
+        "manual_tool_sequence_count": 0,
+        "precomputed_report_count": 0,
+        "operator_intervention_count": 1,
+    }
+    assert admitted.model_identity["execution_kind"] == "not_invoked"
+    assert len(executor.actions) == 4
+    assert executor.actions[0]["arguments"] == {
+        "queries": list(_API_SYMBOLS),
+        "result_kinds": ["methods"],
+        "limit_per_kind": 50,
+    }
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.load_evidence_discovery_sources",
+        lambda _path: (
+            replace(source, allowed_tools=("search_dotnet_metadata",)),
+        ),
+    )
+    with pytest.raises(
+        IntelligentEvidenceEntryError,
+        match="must allow metadata search and exact IL inspection",
+    ):
+        make_fresh_assisted_api_source_augmentation_factory(
+            request="Inspect current crosshair API behavior.",
+            source_registry_path="source-registry.json",
+            source_id="current-interop",
+            api_symbols=_API_SYMBOLS,
+        )
+
+
+@pytest.mark.parametrize(
+    ("returned_symbols", "results_truncated", "failure_text"),
+    [
+        ((), False, "must resolve exactly once"),
+        (("Exact.Type.Method", "Exact.Type.Method"), False, "must resolve exactly once"),
+        (("Exact.Type.Method",), True, "must be complete"),
+    ],
+)
+def test_fresh_assisted_api_factory_requires_one_exact_match_per_symbol(
+    tmp_path: Path,
+    monkeypatch,
+    returned_symbols: tuple[str, ...],
+    results_truncated: bool,
+    failure_text: str,
+) -> None:
+    source = _assisted_api_source(tmp_path)
+    executor = _AssistedApiExecutor(
+        returned_symbols,
+        results_truncated=results_truncated,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.load_evidence_discovery_sources",
+        lambda _path: (source,),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.LocalAssemblyEvidenceToolExecutor.from_inspector",
+        classmethod(lambda _cls, _path: executor),
+    )
+    factory = make_fresh_assisted_api_source_augmentation_factory(
+        request="Inspect one exact API.",
+        source_registry_path="source-registry.json",
+        source_id="current-interop",
+        api_symbols=("Exact.Type.Method",),
+    )
+
+    with pytest.raises(
+        IntelligentEvidenceEntryError,
+        match=failure_text,
+    ):
+        factory({}, EvidencePack.empty(query="ignored", reason="test"))
 
 
 def _assert_result_shape(result: dict[str, object]) -> None:
