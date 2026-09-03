@@ -4,10 +4,12 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.engineering_cognition import (
     build_projection,
     project_current,
+    project_ownership,
     project_product_api,
     project_surfaces,
     project_workflow,
@@ -176,6 +178,15 @@ def test_workflow_and_artifact_entity_are_registry_backed() -> None:
         ["dry_run_result", "evidence_pack"],
         ["dry_run_result", "feature_spec"],
     ]
+
+
+def test_ownership_anchor_is_not_observed_without_source_refs() -> None:
+    with patch("scripts.engineering_cognition._text_refs_in_paths", return_value=[]):
+        result = project_ownership(REPOSITORY_ROOT)
+
+    anchor = result["coverage_planning_binding_drift_anchor"]
+    assert anchor["source_refs"] == []
+    assert anchor["status"] == "not_observed"
 
 
 def test_product_api_reports_narrow_connections_and_fresh_gap() -> None:

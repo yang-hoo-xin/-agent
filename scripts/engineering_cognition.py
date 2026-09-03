@@ -997,7 +997,11 @@ def project_ownership(root: Path) -> dict[str, Any]:
         "coverage_planning_binding_drift_anchor": {
             "inspection_anchor": "authorized_edit_target_ids",
             "source_refs": anchors,
-            "status": "cross_module_reference_points_observed_semantic_owner_not_inferred",
+            "status": (
+                "cross_module_reference_points_observed_semantic_owner_not_inferred"
+                if anchors
+                else "not_observed"
+            ),
         },
         "route_declarations": routes,
         "state_writers": [
