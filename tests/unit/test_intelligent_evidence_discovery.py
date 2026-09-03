@@ -2,21 +2,40 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from src.libs.llm import (
+    AgentToolCall,
+    AgentTurnResponse,
+    AgentUsage,
+    BaseLLM,
+    ChatResponse,
+    Message,
+    OllamaChatAgentAdapter,
+)
+from src.mod_agent.artifacts import (
+    ArtifactRef,
+    ArtifactRegistryError,
+    ArtifactStore,
+    ArtifactTypeRegistry,
+)
+from src.mod_agent.domain.wallcrawler_acceptance import (
+    evaluate_wallcrawler_local_evidence,
+)
+from src.mod_agent.evidence.calibration import run_better_hit_feedback_calibration
 from src.mod_agent.evidence.discovery import (
     AGENT_DISCOVERY_ACTUAL_SCHEMA_VERSION,
-    ChatEvidenceDiscoveryModel,
     EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
+    ChatEvidenceDiscoveryModel,
+    EvidenceDiscoveryAgentModel,
     EvidenceDiscoveryDisclosure,
     EvidenceDiscoveryLocalExecution,
-    EvidenceDiscoveryAgentModel,
     EvidenceDiscoveryRequest,
     EvidenceDiscoverySource,
     EvidenceDiscoverySpecialist,
@@ -25,8 +44,6 @@ from src.mod_agent.evidence.discovery import (
     evidence_discovery_source_from_definition,
     validate_agent_discovery_actual,
 )
-from src.mod_agent.evidence.discovery_tools import LocalAssemblyEvidenceToolExecutor
-from src.mod_agent.evidence.calibration import run_better_hit_feedback_calibration
 from src.mod_agent.evidence.discovery_contract import (
     REQUIREMENT_PROJECTION_SCHEMA_VERSION,
     SEARCH_PLAN_SCHEMA_VERSION,
@@ -39,42 +56,25 @@ from src.mod_agent.evidence.discovery_contract import (
 from src.mod_agent.evidence.discovery_loop import (
     _bind_action_relation_ids,
     _bind_observation_relation_ids,
-    discovery_plan_budget_feasibility,
-    _normalize_family_query_leads,
     _method_focus_comparison,
+    _normalize_family_query_leads,
     _parse_requirement_projection_action,
-    _resolve_finish_fact_handles,
     _resolve_action_from_frozen_plan,
+    _resolve_finish_fact_handles,
     _resolve_model_search_plan_action,
-    _source_query_inputs,
     _validate_finish,
     _validate_supplemental_search,
+    discovery_plan_budget_feasibility,
 )
+from src.mod_agent.evidence.discovery_tools import LocalAssemblyEvidenceToolExecutor
 from src.mod_agent.evidence.models import EvidenceItem, EvidencePack
-from src.mod_agent.artifacts import (
-    ArtifactRef,
-    ArtifactRegistryError,
-    ArtifactStore,
-    ArtifactTypeRegistry,
+from src.mod_agent.evidence.requirement_coverage import (
+    default_feature_requirement_projection,
 )
-from src.mod_agent.workflow import build_graph, create_initial_state
-from src.mod_agent.domain.wallcrawler_acceptance import (
-    evaluate_wallcrawler_local_evidence,
-)
-from src.libs.llm import (
-    AgentToolCall,
-    AgentTurnResponse,
-    AgentUsage,
-    BaseLLM,
-    ChatResponse,
-    Message,
-    OllamaChatAgentAdapter,
-)
-from src.mod_agent.knowledge import (
-    IncrementalIndexer,
-    KnowledgeDatabase,
-    SourceDefinition,
-    SourceRegistry,
+from src.mod_agent.evidence.requirement_coverage_provider import (
+    RequirementCoverageEvidenceProvider,
+    _merge_source_augmentation,
+    _strict_source_augmentation,
 )
 from src.mod_agent.evidence.retriever import DeterministicEvidenceRetriever
 from src.mod_agent.intelligent_evidence_only import (
@@ -82,6 +82,14 @@ from src.mod_agent.intelligent_evidence_only import (
     _post_run_acceptance,
     load_evidence_discovery_sources,
 )
+from src.mod_agent.knowledge import (
+    IncrementalIndexer,
+    KnowledgeDatabase,
+    SourceDefinition,
+    SourceRegistry,
+)
+from src.mod_agent.planning import FeatureSpec, ImplementationPlanner
+from src.mod_agent.workflow import build_graph, create_initial_state
 
 
 def _metadata_arguments(*queries: str, limit_per_kind: int = 20) -> dict[str, object]:
@@ -672,6 +680,22 @@ def _strict_semantic_payload(
         tool_executor=_ObservedToolExecutor(),
     ).discover(replace(_request(tmp_path), require_actual_planning=True))
     return result.pack.to_artifact_payload()
+
+
+def _strict_api_augmentation_pack(tmp_path: Path) -> EvidencePack:
+    pack = EvidencePack.from_artifact_payload(
+        _strict_semantic_payload(
+            tmp_path,
+            decision="needs_more_evidence",
+        )
+    )
+    return replace(
+        pack,
+        items=tuple(
+            replace(item, usage="hook_evidence")
+            for item in pack.items
+        ),
+    )
 
 
 def _strict_roundtrip_feature_payload(feature_id: str) -> dict[str, object]:
@@ -1361,6 +1385,364 @@ def test_phase_2_unrelated_hook_request_freezes_plan_before_tools(
             "failure": None,
         },
     ]
+
+
+def test_requirement_coverage_augments_live_source_with_strict_api_evidence(
+    tmp_path: Path,
+) -> None:
+    feature_spec = FeatureSpec(
+        feature_id="feature_api_augmentation",
+        user_request=(
+            "调查敌人在墙面、斜面和天花板上的移动与朝向实现证据。"
+        ),
+        target_behavior="Change the target method using the observed API contract.",
+        non_goals=(),
+        target_mod="SyntheticMod",
+        risk_level="medium",
+        acceptance_criteria=(),
+        evidence_requirements=(),
+        runtime_verification_plan=(),
+    )
+    feature_data = feature_spec.to_artifact_payload()
+    target_item = EvidenceItem(
+        evidence_id="target_source_001",
+        source_type="target_source",
+        source_path="generated_mods/SyntheticMod/Behavior.cs",
+        symbol="SyntheticMod.Behavior.Change",
+        span={"start_line": 1, "end_line": 3},
+        retrieval_method="rg_live",
+        score=1.0,
+        claim_supported="The current target method is bound.",
+        excerpt="void Change() { }",
+        source_ref="source://target/Behavior.cs",
+        source_hash="B" * 64,
+        file_hash="B" * 64,
+        authority="mod_agent_deterministic",
+        source_authority="authoritative",
+    )
+    retrieved = EvidencePack(
+        query=feature_spec.user_request,
+        readiness="partial",
+        can_generate_patch=False,
+        items=(target_item,),
+        retrieval_methods_used=("rg_live",),
+        budget_summary={"query_count": 1, "max_items": 1},
+    )
+    augmentation = _strict_api_augmentation_pack(tmp_path)
+    assert augmentation.items[0].source_type == "decompiled_api"
+    assert augmentation.items[0].source_path == "Modules-ASM.dll"
+
+    class SourceProvider:
+        def collect_query_set(self, *, queries, search_root, max_items):
+            assert queries
+            assert search_root == "generated_mods/SyntheticMod"
+            assert max_items == len(queries)
+            return retrieved
+
+    augmentation_calls: list[tuple[dict[str, object], EvidencePack]] = []
+
+    def source_augmentation_factory(materialized, source_pack):
+        augmentation_calls.append((materialized, source_pack))
+        materialized["requirements"][0]["text"] = "mutated callback copy"
+        source_pack.items[0].span["start_line"] = 99
+        return augmentation
+
+    def findings_factory(materialized, source_pack):
+        assert materialized["requirements"][0]["text"] == (
+            feature_spec.target_behavior
+        )
+        assert source_pack.items[0].span == {"start_line": 1, "end_line": 3}
+        assert [item.evidence_id for item in source_pack.items] == [
+            target_item.evidence_id,
+            augmentation.items[0].evidence_id,
+        ]
+        assert len(materialized["relations"]) == 1
+        return {
+            "findings": [
+                {
+                    "relation_index": 1,
+                    "relationship": "support",
+                    "evidence_ids": [
+                        target_item.evidence_id,
+                        augmentation.items[0].evidence_id,
+                    ],
+                    "edit_target_evidence_ids": [target_item.evidence_id],
+                    "unresolved_gaps": [],
+                }
+            ]
+        }
+
+    provider = RequirementCoverageEvidenceProvider(
+        SourceProvider(),
+        projection_factory=default_feature_requirement_projection,
+        findings_factory=findings_factory,
+        source_augmentation_factory=source_augmentation_factory,
+    )
+    pack = provider.collect(
+        query=feature_spec.user_request,
+        search_root="generated_mods/SyntheticMod",
+        feature_data=feature_data,
+    )
+
+    assert len(augmentation_calls) == 1
+    payload = pack.to_artifact_payload()
+    assert "requirement_coverage" in payload
+    assert "agent_discovery" not in payload
+    assert "hook_discovery" not in payload
+    assert payload["prompt_contract"] == {}
+    assert payload["trace_refs"] == list(augmentation.trace_refs)
+    assert payload["verified_findings"] == list(augmentation.verified_findings)
+    assert payload["evidence_conclusions"] == list(
+        augmentation.evidence_conclusions
+    )
+    assert payload["observation_fact_catalog"] == list(
+        augmentation.observation_fact_catalog
+    )
+    assert payload["unresolved_questions"] == list(
+        augmentation.unresolved_questions
+    )
+    assert payload["missing_capabilities"] == list(
+        augmentation.missing_capabilities
+    )
+    assert payload["tool_trace_summary"] == list(
+        augmentation.tool_trace_summary
+    )
+    assert payload["model_action_trace"] == list(
+        augmentation.model_action_trace
+    )
+    assert payload["observation_trace"] == list(
+        augmentation.observation_trace
+    )
+    source_audit = payload["budget_summary"]["source_augmentation"]
+    assert source_audit["run_status"] == augmentation.run_status
+    assert source_audit["prompt_contract"] == augmentation.prompt_contract
+    assert source_audit["model_identity"] == augmentation.model_identity
+    assert source_audit["provenance_validation"] == (
+        augmentation.provenance_validation
+    )
+    assert source_audit["input_audit"] == augmentation.input_audit
+    assert source_audit["intelligence_transfer"] == (
+        augmentation.intelligence_transfer
+    )
+    assert "agent_discovery_sha256" not in payload["prompt_contract"]
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+
+    target_plan = ImplementationPlanner().build(
+        feature_spec=feature_spec,
+        evidence_pack=payload,
+        formal_requirement_coverage_required=True,
+        planning_target_evidence_ids=(target_item.evidence_id,),
+    )
+    assert target_plan.blocking is False
+    assert [
+        binding["evidence_id"]
+        for binding in target_plan.binding_registry["edit_bindings"]
+    ] == [target_item.evidence_id]
+    assert any(
+        binding["evidence_id"] == augmentation.items[0].evidence_id
+        for binding in target_plan.binding_registry["supporting_bindings"]
+    )
+
+    api_plan = ImplementationPlanner().build(
+        feature_spec=feature_spec,
+        evidence_pack=payload,
+        formal_requirement_coverage_required=True,
+        planning_target_evidence_ids=(augmentation.items[0].evidence_id,),
+    )
+    assert api_plan.blocking is True
+    assert api_plan.blockers[0]["code"] == (
+        "PLANNING_TARGET_SELECTION_UNRESOLVED"
+    )
+
+
+def test_requirement_coverage_rejects_conflicting_augmentation_evidence_id(
+    tmp_path: Path,
+) -> None:
+    feature_spec = FeatureSpec(
+        feature_id="feature_api_augmentation_conflict",
+        user_request=(
+            "调查敌人在墙面、斜面和天花板上的移动与朝向实现证据。"
+        ),
+        target_behavior="Change the target method.",
+        non_goals=(),
+        target_mod="SyntheticMod",
+        risk_level="medium",
+        acceptance_criteria=(),
+        evidence_requirements=(),
+        runtime_verification_plan=(),
+    )
+    augmentation = _strict_api_augmentation_pack(tmp_path)
+    conflicting_item = replace(
+        augmentation.items[0],
+        source_type="target_source",
+        source_path="generated_mods/SyntheticMod/Behavior.cs",
+        span={"start_line": 1, "end_line": 1},
+        excerpt="different physical source",
+    )
+    retrieved = EvidencePack(
+        query=feature_spec.user_request,
+        readiness="partial",
+        can_generate_patch=False,
+        items=(conflicting_item,),
+        budget_summary={"query_count": 1, "max_items": 1},
+    )
+
+    class SourceProvider:
+        def collect_query_set(self, **_kwargs):
+            return retrieved
+
+    provider = RequirementCoverageEvidenceProvider(
+        SourceProvider(),
+        projection_factory=default_feature_requirement_projection,
+        findings_factory=lambda *_args: pytest.fail(
+            "Findings must not consume conflicting evidence identities."
+        ),
+        source_augmentation_factory=lambda *_args: augmentation,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="SOURCE_AUGMENTATION_EVIDENCE_ID_CONFLICT",
+    ):
+        provider.collect(
+            query=feature_spec.user_request,
+            search_root="generated_mods/SyntheticMod",
+            feature_data=feature_spec.to_artifact_payload(),
+        )
+
+
+def test_source_augmentation_rejects_conflicting_observation_identity(
+    tmp_path: Path,
+) -> None:
+    augmentation = _strict_api_augmentation_pack(tmp_path)
+    augmentation = _strict_source_augmentation(
+        augmentation,
+        expected_query=augmentation.query,
+    )
+    conflicting_trace = dict(augmentation.tool_trace_summary[0])
+    conflicting_trace["summary"] = "Different observation payload."
+    retrieved = EvidencePack(
+        query="Target source retrieval.",
+        readiness="partial",
+        can_generate_patch=False,
+        tool_trace_summary=(conflicting_trace,),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="SOURCE_AUGMENTATION_TRACE_IDENTITY_CONFLICT",
+    ):
+        _merge_source_augmentation(
+            retrieved_pack=retrieved,
+            augmentation_pack=augmentation,
+        )
+
+
+def test_source_augmentation_stably_deduplicates_identical_evidence_id(
+    tmp_path: Path,
+) -> None:
+    augmentation = _strict_api_augmentation_pack(tmp_path)
+    augmentation = _strict_source_augmentation(
+        augmentation,
+        expected_query=augmentation.query,
+    )
+    retrieved = EvidencePack(
+        query=augmentation.query,
+        readiness="partial",
+        can_generate_patch=False,
+        items=(augmentation.items[0],),
+    )
+
+    merged = _merge_source_augmentation(
+        retrieved_pack=retrieved,
+        augmentation_pack=augmentation,
+    )
+
+    assert merged.items == retrieved.items
+    assert merged.items[0] is retrieved.items[0]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("source_type", "target_source"),
+        ("authority", "legacy_rag_auxiliary"),
+        ("usage", "supporting_context"),
+        ("source_authority", "lead"),
+        ("symbol", None),
+        ("source_path", ""),
+        ("source_ref", None),
+        ("source_hash", None),
+        ("file_hash", "C" * 64),
+        ("module_mvid", None),
+        ("metadata_token", None),
+        ("signature_blob", None),
+    ],
+)
+def test_source_augmentation_rejects_incomplete_api_item_identity(
+    tmp_path: Path,
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    augmentation = _strict_api_augmentation_pack(tmp_path)
+    invalid = replace(
+        augmentation,
+        items=(
+            replace(
+                augmentation.items[0],
+                **{field_name: invalid_value},
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="SOURCE_AUGMENTATION_(PACK|ITEM_BOUNDARY)_INVALID",
+    ):
+        _strict_source_augmentation(
+            invalid,
+            expected_query=augmentation.query,
+        )
+
+
+@pytest.mark.parametrize("target_code_executed", [True, None])
+def test_source_augmentation_requires_explicit_no_target_execution(
+    tmp_path: Path,
+    target_code_executed: object,
+) -> None:
+    augmentation = _strict_api_augmentation_pack(tmp_path)
+    provenance = dict(augmentation.provenance_validation)
+    if target_code_executed is None:
+        provenance.pop("target_code_executed")
+    else:
+        provenance["target_code_executed"] = target_code_executed
+
+    with pytest.raises(
+        ValueError,
+        match="SOURCE_AUGMENTATION_(PACK|TARGET_EXECUTION)_INVALID",
+    ):
+        _strict_source_augmentation(
+            replace(
+                augmentation,
+                provenance_validation=provenance,
+            ),
+            expected_query=augmentation.query,
+        )
+
+
+def test_source_augmentation_rejects_cross_request_pack(
+    tmp_path: Path,
+) -> None:
+    augmentation = _strict_api_augmentation_pack(tmp_path)
+
+    with pytest.raises(
+        ValueError,
+        match="SOURCE_AUGMENTATION_QUERY_MISMATCH",
+    ):
+        _strict_source_augmentation(
+            augmentation,
+            expected_query="A different FeatureSpec request.",
+        )
 
 
 def test_actual_metadata_family_selection_resolves_only_frozen_content(

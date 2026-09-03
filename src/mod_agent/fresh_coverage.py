@@ -19,6 +19,7 @@ from src.core.settings import load_settings
 from src.libs.llm import LLMFactory, OllamaLLM, validate_loopback_http_base_url
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.evidence import (
+    EvidencePack,
     RgLiveEvidenceProvider,
     make_requirement_coverage_evidence_provider,
 )
@@ -758,6 +759,10 @@ def run_fresh_requirement_coverage(
     completion: StructuredJsonCompletion,
     rg_executable: str = "rg",
     progress_reporter: FreshCoverageProgressReporter | None = None,
+    source_augmentation_factory: Callable[
+        [Mapping[str, Any], EvidencePack], EvidencePack
+    ]
+    | None = None,
 ) -> FreshCoverageResult:
     """Run projection, live rg retrieval, findings, and resolution, then stop."""
 
@@ -837,6 +842,7 @@ def run_fresh_requirement_coverage(
     provider = make_requirement_coverage_evidence_provider(
         RgLiveEvidenceProvider(workspace, rg_executable=rg_executable),
         complete_json=ledger.complete,
+        source_augmentation_factory=source_augmentation_factory,
     )
     if progress_reporter is not None:
         progress_reporter.set_stage("requirement_coverage")

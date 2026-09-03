@@ -787,6 +787,89 @@ def test_positive_requirement_coverage_roundtrips_and_exposes_support_and_hint(
     )
 
 
+def test_requirement_coverage_pack_preserves_source_audit_fields(
+    tmp_path: Path,
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    audited = replace(
+        retrieved,
+        trace_refs=("obs-source-001",),
+        run_status="completed",
+        verified_findings=({"finding_id": "finding-source-001"},),
+        evidence_conclusions=({"claim": "Source observation."},),
+        observation_fact_catalog=({"fact_id": "fact-source-001"},),
+        unresolved_questions=("Which runtime branch is active?",),
+        missing_capabilities=("runtime_probe",),
+        tool_trace_summary=({"observation_id": "obs-source-001"},),
+        model_action_trace=({"model_step": 1},),
+        observation_trace=({"observation_id": "obs-source-001"},),
+        prompt_contract={"version": "source-prompt-v1"},
+        model_identity={"model": "source-model"},
+        provenance_validation={"target_code_executed": False},
+        input_audit={"manual_symbol_count": 0},
+        intelligence_transfer={"tool_selection_by_platform": True},
+    )
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=audited,
+        findings=_positive_findings(materialized, audited),
+    )
+
+    for field_name in (
+        "trace_refs",
+        "run_status",
+        "verified_findings",
+        "evidence_conclusions",
+        "observation_fact_catalog",
+        "unresolved_questions",
+        "missing_capabilities",
+        "tool_trace_summary",
+        "model_action_trace",
+        "observation_trace",
+        "prompt_contract",
+        "model_identity",
+        "provenance_validation",
+        "input_audit",
+        "intelligence_transfer",
+    ):
+        assert getattr(pack, field_name) == getattr(audited, field_name)
+
+
+def test_requirement_coverage_without_augmentation_keeps_existing_payload_shape(
+    tmp_path: Path,
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    expected = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        findings=_positive_findings(materialized, retrieved),
+    )
+    class SourceProvider:
+        def collect_query_set(self, *, queries, search_root, max_items):
+            assert queries == tuple(dict(item) for item in materialized["queries"])
+            assert search_root == "generated_mods/SyntheticMod"
+            assert max_items == len(materialized["queries"])
+            return retrieved
+
+    provider = RequirementCoverageEvidenceProvider(
+        SourceProvider(),
+        projection_factory=lambda _feature: _projection(),
+        findings_factory=_positive_findings,
+    )
+
+    actual = provider.collect(
+        query=str(feature["user_request"]),
+        search_root="generated_mods/SyntheticMod",
+        feature_data=feature,
+    )
+
+    assert actual.to_artifact_payload() == expected.to_artifact_payload()
+    assert "source_augmentation" not in actual.budget_summary
+
+
 def test_actual10_method_spans_allow_existing_coverage_to_derive_edit_target(
     tmp_path: Path,
 ) -> None:

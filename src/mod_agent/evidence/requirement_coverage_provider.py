@@ -9,7 +9,12 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any, Protocol
 
-from .models import EvidencePack, missing_evidence_from_blockers
+from .models import (
+    DETERMINISTIC_EVIDENCE_AUTHORITY,
+    EvidenceItem,
+    EvidencePack,
+    missing_evidence_from_blockers,
+)
 from .requirement_coverage import (
     LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     PREVIOUS_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
@@ -24,6 +29,9 @@ from .requirement_coverage import (
 
 StructuredJsonCompletion = Callable[
     [str, Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any]
+]
+SourceAugmentationFactory = Callable[
+    [Mapping[str, Any], EvidencePack], EvidencePack
 ]
 
 _PROJECTION_SCHEMA_KEYWORDS = frozenset(
@@ -1037,11 +1045,13 @@ class RequirementCoverageEvidenceProvider:
             [Mapping[str, Any], EvidencePack], Mapping[str, Any]
         ]
         | None = None,
+        source_augmentation_factory: SourceAugmentationFactory | None = None,
     ) -> None:
         self.source_provider = source_provider
         self.semantic_provider = semantic_provider
         self.projection_factory = projection_factory
         self.findings_factory = findings_factory
+        self.source_augmentation_factory = source_augmentation_factory
         if semantic_provider is not None and (
             projection_factory is not None or findings_factory is not None
         ):
@@ -1095,6 +1105,18 @@ class RequirementCoverageEvidenceProvider:
             search_root=search_root,
             max_items=max(1, len(materialized["queries"])),
         )
+        if self.source_augmentation_factory is not None:
+            augmentation = self.source_augmentation_factory(
+                deepcopy(materialized),
+                deepcopy(retrieved),
+            )
+            retrieved = _merge_source_augmentation(
+                retrieved_pack=retrieved,
+                augmentation_pack=_strict_source_augmentation(
+                    augmentation,
+                    expected_query=query,
+                ),
+            )
         if self.semantic_provider is not None:
             if provider_failure_codes:
                 findings = {"findings": []}
@@ -1174,6 +1196,7 @@ def make_requirement_coverage_evidence_provider(
         [Mapping[str, Any], EvidencePack], Mapping[str, Any]
     ]
     | None = None,
+    source_augmentation_factory: SourceAugmentationFactory | None = None,
 ) -> RequirementCoverageEvidenceProvider:
     """Select the formal model path unless explicit test seams are injected."""
 
@@ -1187,6 +1210,7 @@ def make_requirement_coverage_evidence_provider(
         semantic_provider=semantic_provider,
         projection_factory=projection_factory,
         findings_factory=findings_factory,
+        source_augmentation_factory=source_augmentation_factory,
     )
 
 
@@ -1220,6 +1244,25 @@ def build_requirement_coverage_pack(
         disabled_modes=dict(retrieved_pack.disabled_modes),
         timing=dict(retrieved_pack.timing),
         budget_summary=dict(retrieved_pack.budget_summary),
+        trace_refs=retrieved_pack.trace_refs,
+        run_status=retrieved_pack.run_status,
+        verified_findings=retrieved_pack.verified_findings,
+        evidence_conclusions=retrieved_pack.evidence_conclusions,
+        observation_fact_catalog=retrieved_pack.observation_fact_catalog,
+        unresolved_questions=retrieved_pack.unresolved_questions,
+        missing_capabilities=retrieved_pack.missing_capabilities,
+        tool_trace_summary=retrieved_pack.tool_trace_summary,
+        model_action_trace=retrieved_pack.model_action_trace,
+        observation_trace=retrieved_pack.observation_trace,
+        prompt_contract=deepcopy(retrieved_pack.prompt_contract),
+        model_identity=deepcopy(retrieved_pack.model_identity),
+        provenance_validation=deepcopy(
+            retrieved_pack.provenance_validation
+        ),
+        input_audit=deepcopy(retrieved_pack.input_audit),
+        intelligence_transfer=deepcopy(
+            retrieved_pack.intelligence_transfer
+        ),
         requirement_coverage=section,
         message=(
             "Current-source evidence satisfies every required pre-patch requirement."
@@ -1227,6 +1270,225 @@ def build_requirement_coverage_pack(
             else "Requirement coverage is incomplete or conflicting."
         ),
     )
+
+
+def _strict_source_augmentation(
+    value: EvidencePack,
+    *,
+    expected_query: str,
+) -> EvidencePack:
+    if not isinstance(value, EvidencePack):
+        raise ValueError("SOURCE_AUGMENTATION_PACK_INVALID")
+    try:
+        admitted = EvidencePack.from_artifact_payload(
+            value.to_artifact_payload()
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("SOURCE_AUGMENTATION_PACK_INVALID") from exc
+    if admitted.query != expected_query:
+        raise ValueError("SOURCE_AUGMENTATION_QUERY_MISMATCH")
+    if admitted.requirement_coverage is not None:
+        raise ValueError("SOURCE_AUGMENTATION_REQUIREMENT_COVERAGE_INVALID")
+    if admitted.provenance_validation.get("target_code_executed") is not False:
+        raise ValueError("SOURCE_AUGMENTATION_TARGET_EXECUTION_INVALID")
+    if any(
+        item.source_type != "decompiled_api"
+        or item.authority != DETERMINISTIC_EVIDENCE_AUTHORITY
+        or item.usage != "hook_evidence"
+        or item.source_authority not in {"authoritative", "supporting"}
+        or not isinstance(item.symbol, str)
+        or not item.symbol
+        or not isinstance(item.source_path, str)
+        or not item.source_path
+        or not isinstance(item.source_ref, str)
+        or not item.source_ref
+        or not _is_sha256(item.source_hash)
+        or item.file_hash != item.source_hash
+        or not isinstance(item.module_mvid, str)
+        or not item.module_mvid
+        or not isinstance(item.metadata_token, str)
+        or not item.metadata_token
+        or not isinstance(item.signature_blob, str)
+        or not item.signature_blob
+        for item in admitted.items
+    ):
+        raise ValueError("SOURCE_AUGMENTATION_ITEM_BOUNDARY_INVALID")
+    return admitted
+
+
+def _merge_source_augmentation(
+    *,
+    retrieved_pack: EvidencePack,
+    augmentation_pack: EvidencePack,
+) -> EvidencePack:
+    if "source_augmentation" in retrieved_pack.budget_summary:
+        raise ValueError("SOURCE_AUGMENTATION_AUDIT_COLLISION")
+    items = _merge_evidence_items(
+        retrieved_pack.items,
+        augmentation_pack.items,
+    )
+    augmentation_payload = augmentation_pack.to_artifact_payload()
+    augmentation_audit = {
+        "payload_sha256": hashlib.sha256(
+            json.dumps(
+                augmentation_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        ).hexdigest(),
+        "query": augmentation_pack.query,
+        "readiness": augmentation_pack.readiness,
+        "can_generate_patch": augmentation_pack.can_generate_patch,
+        "run_status": augmentation_pack.run_status,
+        "evidence_ids": [item.evidence_id for item in augmentation_pack.items],
+        "retrieval_methods_used": list(
+            augmentation_pack.retrieval_methods_used
+        ),
+        "timing": deepcopy(augmentation_pack.timing),
+        "budget_summary": deepcopy(augmentation_pack.budget_summary),
+        "prompt_contract": deepcopy(augmentation_pack.prompt_contract),
+        "model_identity": deepcopy(augmentation_pack.model_identity),
+        "provenance_validation": deepcopy(
+            augmentation_pack.provenance_validation
+        ),
+        "input_audit": deepcopy(augmentation_pack.input_audit),
+        "intelligence_transfer": deepcopy(
+            augmentation_pack.intelligence_transfer
+        ),
+        "semantic_sections_validated": [
+            name
+            for name, section in (
+                ("hook_discovery", augmentation_pack.hook_discovery),
+                ("agent_discovery", augmentation_pack.agent_discovery),
+            )
+            if section is not None
+        ],
+    }
+    return replace(
+        retrieved_pack,
+        items=items,
+        excluded=_merge_mapping_rows(
+            retrieved_pack.excluded,
+            augmentation_pack.excluded,
+        ),
+        retrieval_methods_used=_stable_strings(
+            retrieved_pack.retrieval_methods_used,
+            augmentation_pack.retrieval_methods_used,
+        ),
+        budget_summary={
+            **deepcopy(retrieved_pack.budget_summary),
+            "source_augmentation": augmentation_audit,
+        },
+        trace_refs=_stable_strings(
+            retrieved_pack.trace_refs,
+            augmentation_pack.trace_refs,
+        ),
+        verified_findings=_merge_mapping_rows(
+            retrieved_pack.verified_findings,
+            augmentation_pack.verified_findings,
+        ),
+        evidence_conclusions=_merge_mapping_rows(
+            retrieved_pack.evidence_conclusions,
+            augmentation_pack.evidence_conclusions,
+        ),
+        observation_fact_catalog=_merge_mapping_rows(
+            retrieved_pack.observation_fact_catalog,
+            augmentation_pack.observation_fact_catalog,
+            identity_field="fact_id",
+        ),
+        unresolved_questions=_stable_strings(
+            retrieved_pack.unresolved_questions,
+            augmentation_pack.unresolved_questions,
+        ),
+        missing_capabilities=_stable_strings(
+            retrieved_pack.missing_capabilities,
+            augmentation_pack.missing_capabilities,
+        ),
+        tool_trace_summary=_merge_mapping_rows(
+            retrieved_pack.tool_trace_summary,
+            augmentation_pack.tool_trace_summary,
+            identity_field="observation_id",
+        ),
+        model_action_trace=_merge_mapping_rows(
+            retrieved_pack.model_action_trace,
+            augmentation_pack.model_action_trace,
+        ),
+        observation_trace=_merge_mapping_rows(
+            retrieved_pack.observation_trace,
+            augmentation_pack.observation_trace,
+            identity_field="observation_id",
+        ),
+        hook_discovery=None,
+        agent_discovery=None,
+        requirement_coverage=None,
+    )
+
+
+def _merge_evidence_items(
+    left: tuple[EvidenceItem, ...],
+    right: tuple[EvidenceItem, ...],
+) -> tuple[EvidenceItem, ...]:
+    merged: list[EvidenceItem] = []
+    payload_by_id: dict[str, dict[str, Any]] = {}
+    for item in (*left, *right):
+        payload = item.to_dict()
+        existing = payload_by_id.get(item.evidence_id)
+        if existing is not None:
+            if existing != payload:
+                raise ValueError("SOURCE_AUGMENTATION_EVIDENCE_ID_CONFLICT")
+            continue
+        payload_by_id[item.evidence_id] = payload
+        merged.append(item)
+    return tuple(merged)
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    )
+
+
+def _stable_strings(
+    left: tuple[str, ...],
+    right: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(dict.fromkeys((*left, *right)))
+
+
+def _merge_mapping_rows(
+    left: tuple[dict[str, Any], ...],
+    right: tuple[dict[str, Any], ...],
+    *,
+    identity_field: str | None = None,
+) -> tuple[dict[str, Any], ...]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    payload_by_identity: dict[str, str] = {}
+    for row in (*left, *right):
+        key = json.dumps(
+            row,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        if identity_field is not None:
+            identity = row.get(identity_field)
+            if not isinstance(identity, str) or not identity:
+                raise ValueError("SOURCE_AUGMENTATION_TRACE_IDENTITY_INVALID")
+            existing = payload_by_identity.get(identity)
+            if existing is not None and existing != key:
+                raise ValueError("SOURCE_AUGMENTATION_TRACE_IDENTITY_CONFLICT")
+            payload_by_identity[identity] = key
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(deepcopy(row))
+    return tuple(merged)
 
 
 def requirement_projection_response_schema(
