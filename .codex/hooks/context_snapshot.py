@@ -444,10 +444,73 @@ def _add_if_within_budget(
     return True
 
 
+def _build_restore_check(
+    stored_git: Mapping[str, Any],
+    current_git: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Compare a stored task-location snapshot with current Git facts."""
+
+    if current_git is None:
+        return {
+            "freshness": "unknown",
+            "reason": "current_git_unavailable",
+            "head_matches": None,
+            "branch_matches": None,
+            "status_matches": None,
+            "current_head": None,
+            "current_branch": None,
+            "current_dirty": None,
+            "current_status_count": None,
+        }
+
+    head_matches = stored_git["head"] == current_git["head"]
+    branch_matches = stored_git["branch"] == current_git["branch"]
+    status_matches = all(
+        stored_git[field] == current_git[field]
+        for field in (
+            "dirty",
+            "status",
+            "status_count",
+            "status_truncated",
+        )
+    )
+    if not head_matches:
+        freshness = "stale"
+        reason = "head_changed"
+    elif not branch_matches:
+        freshness = "stale"
+        reason = "branch_changed"
+    elif not status_matches:
+        freshness = "stale"
+        reason = "status_changed"
+    elif stored_git["dirty"] or current_git["dirty"]:
+        freshness = "unknown"
+        reason = "dirty_content_not_compared"
+    else:
+        freshness = "current"
+        reason = "clean_git_identity_match"
+    return {
+        "freshness": freshness,
+        "reason": reason,
+        "head_matches": head_matches,
+        "branch_matches": branch_matches,
+        "status_matches": status_matches,
+        "current_head": current_git["head"],
+        "current_branch": current_git["branch"],
+        "current_dirty": current_git["dirty"],
+        "current_status_count": current_git["status_count"],
+    }
+
+
 def _context_from_snapshot(
-    snapshot: Mapping[str, Any], *, cwd: Path, source: str
+    snapshot: Mapping[str, Any],
+    *,
+    cwd: Path,
+    source: str,
+    current_git: Mapping[str, Any] | None,
 ) -> str:
     stored_git = snapshot["git"]
+    restore_check = _build_restore_check(stored_git, current_git)
     compact_git: dict[str, Any] = {
         "root": stored_git["root"],
         "head": stored_git["head"],
@@ -456,6 +519,7 @@ def _context_from_snapshot(
         "status_count": stored_git["status_count"],
         "status_truncated": stored_git["status_truncated"],
         "status": [],
+        "restore_check": restore_check,
     }
     compact_snapshot: dict[str, Any] = {
         "schema_version": snapshot["schema_version"],
@@ -471,10 +535,10 @@ def _context_from_snapshot(
         "git": compact_git,
     }
 
+    truncated_fields: list[str] = []
     task_packet = snapshot.get("task_packet")
     if isinstance(task_packet, Mapping):
         compact_packet: dict[str, Any] = {}
-        truncated_fields: list[str] = []
         compact_snapshot["task_packet"] = compact_packet
         for field in _CONTEXT_PACKET_PRIORITY:
             if field not in task_packet:
@@ -516,11 +580,8 @@ def _context_from_snapshot(
                 ):
                     truncated_fields.append(field)
         if truncated_fields:
-            _add_if_within_budget(
-                compact_snapshot,
-                "task_packet_truncated_fields",
-                truncated_fields,
-                compact_snapshot,
+            compact_snapshot["task_packet_truncated_fields"] = list(
+                truncated_fields
             )
         if not compact_packet:
             compact_snapshot.pop("task_packet")
@@ -563,8 +624,13 @@ def _context_from_snapshot(
             "branch": stored_git["branch"],
             "dirty": stored_git["dirty"],
             "status_count": stored_git["status_count"],
+            "restore_check": restore_check,
         },
     }
+    if truncated_fields:
+        minimal_snapshot["task_packet_truncated_fields"] = list(
+            truncated_fields
+        )
     if compact_packet:
         minimal_packet = dict(compact_packet)
         minimal_snapshot["task_packet"] = minimal_packet
@@ -626,7 +692,13 @@ def dispatch(
         snapshot = _read_snapshot(root, session_id)
         if snapshot is None:
             return _success_output()
-        context = _context_from_snapshot(snapshot, cwd=cwd, source=source)
+        current_git = _read_git_state(root)
+        context = _context_from_snapshot(
+            snapshot,
+            cwd=cwd,
+            source=source,
+            current_git=current_git,
+        )
         return {
             "continue": True,
             "hookSpecificOutput": {

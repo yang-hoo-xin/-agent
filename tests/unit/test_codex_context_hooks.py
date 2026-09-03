@@ -112,6 +112,12 @@ def _all_keys(value: Any) -> set[str]:
     return set()
 
 
+def _restored_context_payload(result: dict[str, Any]) -> dict[str, Any]:
+    context = result["hookSpecificOutput"]["additionalContext"]
+    serialized = context.split("```json\n", 1)[1].rsplit("\n```", 1)[0]
+    return json.loads(serialized)
+
+
 def test_pre_compact_records_clean_and_dirty_git_state(tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
 
@@ -181,7 +187,9 @@ def test_session_start_returns_bounded_official_additional_context(
     tmp_path: Path,
 ) -> None:
     repo = _make_repo(tmp_path)
-    _write_snapshot(repo)
+    snapshot = _write_snapshot(repo)
+    snapshot_path = _snapshot_path(repo)
+    snapshot_bytes = snapshot_path.read_bytes()
 
     result = HOOK.dispatch(
         "session_start", _session_start_input(repo), expected_root=repo
@@ -194,7 +202,118 @@ def test_session_start_returns_bounded_official_additional_context(
     assert "codex_context_snapshot_v0" in context
     assert '"source": "compact"' in context
     assert HOOK._estimated_tokens(context) <= HOOK.MAX_CONTEXT_TOKENS_ESTIMATE
+    restored = _restored_context_payload(result)
+    restore_check = restored["git"]["restore_check"]
+    assert restore_check == {
+        "branch_matches": True,
+        "current_branch": snapshot["git"]["branch"],
+        "current_dirty": False,
+        "current_head": restored["git"]["head"],
+        "current_status_count": 0,
+        "freshness": "current",
+        "head_matches": True,
+        "reason": "clean_git_identity_match",
+        "status_matches": True,
+    }
+    assert "transcript_path" not in _all_keys(restored)
+    assert snapshot_path.read_bytes() == snapshot_bytes
     json.dumps(result)
+
+
+def test_session_start_reports_changed_head_and_branch_as_stale(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _write_snapshot(repo, session_id="head-change")
+    (repo / "tracked.txt").write_text("new commit\n", encoding="utf-8")
+    _git(repo, "add", "tracked.txt")
+    _git(repo, "commit", "-m", "advance")
+
+    head_result = HOOK.dispatch(
+        "session_start",
+        _session_start_input(repo, session_id="head-change"),
+        expected_root=repo,
+    )
+    head_check = _restored_context_payload(head_result)["git"]["restore_check"]
+    assert head_check["freshness"] == "stale"
+    assert head_check["reason"] == "head_changed"
+    assert head_check["head_matches"] is False
+
+    _write_snapshot(repo, session_id="branch-change")
+    _git(repo, "checkout", "-b", "other-branch")
+    branch_result = HOOK.dispatch(
+        "session_start",
+        _session_start_input(repo, session_id="branch-change"),
+        expected_root=repo,
+    )
+    branch_check = _restored_context_payload(branch_result)["git"]["restore_check"]
+    assert branch_check["freshness"] == "stale"
+    assert branch_check["reason"] == "branch_changed"
+    assert branch_check["head_matches"] is True
+    assert branch_check["branch_matches"] is False
+
+
+def test_session_start_reports_status_change_and_dirty_uncertainty(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _write_snapshot(repo, session_id="status-change")
+    (repo / "tracked.txt").write_text("dirty once\n", encoding="utf-8")
+
+    changed_result = HOOK.dispatch(
+        "session_start",
+        _session_start_input(repo, session_id="status-change"),
+        expected_root=repo,
+    )
+    changed_check = _restored_context_payload(changed_result)["git"][
+        "restore_check"
+    ]
+    assert changed_check["freshness"] == "stale"
+    assert changed_check["reason"] == "status_changed"
+    assert changed_check["status_matches"] is False
+
+    _write_snapshot(repo, session_id="dirty-same-status")
+    (repo / "tracked.txt").write_text("dirty twice\n", encoding="utf-8")
+    unknown_result = HOOK.dispatch(
+        "session_start",
+        _session_start_input(repo, session_id="dirty-same-status"),
+        expected_root=repo,
+    )
+    unknown_check = _restored_context_payload(unknown_result)["git"][
+        "restore_check"
+    ]
+    assert unknown_check["freshness"] == "unknown"
+    assert unknown_check["reason"] == "dirty_content_not_compared"
+    assert unknown_check["status_matches"] is True
+
+
+def test_session_start_current_git_failure_is_unknown_and_fail_open(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo = _make_repo(tmp_path)
+    _write_snapshot(repo)
+    monkeypatch.setattr(HOOK, "_read_git_state", lambda _root: None)
+
+    result = HOOK.dispatch(
+        "session_start",
+        _session_start_input(repo),
+        expected_root=repo,
+    )
+
+    assert result["continue"] is True
+    restore_check = _restored_context_payload(result)["git"]["restore_check"]
+    assert restore_check == {
+        "branch_matches": None,
+        "current_branch": None,
+        "current_dirty": None,
+        "current_head": None,
+        "current_status_count": None,
+        "freshness": "unknown",
+        "head_matches": None,
+        "reason": "current_git_unavailable",
+        "status_matches": None,
+    }
 
 
 def test_context_budget_keeps_write_protection_and_stop_fields(
@@ -230,8 +349,7 @@ def test_context_budget_keeps_write_protection_and_stop_fields(
         "session_start", _session_start_input(repo), expected_root=repo
     )
     context = result["hookSpecificOutput"]["additionalContext"]
-    serialized = context.split("```json\n", 1)[1].rsplit("\n```", 1)[0]
-    restored = json.loads(serialized)
+    restored = _restored_context_payload(result)
 
     assert restored["task_packet"]["write_allowlist"] == [
         "src/exact_owner.py"
@@ -243,6 +361,7 @@ def test_context_budget_keeps_write_protection_and_stop_fields(
         "The verified owner changes."
     ]
     assert restored["task_packet_truncated_fields"]
+    assert restored["git"]["restore_check"]["freshness"] == "current"
     assert HOOK._estimated_tokens(context) <= HOOK.MAX_CONTEXT_TOKENS_ESTIMATE
 
 
