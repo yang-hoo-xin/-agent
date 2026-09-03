@@ -1638,7 +1638,7 @@ def test_source_augmentation_rejects_conflicting_observation_identity(
         )
 
 
-def test_source_augmentation_stably_deduplicates_identical_evidence_id(
+def test_source_augmentation_deduplicates_api_and_filters_internal_target_source(
     tmp_path: Path,
 ) -> None:
     augmentation = _strict_api_augmentation_pack(tmp_path)
@@ -1646,11 +1646,30 @@ def test_source_augmentation_stably_deduplicates_identical_evidence_id(
         augmentation,
         expected_query=augmentation.query,
     )
+    internal_target = EvidenceItem(
+        evidence_id="source_grounding_001",
+        source_type="target_source",
+        source_path="generated_mods/SyntheticMod/Behavior.cs",
+        symbol="SyntheticMod.Behavior.Change",
+        span={"start_line": 1, "end_line": 3},
+        retrieval_method="rg_live_read",
+        score=1.0,
+        claim_supported="Current target-source vocabulary.",
+        excerpt="void Change() { }",
+        source_ref="source://target/Behavior.cs",
+        source_hash="B" * 64,
+        file_hash="B" * 64,
+        authority="mod_agent_deterministic",
+    )
+    augmentation = replace(
+        augmentation,
+        items=(internal_target, *augmentation.items),
+    )
     retrieved = EvidencePack(
         query=augmentation.query,
         readiness="partial",
         can_generate_patch=False,
-        items=(augmentation.items[0],),
+        items=(augmentation.items[1],),
     )
 
     merged = _merge_source_augmentation(
@@ -1660,12 +1679,15 @@ def test_source_augmentation_stably_deduplicates_identical_evidence_id(
 
     assert merged.items == retrieved.items
     assert merged.items[0] is retrieved.items[0]
+    assert merged.budget_summary["source_augmentation"][
+        "filtered_target_source_evidence_ids"
+    ] == [internal_target.evidence_id]
 
 
 @pytest.mark.parametrize(
     ("field_name", "invalid_value"),
     [
-        ("source_type", "target_source"),
+        ("source_type", "reference_mod"),
         ("authority", "legacy_rag_auxiliary"),
         ("usage", "supporting_context"),
         ("source_authority", "lead"),
@@ -1742,6 +1764,51 @@ def test_source_augmentation_rejects_cross_request_pack(
         _strict_source_augmentation(
             augmentation,
             expected_query="A different FeatureSpec request.",
+        )
+
+
+def test_source_augmentation_rejects_strict_pack_without_api_evidence(
+    tmp_path: Path,
+) -> None:
+    projection = _actual_plan(
+        behavior_goal="A bounded behavior goal.",
+        queries=["bounded behavior"],
+        evidence_need="Which current managed method exposes the behavior?",
+    )["requirement_projection"]
+    assert isinstance(projection, dict)
+    projection = {
+        **projection,
+        "behavior_goal": "",
+        "planning_blocking_questions": [],
+    }
+    result = EvidenceDiscoverySpecialist(
+        model=_ScriptedModel(
+            [
+                {
+                    "action": "plan",
+                    "planning_status": "requirement_projection_insufficient",
+                    "requirement_projection": projection,
+                    "search_plan": None,
+                }
+            ]
+        ),
+        tool_executor=_ObservedToolExecutor(),
+    ).discover(
+        replace(
+            _request(tmp_path),
+            natural_language_request="Do something.",
+            require_actual_planning=True,
+        )
+    )
+    assert result.pack.items == ()
+
+    with pytest.raises(
+        ValueError,
+        match="SOURCE_AUGMENTATION_API_EVIDENCE_MISSING",
+    ):
+        _strict_source_augmentation(
+            result.pack,
+            expected_query="Do something.",
         )
 
 

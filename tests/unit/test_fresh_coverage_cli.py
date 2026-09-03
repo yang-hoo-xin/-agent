@@ -14,12 +14,16 @@ from src.core.settings import load_settings
 from src.libs.llm import ChatResponse, OllamaLLM
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.cli import main
-from src.mod_agent.evidence import EvidencePack
+from src.mod_agent.evidence import EvidenceDiscoverySource, EvidencePack
 from src.mod_agent.fresh_coverage import (
     FreshCoverageError,
     FreshCoverageProgressReporter,
     LocalOllamaRequirementCoverageCompletion,
     create_local_ollama_requirement_coverage_completion,
+    run_fresh_requirement_coverage,
+)
+from src.mod_agent.intelligent_evidence_only import (
+    make_fresh_api_source_augmentation_factory,
 )
 from src.mod_agent.model_admission import ModelAdmissionError
 from src.mod_agent.planning import FeatureSpec
@@ -579,6 +583,7 @@ def _run_cli(
     workspace: Path,
     completion,
     monkeypatch,
+    extra_args: tuple[str, ...] = (),
 ) -> int:
     adapter = _local_completion(completion, monkeypatch)
 
@@ -612,8 +617,222 @@ def _run_cli(
             "generated_mods/SyntheticMod",
             "--artifact-root",
             str(tmp_path / "artifacts"),
+            *extra_args,
         ]
     )
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ("--api-source-registry", "source-registry.json"),
+        ("--api-source-id", "current-interop"),
+    ],
+)
+def test_fresh_coverage_api_source_selection_requires_complete_pair(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+    extra_args: tuple[str, ...],
+) -> None:
+    workspace, _source_root, _source, feature_path = _write_inputs(tmp_path)
+
+    exit_code = _run_cli(
+        tmp_path=tmp_path,
+        feature_path=feature_path,
+        workspace=workspace,
+        completion=lambda *_args: pytest.fail("Model must not run."),
+        monkeypatch=monkeypatch,
+        extra_args=extra_args,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["reason"] == "FRESH_COVERAGE_API_SOURCE_SELECTION_INCOMPLETE"
+
+
+def test_fresh_coverage_cli_passes_explicit_api_augmentation_factory(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    workspace, _source_root, _source, feature_path = _write_inputs(tmp_path)
+    roles: list[str] = []
+    captured: dict[str, object] = {}
+
+    def augmentation_factory(**kwargs):
+        captured["factory_kwargs"] = kwargs
+        return lambda _materialized, _retrieved: pytest.fail(
+            "CLI wiring test does not execute discovery."
+        )
+
+    def run_with_capture(**kwargs):
+        captured["source_augmentation_factory"] = kwargs.pop(
+            "source_augmentation_factory"
+        )
+        return run_fresh_requirement_coverage(**kwargs)
+
+    monkeypatch.setattr(
+        "src.mod_agent.cli.make_fresh_api_source_augmentation_factory",
+        augmentation_factory,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.cli.run_fresh_requirement_coverage",
+        run_with_capture,
+    )
+
+    exit_code = _run_cli(
+        tmp_path=tmp_path,
+        feature_path=feature_path,
+        workspace=workspace,
+        completion=_successful_completion(roles),
+        monkeypatch=monkeypatch,
+        extra_args=(
+            "--api-source-registry",
+            "source-registry.json",
+            "--api-source-id",
+            "current-interop",
+        ),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == "terminal"
+    assert callable(captured["source_augmentation_factory"])
+    factory_kwargs = captured["factory_kwargs"]
+    assert factory_kwargs["request"] == _feature_payload()["user_request"]
+    assert factory_kwargs["source_registry_path"] == "source-registry.json"
+    assert factory_kwargs["source_id"] == "current-interop"
+    assert factory_kwargs["workspace_root"] == str(workspace)
+    assert factory_kwargs["search_root"] == "generated_mods/SyntheticMod"
+    assert factory_kwargs["ollama_base_url"] == "http://127.0.0.1:11434"
+    assert factory_kwargs["ollama_model"] == "test-coverage-model"
+    assert factory_kwargs["ollama_max_output_tokens"] == 1024
+    assert factory_kwargs["ollama_context_window"] == 8192
+    assert factory_kwargs["ollama_request_timeout_seconds"] == 120.0
+
+
+def test_fresh_api_augmentation_factory_reuses_local_discovery_components(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    api_root = tmp_path / "api"
+    api_root.mkdir()
+    (api_root / "Modules-ASM.dll").write_bytes(b"managed-test-bytes")
+    source = EvidenceDiscoverySource(
+        source_id="current-interop",
+        source_type="decompiled_api",
+        kind="unity_script_assembly",
+        evidence_class="current_interop_assembly",
+        source_authority="authoritative",
+        description="Current generated interop assembly.",
+        root_path=api_root,
+        allowed_tools=("search_dotnet_metadata", "inspect_method_il"),
+        assembly_relative_paths=("Modules-ASM.dll",),
+    )
+    captured: dict[str, object] = {}
+
+    class FakeClient:
+        provider = "ollama_chat_local"
+
+        def __init__(self, **kwargs):
+            captured["client_kwargs"] = kwargs
+            self.base_url = kwargs["base_url"]
+            self.model = kwargs["model"]
+
+    class FakeLiveProvider:
+        def __init__(self, workspace_root, *, rg_executable):
+            captured["live_init"] = (workspace_root, rg_executable)
+
+        def collect_query_set(self, *, queries, search_root, max_items):
+            captured["adapted_queries"] = queries
+            captured["live_collect"] = (search_root, max_items)
+            return EvidencePack.empty(query="source vocabulary", reason="test")
+
+    class FakeEvidenceFactory:
+        def __init__(self, **kwargs):
+            captured["evidence_factory_kwargs"] = kwargs
+
+        def __call__(self, state, feature_data):
+            captured["evidence_factory_call"] = (state, feature_data)
+            return EvidencePack.empty(query=feature_data["target_behavior"], reason="test")
+
+    sentinel_executor = object()
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.load_evidence_discovery_sources",
+        lambda _path: (source,),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.OllamaChatAgentAdapter",
+        FakeClient,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.RgLiveEvidenceProvider",
+        FakeLiveProvider,
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.IntelligentEvidencePackFactory",
+        FakeEvidenceFactory,
+    )
+
+    def fake_executor(_cls, inspector_path):
+        captured["inspector_path"] = Path(inspector_path)
+        return sentinel_executor
+
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.LocalAssemblyEvidenceToolExecutor.from_inspector",
+        classmethod(fake_executor),
+    )
+
+    factory = make_fresh_api_source_augmentation_factory(
+        request="Inspect the current crosshair API.",
+        source_registry_path="source-registry.json",
+        source_id="current-interop",
+        workspace_root=tmp_path / "workspace",
+        search_root="generated_mods/SyntheticMod",
+        ollama_base_url="http://127.0.0.1:11434",
+        ollama_model="test-model",
+        ollama_max_output_tokens=1024,
+        ollama_context_window=8192,
+        ollama_request_timeout_seconds=120.0,
+    )
+    specialist = captured["evidence_factory_kwargs"]["specialist"]
+    source_pack = specialist.source_evidence_retriever(
+        (
+            {
+                "query_id": "source_query_01",
+                "origin": "initial_focus_question",
+                "query": "ShowSpreadCircle",
+            },
+        )
+    )
+    result = factory({}, EvidencePack.empty(query="ignored", reason="test"))
+
+    assert source_pack.query == "source vocabulary"
+    assert captured["adapted_queries"] == (
+        {
+            "query_id": "source_query_01",
+            "requirement_id": "initial_focus_question",
+            "query": "ShowSpreadCircle",
+        },
+    )
+    assert captured["live_collect"] == ("generated_mods/SyntheticMod", 1)
+    assert captured["evidence_factory_kwargs"]["sources"] == (source,)
+    assert captured["evidence_factory_kwargs"]["max_tool_calls"] == 4
+    assert captured["evidence_factory_kwargs"]["max_model_steps"] == 5
+    assert captured["evidence_factory_kwargs"]["require_actual_planning"] is True
+    assert specialist.tool_executor is sentinel_executor
+    assert captured["inspector_path"].parts[-4:] == (
+        "bin",
+        "Debug",
+        "net7.0",
+        "r8_il_inspector.dll",
+    )
+    state, feature_data = captured["evidence_factory_call"]
+    assert state["run_id"].startswith("fresh_api_augmentation_")
+    assert state["request_id"].startswith("request_")
+    assert feature_data == {"target_behavior": "Inspect the current crosshair API."}
+    assert result.query == "Inspect the current crosshair API."
 
 
 def _assert_result_shape(result: dict[str, object]) -> None:

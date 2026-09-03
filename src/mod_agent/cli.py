@@ -41,6 +41,7 @@ from .fresh_planning_continuation import (
 )
 from .intelligent_evidence_only import (
     IntelligentEvidenceEntryError,
+    make_fresh_api_source_augmentation_factory,
     run_intelligent_evidence_only,
 )
 from .local_entry import (
@@ -693,6 +694,20 @@ def build_parser(
     )
     fresh_coverage_parser.add_argument(
         "--ollama-timeout-seconds", type=float
+    )
+    fresh_coverage_parser.add_argument(
+        "--api-source-registry",
+        help=(
+            "Enable same-run read-only API evidence augmentation from this "
+            "existing source registry. Requires --api-source-id."
+        ),
+    )
+    fresh_coverage_parser.add_argument(
+        "--api-source-id",
+        help=(
+            "Exact decompiled_api source_id selected for Fresh augmentation. "
+            "Requires --api-source-registry."
+        ),
     )
 
     planning_continuation_parser = subparsers.add_parser(
@@ -1360,6 +1375,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "model_admission",
                     "fresh-coverage requires explicit --local-ollama.",
                 )
+            if (args.api_source_registry is None) != (
+                args.api_source_id is None
+            ):
+                raise FreshCoverageError(
+                    "FRESH_COVERAGE_API_SOURCE_SELECTION_INCOMPLETE",
+                    "request",
+                    "--api-source-registry and --api-source-id must be provided together.",
+                )
             feature_data = load_feature_spec_payload(args.feature_spec)
             completion = create_local_ollama_requirement_coverage_completion(
                 settings_path=args.settings,
@@ -1370,6 +1393,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ollama_timeout_seconds=args.ollama_timeout_seconds,
                 stream_activity_recorder=progress.record_stream_activity,
             )
+            source_augmentation_factory = None
+            if args.api_source_registry is not None:
+                source_augmentation_factory = (
+                    make_fresh_api_source_augmentation_factory(
+                        request=str(feature_data["user_request"]),
+                        source_registry_path=args.api_source_registry,
+                        source_id=args.api_source_id,
+                        workspace_root=args.workspace_root,
+                        search_root=args.search_root,
+                        ollama_base_url=completion.base_url,
+                        ollama_model=completion.model,
+                        ollama_max_output_tokens=completion.output_budget,
+                        ollama_context_window=completion.context_window,
+                        ollama_request_timeout_seconds=completion.llm.timeout,
+                    )
+                )
             result = run_fresh_requirement_coverage(
                 feature_data=feature_data,
                 workspace_root=args.workspace_root,
@@ -1377,6 +1416,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 artifact_root=args.artifact_root,
                 completion=completion,
                 progress_reporter=progress,
+                source_augmentation_factory=source_augmentation_factory,
             )
         except (FreshCoverageError, OSError, RuntimeError, ValueError) as exc:
             failure_code = getattr(

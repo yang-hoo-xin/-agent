@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import traceback
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -18,6 +19,7 @@ from src.libs.llm import (
 )
 
 from .artifacts import ArtifactRef, ArtifactStore
+from .domain.wallcrawler_acceptance import evaluate_wallcrawler_evidence
 from .evidence import (
     EVIDENCE_DISCOVERY_DISCLOSURE_DATA_CLASSES,
     EvidenceDiscoveryAgentModel,
@@ -25,13 +27,14 @@ from .evidence import (
     EvidenceDiscoveryLocalExecution,
     EvidenceDiscoverySource,
     EvidenceDiscoverySpecialist,
+    EvidencePack,
     IntelligentEvidencePackFactory,
     LocalAssemblyEvidenceToolExecutor,
+    RgLiveEvidenceProvider,
     evidence_discovery_source_from_definition,
 )
 from .evidence.discovery_contract import EVIDENCE_DISCOVERY_TOOLS
 from .knowledge import SourceDefinition
-from .domain.wallcrawler_acceptance import evaluate_wallcrawler_evidence
 from .planning.models import stable_feature_id
 from .workflow import build_graph, create_initial_state
 
@@ -153,6 +156,104 @@ def load_evidence_discovery_sources(
     if len({source.source_id for source in sources}) != len(sources):
         raise IntelligentEvidenceEntryError("Source registry source_ids must be unique.")
     return tuple(sources)
+
+
+def make_fresh_api_source_augmentation_factory(
+    *,
+    request: str,
+    source_registry_path: str | Path,
+    source_id: str,
+    workspace_root: str | Path,
+    search_root: str | Path,
+    ollama_base_url: str,
+    ollama_model: str,
+    ollama_max_output_tokens: int,
+    ollama_context_window: int,
+    ollama_request_timeout_seconds: float,
+    inspector_path: str | Path = _DEFAULT_INSPECTOR,
+    rg_executable: str = "rg",
+) -> Callable[[Mapping[str, Any], EvidencePack], EvidencePack]:
+    """Build one same-run local API discovery augmentation for Fresh."""
+
+    if not isinstance(request, str) or not request.strip():
+        raise IntelligentEvidenceEntryError(
+            "Fresh API source augmentation requires a non-empty request."
+        )
+    sources = tuple(
+        source
+        for source in load_evidence_discovery_sources(source_registry_path)
+        if source.source_id == source_id
+    )
+    if len(sources) != 1 or sources[0].source_type != "decompiled_api":
+        raise IntelligentEvidenceEntryError(
+            "Fresh API source_id must select exactly one decompiled_api source."
+        )
+    client = OllamaChatAgentAdapter(
+        base_url=ollama_base_url,
+        model=ollama_model,
+        max_output_tokens=ollama_max_output_tokens,
+        context_window=ollama_context_window,
+        seed=0,
+        request_timeout_seconds=ollama_request_timeout_seconds,
+    )
+    model = EvidenceDiscoveryAgentModel(
+        client,
+        local_execution=EvidenceDiscoveryLocalExecution(
+            endpoint=client.base_url,
+            provider=client.provider,
+            model=client.model,
+        ),
+    )
+    live_source_provider = RgLiveEvidenceProvider(
+        workspace_root,
+        rg_executable=rg_executable,
+    )
+
+    def source_evidence_retriever(
+        queries: tuple[dict[str, str], ...],
+    ) -> EvidencePack:
+        adapted_queries = tuple(
+            {
+                "query_id": item["query_id"],
+                "requirement_id": item["origin"],
+                "query": item["query"],
+            }
+            for item in queries
+        )
+        return live_source_provider.collect_query_set(
+            queries=adapted_queries,
+            search_root=search_root,
+            max_items=len(adapted_queries),
+        )
+
+    evidence_factory = IntelligentEvidencePackFactory(
+        specialist=EvidenceDiscoverySpecialist(
+            model=model,
+            tool_executor=LocalAssemblyEvidenceToolExecutor.from_inspector(
+                inspector_path
+            ),
+            source_evidence_retriever=source_evidence_retriever,
+        ),
+        sources=sources,
+        max_tool_calls=4,
+        max_model_steps=5,
+        require_actual_planning=True,
+    )
+
+    def augment(
+        _materialized_projection: Mapping[str, Any],
+        _retrieved_pack: EvidencePack,
+    ) -> EvidencePack:
+        return evidence_factory(
+            {
+                "run_id": f"fresh_api_augmentation_{uuid4().hex}",
+                "request_id": f"request_{uuid4().hex}",
+                "user_request": request,
+            },
+            {"target_behavior": request},
+        )
+
+    return augment
 
 
 def run_intelligent_evidence_only(

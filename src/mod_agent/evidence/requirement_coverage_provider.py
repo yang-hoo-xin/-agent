@@ -1291,29 +1291,50 @@ def _strict_source_augmentation(
         raise ValueError("SOURCE_AUGMENTATION_REQUIREMENT_COVERAGE_INVALID")
     if admitted.provenance_validation.get("target_code_executed") is not False:
         raise ValueError("SOURCE_AUGMENTATION_TARGET_EXECUTION_INVALID")
-    if any(
-        item.source_type != "decompiled_api"
-        or item.authority != DETERMINISTIC_EVIDENCE_AUTHORITY
-        or item.usage != "hook_evidence"
-        or item.source_authority not in {"authoritative", "supporting"}
-        or not isinstance(item.symbol, str)
-        or not item.symbol
-        or not isinstance(item.source_path, str)
-        or not item.source_path
-        or not isinstance(item.source_ref, str)
-        or not item.source_ref
-        or not _is_sha256(item.source_hash)
-        or item.file_hash != item.source_hash
-        or not isinstance(item.module_mvid, str)
-        or not item.module_mvid
-        or not isinstance(item.metadata_token, str)
-        or not item.metadata_token
-        or not isinstance(item.signature_blob, str)
-        or not item.signature_blob
-        for item in admitted.items
-    ):
+    if any(not _valid_source_augmentation_item(item) for item in admitted.items):
         raise ValueError("SOURCE_AUGMENTATION_ITEM_BOUNDARY_INVALID")
+    if not any(item.source_type == "decompiled_api" for item in admitted.items):
+        raise ValueError("SOURCE_AUGMENTATION_API_EVIDENCE_MISSING")
     return admitted
+
+
+def _valid_source_augmentation_item(item: EvidenceItem) -> bool:
+    if item.authority != DETERMINISTIC_EVIDENCE_AUTHORITY:
+        return False
+    if item.source_type == "target_source":
+        span = item.span
+        return (
+            item.retrieval_method == "rg_live_read"
+            and item.usage is None
+            and isinstance(item.source_path, str)
+            and bool(item.source_path)
+            and isinstance(item.source_ref, str)
+            and bool(item.source_ref)
+            and _is_sha256(item.source_hash)
+            and item.file_hash == item.source_hash
+            and isinstance(span, dict)
+            and type(span.get("start_line")) is int
+            and type(span.get("end_line")) is int
+        )
+    return (
+        item.source_type == "decompiled_api"
+        and item.usage == "hook_evidence"
+        and item.source_authority in {"authoritative", "supporting"}
+        and isinstance(item.symbol, str)
+        and bool(item.symbol)
+        and isinstance(item.source_path, str)
+        and bool(item.source_path)
+        and isinstance(item.source_ref, str)
+        and bool(item.source_ref)
+        and _is_sha256(item.source_hash)
+        and item.file_hash == item.source_hash
+        and isinstance(item.module_mvid, str)
+        and bool(item.module_mvid)
+        and isinstance(item.metadata_token, str)
+        and bool(item.metadata_token)
+        and isinstance(item.signature_blob, str)
+        and bool(item.signature_blob)
+    )
 
 
 def _merge_source_augmentation(
@@ -1323,9 +1344,14 @@ def _merge_source_augmentation(
 ) -> EvidencePack:
     if "source_augmentation" in retrieved_pack.budget_summary:
         raise ValueError("SOURCE_AUGMENTATION_AUDIT_COLLISION")
+    api_items = tuple(
+        item
+        for item in augmentation_pack.items
+        if item.source_type == "decompiled_api"
+    )
     items = _merge_evidence_items(
         retrieved_pack.items,
-        augmentation_pack.items,
+        api_items,
     )
     augmentation_payload = augmentation_pack.to_artifact_payload()
     augmentation_audit = {
@@ -1342,7 +1368,12 @@ def _merge_source_augmentation(
         "readiness": augmentation_pack.readiness,
         "can_generate_patch": augmentation_pack.can_generate_patch,
         "run_status": augmentation_pack.run_status,
-        "evidence_ids": [item.evidence_id for item in augmentation_pack.items],
+        "evidence_ids": [item.evidence_id for item in api_items],
+        "filtered_target_source_evidence_ids": [
+            item.evidence_id
+            for item in augmentation_pack.items
+            if item.source_type == "target_source"
+        ],
         "retrieval_methods_used": list(
             augmentation_pack.retrieval_methods_used
         ),
