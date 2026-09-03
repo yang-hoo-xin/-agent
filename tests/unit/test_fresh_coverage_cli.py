@@ -94,9 +94,17 @@ class _AssistedApiExecutor:
         returned_symbols: tuple[str, ...] = _API_SYMBOLS,
         *,
         results_truncated: bool = False,
+        assemblies_discovered: object = 1,
+        managed_assemblies_searched: object = 1,
+        unreadable_or_non_managed_assemblies: object = 0,
     ) -> None:
         self.returned_symbols = returned_symbols
         self.results_truncated = results_truncated
+        self.assemblies_discovered = assemblies_discovered
+        self.managed_assemblies_searched = managed_assemblies_searched
+        self.unreadable_or_non_managed_assemblies = (
+            unreadable_or_non_managed_assemblies
+        )
         self.actions: list[dict[str, object]] = []
         self.run_id: str | None = None
 
@@ -113,6 +121,11 @@ class _AssistedApiExecutor:
                 summary="Resolved exact method symbols.",
                 data={
                     "results_truncated": self.results_truncated,
+                    "assemblies_discovered": self.assemblies_discovered,
+                    "managed_assemblies_searched": self.managed_assemblies_searched,
+                    "unreadable_or_non_managed_assemblies": (
+                        self.unreadable_or_non_managed_assemblies
+                    ),
                     "methods": [
                         {"symbol": symbol, "candidate_ref": f"ref-{index}"}
                         for index, symbol in enumerate(self.returned_symbols)
@@ -1161,6 +1174,55 @@ def test_fresh_assisted_api_factory_requires_one_exact_match_per_symbol(
     with pytest.raises(
         IntelligentEvidenceEntryError,
         match=failure_text,
+    ):
+        factory({}, EvidencePack.empty(query="ignored", reason="test"))
+
+
+@pytest.mark.parametrize(
+    (
+        "assemblies_discovered",
+        "managed_assemblies_searched",
+        "unreadable_or_non_managed_assemblies",
+    ),
+    [
+        (2, 1, 1),
+        (1, True, 0),
+        ("1", 1, 0),
+    ],
+)
+def test_fresh_assisted_api_factory_requires_complete_managed_assembly_search(
+    tmp_path: Path,
+    monkeypatch,
+    assemblies_discovered: object,
+    managed_assemblies_searched: object,
+    unreadable_or_non_managed_assemblies: object,
+) -> None:
+    source = _assisted_api_source(tmp_path)
+    executor = _AssistedApiExecutor(
+        assemblies_discovered=assemblies_discovered,
+        managed_assemblies_searched=managed_assemblies_searched,
+        unreadable_or_non_managed_assemblies=(
+            unreadable_or_non_managed_assemblies
+        ),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.load_evidence_discovery_sources",
+        lambda _path: (source,),
+    )
+    monkeypatch.setattr(
+        "src.mod_agent.intelligent_evidence_only.LocalAssemblyEvidenceToolExecutor.from_inspector",
+        classmethod(lambda _cls, _path: executor),
+    )
+    factory = make_fresh_assisted_api_source_augmentation_factory(
+        request="Inspect current crosshair API behavior.",
+        source_registry_path="source-registry.json",
+        source_id="current-interop",
+        api_symbols=_API_SYMBOLS,
+    )
+
+    with pytest.raises(
+        IntelligentEvidenceEntryError,
+        match="must cover every configured managed assembly",
     ):
         factory({}, EvidencePack.empty(query="ignored", reason="test"))
 

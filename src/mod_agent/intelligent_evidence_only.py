@@ -342,6 +342,26 @@ def make_fresh_assisted_api_source_augmentation_factory(
             raise IntelligentEvidenceEntryError(
                 "Fresh assisted API metadata result must be complete."
             )
+        assemblies_discovered = search_observation.data.get(
+            "assemblies_discovered"
+        )
+        managed_assemblies_searched = search_observation.data.get(
+            "managed_assemblies_searched"
+        )
+        unreadable_assemblies = search_observation.data.get(
+            "unreadable_or_non_managed_assemblies"
+        )
+        if (
+            type(assemblies_discovered) is not int
+            or type(managed_assemblies_searched) is not int
+            or type(unreadable_assemblies) is not int
+            or assemblies_discovered < 1
+            or managed_assemblies_searched != assemblies_discovered
+            or unreadable_assemblies != 0
+        ):
+            raise IntelligentEvidenceEntryError(
+                "Fresh assisted API metadata result must cover every configured managed assembly."
+            )
         selected_rows: list[dict[str, object]] = []
         for symbol in symbols:
             exact_rows = [
