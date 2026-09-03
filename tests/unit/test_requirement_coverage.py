@@ -2606,6 +2606,53 @@ def test_projection_requires_complete_input_obligation_accounting() -> None:
         )
 
 
+def test_projection_query_leads_are_order_deduplicated() -> None:
+    feature = _feature_data()
+    projection = deepcopy(_projection())
+    projection["requirements"][0]["query_leads"] = [
+        "ChangeMarker",
+        "ConfigKey",
+        "ChangeMarker",
+        "ConfigKey",
+    ]
+
+    materialized = materialize_requirement_coverage_projection(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+        projection=projection,
+    )
+
+    first_requirement = materialized["requirements"][0]
+    assert first_requirement["query_leads"] == ["ChangeMarker", "ConfigKey"]
+    assert [
+        query["query"]
+        for query in materialized["queries"]
+        if query["requirement_id"] == first_requirement["requirement_id"]
+    ] == ["ChangeMarker", "ConfigKey"]
+
+
+@pytest.mark.parametrize("invalid_query_lead", ["", " ", None, 7])
+def test_projection_query_leads_still_reject_invalid_values(
+    invalid_query_lead: object,
+) -> None:
+    feature = _feature_data()
+    projection = deepcopy(_projection())
+    projection["requirements"][0]["query_leads"] = [
+        "ChangeMarker",
+        invalid_query_lead,
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="REQUIREMENT_COVERAGE_REQUIREMENT_INVALID",
+    ):
+        materialize_requirement_coverage_projection(
+            feature_data=feature,
+            request=str(feature["user_request"]),
+            projection=projection,
+        )
+
+
 def test_post_change_obligations_can_be_explicitly_disposed_without_patch_gate() -> None:
     feature = _feature_data()
     disposed = deepcopy(_projection())
@@ -4231,6 +4278,10 @@ def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
         "requirement_findings",
     ]
     projection_rules = calls[0][1]["rules"]
+    assert (
+        "Within the response, never account for the same input obligation "
+        "through both requirements and input_dispositions."
+    ) in projection_rules
     assert any(
         "per-index values listed in input_obligations" in rule
         for rule in projection_rules

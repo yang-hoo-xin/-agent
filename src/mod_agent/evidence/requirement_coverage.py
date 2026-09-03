@@ -843,10 +843,12 @@ def _normalized_projection(
             )
             or not isinstance(query_leads, list)
             or not 1 <= len(query_leads) <= 4
-            or len(query_leads) != len(set(query_leads))
             or any(not isinstance(value, str) or not value.strip() for value in query_leads)
         ):
             raise ValueError("REQUIREMENT_COVERAGE_REQUIREMENT_INVALID")
+        normalized_query_leads = list(
+            dict.fromkeys(value.strip() for value in query_leads)
+        )
         accounted_indexes.update(int(index) for index in obligation_indexes)
         for input_obligation_item_index, input_obligation_index in enumerate(
             obligation_indexes
@@ -874,7 +876,7 @@ def _normalized_projection(
                 "input_obligation_indexes": [
                     int(value) for value in obligation_indexes
                 ],
-                "query_leads": [str(value).strip() for value in query_leads],
+                "query_leads": normalized_query_leads,
             }
         )
     dispositions: list[dict[str, object]] = []

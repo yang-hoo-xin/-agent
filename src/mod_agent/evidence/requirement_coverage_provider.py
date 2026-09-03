@@ -539,6 +539,10 @@ class StructuredModelRequirementCoverageProvider:
                 "bounded reason."
             ),
             (
+                "Within the response, never account for the same input obligation "
+                "through both requirements and input_dispositions."
+            ),
+            (
                 "Use input_dispositions only with the per-index values listed in "
                 "input_obligations; do not invent or cross-bind disposition values."
             ),
