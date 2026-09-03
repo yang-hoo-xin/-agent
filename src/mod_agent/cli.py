@@ -17,6 +17,7 @@ from .actual_execution import (
     execute_sealed_actual_run,
     prepare_sealed_actual_run,
 )
+from .artifacts import ArtifactRef
 from .artifacts.store import ArtifactStorePreflightError
 from .edit_authority_capabilities import (
     parse_current_edit_authority_review_result,
@@ -31,6 +32,13 @@ from .fresh_coverage import (
     load_feature_spec_payload,
     run_fresh_requirement_coverage,
 )
+from .fresh_planning_continuation import (
+    PLANNING_CONTINUATION_CONTRACT_VERSION,
+    PlanningContinuationError,
+    PlanningContinuationInputV1,
+    blocked_planning_continuation_result,
+    run_fresh_planning_continuation,
+)
 from .intelligent_evidence_only import (
     IntelligentEvidenceEntryError,
     run_intelligent_evidence_only,
@@ -40,8 +48,8 @@ from .local_entry import (
     LocalEntryError,
     preflight_local_runtime,
     preflight_stagger_edit_authority_review,
-    resume_stagger_edit_authority_review,
     resume_local_runtime,
+    resume_stagger_edit_authority_review,
     run_local_request,
 )
 from .planning import ModPlanningBriefBuilder, RequestPlanner
@@ -51,8 +59,8 @@ from .preflight_preparation import (
     RejectedPreflightIdentityReservationV1,
     RunFamilyContinuationProfileV1,
     RunFamilyContinuationRequestV1,
-    SelectedPreflightConfigurationV1,
     SealedPreflightPreparationRequestV1,
+    SelectedPreflightConfigurationV1,
     prepare_sealed_entry_preflight,
 )
 from .product_execution import (
@@ -64,11 +72,11 @@ from .runtime import (
     StaggerDiagnosticDiffPreflightError,
     StaggerEditAuthorityApprovalError,
     StaggerEditAuthorityPreflightError,
-    create_stagger_existing_binding_reauthorization_request,
     create_stagger_edit_authority_request,
+    create_stagger_existing_binding_reauthorization_request,
     create_stagger_hud_parent_observation_authority_request,
-    preflight_stagger_existing_binding_reauthorization,
     preflight_stagger_edit_authority,
+    preflight_stagger_existing_binding_reauthorization,
     preflight_stagger_hud_parent_diagnostic_exact_diff,
     preflight_stagger_hud_parent_observation_authority,
 )
@@ -685,6 +693,29 @@ def build_parser(
     )
     fresh_coverage_parser.add_argument(
         "--ollama-timeout-seconds", type=float
+    )
+
+    planning_continuation_parser = subparsers.add_parser(
+        "continue-fresh-planning",
+        help=(
+            "Consume exact Fresh Artifact revisions through implementation "
+            "planning and stop before patch generation."
+        ),
+    )
+    planning_continuation_parser.add_argument("--artifact-root", required=True)
+    planning_continuation_parser.add_argument("--workspace-root", required=True)
+    planning_continuation_parser.add_argument("--feature-id", required=True)
+    planning_continuation_parser.add_argument(
+        "--feature-spec-path", required=True
+    )
+    planning_continuation_parser.add_argument(
+        "--feature-spec-hash", required=True
+    )
+    planning_continuation_parser.add_argument(
+        "--evidence-pack-path", required=True
+    )
+    planning_continuation_parser.add_argument(
+        "--evidence-pack-hash", required=True
     )
 
     intelligent_evidence_parser = subparsers.add_parser(
@@ -1370,6 +1401,54 @@ def main(argv: Sequence[str] | None = None) -> int:
         if result.status == "terminal":
             return 0
         return 1 if result.evidence_pack_artifact is not None else 2
+
+    if args.command == "continue-fresh-planning":
+        continuation_started = time.perf_counter()
+        try:
+            request = PlanningContinuationInputV1(
+                contract_version=PLANNING_CONTINUATION_CONTRACT_VERSION,
+                artifact_store_root=args.artifact_root,
+                workspace_root=args.workspace_root,
+                feature_spec_ref=ArtifactRef(
+                    feature_id=args.feature_id,
+                    artifact_type="feature_spec",
+                    path=args.feature_spec_path,
+                    artifact_hash=args.feature_spec_hash,
+                ),
+                evidence_pack_ref=ArtifactRef(
+                    feature_id=args.feature_id,
+                    artifact_type="evidence_pack",
+                    path=args.evidence_pack_path,
+                    artifact_hash=args.evidence_pack_hash,
+                ),
+            )
+            result = run_fresh_planning_continuation(request)
+        except PlanningContinuationError as exc:
+            result = blocked_planning_continuation_result(
+                code=exc.code,
+                stage=exc.stage,
+                reason=exc.code,
+                duration_seconds=(
+                    time.perf_counter() - continuation_started
+                ),
+            )
+        print(
+            json.dumps(
+                result.to_dict(),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        if result.status == "terminal":
+            return 0
+        if (
+            result.status == "blocked"
+            and result.implementation_plan_artifact is not None
+        ):
+            return 1
+        return 2
 
     if args.command == "plan-request":
         result = plan_request(

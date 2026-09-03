@@ -14,8 +14,8 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactStoreError
 from src.mod_agent.artifact_semantics import project_artifact_write_intent
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactStoreError
 from src.mod_agent.bindings import resolve_runtime_diagnosis_binding
 from src.mod_agent.build import BuildResult, build_fake_build_result
 from src.mod_agent.domain import (
@@ -25,7 +25,6 @@ from src.mod_agent.domain import (
     GTFOAdapter,
     UnsupportedDomainAdapter,
 )
-from src.mod_agent.evaluation import build_transition_eval_gate_report
 from src.mod_agent.edit_authority_capabilities import (
     EditAuthorityCapabilityDeclaration,
     EditAuthorityStoreStepV1,
@@ -38,6 +37,7 @@ from src.mod_agent.edit_authority_capabilities import (
     validate_edit_authority_exact_input_admission,
     validate_edit_authority_request_identity,
 )
+from src.mod_agent.evaluation import build_transition_eval_gate_report
 from src.mod_agent.evidence import (
     DenseRetrievalProvider,
     DeterministicEvidenceRetriever,
@@ -45,6 +45,11 @@ from src.mod_agent.evidence import (
     EvidenceRequest,
 )
 from src.mod_agent.execution import ExactDiffApprovalRejectedError
+from src.mod_agent.fresh_planning_continuation import (
+    PlanningContinuationArtifactWriteError,
+    PlanningContinuationInputV1,
+    preflight_planning_continuation,
+)
 from src.mod_agent.git import GitCommandError, GitRepository
 from src.mod_agent.knowledge import (
     CollectionResolutionError,
@@ -59,6 +64,10 @@ from src.mod_agent.planning import (
     RequestPlan,
     RequestPlanner,
     Uncertainty,
+)
+from src.mod_agent.product_execution import (
+    ProductExecutionContractError,
+    ProductExecutionGraphModeV1,
 )
 from src.mod_agent.proposal import (
     CRITIC_DIMENSIONS,
@@ -75,13 +84,6 @@ from src.mod_agent.runtime import (
     make_gtfo_runtime_evidence_factory_from_settings,
 )
 from src.mod_agent.runtime.evidence import bind_runtime_evidence_context
-from src.mod_agent.runtime_evidence_consolidation import (
-    project_operation_payload as project_consolidated_runtime_evidence,
-)
-from src.mod_agent.product_execution import (
-    ProductExecutionContractError,
-    ProductExecutionGraphModeV1,
-)
 from src.mod_agent.runtime.stagger_edit_authority import (
     StaggerEditAuthorityApprovalError,
     StaggerEditAuthorityMaterializationError,
@@ -90,17 +92,20 @@ from src.mod_agent.runtime.stagger_edit_authority import (
 from src.mod_agent.runtime.stagger_planner_admission import (
     materialize_stagger_planning_approval,
 )
+from src.mod_agent.runtime_evidence_consolidation import (
+    project_operation_payload as project_consolidated_runtime_evidence,
+)
 from src.mod_agent.verification_operations import (
-    BuildInvocationProtocolBindingV1,
     EVIDENCE_CONSOLIDATION_COMPLETION,
     RUNTIME_EVIDENCE_ONLY_COMPLETION,
     RUNTIME_WORKFLOW_COMPLETION,
+    BuildInvocationProtocolBindingV1,
     EvidenceConsolidationOperationV1,
     NewRuntimeResumeProtocolBindingV1,
     RuntimeTerminalizationOperationV1,
     VerificationBuildOperationV1,
-    VerificationOperationEnvelope,
     VerificationOperationDeclaration,
+    VerificationOperationEnvelope,
     VerificationProtocolBinding,
     resolve_verification_operation,
     validate_verification_operation_envelope,
@@ -114,8 +119,8 @@ from .interrupts import InterruptRequest, ResumePayload
 from .nodes import StubNodeRunner
 from .state import ModAgentState
 from .transitions import (
-    route_after_build,
     route_after_binding_resolution,
+    route_after_build,
     route_after_dry_run,
     route_after_evaluate,
     route_after_evidence,
@@ -140,6 +145,7 @@ from .verification_only import (
     verification_only_lineage_matches,
     verification_only_lineage_payload,
 )
+
 GraphNode = Callable[[ModAgentState], ModAgentState]
 BuildResultFactory = Callable[[str, str | None], BuildResult]
 RuntimeEvidenceFactory = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -382,6 +388,49 @@ def _validate_product_graph_start(
     return "continue"
 
 
+def _validate_planning_continuation_graph_start(
+    state: ModAgentState,
+    mode: PlanningContinuationInputV1,
+    artifact_store: ArtifactStore,
+) -> str:
+    """Reject exact-ref state drift before the Planning node can act."""
+
+    admitted = preflight_planning_continuation(
+        mode,
+        artifact_store=artifact_store,
+    )
+    expected_artifacts = {
+        "feature_spec": mode.feature_spec_ref.path,
+        "evidence_pack": mode.evidence_pack_ref.path,
+    }
+    expected_hashes = {
+        "feature_spec": mode.feature_spec_ref.artifact_hash,
+        "evidence_pack": mode.evidence_pack_ref.artifact_hash,
+    }
+    if (
+        state.get("feature_id") != mode.feature_spec_ref.feature_id
+        or state.get("user_request") != admitted.feature_spec["user_request"]
+        or state.get("target_mod") != admitted.feature_spec["target_mod"]
+        or state.get("risk_level") != admitted.feature_spec["risk_level"]
+        or state.get("current_stage") != "evidence_retrieval"
+        or state.get("next_stage") != "implementation_plan"
+        or state.get("artifacts") != expected_artifacts
+        or state.get("artifact_hashes") != expected_hashes
+        or state.get("approvals") != {}
+        or state.get("blockers") != []
+    ):
+        raise ValueError(
+            "Planning continuation state changed after exact-ref admission."
+        )
+    for field in ("run_id", "request_id", "user_request"):
+        value = state.get(field)
+        if type(value) is not str or not value:
+            raise ValueError(
+                "Planning continuation state identity is incomplete."
+            )
+    return "continue"
+
+
 def build_graph(
     artifact_store: ArtifactStore,
     *,
@@ -426,6 +475,7 @@ def build_graph(
     approved_feature_spec_revision_projection_hash: str | None = None,
     verification_operation: VerificationOperationEnvelope | None = None,
     product_execution_mode: ProductExecutionGraphModeV1 | None = None,
+    planning_continuation_mode: PlanningContinuationInputV1 | None = None,
 ):
     """Build a compiled LangGraph graph with real planning/review routing.
 
@@ -455,6 +505,14 @@ def build_graph(
             "product_execution_mode must be ProductExecutionGraphModeV1.",
             side_effects_may_have_started=False,
         )
+    validated_planning_continuation_mode = planning_continuation_mode
+    if validated_planning_continuation_mode is not None and not isinstance(
+        validated_planning_continuation_mode,
+        PlanningContinuationInputV1,
+    ):
+        raise ValueError(
+            "planning_continuation_mode must be PlanningContinuationInputV1."
+        )
     if (
         validated_product_execution_mode is not None
         and validated_verification_operation is not None
@@ -463,6 +521,59 @@ def build_graph(
             "Product and verification operation modes cannot share one Graph.",
             side_effects_may_have_started=False,
         )
+    if validated_planning_continuation_mode is not None:
+        incompatible_values = (
+            settings,
+            knowledge_database,
+            collection_id,
+            collection_resolver,
+            dense_provider,
+            dense_top_k,
+            domain_adapter_registry,
+            domain_review_policy,
+            build_result_factory,
+            runtime_evidence_factory,
+            proposal_git_binding_factory,
+            evidence_pack_factory,
+            patch_change_factory,
+            proposal_review_context_factory,
+            proposal_critic,
+            dry_run_factory,
+            isolated_apply_factory,
+            edit_authority_request_ref,
+            repair_planning_authority_request_ref,
+            evaluation_context_factory,
+            checkpointer,
+            feature_spec_revision_projection,
+            approved_feature_spec_revision_payload_hash,
+            approved_feature_spec_revision_projection_hash,
+            validated_verification_operation,
+            validated_product_execution_mode,
+        )
+        incompatible_flags = (
+            dense_enabled,
+            dense_required,
+            allow_game_launch,
+            use_default_proposal_git_binding,
+            stop_after_evidence,
+            stop_after_build,
+            persist_build_runtime_handoff,
+            bool(build_checkpoint_exact_revision_upstream_types),
+            require_external_evaluation,
+            require_review_approval_for_dry_run,
+            enable_dynamic_review_interrupt,
+            bool(interrupt_before),
+            bool(interrupt_after),
+            critic_requirement != "not_required",
+            proposal_source_snippet_char_limit != 6000,
+        )
+        if any(value is not None for value in incompatible_values) or any(
+            incompatible_flags
+        ):
+            raise ValueError(
+                "Planning continuation cannot receive unrelated workflow, "
+                "model, effect, approval, or stopping controls."
+            )
     if validated_product_execution_mode is not None:
         if (
             stop_after_evidence
@@ -763,6 +874,13 @@ def build_graph(
                 artifact_store,
                 formal_requirement_coverage_required=(
                     validated_product_execution_mode is not None
+                    or validated_planning_continuation_mode is not None
+                ),
+                use_store_result=(
+                    validated_planning_continuation_mode is not None
+                ),
+                planning_continuation_mode=(
+                    validated_planning_continuation_mode
                 ),
             ),
         ),
@@ -997,6 +1115,16 @@ def build_graph(
             ),
             {"continue": "collect_runtime_evidence"},
         )
+    elif validated_planning_continuation_mode is not None:
+        graph.add_conditional_edges(
+            START,
+            lambda state: _validate_planning_continuation_graph_start(
+                state,
+                validated_planning_continuation_mode,
+                artifact_store,
+            ),
+            {"continue": "create_implementation_plan"},
+        )
     elif validated_product_execution_mode is not None:
         graph.add_conditional_edges(
             START,
@@ -1049,7 +1177,11 @@ def build_graph(
     graph.add_conditional_edges(
         "create_implementation_plan",
         route_after_implementation_plan,
-        dict(registry["create_implementation_plan"]),
+        (
+            {"continue": END, "blocked": END}
+            if validated_planning_continuation_mode is not None
+            else dict(registry["create_implementation_plan"])
+        ),
     )
     graph.add_conditional_edges(
         "generate_patch_proposal",
@@ -1443,6 +1575,8 @@ def _run_create_implementation_plan(
     artifact_store: ArtifactStore,
     *,
     formal_requirement_coverage_required: bool = False,
+    use_store_result: bool = False,
+    planning_continuation_mode: PlanningContinuationInputV1 | None = None,
 ) -> ModAgentState:
     feature_spec = _feature_spec_from_payload(
         _read_artifact_data(state, artifact_store, "feature_spec")
@@ -1455,19 +1589,36 @@ def _run_create_implementation_plan(
             formal_requirement_coverage_required
         ),
     )
-    artifact_ref = artifact_store.write(
-        feature_id=implementation.feature_id,
-        artifact_type="implementation_plan",
-        payload=implementation.to_artifact_payload(),
-        status="blocked" if implementation.blocking else "success",
-        upstream_refs=[
+    if planning_continuation_mode is not None:
+        preflight_planning_continuation(
+            planning_continuation_mode,
+            artifact_store=artifact_store,
+        )
+    write_arguments = {
+        "feature_id": implementation.feature_id,
+        "artifact_type": "implementation_plan",
+        "payload": implementation.to_artifact_payload(),
+        "status": "blocked" if implementation.blocking else "success",
+        "upstream_refs": [
             _artifact_ref_from_state(state, "feature_spec"),
             _artifact_ref_from_state(state, "evidence_pack"),
         ],
-    )
+    }
+    write_result = None
+    if use_store_result:
+        write_result = artifact_store.write_with_result(**write_arguments)
+        artifact_ref = write_result.artifact_ref
+        if write_result.outcome != "committed" or artifact_ref is None:
+            raise PlanningContinuationArtifactWriteError(write_result)
+    else:
+        artifact_ref = artifact_store.write(**write_arguments)
     next_state = _copy_state(state)
     next_state["current_stage"] = "implementation_plan"
     _record_artifact(next_state, "implementation_plan", artifact_ref)
+    if write_result is not None:
+        next_state["runtime_summary"][
+            "planning_artifact_write_result"
+        ] = write_result.to_dict()
     if implementation.blocking:
         next_state["blockers"].extend(implementation.blockers)
     return next_state
