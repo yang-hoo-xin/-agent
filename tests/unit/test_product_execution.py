@@ -573,6 +573,11 @@ def _formalize_product_test_pack(
         )
         for requirement in materialized["requirements"]
     }
+    change_requirement_ids = {
+        str(requirement["requirement_id"])
+        for requirement in materialized["requirements"]
+        if requirement["role"] == "change"
+    }
     findings = {
         "findings": [
             {
@@ -592,6 +597,13 @@ def _formalize_product_test_pack(
                     if any(
                         required_by_id[str(parent)]
                         for parent in relation["parent_requirement_ids"]
+                    )
+                    else []
+                ),
+                "edit_target_evidence_ids": (
+                    [evidence_id]
+                    if change_requirement_ids.intersection(
+                        str(parent) for parent in relation["parent_requirement_ids"]
                     )
                     else []
                 ),
@@ -864,6 +876,14 @@ def _formal_coverage_vertical_scenario(
                     str(relation["relation_index"]): {
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
+                        "edit_target_evidence_ids": (
+                            [evidence_id]
+                            if change_requirement_ids.intersection(
+                                relation["parent_requirement_ids"]
+                            )
+                            and not change_unresolved_gaps
+                            else []
+                        ),
                         "unresolved_gaps": (
                             list(change_unresolved_gaps)
                             if change_requirement_ids.intersection(

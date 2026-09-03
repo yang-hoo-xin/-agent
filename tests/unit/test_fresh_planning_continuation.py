@@ -183,18 +183,21 @@ def _positive_findings(
                 "relation_index": 1,
                 "relationship": "support",
                 "evidence_ids": [evidence[change_id][0]],
+                "edit_target_evidence_ids": [evidence[change_id][0]],
                 "unresolved_gaps": [],
             },
             {
                 "relation_index": 2,
                 "relationship": "support",
                 "evidence_ids": [evidence[prepatch_id][0]],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": [],
             },
             {
                 "relation_index": 3,
                 "relationship": "missing",
                 "evidence_ids": [],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": ["Runtime observation occurs after patching."],
             },
         ]

@@ -561,6 +561,7 @@ def _successful_completion(roles: list[str]):
                     str(relation["relation_index"]): {
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
+                        "edit_target_evidence_ids": [evidence_id],
                         "unresolved_gaps": [],
                     }
                     for relation in payload["relations"]
@@ -849,6 +850,7 @@ def test_fresh_coverage_cli_reports_recovered_first_failure_without_recomputing(
                     str(relation["relation_index"]): {
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
+                        "edit_target_evidence_ids": [evidence_id],
                         "unresolved_gaps": [],
                     }
                     for relation in payload["relations"]
@@ -1045,6 +1047,7 @@ def test_fresh_coverage_cli_source_drift_retains_run_facts(
                     str(relation["relation_index"]): {
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
+                        "edit_target_evidence_ids": [evidence_id],
                         "unresolved_gaps": [],
                     }
                     for relation in payload["relations"]
@@ -1103,6 +1106,7 @@ def test_source_drift_preserves_earlier_recovered_model_rejection(
                     str(relation["relation_index"]): {
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
+                        "edit_target_evidence_ids": [evidence_id],
                         "unresolved_gaps": [],
                     }
                     for relation in payload["relations"]

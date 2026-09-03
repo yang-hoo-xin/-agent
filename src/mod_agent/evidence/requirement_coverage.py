@@ -16,10 +16,12 @@ from .models import (
 )
 
 LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION = "evidence_requirement_coverage_v1"
-REQUIREMENT_COVERAGE_SCHEMA_VERSION = "evidence_requirement_coverage_v2"
+PREVIOUS_REQUIREMENT_COVERAGE_SCHEMA_VERSION = "evidence_requirement_coverage_v2"
+REQUIREMENT_COVERAGE_SCHEMA_VERSION = "evidence_requirement_coverage_v3"
 _SUPPORTED_REQUIREMENT_COVERAGE_SCHEMA_VERSIONS = frozenset(
     {
         LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+        PREVIOUS_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
         REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     }
 )
@@ -36,6 +38,13 @@ REQUIREMENT_COVERAGE_DOES_NOT_GRANT = (
 )
 REQUIREMENT_COVERAGE_TRUST_BOUNDARY = (
     "model_originated_semantic_support_conflict_finding",
+    "deterministic_requirement_evidence_identity_validation",
+    "deterministic_current_source_reference_validation",
+    "deterministic_input_accounting_and_coverage_projection",
+    "deterministic_sufficiency_edit_target_patch_authority_derivation",
+)
+REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY = (
+    "model_originated_semantic_support_conflict_and_edit_target_usage_proposal",
     "deterministic_requirement_evidence_identity_validation",
     "deterministic_current_source_reference_validation",
     "deterministic_input_accounting_and_coverage_projection",
@@ -360,9 +369,14 @@ def validate_requirement_coverage_evidence_pack(pack: EvidencePack) -> None:
         and isinstance(relation.get("provenance"), dict)
     }
     persisted_findings = section.get("findings")
-    findings = {
-        "findings": [
-            {
+    schema_version = section.get("schema_version")
+    rebuilt_findings: list[dict[str, object]] | None = None
+    if isinstance(persisted_findings, list):
+        rebuilt_findings = []
+        for finding in persisted_findings:
+            if not isinstance(finding, dict):
+                continue
+            rebuilt_finding = {
                 "relation_index": relation_index_by_id.get(
                     str(finding.get("relation_id"))
                 ),
@@ -370,11 +384,13 @@ def validate_requirement_coverage_evidence_pack(pack: EvidencePack) -> None:
                 "evidence_ids": finding.get("evidence_ids"),
                 "unresolved_gaps": finding.get("unresolved_gaps"),
             }
-            for finding in persisted_findings or []
-            if isinstance(finding, dict)
-        ]
-        if isinstance(persisted_findings, list)
-        else None
+            if schema_version == REQUIREMENT_COVERAGE_SCHEMA_VERSION:
+                rebuilt_finding["edit_target_evidence_ids"] = finding.get(
+                    "edit_target_evidence_ids"
+                )
+            rebuilt_findings.append(rebuilt_finding)
+    findings = {
+        "findings": rebuilt_findings
     }
     rebuilt, readiness, can_generate_patch, blockers, gaps = (
         resolve_requirement_coverage(
@@ -409,6 +425,10 @@ def resolve_requirement_coverage(
         materialized_projection["schema_version"]
         == LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION
     )
+    explicit_edit_targets = (
+        materialized_projection["schema_version"]
+        == REQUIREMENT_COVERAGE_SCHEMA_VERSION
+    )
     if set(findings) != {"findings"} or not isinstance(findings["findings"], list):
         raise ValueError("REQUIREMENT_COVERAGE_FINDINGS_SHAPE_INVALID")
     item_by_id = {item.evidence_id: item for item in items}
@@ -419,16 +439,24 @@ def resolve_requirement_coverage(
     normalized_findings: list[dict[str, object]] = []
     seen_relation_indexes: set[int] = set()
     for raw in findings["findings"]:
-        if not isinstance(raw, dict) or set(raw) != {
+        expected_finding_fields = {
             "relation_index",
             "relationship",
             "evidence_ids",
             "unresolved_gaps",
-        }:
+        }
+        if explicit_edit_targets:
+            expected_finding_fields.add("edit_target_evidence_ids")
+        if not isinstance(raw, dict) or set(raw) != expected_finding_fields:
             raise ValueError("REQUIREMENT_COVERAGE_FINDING_SHAPE_INVALID")
         relation_index = raw.get("relation_index")
         relationship = raw.get("relationship")
         evidence_ids = raw.get("evidence_ids")
+        edit_target_ids = (
+            raw.get("edit_target_evidence_ids")
+            if explicit_edit_targets
+            else None
+        )
         unresolved_gaps = raw.get("unresolved_gaps")
         if (
             isinstance(relation_index, bool)
@@ -446,18 +474,52 @@ def resolve_requirement_coverage(
             raise ValueError("REQUIREMENT_COVERAGE_FINDING_INVALID")
         seen_relation_indexes.add(relation_index)
         relation = relation_by_index[relation_index]
+        relation_has_change_requirement = any(
+            requirement.get("role") == "change"
+            and requirement.get("requirement_id")
+            in relation["parent_requirement_ids"]
+            for requirement in materialized_projection["requirements"]
+        )
+        if explicit_edit_targets and (
+            not isinstance(edit_target_ids, list)
+            or len(edit_target_ids) != len(set(edit_target_ids))
+            or any(value not in item_by_id for value in edit_target_ids)
+            or not set(edit_target_ids).issubset(set(evidence_ids))
+            or (
+                bool(edit_target_ids)
+                and (
+                    relationship != "support"
+                    or not relation_has_change_requirement
+                    or bool(unresolved_gaps)
+                )
+            )
+        ):
+            raise ValueError("REQUIREMENT_COVERAGE_EDIT_TARGET_SELECTION_INVALID")
+        normalized_edit_target_ids = sorted(
+            str(value) for value in (edit_target_ids or [])
+        )
+        finding_identity_parts = [
+            "finding",
+            str(relation["relation_id"]),
+            str(relationship),
+            *sorted(str(value) for value in evidence_ids),
+        ]
+        if explicit_edit_targets:
+            finding_identity_parts.extend(
+                ["edit_targets", *normalized_edit_target_ids]
+            )
         normalized_findings.append(
             {
-                "finding_id": _stable_id(
-                    "finding",
-                    str(relation["relation_id"]),
-                    str(relationship),
-                    *sorted(str(value) for value in evidence_ids),
-                ),
+                "finding_id": _stable_id(*finding_identity_parts),
                 "relation_id": relation["relation_id"],
                 "parent_requirement_ids": list(relation["parent_requirement_ids"]),
                 "relationship": relationship,
                 "evidence_ids": sorted(str(value) for value in evidence_ids),
+                **(
+                    {"edit_target_evidence_ids": normalized_edit_target_ids}
+                    if explicit_edit_targets
+                    else {}
+                ),
                 "unresolved_gaps": list(unresolved_gaps),
             }
         )
@@ -525,21 +587,55 @@ def resolve_requirement_coverage(
         and (legacy_gap_semantics or not finding["unresolved_gaps"])
         for evidence_id in finding["evidence_ids"]
     }
-    edit_target_evidence_ids = sorted(
-        evidence_id
-        for evidence_id in change_support_evidence_ids
-        if evidence_id in item_by_id
-        and item_by_id[evidence_id].authority == DETERMINISTIC_EVIDENCE_AUTHORITY
-        and item_by_id[evidence_id].source_type == "target_source"
-        and bool(item_by_id[evidence_id].source_path)
-        and isinstance(item_by_id[evidence_id].span, dict)
-        and bool(
-            item_by_id[evidence_id].source_hash
-            or item_by_id[evidence_id].file_hash
-            or item_by_id[evidence_id].doc_hash
-        )
+    selected_edit_target_ids = (
+        {
+            str(evidence_id)
+            for finding in normalized_findings
+            if finding["relationship"] == "support"
+            and change_ids.intersection(finding["parent_requirement_ids"])
+            and not finding["unresolved_gaps"]
+            for evidence_id in finding["edit_target_evidence_ids"]
+        }
+        if explicit_edit_targets
+        else change_support_evidence_ids
     )
-    if not edit_target_evidence_ids:
+    edit_target_evidence_ids: list[str] = []
+    for evidence_id in sorted(selected_edit_target_ids):
+        item = item_by_id[evidence_id]
+        span = item.span
+        exact_target_identity = (
+            item.authority == DETERMINISTIC_EVIDENCE_AUTHORITY
+            and item.source_type == "target_source"
+            and bool(item.source_path)
+            and isinstance(span, dict)
+            and type(span.get("start_line")) is int
+            and type(span.get("end_line")) is int
+            and span["start_line"] >= 1
+            and span["end_line"] >= span["start_line"]
+            and bool(item.source_hash or item.file_hash or item.doc_hash)
+        )
+        if explicit_edit_targets and not exact_target_identity:
+            raise ValueError("REQUIREMENT_COVERAGE_EDIT_TARGET_IDENTITY_INVALID")
+        if exact_target_identity:
+            edit_target_evidence_ids.append(evidence_id)
+    if explicit_edit_targets:
+        required_change_ids = {
+            requirement_id
+            for requirement_id in change_ids
+            if requirement_by_id[requirement_id]["required_before_patch"] is True
+        }
+        for requirement_id in sorted(required_change_ids):
+            selected_for_requirement = {
+                str(evidence_id)
+                for finding in normalized_findings
+                if requirement_id in finding["parent_requirement_ids"]
+                for evidence_id in finding["edit_target_evidence_ids"]
+            }
+            if not selected_for_requirement:
+                reasons.append(
+                    f"required_change_edit_target_missing:{requirement_id}"
+                )
+    elif not edit_target_evidence_ids:
         reasons.append("change_edit_target_evidence_missing")
     reasons = list(dict.fromkeys(reasons))
     can_generate_patch = not reasons
@@ -557,7 +653,11 @@ def resolve_requirement_coverage(
         "findings": normalized_findings,
         "edit_target_evidence_ids": edit_target_evidence_ids,
         "sufficiency": {"status": status, "reasons": reasons},
-        "semantic_trust_boundary": list(REQUIREMENT_COVERAGE_TRUST_BOUNDARY),
+        "semantic_trust_boundary": list(
+            REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY
+            if explicit_edit_targets
+            else REQUIREMENT_COVERAGE_TRUST_BOUNDARY
+        ),
         "does_not_grant": list(REQUIREMENT_COVERAGE_DOES_NOT_GRANT),
     }
     return section, status, can_generate_patch, blockers, tuple(reasons)

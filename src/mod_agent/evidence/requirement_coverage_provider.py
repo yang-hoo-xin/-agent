@@ -11,6 +11,9 @@ from typing import Any, Protocol
 
 from .models import EvidencePack, missing_evidence_from_blockers
 from .requirement_coverage import (
+    LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    PREVIOUS_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     REQUIREMENT_ROLES,
     RequirementCoverageProjectionError,
     default_feature_requirement_projection,
@@ -768,6 +771,9 @@ class StructuredModelRequirementCoverageProvider:
         schema = requirement_findings_response_schema(
             relation_indexes=relation_indexes,
             evidence_ids=evidence_ids,
+            coverage_schema_version=str(
+                materialized_projection["schema_version"]
+            ),
         )
         payload = {
             "message_type": "product_requirement_findings",
@@ -813,10 +819,24 @@ class StructuredModelRequirementCoverageProvider:
                 ),
                 (
                     "Each keyed value contains only relationship, evidence_ids, "
-                    "and unresolved_gaps; do not repeat relation identity inside it."
+                    "edit_target_evidence_ids, and unresolved_gaps; do not repeat "
+                    "relation identity inside it."
+                    if materialized_projection["schema_version"]
+                    == REQUIREMENT_COVERAGE_SCHEMA_VERSION
+                    else (
+                        "Each keyed value contains only relationship, evidence_ids, "
+                        "and unresolved_gaps; do not repeat relation identity inside it."
+                    )
                 ),
                 "Semantic findings are proposals; deterministic code validates every identity and derives sufficiency and authority.",
-                "Do not return paths, source refs, sufficiency, edit targets, Patch authority, or execution authority.",
+                (
+                    "Return only listed Evidence IDs in edit_target_evidence_ids; "
+                    "this proposes usage and does not grant a path, span, Patch, or "
+                    "execution authority."
+                    if materialized_projection["schema_version"]
+                    == REQUIREMENT_COVERAGE_SCHEMA_VERSION
+                    else "Do not return paths, source refs, sufficiency, edit targets, Patch authority, or execution authority."
+                ),
                 "State unresolved gaps explicitly and do not infer missing current source as support.",
                 (
                     "For role=change, support means the cited Evidence proves the "
@@ -834,6 +854,24 @@ class StructuredModelRequirementCoverageProvider:
                     "physical modification location needed by the change; preserve "
                     "any missing current-source or edit-authority location in "
                     "unresolved_gaps."
+                ),
+                *(
+                    [
+                        (
+                            "For role=change, evidence_ids may include explanatory "
+                            "support, but edit_target_evidence_ids must contain only "
+                            "the smallest complete subset whose displayed bytes must "
+                            "change to implement the request."
+                        ),
+                        (
+                            "If cited Evidence can remain byte-identical while the "
+                            "requested behavior is implemented, keep it out of "
+                            "edit_target_evidence_ids."
+                        ),
+                    ]
+                    if materialized_projection["schema_version"]
+                    == REQUIREMENT_COVERAGE_SCHEMA_VERSION
+                    else []
                 ),
                 (
                     "unresolved_gaps describe only missing evidence, current-source "
@@ -853,6 +891,9 @@ class StructuredModelRequirementCoverageProvider:
                 raw_findings,
                 schema=schema,
                 relation_indexes=relation_indexes,
+                coverage_schema_version=str(
+                    materialized_projection["schema_version"]
+                ),
             )
             resolve_requirement_coverage(
                 query=request,
@@ -890,6 +931,9 @@ class StructuredModelRequirementCoverageProvider:
                     raw_corrected,
                     schema=schema,
                     relation_indexes=relation_indexes,
+                    coverage_schema_version=str(
+                        materialized_projection["schema_version"]
+                    ),
                 )
                 resolve_requirement_coverage(
                     query=request,
@@ -929,8 +973,16 @@ def _materialize_requirement_findings_response(
     *,
     schema: Mapping[str, Any],
     relation_indexes: list[int],
+    coverage_schema_version: str,
 ) -> dict[str, object]:
     """Bind schema-admitted model semantics to explicit deterministic keys."""
+
+    if coverage_schema_version not in {
+        LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+        PREVIOUS_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+        REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    }:
+        raise ValueError("REQUIREMENT_COVERAGE_SCHEMA_VERSION_INVALID")
 
     diagnostic = _projection_schema_failure(value, schema=schema, path="$")
     if diagnostic is not None:
@@ -1279,8 +1331,17 @@ def requirement_projection_response_schema(
 
 
 def requirement_findings_response_schema(
-    *, relation_indexes: list[int], evidence_ids: list[str]
+    *,
+    relation_indexes: list[int],
+    evidence_ids: list[str],
+    coverage_schema_version: str = REQUIREMENT_COVERAGE_SCHEMA_VERSION,
 ) -> dict[str, object]:
+    if coverage_schema_version not in {
+        LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+        PREVIOUS_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+        REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    }:
+        raise ValueError("REQUIREMENT_COVERAGE_SCHEMA_VERSION_INVALID")
     finding = {
         "type": "object",
         "properties": {
@@ -1293,6 +1354,18 @@ def requirement_findings_response_schema(
                 "uniqueItems": True,
                 "items": {"type": "string", "enum": evidence_ids},
             },
+            **(
+                {
+                    "edit_target_evidence_ids": {
+                        "type": "array",
+                        "uniqueItems": True,
+                        "items": {"type": "string", "enum": evidence_ids},
+                    }
+                }
+                if coverage_schema_version
+                == REQUIREMENT_COVERAGE_SCHEMA_VERSION
+                else {}
+            ),
             "unresolved_gaps": {
                 "type": "array",
                 "items": {"type": "string", "minLength": 1},
@@ -1301,6 +1374,12 @@ def requirement_findings_response_schema(
         "required": [
             "relationship",
             "evidence_ids",
+            *(
+                ["edit_target_evidence_ids"]
+                if coverage_schema_version
+                == REQUIREMENT_COVERAGE_SCHEMA_VERSION
+                else []
+            ),
             "unresolved_gaps",
         ],
         "additionalProperties": False,

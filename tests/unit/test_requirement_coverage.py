@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from src.libs.llm import BaseLLM, ChatResponse, Message
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.evidence import (
     EvidenceItem,
@@ -32,6 +33,7 @@ from src.mod_agent.evidence.identity import (
 )
 from src.mod_agent.evidence.requirement_coverage import (
     LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    PREVIOUS_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     RequirementCoverageProjectionError,
     requirement_input_obligation_model_view,
@@ -42,7 +44,6 @@ from src.mod_agent.evidence.requirement_coverage_provider import (
     requirement_findings_response_schema,
     requirement_projection_response_schema,
 )
-from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.local_entry import _patch_generation_obligation_projection
 from src.mod_agent.planning import (
     FeatureSpec,
@@ -422,18 +423,21 @@ def _actual10_method_coverage_inputs(tmp_path: Path):
                 "relation_index": 1,
                 "relationship": "support",
                 "evidence_ids": [spread.evidence_id],
+                "edit_target_evidence_ids": [spread.evidence_id],
                 "unresolved_gaps": [],
             },
             {
                 "relation_index": 2,
                 "relationship": "support",
                 "evidence_ids": [configuration.evidence_id],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": [],
             },
             {
                 "relation_index": 3,
                 "relationship": "missing",
                 "evidence_ids": [],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": ["Runtime observation occurs after patching."],
             },
         ]
@@ -546,24 +550,28 @@ def _actual10_expected_delta_inputs(tmp_path: Path):
                 "relation_index": 1,
                 "relationship": "support",
                 "evidence_ids": [spread.evidence_id, configuration.evidence_id],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": list(expected_delta_gaps),
             },
             {
                 "relation_index": 2,
                 "relationship": "support",
                 "evidence_ids": [configuration.evidence_id],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": [],
             },
             {
                 "relation_index": 3,
                 "relationship": "support",
                 "evidence_ids": [spread.evidence_id],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": [],
             },
             {
                 "relation_index": 4,
                 "relationship": "missing",
                 "evidence_ids": [],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": [
                     "No evidence of disabled post-change validation is provided."
                 ],
@@ -572,6 +580,7 @@ def _actual10_expected_delta_inputs(tmp_path: Path):
                 "relation_index": 5,
                 "relationship": "missing",
                 "evidence_ids": [],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": [
                     "No evidence of enabled preservation validation is provided."
                 ],
@@ -614,6 +623,15 @@ def _separate_role_coverage_inputs(tmp_path: Path):
                         ][0]
                     ]
                     if index < 4
+                    else []
+                ),
+                "edit_target_evidence_ids": (
+                    [
+                        evidence[
+                            str(materialized["requirements"][0]["requirement_id"])
+                        ][0]
+                    ]
+                    if index == 1
                     else []
                 ),
                 "unresolved_gaps": [] if index < 4 else ["After patch."],
@@ -662,18 +680,21 @@ def _positive_findings(materialized, retrieved) -> dict[str, object]:
                 "relation_index": 1,
                 "relationship": "support",
                 "evidence_ids": [change_evidence],
+                "edit_target_evidence_ids": [change_evidence],
                 "unresolved_gaps": [],
             },
             {
                 "relation_index": 2,
                 "relationship": "support",
                 "evidence_ids": [evidence[prepatch_id][0]],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": [],
             },
             {
                 "relation_index": 3,
                 "relationship": "missing",
                 "evidence_ids": [],
+                "edit_target_evidence_ids": [],
                 "unresolved_gaps": ["Runtime observation occurs after patching."],
             },
         ]
@@ -686,12 +707,12 @@ def _model_findings_response(
     return {
         "findings_by_relation": {
             str(finding["relation_index"]): {
-                key: deepcopy(finding[key])
-                for key in (
-                    "relationship",
-                    "evidence_ids",
-                    "unresolved_gaps",
-                )
+                "relationship": deepcopy(finding["relationship"]),
+                "evidence_ids": deepcopy(finding["evidence_ids"]),
+                "edit_target_evidence_ids": deepcopy(
+                    finding.get("edit_target_evidence_ids", [])
+                ),
+                "unresolved_gaps": deepcopy(finding["unresolved_gaps"]),
             }
             for finding in indexed_findings["findings"]
         }
@@ -730,6 +751,9 @@ def test_positive_requirement_coverage_roundtrips_and_derives_edit_target(
 
     assert pack.readiness == "sufficient"
     assert pack.can_generate_patch is True
+    assert pack.requirement_coverage["semantic_trust_boundary"][0] == (
+        "model_originated_semantic_support_conflict_and_edit_target_usage_proposal"
+    )
     coverage = pack.requirement_coverage
     assert coverage is not None
     change_requirement_id = materialized["requirements"][0]["requirement_id"]
@@ -800,6 +824,10 @@ def test_actual10_expected_delta_is_not_an_unresolved_evidence_gap(
         expected_delta_gaps,
     ) = _actual10_expected_delta_inputs(tmp_path)
     findings["findings"][0]["unresolved_gaps"] = []
+    findings["findings"][0]["edit_target_evidence_ids"] = [
+        spread.evidence_id,
+        configuration.evidence_id,
+    ]
 
     pack = build_requirement_coverage_pack(
         query=str(feature["user_request"]),
@@ -880,7 +908,7 @@ def test_v2_change_support_with_physical_authority_gap_blocks_patch(
     )
 
 
-def _actual15_v2_complete_four_site_plan(
+def _actual15_v3_complete_four_site_plan(
     tmp_path: Path,
 ) -> tuple[
     dict[str, object],
@@ -984,10 +1012,54 @@ def _actual15_v2_complete_four_site_plan(
         excerpt=spread_before,
         claim_supported="Current raw crosshair size override method.",
     )
-    complete_items = (property_site, reload_site, bind_site, spread_site)
+    spread_api_context = replace(
+        configuration,
+        evidence_id="rg_fixture_spread_api_context",
+        source_path="AccurateCrosshair/API/SpreadAPI.cs",
+        source_ref=None,
+        source_hash="a" * 64,
+        file_hash="a" * 64,
+        doc_hash="a" * 64,
+        symbol="AccurateCrosshair",
+        span={"start_line": 1, "end_line": 19},
+        method_name=None,
+        parameter_types=None,
+        return_type=None,
+        method_kind=None,
+        excerpt="namespace AccurateCrosshair.API { public static class SpreadAPI { } }\n",
+        claim_supported="Current public spread modifier propagation context.",
+    )
+    spread_api_update = replace(
+        configuration,
+        evidence_id="rg_fixture_spread_api_update",
+        source_path="AccurateCrosshair/API/SpreadAPI.cs",
+        source_ref=None,
+        source_hash="a" * 64,
+        file_hash="a" * 64,
+        doc_hash="a" * 64,
+        symbol="UpdateModifier",
+        span={"start_line": 23, "end_line": 31},
+        method_name="UpdateModifier",
+        parameter_types=(),
+        return_type="void",
+        method_kind="method",
+        excerpt=(
+            "private static void UpdateModifier()\n"
+            "{\n"
+            "    SpreadPatches.UpdateCrosshairSize();\n"
+            "}\n"
+        ),
+        claim_supported="Current public spread modifier propagation method.",
+    )
+    editable_items = (property_site, reload_site, bind_site, spread_site)
+    supporting_items = (spread_api_context, spread_api_update)
+    complete_items = (*editable_items, *supporting_items)
     retrieved = replace(retrieved, items=complete_items)
     findings["findings"][0]["evidence_ids"] = [
         item.evidence_id for item in complete_items
+    ]
+    findings["findings"][0]["edit_target_evidence_ids"] = [
+        item.evidence_id for item in editable_items
     ]
     findings["findings"][0]["unresolved_gaps"] = []
     findings["findings"][1]["evidence_ids"] = [bind_site.evidence_id]
@@ -1077,24 +1149,34 @@ def _native_four_site_response(
     }
 
 
-def test_v2_complete_multi_site_change_authority_reaches_nonblocking_planning(
+def test_v3_supporting_subset_reaches_four_site_nonblocking_planning(
     tmp_path: Path,
 ) -> None:
-    feature, complete_items, pack, implementation, _ = (
-        _actual15_v2_complete_four_site_plan(tmp_path)
+    feature, complete_items, pack, implementation, after_by_evidence_id = (
+        _actual15_v3_complete_four_site_plan(tmp_path)
     )
 
-    expected_ids = frozenset(item.evidence_id for item in complete_items)
+    expected_ids = frozenset(after_by_evidence_id)
+    supporting_ids = frozenset(
+        item.evidence_id
+        for item in complete_items
+        if item.evidence_id not in expected_ids
+    )
     view = validated_requirement_coverage_view(pack.to_artifact_payload())
     assert view is not None
     assert pack.readiness == "sufficient"
     assert pack.can_generate_patch is True
     assert view.authorized_edit_target_ids == expected_ids
+    assert view.change_related_supporting_evidence_ids == supporting_ids
     assert implementation.blocking is False
     assert {
         binding["evidence_id"]
         for binding in implementation.binding_registry["edit_bindings"]
     } == expected_ids
+    assert {
+        binding["evidence_id"]
+        for binding in implementation.binding_registry["supporting_bindings"]
+    } == supporting_ids
     assert len(implementation.proposed_changes) == 4
     assert all(
         change["rationale"]
@@ -1113,11 +1195,11 @@ def test_v2_complete_multi_site_change_authority_reaches_nonblocking_planning(
     )
 
 
-def test_v2_four_site_plan_projects_and_materializes_canned_native_response(
+def test_v3_four_site_plan_projects_and_materializes_canned_native_response(
     tmp_path: Path,
 ) -> None:
     feature, complete_items, pack, implementation, after_by_evidence_id = (
-        _actual15_v2_complete_four_site_plan(tmp_path)
+        _actual15_v3_complete_four_site_plan(tmp_path)
     )
     obligation_projection, required_validation_by_binding = (
         _required_patch_inputs(feature, implementation)
@@ -1274,12 +1356,12 @@ def test_v2_four_site_plan_projects_and_materializes_canned_native_response(
         "edit_binding_004",
     ],
 )
-def test_v2_four_site_missing_authority_blocks_before_native_provider(
+def test_v3_four_site_missing_authority_blocks_before_native_provider(
     tmp_path: Path,
     missing_binding_id: str,
 ) -> None:
     feature, complete_items, _, implementation, after_by_evidence_id = (
-        _actual15_v2_complete_four_site_plan(tmp_path)
+        _actual15_v3_complete_four_site_plan(tmp_path)
     )
     obligation_projection, required_validation_by_binding = (
         _required_patch_inputs(feature, implementation)
@@ -1333,6 +1415,8 @@ def test_v1_change_expected_delta_gap_remains_readable_as_legacy_history(
         expected_delta_gaps,
     ) = _actual10_expected_delta_inputs(tmp_path)
     materialized["schema_version"] = LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION
+    for finding in findings["findings"]:
+        finding.pop("edit_target_evidence_ids")
 
     pack = build_requirement_coverage_pack(
         query=str(feature["user_request"]),
@@ -1354,6 +1438,102 @@ def test_v1_change_expected_delta_gap_remains_readable_as_legacy_history(
     )
     payload = pack.to_artifact_payload()
     assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+
+
+def test_v2_change_support_derivation_remains_readable_as_history(
+    tmp_path: Path,
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    materialized["schema_version"] = PREVIOUS_REQUIREMENT_COVERAGE_SCHEMA_VERSION
+    findings = _positive_findings(materialized, retrieved)
+    for finding in findings["findings"]:
+        finding.pop("edit_target_evidence_ids")
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        findings=findings,
+    )
+
+    assert pack.requirement_coverage["schema_version"] == (
+        PREVIOUS_REQUIREMENT_COVERAGE_SCHEMA_VERSION
+    )
+    assert pack.can_generate_patch is True
+    assert pack.requirement_coverage["edit_target_evidence_ids"]
+    payload = pack.to_artifact_payload()
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "duplicate",
+        "unknown",
+        "not_subset",
+        "non_change",
+        "unresolved",
+        "non_support",
+    ],
+)
+def test_v3_invalid_edit_target_subset_is_rejected(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    findings = _positive_findings(materialized, retrieved)
+    change = findings["findings"][0]
+    change_target = change["edit_target_evidence_ids"][0]
+    if mutation == "duplicate":
+        change["edit_target_evidence_ids"] = [change_target, change_target]
+    elif mutation == "unknown":
+        change["edit_target_evidence_ids"] = ["unknown_evidence"]
+    elif mutation == "not_subset":
+        change["edit_target_evidence_ids"] = [
+            findings["findings"][1]["evidence_ids"][0]
+        ]
+    elif mutation == "non_change":
+        findings["findings"][1]["edit_target_evidence_ids"] = [
+            findings["findings"][1]["evidence_ids"][0]
+        ]
+    elif mutation == "unresolved":
+        change["unresolved_gaps"] = ["One edit location is unresolved."]
+    elif mutation == "non_support":
+        change["relationship"] = "conflict"
+    else:
+        raise AssertionError(mutation)
+
+    with pytest.raises(
+        ValueError,
+        match="REQUIREMENT_COVERAGE_EDIT_TARGET_SELECTION_INVALID",
+    ):
+        build_requirement_coverage_pack(
+            query=str(feature["user_request"]),
+            materialized_projection=materialized,
+            retrieved_pack=retrieved,
+            findings=findings,
+        )
+
+
+def test_v3_empty_edit_target_subset_fails_closed(tmp_path: Path) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    findings = _positive_findings(materialized, retrieved)
+    findings["findings"][0]["edit_target_evidence_ids"] = []
+
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        findings=findings,
+    )
+
+    change_requirement_id = materialized["requirements"][0]["requirement_id"]
+    assert pack.can_generate_patch is False
+    assert pack.requirement_coverage["edit_target_evidence_ids"] == []
+    assert (
+        f"required_change_edit_target_missing:{change_requirement_id}"
+        in pack.requirement_coverage["sufficiency"]["reasons"]
+    )
 
 
 @pytest.mark.parametrize("relationship", ["missing", "conflict"])
@@ -1418,6 +1598,8 @@ def test_change_support_without_exact_target_source_identity_stays_blocked(
     ) = _actual10_expected_delta_inputs(tmp_path)
     change = findings["findings"][0]
     change["evidence_ids"] = [spread.evidence_id]
+    change["edit_target_evidence_ids"] = [spread.evidence_id]
+    change["unresolved_gaps"] = []
     replacement_values = {field_name: field_value}
     if field_name == "source_hash":
         replacement_values.update(file_hash=None, doc_hash=None)
@@ -1428,20 +1610,18 @@ def test_change_support_without_exact_target_source_identity_stays_blocked(
     )
     changed_retrieved = replace(retrieved, items=changed_items)
 
-    pack = build_requirement_coverage_pack(
-        query=str(feature["user_request"]),
-        materialized_projection=materialized,
-        retrieved_pack=changed_retrieved,
-        findings=findings,
-    )
+    with pytest.raises(
+        ValueError,
+        match="REQUIREMENT_COVERAGE_EDIT_TARGET_IDENTITY_INVALID",
+    ):
+        build_requirement_coverage_pack(
+            query=str(feature["user_request"]),
+            materialized_projection=materialized,
+            retrieved_pack=changed_retrieved,
+            findings=findings,
+        )
 
     assert configuration.evidence_id not in change["evidence_ids"]
-    assert pack.readiness == "insufficient"
-    assert pack.can_generate_patch is False
-    assert pack.requirement_coverage["edit_target_evidence_ids"] == []
-    assert "change_edit_target_evidence_missing" in (
-        pack.requirement_coverage["sufficiency"]["reasons"]
-    )
 
 
 @pytest.mark.parametrize("mode", ["unresolved", "conflict"])
@@ -1526,11 +1706,12 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
             "relation_index, using its decimal string form."
         ),
         (
-            "Each keyed value contains only relationship, evidence_ids, and "
-            "unresolved_gaps; do not repeat relation identity inside it."
+            "Each keyed value contains only relationship, evidence_ids, "
+            "edit_target_evidence_ids, and unresolved_gaps; do not repeat "
+            "relation identity inside it."
         ),
     ]
-    assert payloads[0]["rules"][-4:] == [
+    assert payloads[0]["rules"][-6:] == [
         (
             "For role=change, support means the cited Evidence proves the current "
             "implementation and exact modification location; it does not require "
@@ -1545,6 +1726,15 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
             "For role=change, cited support must cover every known exact physical "
             "modification location needed by the change; preserve any missing "
             "current-source or edit-authority location in unresolved_gaps."
+        ),
+        (
+            "For role=change, evidence_ids may include explanatory support, but "
+            "edit_target_evidence_ids must contain only the smallest complete "
+            "subset whose displayed bytes must change to implement the request."
+        ),
+        (
+            "If cited Evidence can remain byte-identical while the requested "
+            "behavior is implemented, keep it out of edit_target_evidence_ids."
         ),
         (
             "unresolved_gaps describe only missing evidence, current-source facts, "
@@ -1593,7 +1783,7 @@ def test_findings_provider_rejects_frozen_duplicate_relation_indexes(
 
     with pytest.raises(
         ValueError,
-        match="REQUIREMENT_COVERAGE_FINDING_INVALID",
+        match="REQUIREMENT_COVERAGE_FINDING_SHAPE_INVALID",
     ):
         build_requirement_coverage_pack(
             query=str(feature["user_request"]),
@@ -1662,11 +1852,13 @@ def test_findings_schema_requires_complete_explicit_relation_keys() -> None:
         assert set(item["properties"]) == {
             "relationship",
             "evidence_ids",
+            "edit_target_evidence_ids",
             "unresolved_gaps",
         }
         assert set(item["required"]) == {
             "relationship",
             "evidence_ids",
+            "edit_target_evidence_ids",
             "unresolved_gaps",
         }
         assert item["additionalProperties"] is False
@@ -1724,6 +1916,42 @@ def test_findings_provider_invalid_keyed_drafts_use_one_correction_then_block(
         "requirement_findings",
         "requirement_findings_correction",
     ]
+
+
+def test_v3_invalid_edit_target_subset_uses_one_correction(
+    tmp_path: Path,
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    indexed = _positive_findings(materialized, retrieved)
+    valid = _model_findings_response(indexed)
+    invalid = deepcopy(valid)
+    invalid["findings_by_relation"]["1"]["edit_target_evidence_ids"] = [
+        indexed["findings"][1]["evidence_ids"][0]
+    ]
+    roles: list[str] = []
+
+    def complete_json(role, _payload, _schema):
+        roles.append(role)
+        if role == "requirement_findings":
+            return deepcopy(invalid)
+        if role == "requirement_findings_correction":
+            return deepcopy(valid)
+        raise AssertionError(role)
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+
+    assert provider.findings(
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        request=str(feature["user_request"]),
+    ) == indexed
+    assert roles == [
+        "requirement_findings",
+        "requirement_findings_correction",
+    ]
+    assert [
+        item["status"] for item in provider.findings_attempt_audit
+    ] == ["rejected", "accepted"]
 
 
 def test_shared_relation_identity_preserves_hook_compatibility() -> None:
@@ -1954,6 +2182,15 @@ def test_preservation_only_target_source_does_not_become_edit_target(
                 "evidence_ids": (
                     [split_evidence[str(split["requirements"][index - 1]["requirement_id"])][0]]
                     if index < 4
+                    else []
+                ),
+                "edit_target_evidence_ids": (
+                    [
+                        split_evidence[
+                            str(split["requirements"][0]["requirement_id"])
+                        ][0]
+                    ]
+                    if index == 1
                     else []
                 ),
                 "unresolved_gaps": [] if index < 4 else ["After patch."],
@@ -2309,6 +2546,19 @@ def test_graph_reaches_nonblocking_plan_from_explicit_positive_coverage(
                         )
                         else []
                     ),
+                    "edit_target_evidence_ids": (
+                        [items[0].evidence_id]
+                        if any(
+                            str(parent)
+                            in {
+                                str(requirement["requirement_id"])
+                                for requirement in materialized["requirements"]
+                                if requirement["role"] == "change"
+                            }
+                            for parent in relation["parent_requirement_ids"]
+                        )
+                        else []
+                    ),
                     "unresolved_gaps": (
                         []
                         if any(
@@ -2381,6 +2631,19 @@ def test_requirement_coverage_tamper_is_rejected_on_rehydrate(
     payload["requirement_coverage"]["edit_target_evidence_ids"] = [
         payload["items"][1]["evidence_id"]
     ]
+
+    with pytest.raises(ValueError, match="REQUIREMENT_COVERAGE_SEMANTIC_DRIFT"):
+        EvidencePack.from_artifact_payload(payload)
+
+
+def test_v3_per_finding_edit_target_tamper_is_rejected_on_rehydrate(
+    tmp_path: Path,
+) -> None:
+    _, _, _, pack = _positive_pack(tmp_path)
+    payload = pack.to_artifact_payload()
+    payload["requirement_coverage"]["findings"][0][
+        "edit_target_evidence_ids"
+    ] = []
 
     with pytest.raises(ValueError, match="REQUIREMENT_COVERAGE_SEMANTIC_DRIFT"):
         EvidencePack.from_artifact_payload(payload)
@@ -3667,24 +3930,28 @@ def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
                             "relation_index": relations[0]["relation_index"],
                             "relationship": "support",
                             "evidence_ids": [behavior_id],
+                            "edit_target_evidence_ids": [behavior_id],
                             "unresolved_gaps": [],
                         },
                         {
                             "relation_index": relations[1]["relation_index"],
                             "relationship": "support",
                             "evidence_ids": [behavior_id],
+                            "edit_target_evidence_ids": [],
                             "unresolved_gaps": [],
                         },
                         {
                             "relation_index": relations[2]["relation_index"],
                             "relationship": "support",
                             "evidence_ids": [config_id],
+                            "edit_target_evidence_ids": [],
                             "unresolved_gaps": [],
                         },
                         {
                             "relation_index": relations[3]["relation_index"],
                             "relationship": "missing",
                             "evidence_ids": [],
+                            "edit_target_evidence_ids": [],
                             "unresolved_gaps": ["Observed after patching."],
                         },
                     ]
@@ -3728,11 +3995,14 @@ def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
         serialized = str(payload) + str(schema)
         for forbidden in (
             "can_generate_patch",
-            "edit_target_evidence_ids",
             "authoritative_for_patch",
             "source_ref",
         ):
             assert forbidden not in serialized
+    assert any(
+        "edit_target_evidence_ids" in str(payload) + str(schema)
+        for _, payload, schema in calls
+    )
 
 
 def test_formal_model_provider_invalid_accounting_fails_to_blocking_plan(
@@ -3921,6 +4191,11 @@ def test_formal_model_provider_graph_path_reaches_positive_plan(
             }
         if role == "requirement_findings":
             evidence_id = payload["source_observations"][0]["evidence_id"]
+            change_requirement_ids = {
+                requirement["requirement_id"]
+                for requirement in payload["requirements"]
+                if requirement["role"] == "change"
+            }
             return _model_findings_response(
                 {
                     "findings": [
@@ -3928,6 +4203,13 @@ def test_formal_model_provider_graph_path_reaches_positive_plan(
                             "relation_index": relation["relation_index"],
                             "relationship": "support",
                             "evidence_ids": [evidence_id],
+                            "edit_target_evidence_ids": (
+                                [evidence_id]
+                                if change_requirement_ids.intersection(
+                                    relation["parent_requirement_ids"]
+                                )
+                                else []
+                            ),
                             "unresolved_gaps": [],
                         }
                         for relation in payload["relations"]
