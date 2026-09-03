@@ -170,18 +170,27 @@ class RgLiveEvidenceProvider:
         items: list[EvidenceItem] = []
         for selected_path, selected_line in selected_locations:
             _, lines, file_hash = source_cache[selected_path]
-            method_context = (
-                _enclosing_csharp_method(lines, selected_line=selected_line)
-                if _csharp_method_match_rank(lines, selected_line=selected_line) > 0
-                else None
+            method_spans = _csharp_method_source_spans(lines)
+            method_context = _enclosing_csharp_method(
+                lines,
+                selected_line=selected_line,
+                method_spans=method_spans,
             )
             start_line = (
-                method_context["declaration_line"]
+                int(method_context["start_line"])
                 if method_context is not None
                 else max(1, selected_line - 10)
             )
-            end_line = min(len(lines), selected_line + 18)
-            excerpt = "".join(lines[start_line - 1 : end_line])
+            end_line = (
+                int(method_context["end_line"])
+                if method_context is not None
+                else min(len(lines), selected_line + 18)
+            )
+            excerpt = (
+                str(method_context["source_text"])
+                if method_context is not None
+                else "".join(lines[start_line - 1 : end_line])
+            )
             relative = selected_path.relative_to(self.workspace_root).as_posix()
             evidence_id = "rg_live_" + hashlib.sha256(
                 f"{relative}:{file_hash}:{start_line}:{end_line}".encode()
@@ -684,31 +693,48 @@ def _enclosing_csharp_method(
     lines: list[str],
     *,
     selected_line: int,
+    method_spans: tuple[dict[str, object], ...] | None = None,
 ) -> dict[str, object] | None:
-    """Return the nearest preceding C# method declaration for one selected line."""
+    """Return the complete C# method span containing one selected line."""
 
-    for index in range(min(selected_line, len(lines)) - 1, -1, -1):
-        declaration = lines[index].strip()
-        match = _CSHARP_METHOD_RE.fullmatch(declaration)
-        if match is None:
-            continue
-        parameters = match.group("parameters").strip()
-        declaring_type = _nearest_csharp_type(lines, before_line=index + 1)
-        namespace = _nearest_csharp_namespace(lines, before_line=index + 1)
-        declaring_type_full_name = (
-            f"{namespace}.{declaring_type}"
-            if namespace is not None and declaring_type is not None
-            else declaring_type
-        )
-        return {
-            "declaration_line": index + 1,
-            "declaring_type": declaring_type,
-            "declaring_type_full_name": declaring_type_full_name,
-            "method_name": match.group("method_name"),
-            "parameter_types": () if not parameters else None,
-            "return_type": match.group("return_type"),
-        }
-    return None
+    spans = (
+        _csharp_method_source_spans(lines)
+        if method_spans is None
+        else method_spans
+    )
+    containing_span = next(
+        (
+            span
+            for span in spans
+            if int(span["start_line"])
+            <= selected_line
+            <= int(span["end_line"])
+        ),
+        None,
+    )
+    if containing_span is None:
+        return None
+    start_line = int(containing_span["start_line"])
+    match = _CSHARP_METHOD_RE.fullmatch(lines[start_line - 1].strip())
+    if match is None:
+        return None
+    parameters = match.group("parameters").strip()
+    declaring_type = _nearest_csharp_type(lines, before_line=start_line)
+    namespace = _nearest_csharp_namespace(lines, before_line=start_line)
+    declaring_type_full_name = (
+        f"{namespace}.{declaring_type}"
+        if namespace is not None and declaring_type is not None
+        else declaring_type
+    )
+    return {
+        **containing_span,
+        "declaration_line": start_line,
+        "declaring_type": declaring_type,
+        "declaring_type_full_name": declaring_type_full_name,
+        "method_name": match.group("method_name"),
+        "parameter_types": () if not parameters else None,
+        "return_type": match.group("return_type"),
+    }
 
 
 def _csharp_method_match_rank(

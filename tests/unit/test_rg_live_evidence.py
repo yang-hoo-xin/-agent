@@ -5,7 +5,6 @@ import pytest
 
 from src.mod_agent.evidence import RgLiveEvidenceProvider
 
-
 ACTUAL10_QUERY_LEADS = (
     "AccurateCrosshair General Settings Accurate Spread Enabled",
     "AccurateCrosshair config schema settings reference",
@@ -594,7 +593,61 @@ def test_rg_live_provider_binds_enclosing_csharp_method_declaration(
     assert item.return_type == "void"
     assert item.method_kind == "method"
     assert item.span is not None
-    assert item.span["start_line"] == 3
+    assert item.span == {"start_line": 3, "end_line": 18}
+    assert item.excerpt == "".join(
+        source.read_bytes().decode("utf-8").splitlines(keepends=True)[2:18]
+    )
+    assert item.excerpt.splitlines()[-1] == "    }"
+
+
+def test_actual15_adjacent_methods_have_exact_disjoint_evidence_spans() -> None:
+    fixture_root = Path(__file__).parents[1] / "fixtures"
+    provider = RgLiveEvidenceProvider(fixture_root)
+
+    on_file_changed = provider.collect(
+        query="Configuration.cs OnFileChanged configFile Reload",
+        search_root="actual15_four_site_source",
+    ).items[0]
+    bind_all = provider.collect(
+        query="Configuration.cs BindAll Resize Modifier",
+        search_root="actual15_four_site_source",
+    ).items[0]
+
+    assert on_file_changed.method_name == "OnFileChanged"
+    assert on_file_changed.span == {"start_line": 35, "end_line": 48}
+    assert on_file_changed.excerpt.splitlines()[0].strip().startswith(
+        "private static void OnFileChanged"
+    )
+    assert on_file_changed.excerpt.splitlines()[-1] == "        }"
+    assert "private static void BindAll" not in on_file_changed.excerpt
+
+    assert bind_all.method_name == "BindAll"
+    assert bind_all.span == {"start_line": 50, "end_line": 78}
+    assert bind_all.excerpt.splitlines()[0].strip().startswith(
+        "private static void BindAll"
+    )
+    assert bind_all.excerpt.splitlines()[-1] == "        }"
+    assert "OnReload?.Invoke" not in bind_all.excerpt
+    assert on_file_changed.span["end_line"] < bind_all.span["start_line"]
+
+
+def test_rg_live_repeated_hits_in_one_method_share_one_occurrence() -> None:
+    fixture_root = Path(__file__).parents[1] / "fixtures"
+    provider = RgLiveEvidenceProvider(fixture_root)
+    first = provider.collect(
+        query="Configuration.cs BindAll Follow Recoil",
+        search_root="actual15_four_site_source",
+    ).items[0]
+    second = provider.collect(
+        query="Configuration.cs BindAll Resize Modifier",
+        search_root="actual15_four_site_source",
+    ).items[0]
+
+    assert first.method_name == second.method_name == "BindAll"
+    assert first.span == second.span == {"start_line": 50, "end_line": 78}
+    assert first.excerpt == second.excerpt
+    assert first.evidence_id == second.evidence_id
+    assert first.chunk_id == second.chunk_id
 
 
 def test_rg_live_provider_binds_declared_member_types_from_containing_type(
@@ -668,7 +721,7 @@ def test_actual10_configuration_query_selects_bind_all_method_span(
     assert item.source_path == "generated_mods/AccurateCrosshair/Configuration.cs"
     assert item.source_hash == hashlib.sha256(source.read_bytes()).hexdigest()
     assert item.source_hash == item.file_hash == item.doc_hash
-    assert item.span == {"start_line": 18, "end_line": 29}
+    assert item.span == {"start_line": 18, "end_line": 27}
     assert item.excerpt.splitlines()[0] == (
         "        private static void BindAll(ConfigFile config)"
     )
@@ -693,7 +746,7 @@ def test_actual10_spread_query_selects_override_method_span(tmp_path: Path) -> N
         "generated_mods/AccurateCrosshair/CrosshairPatches/SpreadPatches.cs"
     )
     assert item.source_hash == hashlib.sha256(source.read_bytes()).hexdigest()
-    assert item.span == {"start_line": 7, "end_line": 16}
+    assert item.span == {"start_line": 7, "end_line": 14}
     assert item.excerpt.splitlines()[0] == (
         "        private static bool OverrideCrosshairSize(ref float crosshairSize)"
     )
