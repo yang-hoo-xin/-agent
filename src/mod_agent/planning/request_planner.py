@@ -66,6 +66,11 @@ _RUNTIME_DIAGNOSTIC_TERMS = (
     "启动",
     "运行时",
 )
+_RUNTIME_RELOAD_TERMS = (
+    "restart",
+    "reload",
+    "重启",
+)
 
 
 def requested_scope_text(user_request: str) -> str:
@@ -100,6 +105,15 @@ def has_runtime_diagnostic_intent(user_request: str) -> bool:
     requested_scope = requested_scope_text(user_request)
     return any(
         _contains_term(requested_scope, term) for term in _RUNTIME_DIAGNOSTIC_TERMS
+    )
+
+
+def has_runtime_reload_intent(user_request: str) -> bool:
+    """Return whether acceptance explicitly depends on restart or reload behavior."""
+
+    requested_scope = requested_scope_text(user_request)
+    return any(
+        _contains_term(requested_scope, term) for term in _RUNTIME_RELOAD_TERMS
     )
 
 
@@ -152,7 +166,12 @@ class RequestPlanner:
         resolved_target_mod = target_mod or self._extract_target_mod(request)
         quick_patch = has_config_intent(request)
         requires_hook = has_runtime_behavior_intent(request)
-        requires_runtime = requires_hook or has_runtime_diagnostic_intent(request)
+        requires_runtime_diagnostics = has_runtime_diagnostic_intent(request)
+        requires_runtime = (
+            requires_hook
+            or requires_runtime_diagnostics
+            or has_runtime_reload_intent(request)
+        )
         hook_requirement = {
             "required": requires_hook,
             "reason": (
@@ -166,7 +185,11 @@ class RequestPlanner:
             if requires_hook
             else ("quick_patch" if quick_patch else "standard_feature")
         )
-        risk_level = "high" if requires_runtime else ("low" if quick_patch else "medium")
+        risk_level = (
+            "high"
+            if requires_hook or requires_runtime_diagnostics
+            else ("low" if quick_patch else "medium")
+        )
 
         if resolved_target_mod is None:
             uncertainties.append(

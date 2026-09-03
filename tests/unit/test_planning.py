@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
 from src.mod_agent.planning import (
@@ -244,6 +246,46 @@ def test_request_planner_keeps_plain_config_compile_level() -> None:
     assert plan.risk_level == "low"
     assert plan.requires_hook_evidence is False
     assert plan.requires_runtime_evidence is False
+
+
+def test_request_planner_requires_runtime_for_accurate_crosshair_restart() -> None:
+    request = (
+        "为 AccurateCrosshair 增加 [General Settings] Accurate Spread Enabled，默认 true；"
+        "设置为 false 并重启后，只停止 AccurateCrosshair 使用准确扩散数据覆盖游戏传入的"
+        "原始准星尺寸；Follow Recoil、First Shot Display Mode、Pop Enabled 保持独立；"
+        "true 时保持现有行为。"
+    )
+
+    plan = RequestPlanner().plan(request, target_mod="AccurateCrosshair")
+    spec = FeatureSpecBuilder().build(plan)
+
+    assert plan.route == "quick_patch"
+    assert plan.risk_level == "low"
+    assert plan.requires_hook_evidence is False
+    assert plan.requires_runtime_evidence is True
+    assert plan.hook_requirement == {"required": False, "reason": "not_required"}
+    assert spec.runtime_verification_plan == (
+        "compile or static validation",
+        "startup_loaded",
+        "target_path_executed",
+        "acceptance_evidence_observed",
+        "non_goals_preserved",
+    )
+
+
+@pytest.mark.parametrize("lifecycle_term", ["restart", "reload"])
+def test_request_planner_requires_runtime_for_explicit_config_lifecycle_term(
+    lifecycle_term: str,
+) -> None:
+    plan = RequestPlanner().plan(
+        f"default config EnableLogging false after {lifecycle_term}",
+        target_mod="BetterHitFeedback",
+    )
+
+    assert plan.route == "quick_patch"
+    assert plan.risk_level == "low"
+    assert plan.requires_hook_evidence is False
+    assert plan.requires_runtime_evidence is True
 
 
 def test_feature_spec_builder_creates_verifiable_contract() -> None:
