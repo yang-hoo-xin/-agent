@@ -58,6 +58,7 @@ class PlanningContinuationInputV1:
     workspace_root: str
     feature_spec_ref: ArtifactRef
     evidence_pack_ref: ArtifactRef
+    planning_target_evidence_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.contract_version != PLANNING_CONTINUATION_CONTRACT_VERSION:

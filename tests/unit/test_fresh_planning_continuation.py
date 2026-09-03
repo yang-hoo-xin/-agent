@@ -264,6 +264,10 @@ def _inputs(tmp_path: Path) -> _Inputs:
         workspace_root=str(workspace),
         feature_spec_ref=feature_ref,
         evidence_pack_ref=evidence_ref,
+        planning_target_evidence_ids=tuple(
+            str(value)
+            for value in pack.requirement_coverage["edit_target_evidence_ids"]
+        ),
     )
     return _Inputs(
         request=request,
@@ -320,7 +324,7 @@ def _direct_graph_state(inputs: _Inputs):
 
 
 def _cli_args(inputs: _Inputs) -> list[str]:
-    return [
+    args = [
         "continue-fresh-planning",
         "--artifact-root",
         inputs.request.artifact_store_root,
@@ -337,6 +341,9 @@ def _cli_args(inputs: _Inputs) -> list[str]:
         "--evidence-pack-hash",
         inputs.evidence_ref.artifact_hash,
     ]
+    for evidence_id in inputs.request.planning_target_evidence_ids:
+        args.extend(["--planning-target-evidence-id", evidence_id])
+    return args
 
 
 def test_exact_fresh_refs_run_existing_planning_once_and_stop(
@@ -352,6 +359,9 @@ def test_exact_fresh_refs_run_existing_planning_once_and_stop(
         nonlocal calls
         calls += 1
         assert kwargs["formal_requirement_coverage_required"] is True
+        assert kwargs["planning_target_evidence_ids"] == (
+            inputs.request.planning_target_evidence_ids
+        )
         return original_build(self, **kwargs)
 
     monkeypatch.setattr(ImplementationPlanner, "build", recording_build)
@@ -386,6 +396,25 @@ def test_exact_fresh_refs_run_existing_planning_once_and_stop(
         ref.artifact_type
         for ref in inputs.store.list_feature_artifacts(inputs.feature_ref.feature_id)
     } == {"feature_spec", "evidence_pack", "implementation_plan"}
+
+
+def test_human_assisted_continuation_without_target_selection_blocks_before_patch(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = replace(inputs.request, planning_target_evidence_ids=())
+
+    result = run_fresh_planning_continuation(request)
+    public = result.to_dict()
+
+    assert result.status == "blocked"
+    assert result.plan_blocking is True
+    assert result.first_failure == {
+        "code": "PLANNING_TARGET_SELECTION_REQUIRED",
+        "stage": "implementation_plan",
+    }
+    assert public["execution_counts"]["planning"] == 1
+    assert public["execution_counts"]["patch"] == 0
 
 
 def test_planning_continuation_preserves_blocked_plan_and_stops(
@@ -764,7 +793,7 @@ def test_planning_continuation_graph_has_only_planning_reachable(
     }
 
 
-def test_continue_fresh_planning_cli_returns_one_terminal_json(
+def test_human_assisted_continue_fresh_planning_cli_selects_targets_and_stops(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -782,6 +811,12 @@ def test_continue_fresh_planning_cli_returns_one_terminal_json(
     assert result["execution_counts"]["fresh_coverage"] == 0
     assert result["execution_counts"]["model"] == 0
     assert result["execution_counts"]["planning"] == 1
+    assert result["execution_counts"]["patch"] == 0
+    plan = inputs.store.read(ArtifactRef(**result["implementation_plan_artifact"]))
+    assert {
+        binding["evidence_id"]
+        for binding in plan["data"]["binding_registry"]["edit_bindings"]
+    } == set(inputs.request.planning_target_evidence_ids)
 
 
 def test_continue_fresh_planning_cli_returns_one_blocked_json(

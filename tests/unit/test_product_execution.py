@@ -745,6 +745,11 @@ def _successful_compile_adapters(
 
     return ProductExecutionAdaptersV1(
         evidence_pack_factory=evidence_pack_factory,
+        planning_target_selection_factory=(
+            lambda _feature, _evidence: (
+                "evidence_product_compile_001",
+            )
+        ),
         patch_change_factory=patch_change_factory,
         dry_run_factory=dry_run_factory,
         isolated_apply_factory=isolated_apply_factory,
@@ -911,7 +916,7 @@ def _formal_coverage_vertical_scenario(
         coverage = validated_requirement_coverage_view(pack.to_artifact_payload())
         assert coverage is not None
         trace["coverage_edit_target_ids"] = tuple(
-            sorted(coverage.authorized_edit_target_ids)
+            sorted(coverage.edit_target_hint_evidence_ids)
         )
         return (
             replace(pack, requirement_coverage=None)
@@ -931,7 +936,7 @@ def _formal_coverage_vertical_scenario(
         binding = bindings[binding_id]
         coverage = validated_requirement_coverage_view(evidence_pack)
         if coverage is not None:
-            assert binding["evidence_id"] in coverage.authorized_edit_target_ids
+            assert binding["evidence_id"] in coverage.change_support_evidence_ids
         trace["patch_edit_binding_id"] = binding_id
         trace["patch_binding_evidence_id"] = binding["evidence_id"]
         assert "target_file" not in changes[0]
@@ -1024,6 +1029,13 @@ def _formal_coverage_vertical_scenario(
 
     adapters = ProductExecutionAdaptersV1(
         evidence_pack_factory=evidence_pack_factory,
+        planning_target_selection_factory=(
+            lambda _feature, evidence: tuple(
+                str(item["evidence_id"])
+                for item in evidence["items"]
+                if item.get("source_type") == "target_source"
+            )
+        ),
         patch_change_factory=patch_change_factory,
         dry_run_factory=dry_run_factory,
         isolated_apply_factory=isolated_apply_factory,
@@ -1043,6 +1055,61 @@ def _formal_coverage_vertical_scenario(
         canonical=canonical,
         canonical_before=canonical_before,
     )
+
+
+def test_product_execution_without_planning_selection_blocks_before_patch(
+    tmp_path: Path,
+) -> None:
+    request, store = _request(tmp_path)
+    adapters = replace(
+        _successful_compile_adapters(request),
+        planning_target_selection_factory=None,
+    )
+
+    result = execute_product_execution(
+        preflight_product_execution(request, adapters, store),
+        adapters,
+        store,
+    )
+
+    assert result.execution_disposition == "domain_blocked"
+    assert any(
+        blocker.code == "PLANNING_TARGET_SELECTION_REQUIRED"
+        for blocker in result.blockers
+    )
+    assert all(
+        event.effect_role != "patch_generation"
+        for event in result.effect_events
+    )
+
+
+def test_planning_selector_receives_defensive_payload_copies(
+    tmp_path: Path,
+) -> None:
+    request, store = _request(tmp_path)
+
+    def mutating_selector(feature, evidence):
+        selected = str(evidence["items"][0]["evidence_id"])
+        feature["target_behavior"] = "mutated outside Planning input"
+        evidence["items"].clear()
+        return (selected,)
+
+    adapters = replace(
+        _successful_compile_adapters(request),
+        planning_target_selection_factory=mutating_selector,
+    )
+    result = execute_product_execution(
+        preflight_product_execution(request, adapters, store),
+        adapters,
+        store,
+    )
+
+    assert result.execution_disposition == "succeeded"
+    evidence_output = next(
+        item for item in result.outputs if item.artifact_role == "evidence_pack"
+    )
+    stored = store.read(evidence_output.artifact_ref)["data"]
+    assert stored["items"][0]["evidence_id"] == "evidence_product_compile_001"
 
 
 def _install_actual_store_failure(
@@ -1979,7 +2046,7 @@ def test_product_execution_formal_coverage_vertical_reaches_changed_bytes_and_bu
     coverage = validated_requirement_coverage_view(evidence)
     assert coverage is not None
     edit_binding = implementation["binding_registry"]["edit_bindings"][0]
-    assert edit_binding["evidence_id"] in coverage.authorized_edit_target_ids
+    assert edit_binding["evidence_id"] in coverage.change_support_evidence_ids
     assert proposal["diff_intent"][0]["edit_binding_id"] == edit_binding["binding_id"]
     assert proposal["files"] == ["generated_mods/Example/Behavior.cs"]
     assert review["decision"] == "approve_dry_run"
@@ -2337,7 +2404,7 @@ def test_product_execution_actual8_projection_correction_no_progress_fails_close
     assert evidence["requirement_coverage"]["findings"] == []
     coverage = validated_requirement_coverage_view(evidence)
     assert coverage is not None
-    assert coverage.authorized_edit_target_ids == frozenset()
+    assert coverage.edit_target_hint_evidence_ids == frozenset()
     assert implementation["blocking"] is True
     assert implementation["proposed_changes"] == []
     assert implementation["binding_registry"] == {}
@@ -3374,11 +3441,16 @@ def test_each_active_public_store_role_preserves_real_c5_failure_and_prefix(
     assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
 
 
-def test_product_store_role_matrix_excludes_only_unreachable_optional_critic() -> None:
+def test_product_store_role_matrix_excludes_only_unreachable_optional_critic(
+    tmp_path: Path,
+) -> None:
     assert ("review_proposal", "critic_assessment") in (
         PRODUCT_EXECUTION_DECLARATION.node_store_roles
     )
     assert "proposal_critic" not in ProductExecutionAdaptersV1.__dataclass_fields__
+    request, _ = _request(tmp_path)
+    adapters = _successful_compile_adapters(request)
+    assert ("planning_target_selection_factory", True) in adapters.topology()
 
 
 def test_exact_diff_rejection_is_domain_terminal_without_apply_effect(

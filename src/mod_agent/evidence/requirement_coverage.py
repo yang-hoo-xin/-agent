@@ -43,12 +43,19 @@ REQUIREMENT_COVERAGE_TRUST_BOUNDARY = (
     "deterministic_input_accounting_and_coverage_projection",
     "deterministic_sufficiency_edit_target_patch_authority_derivation",
 )
-REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY = (
+LEGACY_REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY = (
     "model_originated_semantic_support_conflict_and_edit_target_usage_proposal",
     "deterministic_requirement_evidence_identity_validation",
     "deterministic_current_source_reference_validation",
     "deterministic_input_accounting_and_coverage_projection",
     "deterministic_sufficiency_edit_target_patch_authority_derivation",
+)
+REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY = (
+    "model_originated_semantic_support_conflict_and_edit_target_usage_hint",
+    "deterministic_requirement_evidence_identity_validation",
+    "deterministic_current_source_reference_validation",
+    "deterministic_input_accounting_and_coverage_projection",
+    "deterministic_coverage_sufficiency_without_edit_target_authority",
 )
 _FEATURE_SPEC_DERIVED_FIELDS = frozenset(
     {"feature_spec_sha256", "input_obligations"}
@@ -70,9 +77,9 @@ class RequirementCoverageView:
 
     feature_id: str
     feature_spec_sha256: str
-    authorized_edit_target_ids: frozenset[str]
+    change_support_evidence_ids: frozenset[str]
+    edit_target_hint_evidence_ids: frozenset[str]
     preservation_requirement_texts: tuple[str, ...]
-    change_related_supporting_evidence_ids: frozenset[str]
 
 
 def requirement_input_obligation_model_view(
@@ -110,7 +117,7 @@ def validated_requirement_coverage_view(
         raise ValueError("REQUIREMENT_COVERAGE_SECTION_REQUIRED")
     requirements = section["requirements"]
     findings = section["findings"]
-    edit_target_ids = frozenset(
+    edit_target_hint_ids = frozenset(
         str(value) for value in section["edit_target_evidence_ids"]
     )
     change_requirement_ids = {
@@ -132,14 +139,12 @@ def validated_requirement_coverage_view(
         feature_spec_sha256=str(
             section["feature_spec_identity"]["feature_spec_sha256"]
         ),
-        authorized_edit_target_ids=edit_target_ids,
+        change_support_evidence_ids=frozenset(change_related_evidence_ids),
+        edit_target_hint_evidence_ids=edit_target_hint_ids,
         preservation_requirement_texts=tuple(
             str(requirement["text"])
             for requirement in requirements
             if requirement["role"] == "preservation"
-        ),
-        change_related_supporting_evidence_ids=frozenset(
-            change_related_evidence_ids - edit_target_ids
         ),
     )
 
@@ -340,7 +345,7 @@ def _materialize_requirement_coverage_projection(
 
 
 def validate_requirement_coverage_evidence_pack(pack: EvidencePack) -> None:
-    """Strictly recompute coverage semantics and top-level patch authority."""
+    """Recompute coverage sufficiency and strictly read legacy semantics."""
 
     section = pack.requirement_coverage
     if not isinstance(section, dict):
@@ -398,6 +403,12 @@ def validate_requirement_coverage_evidence_pack(pack: EvidencePack) -> None:
             materialized_projection=materialized,
             items=pack.items,
             findings=findings,
+            persisted_semantic_trust_boundary=(
+                tuple(str(value) for value in section["semantic_trust_boundary"])
+                if schema_version == REQUIREMENT_COVERAGE_SCHEMA_VERSION
+                and isinstance(section.get("semantic_trust_boundary"), list)
+                else None
+            ),
         )
     )
     if rebuilt != section:
@@ -417,6 +428,7 @@ def resolve_requirement_coverage(
     materialized_projection: Mapping[str, Any],
     items: tuple[EvidenceItem, ...],
     findings: Mapping[str, Any],
+    persisted_semantic_trust_boundary: tuple[str, ...] | None = None,
 ) -> tuple[
     dict[str, object], str, bool, tuple[dict[str, Any], ...], tuple[str, ...]
 ]:
@@ -429,6 +441,15 @@ def resolve_requirement_coverage(
         materialized_projection["schema_version"]
         == REQUIREMENT_COVERAGE_SCHEMA_VERSION
     )
+    legacy_v3_semantics = False
+    if explicit_edit_targets and persisted_semantic_trust_boundary is not None:
+        if (
+            persisted_semantic_trust_boundary
+            == LEGACY_REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY
+        ):
+            legacy_v3_semantics = True
+        elif persisted_semantic_trust_boundary != REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY:
+            raise ValueError("REQUIREMENT_COVERAGE_TRUST_BOUNDARY_INVALID")
     if set(findings) != {"findings"} or not isinstance(findings["findings"], list):
         raise ValueError("REQUIREMENT_COVERAGE_FINDINGS_SHAPE_INVALID")
     item_by_id = {item.evidence_id: item for item in items}
@@ -618,7 +639,7 @@ def resolve_requirement_coverage(
             raise ValueError("REQUIREMENT_COVERAGE_EDIT_TARGET_IDENTITY_INVALID")
         if exact_target_identity:
             edit_target_evidence_ids.append(evidence_id)
-    if explicit_edit_targets:
+    if legacy_v3_semantics:
         required_change_ids = {
             requirement_id
             for requirement_id in change_ids
@@ -635,8 +656,6 @@ def resolve_requirement_coverage(
                 reasons.append(
                     f"required_change_edit_target_missing:{requirement_id}"
                 )
-    elif not edit_target_evidence_ids:
-        reasons.append("change_edit_target_evidence_missing")
     reasons = list(dict.fromkeys(reasons))
     can_generate_patch = not reasons
     status = "sufficient" if can_generate_patch else "insufficient"
@@ -654,7 +673,9 @@ def resolve_requirement_coverage(
         "edit_target_evidence_ids": edit_target_evidence_ids,
         "sufficiency": {"status": status, "reasons": reasons},
         "semantic_trust_boundary": list(
-            REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY
+            LEGACY_REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY
+            if legacy_v3_semantics
+            else REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY
             if explicit_edit_targets
             else REQUIREMENT_COVERAGE_TRUST_BOUNDARY
         ),

@@ -4314,6 +4314,7 @@ def run_local_request(
     requirement_coverage_findings_factory: (
         Callable[[Mapping[str, Any], Any], Mapping[str, Any]] | None
     ) = None,
+    planning_target_evidence_ids: tuple[str, ...] = (),
     run_id: str | None = None,
     request_id: str | None = None,
 ) -> dict[str, Any]:
@@ -4331,6 +4332,13 @@ def run_local_request(
         raise LocalEntryError("run-request explicit run identity is invalid.")
     if not description.strip():
         raise LocalEntryError("run-request requires a non-empty natural-language request.")
+    if not isinstance(planning_target_evidence_ids, tuple) or any(
+        type(value) is not str or not value
+        for value in planning_target_evidence_ids
+    ):
+        raise LocalEntryError(
+            "run-request Planning target evidence IDs must be exact non-empty strings."
+        )
     if local_ollama and allow_source_disclosure:
         raise LocalEntryError(
             "Choose exactly one model boundary: --local-ollama or "
@@ -6230,6 +6238,11 @@ def run_local_request(
     )
     product_adapters = ProductExecutionAdaptersV1(
         evidence_pack_factory=evidence_factory,
+        planning_target_selection_factory=(
+            lambda _feature, _evidence: planning_target_evidence_ids
+        )
+        if planning_target_evidence_ids
+        else None,
         patch_change_factory=patch_change_factory,
         dry_run_factory=dry_run_factory,
         isolated_apply_factory=isolated_apply_factory,

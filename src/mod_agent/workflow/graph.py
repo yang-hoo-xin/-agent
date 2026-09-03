@@ -152,6 +152,9 @@ RuntimeEvidenceFactory = Callable[[str, dict[str, Any], dict[str, Any]], dict[st
 EvaluationContextFactory = Callable[[ModAgentState], dict[str, Any]]
 ProposalGitBindingFactory = Callable[[], dict[str, Any]]
 EvidencePackFactory = Callable[[ModAgentState, dict[str, Any]], EvidencePack]
+PlanningTargetSelectionFactory = Callable[
+    [dict[str, Any], dict[str, Any]], tuple[str, ...]
+]
 PatchChangeFactory = Callable[
     [ModAgentState, dict[str, Any], dict[str, Any]], tuple[dict[str, Any], ...]
 ]
@@ -450,6 +453,7 @@ def build_graph(
     proposal_git_binding_factory: ProposalGitBindingFactory | None = None,
     use_default_proposal_git_binding: bool = True,
     evidence_pack_factory: EvidencePackFactory | None = None,
+    planning_target_selection_factory: PlanningTargetSelectionFactory | None = None,
     patch_change_factory: PatchChangeFactory | None = None,
     proposal_review_context_factory: ProposalReviewContextFactory | None = None,
     proposal_source_snippet_char_limit: int = 6000,
@@ -535,6 +539,7 @@ def build_graph(
             runtime_evidence_factory,
             proposal_git_binding_factory,
             evidence_pack_factory,
+            planning_target_selection_factory,
             patch_change_factory,
             proposal_review_context_factory,
             proposal_critic,
@@ -881,6 +886,9 @@ def build_graph(
                 ),
                 planning_continuation_mode=(
                     validated_planning_continuation_mode
+                ),
+                planning_target_selection_factory=(
+                    planning_target_selection_factory
                 ),
             ),
         ),
@@ -1577,16 +1585,31 @@ def _run_create_implementation_plan(
     formal_requirement_coverage_required: bool = False,
     use_store_result: bool = False,
     planning_continuation_mode: PlanningContinuationInputV1 | None = None,
+    planning_target_selection_factory: PlanningTargetSelectionFactory | None = None,
 ) -> ModAgentState:
     feature_spec = _feature_spec_from_payload(
         _read_artifact_data(state, artifact_store, "feature_spec")
     )
     evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
+    planning_target_evidence_ids = (
+        planning_continuation_mode.planning_target_evidence_ids
+        if planning_continuation_mode is not None
+        else planning_target_selection_factory(
+            copy.deepcopy(feature_spec.to_artifact_payload()),
+            copy.deepcopy(evidence_pack),
+        )
+        if formal_requirement_coverage_required
+        and planning_target_selection_factory is not None
+        else None
+    )
     implementation = ImplementationPlanner().build(
         feature_spec=feature_spec,
         evidence_pack=evidence_pack,
         formal_requirement_coverage_required=(
             formal_requirement_coverage_required
+        ),
+        planning_target_evidence_ids=(
+            planning_target_evidence_ids
         ),
     )
     if planning_continuation_mode is not None:

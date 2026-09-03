@@ -643,6 +643,7 @@ class ProductExecutionAdaptersV1:
     compiled_artifact_verifier: Callable[..., Any] | None
     source_change_verifier: Callable[..., Any] | None
     proposal_review_context_factory: Callable[..., Any] | None = None
+    planning_target_selection_factory: Callable[..., Any] | None = None
 
     def validate_for(self, request: ProductExecutionRequestV1) -> None:
         required = (
@@ -673,6 +674,14 @@ class ProductExecutionAdaptersV1:
                 "or null.",
                 side_effects_may_have_started=False,
             )
+        if self.planning_target_selection_factory is not None and not callable(
+            self.planning_target_selection_factory
+        ):
+            raise ProductExecutionContractError(
+                "Product adapter planning_target_selection_factory must be "
+                "callable or null.",
+                side_effects_may_have_started=False,
+            )
         runtime_required = request.requested_completion_scope == "runtime_workflow"
         if runtime_required is not callable(self.runtime_evidence_factory):
             raise _ProductExecutionAdmissionError(
@@ -685,6 +694,7 @@ class ProductExecutionAdaptersV1:
             (field, callable(getattr(self, field)))
             for field in (
                 "evidence_pack_factory",
+                "planning_target_selection_factory",
                 "patch_change_factory",
                 "dry_run_factory",
                 "isolated_apply_factory",
@@ -1453,10 +1463,16 @@ def execute_product_execution(
         compiled_artifact_verifier=adapters.compiled_artifact_verifier,
         source_change_verifier=adapters.source_change_verifier,
         proposal_review_context_factory=adapters.proposal_review_context_factory,
+        planning_target_selection_factory=(
+            adapters.planning_target_selection_factory
+        ),
     )
     graph = build_graph(
         recorder,
         evidence_pack_factory=wrapped.evidence_pack_factory,
+        planning_target_selection_factory=(
+            wrapped.planning_target_selection_factory
+        ),
         patch_change_factory=wrapped.patch_change_factory,
         proposal_review_context_factory=wrapped.proposal_review_context_factory,
         dry_run_factory=wrapped.dry_run_factory,

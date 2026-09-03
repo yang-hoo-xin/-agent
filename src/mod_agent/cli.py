@@ -717,6 +717,15 @@ def build_parser(
     planning_continuation_parser.add_argument(
         "--evidence-pack-hash", required=True
     )
+    planning_continuation_parser.add_argument(
+        "--planning-target-evidence-id",
+        action="append",
+        default=[],
+        help=(
+            "Repeat for each human-assisted Planning edit target selected "
+            "from the complete change-support evidence pool."
+        ),
+    )
 
     intelligent_evidence_parser = subparsers.add_parser(
         "intelligent-evidence-request",
@@ -813,6 +822,15 @@ def build_parser(
     )
     run_parser.add_argument("--confirm-isolated-write", action="store_true")
     run_parser.add_argument("--allow-build", action="store_true")
+    run_parser.add_argument(
+        "--planning-target-evidence-id",
+        action="append",
+        default=[],
+        help=(
+            "Repeat for each precomputed human-assisted Planning edit target "
+            "from an already-known current Fresh EvidencePack identity."
+        ),
+    )
     run_parser.add_argument(
         "--run-gtfo-runtime",
         action="store_true",
@@ -1421,6 +1439,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     path=args.evidence_pack_path,
                     artifact_hash=args.evidence_pack_hash,
                 ),
+                planning_target_evidence_ids=tuple(
+                    args.planning_target_evidence_id
+                ),
             )
             result = run_fresh_planning_continuation(request)
         except PlanningContinuationError as exc:
@@ -1847,6 +1868,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ollama_model=args.ollama_model,
                 ollama_max_output_tokens=args.ollama_max_output_tokens,
                 ollama_context_window=args.ollama_context_window,
+                planning_target_evidence_ids=tuple(
+                    args.planning_target_evidence_id
+                ),
             )
         except ProductExecutionPresentationError as exc:
             print(

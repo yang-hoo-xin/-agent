@@ -446,6 +446,7 @@ def test_run_local_request_threads_one_strict_git_admission_through_all_source_c
     source = inspect.getsource(run_local_request)
 
     assert "source_git_admission" in signature.parameters
+    assert signature.parameters["planning_target_evidence_ids"].default == ()
     assert source.count("strict_git_admission=source_git_admission") == 3
     assert signature.parameters["game_folder_build_binding"].default is None
 

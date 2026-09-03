@@ -828,11 +828,15 @@ class StructuredModelRequirementCoverageProvider:
                         "and unresolved_gaps; do not repeat relation identity inside it."
                     )
                 ),
-                "Semantic findings are proposals; deterministic code validates every identity and derives sufficiency and authority.",
+                (
+                    "Semantic findings are proposals; deterministic code validates "
+                    "every identity and derives coverage sufficiency. Planning owns "
+                    "the final edit-target selection."
+                ),
                 (
                     "Return only listed Evidence IDs in edit_target_evidence_ids; "
-                    "this proposes usage and does not grant a path, span, Patch, or "
-                    "execution authority."
+                    "this is a Planning hint and does not grant a path, span, "
+                    "Patch, or execution authority."
                     if materialized_projection["schema_version"]
                     == REQUIREMENT_COVERAGE_SCHEMA_VERSION
                     else "Do not return paths, source refs, sufficiency, edit targets, Patch authority, or execution authority."
@@ -1220,7 +1224,7 @@ def build_requirement_coverage_pack(
         message=(
             "Current-source evidence satisfies every required pre-patch requirement."
             if can_generate_patch
-            else "Requirement coverage is incomplete or conflicting; patch authority is blocked."
+            else "Requirement coverage is incomplete or conflicting."
         ),
     )
 

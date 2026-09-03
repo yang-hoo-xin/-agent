@@ -31,12 +31,15 @@ from src.mod_agent.evidence.identity import (
     feature_spec_payload_sha256,
     request_relation_identity,
 )
+from src.mod_agent.evidence.models import missing_evidence_from_blockers
 from src.mod_agent.evidence.requirement_coverage import (
     LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    LEGACY_REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY,
     PREVIOUS_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     RequirementCoverageProjectionError,
     requirement_input_obligation_model_view,
+    resolve_requirement_coverage,
 )
 from src.mod_agent.evidence.requirement_coverage_provider import (
     RequirementProjectionAdmissionError,
@@ -744,7 +747,7 @@ def _feature_spec(feature: dict[str, object]) -> FeatureSpec:
     )
 
 
-def test_positive_requirement_coverage_roundtrips_and_derives_edit_target(
+def test_positive_requirement_coverage_roundtrips_and_exposes_support_and_hint(
     tmp_path: Path,
 ) -> None:
     _, materialized, retrieved, pack = _positive_pack(tmp_path)
@@ -752,7 +755,7 @@ def test_positive_requirement_coverage_roundtrips_and_derives_edit_target(
     assert pack.readiness == "sufficient"
     assert pack.can_generate_patch is True
     assert pack.requirement_coverage["semantic_trust_boundary"][0] == (
-        "model_originated_semantic_support_conflict_and_edit_target_usage_proposal"
+        "model_originated_semantic_support_conflict_and_edit_target_usage_hint"
     )
     coverage = pack.requirement_coverage
     assert coverage is not None
@@ -773,8 +776,11 @@ def test_positive_requirement_coverage_roundtrips_and_derives_edit_target(
     assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
     view = validated_requirement_coverage_view(payload)
     assert view is not None
-    assert view.authorized_edit_target_ids == frozenset(
+    assert view.edit_target_hint_evidence_ids == frozenset(
         coverage["edit_target_evidence_ids"]
+    )
+    assert view.change_support_evidence_ids == frozenset(
+        shared_finding["evidence_ids"]
     )
     assert view.preservation_requirement_texts == (
         "PreserveFeedback must remain unchanged.",
@@ -1059,7 +1065,9 @@ def _actual15_v3_complete_four_site_plan(
         item.evidence_id for item in complete_items
     ]
     findings["findings"][0]["edit_target_evidence_ids"] = [
-        item.evidence_id for item in editable_items
+        property_site.evidence_id,
+        bind_site.evidence_id,
+        spread_site.evidence_id,
     ]
     findings["findings"][0]["unresolved_gaps"] = []
     findings["findings"][1]["evidence_ids"] = [bind_site.evidence_id]
@@ -1075,6 +1083,9 @@ def _actual15_v3_complete_four_site_plan(
         feature_spec=_feature_spec(feature),
         evidence_pack=pack.to_artifact_payload(),
         formal_requirement_coverage_required=True,
+        planning_target_evidence_ids=tuple(
+            item.evidence_id for item in editable_items
+        ),
     )
 
     after_by_evidence_id = {
@@ -1166,8 +1177,10 @@ def test_v3_supporting_subset_reaches_four_site_nonblocking_planning(
     assert view is not None
     assert pack.readiness == "sufficient"
     assert pack.can_generate_patch is True
-    assert view.authorized_edit_target_ids == expected_ids
-    assert view.change_related_supporting_evidence_ids == supporting_ids
+    assert view.edit_target_hint_evidence_ids == expected_ids - {
+        "rg_fixture_configuration_reload"
+    }
+    assert view.change_support_evidence_ids == expected_ids | supporting_ids
     assert implementation.blocking is False
     assert {
         binding["evidence_id"]
@@ -1177,6 +1190,23 @@ def test_v3_supporting_subset_reaches_four_site_nonblocking_planning(
         binding["evidence_id"]
         for binding in implementation.binding_registry["supporting_bindings"]
     } == supporting_ids
+    validation = BindingResolver(
+        binding_registry=implementation.binding_registry,
+        evidence_pack=pack.to_artifact_payload(),
+    ).validate_registry_against_evidence()
+    assert validation.allowed is True
+    assert validation.blockers == ()
+    tampered_registry = deepcopy(implementation.binding_registry)
+    tampered_registry["edit_bindings"][0]["source_hash"] = "0" * 64
+    drift = BindingResolver(
+        binding_registry=tampered_registry,
+        evidence_pack=pack.to_artifact_payload(),
+    ).validate_registry_against_evidence()
+    assert drift.allowed is False
+    assert any(
+        blocker["code"] == "BINDING_EVIDENCE_DRIFT"
+        for blocker in drift.blockers
+    )
     assert len(implementation.proposed_changes) == 4
     assert all(
         change["rationale"]
@@ -1465,6 +1495,56 @@ def test_v2_change_support_derivation_remains_readable_as_history(
     assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
 
 
+def test_legacy_v3_trust_boundary_remains_strictly_readable(
+    tmp_path: Path,
+) -> None:
+    _, _, _, pack = _positive_pack(tmp_path)
+    payload = pack.to_artifact_payload()
+    payload["requirement_coverage"]["semantic_trust_boundary"] = list(
+        LEGACY_REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY
+    )
+
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+
+
+def test_legacy_v3_empty_target_hint_retains_historical_strict_semantics(
+    tmp_path: Path,
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    findings = _positive_findings(materialized, retrieved)
+    findings["findings"][0]["edit_target_evidence_ids"] = []
+    section, readiness, allowed, blockers, gaps = resolve_requirement_coverage(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        items=retrieved.items,
+        findings=findings,
+        persisted_semantic_trust_boundary=(
+            LEGACY_REQUIREMENT_COVERAGE_V3_TRUST_BOUNDARY
+        ),
+    )
+    historical = replace(
+        retrieved,
+        query=str(feature["user_request"]),
+        readiness=readiness,
+        can_generate_patch=allowed,
+        blockers=blockers,
+        gaps=gaps,
+        missing_evidence=missing_evidence_from_blockers(blockers),
+        requirement_coverage=section,
+        message="Historical v3 coverage was insufficient.",
+    )
+    payload = historical.to_artifact_payload()
+    requirement_id = materialized["requirements"][0]["requirement_id"]
+
+    assert readiness == "insufficient"
+    assert allowed is False
+    assert (
+        f"required_change_edit_target_missing:{requirement_id}"
+        in section["sufficiency"]["reasons"]
+    )
+    assert EvidencePack.from_artifact_payload(payload).to_artifact_payload() == payload
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -1515,7 +1595,9 @@ def test_v3_invalid_edit_target_subset_is_rejected(
         )
 
 
-def test_v3_empty_edit_target_subset_fails_closed(tmp_path: Path) -> None:
+def test_v3_empty_edit_target_hint_does_not_reduce_coverage_sufficiency(
+    tmp_path: Path,
+) -> None:
     feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
     findings = _positive_findings(materialized, retrieved)
     findings["findings"][0]["edit_target_evidence_ids"] = []
@@ -1527,13 +1609,20 @@ def test_v3_empty_edit_target_subset_fails_closed(tmp_path: Path) -> None:
         findings=findings,
     )
 
-    change_requirement_id = materialized["requirements"][0]["requirement_id"]
-    assert pack.can_generate_patch is False
+    assert pack.readiness == "sufficient"
+    assert pack.can_generate_patch is True
     assert pack.requirement_coverage["edit_target_evidence_ids"] == []
-    assert (
-        f"required_change_edit_target_missing:{change_requirement_id}"
-        in pack.requirement_coverage["sufficiency"]["reasons"]
+    assert pack.requirement_coverage["sufficiency"]["reasons"] == []
+
+    selected_id = findings["findings"][0]["evidence_ids"][0]
+    plan = ImplementationPlanner().build(
+        feature_spec=_feature_spec(feature),
+        evidence_pack=pack.to_artifact_payload(),
+        formal_requirement_coverage_required=True,
+        planning_target_evidence_ids=(selected_id,),
     )
+    assert plan.blocking is False
+    assert plan.binding_registry["edit_bindings"][0]["evidence_id"] == selected_id
 
 
 @pytest.mark.parametrize("relationship", ["missing", "conflict"])
@@ -2103,6 +2192,88 @@ def test_planner_separates_coverage_edit_and_supporting_bindings(
     assert validation.blockers == ()
 
 
+@pytest.mark.parametrize(
+    ("selection_factory", "expected_code"),
+    [
+        (lambda _change, _outside: None, "PLANNING_TARGET_SELECTION_REQUIRED"),
+        (lambda change, _outside: [change], "PLANNING_TARGET_SELECTION_INVALID"),
+        (
+            lambda change, _outside: (change, change),
+            "PLANNING_TARGET_SELECTION_INVALID",
+        ),
+        (
+            lambda _change, _outside: ("unknown_evidence",),
+            "PLANNING_TARGET_SELECTION_INVALID",
+        ),
+        (
+            lambda _change, outside: (outside,),
+            "PLANNING_TARGET_SELECTION_INVALID",
+        ),
+    ],
+)
+def test_formal_planning_rejects_invalid_explicit_target_selection(
+    tmp_path: Path,
+    selection_factory,
+    expected_code: str,
+) -> None:
+    feature, _, _, pack = _positive_pack(tmp_path)
+    coverage = pack.requirement_coverage
+    assert coverage is not None
+    change_id = coverage["findings"][0]["evidence_ids"][0]
+    outside_id = coverage["findings"][1]["evidence_ids"][0]
+
+    plan = ImplementationPlanner().build(
+        feature_spec=_feature_spec(feature),
+        evidence_pack=pack.to_artifact_payload(),
+        formal_requirement_coverage_required=True,
+        planning_target_evidence_ids=selection_factory(change_id, outside_id),
+    )
+
+    assert plan.blocking is True
+    assert plan.proposed_changes == ()
+    assert plan.blockers[0]["code"] == expected_code
+
+
+@pytest.mark.parametrize(
+    "item_changes",
+    [
+        {"source_type": "decompiled_api"},
+        {"span": None},
+    ],
+)
+def test_formal_planning_rejects_supported_unresolved_target_selection(
+    tmp_path: Path,
+    item_changes: dict[str, object],
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    findings = _positive_findings(materialized, retrieved)
+    change_id = findings["findings"][0]["evidence_ids"][0]
+    findings["findings"][0]["edit_target_evidence_ids"] = []
+    non_target_items = tuple(
+        replace(item, **item_changes)
+        if item.evidence_id == change_id
+        else item
+        for item in retrieved.items
+    )
+    pack = build_requirement_coverage_pack(
+        query=str(feature["user_request"]),
+        materialized_projection=materialized,
+        retrieved_pack=replace(retrieved, items=non_target_items),
+        findings=findings,
+    )
+
+    plan = ImplementationPlanner().build(
+        feature_spec=_feature_spec(feature),
+        evidence_pack=pack.to_artifact_payload(),
+        formal_requirement_coverage_required=True,
+        planning_target_evidence_ids=(change_id,),
+    )
+
+    assert pack.can_generate_patch is True
+    assert plan.blocking is True
+    assert plan.blockers[0]["code"] == "PLANNING_TARGET_SELECTION_UNRESOLVED"
+
+
 def test_planner_and_coverage_share_feature_payload_identity_owner(
     tmp_path: Path,
 ) -> None:
@@ -2493,7 +2664,7 @@ def test_binding_resolver_rejects_supporting_evidence_promoted_to_edit(
     assert review.allowed_next_stage is None
     assert any(
         finding.rule_id == "binding_registry"
-        and "coverage-derived edit target" in finding.message
+        and "change-support pool" in finding.message
         for finding in review.findings
     )
 
@@ -2589,6 +2760,9 @@ def test_graph_reaches_nonblocking_plan_from_explicit_positive_coverage(
     graph = build_graph(
         store,
         evidence_pack_factory=evidence_factory,
+        planning_target_selection_factory=lambda *_args: pytest.fail(
+            "Non-formal Graph must not call the Planning selector."
+        ),
         interrupt_after=["create_implementation_plan"],
     )
     result = graph.invoke(

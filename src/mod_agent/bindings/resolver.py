@@ -116,8 +116,8 @@ class BindingResolver:
                 }
             )
             coverage_view = None
-        coverage_edit_target_ids = (
-            coverage_view.authorized_edit_target_ids
+        coverage_change_support_ids = (
+            coverage_view.change_support_evidence_ids
             if coverage_view is not None
             else set()
             if "requirement_coverage" in self.evidence_pack
@@ -126,15 +126,15 @@ class BindingResolver:
         for binding in self.edit_bindings.values():
             evidence_id = str(binding.get("evidence_id") or "")
             if (
-                coverage_edit_target_ids is not None
-                and evidence_id not in coverage_edit_target_ids
+                coverage_change_support_ids is not None
+                and evidence_id not in coverage_change_support_ids
             ):
                 blockers.append(
                     _blocker(
                         "EDIT_BINDING_OUTSIDE_REQUIREMENT_COVERAGE",
                         (
-                            "Edit binding evidence_id is not a deterministic "
-                            "coverage-derived edit target."
+                            "Edit binding evidence_id is not in the complete "
+                            "requirement-coverage change-support pool."
                         ),
                         binding,
                     )
@@ -157,13 +157,39 @@ class BindingResolver:
                         binding,
                     )
                 )
+            if (
+                not isinstance(item.get("source_path"), str)
+                or not item["source_path"]
+                or _physical_source_revision_hash(item) is None
+                or _exact_line_span(item.get("span")) is None
+            ):
+                blockers.append(
+                    _blocker(
+                        "BINDING_EVIDENCE_DRIFT",
+                        (
+                            "Edit binding evidence does not carry an exact "
+                            "current source identity."
+                        ),
+                        binding,
+                    )
+                )
             checks = (
                 ("canonical_target_path", "source_path", "path"),
+                (
+                    "source_hash",
+                    "physical_source_revision",
+                    "source_hash",
+                ),
                 ("target_symbol", "symbol", "symbol"),
                 ("target_span", "span", "span"),
             )
             for binding_key, evidence_key, label in checks:
-                if binding.get(binding_key) != item.get(evidence_key):
+                evidence_value = (
+                    _physical_source_revision_hash(item)
+                    if evidence_key == "physical_source_revision"
+                    else item.get(evidence_key)
+                )
+                if binding.get(binding_key) != evidence_value:
                     blockers.append(
                         _blocker(
                             "BINDING_EVIDENCE_DRIFT",
@@ -556,6 +582,38 @@ def _normalized_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return list(value)
     return value
+
+
+def _physical_source_revision_hash(item: dict[str, Any]) -> str | None:
+    source_hash = item.get("source_hash")
+    file_hash = item.get("file_hash")
+    if source_hash not in (None, "") and (
+        not isinstance(source_hash, str) or not source_hash
+    ):
+        return None
+    if file_hash not in (None, "") and (
+        not isinstance(file_hash, str) or not file_hash
+    ):
+        return None
+    if source_hash and file_hash and source_hash != file_hash:
+        return None
+    selected = source_hash or file_hash
+    return selected if isinstance(selected, str) and selected else None
+
+
+def _exact_line_span(value: Any) -> tuple[int, int] | None:
+    if not isinstance(value, dict):
+        return None
+    start_line = value.get("start_line")
+    end_line = value.get("end_line")
+    if (
+        type(start_line) is not int
+        or type(end_line) is not int
+        or start_line < 1
+        or end_line < start_line
+    ):
+        return None
+    return start_line, end_line
 
 
 def _supporting_usage_matches_source_type(

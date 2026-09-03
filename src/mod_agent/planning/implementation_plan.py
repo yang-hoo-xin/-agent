@@ -36,6 +36,7 @@ class ImplementationPlanner:
         feature_spec: FeatureSpec,
         evidence_pack: dict[str, Any],
         formal_requirement_coverage_required: bool = False,
+        planning_target_evidence_ids: tuple[str, ...] | None = None,
     ) -> ImplementationPlan:
         """Return an implementation plan or a blocking result."""
 
@@ -225,7 +226,7 @@ class ImplementationPlanner:
                 open_questions=("Rebuild requirement coverage before planning.",),
                 evidence_source_paths=evidence_source_paths,
             )
-        coverage_edit_target_ids: frozenset[str] | None = None
+        selected_edit_target_ids: frozenset[str] | None = None
         preservation_boundaries: tuple[str, ...] = ()
         change_related_evidence_ids: frozenset[str] = frozenset()
         if coverage_view is not None:
@@ -250,12 +251,32 @@ class ImplementationPlanner:
                     open_questions=("Rebuild requirement coverage before planning.",),
                     evidence_source_paths=evidence_source_paths,
                 )
-            coverage_edit_target_ids = coverage_view.authorized_edit_target_ids
             preservation_boundaries = (
                 coverage_view.preservation_requirement_texts
             )
+            if formal_requirement_coverage_required:
+                selection, selection_blocker = self._formal_target_selection(
+                    raw_selection=planning_target_evidence_ids,
+                    planning_items=planning_items,
+                    change_support_evidence_ids=(
+                        coverage_view.change_support_evidence_ids
+                    ),
+                )
+                if selection_blocker is not None:
+                    return self._blocked(
+                        feature_id=feature_spec.feature_id,
+                        blockers=(selection_blocker,),
+                        open_questions=(selection_blocker["message"],),
+                        evidence_source_paths=evidence_source_paths,
+                    )
+                selected_edit_target_ids = selection
+            else:
+                selected_edit_target_ids = (
+                    coverage_view.edit_target_hint_evidence_ids
+                )
             change_related_evidence_ids = (
-                coverage_view.change_related_supporting_evidence_ids
+                coverage_view.change_support_evidence_ids
+                - (selected_edit_target_ids or frozenset())
             )
         editable_items = [
             item
@@ -264,8 +285,8 @@ class ImplementationPlanner:
             and item.get("source_path")
             and item.get("source_type") in EDITABLE_EVIDENCE_SOURCE_TYPES
             and (
-                coverage_edit_target_ids is None
-                or str(item["evidence_id"]) in coverage_edit_target_ids
+                selected_edit_target_ids is None
+                or str(item["evidence_id"]) in selected_edit_target_ids
             )
         ]
         target_files = tuple(
@@ -383,6 +404,115 @@ class ImplementationPlanner:
             evidence_source_paths=evidence_source_paths,
             binding_registry=binding_registry,
         )
+
+    @staticmethod
+    def _formal_target_selection(
+        *,
+        raw_selection: tuple[str, ...] | None,
+        planning_items: list[dict[str, Any]],
+        change_support_evidence_ids: frozenset[str],
+    ) -> tuple[frozenset[str], dict[str, Any] | None]:
+        """Admit one explicit Planning-owned target selection."""
+
+        if raw_selection is None or raw_selection == ():
+            return frozenset(), {
+                "code": "PLANNING_TARGET_SELECTION_REQUIRED",
+                "message": (
+                    "Formal requirement coverage requires an explicit Planning "
+                    "edit-target selection. Coverage edit-target fields are hints only."
+                ),
+            }
+        if not isinstance(raw_selection, tuple) or any(
+            type(value) is not str or not value
+            for value in raw_selection
+        ):
+            return frozenset(), {
+                "code": "PLANNING_TARGET_SELECTION_INVALID",
+                "message": (
+                    "Planning edit-target selection must be a non-empty tuple "
+                    "of exact evidence IDs."
+                ),
+                "reason": "malformed_selection",
+            }
+        if len(raw_selection) != len(set(raw_selection)):
+            duplicate_ids = tuple(
+                dict.fromkeys(
+                    evidence_id
+                    for evidence_id in raw_selection
+                    if raw_selection.count(evidence_id) > 1
+                )
+            )
+            return frozenset(), {
+                "code": "PLANNING_TARGET_SELECTION_INVALID",
+                "message": "Planning edit-target selection contains duplicate evidence IDs.",
+                "reason": "duplicate_evidence_ids",
+                "evidence_ids": list(duplicate_ids),
+            }
+        item_by_id = {
+            str(item["evidence_id"]): item
+            for item in planning_items
+            if item.get("evidence_id")
+        }
+        unknown_ids = tuple(
+            evidence_id
+            for evidence_id in raw_selection
+            if evidence_id not in item_by_id
+        )
+        if unknown_ids:
+            return frozenset(), {
+                "code": "PLANNING_TARGET_SELECTION_INVALID",
+                "message": (
+                    "Planning edit-target selection contains evidence IDs that "
+                    "are unavailable to authoritative planning."
+                ),
+                "reason": "unknown_evidence_ids",
+                "evidence_ids": list(unknown_ids),
+            }
+        outside_support_ids = tuple(
+            evidence_id
+            for evidence_id in raw_selection
+            if evidence_id not in change_support_evidence_ids
+        )
+        if outside_support_ids:
+            return frozenset(), {
+                "code": "PLANNING_TARGET_SELECTION_INVALID",
+                "message": (
+                    "Planning edit-target selection must remain within the "
+                    "complete change-support evidence pool."
+                ),
+                "reason": "outside_change_support",
+                "evidence_ids": list(outside_support_ids),
+            }
+        unresolved_ids = tuple(
+            evidence_id
+            for evidence_id in raw_selection
+            if (
+                item_by_id[evidence_id].get("source_type")
+                not in EDITABLE_EVIDENCE_SOURCE_TYPES
+                or not isinstance(
+                    item_by_id[evidence_id].get("source_path"), str
+                )
+                or not item_by_id[evidence_id]["source_path"]
+                or ImplementationPlanner._physical_source_revision_hash(
+                    item_by_id[evidence_id]
+                )
+                is None
+                or ImplementationPlanner._exact_line_span(
+                    item_by_id[evidence_id].get("span")
+                )
+                is None
+            )
+        )
+        if unresolved_ids:
+            return frozenset(), {
+                "code": "PLANNING_TARGET_SELECTION_UNRESOLVED",
+                "message": (
+                    "Planning edit-target selection contains evidence that "
+                    "does not resolve to an exact current target_source identity."
+                ),
+                "evidence_ids": list(unresolved_ids),
+            }
+        return frozenset(raw_selection), None
 
     @classmethod
     def _normalize_edit_units(

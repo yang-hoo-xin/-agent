@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 import yaml
 
 import src.mod_agent.local_entry as local_entry_module
-
 from src.libs.llm import (
     AgentToolCall,
     AgentTurnProviderError,
@@ -38,6 +37,7 @@ from src.mod_agent.edit_authority_capabilities import (
     project_edit_authority_review_result,
     resolve_edit_authority_capability,
 )
+from src.mod_agent.evidence import RgLiveEvidenceProvider
 from src.mod_agent.evidence.discovery_tools import LocalAssemblyEvidenceToolExecutor
 from src.mod_agent.intelligent_evidence_only import (
     IntelligentEvidenceEntryError,
@@ -59,6 +59,23 @@ def _human_semantic_approval_line(dry_run: dict[str, object]) -> str:
             "reviewer_identity": "human:cli-integration-test",
         }
     ) + "\n"
+
+
+def _read_exact_test_planning_target_id(
+    tmp_path: Path,
+    source_path: Path,
+) -> str:
+    probe_root = tmp_path / "planning-target-probe"
+    probe_source = probe_root / "generated_mods" / "Example" / "Plugin.cs"
+    probe_source.parent.mkdir(parents=True, exist_ok=True)
+    probe_source.write_bytes(source_path.read_bytes())
+    evidence = RgLiveEvidenceProvider(probe_root).collect(
+        query="Load",
+        search_root="generated_mods/Example",
+        max_items=1,
+    )
+    assert len(evidence.items) == 1
+    return evidence.items[0].evidence_id
 
 
 def _successful_edit_authority_cli_result(
@@ -1480,7 +1497,7 @@ def test_cli_run_request_blocks_before_target_access_without_source_disclosure(
     assert "--allow-source-disclosure" in payload["reason"]
 
 
-def test_cli_run_request_passes_local_ollama_boundary_but_rejects_legacy_summary(
+def test_cli_run_request_forwards_precomputed_targets_but_rejects_legacy_summary(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1514,6 +1531,10 @@ def test_cli_run_request_passes_local_ollama_boundary_but_rejects_legacy_summary
             "32768",
             "--confirm-isolated-write",
             "--allow-build",
+            "--planning-target-evidence-id",
+            "evidence_cli_target_001",
+            "--planning-target-evidence-id",
+            "evidence_cli_target_002",
         ]
     )
 
@@ -1529,6 +1550,10 @@ def test_cli_run_request_passes_local_ollama_boundary_but_rejects_legacy_summary
     assert captured["allow_game_launch"] is False
     assert captured["runtime_plugin_destination"] is None
     assert captured["allow_game_directory_write"] is False
+    assert captured["planning_target_evidence_ids"] == (
+        "evidence_cli_target_001",
+        "evidence_cli_target_002",
+    )
     assert callable(captured["diff_approval_reader"])
     assert "requirement_coverage_projection_factory" not in captured
     assert "requirement_coverage_findings_factory" not in captured
@@ -1990,6 +2015,10 @@ def test_cli_run_request_real_public_product_executor_compile_success(
         "src.mod_agent.cli.run_local_request",
         run_with_main_ollama_timeout,
     )
+    planning_target_id = _read_exact_test_planning_target_id(
+        tmp_path,
+        target / "Plugin.cs",
+    )
     exit_code = main(
         [
             "run-request",
@@ -2007,6 +2036,8 @@ def test_cli_run_request_real_public_product_executor_compile_success(
             "32768",
             "--confirm-isolated-write",
             "--allow-build",
+            "--planning-target-evidence-id",
+            planning_target_id,
         ]
     )
 
@@ -2294,6 +2325,10 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
             raise AssertionError("CLI requested approval before durable DryRunResult existed")
 
     monkeypatch.setattr("src.mod_agent.cli.sys.stdin", ExactApprovalInput())
+    planning_target_id = _read_exact_test_planning_target_id(
+        tmp_path,
+        target / "Plugin.cs",
+    )
     exit_code = main(
         [
             "run-request",
@@ -2316,6 +2351,8 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
             "--runtime-plugin-destination",
             str(destination),
             "--allow-game-directory-write",
+            "--planning-target-evidence-id",
+            planning_target_id,
         ]
     )
 
