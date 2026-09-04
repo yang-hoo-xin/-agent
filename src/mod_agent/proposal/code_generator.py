@@ -1499,7 +1499,8 @@ def _patch_system_prompt(
         "Boolean operand only through an exact verified_member_accesses entry. "
         "Do not invent API members. Any required_validation_by_binding entry "
         "formatted as an uppercase identifier is a literal marker and must "
-        "appear in after_text. Do not include markdown fences. "
+        "appear in after_text. Do not add trailing spaces or tabs at line ends. "
+        "Do not include markdown fences. "
     )
     if require_native_schema:
         return shared + (

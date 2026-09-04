@@ -939,6 +939,7 @@ def test_patch_model_projection_admits_actual_scale_generic_fixture() -> None:
     fixture = _large_projection_fixture()
     llm, generated = _generate_projection_fixture(fixture)
 
+    assert "Do not add trailing spaces or tabs" in llm.messages[0].content
     prompt_payload = json.loads(llm.messages[1].content)
     evidence_by_id = {
         item["evidence_id"]: item for item in fixture["evidence_items"]

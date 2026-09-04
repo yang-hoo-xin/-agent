@@ -254,6 +254,45 @@ def test_dry_run_rejects_unbalanced_csharp_replacement(tmp_path: Path) -> None:
         )
 
 
+def test_dry_run_rejects_new_trailing_whitespace(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    source.write_bytes(b"value = Color.Red;\nnext = true;\n")
+    proposal = _proposal()
+    proposal["diff_intent"][0]["patch"]["before_text"] = (
+        "value = Color.Red;\n"
+    )
+    proposal["diff_intent"][0]["patch"]["after_text"] = (
+        "value = Color.Pink;\n    \n"
+    )
+
+    with pytest.raises(PatchApplyError, match="trailing whitespace"):
+        ExactTextPatchApplier().run(
+            workspace_root=tmp_path,
+            proposal=proposal,
+            implementation_plan=_plan(),
+            review=_review(),
+            allow_write=False,
+        )
+
+
+def test_dry_run_allows_unchanged_trailing_whitespace(tmp_path: Path) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    source.write_bytes(b"existing = true;  \nvalue = Color.Red;\n")
+
+    result = ExactTextPatchApplier().run(
+        workspace_root=tmp_path,
+        proposal=_proposal(),
+        implementation_plan=_plan(),
+        review=_review(),
+        allow_write=False,
+    )
+
+    assert result["actual_write_performed"] is False
+    assert " existing = true;  " in result["unified_diff"]
+
+
 def test_approved_isolated_apply_writes_exactly_once(tmp_path: Path) -> None:
     source = tmp_path / "Patches" / "Behavior.cs"
     source.parent.mkdir()

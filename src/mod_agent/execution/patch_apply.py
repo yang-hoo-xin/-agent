@@ -224,6 +224,14 @@ class ExactTextPatchApplier:
             original_by_target=original_by_target,
             staged=staged,
         )
+        added_trailing_whitespace_count = _added_trailing_whitespace_count(
+            unified_diff
+        )
+        if added_trailing_whitespace_count:
+            raise PatchApplyError(
+                "Unified diff introduces trailing whitespace on "
+                f"{added_trailing_whitespace_count} added line(s)."
+            )
         unified_diff_bytes = unified_diff.encode("utf-8")
         diff_stats = _unified_diff_stats(unified_diff)
         context_hashes = {
@@ -762,6 +770,16 @@ def _unified_diff_stats(unified_diff: str) -> dict[str, int]:
             1 for line in lines if line.startswith("-") and not line.startswith("---")
         ),
     }
+
+
+def _added_trailing_whitespace_count(unified_diff: str) -> int:
+    return sum(
+        1
+        for line in unified_diff.splitlines()
+        if line.startswith("+")
+        and not line.startswith("+++")
+        and line[1:].endswith((" ", "\t"))
+    )
 
 
 def _sha256_bytes(value: bytes) -> str:
