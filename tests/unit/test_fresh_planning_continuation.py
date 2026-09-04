@@ -45,6 +45,7 @@ from src.mod_agent.local_entry import (
     make_exact_no_write_dry_run_factory,
 )
 from src.mod_agent.planning import FeatureSpec, ImplementationPlan, ImplementationPlanner
+from src.mod_agent.proposal import LLMExactPatchGenerator, PatchGenerationError
 from src.mod_agent.proposal.patch_agent_loop import (
     PATCH_SOURCE_INSPECTION_TOOL_NAME,
     PatchAgentLoopPolicy,
@@ -1217,6 +1218,95 @@ def test_exact_plan_runs_bounded_patch_agent_loop_before_dry_run(
     assert generation["patch_agent_loop"]["observation_refs"][0][
         "binding_id"
     ] == "edit_binding_001"
+
+
+def test_patch_agent_runs_one_validator_correction_and_keeps_both_responses(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    identity = {
+        "name": "qwen3:4b-instruct",
+        "model": "qwen3:4b-instruct",
+        "digest": "a" * 64,
+        "modified_at": "2026-09-04T00:00:00Z",
+        "size": 1,
+        "details": {"context_length": 8192},
+        "capabilities": ["completion", "tools"],
+        "base_url": "http://127.0.0.1:11434",
+    }
+    client = _PatchAgentTurnClient()
+    adapter = LocalOllamaInitialPatchAdapter(
+        profile=LocalOllamaInitialPatchProfileV1(
+            profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
+            base_url="http://127.0.0.1:11434",
+            model="qwen3:4b-instruct",
+            context_window=8192,
+            output_budget=1024,
+            timeout_seconds=30.0,
+        ),
+        artifact_store=inputs.store,
+        workspace_root=inputs.workspace,
+        patch_agent_loop_policy=PatchAgentLoopPolicy(),
+        identity_reader=lambda _base_url, _model: deepcopy(identity),
+        llm_factory=lambda _profile: _NativePatchLLM(),
+        agent_turn_client_factory=lambda _profile: client,
+    )
+    original_materialize = LLMExactPatchGenerator.materialize_prepared_native
+    materialize_calls = 0
+
+    def fail_once(self, prepared, response, **kwargs):
+        nonlocal materialize_calls
+        materialize_calls += 1
+        if materialize_calls == 1:
+            raise PatchGenerationError(
+                "Change removes every existing C# using directive.",
+                diagnostics={
+                    "failure_classification": (
+                        "csharp_file_header_usings_removed"
+                    ),
+                    "binding_id": "edit_binding_001",
+                    "removed_using_count": 1,
+                },
+            )
+        return original_materialize(
+            self,
+            prepared,
+            response,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(
+        LLMExactPatchGenerator,
+        "materialize_prepared_native",
+        fail_once,
+    )
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+        max_model_calls=5,
+    )
+
+    assert result.status == "terminal"
+    assert result.execution_counts["model"] == 3
+    assert len(client.requests) == 3
+    receipt = json.loads(
+        Path(result.attempt_receipt["path"]).read_text(encoding="utf-8")
+    )
+    factory = receipt["factory_receipt"]
+    assert len(factory["model_responses"]) == 2
+    assert factory["model_responses"][0]["path"] != factory[
+        "model_responses"
+    ][1]["path"]
+    correction = factory["patch_agent_loop"]["validator_correction"]
+    assert correction["status"] == "completed"
+    assert correction["attempt_count"] == 1
+    assert correction["validator"]["failure_classification"] == (
+        "csharp_file_header_usings_removed"
+    )
 
 
 def test_dry_run_failure_preserves_diagnostic_and_completed_artifacts(

@@ -1908,12 +1908,23 @@ def _valid_patch_agent_loop_receipt(
     observations = value.get("observation_trace")
     termination = value.get("termination")
     tool_rounds = value.get("tool_rounds_used")
+    loop_model_turns = value.get("model_turns_used")
+    correction = value.get("validator_correction")
+    correction_calls = (
+        1
+        if isinstance(correction, Mapping)
+        and correction.get("status") == "completed"
+        and correction.get("attempt_count") == 1
+        and isinstance(correction.get("response"), Mapping)
+        else 0
+    )
     return (
         value.get("enabled") is True
         and value.get("status") == "completed"
-        and value.get("model_turns_used") == model_call_count
+        and type(loop_model_turns) is int
+        and loop_model_turns + correction_calls == model_call_count
         and isinstance(usage, list)
-        and len(usage) == model_call_count
+        and len(usage) == loop_model_turns
         and type(tool_rounds) is int
         and 1 <= tool_rounds <= 3
         and isinstance(observations, list)

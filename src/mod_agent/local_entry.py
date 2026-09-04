@@ -31,6 +31,7 @@ from src.libs.llm import (
     AgentMessage,
     AgentResponseFormat,
     AgentTurnClient,
+    AgentTurnRequest,
     ChatResponse,
     LLMFactory,
     Message,
@@ -481,9 +482,11 @@ def _local_patch_response_sidecar_path(
     artifact_root: Path,
     *,
     run_id: str,
+    response_label: str | None = None,
 ) -> Path:
     locator = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
-    return artifact_root / "cr" / f"{locator}.response.txt"
+    suffix = "" if response_label is None else f".{response_label}"
+    return artifact_root / "cr" / f"{locator}.response{suffix}.txt"
 
 
 def _write_local_patch_response_sidecar(
@@ -547,6 +550,28 @@ def _patch_agent_loop_generation_ref(
     if value.get("enabled") is not True:
         return {"enabled": False}
     observations = value.get("observation_trace")
+    correction = value.get("validator_correction")
+    correction_ref = (
+        {
+            "status": correction.get("status"),
+            "attempt_count": correction.get("attempt_count"),
+            "previous_response_sha256": correction.get(
+                "previous_response_sha256"
+            ),
+            "response_sha256": (
+                correction.get("response", {}).get("output_sha256")
+                if isinstance(correction.get("response"), Mapping)
+                else None
+            ),
+            "failure_classification": correction.get("validator", {}).get(
+                "failure_classification"
+            )
+            if isinstance(correction.get("validator"), Mapping)
+            else None,
+        }
+        if isinstance(correction, Mapping)
+        else None
+    )
     return {
         "enabled": True,
         "status": value.get("status"),
@@ -563,6 +588,7 @@ def _patch_agent_loop_generation_ref(
             if isinstance(item, Mapping) and item.get("admitted_to_model") is True
         ],
         "termination": dict(value.get("termination") or {}),
+        "validator_correction": correction_ref,
     }
 
 
@@ -712,6 +738,7 @@ class LocalOllamaInitialPatchAdapter:
             "model_call_count": 0,
             "provider_request": None,
             "model_response": None,
+            "model_responses": [],
             "failure": None,
         }
 
@@ -868,19 +895,22 @@ class LocalOllamaInitialPatchAdapter:
                 )
                 self._receipt["patch_agent_loop"]["status"] = "running"
                 self._emit("local_patch_agent_loop_started")
+                agent_client = self.agent_turn_client_factory(self.profile)
+                agent_messages = _patch_agent_initial_messages(
+                    prepared.messages
+                )
+                response_format = AgentResponseFormat(
+                    name="patch_generation_v2",
+                    description=(
+                        "Return one binding-only exact Patch response."
+                    ),
+                    schema=dict(prepared.response_schema),
+                    strict=True,
+                )
                 loop_result = run_patch_agent_loop(
-                    client=self.agent_turn_client_factory(self.profile),
-                    initial_messages=_patch_agent_initial_messages(
-                        prepared.messages
-                    ),
-                    final_response_format=AgentResponseFormat(
-                        name="patch_generation_v2",
-                        description=(
-                            "Return one binding-only exact Patch response."
-                        ),
-                        schema=dict(prepared.response_schema),
-                        strict=True,
-                    ),
+                    client=agent_client,
+                    initial_messages=agent_messages,
+                    final_response_format=response_format,
                     source_inspector=inspector,
                     policy=self.patch_agent_loop_policy,
                 )
@@ -905,11 +935,131 @@ class LocalOllamaInitialPatchAdapter:
                     },
                 )
                 self._record_response(response)
-                generated = generator.materialize_prepared_native(
-                    prepared,
-                    response,
-                    post_response_admission=post_response_admission,
-                )
+                try:
+                    generated = generator.materialize_prepared_native(
+                        prepared,
+                        response,
+                        post_response_admission=post_response_admission,
+                    )
+                except PatchGenerationError as exc:
+                    classification = exc.diagnostics.get(
+                        "failure_classification"
+                    )
+                    if classification != "csharp_file_header_usings_removed":
+                        raise
+                    inspector.validate_snapshot()
+                    initial_response = self._receipt["model_response"]
+                    previous_response_sha256 = initial_response[
+                        "output_sha256"
+                    ]
+                    correction_state = {
+                        "status": "running",
+                        "attempt_count": 1,
+                        "validator": {
+                            "failure_classification": classification,
+                            "message": str(exc),
+                            "binding_id": exc.diagnostics.get("binding_id"),
+                            "removed_using_count": exc.diagnostics.get(
+                                "removed_using_count"
+                            ),
+                        },
+                        "previous_response_sha256": previous_response_sha256,
+                        "response": None,
+                    }
+                    self._receipt["patch_agent_loop"][
+                        "validator_correction"
+                    ] = correction_state
+                    self._receipt["model_call_count"] = (
+                        loop_result.model_turns_used + 1
+                    )
+                    self._emit("local_patch_validator_correction_started")
+                    correction = agent_client.complete_turn(
+                        AgentTurnRequest(
+                            messages=(
+                                *agent_messages,
+                                AgentMessage(
+                                    role="user",
+                                    content={
+                                        "message_type": (
+                                            "patch_validator_correction"
+                                        ),
+                                        "previous_response_sha256": (
+                                            previous_response_sha256
+                                        ),
+                                        "previous_response": (
+                                            loop_result.final_content
+                                        ),
+                                        "validator_feedback": dict(
+                                            correction_state["validator"]
+                                        ),
+                                        "required_action": (
+                                            "Return one corrected complete Patch "
+                                            "response. Preserve every unrelated "
+                                            "line from each exact binding excerpt; "
+                                            "do not call tools."
+                                        ),
+                                    },
+                                ),
+                            ),
+                            tools=(),
+                            tool_choice="none",
+                            parallel_tool_calls=False,
+                            response_format=response_format,
+                            temperature=0.0,
+                        )
+                    )
+                    if correction.tool_calls or not correction.content:
+                        raise LocalEntryError(
+                            "PATCH_AGENT_CORRECTION_RESPONSE_INVALID"
+                        )
+                    corrected_response = ChatResponse(
+                        content=correction.content,
+                        model=correction.model,
+                        usage={
+                            "prompt_tokens": correction.usage.input_tokens,
+                            "completion_tokens": correction.usage.output_tokens,
+                            "total_tokens": correction.usage.total_tokens,
+                        },
+                        raw_response=(
+                            correction.raw_response
+                            if isinstance(correction.raw_response, Mapping)
+                            else {
+                                "done": True,
+                                "done_reason": correction.stop_reason,
+                            }
+                        ),
+                    )
+                    self._response_sidecar_path = (
+                        _local_patch_response_sidecar_path(
+                            self.artifact_store.root,
+                            run_id=run_id,
+                            response_label="correction-001",
+                        )
+                    )
+                    self._record_response(corrected_response)
+                    correction_state.update(
+                        {
+                            "status": "completed",
+                            "provider": correction.provider,
+                            "model": correction.model,
+                            "usage": correction.usage.to_dict(),
+                            "provider_diagnostic": dict(
+                                correction.provider_diagnostic or {}
+                            ),
+                            "response": dict(
+                                self._receipt["model_response"]
+                            ),
+                        }
+                    )
+                    self._receipt["patch_agent_loop"][
+                        "validator_correction"
+                    ] = correction_state
+                    self._emit("local_patch_validator_correction_completed")
+                    generated = generator.materialize_prepared_native(
+                        prepared,
+                        corrected_response,
+                        post_response_admission=post_response_admission,
+                    )
             else:
                 llm = _PatchResponseCapturingLLM(
                     self.llm_factory(self.profile),
@@ -1028,13 +1178,17 @@ class LocalOllamaInitialPatchAdapter:
             response.content,
         )
         raw = response.raw_response if isinstance(response.raw_response, Mapping) else {}
-        self._receipt["model_response"] = {
+        response_receipt = {
             "model": response.model,
             **sidecar,
             "usage": response.usage,
             "done": raw.get("done"),
             "done_reason": raw.get("done_reason"),
         }
+        self._receipt.setdefault("model_responses", []).append(
+            dict(response_receipt)
+        )
+        self._receipt["model_response"] = response_receipt
         self._receipt["status"] = "model_response_persisted"
         self._emit("local_patch_model_response_persisted")
 
