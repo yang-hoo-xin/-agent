@@ -2417,6 +2417,10 @@ def _validate_bound_member_shadowing(
     context: Mapping[str, Any],
     index: int,
 ) -> None:
+    csharp_type_token = (
+        r"[A-Za-z_]"
+        r"(?:[A-Za-z0-9_.<>,?\[\]]*[A-Za-z0-9_>?\]])?"
+    )
     for member_name, declared_type in declared_member_types.items():
         if not isinstance(member_name, str) or not isinstance(declared_type, str):
             continue
@@ -2425,9 +2429,9 @@ def _validate_bound_member_shadowing(
             continue
         escaped = re.escape(member_name)
         shadow_patterns = (
-            rf"\b(?:var|[A-Za-z_][A-Za-z0-9_.<>,?\[\]]*)\s+{escaped}\b",
+            rf"\b(?:var|{csharp_type_token})\s+{escaped}\b",
             rf"\bout\s+var\s+{escaped}\b",
-            rf"\bis\s+[A-Za-z_][A-Za-z0-9_.<>,?\[\]]*\s+{escaped}\b",
+            rf"\bis\s+{csharp_type_token}\s+{escaped}\b",
             rf"\bforeach\s*\([^)]*\b{escaped}\s+in\b",
         )
         if not any(re.search(pattern, after) for pattern in shadow_patterns):

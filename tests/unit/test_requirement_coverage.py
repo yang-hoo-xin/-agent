@@ -1230,7 +1230,6 @@ def _native_four_site_response(
     return {
         "changes": [
             {
-                "change_id": str(change["change_id"]),
                 "edit_binding_id": str(change["edit_binding_id"]),
                 "rationale": "Bounded four-site AccurateCrosshair change.",
                 "rollback_hint": "Restore the exact authorized source excerpt.",
@@ -1359,7 +1358,6 @@ def test_v3_four_site_plan_projects_and_materializes_canned_native_response(
         ]
     )
     assert schema_fields == {
-        "change_id",
         "edit_binding_id",
         "rationale",
         "rollback_hint",

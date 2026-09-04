@@ -1822,6 +1822,49 @@ def test_generator_rejects_shadowing_of_bound_receiver() -> None:
     )
 
 
+def test_generator_allows_bound_member_as_method_argument_and_assignment() -> None:
+    payload = {
+        "changes": [
+            {
+                "edit_binding_id": "edit_binding_001",
+                "patch": {
+                    "kind": "exact_text_replace",
+                    "before_text": "Bind();",
+                    "after_text": (
+                        "Bind();\n"
+                        "Configure(key, FirstShotMinDelay);\n"
+                        "FirstShotMinDelay = minimumDelay;"
+                    ),
+                    "expected_occurrences": 1,
+                },
+            }
+        ]
+    }
+    registry = {
+        "edit_bindings": [
+            _verified_binding_context(
+                receiver_name="FirstShotMinDelay",
+                receiver_type="float",
+                facts=[],
+            )
+        ]
+    }
+
+    generated = LLMExactPatchGenerator(_FakeLLM(json.dumps(payload))).generate(
+        user_request="configure first-shot delay",
+        evidence_items=[{"excerpt": "public void Load() { Bind(); }"}],
+        binding_registry=registry,
+        constraints=[],
+    )
+
+    assert "Configure(key, FirstShotMinDelay);" in (
+        generated.changes[0]["patch"]["after_text"]
+    )
+    assert "FirstShotMinDelay = minimumDelay;" in (
+        generated.changes[0]["patch"]["after_text"]
+    )
+
+
 def test_generator_ignores_shadowing_text_inside_csharp_comment() -> None:
     payload = {
         "changes": [
