@@ -19,9 +19,11 @@ from src.mod_agent.evidence import (
 from src.mod_agent.fresh_planning_continuation import (
     PATCH_CONTINUATION_CONTRACT_VERSION,
     PLANNING_CONTINUATION_CONTRACT_VERSION,
+    PatchContinuationAttemptJournal,
     PatchContinuationInputV1,
     PlanningContinuationError,
     PlanningContinuationInputV1,
+    preflight_patch_continuation,
     run_fresh_patch_continuation,
     run_fresh_planning_continuation,
 )
@@ -1002,6 +1004,43 @@ def test_exact_plan_runs_one_local_patch_review_and_no_write_dry_run(
     assert receipt["generated_against_snapshot_sha256"] == receipt[
         "current_snapshot_sha256"
     ]
+
+
+def test_patch_attempt_receipt_writes_under_real_length_artifact_root(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    admitted = preflight_patch_continuation(request)
+    target_root_length = 169
+    component_length = target_root_length - len(str(tmp_path)) - 1
+    assert component_length > 0
+    long_artifact_root = tmp_path / ("r" * component_length)
+    long_artifact_root.mkdir()
+    assert len(str(long_artifact_root)) == target_root_length
+    run_id = "patch_continuation_" + "1" * 32
+
+    journal = PatchContinuationAttemptJournal(
+        artifact_root=long_artifact_root,
+        run_id=run_id,
+        request_id="patch_request_" + "2" * 32,
+        request=request,
+        admitted=admitted,
+    )
+
+    assert journal.path.is_file()
+    assert len(str(journal.path)) <= 220
+    assert journal.path.resolve().is_relative_to(long_artifact_root.resolve())
+    receipt = json.loads(journal.path.read_text(encoding="utf-8"))
+    assert receipt["run_id"] == run_id
+    other = PatchContinuationAttemptJournal(
+        artifact_root=long_artifact_root,
+        run_id="patch_continuation_" + "3" * 32,
+        request_id="patch_request_" + "4" * 32,
+        request=request,
+        admitted=admitted,
+    )
+    assert other.path.name != journal.path.name
 
 
 def test_continue_fresh_patch_cli_runs_exact_no_write_vertical(

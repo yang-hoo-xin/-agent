@@ -1227,12 +1227,8 @@ class PatchContinuationAttemptJournal:
         request: PatchContinuationInputV1,
         admitted: _AdmittedPatchInputs,
     ) -> None:
-        self.path = (
-            artifact_root
-            / "continuation_receipts"
-            / run_id
-            / "patch_attempt.json"
-        )
+        receipt_locator = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
+        self.path = artifact_root / "cr" / f"{receipt_locator}.json"
         self._document: dict[str, Any] = {
             "receipt_version": PATCH_CONTINUATION_RECEIPT_VERSION,
             "status": "admitted",
