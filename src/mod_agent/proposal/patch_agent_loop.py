@@ -527,7 +527,16 @@ def run_patch_agent_loop(
                 termination=_termination(exc.code, exc.reason, turn_index - 1),
             )
 
-        must_finish = force_final or tool_rounds_used >= selected_policy.max_tool_rounds
+        remaining_binding_ids = tuple(
+            binding_id
+            for binding_id in source_inspector.available_binding_ids
+            if binding_id not in inspected_binding_ids
+        )
+        must_finish = (
+            force_final
+            or tool_rounds_used >= selected_policy.max_tool_rounds
+            or not remaining_binding_ids
+        )
         prior_observations = (
             observations[:-1] if pending_observation is not None else observations
         )
@@ -553,7 +562,16 @@ def run_patch_agent_loop(
         )
         request = AgentTurnRequest(
             messages=(*initial_messages, state_message),
-            tools=() if must_finish else (_source_tool_definition(source_inspector),),
+            tools=(
+                ()
+                if must_finish
+                else (
+                    _source_tool_definition(
+                        source_inspector,
+                        binding_ids=remaining_binding_ids,
+                    ),
+                )
+            ),
             tool_choice=(
                 "none"
                 if must_finish
@@ -655,9 +673,6 @@ def run_patch_agent_loop(
             if type(call.call_id) is not str or not call.call_id:
                 code = "PATCH_AGENT_TOOL_CALL_ID_INVALID"
                 reason = "The provider tool call id is missing."
-            elif call.call_id in seen_tool_call_ids:
-                code = "PATCH_AGENT_TOOL_CALL_ID_REUSED"
-                reason = "The provider reused a tool call id."
             elif call.name != PATCH_SOURCE_INSPECTION_TOOL_NAME:
                 code = "PATCH_AGENT_UNKNOWN_TOOL"
                 reason = "The model requested an unregistered Patch tool."
@@ -679,6 +694,9 @@ def run_patch_agent_loop(
                 if binding_id in inspected_binding_ids:
                     code = "PATCH_AGENT_REPEATED_TOOL_CALL"
                     reason = "The same Plan binding cannot be inspected twice."
+                elif call.call_id in seen_tool_call_ids:
+                    code = "PATCH_AGENT_TOOL_CALL_ID_REUSED"
+                    reason = "The provider reused a tool call id."
                 elif binding_id not in source_inspector.available_binding_ids:
                     code = "PATCH_AGENT_BINDING_UNKNOWN"
                     reason = "The requested binding id is not selected by the Plan."
@@ -864,7 +882,10 @@ def run_patch_agent_loop(
 
 def _source_tool_definition(
     inspector: PlanBoundSourceInspector,
+    *,
+    binding_ids: tuple[str, ...] | None = None,
 ) -> AgentToolDefinition:
+    allowed_binding_ids = binding_ids or inspector.available_binding_ids
     return AgentToolDefinition(
         name=PATCH_SOURCE_INSPECTION_TOOL_NAME,
         description=(
@@ -878,7 +899,7 @@ def _source_tool_definition(
             "properties": {
                 "binding_id": {
                     "type": "string",
-                    "enum": list(inspector.available_binding_ids),
+                    "enum": list(allowed_binding_ids),
                 }
             },
         },

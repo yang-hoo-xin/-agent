@@ -307,6 +307,7 @@ def test_loop_inspects_one_binding_then_records_final_termination(
     assert first_request.parallel_tool_calls is False
     assert first_request.tool_choice == "required"
     second_request = client.requests[1]
+    assert second_request.tools == ()
     assert second_request.tool_results[0].call_id == "call-001"
     assert second_request.tool_results[0].name == PATCH_SOURCE_INSPECTION_TOOL_NAME
     assert second_request.tool_results[0].output["source_ref"] == (
@@ -453,6 +454,12 @@ def test_loop_stops_before_fourth_tool_execution(tmp_path: Path) -> None:
     assert result.model_turns_used == 4
     assert result.tool_rounds_used == 3
     assert len(result.observation_trace) == 3
+    assert client.requests[1].tools[0].parameters["properties"]["binding_id"][
+        "enum"
+    ] == ["edit_binding_002", "edit_binding_003", "edit_binding_004"]
+    assert client.requests[2].tools[0].parameters["properties"]["binding_id"][
+        "enum"
+    ] == ["edit_binding_003", "edit_binding_004"]
     assert client.requests[3].tools == ()
     assert client.requests[3].tool_choice == "none"
     assert client.requests[3].response_format == _final_format()
