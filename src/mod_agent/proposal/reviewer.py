@@ -25,7 +25,6 @@ CHECKED_RULES = (
     "evidence_binding",
     "hook_target_binding",
     "scope_boundary",
-    "target_alignment",
     "risk_policy",
     "domain_profile",
     "forbidden_paths",
@@ -273,15 +272,6 @@ class ProposalReviewer:
 
         if require_executable_patch:
             findings.extend(self._review_executable_patch(diff_intent))
-
-        if feature_spec and not self._target_aligned(proposal, feature_spec):
-            findings.append(
-                ReviewFinding(
-                    rule_id="target_alignment",
-                    level="blocking",
-                    message="Proposal summary/rationale does not align with target behavior.",
-                )
-            )
 
         if proposal.get("risk_assessment", {}).get("requires_manual_review"):
             findings.append(
@@ -562,19 +552,6 @@ class ProposalReviewer:
         if repair_plan is not None:
             evidence_ids.update(str(ref) for ref in repair_plan.get("evidence_refs", []))
         return evidence_ids
-
-    @staticmethod
-    def _target_aligned(proposal: dict[str, Any], feature_spec: dict[str, Any]) -> bool:
-        target = str(feature_spec.get("target_behavior") or "").lower()
-        if not target:
-            return True
-        haystack = " ".join(
-            [
-                str(proposal.get("summary") or ""),
-                " ".join(str(change.get("rationale") or "") for change in proposal.get("diff_intent", [])),
-            ]
-        ).lower()
-        return any(token in haystack for token in target.split() if len(token) > 3)
 
     @staticmethod
     def _change_unit_ids(diff_intent: list[dict[str, Any]]) -> set[str]:

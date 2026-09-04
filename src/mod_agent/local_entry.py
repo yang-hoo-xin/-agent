@@ -66,7 +66,12 @@ from src.mod_agent.evidence.dotnet_metadata import (
 )
 from src.mod_agent.execution import ExactDiffApprovalRejectedError, ExactTextPatchApplier
 from src.mod_agent.git.admission import StrictGitAdmission
-from src.mod_agent.proposal import LLMExactPatchGenerator, PatchGenerationError
+from src.mod_agent.proposal import (
+    PATCH_RESPONSE_CONTRACT_ID,
+    PATCH_RESPONSE_CONTRACT_VERSION,
+    LLMExactPatchGenerator,
+    PatchGenerationError,
+)
 from src.mod_agent.product_execution import (
     ProductExecutionContractError,
     ProductExecutionInputBindingV1,
@@ -532,6 +537,11 @@ class LocalOllamaInitialPatchAdapter:
         self._receipt: dict[str, Any] = {
             "adapter": "LocalOllamaInitialPatchAdapter",
             "profile": profile.to_dict(),
+            "patch_response_contract": {
+                "contract_id": PATCH_RESPONSE_CONTRACT_ID,
+                "contract_version": PATCH_RESPONSE_CONTRACT_VERSION,
+                "schema_sha256": None,
+            },
             "status": "not_started",
             "model_call_count": 0,
             "provider_request": None,
@@ -696,6 +706,15 @@ class LocalOllamaInitialPatchAdapter:
                         "model_digest": identity["digest"],
                         "usage": generated.usage,
                         "profile_version": self.profile.profile_version,
+                        "patch_response_contract": dict(
+                            self._receipt["patch_response_contract"]
+                        ),
+                        "model_input_sha256": self._receipt[
+                            "model_input_sha256"
+                        ],
+                        "model_response_sha256": self._receipt[
+                            "model_response"
+                        ]["output_sha256"],
                     },
                 }
                 for change in overlaid
@@ -764,6 +783,9 @@ class LocalOllamaInitialPatchAdapter:
                 "response_format_sha256",
             )
         }
+        self._receipt["patch_response_contract"]["schema_sha256"] = (
+            provider_request.get("response_format_sha256")
+        )
         self._emit("local_patch_provider_invocation_recorded")
 
     def _record_response(self, response: ChatResponse) -> None:

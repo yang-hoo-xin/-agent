@@ -11,6 +11,9 @@ from typing import Any
 
 from src.libs.llm import BaseLLM, ChatResponse, Message
 
+PATCH_RESPONSE_CONTRACT_ID = "patch_generation"
+PATCH_RESPONSE_CONTRACT_VERSION = "2"
+
 _LITERAL_VALIDATION_MARKER_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 _DETERMINISTICALLY_INHERITED_VALIDATION = frozenset(
     {"compile or static validation"}

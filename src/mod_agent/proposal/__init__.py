@@ -1,7 +1,13 @@
 """Patch proposal and review gate primitives."""
 
 from .builder import PatchProposalBuilder
-from .code_generator import GeneratedPatch, LLMExactPatchGenerator, PatchGenerationError
+from .code_generator import (
+    PATCH_RESPONSE_CONTRACT_ID,
+    PATCH_RESPONSE_CONTRACT_VERSION,
+    GeneratedPatch,
+    LLMExactPatchGenerator,
+    PatchGenerationError,
+)
 from .critic import (
     CRITIC_DIMENSIONS,
     CRITIC_PASS_THRESHOLD,
@@ -29,5 +35,7 @@ __all__ = [
     "ReviewFinding",
     "GeneratedPatch",
     "LLMExactPatchGenerator",
+    "PATCH_RESPONSE_CONTRACT_ID",
+    "PATCH_RESPONSE_CONTRACT_VERSION",
     "PatchGenerationError",
 ]

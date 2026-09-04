@@ -320,6 +320,32 @@ def test_reviewer_requires_executable_patch_when_real_codegen_is_enabled() -> No
     assert any(item.rule_id == "executable_patch" for item in review.findings)
 
 
+def test_model_rationale_is_annotation_not_target_alignment_authority() -> None:
+    baseline = ProposalReviewer().review(
+        _proposal_payload(),
+        evidence_pack=_evidence_pack(),
+        implementation_plan=_implementation_payload(),
+        artifact_hashes=_artifact_hashes(),
+        feature_spec=_feature_spec(),
+    )
+    proposal = _proposal_payload()
+    proposal["diff_intent"][0]["rationale"] = (
+        "Free-form model explanation with no target keywords."
+    )
+
+    review = ProposalReviewer().review(
+        proposal,
+        evidence_pack=_evidence_pack(),
+        implementation_plan=_implementation_payload(),
+        artifact_hashes=_artifact_hashes(),
+        feature_spec=_feature_spec(),
+    )
+
+    assert review.decision == baseline.decision
+    assert review.allowed_next_stage == baseline.allowed_next_stage
+    assert all(item.rule_id != "target_alignment" for item in review.findings)
+
+
 def test_patch_proposal_builder_converts_implementation_plan_to_reviewable_intent() -> None:
     proposal = PatchProposalBuilder().build(
         _implementation_payload(),

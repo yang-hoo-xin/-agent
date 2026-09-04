@@ -293,6 +293,26 @@ def test_dry_run_allows_unchanged_trailing_whitespace(tmp_path: Path) -> None:
     assert " existing = true;  " in result["unified_diff"]
 
 
+def test_dry_run_checks_added_code_that_starts_with_double_plus(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Patches" / "Behavior.cs"
+    source.parent.mkdir()
+    source.write_bytes(b"counter++;\n")
+    proposal = _proposal()
+    proposal["diff_intent"][0]["patch"]["before_text"] = "counter++;"
+    proposal["diff_intent"][0]["patch"]["after_text"] = "++counter; "
+
+    with pytest.raises(PatchApplyError, match="trailing whitespace"):
+        ExactTextPatchApplier().run(
+            workspace_root=tmp_path,
+            proposal=proposal,
+            implementation_plan=_plan(),
+            review=_review(),
+            allow_write=False,
+        )
+
+
 def test_approved_isolated_apply_writes_exactly_once(tmp_path: Path) -> None:
     source = tmp_path / "Patches" / "Behavior.cs"
     source.parent.mkdir()

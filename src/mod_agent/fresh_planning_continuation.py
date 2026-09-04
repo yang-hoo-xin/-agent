@@ -1278,9 +1278,41 @@ class PatchContinuationAttemptJournal:
         self._document["events"].append(normalized)
         for key, value in normalized.items():
             if key not in {"phase", "event_index"}:
-                self._document[key] = value
+                if key == "artifacts" and isinstance(value, Mapping):
+                    current = self._document.get("artifacts")
+                    self._document["artifacts"] = {
+                        **(dict(current) if isinstance(current, Mapping) else {}),
+                        **dict(value),
+                    }
+                else:
+                    self._document[key] = value
         self._document["status"] = phase
         self._write()
+
+    def artifact_ref(self, artifact_type: str) -> ArtifactRef | None:
+        artifacts = self._document.get("artifacts")
+        value = artifacts.get(artifact_type) if isinstance(artifacts, Mapping) else None
+        if not isinstance(value, Mapping):
+            return None
+        feature_id = value.get("feature_id")
+        observed_type = value.get("artifact_type")
+        path = value.get("path")
+        artifact_hash = value.get("artifact_hash")
+        if (
+            type(feature_id) is not str
+            or not feature_id
+            or observed_type != artifact_type
+            or type(path) is not str
+            or not Path(path).is_absolute()
+            or not _is_sha256(artifact_hash)
+        ):
+            return None
+        return ArtifactRef(
+            feature_id=feature_id,
+            artifact_type=artifact_type,
+            path=path,
+            artifact_hash=artifact_hash,
+        )
 
     def projection(self) -> dict[str, Any]:
         payload = self.path.read_bytes()
@@ -2160,6 +2192,7 @@ def run_fresh_patch_continuation(
             _csharp_source_snapshot(Path(request.workspace_root).resolve())
         )
         failure_code = str(getattr(exc, "code", type(exc).__name__))
+        failure_message = str(exc)[:4096] or failure_code
         journal.record(
             {
                 "phase": "continuation_failed",
@@ -2167,6 +2200,7 @@ def run_fresh_patch_continuation(
                 "failure": {
                     "code": failure_code,
                     "failure_class": type(exc).__name__,
+                    "message": failure_message,
                     "stage": failure_stage,
                 },
                 "proposal_admitted": False,
@@ -2181,9 +2215,12 @@ def run_fresh_patch_continuation(
             failed_node if isinstance(failed_node, str) else None,
             model_call_count=int(receipt.get("model_call_count") or 0),
         )
+        patch_ref = journal.artifact_ref("patch_proposal")
+        review_ref = journal.artifact_ref("proposal_review")
         return blocked_patch_continuation_result(
             code=failure_code,
             stage=failure_stage,
+            reason=failure_message,
             duration_seconds=time.perf_counter() - started,
             run_id=run_id,
             request_id=request_id,
@@ -2191,6 +2228,8 @@ def run_fresh_patch_continuation(
             feature_spec_ref=request.feature_spec_ref,
             evidence_pack_ref=request.evidence_pack_ref,
             implementation_plan_ref=request.implementation_plan_ref,
+            patch_proposal_ref=patch_ref,
+            proposal_review_ref=review_ref,
             source_validation={
                 "status": "failed_during_continuation",
                 "before": admitted.source_validation,

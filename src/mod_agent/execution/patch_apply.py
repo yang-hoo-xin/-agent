@@ -225,7 +225,8 @@ class ExactTextPatchApplier:
             staged=staged,
         )
         added_trailing_whitespace_count = _added_trailing_whitespace_count(
-            unified_diff
+            original_by_target=original_by_target,
+            staged=staged,
         )
         if added_trailing_whitespace_count:
             raise PatchApplyError(
@@ -772,14 +773,28 @@ def _unified_diff_stats(unified_diff: str) -> dict[str, int]:
     }
 
 
-def _added_trailing_whitespace_count(unified_diff: str) -> int:
-    return sum(
-        1
-        for line in unified_diff.splitlines()
-        if line.startswith("+")
-        and not line.startswith("+++")
-        and line[1:].endswith((" ", "\t"))
-    )
+def _added_trailing_whitespace_count(
+    *,
+    original_by_target: Mapping[Path, bytes],
+    staged: Mapping[Path, bytes],
+) -> int:
+    count = 0
+    for target, after_bytes in staged.items():
+        before_lines = original_by_target[target].decode("utf-8-sig").splitlines()
+        after_lines = after_bytes.decode("utf-8-sig").splitlines()
+        for tag, _, _, after_start, after_end in difflib.SequenceMatcher(
+            None,
+            before_lines,
+            after_lines,
+            autojunk=False,
+        ).get_opcodes():
+            if tag not in {"insert", "replace"}:
+                continue
+            count += sum(
+                line.endswith((" ", "\t"))
+                for line in after_lines[after_start:after_end]
+            )
+    return count
 
 
 def _sha256_bytes(value: bytes) -> str:

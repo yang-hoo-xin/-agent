@@ -1070,6 +1070,11 @@ def build_graph(
                 proposal_critic=proposal_critic,
                 critic_requirement=critic_requirement,
                 proposal_review_context_factory=proposal_review_context_factory,
+                patch_continuation_attempt_recorder=(
+                    patch_continuation_attempt_recorder
+                    if validated_patch_continuation_mode is not None
+                    else None
+                ),
             ),
         ),
     )
@@ -2218,6 +2223,9 @@ def _run_review_proposal(
     proposal_critic: ProposalCritic | None = None,
     critic_requirement: CriticRequirement = "not_required",
     proposal_review_context_factory: ProposalReviewContextFactory | None = None,
+    patch_continuation_attempt_recorder: (
+        PatchContinuationAttemptRecorder | None
+    ) = None,
 ) -> ModAgentState:
     proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
     implementation_plan = _read_artifact_data(
@@ -2315,6 +2323,21 @@ def _run_review_proposal(
         status="success" if review.allowed_next_stage == "dry_run_apply" else "blocked",
         upstream_refs=[proposal_ref, *([critic_ref] if critic_ref is not None else [])],
     )
+    if patch_continuation_attempt_recorder is not None:
+        patch_continuation_attempt_recorder(
+            {
+                "phase": "proposal_review_committed",
+                "proposal_admitted": review.allowed_next_stage == "dry_run_apply",
+                "artifacts": {
+                    "proposal_review": {
+                        "feature_id": artifact_ref.feature_id,
+                        "artifact_type": artifact_ref.artifact_type,
+                        "path": artifact_ref.path,
+                        "artifact_hash": artifact_ref.artifact_hash,
+                    }
+                },
+            }
+        )
     next_state = _copy_state(state)
     next_state["current_stage"] = "proposal_review"
     next_state["review_summary"] = {

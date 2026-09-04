@@ -16,6 +16,7 @@ from src.mod_agent.evidence import (
     build_requirement_coverage_pack,
     materialize_requirement_coverage_projection,
 )
+from src.mod_agent.execution import PatchApplyError
 from src.mod_agent.fresh_planning_continuation import (
     PATCH_CONTINUATION_CONTRACT_VERSION,
     PLANNING_CONTINUATION_CONTRACT_VERSION,
@@ -1022,10 +1023,75 @@ def test_exact_plan_runs_one_local_patch_review_and_no_write_dry_run(
     assert response_receipt["encoding"] == "utf-8"
     assert response_receipt["output_sha256"] == hashlib.sha256(response_bytes).hexdigest()
     assert response_receipt["output_utf8_bytes"] == len(response_bytes)
+    response_contract = receipt["factory_receipt"]["patch_response_contract"]
+    assert response_contract == {
+        "contract_id": "patch_generation",
+        "contract_version": "2",
+        "schema_sha256": receipt["factory_receipt"]["provider_request"][
+            "response_format_sha256"
+        ],
+    }
+    generation = patch["data"]["diff_intent"][0]["generation"]
+    assert generation["patch_response_contract"] == response_contract
+    assert generation["model_input_sha256"] == receipt["factory_receipt"][
+        "model_input_sha256"
+    ]
+    assert generation["model_response_sha256"] == response_receipt[
+        "output_sha256"
+    ]
     assert receipt["proposal_admitted"] is True
     assert receipt["generated_against_snapshot_sha256"] == receipt[
         "current_snapshot_sha256"
     ]
+
+
+def test_dry_run_failure_preserves_diagnostic_and_completed_artifacts(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, llm = _local_patch_adapter(inputs)
+    source_before = _source_hashes(inputs.workspace)
+
+    def fail_dry_run(*_args):
+        raise PatchApplyError(
+            "Unified diff introduces trailing whitespace on 1 added line(s)."
+        )
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=fail_dry_run,
+    )
+
+    assert result.status == "partial"
+    assert result.first_failure == {
+        "code": "PatchApplyError",
+        "stage": "dry_run_apply",
+    }
+    assert result.patch_proposal_artifact is not None
+    assert result.proposal_review_artifact is not None
+    assert result.dry_run_artifact is None
+    assert result.reason == (
+        "Unified diff introduces trailing whitespace on 1 added line(s)."
+    )
+    assert llm.calls == 1
+    assert _source_hashes(inputs.workspace) == source_before
+    receipt = json.loads(
+        Path(result.attempt_receipt["path"]).read_text(encoding="utf-8")
+    )
+    assert set(receipt["artifacts"]) == {
+        "patch_proposal",
+        "proposal_review",
+    }
+    assert receipt["failure"] == {
+        "code": "PatchApplyError",
+        "failure_class": "PatchApplyError",
+        "message": (
+            "Unified diff introduces trailing whitespace on 1 added line(s)."
+        ),
+        "stage": "dry_run_apply",
+    }
 
 
 def test_patch_attempt_receipt_writes_under_real_length_artifact_root(
