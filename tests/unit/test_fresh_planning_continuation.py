@@ -1191,6 +1191,7 @@ def test_exact_plan_runs_bounded_patch_agent_loop_before_dry_run(
         request,
         patch_change_factory=adapter,
         dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+        max_model_calls=5,
     )
 
     assert result.status == "terminal"
@@ -1688,38 +1689,6 @@ def test_patch_continuation_rejects_non_exact_model_call_receipt(
     }
     assert llm.calls == 1
     assert result.patch_proposal_artifact is None
-
-
-def test_patch_continuation_accepts_declared_bounded_agent_model_calls(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    inputs = _inputs(tmp_path)
-    request = _patch_request(inputs)
-    adapter, _ = _local_patch_adapter(inputs)
-    original_receipt = adapter.patch_attempt_receipt
-
-    def bounded_agent_receipt():
-        receipt = original_receipt()
-        receipt["model_call_count"] = 2
-        receipt["model_call_budget"] = {
-            "minimum_total_model_calls": 2,
-            "maximum_total_model_calls": 5,
-        }
-        return receipt
-
-    monkeypatch.setattr(adapter, "patch_attempt_receipt", bounded_agent_receipt)
-
-    result = run_fresh_patch_continuation(
-        request,
-        patch_change_factory=adapter,
-        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
-    )
-
-    assert result.status == "terminal"
-    assert result.execution_counts["model"] == 2
-    assert result.patch_proposal_artifact is not None
-    assert result.dry_run_artifact is not None
 
 
 def test_patch_continuation_graph_has_only_patch_review_dry_run_reachable(

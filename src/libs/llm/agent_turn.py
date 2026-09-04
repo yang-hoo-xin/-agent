@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import math
 import time
+from collections.abc import Mapping
 from hashlib import sha256
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Protocol
@@ -286,6 +288,7 @@ class OllamaChatAgentAdapter:
         self._send = request_sender or _LoopbackHttpJsonSender(
             timeout_seconds=request_timeout_seconds
         )
+        self._prompt_token_calibrations: list[tuple[int, int]] = []
 
     def complete_turn(self, request: AgentTurnRequest) -> AgentTurnResponse:
         messages = [_chat_message(item) for item in request.messages]
@@ -335,11 +338,7 @@ class OllamaChatAgentAdapter:
             payload["format"] = request.response_format.schema
         elif required_single_tool:
             payload["format"] = request.tools[0].parameters
-        context_admission = build_ollama_context_admission(
-            payload=payload,
-            configured_num_ctx=self.context_window,
-            num_predict=self.max_output_tokens,
-        )
+        context_admission = self._context_admission(payload)
         if (
             self.context_window is not None
             and context_admission["admitted"] is not True
@@ -361,6 +360,14 @@ class OllamaChatAgentAdapter:
             {"Content-Type": "application/json"},
         )
         client_elapsed_seconds = time.perf_counter() - request_started
+        prompt_eval_count = _int_value(data.get("prompt_eval_count"))
+        if prompt_eval_count > 0:
+            self._prompt_token_calibrations.append(
+                (
+                    int(context_admission["provider_body_utf8_bytes"]),
+                    prompt_eval_count,
+                )
+            )
         message = data.get("message")
         if not isinstance(message, dict):
             raise AgentTurnProviderError("OLLAMA_CHAT_RESPONSE_INVALID")
@@ -404,6 +411,55 @@ class OllamaChatAgentAdapter:
             ),
             raw_response=data,
         )
+
+    def _context_admission(
+        self,
+        payload: Mapping[str, object],
+    ) -> dict[str, Any]:
+        conservative = build_ollama_context_admission(
+            payload=payload,
+            configured_num_ctx=self.context_window,
+            num_predict=self.max_output_tokens,
+        )
+        if (
+            conservative["admitted"] is True
+            or self.context_window is None
+            or not self._prompt_token_calibrations
+        ):
+            return conservative
+        body_bytes = int(conservative["provider_body_utf8_bytes"])
+        observed_upper_ratio = max(
+            prompt_tokens / prior_body_bytes
+            for prior_body_bytes, prompt_tokens in self._prompt_token_calibrations
+            if prior_body_bytes > 0
+        )
+        estimated_prompt_tokens = max(
+            math.ceil(body_bytes * observed_upper_ratio * 2.0),
+            math.ceil(body_bytes / 2),
+        )
+        estimated_required_context = (
+            estimated_prompt_tokens + self.max_output_tokens
+        )
+        return {
+            "mode": "same_model_observed_prompt_ratio_upper_bound_v1",
+            "exact_prompt_tokens_available_pre_call": False,
+            "provider_body_utf8_bytes": body_bytes,
+            "configured_num_ctx": self.context_window,
+            "num_predict": self.max_output_tokens,
+            "observed_calibration_count": len(
+                self._prompt_token_calibrations
+            ),
+            "observed_max_prompt_tokens_per_body_byte": (
+                observed_upper_ratio
+            ),
+            "safety_multiplier": 2.0,
+            "estimated_prompt_tokens": estimated_prompt_tokens,
+            "estimated_required_context": estimated_required_context,
+            "conservative_fallback_required_context": conservative[
+                "conservative_required_context"
+            ],
+            "admitted": estimated_required_context <= self.context_window,
+        }
 
 
 class QwenChatAgentAdapter:

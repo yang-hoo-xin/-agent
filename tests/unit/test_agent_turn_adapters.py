@@ -413,6 +413,58 @@ def test_ollama_adapter_blocks_oversized_payload_before_sender() -> None:
     assert admission["admitted"] is False
 
 
+def test_ollama_adapter_uses_same_model_observed_tokens_for_later_turn() -> None:
+    captured: list[dict[str, object]] = []
+
+    def send(_url, payload, _headers):
+        captured.append(payload)
+        body_bytes = len(
+            json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        return {
+            "model": "qwen3-coder:30b",
+            "done": True,
+            "done_reason": "stop",
+            "message": {"role": "assistant", "content": "done"},
+            "prompt_eval_count": max(1, body_bytes // 4),
+            "eval_count": 1,
+        }
+
+    adapter = OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434",
+        model="qwen3-coder:30b",
+        max_output_tokens=128,
+        context_window=2048,
+        request_sender=send,
+    )
+    adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content="small" * 20),),
+        )
+    )
+    response = adapter.complete_turn(
+        AgentTurnRequest(
+            messages=(AgentMessage(role="user", content="large" * 500),),
+        )
+    )
+
+    assert len(captured) == 2
+    admission = response.provider_diagnostic["context_admission"]
+    assert admission["mode"] == (
+        "same_model_observed_prompt_ratio_upper_bound_v1"
+    )
+    assert admission["observed_calibration_count"] == 1
+    assert admission["safety_multiplier"] == 2.0
+    assert admission["conservative_fallback_required_context"] > 2048
+    assert admission["estimated_required_context"] <= 2048
+    assert admission["admitted"] is True
+
+
 def test_ollama_adapter_context_admission_counts_unicode_utf8() -> None:
     captured: list[dict[str, object]] = []
 

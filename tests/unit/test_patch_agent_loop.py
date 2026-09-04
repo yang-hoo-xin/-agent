@@ -534,7 +534,10 @@ def test_loop_records_provider_failure_as_usage_unavailable(tmp_path: Path) -> N
 
         @staticmethod
         def complete_turn(_request):
-            raise AgentTurnProviderError("provider unavailable")
+            raise AgentTurnProviderError(
+                "provider unavailable",
+                diagnostic={"failure_boundary": "provider_request_gate"},
+            )
 
     result = run_patch_agent_loop(
         client=_FailingClient(),
@@ -545,6 +548,10 @@ def test_loop_records_provider_failure_as_usage_unavailable(tmp_path: Path) -> N
 
     assert result.status == "blocked"
     assert result.termination["code"] == "PATCH_AGENT_PROVIDER_TURN_FAILED"
+    assert result.termination["reason"] == "provider unavailable"
+    assert result.termination["provider_diagnostic"] == {
+        "failure_boundary": "provider_request_gate"
+    }
     assert result.model_turns_used == 1
     assert result.usage_by_turn == (
         {

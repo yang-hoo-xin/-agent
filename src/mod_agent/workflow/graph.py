@@ -535,6 +535,7 @@ def build_graph(
     product_execution_mode: ProductExecutionGraphModeV1 | None = None,
     planning_continuation_mode: PlanningContinuationInputV1 | None = None,
     patch_continuation_mode: PatchContinuationInputV1 | None = None,
+    patch_continuation_max_model_calls: int = 1,
     patch_continuation_attempt_recorder: (
         PatchContinuationAttemptRecorder | None
     ) = None,
@@ -653,6 +654,7 @@ def build_graph(
             bool(interrupt_after),
             critic_requirement != "not_required",
             proposal_source_snippet_char_limit != 6000,
+            patch_continuation_max_model_calls != 1,
         )
         if any(value is not None for value in incompatible_values) or any(
             incompatible_flags
@@ -662,6 +664,14 @@ def build_graph(
                 "model, effect, approval, or stopping controls."
             )
     if validated_patch_continuation_mode is not None:
+        if (
+            isinstance(patch_continuation_max_model_calls, bool)
+            or not isinstance(patch_continuation_max_model_calls, int)
+            or not 1 <= patch_continuation_max_model_calls <= 5
+        ):
+            raise ValueError(
+                "Patch continuation model-call budget must be between 1 and 5."
+            )
         incompatible_values = (
             settings,
             knowledge_database,
@@ -725,6 +735,10 @@ def build_graph(
     elif patch_continuation_attempt_recorder is not None:
         raise ValueError(
             "Patch continuation attempt recorder requires patch_continuation_mode."
+        )
+    elif patch_continuation_max_model_calls != 1:
+        raise ValueError(
+            "Patch continuation model-call budget requires patch continuation mode."
         )
     if validated_product_execution_mode is not None:
         if (
@@ -1053,6 +1067,9 @@ def build_graph(
                 patch_continuation_mode=validated_patch_continuation_mode,
                 patch_continuation_attempt_recorder=(
                     patch_continuation_attempt_recorder
+                ),
+                patch_continuation_max_model_calls=(
+                    patch_continuation_max_model_calls
                 ),
             ),
         ),
@@ -1880,6 +1897,38 @@ def _patch_continuation_current_snapshot_sha256(
     ).hexdigest()
 
 
+def _valid_patch_agent_loop_receipt(
+    value: Any,
+    *,
+    model_call_count: int,
+) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    usage = value.get("usage_by_turn")
+    observations = value.get("observation_trace")
+    termination = value.get("termination")
+    tool_rounds = value.get("tool_rounds_used")
+    return (
+        value.get("enabled") is True
+        and value.get("status") == "completed"
+        and value.get("model_turns_used") == model_call_count
+        and isinstance(usage, list)
+        and len(usage) == model_call_count
+        and type(tool_rounds) is int
+        and 1 <= tool_rounds <= 3
+        and isinstance(observations, list)
+        and len(observations) == tool_rounds
+        and all(
+            isinstance(item, Mapping)
+            and item.get("admitted_to_model") is True
+            for item in observations
+        )
+        and isinstance(termination, Mapping)
+        and termination.get("status") == "completed"
+        and termination.get("code") == "PATCH_AGENT_MODEL_FINISHED"
+    )
+
+
 def _run_patch_continuation_factory(
     state: ModAgentState,
     artifact_store: ArtifactStore,
@@ -1889,6 +1938,7 @@ def _run_patch_continuation_factory(
     patch_change_factory: PatchChangeFactory,
     mode: PatchContinuationInputV1,
     recorder: PatchContinuationAttemptRecorder,
+    max_model_calls: int,
 ) -> tuple[dict[str, Any], ...]:
     admitted_before = preflight_patch_continuation(
         mode,
@@ -1957,7 +2007,6 @@ def _run_patch_continuation_factory(
         raise
     factory_receipt = _patch_factory_attempt_receipt(patch_change_factory)
     model_call_count = factory_receipt.get("model_call_count")
-    model_call_budget = factory_receipt.get("model_call_budget")
     generated_sha256 = hashlib.sha256(
         json.dumps(
             generated,
@@ -1978,20 +2027,17 @@ def _run_patch_continuation_factory(
             "proposal_admitted": False,
         }
     )
-    if isinstance(model_call_budget, Mapping):
-        minimum_model_calls = model_call_budget.get("minimum_total_model_calls")
-        maximum_model_calls = model_call_budget.get("maximum_total_model_calls")
-        model_call_count_valid = (
-            type(model_call_count) is int
-            and type(minimum_model_calls) is int
-            and type(maximum_model_calls) is int
-            and 1 <= minimum_model_calls <= maximum_model_calls <= 5
-            and minimum_model_calls <= model_call_count <= maximum_model_calls
+    model_call_count_valid = (
+        type(model_call_count) is int
+        and 1 <= model_call_count <= max_model_calls
+        and (
+            model_call_count == 1
+            or _valid_patch_agent_loop_receipt(
+                factory_receipt.get("patch_agent_loop"),
+                model_call_count=model_call_count,
+            )
         )
-    else:
-        model_call_count_valid = (
-            type(model_call_count) is int and model_call_count == 1
-        )
+    )
     if not model_call_count_valid:
         error = PatchContinuationError(
             "PATCH_CONTINUATION_MODEL_CALL_COUNT_INVALID",
@@ -2075,6 +2121,7 @@ def _run_generate_patch_proposal(
     patch_continuation_attempt_recorder: (
         PatchContinuationAttemptRecorder | None
     ) = None,
+    patch_continuation_max_model_calls: int = 1,
 ) -> ModAgentState:
     if state["current_stage"] == "repair_plan" and "repair_plan" in state["artifacts"]:
         repair_plan = _read_artifact_data(state, artifact_store, "repair_plan")
@@ -2123,6 +2170,7 @@ def _run_generate_patch_proposal(
                     patch_change_factory=patch_change_factory,
                     mode=patch_continuation_mode,
                     recorder=patch_continuation_attempt_recorder,
+                    max_model_calls=patch_continuation_max_model_calls,
                 )
                 if patch_continuation_mode is not None
                 and patch_continuation_attempt_recorder is not None

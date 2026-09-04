@@ -111,9 +111,19 @@ class PatchAgentLoopResult:
         return self.status == "completed"
 
     def to_dict(self) -> dict[str, object]:
+        final_bytes = (
+            None
+            if self.final_content is None
+            else self.final_content.encode("utf-8")
+        )
         return {
             "status": self.status,
-            "final_content": self.final_content,
+            "final_content_sha256": (
+                None if final_bytes is None else hashlib.sha256(final_bytes).hexdigest()
+            ),
+            "final_content_utf8_bytes": (
+                None if final_bytes is None else len(final_bytes)
+            ),
             "provider": self.provider,
             "model": self.model,
             "model_turns_used": self.model_turns_used,
@@ -560,7 +570,7 @@ def run_patch_agent_loop(
         )
         try:
             response = client.complete_turn(request)
-        except AgentTurnProviderError:
+        except AgentTurnProviderError as exc:
             usage_by_turn.append(
                 {
                     "turn_index": turn_index,
@@ -585,8 +595,9 @@ def run_patch_agent_loop(
                 observation_trace=observation_trace,
                 termination=_termination(
                     "PATCH_AGENT_PROVIDER_TURN_FAILED",
-                    "The Patch Agent provider turn failed.",
+                    str(exc) or "The Patch Agent provider turn failed.",
                     turn_index,
+                    provider_diagnostic=exc.diagnostic,
                 ),
             )
         if not isinstance(response, AgentTurnResponse):
@@ -906,7 +917,9 @@ def _loop_state_message(
             "final_response_contract": {
                 "name": final_response_format.name,
                 "description": final_response_format.description,
-                "schema": deepcopy(final_response_format.schema),
+                "schema_sha256": _canonical_sha256(
+                    final_response_format.schema
+                ),
             },
         },
     )
@@ -975,13 +988,17 @@ def _termination(
     turn_index: int,
     *,
     status: Literal["completed", "blocked"] = "blocked",
+    provider_diagnostic: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    return {
+    result: dict[str, object] = {
         "status": status,
         "code": code,
         "reason": reason,
         "turn_index": turn_index,
     }
+    if provider_diagnostic:
+        result["provider_diagnostic"] = deepcopy(dict(provider_diagnostic))
+    return result
 
 
 def _loop_result(

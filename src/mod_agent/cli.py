@@ -1683,6 +1683,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 dry_run_factory=make_exact_no_write_dry_run_factory(
                     args.workspace_root
                 ),
+                max_model_calls=(5 if args.patch_agent_loop else 1),
             )
         except (PatchContinuationError, LocalEntryError, OSError, ValueError) as exc:
             result = blocked_patch_continuation_result(

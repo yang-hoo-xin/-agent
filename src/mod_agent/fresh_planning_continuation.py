@@ -2115,6 +2115,7 @@ def run_fresh_patch_continuation(
     *,
     patch_change_factory: PatchContinuationFactory,
     dry_run_factory: PatchContinuationDryRunFactory,
+    max_model_calls: int = 1,
 ) -> PatchContinuationResultV1:
     """Run an exact Plan through Patch, Review, and no-write Dry-run once."""
 
@@ -2122,6 +2123,22 @@ def run_fresh_patch_continuation(
     run_id = f"patch_continuation_{uuid4().hex}"
     request_id = f"patch_request_{uuid4().hex}"
     feature_id = request.feature_spec_ref.feature_id
+    if (
+        isinstance(max_model_calls, bool)
+        or not isinstance(max_model_calls, int)
+        or not 1 <= max_model_calls <= 5
+    ):
+        return blocked_patch_continuation_result(
+            code="PATCH_CONTINUATION_MODEL_CALL_BUDGET_INVALID",
+            stage="request",
+            duration_seconds=time.perf_counter() - started,
+            run_id=run_id,
+            request_id=request_id,
+            feature_id=feature_id,
+            feature_spec_ref=request.feature_spec_ref,
+            evidence_pack_ref=request.evidence_pack_ref,
+            implementation_plan_ref=request.implementation_plan_ref,
+        )
     try:
         admitted = preflight_patch_continuation(request)
     except PatchContinuationError as exc:
@@ -2180,6 +2197,7 @@ def run_fresh_patch_continuation(
                 admitted
             ),
             patch_continuation_mode=request,
+            patch_continuation_max_model_calls=max_model_calls,
             patch_continuation_attempt_recorder=journal.record,
         )
         graph_result = graph.invoke(state)
