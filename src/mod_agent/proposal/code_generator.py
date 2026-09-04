@@ -2156,6 +2156,17 @@ def _materialize_native_change(
             change_id=change_id,
             binding_id=binding_id,
         )
+    if before.startswith("\ufeff"):
+        if not after.startswith("\ufeff"):
+            after = "\ufeff" + after
+    elif after.startswith("\ufeff"):
+        raise _native_validation_error(
+            f"Change {index} must not introduce a UTF-8 BOM.",
+            failure_classification="native_after_text_bom_invalid",
+            change_index=index,
+            change_id=change_id,
+            binding_id=binding_id,
+        )
     if after == before:
         raise _native_validation_error(
             f"Change {index} after_text must be a real replacement.",

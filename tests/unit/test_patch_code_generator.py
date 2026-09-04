@@ -514,6 +514,27 @@ def test_prepared_native_contract_materializes_without_a_second_provider_call() 
     ]
 
 
+def test_native_materializer_restores_plan_owned_utf8_bom() -> None:
+    fixture = json.loads(json.dumps(_large_projection_fixture()))
+    first_binding = fixture["binding_registry"]["edit_bindings"][0]
+    first_evidence = next(
+        item
+        for item in fixture["evidence_items"]
+        if item["evidence_id"] == first_binding["evidence_id"]
+    )
+    first_evidence["excerpt"] = "\ufeff" + first_evidence["excerpt"]
+
+    _, generated = _generate_projection_fixture(fixture)
+
+    first_change = next(
+        item
+        for item in generated.changes
+        if item["edit_binding_id"] == first_binding["binding_id"]
+    )
+    assert first_change["patch"]["before_text"].startswith("\ufeff")
+    assert first_change["patch"]["after_text"].startswith("\ufeff")
+
+
 def _frozen_resume_identity() -> dict[str, object]:
     return {
         "run_id": "run_001",
