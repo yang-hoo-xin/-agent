@@ -1,9 +1,12 @@
 ---
 name: runtime-diagnosis-playbook
-description: Process-only runtime diagnosis playbook for the Controlled Mod Agent Platform. Use when diagnosing build/runtime evidence, runtime probe output, logs, acceptance markers, fake/local/supplied/manual/real evidence boundaries, repair routing, or handoff readiness in a mod delivery workflow. Do not use as a runtime Skill registry, Skill selector, Skill loader, LangGraph selected-skill injection mechanism, output validator, or source of product facts, schemas, current state, or test results.
+description: "FROZEN historical process reference. Do not load or use unless the user explicitly names runtime-diagnosis-playbook in the current request and asks to thaw or inspect it."
 ---
 
 # Runtime Diagnosis Playbook
+
+> Frozen by explicit user decision. This file is not an active Skill and must
+> not influence implicit task selection or implementation decisions.
 
 ## Boundary
 

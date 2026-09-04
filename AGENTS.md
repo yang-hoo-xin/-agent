@@ -79,6 +79,21 @@ order above.
   explicit current owner and bound source/test/receipt/trace evidence;
   otherwise report the limitation or `unknown`.
 
+### 2.4 Frozen Project Playbooks
+
+- Every project-local directory whose name ends in `-playbook` is frozen. Its
+  `SKILL.md.frozen` file is historical process material, not an active Skill,
+  task router, fact source, authority source, or default decision input.
+- Do not load, cite, restore, or follow a frozen playbook merely because a task
+  resembles its former description. Current user intent, current source,
+  exact Artifacts, logs, configuration, and focused tests govern the work.
+- A frozen playbook may be restored or consulted only when the user explicitly
+  names that exact playbook in the current request and asks to thaw or inspect
+  it. Restoration is a separately reviewed versioned edit.
+- If a frozen playbook is loaded accidentally, disclose that fact, stop using
+  it, and independently revalidate every affected conclusion from current
+  evidence before acting.
+
 ## 3. Task Entry And Capability-First Work
 
 - Do not execute platform expansion without a concrete product capability, real

@@ -1,9 +1,12 @@
 ---
 name: hook-discovery-playbook
-description: "Process-only hook discovery playbook for the Controlled Mod Agent Platform. Use when turning a gameplay or mod behavior request into a verified hook discovery workflow: target behavior decomposition, evidence lookup, source/API/symbol/log review, hook option comparison, risk classification, proposal handoff, and runtime verification planning. Do not use as an automatic hook scanner, decompiler integration, runtime patch executor, runtime Skill registry, Skill selector, Skill loader, or source of product facts, schemas, current state, or test results."
+description: "FROZEN historical process reference. Do not load or use unless the user explicitly names hook-discovery-playbook in the current request and asks to thaw or inspect it."
 ---
 
 # Hook Discovery Playbook
+
+> Frozen by explicit user decision. This file is not an active Skill and must
+> not influence implicit task selection or implementation decisions.
 
 ## Boundary
 

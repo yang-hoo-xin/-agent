@@ -1,9 +1,12 @@
 ---
 name: mod-planning-brief-playbook
-description: "Process-only planning brief playbook for the Controlled Mod Agent Platform. Use when turning a natural language mod idea, planning discussion, gameplay request, UI feedback request, config-only request, runtime diagnostics request, hook-likely request, or unclear mod concept into a negotiated mod_planning_brief before feature_spec generation. Do not use as a RAG extractor implementation, feature_spec generator, code generator, runtime Skill system, or source of product facts, schemas, current state, test results, or artifact payloads."
+description: "FROZEN historical process reference. Do not load or use unless the user explicitly names mod-planning-brief-playbook in the current request and asks to thaw or inspect it."
 ---
 
 # Mod Planning Brief Playbook
+
+> Frozen by explicit user decision. This file is not an active Skill and must
+> not influence implicit task selection or implementation decisions.
 
 ## Boundary
 
