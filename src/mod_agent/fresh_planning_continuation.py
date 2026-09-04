@@ -2368,7 +2368,7 @@ def run_fresh_patch_continuation(
     )
     expected_counts = {
         "fresh_coverage": 0,
-        "model": 1,
+        "model": counts["model"],
         "planning": 0,
         "patch": 1,
         "review": 1,

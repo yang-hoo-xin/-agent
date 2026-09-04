@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from src.libs.llm import ChatResponse
+from src.libs.llm import (
+    AgentToolCall,
+    AgentTurnResponse,
+    AgentUsage,
+    ChatResponse,
+    Message,
+)
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.cli import main
 from src.mod_agent.evidence import (
@@ -33,11 +39,16 @@ from src.mod_agent.local_entry import (
     LocalEntryError,
     LocalOllamaInitialPatchAdapter,
     LocalOllamaInitialPatchProfileV1,
+    _patch_agent_initial_messages,
     _local_patch_response_sidecar_path,
     _write_local_patch_response_sidecar,
     make_exact_no_write_dry_run_factory,
 )
 from src.mod_agent.planning import FeatureSpec, ImplementationPlan, ImplementationPlanner
+from src.mod_agent.proposal.patch_agent_loop import (
+    PATCH_SOURCE_INSPECTION_TOOL_NAME,
+    PatchAgentLoopPolicy,
+)
 from src.mod_agent.workflow import build_graph, create_initial_state
 
 
@@ -378,6 +389,102 @@ class _NativePatchLLM:
             usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
             raw_response={"done": True, "done_reason": "stop"},
         )
+
+
+class _PatchAgentTurnClient:
+    provider = "ollama_chat_local"
+    model = "qwen3:4b-instruct"
+
+    def __init__(self) -> None:
+        self.requests = []
+
+    def complete_turn(self, request):
+        self.requests.append(request)
+        turn = len(self.requests)
+        if turn == 1:
+            return AgentTurnResponse(
+                provider=self.provider,
+                model=self.model,
+                content=None,
+                tool_calls=(
+                    AgentToolCall(
+                        call_id="patch-call-001",
+                        name=PATCH_SOURCE_INSPECTION_TOOL_NAME,
+                        arguments={"binding_id": "edit_binding_001"},
+                    ),
+                ),
+                stop_reason="tool_calls",
+                usage=AgentUsage(input_tokens=40, output_tokens=5),
+                provider_state={
+                    "content": None,
+                    "tool_calls": [{"id": "patch-call-001"}],
+                },
+            )
+        prompt = json.loads(request.messages[1].content)
+        changes = []
+        for item in prompt["required_change_units"]:
+            binding_id = item["edit_binding_id"]
+            source_excerpt = prompt["edit_binding_contexts"][binding_id][
+                "source_excerpt"
+            ]
+            changes.append(
+                {
+                    "edit_binding_id": binding_id,
+                    "rationale": "Model annotation only.",
+                    "rollback_hint": "Restore the selected source span.",
+                    "after_text": source_excerpt.replace(
+                        "KeepExistingFeedback();",
+                        "KeepExistingFeedback();\n        RecordRuntimeMarker();",
+                    ),
+                }
+            )
+        return AgentTurnResponse(
+            provider=self.provider,
+            model=self.model,
+            content=json.dumps({"changes": changes}),
+            stop_reason="stop",
+            usage=AgentUsage(input_tokens=80, output_tokens=20),
+        )
+
+
+def test_patch_agent_prompt_uses_ref_first_bounded_supporting_excerpt() -> None:
+    full_excerpt = "API behavior\n" * 200
+    projected = _patch_agent_initial_messages(
+        (
+            Message(role="system", content="Generate Patch."),
+            Message(
+                role="user",
+                content=json.dumps(
+                    {
+                        "supporting_evidence": [
+                            {
+                                "binding_id": "support_binding_001",
+                                "evidence_id": "evidence_001",
+                                "excerpt": full_excerpt,
+                            }
+                        ],
+                        "edit_binding_contexts": {
+                            "edit_binding_001": {
+                                "source_excerpt": "exact editable source"
+                            }
+                        },
+                    }
+                ),
+            ),
+        )
+    )
+
+    payload = json.loads(projected[1].content)
+    support = payload["supporting_evidence"][0]
+    assert len(support["excerpt"].encode("utf-8")) <= 1024
+    assert support["excerpt_truncated"] is True
+    assert support["excerpt_utf8_bytes"] == len(full_excerpt.encode("utf-8"))
+    assert support["excerpt_sha256"] == hashlib.sha256(
+        full_excerpt.encode("utf-8")
+    ).hexdigest()
+    assert payload["edit_binding_contexts"]["edit_binding_001"][
+        "source_excerpt"
+    ] == "exact editable source"
 
 
 def _local_patch_adapter(
@@ -1045,6 +1152,72 @@ def test_exact_plan_runs_one_local_patch_review_and_no_write_dry_run(
     ]
 
 
+def test_exact_plan_runs_bounded_patch_agent_loop_before_dry_run(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    source_before = _source_hashes(inputs.workspace)
+    identity = {
+        "name": "qwen3:4b-instruct",
+        "model": "qwen3:4b-instruct",
+        "digest": "a" * 64,
+        "modified_at": "2026-09-04T00:00:00Z",
+        "size": 1,
+        "details": {"context_length": 8192},
+        "capabilities": ["completion", "tools"],
+        "base_url": "http://127.0.0.1:11434",
+    }
+    unused_materializer_llm = _NativePatchLLM()
+    agent_client = _PatchAgentTurnClient()
+    adapter = LocalOllamaInitialPatchAdapter(
+        profile=LocalOllamaInitialPatchProfileV1(
+            profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
+            base_url="http://127.0.0.1:11434",
+            model="qwen3:4b-instruct",
+            context_window=8192,
+            output_budget=1024,
+            timeout_seconds=30.0,
+        ),
+        artifact_store=inputs.store,
+        workspace_root=inputs.workspace,
+        patch_agent_loop_policy=PatchAgentLoopPolicy(),
+        identity_reader=lambda _base_url, _model: deepcopy(identity),
+        llm_factory=lambda _profile: unused_materializer_llm,
+        agent_turn_client_factory=lambda _profile: agent_client,
+    )
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+
+    assert result.status == "terminal"
+    assert result.execution_counts["model"] == 2
+    assert len(agent_client.requests) == 2
+    assert agent_client.requests[0].tool_choice == "required"
+    assert agent_client.requests[1].tool_results[0].output[
+        "source_ref"
+    ] == "binding://edit_binding_001"
+    assert unused_materializer_llm.calls == 0
+    assert _source_hashes(inputs.workspace) == source_before
+    receipt = json.loads(
+        Path(result.attempt_receipt["path"]).read_text(encoding="utf-8")
+    )
+    loop = receipt["factory_receipt"]["patch_agent_loop"]
+    assert loop["status"] == "completed"
+    assert loop["model_turns_used"] == 2
+    assert loop["tool_rounds_used"] == 1
+    assert loop["observation_trace"][0]["admitted_to_model"] is True
+    proposal = inputs.store.read(ArtifactRef(**result.patch_proposal_artifact))
+    generation = proposal["data"]["diff_intent"][0]["generation"]
+    assert generation["patch_agent_loop"]["enabled"] is True
+    assert generation["patch_agent_loop"]["observation_refs"][0][
+        "binding_id"
+    ] == "edit_binding_001"
+
+
 def test_dry_run_failure_preserves_diagnostic_and_completed_artifacts(
     tmp_path: Path,
 ) -> None:
@@ -1515,6 +1688,38 @@ def test_patch_continuation_rejects_non_exact_model_call_receipt(
     }
     assert llm.calls == 1
     assert result.patch_proposal_artifact is None
+
+
+def test_patch_continuation_accepts_declared_bounded_agent_model_calls(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, _ = _local_patch_adapter(inputs)
+    original_receipt = adapter.patch_attempt_receipt
+
+    def bounded_agent_receipt():
+        receipt = original_receipt()
+        receipt["model_call_count"] = 2
+        receipt["model_call_budget"] = {
+            "minimum_total_model_calls": 2,
+            "maximum_total_model_calls": 5,
+        }
+        return receipt
+
+    monkeypatch.setattr(adapter, "patch_attempt_receipt", bounded_agent_receipt)
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+
+    assert result.status == "terminal"
+    assert result.execution_counts["model"] == 2
+    assert result.patch_proposal_artifact is not None
+    assert result.dry_run_artifact is not None
 
 
 def test_patch_continuation_graph_has_only_patch_review_dry_run_reachable(

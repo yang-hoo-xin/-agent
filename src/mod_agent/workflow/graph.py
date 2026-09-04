@@ -1957,6 +1957,7 @@ def _run_patch_continuation_factory(
         raise
     factory_receipt = _patch_factory_attempt_receipt(patch_change_factory)
     model_call_count = factory_receipt.get("model_call_count")
+    model_call_budget = factory_receipt.get("model_call_budget")
     generated_sha256 = hashlib.sha256(
         json.dumps(
             generated,
@@ -1977,11 +1978,25 @@ def _run_patch_continuation_factory(
             "proposal_admitted": False,
         }
     )
-    if type(model_call_count) is not int or model_call_count != 1:
+    if isinstance(model_call_budget, Mapping):
+        minimum_model_calls = model_call_budget.get("minimum_total_model_calls")
+        maximum_model_calls = model_call_budget.get("maximum_total_model_calls")
+        model_call_count_valid = (
+            type(model_call_count) is int
+            and type(minimum_model_calls) is int
+            and type(maximum_model_calls) is int
+            and 1 <= minimum_model_calls <= maximum_model_calls <= 5
+            and minimum_model_calls <= model_call_count <= maximum_model_calls
+        )
+    else:
+        model_call_count_valid = (
+            type(model_call_count) is int and model_call_count == 1
+        )
+    if not model_call_count_valid:
         error = PatchContinuationError(
             "PATCH_CONTINUATION_MODEL_CALL_COUNT_INVALID",
             "post_call_admission",
-            "Patch continuation requires exactly one reported model call.",
+            "Patch continuation model calls do not match the admitted budget.",
         )
         recorder(
             {

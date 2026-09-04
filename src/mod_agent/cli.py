@@ -64,6 +64,7 @@ from .local_entry import (
     run_local_request,
 )
 from .planning import ModPlanningBriefBuilder, RequestPlanner
+from .proposal.patch_agent_loop import PatchAgentLoopPolicy
 from .preflight_preparation import (
     DeterministicPostChangeConditionsV1,
     PreflightPreparationError,
@@ -790,6 +791,14 @@ def build_parser(
         "--ollama-timeout-seconds",
         type=float,
         required=True,
+    )
+    patch_continuation_parser.add_argument(
+        "--patch-agent-loop",
+        action="store_true",
+        help=(
+            "Require a bounded Plan-binding source inspection loop before "
+            "the final structured Patch response."
+        ),
     )
     planning_continuation_parser.add_argument(
         "--feature-spec-hash", required=True
@@ -1662,6 +1671,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 patch_change_factory=LocalOllamaInitialPatchAdapter(
                     profile=profile,
                     artifact_store=store,
+                    workspace_root=(
+                        args.workspace_root if args.patch_agent_loop else None
+                    ),
+                    patch_agent_loop_policy=(
+                        PatchAgentLoopPolicy()
+                        if args.patch_agent_loop
+                        else None
+                    ),
                 ),
                 dry_run_factory=make_exact_no_write_dry_run_factory(
                     args.workspace_root

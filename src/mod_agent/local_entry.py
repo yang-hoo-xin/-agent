@@ -28,9 +28,13 @@ from langgraph.types import Command
 
 from src.core.settings import load_settings
 from src.libs.llm import (
+    AgentMessage,
+    AgentResponseFormat,
+    AgentTurnClient,
     ChatResponse,
     LLMFactory,
     Message,
+    OllamaChatAgentAdapter,
     OllamaLLM,
     validate_loopback_http_base_url,
 )
@@ -71,6 +75,11 @@ from src.mod_agent.proposal import (
     PATCH_RESPONSE_CONTRACT_VERSION,
     LLMExactPatchGenerator,
     PatchGenerationError,
+)
+from src.mod_agent.proposal.patch_agent_loop import (
+    PatchAgentLoopPolicy,
+    PlanBoundSourceInspector,
+    run_patch_agent_loop,
 )
 from src.mod_agent.product_execution import (
     ProductExecutionContractError,
@@ -516,6 +525,118 @@ def _write_local_patch_response_sidecar(
     }
 
 
+def _patch_agent_loop_usage(result: Mapping[str, Any]) -> dict[str, int]:
+    prompt_tokens = 0
+    completion_tokens = 0
+    for record in result.get("usage_by_turn") or []:
+        usage = record.get("usage") if isinstance(record, Mapping) else None
+        if not isinstance(usage, Mapping):
+            continue
+        prompt_tokens += int(usage.get("input_tokens") or 0)
+        completion_tokens += int(usage.get("output_tokens") or 0)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+
+
+def _patch_agent_loop_generation_ref(
+    value: Mapping[str, Any],
+) -> dict[str, Any]:
+    if value.get("enabled") is not True:
+        return {"enabled": False}
+    observations = value.get("observation_trace")
+    return {
+        "enabled": True,
+        "status": value.get("status"),
+        "model_turns_used": value.get("model_turns_used"),
+        "tool_rounds_used": value.get("tool_rounds_used"),
+        "observation_refs": [
+            {
+                "observation_id": item.get("observation_id"),
+                "binding_id": item.get("binding_id"),
+                "source_hash": item.get("source_hash"),
+                "observation_sha256": item.get("observation_sha256"),
+            }
+            for item in (observations or [])
+            if isinstance(item, Mapping) and item.get("admitted_to_model") is True
+        ],
+        "termination": dict(value.get("termination") or {}),
+    }
+
+
+def _bounded_utf8_prefix(value: str, *, max_bytes: int) -> tuple[str, bool]:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value, False
+    prefix = encoded[:max_bytes]
+    while prefix:
+        try:
+            return prefix.decode("utf-8"), True
+        except UnicodeDecodeError:
+            prefix = prefix[:-1]
+    return "", True
+
+
+def _patch_agent_initial_messages(
+    messages: tuple[Message, ...],
+) -> tuple[AgentMessage, ...]:
+    if len(messages) != 2 or messages[1].role != "user":
+        raise LocalEntryError("LOCAL_PATCH_AGENT_PROMPT_CONTRACT_INVALID")
+    try:
+        payload = json.loads(messages[1].content)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise LocalEntryError("LOCAL_PATCH_AGENT_PROMPT_CONTRACT_INVALID") from exc
+    if not isinstance(payload, dict):
+        raise LocalEntryError("LOCAL_PATCH_AGENT_PROMPT_CONTRACT_INVALID")
+    supporting = payload.get("supporting_evidence")
+    if not isinstance(supporting, list):
+        raise LocalEntryError("LOCAL_PATCH_AGENT_PROMPT_CONTRACT_INVALID")
+    projected_support: list[dict[str, Any]] = []
+    for raw in supporting:
+        if not isinstance(raw, Mapping):
+            raise LocalEntryError("LOCAL_PATCH_AGENT_PROMPT_CONTRACT_INVALID")
+        item = dict(raw)
+        excerpt = item.get("excerpt")
+        if isinstance(excerpt, str):
+            bounded, truncated = _bounded_utf8_prefix(excerpt, max_bytes=1024)
+            item["excerpt"] = bounded
+            item["excerpt_sha256"] = hashlib.sha256(
+                excerpt.encode("utf-8")
+            ).hexdigest()
+            item["excerpt_utf8_bytes"] = len(excerpt.encode("utf-8"))
+            item["excerpt_truncated"] = truncated
+        projected_support.append(item)
+    payload["supporting_evidence"] = projected_support
+    payload["patch_agent_context_policy"] = {
+        "editable_source": "exact_binding_excerpt",
+        "supporting_evidence": "ref_first_bounded_excerpt_1024_bytes",
+        "additional_source": "plan_binding_tool_observation",
+    }
+    return (
+        AgentMessage(
+            role="system",
+            content=(
+                str(messages[0].content)
+                + " Use the Plan-binding source inspection tool to resolve "
+                "caller, callee, lifecycle, and state-flow uncertainty before "
+                "returning the final Patch."
+            ),
+        ),
+        AgentMessage(
+            role="user",
+            content=json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ),
+        ),
+    )
+
+
 class LocalOllamaInitialPatchAdapter:
     """Generate one native-schema Patch response with a queryable call receipt."""
 
@@ -524,13 +645,25 @@ class LocalOllamaInitialPatchAdapter:
         *,
         profile: LocalOllamaInitialPatchProfileV1,
         artifact_store: ArtifactStore,
+        workspace_root: str | Path | None = None,
+        patch_agent_loop_policy: PatchAgentLoopPolicy | None = None,
         identity_reader: OllamaModelIdentityReader | None = None,
         llm_factory: Callable[[LocalOllamaInitialPatchProfileV1], Any] | None = None,
+        agent_turn_client_factory: (
+            Callable[[LocalOllamaInitialPatchProfileV1], AgentTurnClient] | None
+        ) = None,
     ) -> None:
+        if patch_agent_loop_policy is not None and workspace_root is None:
+            raise LocalEntryError("LOCAL_PATCH_AGENT_WORKSPACE_REQUIRED")
         self.profile = profile
         self.artifact_store = artifact_store
+        self.workspace_root = workspace_root
+        self.patch_agent_loop_policy = patch_agent_loop_policy
         self.identity_reader = identity_reader or _read_ollama_model_identity
         self.llm_factory = llm_factory or self._default_llm
+        self.agent_turn_client_factory = (
+            agent_turn_client_factory or self._default_agent_turn_client
+        )
         self._attempt_recorder: Callable[[Mapping[str, Any]], None] | None = None
         self._invocation_count = 0
         self._response_sidecar_path: Path | None = None
@@ -542,6 +675,36 @@ class LocalOllamaInitialPatchAdapter:
                 "contract_version": PATCH_RESPONSE_CONTRACT_VERSION,
                 "schema_sha256": None,
             },
+            "model_call_budget": {
+                "minimum_total_model_calls": (
+                    2 if patch_agent_loop_policy is not None else 1
+                ),
+                "maximum_total_model_calls": (
+                    patch_agent_loop_policy.max_total_model_turns
+                    if patch_agent_loop_policy is not None
+                    else 1
+                ),
+            },
+            "patch_agent_loop": (
+                {
+                    "enabled": True,
+                    "status": "not_started",
+                    "policy": {
+                        "max_tool_rounds": patch_agent_loop_policy.max_tool_rounds,
+                        "max_total_model_turns": (
+                            patch_agent_loop_policy.max_total_model_turns
+                        ),
+                        "max_observation_bytes": (
+                            patch_agent_loop_policy.max_observation_bytes
+                        ),
+                        "context_radius_lines": (
+                            patch_agent_loop_policy.context_radius_lines
+                        ),
+                    },
+                }
+                if patch_agent_loop_policy is not None
+                else {"enabled": False, "status": "not_applicable"}
+            ),
             "status": "not_started",
             "model_call_count": 0,
             "provider_request": None,
@@ -643,11 +806,6 @@ class LocalOllamaInitialPatchAdapter:
                 self.artifact_store.root,
                 run_id=run_id,
             )
-            llm = _PatchResponseCapturingLLM(
-                self.llm_factory(self.profile),
-                self._record_response,
-            )
-            generator = LLMExactPatchGenerator(llm)
 
             def post_response_admission(response: ChatResponse) -> None:
                 if response.model != self.profile.model:
@@ -672,27 +830,95 @@ class LocalOllamaInitialPatchAdapter:
                 self._receipt["post_response_model_identity"] = dict(observed)
                 self._emit("local_patch_post_response_model_admitted")
 
-            generated = generator.generate(
-                user_request=str(model_input["request"]),
-                evidence_items=list(model_input["evidence"]),
-                binding_registry=dict(model_input["binding_registry"]),
-                constraints=list(model_input["side_effect_boundaries"]),
-                target_behavior=str(model_input["target_behavior"]),
-                acceptance_criteria=list(model_input["acceptance_criteria"]),
-                runtime_verification_plan=list(
+            generation_inputs = {
+                "user_request": str(model_input["request"]),
+                "evidence_items": list(model_input["evidence"]),
+                "binding_registry": dict(model_input["binding_registry"]),
+                "constraints": list(model_input["side_effect_boundaries"]),
+                "target_behavior": str(model_input["target_behavior"]),
+                "acceptance_criteria": list(model_input["acceptance_criteria"]),
+                "runtime_verification_plan": list(
                     model_input["runtime_verification_plan"]
                 ),
-                required_change_units=list(model_input["required_change_units"]),
-                required_validation_by_binding={
+                "required_change_units": list(
+                    model_input["required_change_units"]
+                ),
+                "required_validation_by_binding": {
                     str(item["edit_binding_id"]): list(
                         item["expected_validation"]
                     )
                     for item in model_input["required_change_units"]
                 },
-                require_native_schema=True,
-                provider_request_recorder=self._record_provider_request,
-                post_response_admission=post_response_admission,
-            )
+            }
+            if self.patch_agent_loop_policy is not None:
+                generator = LLMExactPatchGenerator(self.llm_factory(self.profile))
+                prepared = generator.prepare_native_contract(**generation_inputs)
+                self._receipt["patch_response_contract"] = {
+                    "contract_id": prepared.contract_id,
+                    "contract_version": prepared.contract_version,
+                    "schema_sha256": prepared.schema_sha256,
+                }
+                inspector = PlanBoundSourceInspector(
+                    workspace_root=self.workspace_root,
+                    implementation_plan=implementation,
+                    policy=self.patch_agent_loop_policy,
+                )
+                self._receipt["patch_agent_loop"]["status"] = "running"
+                self._emit("local_patch_agent_loop_started")
+                loop_result = run_patch_agent_loop(
+                    client=self.agent_turn_client_factory(self.profile),
+                    initial_messages=_patch_agent_initial_messages(
+                        prepared.messages
+                    ),
+                    final_response_format=AgentResponseFormat(
+                        name="patch_generation_v2",
+                        description=(
+                            "Return one binding-only exact Patch response."
+                        ),
+                        schema=dict(prepared.response_schema),
+                        strict=True,
+                    ),
+                    source_inspector=inspector,
+                    policy=self.patch_agent_loop_policy,
+                )
+                self._receipt["model_call_count"] = loop_result.model_turns_used
+                self._receipt["patch_agent_loop"] = {
+                    "enabled": True,
+                    **loop_result.to_dict(),
+                }
+                self._emit("local_patch_agent_loop_finished")
+                if not loop_result.completed or loop_result.final_content is None:
+                    termination = loop_result.termination
+                    raise LocalEntryError(
+                        str(termination.get("code") or "PATCH_AGENT_LOOP_BLOCKED")
+                    )
+                response = ChatResponse(
+                    content=loop_result.final_content,
+                    model=loop_result.model,
+                    usage=_patch_agent_loop_usage(loop_result.to_dict()),
+                    raw_response={
+                        "done": True,
+                        "done_reason": "patch_agent_loop_completed",
+                    },
+                )
+                self._record_response(response)
+                generated = generator.materialize_prepared_native(
+                    prepared,
+                    response,
+                    post_response_admission=post_response_admission,
+                )
+            else:
+                llm = _PatchResponseCapturingLLM(
+                    self.llm_factory(self.profile),
+                    self._record_response,
+                )
+                generator = LLMExactPatchGenerator(llm)
+                generated = generator.generate(
+                    **generation_inputs,
+                    require_native_schema=True,
+                    provider_request_recorder=self._record_provider_request,
+                    post_response_admission=post_response_admission,
+                )
             overlaid = _overlay_generated_patch_changes_on_plan(
                 planned_changes=planned_changes,
                 generated_changes=generated.changes,
@@ -715,6 +941,9 @@ class LocalOllamaInitialPatchAdapter:
                         "model_response_sha256": self._receipt[
                             "model_response"
                         ]["output_sha256"],
+                        "patch_agent_loop": _patch_agent_loop_generation_ref(
+                            self._receipt["patch_agent_loop"]
+                        ),
                     },
                 }
                 for change in overlaid
@@ -831,6 +1060,19 @@ class LocalOllamaInitialPatchAdapter:
             base_url=profile.base_url,
             timeout=float(profile.timeout_seconds),
             context_window=profile.context_window,
+        )
+
+    @staticmethod
+    def _default_agent_turn_client(
+        profile: LocalOllamaInitialPatchProfileV1,
+    ) -> AgentTurnClient:
+        return OllamaChatAgentAdapter(
+            base_url=profile.base_url,
+            model=profile.model,
+            max_output_tokens=profile.output_budget,
+            context_window=profile.context_window,
+            seed=0,
+            request_timeout_seconds=float(profile.timeout_seconds),
         )
 
 

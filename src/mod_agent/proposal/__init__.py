@@ -7,6 +7,7 @@ from .code_generator import (
     GeneratedPatch,
     LLMExactPatchGenerator,
     PatchGenerationError,
+    PreparedNativePatchContract,
 )
 from .critic import (
     CRITIC_DIMENSIONS,
@@ -18,6 +19,15 @@ from .critic import (
     RuleBasedProposalCritic,
 )
 from .models import PatchProposal, ProposalReview, ReviewFinding
+from .patch_agent_loop import (
+    PATCH_SOURCE_INSPECTION_TOOL_NAME,
+    PatchAgentLoopError,
+    PatchAgentLoopPolicy,
+    PatchAgentLoopResult,
+    PatchSourceObservation,
+    PlanBoundSourceInspector,
+    run_patch_agent_loop,
+)
 from .reviewer import ProposalReviewer
 
 __all__ = [
@@ -38,4 +48,12 @@ __all__ = [
     "PATCH_RESPONSE_CONTRACT_ID",
     "PATCH_RESPONSE_CONTRACT_VERSION",
     "PatchGenerationError",
+    "PATCH_SOURCE_INSPECTION_TOOL_NAME",
+    "PatchAgentLoopError",
+    "PatchAgentLoopPolicy",
+    "PatchAgentLoopResult",
+    "PatchSourceObservation",
+    "PlanBoundSourceInspector",
+    "PreparedNativePatchContract",
+    "run_patch_agent_loop",
 ]

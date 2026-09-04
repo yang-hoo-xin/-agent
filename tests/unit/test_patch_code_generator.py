@@ -9,7 +9,12 @@ import pytest
 
 from src.libs.llm import BaseLLM, ChatResponse, Message, OllamaLLM
 from src.libs.llm.ollama_llm import build_ollama_context_admission
-from src.mod_agent.proposal import LLMExactPatchGenerator, PatchGenerationError
+from src.mod_agent.proposal import (
+    PATCH_RESPONSE_CONTRACT_ID,
+    PATCH_RESPONSE_CONTRACT_VERSION,
+    LLMExactPatchGenerator,
+    PatchGenerationError,
+)
 from src.mod_agent.proposal.code_generator import _legacy_pair_patch_response_schema
 
 
@@ -477,6 +482,38 @@ def _generate_projection_fixture(
     return llm, generated
 
 
+def test_prepared_native_contract_materializes_without_a_second_provider_call() -> None:
+    fixture = _large_projection_fixture()
+    generator = LLMExactPatchGenerator(_FakeLLM("provider must not be called"))
+    prepared = generator.prepare_native_contract(
+        user_request=str(fixture["user_request"]),
+        evidence_items=list(fixture["evidence_items"]),
+        binding_registry=dict(fixture["binding_registry"]),
+        constraints=list(fixture["constraints"]),
+        required_change_units=list(fixture["required_change_units"]),
+        required_validation_by_binding=dict(
+            fixture["required_validation_by_binding"]
+        ),
+    )
+
+    assert prepared.contract_id == PATCH_RESPONSE_CONTRACT_ID
+    assert prepared.contract_version == PATCH_RESPONSE_CONTRACT_VERSION
+    assert prepared.response_schema["additionalProperties"] is False
+    generated = generator.materialize_prepared_native(
+        prepared,
+        ChatResponse(
+            content=json.dumps(fixture["response"]),
+            model="agent-loop-model",
+            usage={"prompt_tokens": 20, "completion_tokens": 10},
+        ),
+    )
+
+    assert generated.model == "agent-loop-model"
+    assert [item["edit_binding_id"] for item in generated.changes] == [
+        item["edit_binding_id"] for item in fixture["required_change_units"]
+    ]
+
+
 def _frozen_resume_identity() -> dict[str, object]:
     return {
         "run_id": "run_001",
@@ -940,6 +977,27 @@ def test_patch_model_projection_admits_actual_scale_generic_fixture() -> None:
     llm, generated = _generate_projection_fixture(fixture)
 
     assert "Do not add trailing spaces or tabs" in llm.messages[0].content
+    provider_schema = llm.kwargs["response_format"]
+    provider_schema_text = json.dumps(provider_schema, sort_keys=True)
+    assert all(
+        keyword not in provider_schema_text
+        for keyword in (
+            "oneOf",
+            "anyOf",
+            "allOf",
+            "$ref",
+            "$defs",
+            "if",
+            "then",
+            "else",
+        )
+    )
+    assert set(provider_schema) == {
+        "type",
+        "additionalProperties",
+        "required",
+        "properties",
+    }
     prompt_payload = json.loads(llm.messages[1].content)
     evidence_by_id = {
         item["evidence_id"]: item for item in fixture["evidence_items"]

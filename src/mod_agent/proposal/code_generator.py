@@ -48,6 +48,45 @@ class GeneratedPatch:
     raw_text: str
 
 
+@dataclass(frozen=True)
+class PreparedNativePatchContract:
+    """Provider-neutral native Patch prompt and deterministic materializer."""
+
+    messages: tuple[Message, ...]
+    response_schema: dict[str, Any]
+    materialization_context: dict[str, Any]
+    contract_id: str
+    contract_version: str
+    schema_sha256: str
+
+
+class _NativePatchContractPrepared(RuntimeError):
+    def __init__(
+        self,
+        messages: list[Message],
+        response_schema: Mapping[str, Any],
+    ) -> None:
+        super().__init__("Native Patch contract prepared without a provider call.")
+        self.messages = tuple(messages)
+        self.response_schema = dict(response_schema)
+
+
+class _NativePatchContractCaptureLLM(BaseLLM):
+    def chat(
+        self,
+        messages: list[Message],
+        trace: Any = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        del trace
+        response_schema = kwargs.get("response_format")
+        if not isinstance(response_schema, Mapping):
+            raise PatchGenerationError(
+                "Native Patch preparation requires a response schema."
+            )
+        raise _NativePatchContractPrepared(messages, response_schema)
+
+
 class _FrozenProviderRequestPrepared(RuntimeError):
     def __init__(self, provider_request: Mapping[str, Any]) -> None:
         super().__init__("Native Patch provider request frozen.")
@@ -88,6 +127,76 @@ class LLMExactPatchGenerator:
 
     def __init__(self, llm: BaseLLM) -> None:
         self.llm = llm
+
+    def prepare_native_contract(
+        self,
+        **generation_inputs: Any,
+    ) -> PreparedNativePatchContract:
+        """Build the exact native prompt/schema without invoking a provider."""
+
+        required_validation = _normalize_required_validation_mapping(
+            generation_inputs.get("required_validation_by_binding") or {}
+        )
+        inputs = dict(generation_inputs)
+        inputs["require_native_schema"] = True
+        inputs["provider_request_recorder"] = lambda _: None
+        try:
+            LLMExactPatchGenerator(_NativePatchContractCaptureLLM()).generate(
+                **inputs
+            )
+        except _NativePatchContractPrepared as prepared:
+            provider_contract = _native_provider_contract(
+                prepared.messages,
+                prepared.response_schema,
+            )
+            return PreparedNativePatchContract(
+                messages=prepared.messages,
+                response_schema=prepared.response_schema,
+                materialization_context=(
+                    _native_materialization_context_from_frozen(
+                        provider_contract,
+                        required_validation=required_validation,
+                    )
+                ),
+                contract_id=PATCH_RESPONSE_CONTRACT_ID,
+                contract_version=PATCH_RESPONSE_CONTRACT_VERSION,
+                schema_sha256=_canonical_json_sha256(
+                    prepared.response_schema
+                ),
+            )
+        raise PatchGenerationError(
+            "Native Patch preparation did not reach the contract boundary."
+        )
+
+    def materialize_prepared_native(
+        self,
+        prepared: PreparedNativePatchContract,
+        response: ChatResponse,
+        *,
+        post_response_admission: Callable[[ChatResponse], None] | None = None,
+    ) -> GeneratedPatch:
+        """Validate one already obtained response against a prepared contract."""
+
+        if (
+            not isinstance(prepared, PreparedNativePatchContract)
+            or prepared.contract_id != PATCH_RESPONSE_CONTRACT_ID
+            or prepared.contract_version != PATCH_RESPONSE_CONTRACT_VERSION
+            or prepared.schema_sha256
+            != _canonical_json_sha256(prepared.response_schema)
+        ):
+            raise PatchGenerationError(
+                "Prepared native Patch contract identity is invalid."
+            )
+        if post_response_admission is not None:
+            post_response_admission(response)
+        return _materialize_frozen_native_response(
+            response,
+            context=prepared.materialization_context,
+            provider_request=_native_provider_contract(
+                prepared.messages,
+                prepared.response_schema,
+            ),
+        )
 
     def prepare_frozen_native(
         self,
@@ -560,6 +669,29 @@ def _canonical_json_sha256(value: Mapping[str, Any]) -> str:
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
+
+
+def _native_provider_contract(
+    messages: tuple[Message, ...] | list[Message],
+    response_schema: Mapping[str, Any],
+) -> dict[str, Any]:
+    body = {
+        "messages": [
+            {"role": message.role, "content": message.content}
+            for message in messages
+        ],
+        "format": dict(response_schema),
+    }
+    return {
+        "body_utf8": json.dumps(
+            body,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ),
+        "response_format_sha256": _canonical_json_sha256(response_schema),
+    }
 
 
 def _native_materialization_context_from_frozen(
