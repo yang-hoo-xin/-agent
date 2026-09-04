@@ -682,15 +682,16 @@ def _successful_completion(roles: list[str]):
         if role == "requirement_findings":
             evidence_id = payload["source_observations"][0]["evidence_id"]
             return {
-                "findings_by_relation": {
-                    str(relation["relation_index"]): {
+                "findings": [
+                    {
+                        "relation_index": relation["relation_index"],
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
                         "edit_target_evidence_ids": [evidence_id],
                         "unresolved_gaps": [],
                     }
                     for relation in payload["relations"]
-                }
+                ]
             }
         raise AssertionError(role)
 
@@ -1336,7 +1337,7 @@ def test_fresh_coverage_cli_persists_success_and_stops_before_planning(
         "generated_mods/SyntheticMod",
         str(workspace),
         '"message_type"',
-        '"findings_by_relation"',
+        '"findings"',
     ):
         assert forbidden not in progress_text
 
@@ -1457,15 +1458,16 @@ def test_fresh_coverage_cli_reports_recovered_first_failure_without_recomputing(
         if role == "requirement_findings_correction":
             evidence_id = payload["source_observations"][0]["evidence_id"]
             return {
-                "findings_by_relation": {
-                    str(relation["relation_index"]): {
+                "findings": [
+                    {
+                        "relation_index": relation["relation_index"],
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
                         "edit_target_evidence_ids": [evidence_id],
                         "unresolved_gaps": [],
                     }
                     for relation in payload["relations"]
-                }
+                ]
             }
         raise AssertionError(role)
 
@@ -1654,15 +1656,16 @@ def test_fresh_coverage_cli_source_drift_retains_run_facts(
             source.write_text("changed during coverage\n", encoding="utf-8")
             evidence_id = payload["source_observations"][0]["evidence_id"]
             return {
-                "findings_by_relation": {
-                    str(relation["relation_index"]): {
+                "findings": [
+                    {
+                        "relation_index": relation["relation_index"],
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
                         "edit_target_evidence_ids": [evidence_id],
                         "unresolved_gaps": [],
                     }
                     for relation in payload["relations"]
-                }
+                ]
             }
         raise AssertionError(role)
 
@@ -1713,15 +1716,16 @@ def test_source_drift_preserves_earlier_recovered_model_rejection(
             source.write_text("changed after recovered rejection\n", encoding="utf-8")
             evidence_id = payload["source_observations"][0]["evidence_id"]
             return {
-                "findings_by_relation": {
-                    str(relation["relation_index"]): {
+                "findings": [
+                    {
+                        "relation_index": relation["relation_index"],
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
                         "edit_target_evidence_ids": [evidence_id],
                         "unresolved_gaps": [],
                     }
                     for relation in payload["relations"]
-                }
+                ]
             }
         raise AssertionError(role)
 

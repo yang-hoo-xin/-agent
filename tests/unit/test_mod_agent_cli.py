@@ -1827,27 +1827,24 @@ def _formal_coverage_model_response(request: dict[str, object]) -> dict[str, obj
         }
     if message_type == "product_requirement_findings":
         evidence_id = request["source_observations"][0]["evidence_id"]
-        change_requirement_ids = {
-            requirement["requirement_id"]
-            for requirement in request["requirements"]
-            if requirement["role"] == "change"
-        }
         return {
-            "findings_by_relation": {
-                str(relation["relation_index"]): {
+            "findings": [
+                {
+                    "relation_index": relation["relation_index"],
                     "relationship": "support",
                     "evidence_ids": [evidence_id],
                     "edit_target_evidence_ids": (
                         [evidence_id]
-                        if change_requirement_ids.intersection(
-                            relation["parent_requirement_ids"]
+                        if any(
+                            parent["role"] == "change"
+                            for parent in relation["parent_requirements"]
                         )
                         else []
                     ),
                     "unresolved_gaps": [],
                 }
                 for relation in request["relations"]
-            }
+            ]
         }
     return None
 

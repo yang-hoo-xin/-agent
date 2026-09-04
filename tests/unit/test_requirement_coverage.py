@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from src.libs.llm import BaseLLM, ChatResponse, Message
+from src.libs.llm.ollama_llm import build_ollama_context_admission
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.evidence import (
@@ -42,6 +43,7 @@ from src.mod_agent.evidence.requirement_coverage import (
     resolve_requirement_coverage,
 )
 from src.mod_agent.evidence.requirement_coverage_provider import (
+    RequirementFindingsAdmissionError,
     RequirementProjectionAdmissionError,
     admit_requirement_projection_response,
     requirement_findings_response_schema,
@@ -708,17 +710,15 @@ def _model_findings_response(
     indexed_findings: dict[str, object],
 ) -> dict[str, object]:
     return {
-        "findings_by_relation": {
-            str(finding["relation_index"]): {
-                "relationship": deepcopy(finding["relationship"]),
-                "evidence_ids": deepcopy(finding["evidence_ids"]),
+        "findings": [
+            {
+                **deepcopy(finding),
                 "edit_target_evidence_ids": deepcopy(
                     finding.get("edit_target_evidence_ids", [])
                 ),
-                "unresolved_gaps": deepcopy(finding["unresolved_gaps"]),
             }
             for finding in indexed_findings["findings"]
-        }
+        ]
     }
 
 
@@ -1846,18 +1846,40 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
     def complete_json(role, payload, _schema):
         assert role == "requirement_findings"
         payloads.append(deepcopy(payload))
-        response = _model_findings_response(findings)
-        response["findings_by_relation"] = dict(
-            reversed(tuple(response["findings_by_relation"].items()))
+        active_indexes = {
+            relation["relation_index"] for relation in payload["relations"]
+        }
+        return _model_findings_response(
+            {
+                "findings": list(
+                    reversed(
+                        [
+                            finding
+                            for finding in findings["findings"]
+                            if finding["relation_index"] in active_indexes
+                        ]
+                    )
+                )
+            }
         )
-        return response
 
     provider = StructuredModelRequirementCoverageProvider(complete_json)
     assert provider.findings(
         materialized_projection=materialized,
         retrieved_pack=retrieved,
         request=str(feature["user_request"]),
-    ) == findings
+    ) == {
+        "findings": [
+            *findings["findings"][:3],
+            *[
+                {
+                    **finding,
+                    "unresolved_gaps": [],
+                }
+                for finding in findings["findings"][3:]
+            ],
+        ]
+    }
 
     assert payloads[0]["coverage_schema_version"] == (
         REQUIREMENT_COVERAGE_SCHEMA_VERSION
@@ -1866,54 +1888,63 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
         set(relation)
         == {
             "relation_index",
-            "relation_id",
-            "parent_requirement_ids",
-            "meaning",
+            "parent_requirements",
         }
         for relation in payloads[0]["relations"]
     )
+    assert [
+        parent
+        for relation in payloads[0]["relations"]
+        for parent in relation["parent_requirements"]
+    ] == [
+        {
+            "role": materialized_requirement["role"],
+            "text": materialized_requirement["text"],
+            "required_before_patch": materialized_requirement[
+                "required_before_patch"
+            ],
+        }
+        for materialized_relation in materialized["relations"][:3]
+        for materialized_requirement in materialized["requirements"]
+        if materialized_requirement["requirement_id"]
+        in materialized_relation["parent_requirement_ids"]
+    ]
     assert payloads[0]["rules"][:2] == [
         (
-            "Return findings_by_relation with exactly one key for every listed "
-            "relation_index, using its decimal string form."
+            "Return findings with exactly one item for every listed "
+            "relation_index."
         ),
         (
-            "Each keyed value contains only relationship, evidence_ids, "
-            "edit_target_evidence_ids, and unresolved_gaps; do not repeat "
-            "relation identity inside it."
+            "Each item contains only relation_index, relationship, evidence_ids, "
+            "edit_target_evidence_ids, and unresolved_gaps."
         ),
     ]
-    assert payloads[0]["rules"][-6:] == [
-        (
-            "For role=change, support means the cited Evidence proves the current "
-            "implementation and exact modification location; it does not require "
-            "the requested behavior to exist before the change."
-        ),
-        (
-            "For role=change, use missing when current source or API evidence is "
-            "absent or the modification location is unknown, and use conflict when "
-            "the cited Evidence conflicts."
-        ),
-        (
-            "For role=change, cited support must cover every known exact physical "
-            "modification location needed by the change; preserve any missing "
-            "current-source or edit-authority location in unresolved_gaps."
-        ),
-        (
-            "For role=change, evidence_ids may include explanatory support, but "
-            "edit_target_evidence_ids must contain only the smallest complete "
-            "subset whose displayed bytes must change to implement the request."
-        ),
-        (
-            "If cited Evidence can remain byte-identical while the requested "
-            "behavior is implemented, keep it out of edit_target_evidence_ids."
-        ),
-        (
-            "unresolved_gaps describe only missing evidence, current-source facts, "
-            "or edit authority required before Patch. Do not list the requested "
-            "behavior's expected implementation delta as an unresolved gap."
-        ),
-    ]
+    assert len(payloads[0]["rules"]) == 7
+    assert "requirements" not in payloads[0]
+    assert "query_execution" not in payloads[0]
+    assert "request_sha256" not in payloads[0]
+    assert len(payloads[0]["relations"]) == 3
+    assert all(
+        relation["parent_requirements"]
+        and any(
+            parent["required_before_patch"] is True
+            for parent in relation["parent_requirements"]
+        )
+        for relation in payloads[0]["relations"]
+    )
+    assert all(
+        set(observation)
+        == {
+            "evidence_id",
+            "source_type",
+            "source_path",
+            "symbol",
+            "span",
+            "claim_supported",
+            "excerpt",
+        }
+        for observation in payloads[0]["source_observations"]
+    )
 
 
 def test_findings_provider_rejects_frozen_duplicate_relation_indexes(
@@ -2009,31 +2040,316 @@ def test_findings_provider_rejects_complete_unique_legacy_list(
     ]
 
 
-def test_findings_schema_requires_complete_explicit_relation_keys() -> None:
+def test_findings_schema_uses_one_indexed_item_shape() -> None:
     schema = requirement_findings_response_schema(
         relation_indexes=[1, 2, 3],
         evidence_ids=["evidence_1"],
     )
-    findings = schema["properties"]["findings_by_relation"]
+    findings = schema["properties"]["findings"]
+    item = findings["items"]
 
-    assert schema["required"] == ["findings_by_relation"]
-    assert set(findings["properties"]) == {"1", "2", "3"}
-    assert findings["required"] == ["1", "2", "3"]
-    assert findings["additionalProperties"] is False
-    for item in findings["properties"].values():
-        assert set(item["properties"]) == {
-            "relationship",
-            "evidence_ids",
-            "edit_target_evidence_ids",
-            "unresolved_gaps",
+    assert schema["required"] == ["findings"]
+    assert findings["minItems"] == 3
+    assert findings["maxItems"] == 3
+    assert set(item["properties"]) == {
+        "relation_index",
+        "relationship",
+        "evidence_ids",
+        "edit_target_evidence_ids",
+        "unresolved_gaps",
+    }
+    assert set(item["required"]) == set(item["properties"])
+    assert item["properties"]["relation_index"]["enum"] == [1, 2, 3]
+    assert item["additionalProperties"] is False
+
+
+def test_findings_provider_rejects_duplicate_active_relation_index_after_schema(
+    tmp_path: Path,
+) -> None:
+    feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
+    duplicate = {
+        "findings": [
+            {
+                "relation_index": 1,
+                "relationship": "missing",
+                "evidence_ids": [],
+                "edit_target_evidence_ids": [],
+                "unresolved_gaps": ["First bounded gap."],
+            },
+            {
+                "relation_index": 1,
+                "relationship": "conflict",
+                "evidence_ids": [],
+                "edit_target_evidence_ids": [],
+                "unresolved_gaps": ["Different bounded gap."],
+            },
+        ]
+    }
+    roles: list[str] = []
+
+    def complete_json(role, _payload, _schema):
+        roles.append(role)
+        return deepcopy(duplicate)
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    with pytest.raises(RequirementFindingsAdmissionError) as rejection:
+        provider.findings(
+            materialized_projection=materialized,
+            retrieved_pack=retrieved,
+            request=str(feature["user_request"]),
+        )
+
+    assert rejection.value.diagnostic["failure_category"] == (
+        "duplicate_relation_index"
+    )
+    assert roles == [
+        "requirement_findings",
+        "requirement_findings_correction",
+    ]
+
+
+def test_mixed_prepatch_and_postchange_relation_remains_in_model_view(
+    tmp_path: Path,
+) -> None:
+    feature, _, retrieved = _materialized_and_retrieved(tmp_path)
+    projection = deepcopy(_projection())
+    projection["relations"][0]["parent_requirement_indexes"] = [1, 3, 4]
+    materialized = materialize_requirement_coverage_projection(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+        projection=projection,
+    )
+    payloads: list[dict[str, object]] = []
+
+    def complete_json(role, payload, _schema):
+        assert role == "requirement_findings"
+        payloads.append(deepcopy(payload))
+        return _model_findings_response(
+            {
+                "findings": [
+                    {
+                        "relation_index": relation["relation_index"],
+                        "relationship": "missing",
+                        "evidence_ids": [],
+                        "unresolved_gaps": ["Pre-Patch support is unresolved."],
+                    }
+                    for relation in payload["relations"]
+                ]
+            }
+        )
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    findings = provider.findings(
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        request=str(feature["user_request"]),
+    )
+
+    assert [row["relation_index"] for row in payloads[0]["relations"]] == [1, 2]
+    assert [
+        parent["role"]
+        for parent in payloads[0]["relations"][0]["parent_requirements"]
+    ] == ["change", "preservation", "post_change_acceptance"]
+    assert [row["relation_index"] for row in findings["findings"]] == [1, 2, 3]
+    assert findings["findings"][2] == {
+        "relation_index": 3,
+        "relationship": "missing",
+        "evidence_ids": [],
+        "edit_target_evidence_ids": [],
+        "unresolved_gaps": [],
+    }
+
+
+def test_assisted_api_findings_context_fits_40960_and_defers_postchange(
+    tmp_path: Path,
+) -> None:
+    _write_sources(tmp_path)
+    feature = _feature_data()
+    feature["evidence_requirements"] = [
+        f"Pre-Patch evidence obligation {index}." for index in range(1, 5)
+    ]
+    feature["non_goals"] = [
+        f"Preserve bounded behavior {index}." for index in range(1, 4)
+    ]
+    feature["acceptance_criteria"] = [
+        f"Post-change acceptance obligation {index}." for index in range(1, 6)
+    ]
+    feature["runtime_verification_plan"] = [
+        f"Runtime verification obligation {index}." for index in range(1, 3)
+    ]
+    obligations = requirement_input_obligation_model_view(feature)
+    requirements = [
+        {
+            "role": "change",
+            "text": str(feature["target_behavior"]),
+            "input_obligation_indexes": [1, 2],
+            "query_leads": ["ChangeMarker"],
         }
-        assert set(item["required"]) == {
-            "relationship",
-            "evidence_ids",
-            "edit_target_evidence_ids",
-            "unresolved_gaps",
+    ]
+    for index, obligation in enumerate(obligations[2:], 3):
+        requirements.append(
+            {
+                "role": obligation["allowed_roles"][0],
+                "text": obligation["text"],
+                "input_obligation_indexes": [index],
+                "query_leads": [obligation["text"]],
+            }
+        )
+    projection = {
+        "requirements": requirements,
+        "relations": [
+            {
+                "parent_requirement_indexes": [index],
+                "meaning": f"Evidence disposition for requirement {index}.",
+            }
+            for index in range(1, 16)
+        ],
+        "input_dispositions": [],
+    }
+    materialized = materialize_requirement_coverage_projection(
+        feature_data=feature,
+        request=str(feature["user_request"]),
+        projection=projection,
+    )
+    retrieved = RgLiveEvidenceProvider(tmp_path).collect_query_set(
+        queries=tuple(dict(value) for value in materialized["queries"]),
+        search_root="generated_mods/SyntheticMod",
+        max_items=len(materialized["queries"]),
+    )
+    excerpt_lengths = (
+        859,
+        421,
+        1945,
+        392,
+        1237,
+        395,
+        667,
+        331,
+        154,
+        367,
+        1114,
+        450,
+        994,
+        151,
+        430,
+        2963,
+        2292,
+        2296,
+    )
+    base_item = retrieved.items[0]
+    items = tuple(
+        replace(
+            base_item,
+            evidence_id=f"evidence_context_{index:02d}",
+            source_type=("decompiled_api" if index > 15 else "target_source"),
+            source_path=(
+                "dependencies/Modules-ASM.dll"
+                if index > 15
+                else f"generated_mods/SyntheticMod/Source{index:02d}.cs"
+            ),
+            symbol=f"Synthetic.Symbol{index:02d}",
+            claim_supported=f"Bounded claim {index:02d}.",
+            excerpt=(
+                ("IL_0000: call Synthetic.Api\n" if index > 15 else "// source\n")
+                + "x" * excerpt_length
+            ),
+        )
+        for index, excerpt_length in enumerate(excerpt_lengths, 1)
+    )
+    retrieved = replace(retrieved, items=items)
+    captured: dict[str, object] = {}
+    api_ids = [item.evidence_id for item in items if item.source_type == "decompiled_api"]
+    target_id = items[0].evidence_id
+
+    def complete_json(role, payload, schema):
+        assert role == "requirement_findings"
+        captured.update(payload=deepcopy(payload), schema=deepcopy(schema))
+        return {
+            "findings": [
+                {
+                    "relation_index": relation["relation_index"],
+                    "relationship": "support",
+                    "evidence_ids": (
+                        [target_id, *api_ids]
+                        if relation["relation_index"] == 1
+                        else [target_id]
+                    ),
+                    "edit_target_evidence_ids": (
+                        [target_id] if relation["relation_index"] == 1 else []
+                    ),
+                    "unresolved_gaps": [],
+                }
+                for relation in payload["relations"]
+            ]
         }
-        assert item["additionalProperties"] is False
+
+    provider = StructuredModelRequirementCoverageProvider(complete_json)
+    findings = provider.findings(
+        materialized_projection=materialized,
+        retrieved_pack=retrieved,
+        request=str(feature["user_request"]),
+    )
+
+    payload = captured["payload"]
+    schema = captured["schema"]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Return one strict JSON object matching the native response schema. "
+                "Do not return reasoning, markdown, stable identities, sufficiency, "
+                "edit authority, or execution authority."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        },
+    ]
+    admission = build_ollama_context_admission(
+        payload={
+            "model": "qwen3.6:27b",
+            "messages": messages,
+            "stream": True,
+            "options": {
+                "temperature": 0.0,
+                "num_predict": 4096,
+                "num_ctx": 40960,
+            },
+            "think": False,
+            "format": schema,
+        },
+        configured_num_ctx=40960,
+        num_predict=4096,
+    )
+
+    assert admission["admitted"] is True
+    assert admission["conservative_required_context"] <= 40960
+    assert len(payload["relations"]) == 8
+    assert len(payload["source_observations"]) == 18
+    assert sum(
+        observation["source_type"] == "decompiled_api"
+        for observation in payload["source_observations"]
+    ) == 3
+    assert "requirements" not in payload
+    assert "query_execution" not in payload
+    assert "request_sha256" not in payload
+    assert {
+        observation["evidence_id"]: observation["excerpt"]
+        for observation in payload["source_observations"]
+    } == {item.evidence_id: item.excerpt for item in items}
+    assert len(findings["findings"]) == 15
+    assert all(
+        finding["relationship"] == "missing"
+        and finding["evidence_ids"] == []
+        and finding["edit_target_evidence_ids"] == []
+        and finding["unresolved_gaps"] == []
+        for finding in findings["findings"][8:]
+    )
+    assert set(api_ids).issubset(findings["findings"][0]["evidence_ids"])
+    assert set(api_ids).isdisjoint(
+        findings["findings"][0]["edit_target_evidence_ids"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -2051,23 +2367,19 @@ def test_findings_provider_invalid_keyed_drafts_use_one_correction_then_block(
 ) -> None:
     feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
     row = {
+        "relation_index": 1,
         "relationship": "missing",
         "evidence_ids": [],
+        "edit_target_evidence_ids": [],
         "unresolved_gaps": ["Current-source evidence is missing."],
     }
-    draft = {
-        "findings_by_relation": {
-            str(index): deepcopy(row) for index in range(1, 4)
-        }
-    }
+    draft = {"findings": [{**deepcopy(row), "relation_index": index} for index in (1, 2)]}
     if draft_mutation == "missing_finding":
-        draft["findings_by_relation"].pop("3")
+        draft["findings"].pop()
     elif draft_mutation == "extra_finding":
-        draft["findings_by_relation"]["4"] = deepcopy(row)
+        draft["findings"].append({**deepcopy(row), "relation_index": 3})
     elif draft_mutation == "wrong_shape":
-        draft["findings_by_relation"]["2"]["invented_identity"] = (
-            "relation_2"
-        )
+        draft["findings"][1]["invented_identity"] = "relation_2"
     else:
         raise AssertionError(draft_mutation)
     roles: list[str] = []
@@ -2095,9 +2407,11 @@ def test_v3_invalid_edit_target_subset_uses_one_correction(
 ) -> None:
     feature, materialized, retrieved = _materialized_and_retrieved(tmp_path)
     indexed = _positive_findings(materialized, retrieved)
-    valid = _model_findings_response(indexed)
+    valid = _model_findings_response(
+        {"findings": indexed["findings"][:2]}
+    )
     invalid = deepcopy(valid)
-    invalid["findings_by_relation"]["1"]["edit_target_evidence_ids"] = [
+    invalid["findings"][0]["edit_target_evidence_ids"] = [
         indexed["findings"][1]["evidence_ids"][0]
     ]
     roles: list[str] = []
@@ -2116,7 +2430,12 @@ def test_v3_invalid_edit_target_subset_uses_one_correction(
         materialized_projection=materialized,
         retrieved_pack=retrieved,
         request=str(feature["user_request"]),
-    ) == indexed
+    ) == {
+        "findings": [
+            *indexed["findings"][:2],
+            {**indexed["findings"][2], "unresolved_gaps": []},
+        ]
+    }
     assert roles == [
         "requirement_findings",
         "requirement_findings_correction",
@@ -3085,12 +3404,24 @@ def test_actual9_derived_two_requirement_projection_is_completed_before_findings
             projection_schemas.append(deepcopy(schema))
             return raw_projection
         if role == "requirement_findings":
-            assert len(payload["requirements"]) == 2
             assert [
-                relation["meaning"] for relation in payload["relations"]
+                relation["parent_requirements"]
+                for relation in payload["relations"]
             ] == [
-                "Evidence disposition for requirement 1.",
-                "Evidence disposition for requirement 2.",
+                [
+                    {
+                        "role": "change",
+                        "text": "Keep the two model-owned change obligations.",
+                        "required_before_patch": True,
+                    }
+                ],
+                [
+                    {
+                        "role": "pre_patch_evidence",
+                        "text": "Keep the four model-owned pre-patch obligations.",
+                        "required_before_patch": True,
+                    }
+                ],
             ]
             return _model_findings_response(
                 {
@@ -4251,13 +4582,6 @@ def test_formal_model_provider_handles_embedded_preservation_and_positive_pack(
                             "edit_target_evidence_ids": [],
                             "unresolved_gaps": [],
                         },
-                        {
-                            "relation_index": relations[3]["relation_index"],
-                            "relationship": "missing",
-                            "evidence_ids": [],
-                            "edit_target_evidence_ids": [],
-                            "unresolved_gaps": ["Observed after patching."],
-                        },
                     ]
                 }
             )
@@ -4499,11 +4823,6 @@ def test_formal_model_provider_graph_path_reaches_positive_plan(
             }
         if role == "requirement_findings":
             evidence_id = payload["source_observations"][0]["evidence_id"]
-            change_requirement_ids = {
-                requirement["requirement_id"]
-                for requirement in payload["requirements"]
-                if requirement["role"] == "change"
-            }
             return _model_findings_response(
                 {
                     "findings": [
@@ -4513,8 +4832,9 @@ def test_formal_model_provider_graph_path_reaches_positive_plan(
                             "evidence_ids": [evidence_id],
                             "edit_target_evidence_ids": (
                                 [evidence_id]
-                                if change_requirement_ids.intersection(
-                                    relation["parent_requirement_ids"]
+                                if any(
+                                    parent["role"] == "change"
+                                    for parent in relation["parent_requirements"]
                                 )
                                 else []
                             ),

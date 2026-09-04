@@ -871,34 +871,32 @@ def _formal_coverage_vertical_scenario(
             }
         if role == "requirement_findings":
             evidence_id = payload["source_observations"][0]["evidence_id"]
-            change_requirement_ids = {
-                requirement["requirement_id"]
-                for requirement in payload["requirements"]
-                if requirement["role"] == "change"
-            }
             return {
-                "findings_by_relation": {
-                    str(relation["relation_index"]): {
+                "findings": [
+                    {
+                        "relation_index": relation["relation_index"],
                         "relationship": "support",
                         "evidence_ids": [evidence_id],
                         "edit_target_evidence_ids": (
                             [evidence_id]
-                            if change_requirement_ids.intersection(
-                                relation["parent_requirement_ids"]
+                            if any(
+                                parent["role"] == "change"
+                                for parent in relation["parent_requirements"]
                             )
                             and not change_unresolved_gaps
                             else []
                         ),
                         "unresolved_gaps": (
                             list(change_unresolved_gaps)
-                            if change_requirement_ids.intersection(
-                                relation["parent_requirement_ids"]
+                            if any(
+                                parent["role"] == "change"
+                                for parent in relation["parent_requirements"]
                             )
                             else []
                         ),
                     }
                     for relation in payload["relations"]
-                }
+                ]
             }
         raise AssertionError(role)
 

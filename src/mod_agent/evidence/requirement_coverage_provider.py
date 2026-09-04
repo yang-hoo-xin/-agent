@@ -775,10 +775,18 @@ class StructuredModelRequirementCoverageProvider:
         request: str,
     ) -> Mapping[str, Any]:
         self._findings_attempt_audit = []
-        relation_indexes = [
-            int(relation["provenance"]["relation_index"])
-            for relation in materialized_projection["relations"]
-        ]
+        (
+            relation_views,
+            relation_indexes,
+            all_relation_indexes,
+            deferred_findings,
+        ) = _requirement_findings_model_relations(materialized_projection)
+        if not relation_indexes:
+            return _merge_deferred_requirement_findings(
+                {"findings": []},
+                all_relation_indexes=all_relation_indexes,
+                deferred_findings=deferred_findings,
+            )
         evidence_ids = [item.evidence_id for item in retrieved_pack.items]
         schema = requirement_findings_response_schema(
             relation_indexes=relation_indexes,
@@ -792,108 +800,54 @@ class StructuredModelRequirementCoverageProvider:
             "coverage_schema_version": materialized_projection[
                 "schema_version"
             ],
-            "request_sha256": hashlib.sha256(
-                request.strip().encode("utf-8")
-            ).hexdigest(),
-            "requirements": [
-                {
-                    "requirement_id": requirement["requirement_id"],
-                    "role": requirement["role"],
-                    "text": requirement["text"],
-                    "required_before_patch": requirement[
-                        "required_before_patch"
-                    ],
-                }
-                for requirement in materialized_projection["requirements"]
-            ],
-            "relations": [
-                {
-                    "relation_index": relation["provenance"]["relation_index"],
-                    "relation_id": relation["relation_id"],
-                    "parent_requirement_ids": list(
-                        relation["parent_requirement_ids"]
-                    ),
-                    "meaning": relation["meaning"],
-                }
-                for relation in materialized_projection["relations"]
-            ],
-            "query_execution": list(
-                retrieved_pack.budget_summary.get("per_query_execution", [])
-            ),
+            "relations": relation_views,
             "source_observations": [
                 _source_observation_model_view(item.to_dict())
                 for item in retrieved_pack.items
             ],
             "rules": [
                 (
-                    "Return findings_by_relation with exactly one key for every "
-                    "listed relation_index, using its decimal string form."
+                    "Return findings with exactly one item for every listed "
+                    "relation_index."
                 ),
                 (
-                    "Each keyed value contains only relationship, evidence_ids, "
-                    "edit_target_evidence_ids, and unresolved_gaps; do not repeat "
-                    "relation identity inside it."
+                    "Each item contains only relation_index, relationship, "
+                    "evidence_ids, edit_target_evidence_ids, and unresolved_gaps."
                     if materialized_projection["schema_version"]
                     == REQUIREMENT_COVERAGE_SCHEMA_VERSION
                     else (
-                        "Each keyed value contains only relationship, evidence_ids, "
-                        "and unresolved_gaps; do not repeat relation identity inside it."
+                        "Each item contains only relation_index, relationship, "
+                        "evidence_ids, and unresolved_gaps."
                     )
                 ),
                 (
-                    "Semantic findings are proposals; deterministic code validates "
-                    "every identity and derives coverage sufficiency. Planning owns "
-                    "the final edit-target selection."
+                    "For a change parent, support means cited Evidence proves the "
+                    "current implementation and every known exact physical "
+                    "modification location; it does not mean the requested behavior "
+                    "already exists."
                 ),
                 (
-                    "Return only listed Evidence IDs in edit_target_evidence_ids; "
-                    "this is a Planning hint and does not grant a path, span, "
-                    "Patch, or execution authority."
+                    "Use missing when required current source or API evidence is "
+                    "absent or a modification location is unknown, use conflict for "
+                    "contradictory Evidence, and state only pre-Patch gaps."
+                ),
+                (
+                    "Evidence IDs must come from source_observations. Semantic "
+                    "findings are proposals; deterministic code validates identities "
+                    "and coverage, and Planning owns final target selection."
+                ),
+                (
+                    "edit_target_evidence_ids is only a Planning hint: include the "
+                    "smallest complete subset whose displayed target-source bytes "
+                    "must change, and exclude explanatory API or other support that "
+                    "can remain byte-identical."
                     if materialized_projection["schema_version"]
                     == REQUIREMENT_COVERAGE_SCHEMA_VERSION
                     else "Do not return paths, source refs, sufficiency, edit targets, Patch authority, or execution authority."
                 ),
-                "State unresolved gaps explicitly and do not infer missing current source as support.",
                 (
-                    "For role=change, support means the cited Evidence proves the "
-                    "current implementation and exact modification location; it "
-                    "does not require the requested behavior to exist before the "
-                    "change."
-                ),
-                (
-                    "For role=change, use missing when current source or API "
-                    "evidence is absent or the modification location is unknown, "
-                    "and use conflict when the cited Evidence conflicts."
-                ),
-                (
-                    "For role=change, cited support must cover every known exact "
-                    "physical modification location needed by the change; preserve "
-                    "any missing current-source or edit-authority location in "
-                    "unresolved_gaps."
-                ),
-                *(
-                    [
-                        (
-                            "For role=change, evidence_ids may include explanatory "
-                            "support, but edit_target_evidence_ids must contain only "
-                            "the smallest complete subset whose displayed bytes must "
-                            "change to implement the request."
-                        ),
-                        (
-                            "If cited Evidence can remain byte-identical while the "
-                            "requested behavior is implemented, keep it out of "
-                            "edit_target_evidence_ids."
-                        ),
-                    ]
-                    if materialized_projection["schema_version"]
-                    == REQUIREMENT_COVERAGE_SCHEMA_VERSION
-                    else []
-                ),
-                (
-                    "unresolved_gaps describe only missing evidence, current-source "
-                    "facts, or edit authority required before Patch. Do not list the "
-                    "requested behavior's expected implementation delta as an "
-                    "unresolved gap."
+                    "Do not invent or return identities other than listed "
+                    "relation_index and Evidence IDs."
                 ),
             ],
         }
@@ -910,6 +864,11 @@ class StructuredModelRequirementCoverageProvider:
                 coverage_schema_version=str(
                     materialized_projection["schema_version"]
                 ),
+            )
+            findings = _merge_deferred_requirement_findings(
+                findings,
+                all_relation_indexes=all_relation_indexes,
+                deferred_findings=deferred_findings,
             )
             resolve_requirement_coverage(
                 query=request,
@@ -936,7 +895,7 @@ class StructuredModelRequirementCoverageProvider:
                 "error_code": str(exc),
                 "instruction": (
                     "Return one complete corrected findings object with exactly "
-                    "one findings_by_relation entry per listed relation_index."
+                    "one findings item per listed relation_index."
                 ),
             }
             try:
@@ -950,6 +909,11 @@ class StructuredModelRequirementCoverageProvider:
                     coverage_schema_version=str(
                         materialized_projection["schema_version"]
                     ),
+                )
+                corrected = _merge_deferred_requirement_findings(
+                    corrected,
+                    all_relation_indexes=all_relation_indexes,
+                    deferred_findings=deferred_findings,
                 )
                 resolve_requirement_coverage(
                     query=request,
@@ -1012,23 +976,147 @@ def _materialize_requirement_findings_response(
                 allowed_boundary={"expected_type": "object"},
             )
         )
-    findings_by_relation = value["findings_by_relation"]
-    if not isinstance(findings_by_relation, Mapping):
+    raw_findings = value["findings"]
+    if not isinstance(raw_findings, list):
         raise RequirementFindingsAdmissionError(
             _schema_diagnostic(
                 category="type_mismatch",
-                path="$.findings_by_relation",
+                path="$.findings",
                 keyword="type",
-                allowed_boundary={"expected_type": "object"},
+                allowed_boundary={"expected_type": "array"},
             )
         )
+    observed_indexes = [int(finding["relation_index"]) for finding in raw_findings]
+    if len(observed_indexes) != len(set(observed_indexes)):
+        raise RequirementFindingsAdmissionError(
+            _schema_diagnostic(
+                category="duplicate_relation_index",
+                path="$.findings",
+                keyword="unique_relation_index",
+                allowed_boundary={"relation_indexes": relation_indexes},
+                details={"observed_relation_indexes": observed_indexes},
+            )
+        )
+    if set(observed_indexes) != set(relation_indexes):
+        raise RequirementFindingsAdmissionError(
+            _schema_diagnostic(
+                category="relation_index_coverage_mismatch",
+                path="$.findings",
+                keyword="complete_relation_indexes",
+                allowed_boundary={"relation_indexes": relation_indexes},
+                details={"observed_relation_indexes": observed_indexes},
+            )
+        )
+    finding_by_relation = {
+        int(finding["relation_index"]): finding for finding in raw_findings
+    }
     return {
         "findings": [
+            deepcopy(finding_by_relation[relation_index])
+            for relation_index in relation_indexes
+        ]
+    }
+
+
+def _requirement_findings_model_relations(
+    materialized_projection: Mapping[str, Any],
+) -> tuple[
+    list[dict[str, object]],
+    list[int],
+    list[int],
+    dict[int, dict[str, object]],
+]:
+    requirements = materialized_projection["requirements"]
+    relations = materialized_projection["relations"]
+    requirement_by_id: dict[str, Mapping[str, Any]] = {}
+    for requirement in requirements:
+        requirement_id = requirement["requirement_id"]
+        if (
+            not isinstance(requirement_id, str)
+            or not requirement_id
+            or requirement_id in requirement_by_id
+        ):
+            raise ValueError("REQUIREMENT_COVERAGE_RELATION_INVALID")
+        requirement_by_id[requirement_id] = requirement
+
+    relation_views: list[dict[str, object]] = []
+    relation_indexes: list[int] = []
+    all_relation_indexes: list[int] = []
+    deferred_findings: dict[int, dict[str, object]] = {}
+    for relation in relations:
+        relation_index = relation["provenance"]["relation_index"]
+        parent_ids = relation["parent_requirement_ids"]
+        if (
+            isinstance(relation_index, bool)
+            or not isinstance(relation_index, int)
+            or relation_index in all_relation_indexes
+            or not isinstance(parent_ids, list)
+            or not parent_ids
+            or len(parent_ids) != len(set(parent_ids))
+            or any(parent_id not in requirement_by_id for parent_id in parent_ids)
+        ):
+            raise ValueError("REQUIREMENT_COVERAGE_RELATION_INVALID")
+        parents = [requirement_by_id[str(parent_id)] for parent_id in parent_ids]
+        all_relation_indexes.append(relation_index)
+        if all(
+            parent["required_before_patch"] is False
+            and parent["role"] == "post_change_acceptance"
+            for parent in parents
+        ):
+            deferred_findings[relation_index] = {
+                "relation_index": relation_index,
+                "relationship": "missing",
+                "evidence_ids": [],
+                **(
+                    {"edit_target_evidence_ids": []}
+                    if materialized_projection["schema_version"]
+                    == REQUIREMENT_COVERAGE_SCHEMA_VERSION
+                    else {}
+                ),
+                "unresolved_gaps": [],
+            }
+            continue
+        relation_indexes.append(relation_index)
+        relation_views.append(
             {
                 "relation_index": relation_index,
-                **deepcopy(findings_by_relation[str(relation_index)]),
+                "parent_requirements": [
+                    {
+                        "role": parent["role"],
+                        "text": parent["text"],
+                        "required_before_patch": parent[
+                            "required_before_patch"
+                        ],
+                    }
+                    for parent in parents
+                ],
             }
-            for relation_index in relation_indexes
+        )
+    return (
+        relation_views,
+        relation_indexes,
+        all_relation_indexes,
+        deferred_findings,
+    )
+
+
+def _merge_deferred_requirement_findings(
+    model_findings: Mapping[str, Any],
+    *,
+    all_relation_indexes: list[int],
+    deferred_findings: Mapping[int, Mapping[str, Any]],
+) -> dict[str, object]:
+    active_by_relation = {
+        int(finding["relation_index"]): finding
+        for finding in model_findings["findings"]
+    }
+    return {
+        "findings": [
+            deepcopy(
+                deferred_findings.get(relation_index)
+                or active_by_relation[relation_index]
+            )
+            for relation_index in all_relation_indexes
         ]
     }
 
@@ -1728,6 +1816,10 @@ def requirement_findings_response_schema(
     finding = {
         "type": "object",
         "properties": {
+            "relation_index": {
+                "type": "integer",
+                "enum": relation_indexes,
+            },
             "relationship": {
                 "type": "string",
                 "enum": ["support", "conflict", "missing"],
@@ -1755,6 +1847,7 @@ def requirement_findings_response_schema(
             },
         },
         "required": [
+            "relation_index",
             "relationship",
             "evidence_ids",
             *(
@@ -1767,20 +1860,17 @@ def requirement_findings_response_schema(
         ],
         "additionalProperties": False,
     }
-    relation_keys = [str(value) for value in relation_indexes]
     return {
         "type": "object",
         "properties": {
-            "findings_by_relation": {
-                "type": "object",
-                "properties": {
-                    key: deepcopy(finding) for key in relation_keys
-                },
-                "required": relation_keys,
-                "additionalProperties": False,
+            "findings": {
+                "type": "array",
+                "minItems": len(relation_indexes),
+                "maxItems": len(relation_indexes),
+                "items": finding,
             }
         },
-        "required": ["findings_by_relation"],
+        "required": ["findings"],
         "additionalProperties": False,
     }
 
@@ -1794,10 +1884,6 @@ def _source_observation_model_view(item: Mapping[str, Any]) -> dict[str, object]
             "source_path",
             "symbol",
             "span",
-            "source_hash",
-            "file_hash",
-            "doc_hash",
-            "retrieval_method",
             "claim_supported",
             "excerpt",
         )
