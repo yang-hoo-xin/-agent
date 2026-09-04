@@ -136,7 +136,9 @@ def _fixture(
             for index in range(1, binding_count + 1)
         ],
     }
-    selected_policy = policy or PatchAgentLoopPolicy()
+    selected_policy = policy or PatchAgentLoopPolicy(
+        finalize_after_first_observation=False
+    )
     inspector = PlanBoundSourceInspector(
         workspace_root=workspace,
         implementation_plan=plan,
@@ -164,6 +166,7 @@ def test_policy_has_fixed_turn_limits_and_real_context_default() -> None:
     assert policy.max_total_model_turns == 5
     assert policy.max_observation_bytes == 32_768
     assert policy.context_radius_lines == 64
+    assert policy.finalize_after_first_observation is True
 
 
 def test_source_inspector_returns_ref_first_bounded_context_without_path(
@@ -313,6 +316,31 @@ def test_loop_inspects_one_binding_then_records_final_termination(
     assert second_request.tool_results[0].output["source_ref"] == (
         "binding://edit_binding_001"
     )
+
+
+def test_default_policy_forces_final_after_first_observation(
+    tmp_path: Path,
+) -> None:
+    policy = PatchAgentLoopPolicy()
+    _, _, _, inspector = _fixture(
+        tmp_path,
+        binding_count=2,
+        policy=policy,
+    )
+    client = _ScriptedClient(
+        [
+            _response(turn=1, tool_calls=(_tool_call("edit_binding_001", turn=1),)),
+            _response(turn=2, content='{"changes":[]}'),
+        ]
+    )
+
+    result = _run(client, inspector)
+
+    assert result.status == "completed"
+    assert result.tool_rounds_used == 1
+    assert client.requests[1].tools == ()
+    assert client.requests[1].tool_choice == "none"
+    assert client.requests[1].response_format == _final_format()
 
 
 @pytest.mark.parametrize(

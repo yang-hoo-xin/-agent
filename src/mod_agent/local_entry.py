@@ -700,6 +700,9 @@ class LocalOllamaInitialPatchAdapter:
                         "context_radius_lines": (
                             patch_agent_loop_policy.context_radius_lines
                         ),
+                        "finalize_after_first_observation": (
+                            patch_agent_loop_policy.finalize_after_first_observation
+                        ),
                     },
                 }
                 if patch_agent_loop_policy is not None

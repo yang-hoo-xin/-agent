@@ -43,10 +43,17 @@ class PatchAgentLoopPolicy:
 
     max_observation_bytes: int = 32_768
     context_radius_lines: int = 64
+    finalize_after_first_observation: bool = True
     max_tool_rounds: int = field(default=3, init=False)
     max_total_model_turns: int = field(default=5, init=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.finalize_after_first_observation, bool):
+            raise PatchAgentLoopError(
+                "PATCH_AGENT_POLICY_INVALID",
+                stage="policy",
+                reason="finalize_after_first_observation must be a boolean.",
+            )
         for name in ("max_observation_bytes", "context_radius_lines"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -535,6 +542,10 @@ def run_patch_agent_loop(
         must_finish = (
             force_final
             or tool_rounds_used >= selected_policy.max_tool_rounds
+            or (
+                selected_policy.finalize_after_first_observation
+                and tool_rounds_used >= 1
+            )
             or not remaining_binding_ids
         )
         prior_observations = (
