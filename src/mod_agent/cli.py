@@ -17,7 +17,7 @@ from .actual_execution import (
     execute_sealed_actual_run,
     prepare_sealed_actual_run,
 )
-from .artifacts import ArtifactRef
+from .artifacts import ArtifactRef, ArtifactStore
 from .artifacts.store import ArtifactStorePreflightError
 from .edit_authority_capabilities import (
     parse_current_edit_authority_review_result,
@@ -33,21 +33,30 @@ from .fresh_coverage import (
     run_fresh_requirement_coverage,
 )
 from .fresh_planning_continuation import (
+    PATCH_CONTINUATION_CONTRACT_VERSION,
     PLANNING_CONTINUATION_CONTRACT_VERSION,
+    PatchContinuationError,
+    PatchContinuationInputV1,
     PlanningContinuationError,
     PlanningContinuationInputV1,
+    blocked_patch_continuation_result,
     blocked_planning_continuation_result,
+    run_fresh_patch_continuation,
     run_fresh_planning_continuation,
 )
 from .intelligent_evidence_only import (
     IntelligentEvidenceEntryError,
-    make_fresh_assisted_api_source_augmentation_factory,
     make_fresh_api_source_augmentation_factory,
+    make_fresh_assisted_api_source_augmentation_factory,
     run_intelligent_evidence_only,
 )
 from .local_entry import (
+    LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
     EditAuthorityPresentationError,
     LocalEntryError,
+    LocalOllamaInitialPatchAdapter,
+    LocalOllamaInitialPatchProfileV1,
+    make_exact_no_write_dry_run_factory,
     preflight_local_runtime,
     preflight_stagger_edit_authority_review,
     resume_local_runtime,
@@ -740,6 +749,47 @@ def build_parser(
     planning_continuation_parser.add_argument("--feature-id", required=True)
     planning_continuation_parser.add_argument(
         "--feature-spec-path", required=True
+    )
+
+    patch_continuation_parser = subparsers.add_parser(
+        "continue-fresh-patch",
+        help=(
+            "Consume exact Fresh and ImplementationPlan revisions through one "
+            "local Patch call, deterministic Review, and no-write Dry-run."
+        ),
+    )
+    patch_continuation_parser.add_argument("--artifact-root", required=True)
+    patch_continuation_parser.add_argument("--workspace-root", required=True)
+    patch_continuation_parser.add_argument("--feature-id", required=True)
+    patch_continuation_parser.add_argument("--feature-spec-path", required=True)
+    patch_continuation_parser.add_argument("--feature-spec-hash", required=True)
+    patch_continuation_parser.add_argument("--evidence-pack-path", required=True)
+    patch_continuation_parser.add_argument("--evidence-pack-hash", required=True)
+    patch_continuation_parser.add_argument(
+        "--implementation-plan-path", required=True
+    )
+    patch_continuation_parser.add_argument(
+        "--implementation-plan-hash", required=True
+    )
+    patch_continuation_parser.add_argument(
+        "--ollama-base-url",
+        default="http://127.0.0.1:11434",
+    )
+    patch_continuation_parser.add_argument("--ollama-model", required=True)
+    patch_continuation_parser.add_argument(
+        "--ollama-context-window",
+        type=int,
+        required=True,
+    )
+    patch_continuation_parser.add_argument(
+        "--ollama-output-budget",
+        type=int,
+        default=4096,
+    )
+    patch_continuation_parser.add_argument(
+        "--ollama-timeout-seconds",
+        type=float,
+        required=True,
     )
     planning_continuation_parser.add_argument(
         "--feature-spec-hash", required=True
@@ -1567,6 +1617,89 @@ def main(argv: Sequence[str] | None = None) -> int:
         if (
             result.status == "blocked"
             and result.implementation_plan_artifact is not None
+        ):
+            return 1
+        return 2
+
+    if args.command == "continue-fresh-patch":
+        continuation_started = time.perf_counter()
+        request: PatchContinuationInputV1 | None = None
+        try:
+            request = PatchContinuationInputV1(
+                contract_version=PATCH_CONTINUATION_CONTRACT_VERSION,
+                artifact_store_root=args.artifact_root,
+                workspace_root=args.workspace_root,
+                feature_spec_ref=ArtifactRef(
+                    feature_id=args.feature_id,
+                    artifact_type="feature_spec",
+                    path=args.feature_spec_path,
+                    artifact_hash=args.feature_spec_hash,
+                ),
+                evidence_pack_ref=ArtifactRef(
+                    feature_id=args.feature_id,
+                    artifact_type="evidence_pack",
+                    path=args.evidence_pack_path,
+                    artifact_hash=args.evidence_pack_hash,
+                ),
+                implementation_plan_ref=ArtifactRef(
+                    feature_id=args.feature_id,
+                    artifact_type="implementation_plan",
+                    path=args.implementation_plan_path,
+                    artifact_hash=args.implementation_plan_hash,
+                ),
+            )
+            profile = LocalOllamaInitialPatchProfileV1(
+                profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
+                base_url=args.ollama_base_url,
+                model=args.ollama_model,
+                context_window=args.ollama_context_window,
+                output_budget=args.ollama_output_budget,
+                timeout_seconds=args.ollama_timeout_seconds,
+            )
+            store = ArtifactStore(args.artifact_root)
+            result = run_fresh_patch_continuation(
+                request,
+                patch_change_factory=LocalOllamaInitialPatchAdapter(
+                    profile=profile,
+                    artifact_store=store,
+                ),
+                dry_run_factory=make_exact_no_write_dry_run_factory(
+                    args.workspace_root
+                ),
+            )
+        except (PatchContinuationError, LocalEntryError, OSError, ValueError) as exc:
+            result = blocked_patch_continuation_result(
+                code=str(getattr(exc, "code", type(exc).__name__)),
+                stage=str(getattr(exc, "stage", "request")),
+                reason=str(getattr(exc, "reason", exc)),
+                duration_seconds=time.perf_counter() - continuation_started,
+                feature_id=(
+                    None if request is None else request.feature_spec_ref.feature_id
+                ),
+                feature_spec_ref=(
+                    None if request is None else request.feature_spec_ref
+                ),
+                evidence_pack_ref=(
+                    None if request is None else request.evidence_pack_ref
+                ),
+                implementation_plan_ref=(
+                    None if request is None else request.implementation_plan_ref
+                ),
+            )
+        print(
+            json.dumps(
+                result.to_dict(),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        if result.status == "terminal":
+            return 0
+        if result.patch_proposal_artifact is not None or (
+            result.attempt_receipt is not None
+            and result.attempt_receipt.get("model_call_count") == 1
         ):
             return 1
         return 2

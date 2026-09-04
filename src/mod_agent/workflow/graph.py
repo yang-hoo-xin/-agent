@@ -46,8 +46,12 @@ from src.mod_agent.evidence import (
 )
 from src.mod_agent.execution import ExactDiffApprovalRejectedError
 from src.mod_agent.fresh_planning_continuation import (
+    PatchContinuationError,
+    PatchContinuationInputV1,
     PlanningContinuationArtifactWriteError,
+    PlanningContinuationError,
     PlanningContinuationInputV1,
+    preflight_patch_continuation,
     preflight_planning_continuation,
 )
 from src.mod_agent.git import GitCommandError, GitRepository
@@ -165,6 +169,7 @@ ProposalReviewContextFactory = Callable[
 PatchExecutionFactory = Callable[
     [dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]
 ]
+PatchContinuationAttemptRecorder = Callable[[Mapping[str, Any]], None]
 
 
 class _RuntimeEvidenceExecutionBoundaryError(RuntimeError):
@@ -434,6 +439,55 @@ def _validate_planning_continuation_graph_start(
     return "continue"
 
 
+def _validate_patch_continuation_graph_start(
+    state: ModAgentState,
+    mode: PatchContinuationInputV1,
+    artifact_store: ArtifactStore,
+) -> str:
+    """Reject state, exact-ref, binding, or source drift before Patch."""
+
+    admitted = preflight_patch_continuation(
+        mode,
+        artifact_store=artifact_store,
+    )
+    expected_artifacts = {
+        "feature_spec": mode.feature_spec_ref.path,
+        "evidence_pack": mode.evidence_pack_ref.path,
+        "implementation_plan": mode.implementation_plan_ref.path,
+    }
+    expected_hashes = {
+        "feature_spec": mode.feature_spec_ref.artifact_hash,
+        "evidence_pack": mode.evidence_pack_ref.artifact_hash,
+        "implementation_plan": mode.implementation_plan_ref.artifact_hash,
+    }
+    if (
+        state.get("feature_id") != mode.feature_spec_ref.feature_id
+        or state.get("user_request") != admitted.feature_spec["user_request"]
+        or state.get("target_mod") != admitted.feature_spec["target_mod"]
+        or state.get("risk_level") != admitted.feature_spec["risk_level"]
+        or state.get("current_stage") != "implementation_plan"
+        or state.get("next_stage") != "patch_proposal"
+        or state.get("artifacts") != expected_artifacts
+        or state.get("artifact_hashes") != expected_hashes
+        or state.get("approvals") != {}
+        or state.get("blockers") != []
+    ):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_STATE_DRIFT",
+            "patch_admission",
+            "Patch continuation state changed after exact-ref admission.",
+        )
+    for field in ("run_id", "request_id", "user_request"):
+        value = state.get(field)
+        if type(value) is not str or not value:
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_STATE_IDENTITY_INVALID",
+                "patch_admission",
+                "Patch continuation state identity is incomplete.",
+            )
+    return "continue"
+
+
 def build_graph(
     artifact_store: ArtifactStore,
     *,
@@ -480,6 +534,10 @@ def build_graph(
     verification_operation: VerificationOperationEnvelope | None = None,
     product_execution_mode: ProductExecutionGraphModeV1 | None = None,
     planning_continuation_mode: PlanningContinuationInputV1 | None = None,
+    patch_continuation_mode: PatchContinuationInputV1 | None = None,
+    patch_continuation_attempt_recorder: (
+        PatchContinuationAttemptRecorder | None
+    ) = None,
 ):
     """Build a compiled LangGraph graph with real planning/review routing.
 
@@ -516,6 +574,28 @@ def build_graph(
     ):
         raise ValueError(
             "planning_continuation_mode must be PlanningContinuationInputV1."
+        )
+    validated_patch_continuation_mode = patch_continuation_mode
+    if validated_patch_continuation_mode is not None and not isinstance(
+        validated_patch_continuation_mode,
+        PatchContinuationInputV1,
+    ):
+        raise ValueError(
+            "patch_continuation_mode must be PatchContinuationInputV1."
+        )
+    active_controlled_modes = sum(
+        value is not None
+        for value in (
+            validated_product_execution_mode,
+            validated_verification_operation,
+            validated_planning_continuation_mode,
+            validated_patch_continuation_mode,
+        )
+    )
+    if active_controlled_modes > 1:
+        raise ValueError(
+            "Product, verification, Planning continuation, and Patch "
+            "continuation modes are mutually exclusive."
         )
     if (
         validated_product_execution_mode is not None
@@ -554,6 +634,8 @@ def build_graph(
             approved_feature_spec_revision_projection_hash,
             validated_verification_operation,
             validated_product_execution_mode,
+            validated_patch_continuation_mode,
+            patch_continuation_attempt_recorder,
         )
         incompatible_flags = (
             dense_enabled,
@@ -579,6 +661,71 @@ def build_graph(
                 "Planning continuation cannot receive unrelated workflow, "
                 "model, effect, approval, or stopping controls."
             )
+    if validated_patch_continuation_mode is not None:
+        incompatible_values = (
+            settings,
+            knowledge_database,
+            collection_id,
+            collection_resolver,
+            dense_provider,
+            dense_top_k,
+            domain_adapter_registry,
+            domain_review_policy,
+            build_result_factory,
+            runtime_evidence_factory,
+            proposal_git_binding_factory,
+            evidence_pack_factory,
+            planning_target_selection_factory,
+            proposal_review_context_factory,
+            proposal_critic,
+            isolated_apply_factory,
+            edit_authority_request_ref,
+            repair_planning_authority_request_ref,
+            evaluation_context_factory,
+            checkpointer,
+            feature_spec_revision_projection,
+            approved_feature_spec_revision_payload_hash,
+            approved_feature_spec_revision_projection_hash,
+            validated_verification_operation,
+            validated_product_execution_mode,
+            validated_planning_continuation_mode,
+        )
+        incompatible_flags = (
+            dense_enabled,
+            dense_required,
+            allow_game_launch,
+            use_default_proposal_git_binding,
+            stop_after_evidence,
+            stop_after_build,
+            persist_build_runtime_handoff,
+            bool(build_checkpoint_exact_revision_upstream_types),
+            require_external_evaluation,
+            require_review_approval_for_dry_run,
+            enable_dynamic_review_interrupt,
+            bool(interrupt_before),
+            bool(interrupt_after),
+            critic_requirement != "not_required",
+        )
+        if any(value is not None for value in incompatible_values) or any(
+            incompatible_flags
+        ):
+            raise ValueError(
+                "Patch continuation cannot receive unrelated workflow, "
+                "approval, Apply, Build, Runtime, or repair controls."
+            )
+        if patch_change_factory is None or dry_run_factory is None:
+            raise ValueError(
+                "Patch continuation requires explicit Patch and no-write "
+                "Dry-run adapters."
+            )
+        if patch_continuation_attempt_recorder is None:
+            raise ValueError(
+                "Patch continuation requires a durable attempt recorder."
+            )
+    elif patch_continuation_attempt_recorder is not None:
+        raise ValueError(
+            "Patch continuation attempt recorder requires patch_continuation_mode."
+        )
     if validated_product_execution_mode is not None:
         if (
             stop_after_evidence
@@ -903,6 +1050,10 @@ def build_graph(
                 proposal_git_binding_factory=effective_proposal_git_binding_factory,
                 patch_change_factory=patch_change_factory,
                 source_snippet_char_limit=proposal_source_snippet_char_limit,
+                patch_continuation_mode=validated_patch_continuation_mode,
+                patch_continuation_attempt_recorder=(
+                    patch_continuation_attempt_recorder
+                ),
             ),
         ),
     )
@@ -1133,6 +1284,16 @@ def build_graph(
             ),
             {"continue": "create_implementation_plan"},
         )
+    elif validated_patch_continuation_mode is not None:
+        graph.add_conditional_edges(
+            START,
+            lambda state: _validate_patch_continuation_graph_start(
+                state,
+                validated_patch_continuation_mode,
+                artifact_store,
+            ),
+            {"continue": "generate_patch_proposal"},
+        )
     elif validated_product_execution_mode is not None:
         graph.add_conditional_edges(
             START,
@@ -1194,14 +1355,22 @@ def build_graph(
     graph.add_conditional_edges(
         "generate_patch_proposal",
         route_after_patch_proposal,
-        dict(registry["generate_patch_proposal"]),
+        (
+            {"continue": "review_proposal", "blocked": END}
+            if validated_patch_continuation_mode is not None
+            else dict(registry["generate_patch_proposal"])
+        ),
     )
     graph.add_conditional_edges(
         "review_proposal",
         route_after_review,
-        _review_route_map(
-            registry["review_proposal"],
-            enable_dynamic_review_interrupt=enable_dynamic_review_interrupt,
+        (
+            {"continue": "dry_run_apply", "blocked": END, "repair": END}
+            if validated_patch_continuation_mode is not None
+            else _review_route_map(
+                registry["review_proposal"],
+                enable_dynamic_review_interrupt=enable_dynamic_review_interrupt,
+            )
         ),
     )
     if enable_dynamic_review_interrupt:
@@ -1220,7 +1389,11 @@ def build_graph(
     graph.add_conditional_edges(
         "dry_run_apply",
         route_after_dry_run,
-        dry_run_routes,
+        (
+            {"continue": END, "blocked": END}
+            if validated_patch_continuation_mode is not None
+            else dry_run_routes
+        ),
     )
     if isolated_apply_factory is not None:
         graph.add_conditional_edges(
@@ -1647,6 +1820,230 @@ def _run_create_implementation_plan(
     return next_state
 
 
+def _patch_factory_attempt_receipt(
+    patch_change_factory: PatchChangeFactory,
+) -> dict[str, Any]:
+    reporter = getattr(patch_change_factory, "patch_attempt_receipt", None)
+    if reporter is None:
+        return {}
+    if not callable(reporter):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_FACTORY_RECEIPT_INVALID",
+            "patch_generation",
+            "Patch factory receipt reporter must be callable.",
+        )
+    receipt = reporter()
+    if not isinstance(receipt, Mapping):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_FACTORY_RECEIPT_INVALID",
+            "patch_generation",
+            "Patch factory receipt reporter must return an object.",
+        )
+    return json.loads(
+        json.dumps(
+            dict(receipt),
+            ensure_ascii=False,
+            sort_keys=True,
+            allow_nan=False,
+        )
+    )
+
+
+def _patch_continuation_current_snapshot_sha256(
+    mode: PatchContinuationInputV1,
+) -> str | None:
+    try:
+        root = Path(mode.workspace_root).resolve(strict=True)
+        snapshot = tuple(
+            (
+                path.relative_to(root).as_posix(),
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+            for path in sorted(root.rglob("*.cs"), key=lambda item: item.as_posix())
+            if path.is_file()
+        )
+    except OSError:
+        return None
+    return hashlib.sha256(
+        json.dumps(
+            [{"path": path, "sha256": sha256} for path, sha256 in snapshot],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _run_patch_continuation_factory(
+    state: ModAgentState,
+    artifact_store: ArtifactStore,
+    *,
+    implementation: dict[str, Any],
+    evidence_pack: dict[str, Any],
+    patch_change_factory: PatchChangeFactory,
+    mode: PatchContinuationInputV1,
+    recorder: PatchContinuationAttemptRecorder,
+) -> tuple[dict[str, Any], ...]:
+    admitted_before = preflight_patch_continuation(
+        mode,
+        artifact_store=artifact_store,
+    )
+    admitted_snapshot = hashlib.sha256(
+        json.dumps(
+            [
+                {"path": path, "sha256": sha256}
+                for path, sha256 in admitted_before.source_tree_snapshot
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    generated_against = _patch_continuation_current_snapshot_sha256(mode)
+    if generated_against is None or generated_against != admitted_snapshot:
+        error = PatchContinuationError(
+            "PATCH_CONTINUATION_SOURCE_CHANGED_BEFORE_MODEL",
+            "pre_call_admission",
+            "Product source changed after Patch preflight and before model invocation.",
+        )
+        recorder(
+            {
+                "phase": "pre_call_admission_rejected",
+                "generated_against_snapshot_sha256": generated_against,
+                "current_snapshot_sha256": generated_against,
+                "model_call_count": 0,
+                "failure": {
+                    "code": error.code,
+                    "failure_class": type(error).__name__,
+                    "stage": error.stage,
+                },
+                "proposal_admitted": False,
+            }
+        )
+        raise error
+    recorder(
+        {
+            "phase": "patch_generation_started",
+            "generated_against_snapshot_sha256": generated_against,
+            "proposal_admitted": False,
+        }
+    )
+    try:
+        generated = tuple(
+            patch_change_factory(state, implementation, evidence_pack)
+        )
+    except Exception as exc:
+        factory_receipt = _patch_factory_attempt_receipt(patch_change_factory)
+        recorder(
+            {
+                "phase": "patch_generation_failed",
+                "factory_receipt": factory_receipt,
+                "model_call_count": factory_receipt.get("model_call_count", 0),
+                "failure": {
+                    "code": str(getattr(exc, "code", type(exc).__name__)),
+                    "failure_class": type(exc).__name__,
+                    "stage": "patch_generation",
+                },
+                "proposal_admitted": False,
+            }
+        )
+        raise
+    factory_receipt = _patch_factory_attempt_receipt(patch_change_factory)
+    model_call_count = factory_receipt.get("model_call_count")
+    generated_sha256 = hashlib.sha256(
+        json.dumps(
+            generated,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    recorder(
+        {
+            "phase": "model_output_persisted_before_post_call_admission",
+            "factory_receipt": factory_receipt,
+            "model_call_count": model_call_count,
+            "generated_changes_sha256": generated_sha256,
+            "generated_change_count": len(generated),
+            "generated_against_snapshot_sha256": generated_against,
+            "proposal_admitted": False,
+        }
+    )
+    if type(model_call_count) is not int or model_call_count != 1:
+        error = PatchContinuationError(
+            "PATCH_CONTINUATION_MODEL_CALL_COUNT_INVALID",
+            "post_call_admission",
+            "Patch continuation requires exactly one reported model call.",
+        )
+        recorder(
+            {
+                "phase": "post_call_admission_rejected",
+                "failure": {
+                    "code": error.code,
+                    "failure_class": type(error).__name__,
+                    "stage": error.stage,
+                },
+                "proposal_admitted": False,
+            }
+        )
+        raise error
+    try:
+        admitted_after = preflight_patch_continuation(
+            mode,
+            artifact_store=artifact_store,
+        )
+    except (PatchContinuationError, PlanningContinuationError) as exc:
+        current_snapshot = _patch_continuation_current_snapshot_sha256(mode)
+        recorder(
+            {
+                "phase": "post_call_admission_rejected",
+                "current_snapshot_sha256": current_snapshot,
+                "failure": {
+                    "code": str(getattr(exc, "code", type(exc).__name__)),
+                    "failure_class": type(exc).__name__,
+                    "stage": str(getattr(exc, "stage", "post_call_admission")),
+                },
+                "proposal_admitted": False,
+            }
+        )
+        raise PatchContinuationError(
+            str(getattr(exc, "code", "PATCH_CONTINUATION_POST_CALL_DRIFT")),
+            "post_call_admission",
+            "Exact Artifact, binding, or source admission changed during Patch generation.",
+        ) from exc
+    current_snapshot = _patch_continuation_current_snapshot_sha256(mode)
+    if admitted_after.source_tree_snapshot != admitted_before.source_tree_snapshot:
+        error = PatchContinuationError(
+            "PATCH_CONTINUATION_SOURCE_CHANGED_AFTER_MODEL",
+            "post_call_admission",
+            "Product source changed while Patch generation was running.",
+        )
+        recorder(
+            {
+                "phase": "post_call_admission_rejected",
+                "current_snapshot_sha256": current_snapshot,
+                "failure": {
+                    "code": error.code,
+                    "failure_class": type(error).__name__,
+                    "stage": error.stage,
+                },
+                "proposal_admitted": False,
+            }
+        )
+        raise error
+    recorder(
+        {
+            "phase": "post_call_admission_passed",
+            "current_snapshot_sha256": current_snapshot,
+            "proposal_admitted": False,
+        }
+    )
+    return generated
+
+
 def _run_generate_patch_proposal(
     state: ModAgentState,
     artifact_store: ArtifactStore,
@@ -1654,6 +2051,10 @@ def _run_generate_patch_proposal(
     proposal_git_binding_factory: ProposalGitBindingFactory | None = None,
     patch_change_factory: PatchChangeFactory | None = None,
     source_snippet_char_limit: int = 6000,
+    patch_continuation_mode: PatchContinuationInputV1 | None = None,
+    patch_continuation_attempt_recorder: (
+        PatchContinuationAttemptRecorder | None
+    ) = None,
 ) -> ModAgentState:
     if state["current_stage"] == "repair_plan" and "repair_plan" in state["artifacts"]:
         repair_plan = _read_artifact_data(state, artifact_store, "repair_plan")
@@ -1693,11 +2094,23 @@ def _run_generate_patch_proposal(
         implementation = _read_artifact_data(state, artifact_store, "implementation_plan")
         evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
         if patch_change_factory is not None:
+            generated_changes = (
+                _run_patch_continuation_factory(
+                    state,
+                    artifact_store,
+                    implementation=implementation,
+                    evidence_pack=evidence_pack,
+                    patch_change_factory=patch_change_factory,
+                    mode=patch_continuation_mode,
+                    recorder=patch_continuation_attempt_recorder,
+                )
+                if patch_continuation_mode is not None
+                and patch_continuation_attempt_recorder is not None
+                else patch_change_factory(state, implementation, evidence_pack)
+            )
             implementation = {
                 **implementation,
-                "proposed_changes": list(
-                    patch_change_factory(state, implementation, evidence_pack)
-                ),
+                "proposed_changes": list(generated_changes),
             }
         proposal = PatchProposalBuilder().build(
             implementation,
@@ -1721,7 +2134,38 @@ def _run_generate_patch_proposal(
         payload=proposal.to_artifact_payload(),
         status="blocked" if proposal.blocked else "success",
         upstream_refs=upstream_refs,
+        exact_revision_upstream_types=(
+            {"implementation_plan", "evidence_pack"}
+            if patch_continuation_mode is not None
+            else None
+        ),
     )
+    if (
+        patch_continuation_mode is not None
+        and patch_continuation_attempt_recorder is not None
+    ):
+        patch_continuation_attempt_recorder(
+            {
+                "phase": "patch_proposal_committed",
+                "proposal_admitted": not proposal.blocked,
+                "artifacts": {
+                    "patch_proposal": {
+                        "feature_id": artifact_ref.feature_id,
+                        "artifact_type": artifact_ref.artifact_type,
+                        "path": artifact_ref.path,
+                        "artifact_hash": artifact_ref.artifact_hash,
+                    }
+                },
+                "patch_proposal_upstream_artifacts": [
+                    {
+                        "artifact_type": ref.artifact_type,
+                        "path": ref.path,
+                        "artifact_hash": ref.artifact_hash,
+                    }
+                    for ref in upstream_refs
+                ],
+            }
+        )
     next_state = _copy_state(state)
     next_state["current_stage"] = "patch_proposal"
     _record_artifact(next_state, "patch_proposal", artifact_ref)

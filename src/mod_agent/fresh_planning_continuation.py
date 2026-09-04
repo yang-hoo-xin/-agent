@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
@@ -14,11 +14,13 @@ from uuid import uuid4
 
 from src.mod_agent.artifacts import (
     ArtifactRef,
+    ArtifactRegistryError,
     ArtifactStore,
     ArtifactStoreError,
     ArtifactWriteResult,
     StaleArtifactError,
 )
+from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.evidence import EvidencePack
 from src.mod_agent.evidence.identity import feature_spec_payload_sha256
 from src.mod_agent.fresh_coverage import (
@@ -29,6 +31,10 @@ from src.mod_agent.fresh_coverage import (
 PLANNING_CONTINUATION_CONTRACT_VERSION = "fresh_planning_continuation_v1"
 PLANNING_CONTINUATION_RESULT_TYPE = "planning_continuation_result_v1"
 PLANNING_CONSUMER_STAGE = "create_implementation_plan"
+PATCH_CONTINUATION_CONTRACT_VERSION = "fresh_patch_continuation_v1"
+PATCH_CONTINUATION_RESULT_TYPE = "patch_continuation_result_v1"
+PATCH_CONTINUATION_RECEIPT_VERSION = "patch_continuation_attempt_v1"
+PATCH_CONSUMER_STAGE = "generate_patch_proposal"
 
 
 class PlanningContinuationError(ValueError):
@@ -47,6 +53,16 @@ class PlanningContinuationArtifactWriteError(RuntimeError):
     def __init__(self, write_result: ArtifactWriteResult) -> None:
         super().__init__("Planning continuation Artifact write did not commit.")
         self.write_result = write_result
+
+
+class PatchContinuationError(ValueError):
+    """Reject an invalid exact Plan continuation before unsafe progress."""
+
+    def __init__(self, code: str, stage: str, reason: str) -> None:
+        super().__init__(code)
+        self.code = code
+        self.stage = stage
+        self.reason = reason
 
 
 @dataclass(frozen=True)
@@ -92,6 +108,68 @@ class PlanningContinuationInputV1:
                 "PLANNING_CONTINUATION_FEATURE_MISMATCH",
                 "request",
                 "Fresh FeatureSpec and EvidencePack refs have different feature_id values.",
+            )
+
+
+@dataclass(frozen=True)
+class PatchContinuationInputV1:
+    """Exact immutable Artifact selection for one Patch-to-Dry-run continuation."""
+
+    contract_version: Literal["fresh_patch_continuation_v1"]
+    artifact_store_root: str
+    workspace_root: str
+    feature_spec_ref: ArtifactRef
+    evidence_pack_ref: ArtifactRef
+    implementation_plan_ref: ArtifactRef
+
+    def __post_init__(self) -> None:
+        if self.contract_version != PATCH_CONTINUATION_CONTRACT_VERSION:
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_VERSION_INVALID",
+                "request",
+                "Patch continuation contract version is invalid.",
+            )
+        for value, name in (
+            (self.artifact_store_root, "artifact_store_root"),
+            (self.workspace_root, "workspace_root"),
+        ):
+            if type(value) is not str or not value.strip():
+                raise PatchContinuationError(
+                    "PATCH_CONTINUATION_PATH_INVALID",
+                    "request",
+                    f"Patch continuation {name} must be non-empty text.",
+                )
+        for ref, field_name, artifact_type in (
+            (self.feature_spec_ref, "feature_spec_ref", "feature_spec"),
+            (self.evidence_pack_ref, "evidence_pack_ref", "evidence_pack"),
+            (
+                self.implementation_plan_ref,
+                "implementation_plan_ref",
+                "implementation_plan",
+            ),
+        ):
+            try:
+                _validate_artifact_ref(
+                    ref,
+                    field_name=field_name,
+                    expected_type=artifact_type,
+                )
+            except PlanningContinuationError as exc:
+                raise PatchContinuationError(
+                    "PATCH_CONTINUATION_REF_INVALID",
+                    "request",
+                    exc.reason,
+                ) from exc
+        feature_ids = {
+            self.feature_spec_ref.feature_id,
+            self.evidence_pack_ref.feature_id,
+            self.implementation_plan_ref.feature_id,
+        }
+        if len(feature_ids) != 1:
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_FEATURE_MISMATCH",
+                "request",
+                "Selected FeatureSpec, EvidencePack, and Plan feature_id values differ.",
             )
 
 
@@ -158,12 +236,87 @@ class PlanningContinuationResultV1:
 
 
 @dataclass(frozen=True)
+class PatchContinuationResultV1:
+    """Public result for exact Plan through deterministic no-write Dry-run."""
+
+    status: Literal["terminal", "blocked", "partial"]
+    terminal_stage: str
+    first_failure: dict[str, str] | None
+    run_id: str
+    request_id: str
+    feature_id: str | None
+    feature_spec_artifact: dict[str, str] | None
+    evidence_pack_artifact: dict[str, str] | None
+    implementation_plan_artifact: dict[str, str] | None
+    patch_proposal_artifact: dict[str, str] | None
+    proposal_review_artifact: dict[str, str] | None
+    dry_run_artifact: dict[str, str] | None
+    source_validation: dict[str, Any]
+    execution_counts: dict[str, int]
+    attempt_receipt: dict[str, Any] | None
+    source_modified_during_run: bool | None
+    duration_seconds: float
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "result_type": PATCH_CONTINUATION_RESULT_TYPE,
+            "status": self.status,
+            "command": "continue-fresh-patch",
+            "terminal_stage": self.terminal_stage,
+            "first_failure": (
+                None if self.first_failure is None else dict(self.first_failure)
+            ),
+            "run_id": self.run_id,
+            "request_id": self.request_id,
+            "feature_id": self.feature_id,
+            "feature_spec_artifact": self.feature_spec_artifact,
+            "evidence_pack_artifact": self.evidence_pack_artifact,
+            "implementation_plan_artifact": self.implementation_plan_artifact,
+            "patch_proposal_artifact": self.patch_proposal_artifact,
+            "proposal_review_artifact": self.proposal_review_artifact,
+            "dry_run_artifact": self.dry_run_artifact,
+            "source_validation": dict(self.source_validation),
+            "stopped_before": "exact_diff_approval",
+            "execution_counts": dict(self.execution_counts),
+            "attempt_receipt": (
+                None if self.attempt_receipt is None else dict(self.attempt_receipt)
+            ),
+            "product_source_writes_performed": False,
+            "source_modified_during_run": self.source_modified_during_run,
+            "duration_seconds": self.duration_seconds,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
 class _AdmittedPlanningInputs:
     artifact_store: ArtifactStore
     feature_spec: dict[str, Any]
     evidence_pack: dict[str, Any]
     source_validation: dict[str, Any]
     source_tree_snapshot: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class _AdmittedPatchInputs:
+    artifact_store: ArtifactStore
+    feature_spec: dict[str, Any]
+    evidence_pack: dict[str, Any]
+    implementation_plan: dict[str, Any]
+    source_validation: dict[str, Any]
+    source_tree_snapshot: tuple[tuple[str, str], ...]
+    latest_observations: dict[str, dict[str, Any]]
+
+
+PatchContinuationFactory = Callable[
+    [dict[str, Any], dict[str, Any], dict[str, Any]],
+    tuple[dict[str, Any], ...],
+]
+PatchContinuationDryRunFactory = Callable[
+    [dict[str, Any], dict[str, Any], dict[str, Any]],
+    dict[str, Any],
+]
 
 
 def _validate_artifact_ref(
@@ -762,6 +915,423 @@ def preflight_planning_continuation(
     )
 
 
+def _read_selected_exact_revision(
+    store: ArtifactStore,
+    ref: ArtifactRef,
+    *,
+    consumer_stage: str | None,
+) -> dict[str, Any]:
+    """Read a selected immutable revision without promoting latest to authority."""
+
+    try:
+        revisions = store.list_feature_artifact_revisions(
+            ref.feature_id,
+            ref.artifact_type,
+        )
+        if ref not in revisions:
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_EXACT_REVISION_REQUIRED",
+                "artifact_admission",
+                "Patch continuation requires immutable Artifact revision refs.",
+            )
+        if consumer_stage is not None:
+            store.registry.validate_consumer(ref.artifact_type, consumer_stage)
+        envelope = dict(store.semantic_read_immutable(ref))
+        freshness = store.check_exact_revision_freshness(ref)
+    except PatchContinuationError:
+        raise
+    except (ArtifactRegistryError, ArtifactStoreError, OSError, ValueError) as exc:
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_ARTIFACT_INVALID",
+            "artifact_admission",
+            "Selected exact Artifact revision failed immutable admission.",
+        ) from exc
+    if not freshness.is_fresh:
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_ANCESTRY_STALE",
+            "artifact_admission",
+            "Selected exact Artifact ancestry is missing or content-invalid.",
+        )
+    return envelope
+
+
+def _latest_observation(
+    store: ArtifactStore,
+    selected_ref: ArtifactRef,
+) -> dict[str, Any]:
+    """Observe the latest alias without granting it continuation authority."""
+
+    try:
+        latest_ref = _latest_artifact_ref(
+            store,
+            feature_id=selected_ref.feature_id,
+            artifact_type=selected_ref.artifact_type,
+        )
+    except (ArtifactStoreError, PatchContinuationError, PlanningContinuationError) as exc:
+        return {
+            "status": "unavailable",
+            "selected_is_latest": None,
+            "failure_class": type(exc).__name__,
+        }
+    if latest_ref is None:
+        return {
+            "status": "absent",
+            "selected_is_latest": False,
+            "artifact_hash": None,
+            "path": None,
+        }
+    return {
+        "status": "observed",
+        "selected_is_latest": latest_ref.artifact_hash == selected_ref.artifact_hash,
+        "artifact_hash": latest_ref.artifact_hash,
+        "path": latest_ref.path,
+    }
+
+
+def _validate_exact_upstream_set(
+    envelope: Mapping[str, Any],
+    expected_refs: tuple[ArtifactRef, ...],
+) -> None:
+    upstreams = envelope.get("inputs", {}).get("upstream_artifacts")
+    if not isinstance(upstreams, list) or len(upstreams) != len(expected_refs):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_UPSTREAM_INVALID",
+            "artifact_admission",
+            "Selected Artifact has an unexpected direct upstream set.",
+        )
+    observed: dict[str, Mapping[str, Any]] = {}
+    for upstream in upstreams:
+        if not isinstance(upstream, Mapping):
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_UPSTREAM_INVALID",
+                "artifact_admission",
+                "Selected Artifact direct upstream identity is invalid.",
+            )
+        artifact_type = upstream.get("artifact_type")
+        if type(artifact_type) is not str or artifact_type in observed:
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_UPSTREAM_INVALID",
+                "artifact_admission",
+                "Selected Artifact direct upstream types are invalid.",
+            )
+        observed[artifact_type] = upstream
+    for expected in expected_refs:
+        upstream = observed.get(expected.artifact_type)
+        if upstream is None or (
+            upstream.get("path") != expected.path
+            or upstream.get("artifact_hash") != expected.artifact_hash
+        ):
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_UPSTREAM_MISMATCH",
+                "artifact_admission",
+                "Selected Artifact ancestry does not match the explicit refs.",
+            )
+
+
+def _validate_selected_plan(
+    implementation_plan: Mapping[str, Any],
+    evidence_pack: dict[str, Any],
+    *,
+    feature_id: str,
+) -> None:
+    if (
+        implementation_plan.get("feature_id") != feature_id
+        or implementation_plan.get("blocking") is not False
+    ):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_PLAN_NOT_ADMITTED",
+            "artifact_admission",
+            "Selected ImplementationPlan is blocking or has the wrong feature_id.",
+        )
+    registry = implementation_plan.get("binding_registry")
+    proposed_changes = implementation_plan.get("proposed_changes")
+    if not isinstance(registry, dict) or not isinstance(proposed_changes, list):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_PLAN_PAYLOAD_INVALID",
+            "artifact_admission",
+            "Selected ImplementationPlan has no valid binding/change representation.",
+        )
+    resolver = BindingResolver.from_implementation_plan(
+        dict(implementation_plan),
+        evidence_pack=evidence_pack,
+    )
+    binding_validation = resolver.validate_registry_against_evidence()
+    if not binding_validation.allowed:
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_BINDING_INVALID",
+            "binding_admission",
+            "Selected ImplementationPlan bindings drifted from EvidencePack.",
+        )
+    edit_binding_ids = tuple(resolver.edit_bindings)
+    if not edit_binding_ids or len(edit_binding_ids) != len(set(edit_binding_ids)):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_BINDING_INVALID",
+            "binding_admission",
+            "Selected ImplementationPlan edit bindings are empty or duplicated.",
+        )
+    selected_change_ids: list[str] = []
+    selected_binding_ids: list[str] = []
+    for change in proposed_changes:
+        if not isinstance(change, Mapping):
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_PLAN_CHANGE_INVALID",
+                "binding_admission",
+                "Selected ImplementationPlan change is not an object.",
+            )
+        change_id = change.get("change_id")
+        binding_id = change.get("edit_binding_id")
+        if type(change_id) is not str or not change_id or type(binding_id) is not str:
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_PLAN_CHANGE_INVALID",
+                "binding_admission",
+                "Selected ImplementationPlan change identity is incomplete.",
+            )
+        selected_change_ids.append(change_id)
+        selected_binding_ids.append(binding_id)
+    if (
+        len(selected_change_ids) != len(set(selected_change_ids))
+        or len(selected_binding_ids) != len(set(selected_binding_ids))
+        or set(selected_binding_ids) != set(edit_binding_ids)
+    ):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_PLAN_SELECTION_INVALID",
+            "binding_admission",
+            "The exact Plan selection must cover every and only its edit bindings once.",
+        )
+
+
+def preflight_patch_continuation(
+    request: PatchContinuationInputV1,
+    *,
+    artifact_store: ArtifactStore | None = None,
+) -> _AdmittedPatchInputs:
+    """Admit exact selected refs, ancestry, bindings, and current source bytes."""
+
+    try:
+        artifact_root, workspace_root = _resolve_roots(request)  # type: ignore[arg-type]
+    except PlanningContinuationError as exc:
+        raise PatchContinuationError(
+            exc.code.replace("PLANNING_", "PATCH_", 1),
+            exc.stage,
+            exc.reason,
+        ) from exc
+    if artifact_store is not None and not _same_path(
+        artifact_store.root,
+        artifact_root,
+    ):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_STORE_BINDING_MISMATCH",
+            "artifact_admission",
+            "Graph ArtifactStore does not match the continuation input root.",
+        )
+    store = artifact_store or ArtifactStore(artifact_root)
+    feature_envelope = _read_selected_exact_revision(
+        store,
+        request.feature_spec_ref,
+        consumer_stage=None,
+    )
+    evidence_envelope = _read_selected_exact_revision(
+        store,
+        request.evidence_pack_ref,
+        consumer_stage=PATCH_CONSUMER_STAGE,
+    )
+    plan_envelope = _read_selected_exact_revision(
+        store,
+        request.implementation_plan_ref,
+        consumer_stage=PATCH_CONSUMER_STAGE,
+    )
+    if any(
+        envelope.get("status") != "success"
+        for envelope in (feature_envelope, evidence_envelope, plan_envelope)
+    ):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_ARTIFACT_STATUS_INVALID",
+            "artifact_admission",
+            "Patch continuation requires successful selected Artifacts.",
+        )
+    _validate_exact_upstream_set(evidence_envelope, (request.feature_spec_ref,))
+    _validate_exact_upstream_set(
+        plan_envelope,
+        (request.feature_spec_ref, request.evidence_pack_ref),
+    )
+    try:
+        feature_spec = strict_feature_spec_payload(feature_envelope["data"])
+        evidence_pack = EvidencePack.from_artifact_payload(
+            evidence_envelope["data"]
+        ).to_artifact_payload()
+        implementation_plan = dict(plan_envelope["data"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_PAYLOAD_INVALID",
+            "artifact_admission",
+            "Selected Artifact payload failed strict semantic admission.",
+        ) from exc
+    if (
+        feature_spec["feature_id"] != request.feature_spec_ref.feature_id
+        or evidence_pack["query"] != feature_spec["user_request"]
+    ):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_SEMANTIC_IDENTITY_MISMATCH",
+            "artifact_admission",
+            "Selected FeatureSpec and EvidencePack semantic identities differ.",
+        )
+    _validate_selected_plan(
+        implementation_plan,
+        evidence_pack,
+        feature_id=request.feature_spec_ref.feature_id,
+    )
+    try:
+        source_validation = _validate_source_items(evidence_pack, workspace_root)
+    except PlanningContinuationError as exc:
+        raise PatchContinuationError(
+            exc.code.replace("PLANNING_", "PATCH_", 1),
+            exc.stage,
+            exc.reason,
+        ) from exc
+    selected_refs = (
+        request.feature_spec_ref,
+        request.evidence_pack_ref,
+        request.implementation_plan_ref,
+    )
+    return _AdmittedPatchInputs(
+        artifact_store=store,
+        feature_spec=feature_spec,
+        evidence_pack=evidence_pack,
+        implementation_plan=implementation_plan,
+        source_validation=source_validation,
+        source_tree_snapshot=_csharp_source_snapshot(workspace_root),
+        latest_observations={
+            ref.artifact_type: _latest_observation(store, ref)
+            for ref in selected_refs
+        },
+    )
+
+
+def _source_tree_snapshot_sha256(
+    snapshot: tuple[tuple[str, str], ...],
+) -> str:
+    return _canonical_sha256(
+        [{"path": path, "sha256": sha256} for path, sha256 in snapshot]
+    )
+
+
+class PatchContinuationAttemptJournal:
+    """Atomic non-Artifact receipt for one external Patch attempt and its gates."""
+
+    def __init__(
+        self,
+        *,
+        artifact_root: Path,
+        run_id: str,
+        request_id: str,
+        request: PatchContinuationInputV1,
+        admitted: _AdmittedPatchInputs,
+    ) -> None:
+        self.path = (
+            artifact_root
+            / "continuation_receipts"
+            / run_id
+            / "patch_attempt.json"
+        )
+        self._document: dict[str, Any] = {
+            "receipt_version": PATCH_CONTINUATION_RECEIPT_VERSION,
+            "status": "admitted",
+            "run_id": run_id,
+            "request_id": request_id,
+            "feature_id": request.feature_spec_ref.feature_id,
+            "continuation_selection": "explicit_exact_implementation_plan_ref",
+            "semantic_authority_claimed": False,
+            "selected_artifacts": {
+                "feature_spec": _artifact_ref_dict(request.feature_spec_ref),
+                "evidence_pack": _artifact_ref_dict(request.evidence_pack_ref),
+                "implementation_plan": _artifact_ref_dict(
+                    request.implementation_plan_ref
+                ),
+            },
+            "latest_observations": admitted.latest_observations,
+            "generated_against_snapshot_sha256": _source_tree_snapshot_sha256(
+                admitted.source_tree_snapshot
+            ),
+            "current_snapshot_sha256": _source_tree_snapshot_sha256(
+                admitted.source_tree_snapshot
+            ),
+            "model_call_count": 0,
+            "proposal_admitted": False,
+            "artifacts": {},
+            "events": [],
+        }
+        self._write()
+
+    def record(self, event: Mapping[str, Any]) -> None:
+        phase = event.get("phase")
+        if type(phase) is not str or not phase:
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_RECEIPT_EVENT_INVALID",
+                "patch_attempt_receipt",
+                "Patch attempt receipt event requires a non-empty phase.",
+            )
+        normalized = json.loads(
+            json.dumps(
+                dict(event),
+                ensure_ascii=False,
+                sort_keys=True,
+                allow_nan=False,
+            )
+        )
+        normalized["event_index"] = len(self._document["events"]) + 1
+        self._document["events"].append(normalized)
+        for key, value in normalized.items():
+            if key not in {"phase", "event_index"}:
+                self._document[key] = value
+        self._document["status"] = phase
+        self._write()
+
+    def projection(self) -> dict[str, Any]:
+        payload = self.path.read_bytes()
+        return {
+            "receipt_version": PATCH_CONTINUATION_RECEIPT_VERSION,
+            "path": str(self.path),
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "status": self._document["status"],
+            "event_count": len(self._document["events"]),
+            "model_call_count": self._document.get("model_call_count", 0),
+            "proposal_admitted": self._document.get("proposal_admitted", False),
+            "generated_against_snapshot_sha256": self._document.get(
+                "generated_against_snapshot_sha256"
+            ),
+            "current_snapshot_sha256": self._document.get(
+                "current_snapshot_sha256"
+            ),
+        }
+
+    def _write(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_name(f".{self.path.name}.{uuid4().hex}.tmp")
+        payload = (
+            json.dumps(
+                self._document,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n"
+        )
+        try:
+            temporary.write_text(payload, encoding="utf-8")
+            os.replace(temporary, self.path)
+        except OSError as exc:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_RECEIPT_WRITE_FAILED",
+                "patch_attempt_receipt",
+                "Patch attempt receipt could not be persisted atomically.",
+            ) from exc
+
+
 def blocked_planning_continuation_result(
     *,
     code: str,
@@ -1268,4 +1838,586 @@ def run_fresh_planning_continuation(
         source_modified_during_run=False,
         duration_seconds=time.perf_counter() - started,
         reason=(None if first_failure is None else first_failure["code"]),
+    )
+
+
+def blocked_patch_continuation_result(
+    *,
+    code: str,
+    stage: str,
+    duration_seconds: float,
+    reason: str | None = None,
+    run_id: str | None = None,
+    request_id: str | None = None,
+    feature_id: str | None = None,
+    feature_spec_ref: ArtifactRef | None = None,
+    evidence_pack_ref: ArtifactRef | None = None,
+    implementation_plan_ref: ArtifactRef | None = None,
+    patch_proposal_ref: ArtifactRef | None = None,
+    proposal_review_ref: ArtifactRef | None = None,
+    dry_run_ref: ArtifactRef | None = None,
+    source_validation: Mapping[str, Any] | None = None,
+    execution_counts: Mapping[str, int] | None = None,
+    attempt_receipt: Mapping[str, Any] | None = None,
+    source_modified_during_run: bool | None = None,
+    status: Literal["blocked", "partial"] = "blocked",
+) -> PatchContinuationResultV1:
+    counts = {
+        "fresh_coverage": 0,
+        "model": 0,
+        "planning": 0,
+        "patch": 0,
+        "review": 0,
+        "dry_run": 0,
+        "apply": 0,
+        "build": 0,
+        "runtime": 0,
+    }
+    counts.update(dict(execution_counts or {}))
+    return PatchContinuationResultV1(
+        status=status,
+        terminal_stage=stage,
+        first_failure={"code": code, "stage": stage},
+        run_id=run_id or f"patch_continuation_{uuid4().hex}",
+        request_id=request_id or f"patch_request_{uuid4().hex}",
+        feature_id=feature_id,
+        feature_spec_artifact=(
+            None if feature_spec_ref is None else _artifact_ref_dict(feature_spec_ref)
+        ),
+        evidence_pack_artifact=(
+            None if evidence_pack_ref is None else _artifact_ref_dict(evidence_pack_ref)
+        ),
+        implementation_plan_artifact=(
+            None
+            if implementation_plan_ref is None
+            else _artifact_ref_dict(implementation_plan_ref)
+        ),
+        patch_proposal_artifact=(
+            None if patch_proposal_ref is None else _artifact_ref_dict(patch_proposal_ref)
+        ),
+        proposal_review_artifact=(
+            None if proposal_review_ref is None else _artifact_ref_dict(proposal_review_ref)
+        ),
+        dry_run_artifact=(
+            None if dry_run_ref is None else _artifact_ref_dict(dry_run_ref)
+        ),
+        source_validation=dict(
+            source_validation
+            or {
+                "status": "not_completed",
+                "checked_item_count": 0,
+                "checked_file_count": 0,
+            }
+        ),
+        execution_counts=counts,
+        attempt_receipt=(
+            None if attempt_receipt is None else dict(attempt_receipt)
+        ),
+        source_modified_during_run=source_modified_during_run,
+        duration_seconds=duration_seconds,
+        reason=reason or code,
+    )
+
+
+def _patch_continuation_state(
+    *,
+    run_id: str,
+    request_id: str,
+    request: PatchContinuationInputV1,
+    admitted: _AdmittedPatchInputs,
+):
+    from src.mod_agent.workflow.state import create_initial_state
+
+    state = create_initial_state(
+        run_id=run_id,
+        request_id=request_id,
+        user_request=admitted.feature_spec["user_request"],
+        target_mod=admitted.feature_spec["target_mod"],
+    )
+    state["feature_id"] = request.feature_spec_ref.feature_id
+    state["risk_level"] = admitted.feature_spec["risk_level"]
+    state["current_stage"] = "implementation_plan"
+    state["next_stage"] = "patch_proposal"
+    state["artifacts"] = {
+        "feature_spec": request.feature_spec_ref.path,
+        "evidence_pack": request.evidence_pack_ref.path,
+        "implementation_plan": request.implementation_plan_ref.path,
+    }
+    state["artifact_hashes"] = {
+        "feature_spec": request.feature_spec_ref.artifact_hash,
+        "evidence_pack": request.evidence_pack_ref.artifact_hash,
+        "implementation_plan": request.implementation_plan_ref.artifact_hash,
+    }
+    return state
+
+
+def _bind_patch_attempt_recorder(
+    factory: PatchContinuationFactory,
+    recorder: Callable[[Mapping[str, Any]], None],
+) -> None:
+    binder = getattr(factory, "bind_attempt_recorder", None)
+    if binder is None:
+        return
+    if not callable(binder):
+        raise PatchContinuationError(
+            "PATCH_CONTINUATION_FACTORY_RECORDER_INVALID",
+            "patch_attempt_receipt",
+            "Patch factory recorder binder must be callable.",
+        )
+    binder(recorder)
+
+
+def _ref_from_patch_state(
+    state: Mapping[str, Any],
+    artifact_type: str,
+    *,
+    feature_id: str,
+) -> ArtifactRef | None:
+    artifacts = state.get("artifacts")
+    hashes = state.get("artifact_hashes")
+    if not isinstance(artifacts, Mapping) or not isinstance(hashes, Mapping):
+        return None
+    path = artifacts.get(artifact_type)
+    artifact_hash = hashes.get(artifact_type)
+    if type(path) is not str or not path or not _is_sha256(artifact_hash):
+        return None
+    return ArtifactRef(
+        feature_id=feature_id,
+        artifact_type=artifact_type,
+        path=path,
+        artifact_hash=artifact_hash,
+    )
+
+
+def _node_execution_count(state: Mapping[str, Any], node_name: str) -> int:
+    trace_events = state.get("trace_events")
+    if not isinstance(trace_events, list):
+        return 0
+    return sum(
+        1
+        for event in trace_events
+        if isinstance(event, Mapping)
+        and event.get("node_name") == node_name
+        and event.get("event_type") == "node_started"
+    )
+
+
+def _patch_execution_counts(
+    state: Mapping[str, Any],
+    *,
+    model_call_count: int,
+) -> dict[str, int]:
+    return {
+        "fresh_coverage": 0,
+        "model": model_call_count,
+        "planning": 0,
+        "patch": _node_execution_count(state, "generate_patch_proposal"),
+        "review": _node_execution_count(state, "review_proposal"),
+        "dry_run": _node_execution_count(state, "dry_run_apply"),
+        "apply": 0,
+        "build": 0,
+        "runtime": 0,
+    }
+
+
+def _failed_patch_execution_counts(
+    failed_node: str | None,
+    *,
+    model_call_count: int,
+) -> dict[str, int]:
+    ordered = (
+        "generate_patch_proposal",
+        "review_proposal",
+        "dry_run_apply",
+    )
+    reached = ordered.index(failed_node) + 1 if failed_node in ordered else 0
+    return {
+        "fresh_coverage": 0,
+        "model": model_call_count,
+        "planning": 0,
+        "patch": int(reached >= 1),
+        "review": int(reached >= 2),
+        "dry_run": int(reached >= 3),
+        "apply": 0,
+        "build": 0,
+        "runtime": 0,
+    }
+
+
+def _patch_first_failure(state: Mapping[str, Any]) -> dict[str, str] | None:
+    blockers = state.get("blockers")
+    if not isinstance(blockers, list):
+        return {
+            "code": "PATCH_CONTINUATION_BLOCKERS_INVALID",
+            "stage": str(state.get("current_stage") or "workflow"),
+        }
+    for blocker in blockers:
+        if not isinstance(blocker, Mapping):
+            continue
+        code = blocker.get("code")
+        if type(code) is str and code:
+            return {
+                "code": code,
+                "stage": str(blocker.get("stage") or state.get("current_stage") or "workflow"),
+            }
+    return None
+
+
+def _proposal_source_snippet_char_limit(admitted: _AdmittedPatchInputs) -> int:
+    evidence_by_id = {
+        str(item["evidence_id"]): item
+        for item in admitted.evidence_pack.get("items") or []
+        if isinstance(item, Mapping) and item.get("evidence_id")
+    }
+    return max(
+        1,
+        sum(
+            len(excerpt)
+            for evidence_id in admitted.implementation_plan.get("evidence_refs") or []
+            if isinstance(
+                excerpt := evidence_by_id.get(str(evidence_id), {}).get("excerpt"),
+                str,
+            )
+        ),
+    )
+
+
+def run_fresh_patch_continuation(
+    request: PatchContinuationInputV1,
+    *,
+    patch_change_factory: PatchContinuationFactory,
+    dry_run_factory: PatchContinuationDryRunFactory,
+) -> PatchContinuationResultV1:
+    """Run an exact Plan through Patch, Review, and no-write Dry-run once."""
+
+    started = time.perf_counter()
+    run_id = f"patch_continuation_{uuid4().hex}"
+    request_id = f"patch_request_{uuid4().hex}"
+    feature_id = request.feature_spec_ref.feature_id
+    try:
+        admitted = preflight_patch_continuation(request)
+    except PatchContinuationError as exc:
+        return blocked_patch_continuation_result(
+            code=exc.code,
+            stage=exc.stage,
+            duration_seconds=time.perf_counter() - started,
+            run_id=run_id,
+            request_id=request_id,
+            feature_id=feature_id,
+            feature_spec_ref=request.feature_spec_ref,
+            evidence_pack_ref=request.evidence_pack_ref,
+            implementation_plan_ref=request.implementation_plan_ref,
+        )
+
+    journal = PatchContinuationAttemptJournal(
+        artifact_root=admitted.artifact_store.root,
+        run_id=run_id,
+        request_id=request_id,
+        request=request,
+        admitted=admitted,
+    )
+    try:
+        _bind_patch_attempt_recorder(patch_change_factory, journal.record)
+    except PatchContinuationError as exc:
+        return blocked_patch_continuation_result(
+            code=exc.code,
+            stage=exc.stage,
+            duration_seconds=time.perf_counter() - started,
+            run_id=run_id,
+            request_id=request_id,
+            feature_id=feature_id,
+            feature_spec_ref=request.feature_spec_ref,
+            evidence_pack_ref=request.evidence_pack_ref,
+            implementation_plan_ref=request.implementation_plan_ref,
+            source_validation={"status": "passed_before_patch", "before": admitted.source_validation},
+            attempt_receipt=journal.projection(),
+            source_modified_during_run=False,
+        )
+
+    from src.mod_agent.workflow.graph import build_graph
+
+    state = _patch_continuation_state(
+        run_id=run_id,
+        request_id=request_id,
+        request=request,
+        admitted=admitted,
+    )
+    try:
+        graph = build_graph(
+            admitted.artifact_store,
+            patch_change_factory=patch_change_factory,
+            dry_run_factory=dry_run_factory,
+            use_default_proposal_git_binding=False,
+            proposal_source_snippet_char_limit=_proposal_source_snippet_char_limit(
+                admitted
+            ),
+            patch_continuation_mode=request,
+            patch_continuation_attempt_recorder=journal.record,
+        )
+        graph_result = graph.invoke(state)
+    except Exception as exc:
+        failed_node = getattr(exc, "_mod_agent_graph_node", None)
+        failure_stage = str(
+            getattr(exc, "stage", None) or failed_node or "workflow"
+        )
+        current_snapshot = _source_tree_snapshot_sha256(
+            _csharp_source_snapshot(Path(request.workspace_root).resolve())
+        )
+        failure_code = str(getattr(exc, "code", type(exc).__name__))
+        journal.record(
+            {
+                "phase": "continuation_failed",
+                "current_snapshot_sha256": current_snapshot,
+                "failure": {
+                    "code": failure_code,
+                    "failure_class": type(exc).__name__,
+                    "stage": failure_stage,
+                },
+                "proposal_admitted": False,
+            }
+        )
+        receipt = journal.projection()
+        source_modified = (
+            current_snapshot
+            != _source_tree_snapshot_sha256(admitted.source_tree_snapshot)
+        )
+        counts = _failed_patch_execution_counts(
+            failed_node if isinstance(failed_node, str) else None,
+            model_call_count=int(receipt.get("model_call_count") or 0),
+        )
+        return blocked_patch_continuation_result(
+            code=failure_code,
+            stage=failure_stage,
+            duration_seconds=time.perf_counter() - started,
+            run_id=run_id,
+            request_id=request_id,
+            feature_id=feature_id,
+            feature_spec_ref=request.feature_spec_ref,
+            evidence_pack_ref=request.evidence_pack_ref,
+            implementation_plan_ref=request.implementation_plan_ref,
+            source_validation={
+                "status": "failed_during_continuation",
+                "before": admitted.source_validation,
+                "current_snapshot_sha256": current_snapshot,
+            },
+            execution_counts=counts,
+            attempt_receipt=receipt,
+            source_modified_during_run=source_modified,
+            status="partial" if counts["model"] else "blocked",
+        )
+
+    patch_ref = _ref_from_patch_state(
+        graph_result,
+        "patch_proposal",
+        feature_id=feature_id,
+    )
+    review_ref = _ref_from_patch_state(
+        graph_result,
+        "proposal_review",
+        feature_id=feature_id,
+    )
+    dry_run_ref = _ref_from_patch_state(
+        graph_result,
+        "dry_run_result",
+        feature_id=feature_id,
+    )
+    artifacts = {
+        artifact_type: _artifact_ref_dict(ref)
+        for artifact_type, ref in (
+            ("patch_proposal", patch_ref),
+            ("proposal_review", review_ref),
+            ("dry_run_result", dry_run_ref),
+        )
+        if ref is not None
+    }
+    journal.record(
+        {
+            "phase": "workflow_artifacts_persisted",
+            "artifacts": artifacts,
+            "proposal_admitted": patch_ref is not None and not graph_result.get("blockers"),
+        }
+    )
+    try:
+        after = preflight_patch_continuation(
+            request,
+            artifact_store=admitted.artifact_store,
+        )
+    except PatchContinuationError as exc:
+        current_snapshot = _source_tree_snapshot_sha256(
+            _csharp_source_snapshot(Path(request.workspace_root).resolve())
+        )
+        journal.record(
+            {
+                "phase": "post_workflow_admission_rejected",
+                "current_snapshot_sha256": current_snapshot,
+                "failure": {
+                    "code": exc.code,
+                    "failure_class": type(exc).__name__,
+                    "stage": exc.stage,
+                },
+                "proposal_admitted": False,
+            }
+        )
+        counts = _patch_execution_counts(
+            graph_result,
+            model_call_count=int(journal.projection().get("model_call_count") or 0),
+        )
+        return blocked_patch_continuation_result(
+            code=exc.code,
+            stage=exc.stage,
+            duration_seconds=time.perf_counter() - started,
+            run_id=run_id,
+            request_id=request_id,
+            feature_id=feature_id,
+            feature_spec_ref=request.feature_spec_ref,
+            evidence_pack_ref=request.evidence_pack_ref,
+            implementation_plan_ref=request.implementation_plan_ref,
+            patch_proposal_ref=patch_ref,
+            proposal_review_ref=review_ref,
+            dry_run_ref=dry_run_ref,
+            source_validation={"status": "failed_after_workflow", "before": admitted.source_validation},
+            execution_counts=counts,
+            attempt_receipt=journal.projection(),
+            source_modified_during_run=None,
+            status="partial",
+        )
+    source_modified = after.source_tree_snapshot != admitted.source_tree_snapshot
+    if source_modified:
+        code = "PATCH_CONTINUATION_SOURCE_CHANGED_DURING_WORKFLOW"
+        journal.record(
+            {
+                "phase": "post_workflow_source_rejected",
+                "current_snapshot_sha256": _source_tree_snapshot_sha256(
+                    after.source_tree_snapshot
+                ),
+                "failure": {
+                    "code": code,
+                    "failure_class": "PatchContinuationError",
+                    "stage": "source_validation",
+                },
+                "proposal_admitted": False,
+            }
+        )
+        return blocked_patch_continuation_result(
+            code=code,
+            stage="source_validation",
+            duration_seconds=time.perf_counter() - started,
+            run_id=run_id,
+            request_id=request_id,
+            feature_id=feature_id,
+            feature_spec_ref=request.feature_spec_ref,
+            evidence_pack_ref=request.evidence_pack_ref,
+            implementation_plan_ref=request.implementation_plan_ref,
+            patch_proposal_ref=patch_ref,
+            proposal_review_ref=review_ref,
+            dry_run_ref=dry_run_ref,
+            source_validation={
+                "status": "failed_after_workflow",
+                "before": admitted.source_validation,
+                "after": after.source_validation,
+            },
+            execution_counts=_patch_execution_counts(
+                graph_result,
+                model_call_count=int(journal.projection().get("model_call_count") or 0),
+            ),
+            attempt_receipt=journal.projection(),
+            source_modified_during_run=True,
+            status="partial",
+        )
+
+    first_failure = _patch_first_failure(graph_result)
+    pre_terminal_receipt = journal.projection()
+    counts = _patch_execution_counts(
+        graph_result,
+        model_call_count=int(pre_terminal_receipt.get("model_call_count") or 0),
+    )
+    expected_counts = {
+        "fresh_coverage": 0,
+        "model": 1,
+        "planning": 0,
+        "patch": 1,
+        "review": 1,
+        "dry_run": 1,
+        "apply": 0,
+        "build": 0,
+        "runtime": 0,
+    }
+    complete = (
+        first_failure is None
+        and patch_ref is not None
+        and review_ref is not None
+        and dry_run_ref is not None
+        and graph_result.get("current_stage") == "dry_run_apply"
+        and counts == expected_counts
+    )
+    terminal_phase = (
+        "stopped_before_exact_diff_approval"
+        if complete
+        else "continuation_blocked"
+    )
+    journal.record(
+        {
+            "phase": terminal_phase,
+            "current_snapshot_sha256": _source_tree_snapshot_sha256(
+                after.source_tree_snapshot
+            ),
+            "proposal_admitted": complete,
+            "source_tree_unchanged": True,
+        }
+    )
+    receipt = journal.projection()
+    if not complete:
+        failure = first_failure or {
+            "code": "PATCH_CONTINUATION_INCOMPLETE",
+            "stage": str(graph_result.get("current_stage") or "workflow"),
+        }
+        return blocked_patch_continuation_result(
+            code=failure["code"],
+            stage=failure["stage"],
+            duration_seconds=time.perf_counter() - started,
+            run_id=run_id,
+            request_id=request_id,
+            feature_id=feature_id,
+            feature_spec_ref=request.feature_spec_ref,
+            evidence_pack_ref=request.evidence_pack_ref,
+            implementation_plan_ref=request.implementation_plan_ref,
+            patch_proposal_ref=patch_ref,
+            proposal_review_ref=review_ref,
+            dry_run_ref=dry_run_ref,
+            source_validation={
+                "status": "passed",
+                "before": admitted.source_validation,
+                "after_snapshot_sha256": after.source_validation["snapshot_sha256"],
+                "source_tree_unchanged": True,
+            },
+            execution_counts=counts,
+            attempt_receipt=receipt,
+            source_modified_during_run=False,
+            status="partial" if counts["model"] else "blocked",
+        )
+    return PatchContinuationResultV1(
+        status="terminal",
+        terminal_stage="dry_run_apply",
+        first_failure=None,
+        run_id=run_id,
+        request_id=request_id,
+        feature_id=feature_id,
+        feature_spec_artifact=_artifact_ref_dict(request.feature_spec_ref),
+        evidence_pack_artifact=_artifact_ref_dict(request.evidence_pack_ref),
+        implementation_plan_artifact=_artifact_ref_dict(
+            request.implementation_plan_ref
+        ),
+        patch_proposal_artifact=_artifact_ref_dict(patch_ref),
+        proposal_review_artifact=_artifact_ref_dict(review_ref),
+        dry_run_artifact=_artifact_ref_dict(dry_run_ref),
+        source_validation={
+            "status": "passed",
+            "before": admitted.source_validation,
+            "after_snapshot_sha256": after.source_validation["snapshot_sha256"],
+            "source_tree_unchanged": True,
+        },
+        execution_counts=counts,
+        attempt_receipt=receipt,
+        source_modified_during_run=False,
+        duration_seconds=time.perf_counter() - started,
     )

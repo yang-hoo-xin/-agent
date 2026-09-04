@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from src.libs.llm import ChatResponse
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.cli import main
 from src.mod_agent.evidence import (
@@ -16,10 +17,19 @@ from src.mod_agent.evidence import (
     materialize_requirement_coverage_projection,
 )
 from src.mod_agent.fresh_planning_continuation import (
+    PATCH_CONTINUATION_CONTRACT_VERSION,
     PLANNING_CONTINUATION_CONTRACT_VERSION,
+    PatchContinuationInputV1,
     PlanningContinuationError,
     PlanningContinuationInputV1,
+    run_fresh_patch_continuation,
     run_fresh_planning_continuation,
+)
+from src.mod_agent.local_entry import (
+    LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
+    LocalOllamaInitialPatchAdapter,
+    LocalOllamaInitialPatchProfileV1,
+    make_exact_no_write_dry_run_factory,
 )
 from src.mod_agent.planning import FeatureSpec, ImplementationPlan, ImplementationPlanner
 from src.mod_agent.workflow import build_graph, create_initial_state
@@ -287,6 +297,109 @@ def _source_hashes(workspace: Path) -> dict[str, str]:
     }
 
 
+def _patch_request(inputs: _Inputs) -> PatchContinuationInputV1:
+    planning = run_fresh_planning_continuation(inputs.request)
+    assert planning.status == "terminal"
+    assert planning.implementation_plan_artifact is not None
+    return PatchContinuationInputV1(
+        contract_version=PATCH_CONTINUATION_CONTRACT_VERSION,
+        artifact_store_root=inputs.request.artifact_store_root,
+        workspace_root=inputs.request.workspace_root,
+        feature_spec_ref=inputs.feature_ref,
+        evidence_pack_ref=inputs.evidence_ref,
+        implementation_plan_ref=ArtifactRef(
+            **planning.implementation_plan_artifact
+        ),
+    )
+
+
+class _NativePatchLLM:
+    def __init__(self, *, after_response=None) -> None:
+        self.calls = 0
+        self.after_response = after_response
+
+    def chat(self, messages, trace=None, **kwargs):
+        del trace
+        self.calls += 1
+        kwargs["provider_request_recorder"](
+            {
+                "method": "POST",
+                "destination": "http://127.0.0.1:11434/api/chat",
+                "body_sha256": "1" * 64,
+                "body_size_bytes": 1024,
+                "timeout_seconds": 30.0,
+                "trust_environment": False,
+                "follow_redirects": False,
+                "context_admission": {"admitted": True},
+                "model": "qwen3:4b-instruct",
+                "output_budget": 1024,
+                "context_window": 8192,
+                "temperature": 0.0,
+                "messages_sha256": "2" * 64,
+                "response_format_sha256": "3" * 64,
+            }
+        )
+        prompt = json.loads(messages[1].content)
+        required = prompt["required_change_units"]
+        contexts = prompt["edit_binding_contexts"]
+        changes = []
+        for item in required:
+            binding_id = item["edit_binding_id"]
+            source_excerpt = contexts[binding_id]["source_excerpt"]
+            changes.append(
+                {
+                    "change_id": item["change_id"],
+                    "edit_binding_id": binding_id,
+                    "rationale": prompt["target_behavior"],
+                    "rollback_hint": "Restore the selected source span.",
+                    "after_text": source_excerpt.replace(
+                        "KeepExistingFeedback();",
+                        "KeepExistingFeedback();\n        RecordRuntimeMarker();",
+                    ),
+                }
+            )
+        if self.after_response is not None:
+            self.after_response()
+        return ChatResponse(
+            content=json.dumps({"changes": changes}),
+            model="qwen3:4b-instruct",
+            usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
+            raw_response={"done": True, "done_reason": "stop"},
+        )
+
+
+def _local_patch_adapter(
+    inputs: _Inputs,
+    *,
+    after_response=None,
+) -> tuple[LocalOllamaInitialPatchAdapter, _NativePatchLLM]:
+    identity = {
+        "name": "qwen3:4b-instruct",
+        "model": "qwen3:4b-instruct",
+        "digest": "a" * 64,
+        "modified_at": "2026-09-04T00:00:00Z",
+        "size": 1,
+        "details": {"context_length": 8192},
+        "capabilities": ["completion"],
+        "base_url": "http://127.0.0.1:11434",
+    }
+    llm = _NativePatchLLM(after_response=after_response)
+    adapter = LocalOllamaInitialPatchAdapter(
+        profile=LocalOllamaInitialPatchProfileV1(
+            profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
+            base_url="http://127.0.0.1:11434",
+            model="qwen3:4b-instruct",
+            context_window=8192,
+            output_budget=1024,
+            timeout_seconds=30.0,
+        ),
+        artifact_store=inputs.store,
+        identity_reader=lambda _base_url, _model: deepcopy(identity),
+        llm_factory=lambda _profile: llm,
+    )
+    return adapter, llm
+
+
 def _write_evidence_revision(
     inputs: _Inputs,
     *,
@@ -344,6 +457,38 @@ def _cli_args(inputs: _Inputs) -> list[str]:
     for evidence_id in inputs.request.planning_target_evidence_ids:
         args.extend(["--planning-target-evidence-id", evidence_id])
     return args
+
+
+def _patch_cli_args(request: PatchContinuationInputV1) -> list[str]:
+    return [
+        "continue-fresh-patch",
+        "--artifact-root",
+        request.artifact_store_root,
+        "--workspace-root",
+        request.workspace_root,
+        "--feature-id",
+        request.feature_spec_ref.feature_id,
+        "--feature-spec-path",
+        request.feature_spec_ref.path,
+        "--feature-spec-hash",
+        request.feature_spec_ref.artifact_hash,
+        "--evidence-pack-path",
+        request.evidence_pack_ref.path,
+        "--evidence-pack-hash",
+        request.evidence_pack_ref.artifact_hash,
+        "--implementation-plan-path",
+        request.implementation_plan_ref.path,
+        "--implementation-plan-hash",
+        request.implementation_plan_ref.artifact_hash,
+        "--ollama-model",
+        "qwen3:4b-instruct",
+        "--ollama-context-window",
+        "8192",
+        "--ollama-output-budget",
+        "1024",
+        "--ollama-timeout-seconds",
+        "30",
+    ]
 
 
 def test_exact_fresh_refs_run_existing_planning_once_and_stop(
@@ -790,6 +935,308 @@ def test_planning_continuation_graph_has_only_planning_reachable(
     assert {(edge.source, edge.target, edge.conditional) for edge in graph.edges} == {
         ("__start__", "create_implementation_plan", True),
         ("create_implementation_plan", "__end__", True),
+    }
+
+
+def test_exact_plan_runs_one_local_patch_review_and_no_write_dry_run(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, llm = _local_patch_adapter(inputs)
+    source_before = _source_hashes(inputs.workspace)
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+    public = result.to_dict()
+
+    assert result.status == "terminal"
+    assert result.terminal_stage == "dry_run_apply"
+    assert result.first_failure is None
+    assert llm.calls == 1
+    assert public["execution_counts"] == {
+        "fresh_coverage": 0,
+        "model": 1,
+        "planning": 0,
+        "patch": 1,
+        "review": 1,
+        "dry_run": 1,
+        "apply": 0,
+        "build": 0,
+        "runtime": 0,
+    }
+    assert public["stopped_before"] == "exact_diff_approval"
+    assert public["product_source_writes_performed"] is False
+    assert public["source_modified_during_run"] is False
+    assert _source_hashes(inputs.workspace) == source_before
+    patch_ref = ArtifactRef(**public["patch_proposal_artifact"])
+    patch = inputs.store.read(patch_ref)
+    assert [
+        item["artifact_type"]
+        for item in patch["inputs"]["upstream_artifacts"]
+    ] == ["implementation_plan", "evidence_pack"]
+    assert all(
+        item["require_latest"] is False
+        for item in patch["inputs"]["upstream_artifacts"]
+    )
+    assert patch["inputs"]["upstream_artifacts"][0]["artifact_hash"] == (
+        request.implementation_plan_ref.artifact_hash
+    )
+    assert patch["inputs"]["upstream_artifacts"][1]["artifact_hash"] == (
+        request.evidence_pack_ref.artifact_hash
+    )
+    review = inputs.store.read(ArtifactRef(**public["proposal_review_artifact"]))
+    assert review["data"]["allowed_next_stage"] == "dry_run_apply"
+    dry_run = inputs.store.read(ArtifactRef(**public["dry_run_artifact"]))
+    assert dry_run["data"]["execution_mode"] == "dry_run"
+    assert dry_run["data"]["actual_write_performed"] is False
+    receipt_ref = public["attempt_receipt"]
+    receipt_path = Path(receipt_ref["path"])
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt_ref["model_call_count"] == 1
+    assert receipt["factory_receipt"]["model_response"]["output_sha256"]
+    assert receipt["proposal_admitted"] is True
+    assert receipt["generated_against_snapshot_sha256"] == receipt[
+        "current_snapshot_sha256"
+    ]
+
+
+def test_continue_fresh_patch_cli_runs_exact_no_write_vertical(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, llm = _local_patch_adapter(inputs)
+    monkeypatch.setattr(
+        "src.mod_agent.cli.LocalOllamaInitialPatchAdapter",
+        lambda **_kwargs: adapter,
+    )
+
+    exit_code = main(_patch_cli_args(request))
+
+    captured = capsys.readouterr()
+    public = json.loads(captured.out)
+    assert exit_code == 0
+    assert captured.err == ""
+    assert public["result_type"] == "patch_continuation_result_v1"
+    assert public["status"] == "terminal"
+    assert public["stopped_before"] == "exact_diff_approval"
+    assert public["execution_counts"]["model"] == 1
+    assert public["execution_counts"]["planning"] == 0
+    assert public["execution_counts"]["patch"] == 1
+    assert public["execution_counts"]["review"] == 1
+    assert public["execution_counts"]["dry_run"] == 1
+    assert llm.calls == 1
+
+
+def test_exact_selected_plan_remains_admitted_when_not_latest(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    selected_plan = inputs.store.read(request.implementation_plan_ref)
+    newer_payload = deepcopy(selected_plan["data"])
+    newer_payload["message"] = "A later Plan alias that is not selected."
+    newer_plan_ref = inputs.store.write(
+        feature_id=request.implementation_plan_ref.feature_id,
+        artifact_type="implementation_plan",
+        payload=newer_payload,
+        status="success",
+        upstream_refs=[inputs.feature_ref, inputs.evidence_ref],
+    )
+    assert newer_plan_ref.artifact_hash != request.implementation_plan_ref.artifact_hash
+    adapter, _ = _local_patch_adapter(inputs)
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+
+    assert result.status == "terminal"
+    receipt = json.loads(
+        Path(result.attempt_receipt["path"]).read_text(encoding="utf-8")
+    )
+    assert receipt["latest_observations"]["implementation_plan"][
+        "selected_is_latest"
+    ] is False
+    proposal = inputs.store.read(ArtifactRef(**result.patch_proposal_artifact))
+    plan_upstream = next(
+        item
+        for item in proposal["inputs"]["upstream_artifacts"]
+        if item["artifact_type"] == "implementation_plan"
+    )
+    assert plan_upstream["artifact_hash"] == request.implementation_plan_ref.artifact_hash
+    assert plan_upstream["require_latest"] is False
+
+
+def test_source_drift_after_model_keeps_receipt_and_writes_no_proposal(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, llm = _local_patch_adapter(
+        inputs,
+        after_response=lambda: inputs.behavior.write_text(
+            "changed concurrently after model response\n",
+            encoding="utf-8",
+        ),
+    )
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+
+    assert result.status == "partial"
+    assert llm.calls == 1
+    assert result.first_failure == {
+        "code": "PATCH_CONTINUATION_SOURCE_HASH_MISMATCH",
+        "stage": "post_call_admission",
+    }
+    assert result.patch_proposal_artifact is None
+    assert result.proposal_review_artifact is None
+    assert result.dry_run_artifact is None
+    assert result.execution_counts["model"] == 1
+    assert result.execution_counts["patch"] == 1
+    receipt = json.loads(
+        Path(result.attempt_receipt["path"]).read_text(encoding="utf-8")
+    )
+    phases = [event["phase"] for event in receipt["events"]]
+    assert phases.index("model_output_persisted_before_post_call_admission") < phases.index(
+        "post_call_admission_rejected"
+    )
+    assert receipt["factory_receipt"]["model_response"]["output_sha256"]
+    assert receipt["proposal_admitted"] is False
+    assert receipt["generated_against_snapshot_sha256"] != receipt[
+        "current_snapshot_sha256"
+    ]
+
+
+def test_exact_plan_ref_drift_after_model_keeps_receipt_and_no_downstream_artifact(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, llm = _local_patch_adapter(
+        inputs,
+        after_response=lambda: Path(request.implementation_plan_ref.path).write_text(
+            "{}\n",
+            encoding="utf-8",
+        ),
+    )
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+
+    assert result.status == "partial"
+    assert result.first_failure == {
+        "code": "PATCH_CONTINUATION_ARTIFACT_INVALID",
+        "stage": "post_call_admission",
+    }
+    assert llm.calls == 1
+    assert result.patch_proposal_artifact is None
+    assert result.proposal_review_artifact is None
+    assert result.dry_run_artifact is None
+    receipt = json.loads(
+        Path(result.attempt_receipt["path"]).read_text(encoding="utf-8")
+    )
+    phases = [event["phase"] for event in receipt["events"]]
+    assert phases.index("model_output_persisted_before_post_call_admission") < phases.index(
+        "post_call_admission_rejected"
+    )
+    assert receipt["factory_receipt"]["model_response"]["output_sha256"]
+    assert receipt["proposal_admitted"] is False
+
+
+def test_pre_call_snapshot_race_blocks_with_zero_model_calls(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, llm = _local_patch_adapter(inputs)
+    monkeypatch.setattr(
+        "src.mod_agent.workflow.graph._patch_continuation_current_snapshot_sha256",
+        lambda _mode: "f" * 64,
+    )
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+
+    assert result.status == "blocked"
+    assert result.first_failure == {
+        "code": "PATCH_CONTINUATION_SOURCE_CHANGED_BEFORE_MODEL",
+        "stage": "pre_call_admission",
+    }
+    assert result.execution_counts["model"] == 0
+    assert llm.calls == 0
+    assert result.patch_proposal_artifact is None
+
+
+def test_patch_continuation_rejects_non_exact_model_call_receipt(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, llm = _local_patch_adapter(inputs)
+    monkeypatch.setattr(
+        adapter,
+        "patch_attempt_receipt",
+        lambda: {"model_call_count": 2, "model_response": {"output_sha256": "a" * 64}},
+    )
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+
+    assert result.status == "partial"
+    assert result.first_failure == {
+        "code": "PATCH_CONTINUATION_MODEL_CALL_COUNT_INVALID",
+        "stage": "post_call_admission",
+    }
+    assert llm.calls == 1
+    assert result.patch_proposal_artifact is None
+
+
+def test_patch_continuation_graph_has_only_patch_review_dry_run_reachable(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, _ = _local_patch_adapter(inputs)
+    graph = build_graph(
+        inputs.store,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+        use_default_proposal_git_binding=False,
+        proposal_source_snippet_char_limit=10_000,
+        patch_continuation_mode=request,
+        patch_continuation_attempt_recorder=lambda _event: None,
+    ).get_graph()
+
+    assert {(edge.source, edge.target, edge.conditional) for edge in graph.edges} == {
+        ("__start__", "generate_patch_proposal", True),
+        ("generate_patch_proposal", "review_proposal", True),
+        ("generate_patch_proposal", "__end__", True),
+        ("review_proposal", "dry_run_apply", True),
+        ("review_proposal", "__end__", True),
+        ("dry_run_apply", "__end__", True),
     }
 
 

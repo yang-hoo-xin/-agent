@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
@@ -389,6 +390,418 @@ _INITIAL_PATCH_GENERATION_CALL_BUDGET = 2
 _REPAIR_PATCH_GENERATION_CALL_BUDGET = 2
 OllamaModelIdentityReader = Callable[[str, str], dict[str, Any]]
 OllamaServerVersionReader = Callable[[str], str]
+LOCAL_OLLAMA_PATCH_PROFILE_VERSION = "local_ollama_initial_patch_profile_v1"
+
+
+@dataclass(frozen=True)
+class LocalOllamaInitialPatchProfileV1:
+    """One explicit loopback-only model profile for exact initial Patch."""
+
+    profile_version: Literal["local_ollama_initial_patch_profile_v1"]
+    base_url: str
+    model: str
+    context_window: int
+    output_budget: int
+    timeout_seconds: float
+
+    def __post_init__(self) -> None:
+        if self.profile_version != LOCAL_OLLAMA_PATCH_PROFILE_VERSION:
+            raise LocalEntryError("LOCAL_PATCH_PROFILE_VERSION_INVALID")
+        try:
+            normalized = validate_loopback_http_base_url(self.base_url)
+        except ValueError as exc:
+            raise LocalEntryError("LOCAL_PATCH_BASE_URL_INVALID") from exc
+        if normalized != self.base_url:
+            raise LocalEntryError("LOCAL_PATCH_BASE_URL_NOT_NORMALIZED")
+        if not isinstance(self.model, str) or not self.model.strip():
+            raise LocalEntryError("LOCAL_PATCH_MODEL_INVALID")
+        for value, field_name in (
+            (self.context_window, "CONTEXT_WINDOW"),
+            (self.output_budget, "OUTPUT_BUDGET"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise LocalEntryError(f"LOCAL_PATCH_{field_name}_INVALID")
+        if self.context_window <= self.output_budget:
+            raise LocalEntryError("LOCAL_PATCH_CONTEXT_WINDOW_NOT_GREATER_THAN_OUTPUT")
+        if (
+            isinstance(self.timeout_seconds, bool)
+            or not isinstance(self.timeout_seconds, (int, float))
+            or not math.isfinite(float(self.timeout_seconds))
+            or self.timeout_seconds <= 0
+        ):
+            raise LocalEntryError("LOCAL_PATCH_TIMEOUT_INVALID")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile_version": self.profile_version,
+            "provider": "ollama",
+            "execution_locality": "local",
+            "base_url": self.base_url,
+            "model": self.model,
+            "context_window": self.context_window,
+            "output_budget": self.output_budget,
+            "timeout_seconds": float(self.timeout_seconds),
+            "temperature": 0.0,
+            "native_json_schema": True,
+            "automatic_retry": False,
+            "automatic_provider_fallback": False,
+        }
+
+
+class _PatchResponseCapturingLLM:
+    def __init__(
+        self,
+        delegate: Any,
+        response_recorder: Callable[[ChatResponse], None],
+    ) -> None:
+        self._delegate = delegate
+        self._response_recorder = response_recorder
+
+    def chat(self, messages: list[Message], trace: Any | None = None, **kwargs: Any):
+        response = self._delegate.chat(messages, trace=trace, **kwargs)
+        self._response_recorder(response)
+        return response
+
+
+class LocalOllamaInitialPatchAdapter:
+    """Generate one native-schema Patch response with a queryable call receipt."""
+
+    def __init__(
+        self,
+        *,
+        profile: LocalOllamaInitialPatchProfileV1,
+        artifact_store: ArtifactStore,
+        identity_reader: OllamaModelIdentityReader | None = None,
+        llm_factory: Callable[[LocalOllamaInitialPatchProfileV1], Any] | None = None,
+    ) -> None:
+        self.profile = profile
+        self.artifact_store = artifact_store
+        self.identity_reader = identity_reader or _read_ollama_model_identity
+        self.llm_factory = llm_factory or self._default_llm
+        self._attempt_recorder: Callable[[Mapping[str, Any]], None] | None = None
+        self._invocation_count = 0
+        self._receipt: dict[str, Any] = {
+            "adapter": "LocalOllamaInitialPatchAdapter",
+            "profile": profile.to_dict(),
+            "status": "not_started",
+            "model_call_count": 0,
+            "provider_request": None,
+            "model_response": None,
+            "failure": None,
+        }
+
+    def bind_attempt_recorder(
+        self,
+        recorder: Callable[[Mapping[str, Any]], None],
+    ) -> None:
+        if self._invocation_count != 0 or self._attempt_recorder is not None:
+            raise LocalEntryError("LOCAL_PATCH_ATTEMPT_RECORDER_ALREADY_BOUND")
+        if not callable(recorder):
+            raise LocalEntryError("LOCAL_PATCH_ATTEMPT_RECORDER_INVALID")
+        self._attempt_recorder = recorder
+
+    def patch_attempt_receipt(self) -> dict[str, Any]:
+        return json.loads(
+            json.dumps(
+                self._receipt,
+                ensure_ascii=False,
+                sort_keys=True,
+                allow_nan=False,
+            )
+        )
+
+    def __call__(
+        self,
+        state: dict[str, Any],
+        implementation: dict[str, Any],
+        evidence_pack: dict[str, Any],
+    ) -> tuple[dict[str, Any], ...]:
+        if self._attempt_recorder is None:
+            raise LocalEntryError("LOCAL_PATCH_ATTEMPT_RECORDER_NOT_BOUND")
+        if self._invocation_count != 0:
+            raise LocalEntryError("LOCAL_PATCH_MODEL_CALL_ALREADY_CONSUMED")
+        self._invocation_count = 1
+        started = time.perf_counter()
+        try:
+            identity = self.identity_reader(self.profile.base_url, self.profile.model)
+            _validate_ollama_model_identity(
+                identity,
+                expected_base_url=self.profile.base_url,
+                expected_model=self.profile.model,
+            )
+            model_context_limit = _validate_ollama_context_window(
+                identity,
+                requested_context_window=self.profile.context_window,
+            )
+            feature_spec = self._read_feature_spec(state)
+            planned_changes = [
+                dict(item)
+                for item in implementation.get("proposed_changes") or []
+                if isinstance(item, dict)
+            ]
+            obligations = _patch_generation_obligation_projection(
+                feature_spec=feature_spec,
+                implementation=implementation,
+                planned_changes=planned_changes,
+            )
+            model_input = {
+                "request": state["user_request"],
+                "evidence": _external_evidence_items(
+                    [
+                        dict(item)
+                        for item in evidence_pack.get("items") or []
+                        if isinstance(item, dict)
+                    ]
+                ),
+                "binding_registry": dict(
+                    implementation.get("binding_registry") or {}
+                ),
+                "required_change_units": obligations["required_change_units"],
+                "side_effect_boundaries": obligations["side_effect_boundaries"],
+                "target_behavior": obligations["target_behavior"],
+                "acceptance_criteria": obligations["acceptance_criteria"],
+                "runtime_verification_plan": obligations[
+                    "runtime_verification_plan"
+                ],
+            }
+            _assert_no_absolute_local_paths(model_input)
+            self._receipt.update(
+                {
+                    "status": "ready_for_provider_invocation",
+                    "model_identity": dict(identity),
+                    "model_context_limit": model_context_limit,
+                    "model_input_sha256": _sha256_json(model_input),
+                    "required_change_count": len(
+                        obligations["required_change_units"]
+                    ),
+                }
+            )
+            self._emit("local_patch_model_admitted")
+            llm = _PatchResponseCapturingLLM(
+                self.llm_factory(self.profile),
+                self._record_response,
+            )
+            generator = LLMExactPatchGenerator(llm)
+
+            def post_response_admission(response: ChatResponse) -> None:
+                if response.model != self.profile.model:
+                    raise LocalEntryError("OLLAMA_RESPONSE_MODEL_IDENTITY_MISMATCH")
+                observed = self.identity_reader(
+                    self.profile.base_url,
+                    self.profile.model,
+                )
+                _validate_ollama_model_identity(
+                    observed,
+                    expected_base_url=self.profile.base_url,
+                    expected_model=self.profile.model,
+                )
+                _assert_ollama_model_identity_stable(
+                    expected=identity,
+                    observed=observed,
+                )
+                _validate_ollama_context_window(
+                    observed,
+                    requested_context_window=self.profile.context_window,
+                )
+                self._receipt["post_response_model_identity"] = dict(observed)
+                self._emit("local_patch_post_response_model_admitted")
+
+            generated = generator.generate(
+                user_request=str(model_input["request"]),
+                evidence_items=list(model_input["evidence"]),
+                binding_registry=dict(model_input["binding_registry"]),
+                constraints=list(model_input["side_effect_boundaries"]),
+                target_behavior=str(model_input["target_behavior"]),
+                acceptance_criteria=list(model_input["acceptance_criteria"]),
+                runtime_verification_plan=list(
+                    model_input["runtime_verification_plan"]
+                ),
+                required_change_units=list(model_input["required_change_units"]),
+                required_validation_by_binding={
+                    str(item["edit_binding_id"]): list(
+                        item["expected_validation"]
+                    )
+                    for item in model_input["required_change_units"]
+                },
+                require_native_schema=True,
+                provider_request_recorder=self._record_provider_request,
+                post_response_admission=post_response_admission,
+            )
+            overlaid = _overlay_generated_patch_changes_on_plan(
+                planned_changes=planned_changes,
+                generated_changes=generated.changes,
+            )
+            changes = tuple(
+                {
+                    **change,
+                    "generation": {
+                        "provider": "ollama",
+                        "model": generated.model,
+                        "model_digest": identity["digest"],
+                        "usage": generated.usage,
+                        "profile_version": self.profile.profile_version,
+                    },
+                }
+                for change in overlaid
+            )
+            self._receipt.update(
+                {
+                    "status": "completed",
+                    "duration_seconds": time.perf_counter() - started,
+                    "generated_changes_sha256": _sha256_json(changes),
+                    "generated_change_count": len(changes),
+                }
+            )
+            self._emit("local_patch_generation_completed")
+            return changes
+        except Exception as exc:
+            self._receipt.update(
+                {
+                    "status": "failed",
+                    "duration_seconds": time.perf_counter() - started,
+                    "failure": _local_patch_failure_receipt(exc),
+                }
+            )
+            self._emit("local_patch_generation_failed")
+            raise
+
+    def _read_feature_spec(self, state: Mapping[str, Any]) -> dict[str, Any]:
+        artifacts = state.get("artifacts")
+        hashes = state.get("artifact_hashes")
+        feature_id = state.get("feature_id")
+        if not isinstance(artifacts, Mapping) or not isinstance(hashes, Mapping):
+            raise LocalEntryError("LOCAL_PATCH_FEATURE_SPEC_REF_MISSING")
+        path = artifacts.get("feature_spec")
+        artifact_hash = hashes.get("feature_spec")
+        if not all(isinstance(value, str) and value for value in (feature_id, path, artifact_hash)):
+            raise LocalEntryError("LOCAL_PATCH_FEATURE_SPEC_REF_MISSING")
+        return self.artifact_store.read(
+            ArtifactRef(
+                feature_id=str(feature_id),
+                artifact_type="feature_spec",
+                path=str(path),
+                artifact_hash=str(artifact_hash),
+            )
+        )["data"]
+
+    def _record_provider_request(self, provider_request: dict[str, Any]) -> None:
+        if self._receipt["model_call_count"] != 0:
+            raise LocalEntryError("LOCAL_PATCH_MODEL_CALL_COUNT_EXCEEDED")
+        self._receipt["model_call_count"] = 1
+        self._receipt["status"] = "provider_invocation_recorded"
+        self._receipt["provider_request"] = {
+            key: provider_request.get(key)
+            for key in (
+                "method",
+                "destination",
+                "body_sha256",
+                "body_size_bytes",
+                "timeout_seconds",
+                "trust_environment",
+                "follow_redirects",
+                "context_admission",
+                "model",
+                "output_budget",
+                "context_window",
+                "temperature",
+                "messages_sha256",
+                "response_format_sha256",
+            )
+        }
+        self._emit("local_patch_provider_invocation_recorded")
+
+    def _record_response(self, response: ChatResponse) -> None:
+        content_bytes = response.content.encode("utf-8")
+        raw = response.raw_response if isinstance(response.raw_response, Mapping) else {}
+        self._receipt["model_response"] = {
+            "model": response.model,
+            "output_sha256": hashlib.sha256(content_bytes).hexdigest(),
+            "output_utf8_bytes": len(content_bytes),
+            "usage": response.usage,
+            "done": raw.get("done"),
+            "done_reason": raw.get("done_reason"),
+        }
+        self._receipt["status"] = "model_response_persisted"
+        self._emit("local_patch_model_response_persisted")
+
+    def _emit(self, phase: str) -> None:
+        if self._attempt_recorder is None:
+            raise LocalEntryError("LOCAL_PATCH_ATTEMPT_RECORDER_NOT_BOUND")
+        self._attempt_recorder(
+            {
+                "phase": phase,
+                "factory_receipt": self.patch_attempt_receipt(),
+                "model_call_count": self._receipt["model_call_count"],
+            }
+        )
+
+    @staticmethod
+    def _default_llm(profile: LocalOllamaInitialPatchProfileV1) -> OllamaLLM:
+        settings = SimpleNamespace(
+            llm=SimpleNamespace(
+                model=profile.model,
+                temperature=0.0,
+                max_tokens=profile.output_budget,
+            )
+        )
+        return OllamaLLM(
+            settings,
+            base_url=profile.base_url,
+            timeout=float(profile.timeout_seconds),
+            context_window=profile.context_window,
+        )
+
+
+def _local_patch_failure_receipt(exc: BaseException) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {}
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        current_diagnostics = getattr(current, "diagnostics", None)
+        if isinstance(current_diagnostics, Mapping):
+            diagnostics.update(dict(current_diagnostics))
+        current = current.__cause__ or current.__context__
+    message_content = diagnostics.pop("message_content", None)
+    if isinstance(message_content, str):
+        encoded = message_content.encode("utf-8")
+        diagnostics["model_output"] = {
+            "present": True,
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+            "utf8_bytes": len(encoded),
+        }
+    return {
+        "failure_class": type(exc).__name__,
+        "failure_code": str(getattr(exc, "code", type(exc).__name__)),
+        "message": str(exc),
+        "diagnostics": diagnostics,
+    }
+
+
+def make_exact_no_write_dry_run_factory(
+    workspace_root: str | Path,
+) -> Callable[[dict[str, Any], dict[str, Any], dict[str, Any]], dict[str, Any]]:
+    """Bind the existing exact-text applier to one no-write workspace."""
+
+    root = Path(workspace_root).resolve(strict=True)
+    if not root.is_dir():
+        raise LocalEntryError("LOCAL_PATCH_WORKSPACE_ROOT_INVALID")
+    applier = ExactTextPatchApplier()
+
+    def dry_run(
+        proposal: dict[str, Any],
+        implementation: dict[str, Any],
+        review: dict[str, Any],
+    ) -> dict[str, Any]:
+        return applier.run(
+            workspace_root=root,
+            proposal=proposal,
+            implementation_plan=implementation,
+            review=review,
+            allow_write=False,
+        )
+
+    return dry_run
 
 
 _LOCAL_PATCH_FROZEN_RESUME_IDENTITY_FIELDS = frozenset(
