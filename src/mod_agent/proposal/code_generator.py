@@ -2167,6 +2167,14 @@ def _materialize_native_change(
             change_id=change_id,
             binding_id=binding_id,
         )
+    _validate_csharp_header_preservation(
+        before=before,
+        after=after,
+        binding_context=binding_contexts.get(binding_id) or {},
+        index=index,
+        change_id=change_id,
+        binding_id=binding_id,
+    )
     if after == before:
         raise _native_validation_error(
             f"Change {index} after_text must be a real replacement.",
@@ -2227,6 +2235,47 @@ def _materialize_native_change(
             "expected_occurrences": 1,
         },
     }
+
+
+def _validate_csharp_header_preservation(
+    *,
+    before: str,
+    after: str,
+    binding_context: Mapping[str, Any],
+    index: int,
+    change_id: str,
+    binding_id: str,
+) -> None:
+    path = str(binding_context.get("canonical_target_path") or "")
+    span = binding_context.get("target_span")
+    if (
+        not path.lower().endswith(".cs")
+        or not isinstance(span, Mapping)
+        or span.get("start_line") != 1
+    ):
+        return
+    before_usings = {
+        line.strip().lstrip("\ufeff")
+        for line in before.splitlines()
+        if line.strip().lstrip("\ufeff").startswith("using ")
+        and line.strip().endswith(";")
+    }
+    after_usings = {
+        line.strip().lstrip("\ufeff")
+        for line in after.splitlines()
+        if line.strip().lstrip("\ufeff").startswith("using ")
+        and line.strip().endswith(";")
+    }
+    if before_usings and not after_usings:
+        raise _native_validation_error(
+            f"Change {index} removes every existing C# using directive from "
+            "a file-header replacement.",
+            failure_classification="csharp_file_header_usings_removed",
+            change_index=index,
+            change_id=change_id,
+            binding_id=binding_id,
+            removed_using_count=len(before_usings),
+        )
 
 
 def _validate_change(

@@ -535,6 +535,33 @@ def test_native_materializer_restores_plan_owned_utf8_bom() -> None:
     assert first_change["patch"]["after_text"].startswith("\ufeff")
 
 
+def test_native_materializer_rejects_complete_csharp_using_loss() -> None:
+    fixture = json.loads(json.dumps(_large_projection_fixture()))
+    binding = fixture["binding_registry"]["edit_bindings"][0]
+    evidence = next(
+        item
+        for item in fixture["evidence_items"]
+        if item["evidence_id"] == binding["evidence_id"]
+    )
+    binding["target_span"] = {"start_line": 1, "end_line": 130}
+    evidence["span"] = {"start_line": 1, "end_line": 130}
+    evidence["excerpt"] = "using System;\n" + evidence["excerpt"]
+    response = next(
+        item
+        for item in fixture["response"]["changes"]
+        if item["edit_binding_id"] == binding["binding_id"]
+    )
+    response["after_text"] = "namespace Generic;\n" + response["after_text"]
+
+    with pytest.raises(PatchGenerationError) as caught:
+        _generate_projection_fixture(fixture)
+
+    assert caught.value.diagnostics["failure_classification"] == (
+        "csharp_file_header_usings_removed"
+    )
+    assert caught.value.diagnostics["removed_using_count"] == 1
+
+
 def _frozen_resume_identity() -> dict[str, object]:
     return {
         "run_id": "run_001",
