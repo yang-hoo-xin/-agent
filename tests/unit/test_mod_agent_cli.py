@@ -1943,7 +1943,6 @@ def test_cli_run_request_real_public_product_executor_compile_success(
                 after = before + "\n// PRODUCT_TEST_CHANGE " + marker_text
             changes.append(
                 {
-                    "change_id": unit["change_id"],
                     "edit_binding_id": binding_id,
                     "rationale": "Deterministic evidence-bound CLI integration change.",
                     "rollback_hint": "Restore the exact prior source text.",
@@ -2222,7 +2221,6 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
                 after = before + "\n// PRODUCT_RUNTIME_TEST_CHANGE " + marker_text
             changes.append(
                 {
-                    "change_id": unit["change_id"],
                     "edit_binding_id": binding_id,
                     "rationale": "Deterministic evidence-bound Runtime CLI change.",
                     "rollback_hint": "Restore the exact prior source text.",

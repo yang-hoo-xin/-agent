@@ -10,6 +10,7 @@ import pytest
 from src.libs.llm import BaseLLM, ChatResponse, Message, OllamaLLM
 from src.libs.llm.ollama_llm import build_ollama_context_admission
 from src.mod_agent.proposal import LLMExactPatchGenerator, PatchGenerationError
+from src.mod_agent.proposal.code_generator import _legacy_pair_patch_response_schema
 
 
 class _FakeLLM(BaseLLM):
@@ -347,7 +348,6 @@ def _large_projection_fixture() -> dict[str, object]:
         ]
         response_changes.append(
             {
-                "change_id": f"change_{index:03d}",
                 "edit_binding_id": binding_id,
                 "rationale": "Apply the bounded behavior change.",
                 "rollback_hint": "Restore the exact prior source text.",
@@ -521,6 +521,74 @@ def _prepare_frozen_fixture(
     return generator
 
 
+def _rehash_frozen_attempt(attempt: dict[str, object]) -> None:
+    identity = {
+        "resume_identity": attempt["resume_identity"],
+        "provider_request": attempt["provider_request"],
+        "materialization_context": attempt["materialization_context"],
+    }
+    attempt["frozen_identity_sha256"] = hashlib.sha256(
+        json.dumps(
+            identity,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _replace_frozen_response_schemas(
+    attempt: dict[str, object],
+    *,
+    body_schema: dict[str, object],
+    prompt_schema: dict[str, object],
+) -> None:
+    provider_request = attempt["provider_request"]
+    body = json.loads(provider_request["body_utf8"])
+    prompt = json.loads(body["messages"][1]["content"])
+    prompt["required_output_schema"] = prompt_schema
+    body["messages"][1]["content"] = json.dumps(
+        prompt,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    body["format"] = body_schema
+    body_utf8 = json.dumps(
+        body,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    body_bytes = body_utf8.encode("utf-8")
+    provider_request["body_utf8"] = body_utf8
+    provider_request["body_sha256"] = hashlib.sha256(body_bytes).hexdigest()
+    provider_request["body_size_bytes"] = len(body_bytes)
+    _rehash_frozen_attempt(attempt)
+
+
+def _legacy_frozen_attempt(
+    fixture: dict[str, object],
+    llm: _FrozenTestLLM,
+) -> tuple[LLMExactPatchGenerator, dict[str, object]]:
+    store: dict[str, object] = {}
+    generator = _prepare_frozen_fixture(fixture, llm, store)
+    attempt = json.loads(json.dumps(store["value"]))
+    allowed_bindings = {
+        item["binding_id"]
+        for item in fixture["binding_registry"]["edit_bindings"]
+    }
+    legacy_schema = _legacy_pair_patch_response_schema(
+        allowed_bindings,
+        required_change_count=len(fixture["required_change_units"]),
+    )
+    _replace_frozen_response_schemas(
+        attempt,
+        body_schema=legacy_schema,
+        prompt_schema=legacy_schema,
+    )
+    return generator, attempt
+
+
 def test_native_freeze_uses_existing_prompt_schema_and_pauses_without_generation() -> None:
     fixture = _large_projection_fixture()
     immediate_llm, _ = _generate_projection_fixture(fixture)
@@ -586,6 +654,83 @@ def test_native_frozen_resume_materializes_then_rejects_duplicate_without_call()
         "frozen_patch_attempt_not_resumable"
     )
     assert frozen_llm.resume_count == 1
+
+
+def test_legacy_frozen_pair_schema_preserves_hash_and_uses_legacy_materializer() -> None:
+    fixture = _large_projection_fixture()
+    change_id_by_binding = {
+        item["edit_binding_id"]: item["change_id"]
+        for item in fixture["required_change_units"]
+    }
+    legacy_response = {
+        "changes": [
+            {
+                "change_id": change_id_by_binding[item["edit_binding_id"]],
+                **item,
+            }
+            for item in fixture["response"]["changes"]
+        ]
+    }
+    frozen_llm = _FrozenTestLLM(
+        ChatResponse(content=json.dumps(legacy_response), model="fake-codegen")
+    )
+    generator, attempt = _legacy_frozen_attempt(fixture, frozen_llm)
+    immutable_before = json.dumps(attempt, ensure_ascii=False, sort_keys=True)
+    frozen_hash = attempt["frozen_identity_sha256"]
+
+    generator.validate_frozen_native(
+        attempt,
+        current_resume_identity=_frozen_resume_identity(),
+    )
+
+    assert json.dumps(attempt, ensure_ascii=False, sort_keys=True) == immutable_before
+    assert attempt["frozen_identity_sha256"] == frozen_hash
+    store = {"value": attempt}
+    generated = generator.resume_frozen_native(
+        frozen_attempt_loader=lambda: store["value"],
+        frozen_attempt_recorder=lambda value: store.update(value=value),
+        current_resume_identity=_frozen_resume_identity(),
+    )
+    assert [item["change_id"] for item in generated.changes] == [
+        item["change_id"] for item in fixture["required_change_units"]
+    ]
+    assert frozen_llm.resume_count == 1
+
+
+@pytest.mark.parametrize("schema_case", ["mismatch", "unknown"])
+def test_frozen_native_response_schema_mismatch_or_unknown_fails_before_resume(
+    schema_case: str,
+) -> None:
+    fixture = _large_projection_fixture()
+    frozen_llm = _FrozenTestLLM(
+        ChatResponse(content=json.dumps(fixture["response"]), model="fake-codegen")
+    )
+    store: dict[str, object] = {}
+    generator = _prepare_frozen_fixture(fixture, frozen_llm, store)
+    attempt = json.loads(json.dumps(store["value"]))
+    body = json.loads(attempt["provider_request"]["body_utf8"])
+    prompt = json.loads(body["messages"][1]["content"])
+    current_schema = prompt["required_output_schema"]
+    unknown_schema = {"type": "object", "required": ["unknown"]}
+    _replace_frozen_response_schemas(
+        attempt,
+        body_schema=(unknown_schema if schema_case == "unknown" else current_schema),
+        prompt_schema=(unknown_schema if schema_case == "unknown" else unknown_schema),
+    )
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        generator.resume_frozen_native(
+            frozen_attempt_loader=lambda: attempt,
+            frozen_attempt_recorder=lambda _value: None,
+            current_resume_identity=_frozen_resume_identity(),
+        )
+
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "frozen_patch_response_schema_unknown"
+        if schema_case == "unknown"
+        else "frozen_patch_response_schema_mismatch"
+    )
+    assert frozen_llm.resume_count == 0
 
 
 @pytest.mark.parametrize(
@@ -742,14 +887,13 @@ def _non_native_plan_response_changes(
         item["binding_id"]: item
         for item in fixture["binding_registry"]["edit_bindings"]
     }
-    native_by_identity = {
-        (item["change_id"], item["edit_binding_id"]): item
+    native_by_binding = {
+        item["edit_binding_id"]: item
         for item in fixture["response"]["changes"]
     }
     changes: list[dict[str, object]] = []
     for required in fixture["required_change_units"]:
-        identity = (required["change_id"], required["edit_binding_id"])
-        native = native_by_identity[identity]
+        native = native_by_binding[required["edit_binding_id"]]
         binding = binding_by_id[required["edit_binding_id"]]
         evidence = evidence_by_id[binding["evidence_id"]]
         changes.append(
@@ -2037,7 +2181,6 @@ def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
     payload = {
         "changes": [
             {
-                "change_id": "change_001",
                 "edit_binding_id": "edit_binding_001",
                 "rationale": "bounded",
                 "rollback_hint": "restore",
@@ -2102,7 +2245,6 @@ def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
         "items"
     ]
     assert item_schema["required"] == [
-        "change_id",
         "edit_binding_id",
         "rationale",
         "rollback_hint",
@@ -2120,6 +2262,7 @@ def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
     assert generated.changes[0]["patch"]["before_text"] == "old"
     assert generated.changes[0]["patch"]["kind"] == "exact_text_replace"
     assert generated.changes[0]["patch"]["expected_occurrences"] == 1
+    assert generated.changes[0]["change_id"] == "change_001"
     assert generated.changes[0]["expected_validation"] == [
         "compile or static validation"
     ]
@@ -2129,7 +2272,8 @@ def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
     ("failure_case", "expected_classification"),
     [
         ("unknown_binding", "native_change_binding_unknown"),
-        ("unknown_change", "native_change_identity_unknown"),
+        ("missing_binding", "native_response_fields_invalid"),
+        ("unexpected_change_id", "native_response_fields_invalid"),
         ("missing_change", "plan_change_coverage_incomplete"),
         ("duplicate_change", "plan_change_coverage_incomplete"),
         ("empty_after_text", "native_after_text_invalid"),
@@ -2146,7 +2290,9 @@ def test_native_materialization_fails_closed_for_invalid_model_semantics(
     changes = fixture["response"]["changes"]
     if failure_case == "unknown_binding":
         changes[0]["edit_binding_id"] = "edit_binding_unknown"
-    elif failure_case == "unknown_change":
+    elif failure_case == "missing_binding":
+        changes[0].pop("edit_binding_id")
+    elif failure_case == "unexpected_change_id":
         changes[0]["change_id"] = "change_unknown"
     elif failure_case == "missing_change":
         changes.pop()
@@ -2383,14 +2529,12 @@ def test_normalized_nested_region_requires_two_patch_replacements() -> None:
     response = {
         "changes": [
             {
-                "change_id": "chg_001",
                 "edit_binding_id": "edit_binding_001",
                 "rationale": "bounded configuration change",
                 "rollback_hint": "restore configuration",
                 "after_text": "ReloadConfigurationAndSpreadSetting();",
             },
             {
-                "change_id": "chg_002",
                 "edit_binding_id": "edit_binding_002",
                 "rationale": "bounded spread change",
                 "rollback_hint": "restore spread method",
@@ -2497,6 +2641,33 @@ def test_native_change_semantic_obligations_fail_closed_before_provider_call(
     assert llm.messages == []
     assert exc_info.value.diagnostics["failure_classification"] == (
         expected_classification
+    )
+
+
+def test_native_plan_duplicate_edit_binding_fails_before_provider_call() -> None:
+    fixture = json.loads(json.dumps(_large_projection_fixture()))
+    fixture["required_change_units"][1]["edit_binding_id"] = (
+        fixture["required_change_units"][0]["edit_binding_id"]
+    )
+    llm = _RecordingLLM(json.dumps(fixture["response"]))
+
+    with pytest.raises(PatchGenerationError) as exc_info:
+        LLMExactPatchGenerator(llm).generate(
+            user_request=str(fixture["user_request"]),
+            evidence_items=list(fixture["evidence_items"]),
+            binding_registry=dict(fixture["binding_registry"]),
+            constraints=list(fixture["constraints"]),
+            required_change_units=list(fixture["required_change_units"]),
+            required_validation_by_binding=dict(
+                fixture["required_validation_by_binding"]
+            ),
+            require_native_schema=True,
+            provider_request_recorder=lambda _: None,
+        )
+
+    assert llm.messages == []
+    assert exc_info.value.diagnostics["failure_classification"] == (
+        "required_change_unit_binding_duplicate"
     )
 
 

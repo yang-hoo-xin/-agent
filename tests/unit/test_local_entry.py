@@ -3870,7 +3870,6 @@ def _prepare_local_resume_order_fixture(
                 {
                     "changes": [
                         {
-                            "change_id": "change_001",
                             "edit_binding_id": "edit_binding_001",
                             "rationale": "Apply the bounded change.",
                             "rollback_hint": "Restore the prior source.",
@@ -4109,7 +4108,6 @@ def test_concurrent_local_frozen_resume_has_one_filesystem_consumer_and_one_post
                 {
                     "changes": [
                         {
-                            "change_id": "change_001",
                             "edit_binding_id": "edit_binding_001",
                             "rationale": "Apply the bounded change.",
                             "rollback_hint": "Restore the prior source.",

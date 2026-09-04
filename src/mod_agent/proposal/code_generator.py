@@ -180,6 +180,7 @@ class LLMExactPatchGenerator:
             generated = _materialize_frozen_native_response(
                 response,
                 context=attempt["materialization_context"],
+                provider_request=attempt["provider_request"],
             )
         except Exception as exc:
             diagnostics = getattr(exc, "diagnostics", None)
@@ -619,6 +620,97 @@ def _native_materialization_context_from_frozen(
     }
 
 
+def _frozen_native_response_contract(
+    provider_request: Mapping[str, Any],
+) -> str:
+    """Identify the hash-bound response schema without changing v1 bytes."""
+
+    body_utf8 = provider_request.get("body_utf8")
+    if not isinstance(body_utf8, str):
+        raise _native_validation_error(
+            "Frozen Patch provider body is missing.",
+            failure_classification="frozen_patch_response_schema_invalid",
+        )
+    try:
+        body = json.loads(body_utf8)
+    except json.JSONDecodeError as exc:
+        raise _native_validation_error(
+            "Frozen Patch provider body is invalid JSON.",
+            failure_classification="frozen_patch_response_schema_invalid",
+        ) from exc
+    messages = body.get("messages") if isinstance(body, dict) else None
+    body_schema = body.get("format") if isinstance(body, dict) else None
+    if not isinstance(messages, list) or len(messages) != 2:
+        raise _native_validation_error(
+            "Frozen Patch provider messages are invalid.",
+            failure_classification="frozen_patch_response_schema_invalid",
+        )
+    user_message = messages[1]
+    if not isinstance(user_message, dict) or user_message.get("role") != "user":
+        raise _native_validation_error(
+            "Frozen Patch user message is invalid.",
+            failure_classification="frozen_patch_response_schema_invalid",
+        )
+    content = user_message.get("content")
+    if not isinstance(content, str):
+        raise _native_validation_error(
+            "Frozen Patch user message content is invalid.",
+            failure_classification="frozen_patch_response_schema_invalid",
+        )
+    try:
+        prompt_payload = json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise _native_validation_error(
+            "Frozen Patch prompt payload is invalid JSON.",
+            failure_classification="frozen_patch_response_schema_invalid",
+        ) from exc
+    prompt_schema = (
+        prompt_payload.get("required_output_schema")
+        if isinstance(prompt_payload, dict)
+        else None
+    )
+    if not isinstance(body_schema, dict) or not isinstance(prompt_schema, dict):
+        raise _native_validation_error(
+            "Frozen Patch native response schema is missing.",
+            failure_classification="frozen_patch_response_schema_invalid",
+        )
+    if body_schema != prompt_schema:
+        raise _native_validation_error(
+            "Frozen Patch provider and prompt response schemas disagree.",
+            failure_classification="frozen_patch_response_schema_mismatch",
+        )
+    allowed_bindings = prompt_payload.get("allowed_edit_binding_ids")
+    required_changes = prompt_payload.get("required_change_units")
+    if (
+        not isinstance(allowed_bindings, list)
+        or not allowed_bindings
+        or len(set(allowed_bindings)) != len(allowed_bindings)
+        or not all(isinstance(item, str) and item for item in allowed_bindings)
+        or not isinstance(required_changes, list)
+        or not required_changes
+    ):
+        raise _native_validation_error(
+            "Frozen Patch response schema inputs are invalid.",
+            failure_classification="frozen_patch_response_schema_invalid",
+        )
+    allowed = set(allowed_bindings)
+    required_count = len(required_changes)
+    if body_schema == _legacy_pair_patch_response_schema(
+        allowed,
+        required_change_count=required_count,
+    ):
+        return "legacy_pair"
+    if body_schema == _patch_response_schema(
+        allowed,
+        required_change_count=required_count,
+    ):
+        return "binding_only"
+    raise _native_validation_error(
+        "Frozen Patch native response schema is not recognized.",
+        failure_classification="frozen_patch_response_schema_unknown",
+    )
+
+
 def _validate_frozen_native_attempt(
     raw_attempt: Mapping[str, Any],
     *,
@@ -752,6 +844,7 @@ def _validate_frozen_materialization_context(
                 ),
             },
         )
+    _frozen_native_response_contract(attempt["provider_request"])
 
 
 def _record_frozen_terminal(
@@ -813,6 +906,38 @@ def _materialize_native_changes(
     required_validation: Mapping[str, tuple[str, ...]],
     binding_contexts: Mapping[str, Mapping[str, Any]],
 ) -> tuple[dict[str, Any], ...]:
+    required_changes_by_binding = {
+        str(item["edit_binding_id"]): item
+        for item in normalized_required_changes
+    }
+    if len(required_changes_by_binding) != len(normalized_required_changes):
+        raise _native_validation_error(
+            "Native Plan change units do not have unique edit bindings.",
+            failure_classification="required_change_unit_binding_duplicate",
+        )
+    return tuple(
+        _materialize_native_change(
+            item,
+            allowed_bindings=allowed_bindings,
+            binding_evidence_excerpts=binding_evidence_excerpts,
+            required_changes_by_binding=required_changes_by_binding,
+            required_validation=required_validation,
+            binding_contexts=binding_contexts,
+            index=index,
+        )
+        for index, item in enumerate(raw_changes, start=1)
+    )
+
+
+def _materialize_legacy_native_changes(
+    raw_changes: list[Any],
+    *,
+    allowed_bindings: set[str],
+    binding_evidence_excerpts: Mapping[str, str],
+    normalized_required_changes: tuple[dict[str, Any], ...],
+    required_validation: Mapping[str, tuple[str, ...]],
+    binding_contexts: Mapping[str, Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
     required_changes_by_identity = {
         (str(item["change_id"]), str(item["edit_binding_id"])): item
         for item in normalized_required_changes
@@ -822,7 +947,8 @@ def _materialize_native_changes(
             item,
             allowed_bindings=allowed_bindings,
             binding_evidence_excerpts=binding_evidence_excerpts,
-            required_changes_by_identity=required_changes_by_identity,
+            required_changes_by_binding={},
+            legacy_required_changes_by_identity=required_changes_by_identity,
             required_validation=required_validation,
             binding_contexts=binding_contexts,
             index=index,
@@ -835,6 +961,7 @@ def _materialize_frozen_native_response(
     response: ChatResponse,
     *,
     context: Mapping[str, Any],
+    provider_request: Mapping[str, Any],
 ) -> GeneratedPatch:
     expected_context_fields = {
         "allowed_bindings",
@@ -861,7 +988,13 @@ def _materialize_frozen_native_response(
     }
     try:
         raw_changes = _parse_native_response_changes(response.content)
-        changes = _materialize_native_changes(
+        response_contract = _frozen_native_response_contract(provider_request)
+        materializer = (
+            _materialize_legacy_native_changes
+            if response_contract == "legacy_pair"
+            else _materialize_native_changes
+        )
+        changes = materializer(
             raw_changes,
             allowed_bindings=allowed_bindings,
             binding_evidence_excerpts=binding_evidence_excerpts,
@@ -1340,13 +1473,23 @@ def _patch_system_prompt(
     require_native_schema: bool,
     plan_bound_response: bool,
 ) -> str:
+    identity_contract = (
+        "Return exactly one change for every required_change_units entry and "
+        "identify it only by its exact edit_binding_id. Do not return change_id; "
+        "deterministic code derives it from the unique Plan binding. "
+        if require_native_schema
+        else (
+            "Return exactly one change for every required_change_units entry and "
+            "preserve its exact change_id and edit_binding_id. "
+        )
+    )
     shared = (
         "Generate a minimal exact-text code patch from verified evidence. "
         "Return strict JSON only. Never invent a file path, symbol, API, or "
         "binding id. supporting_evidence is read-only context and never "
-        "authorizes an edit target. Return exactly one change for every "
-        "required_change_units entry and preserve its exact change_id and "
-        "edit_binding_id. target_behavior, constraints, acceptance_criteria, "
+        "authorizes an edit target. "
+        + identity_contract
+        + "target_behavior, constraints, acceptance_criteria, "
         "and runtime_verification_plan form one feature-level generation contract. "
         "required_change_units owns only the displayed change identity, operation, "
         "and binding references; it does not assign a feature obligation to an "
@@ -1410,14 +1553,12 @@ def _patch_response_schema(
                     "type": "object",
                     "additionalProperties": False,
                     "required": [
-                        "change_id",
                         "edit_binding_id",
                         "rationale",
                         "rollback_hint",
                         "after_text",
                     ],
                     "properties": {
-                        "change_id": {"type": "string", "minLength": 1},
                         "edit_binding_id": {
                             "type": "string",
                             "enum": sorted(allowed_bindings),
@@ -1430,6 +1571,32 @@ def _patch_response_schema(
             }
         },
     }
+
+
+def _legacy_pair_patch_response_schema(
+    allowed_bindings: set[str],
+    *,
+    required_change_count: int | None = None,
+) -> dict[str, Any]:
+    """Return the exact five-field schema already frozen in v1 attempts."""
+
+    schema = _patch_response_schema(
+        allowed_bindings,
+        required_change_count=required_change_count,
+    )
+    item_schema = schema["properties"]["changes"]["items"]
+    item_schema["required"] = [
+        "change_id",
+        "edit_binding_id",
+        "rationale",
+        "rollback_hint",
+        "after_text",
+    ]
+    item_schema["properties"] = {
+        "change_id": {"type": "string", "minLength": 1},
+        **item_schema["properties"],
+    }
+    return schema
 
 
 def _normalize_semantic_obligation_list(
@@ -1502,6 +1669,7 @@ def _normalize_required_change_units(
         return ()
     normalized: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
+    seen_binding_ids: set[str] = set()
     seen_pairs: set[tuple[str, str]] = set()
     for index, raw in enumerate(raw_units, start=1):
         if not isinstance(raw, dict):
@@ -1569,6 +1737,14 @@ def _normalize_required_change_units(
             change_id=change_id,
         )
         pair = (change_id, binding_id)
+        if require_native_contract and binding_id in seen_binding_ids:
+            raise _projection_error(
+                "Native required change units must have unique edit_binding_id values.",
+                failure_classification="required_change_unit_binding_duplicate",
+                change_index=index,
+                change_id=change_id,
+                binding_id=binding_id,
+            )
         if change_id in seen_ids or pair in seen_pairs:
             raise _projection_error(
                 "Required change units must have unique change_id values.",
@@ -1624,6 +1800,7 @@ def _normalize_required_change_units(
                 binding_id=hook_target_binding_id,
             )
         seen_ids.add(change_id)
+        seen_binding_ids.add(binding_id)
         seen_pairs.add(pair)
         normalized.append(
             {
@@ -1739,9 +1916,11 @@ def _materialize_native_change(
     *,
     allowed_bindings: set[str],
     binding_evidence_excerpts: Mapping[str, str],
-    required_changes_by_identity: Mapping[
+    required_changes_by_binding: Mapping[str, Mapping[str, Any]],
+    legacy_required_changes_by_identity: Mapping[
         tuple[str, str], Mapping[str, Any]
-    ],
+    ]
+    | None = None,
     required_validation: Mapping[str, tuple[str, ...]],
     binding_contexts: Mapping[str, Mapping[str, Any]],
     index: int,
@@ -1752,13 +1931,15 @@ def _materialize_native_change(
             failure_classification="native_response_fields_invalid",
             change_index=index,
         )
+    legacy_pair_identity = legacy_required_changes_by_identity is not None
     required_fields = {
-        "change_id",
         "edit_binding_id",
         "rationale",
         "rollback_hint",
         "after_text",
     }
+    if legacy_pair_identity:
+        required_fields.add("change_id")
     actual_fields = set(raw)
     if actual_fields != required_fields:
         raise _native_validation_error(
@@ -1769,13 +1950,11 @@ def _materialize_native_change(
             unexpected_fields=sorted(actual_fields - required_fields),
         )
 
-    change_id = raw["change_id"]
     binding_id = raw["edit_binding_id"]
     rationale = raw["rationale"]
     rollback_hint = raw["rollback_hint"]
     after = raw["after_text"]
     for field, value in (
-        ("change_id", change_id),
         ("edit_binding_id", binding_id),
         ("rationale", rationale),
         ("rollback_hint", rollback_hint),
@@ -1794,15 +1973,36 @@ def _materialize_native_change(
             change_index=index,
             binding_id=binding_id,
         )
-    required_change = required_changes_by_identity.get((change_id, binding_id))
-    if required_change is None:
-        raise _native_validation_error(
-            f"Change {index} is not a required Plan change identity.",
-            failure_classification="native_change_identity_unknown",
-            change_index=index,
-            change_id=change_id,
-            binding_id=binding_id,
+    if legacy_pair_identity:
+        change_id = raw["change_id"]
+        if not isinstance(change_id, str) or not change_id:
+            raise _native_validation_error(
+                f"Change {index} change_id must be a non-empty string.",
+                failure_classification="native_response_fields_invalid",
+                change_index=index,
+                field="change_id",
+            )
+        required_change = legacy_required_changes_by_identity.get(
+            (change_id, binding_id)
         )
+        if required_change is None:
+            raise _native_validation_error(
+                f"Change {index} is not a required Plan change identity.",
+                failure_classification="native_change_identity_unknown",
+                change_index=index,
+                change_id=change_id,
+                binding_id=binding_id,
+            )
+    else:
+        required_change = required_changes_by_binding.get(binding_id)
+        if required_change is None:
+            raise _native_validation_error(
+                f"Change {index} binding is not a required Plan change.",
+                failure_classification="native_change_binding_not_required",
+                change_index=index,
+                binding_id=binding_id,
+            )
+        change_id = str(required_change["change_id"])
     if not isinstance(after, str) or not after:
         raise _native_validation_error(
             f"Change {index} after_text must be non-empty.",

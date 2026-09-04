@@ -29,8 +29,11 @@ from src.mod_agent.fresh_planning_continuation import (
 )
 from src.mod_agent.local_entry import (
     LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
+    LocalEntryError,
     LocalOllamaInitialPatchAdapter,
     LocalOllamaInitialPatchProfileV1,
+    _local_patch_response_sidecar_path,
+    _write_local_patch_response_sidecar,
     make_exact_no_write_dry_run_factory,
 )
 from src.mod_agent.planning import FeatureSpec, ImplementationPlan, ImplementationPlanner
@@ -316,9 +319,11 @@ def _patch_request(inputs: _Inputs) -> PatchContinuationInputV1:
 
 
 class _NativePatchLLM:
-    def __init__(self, *, after_response=None) -> None:
+    def __init__(self, *, after_response=None, content_override: str | None = None) -> None:
         self.calls = 0
         self.after_response = after_response
+        self.content_override = content_override
+        self.last_content: str | None = None
 
     def chat(self, messages, trace=None, **kwargs):
         del trace
@@ -350,9 +355,8 @@ class _NativePatchLLM:
             source_excerpt = contexts[binding_id]["source_excerpt"]
             changes.append(
                 {
-                    "change_id": item["change_id"],
                     "edit_binding_id": binding_id,
-                    "rationale": prompt["target_behavior"],
+                    "rationale": f'{prompt["target_behavior"]} 精确',
                     "rollback_hint": "Restore the selected source span.",
                     "after_text": source_excerpt.replace(
                         "KeepExistingFeedback();",
@@ -362,8 +366,13 @@ class _NativePatchLLM:
             )
         if self.after_response is not None:
             self.after_response()
+        self.last_content = self.content_override or json.dumps(
+            {"changes": changes},
+            ensure_ascii=False,
+            indent=2,
+        ).replace("\n", "\r\n")
         return ChatResponse(
-            content=json.dumps({"changes": changes}),
+            content=self.last_content,
             model="qwen3:4b-instruct",
             usage={"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120},
             raw_response={"done": True, "done_reason": "stop"},
@@ -374,6 +383,7 @@ def _local_patch_adapter(
     inputs: _Inputs,
     *,
     after_response=None,
+    content_override: str | None = None,
 ) -> tuple[LocalOllamaInitialPatchAdapter, _NativePatchLLM]:
     identity = {
         "name": "qwen3:4b-instruct",
@@ -385,7 +395,10 @@ def _local_patch_adapter(
         "capabilities": ["completion"],
         "base_url": "http://127.0.0.1:11434",
     }
-    llm = _NativePatchLLM(after_response=after_response)
+    llm = _NativePatchLLM(
+        after_response=after_response,
+        content_override=content_override,
+    )
     adapter = LocalOllamaInitialPatchAdapter(
         profile=LocalOllamaInitialPatchProfileV1(
             profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
@@ -1000,6 +1013,15 @@ def test_exact_plan_runs_one_local_patch_review_and_no_write_dry_run(
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert receipt_ref["model_call_count"] == 1
     assert receipt["factory_receipt"]["model_response"]["output_sha256"]
+    response_receipt = receipt["factory_receipt"]["model_response"]
+    assert response_receipt["retained"] is True
+    response_bytes = Path(response_receipt["path"]).read_bytes()
+    assert response_bytes == llm.last_content.encode("utf-8")
+    assert b"\r\n" in response_bytes
+    assert "精确".encode() in response_bytes
+    assert response_receipt["encoding"] == "utf-8"
+    assert response_receipt["output_sha256"] == hashlib.sha256(response_bytes).hexdigest()
+    assert response_receipt["output_utf8_bytes"] == len(response_bytes)
     assert receipt["proposal_admitted"] is True
     assert receipt["generated_against_snapshot_sha256"] == receipt[
         "current_snapshot_sha256"
@@ -1041,6 +1063,73 @@ def test_patch_attempt_receipt_writes_under_real_length_artifact_root(
         admitted=admitted,
     )
     assert other.path.name != journal.path.name
+    response_content = '{\r\n  "changes": [],\r\n  "note": "完整"\r\n}'
+    response_path = _local_patch_response_sidecar_path(
+        long_artifact_root,
+        run_id=run_id,
+    )
+    sidecar = _write_local_patch_response_sidecar(response_path, response_content)
+    assert len(str(response_path)) <= 220
+    assert response_path.resolve().is_relative_to(long_artifact_root.resolve())
+    assert response_path.read_bytes() == response_content.encode("utf-8")
+    assert sidecar["retained"] is True
+    assert _local_patch_response_sidecar_path(
+        long_artifact_root,
+        run_id="patch_continuation_" + "3" * 32,
+    ).name != response_path.name
+
+
+def test_patch_response_sidecar_first_create_installs_exact_bytes(
+    tmp_path: Path,
+) -> None:
+    destination = _local_patch_response_sidecar_path(
+        tmp_path,
+        run_id="patch_continuation_first_create",
+    )
+    content = "first response 精确\r\n"
+
+    receipt = _write_local_patch_response_sidecar(destination, content)
+
+    assert destination.read_bytes() == content.encode("utf-8")
+    assert receipt["retained"] is True
+    assert list(destination.parent.glob("*.tmp")) == []
+
+
+def test_patch_response_sidecar_same_bytes_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    destination = _local_patch_response_sidecar_path(
+        tmp_path,
+        run_id="patch_continuation_idempotent",
+    )
+    content = "same response bytes\r\n"
+    first = _write_local_patch_response_sidecar(destination, content)
+
+    second = _write_local_patch_response_sidecar(destination, content)
+
+    assert destination.read_bytes() == content.encode("utf-8")
+    assert second == first
+    assert list(destination.parent.glob("*.tmp")) == []
+
+
+def test_patch_response_sidecar_different_bytes_rejects_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    destination = _local_patch_response_sidecar_path(
+        tmp_path,
+        run_id="patch_continuation_conflict",
+    )
+    original = b"immutable original response\r\n"
+    _write_local_patch_response_sidecar(destination, original.decode("utf-8"))
+
+    with pytest.raises(
+        LocalEntryError,
+        match="LOCAL_PATCH_RESPONSE_SIDECAR_CONTENT_CONFLICT",
+    ):
+        _write_local_patch_response_sidecar(destination, "different response\r\n")
+
+    assert destination.read_bytes() == original
+    assert list(destination.parent.glob("*.tmp")) == []
 
 
 def test_continue_fresh_patch_cli_runs_exact_no_write_vertical(
@@ -1071,6 +1160,9 @@ def test_continue_fresh_patch_cli_runs_exact_no_write_vertical(
     assert public["execution_counts"]["review"] == 1
     assert public["execution_counts"]["dry_run"] == 1
     assert llm.calls == 1
+    assert llm.last_content not in captured.out
+    receipt_text = Path(public["attempt_receipt"]["path"]).read_text(encoding="utf-8")
+    assert llm.last_content not in receipt_text
 
 
 def test_exact_selected_plan_remains_admitted_when_not_latest(
@@ -1152,6 +1244,7 @@ def test_source_drift_after_model_keeps_receipt_and_writes_no_proposal(
         "post_call_admission_rejected"
     )
     assert receipt["factory_receipt"]["model_response"]["output_sha256"]
+    assert Path(receipt["factory_receipt"]["model_response"]["path"]).is_file()
     assert receipt["proposal_admitted"] is False
     assert receipt["generated_against_snapshot_sha256"] != receipt[
         "current_snapshot_sha256"
@@ -1194,7 +1287,112 @@ def test_exact_plan_ref_drift_after_model_keeps_receipt_and_no_downstream_artifa
         "post_call_admission_rejected"
     )
     assert receipt["factory_receipt"]["model_response"]["output_sha256"]
+    assert Path(receipt["factory_receipt"]["model_response"]["path"]).is_file()
     assert receipt["proposal_admitted"] is False
+
+
+def test_malformed_native_response_keeps_full_sidecar_and_no_proposal(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    malformed = '{"changes": [完整'
+    adapter, llm = _local_patch_adapter(
+        inputs,
+        content_override=malformed,
+    )
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+
+    assert result.status == "partial"
+    assert llm.calls == 1
+    assert result.patch_proposal_artifact is None
+    receipt = json.loads(
+        Path(result.attempt_receipt["path"]).read_text(encoding="utf-8")
+    )
+    response_receipt = receipt["factory_receipt"]["model_response"]
+    assert response_receipt["retained"] is True
+    assert Path(response_receipt["path"]).read_bytes() == malformed.encode("utf-8")
+
+
+def test_legacy_pair_mismatch_response_is_retained_but_not_materialized(
+    tmp_path: Path,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    legacy_mismatch = json.dumps(
+        {
+            "changes": [
+                {
+                    "change_id": "wrong_change",
+                    "edit_binding_id": "edit_binding_001",
+                    "rationale": "old pair response",
+                    "rollback_hint": "restore",
+                    "after_text": "changed",
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+    adapter, _ = _local_patch_adapter(
+        inputs,
+        content_override=legacy_mismatch,
+    )
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+
+    assert result.status == "partial"
+    assert result.patch_proposal_artifact is None
+    receipt = json.loads(
+        Path(result.attempt_receipt["path"]).read_text(encoding="utf-8")
+    )
+    factory_receipt = receipt["factory_receipt"]
+    assert factory_receipt["failure"]["diagnostics"]["failure_classification"] == (
+        "native_response_fields_invalid"
+    )
+    response_receipt = factory_receipt["model_response"]
+    assert response_receipt["retained"] is True
+    assert Path(response_receipt["path"]).read_bytes() == legacy_mismatch.encode("utf-8")
+
+
+def test_sidecar_write_failure_blocks_before_parse_and_proposal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, llm = _local_patch_adapter(inputs)
+    monkeypatch.setattr(
+        "src.mod_agent.local_entry._write_local_patch_response_sidecar",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            LocalEntryError("LOCAL_PATCH_RESPONSE_SIDECAR_WRITE_FAILED")
+        ),
+    )
+
+    result = run_fresh_patch_continuation(
+        request,
+        patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+
+    assert result.status == "partial"
+    assert llm.calls == 1
+    assert result.patch_proposal_artifact is None
+    receipt = json.loads(
+        Path(result.attempt_receipt["path"]).read_text(encoding="utf-8")
+    )
+    assert receipt["factory_receipt"]["model_response"] is None
+    assert receipt["factory_receipt"]["failure"]["message"] == (
+        "LOCAL_PATCH_RESPONSE_SIDECAR_WRITE_FAILED"
+    )
 
 
 def test_pre_call_snapshot_race_blocks_with_zero_model_calls(

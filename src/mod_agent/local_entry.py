@@ -463,6 +463,54 @@ class _PatchResponseCapturingLLM:
         return response
 
 
+def _local_patch_response_sidecar_path(
+    artifact_root: Path,
+    *,
+    run_id: str,
+) -> Path:
+    locator = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
+    return artifact_root / "cr" / f"{locator}.response.txt"
+
+
+def _write_local_patch_response_sidecar(
+    destination: Path,
+    content: str,
+) -> dict[str, Any]:
+    content_bytes = content.encode("utf-8")
+    temporary = destination.with_name(
+        f".{destination.name[:32]}.{uuid4().hex[:16]}.tmp"
+    )
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with temporary.open("xb") as stream:
+            stream.write(content_bytes)
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, destination)
+        except FileExistsError:
+            if destination.read_bytes() != content_bytes:
+                raise LocalEntryError(
+                    "LOCAL_PATCH_RESPONSE_SIDECAR_CONTENT_CONFLICT"
+                )
+    except LocalEntryError:
+        raise
+    except OSError as exc:
+        raise LocalEntryError("LOCAL_PATCH_RESPONSE_SIDECAR_WRITE_FAILED") from exc
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return {
+        "path": str(destination),
+        "output_sha256": hashlib.sha256(content_bytes).hexdigest(),
+        "output_utf8_bytes": len(content_bytes),
+        "encoding": "utf-8",
+        "retained": True,
+    }
+
+
 class LocalOllamaInitialPatchAdapter:
     """Generate one native-schema Patch response with a queryable call receipt."""
 
@@ -480,6 +528,7 @@ class LocalOllamaInitialPatchAdapter:
         self.llm_factory = llm_factory or self._default_llm
         self._attempt_recorder: Callable[[Mapping[str, Any]], None] | None = None
         self._invocation_count = 0
+        self._response_sidecar_path: Path | None = None
         self._receipt: dict[str, Any] = {
             "adapter": "LocalOllamaInitialPatchAdapter",
             "profile": profile.to_dict(),
@@ -577,6 +626,13 @@ class LocalOllamaInitialPatchAdapter:
                 }
             )
             self._emit("local_patch_model_admitted")
+            run_id = state.get("run_id")
+            if not isinstance(run_id, str) or not run_id:
+                raise LocalEntryError("LOCAL_PATCH_RUN_ID_INVALID")
+            self._response_sidecar_path = _local_patch_response_sidecar_path(
+                self.artifact_store.root,
+                run_id=run_id,
+            )
             llm = _PatchResponseCapturingLLM(
                 self.llm_factory(self.profile),
                 self._record_response,
@@ -711,12 +767,16 @@ class LocalOllamaInitialPatchAdapter:
         self._emit("local_patch_provider_invocation_recorded")
 
     def _record_response(self, response: ChatResponse) -> None:
-        content_bytes = response.content.encode("utf-8")
+        if self._response_sidecar_path is None:
+            raise LocalEntryError("LOCAL_PATCH_RESPONSE_SIDECAR_PATH_MISSING")
+        sidecar = _write_local_patch_response_sidecar(
+            self._response_sidecar_path,
+            response.content,
+        )
         raw = response.raw_response if isinstance(response.raw_response, Mapping) else {}
         self._receipt["model_response"] = {
             "model": response.model,
-            "output_sha256": hashlib.sha256(content_bytes).hexdigest(),
-            "output_utf8_bytes": len(content_bytes),
+            **sidecar,
             "usage": response.usage,
             "done": raw.get("done"),
             "done_reason": raw.get("done_reason"),
