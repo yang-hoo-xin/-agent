@@ -36,8 +36,9 @@ The later user-directed P0 repair added and exercised one bounded behavior
 correction inside the existing Patch adapter. Both acceptances failed the same
 matrix (33/36, then 32/36 with Recoil regression), preserving c760 and source
 identity. This is an implementation-quality blocker, not evidence that the Plan
-must expand. The optional local-model comparison remains a prepared, unexecuted
-scope decision; do not silently switch models or extend retries. Details: section 13.
+must expand. The user chose keeping the current model and submitting the failure
+report. The prepared local-model comparison is unexecuted and not selected;
+do not switch models or extend retries from this record. Details: section 13.
 
 | Order | Work / exit condition | Current disposition |
 | --- | --- | --- |

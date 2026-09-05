@@ -41,7 +41,8 @@ Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
   32/36. Both stopped before a new Proposal. This proves the feedback/stopping
   path was used, not successful correction. Original sources remain unchanged.
 - A same-input local qwen3.6:27b comparison has only passed zero-network preparation.
-  It has not run; changing the previously fixed model awaits the user's decision.
+  The user chose to retain the current model and submit the failure report, so
+  this comparison has not run and is not selected. No additional attempt is started.
 - Primary run references, evidence limits, test results, and corrections to
   earlier completion claims are in
   [the progress reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).

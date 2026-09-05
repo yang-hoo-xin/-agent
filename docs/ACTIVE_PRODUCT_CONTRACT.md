@@ -88,8 +88,9 @@ binding but regressed Recoil and ended 32/36. Neither produced a new admitted
 Proposal. Current First Shot defects remain Patch implementation errors inside
 c760, and the new Recoil regression also occurs inside its binding001.
 Feedback delivery and failure stopping are exercised; successful behavioral
-repair is not demonstrated. A local qwen3.6:27b comparison is prepared without a
-model call and awaits the user's decision to change the previously fixed model.
+repair is not demonstrated. The user selected keeping the current model and
+submitting this failure report. The prepared local qwen3.6:27b comparison is not
+selected for execution and has made no model call; do not start it from its saved preview.
 See reconciliation section 13; no automatic fallback or new scope is implied.
 
 Autonomous target selection produced e504 in one real model call, but independent
