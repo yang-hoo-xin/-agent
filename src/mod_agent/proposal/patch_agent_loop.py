@@ -49,19 +49,23 @@ class PatchAgentLoopPolicy:
     enable_supporting_reads: bool = False
     require_source_inspection: bool = True
     allow_upstream_request: bool = False
+    allow_batched_reads: bool = False
     max_tool_rounds: int = field(default=3, init=False)
-    max_total_model_turns: int = field(default=5, init=False)
+    max_total_model_turns: int = 5
 
     def __post_init__(self) -> None:
         if any(type(getattr(self, name)) is not bool for name in (
             "finalize_after_first_observation", "enable_supporting_reads",
-            "require_source_inspection", "allow_upstream_request",
+            "require_source_inspection", "allow_upstream_request", "allow_batched_reads",
         )):
             raise PatchAgentLoopError(
                 "PATCH_AGENT_POLICY_INVALID",
                 stage="policy",
                 reason="Patch strategy switches must be boolean values.",
             )
+        if type(self.max_total_model_turns) is not int or not 1 <= self.max_total_model_turns <= 5:
+            raise PatchAgentLoopError("PATCH_AGENT_POLICY_INVALID", stage="policy",
+                reason="The selected model-turn limit must be between one and the shared maximum of five.")
         for name in ("max_observation_bytes", "context_radius_lines"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -652,6 +656,7 @@ def run_patch_agent_loop(
     tool_availability_trace: list[dict[str, object]] = []
     inspected_binding_ids: set[str] = set()
     seen_tool_call_ids: set[str] = set()
+    rejected_read_batches: set[str] = set()
     total_observation_bytes = consumed_observation_bytes
     tool_rounds_used = consumed_tool_rounds
     allowed_model_end = selected_policy.max_total_model_turns - reserve_model_turns
@@ -667,9 +672,15 @@ def run_patch_agent_loop(
         retained_exchanges.append(AgentToolExchange(base_request.tool_results, base_request.provider_state,
             base_request.tool_result_insert_index if base_request.tool_result_insert_index is not None else len(base_request.messages)))
     for exchange in retained_exchanges:
+        rejected_bindings = [result.output.get("binding_id") for result in exchange.tool_results
+            if isinstance(result.output, Mapping)
+            and result.output.get("error_code") == "PATCH_AGENT_TOOL_BATCH_BUDGET_EXCEEDED"]
+        if rejected_bindings and all(isinstance(binding, str) for binding in rejected_bindings):
+            rejected_read_batches.add(_canonical_sha256(sorted(rejected_bindings)))
         for tool_result in exchange.tool_results:
             seen_tool_call_ids.add(tool_result.call_id)
-            if tool_result.name == PATCH_SOURCE_INSPECTION_TOOL_NAME and isinstance(tool_result.output, Mapping):
+            if (tool_result.name == PATCH_SOURCE_INSPECTION_TOOL_NAME and isinstance(tool_result.output, Mapping)
+                and isinstance(tool_result.output.get("observation_sha256"), str)):
                 binding_id = tool_result.output.get("binding_id")
                 if isinstance(binding_id, str):
                     inspected_binding_ids.add(binding_id)
@@ -692,6 +703,7 @@ def run_patch_agent_loop(
         return replace(_loop_result(**kwargs), tool_availability_trace=tuple(deepcopy(tool_availability_trace)))
     pending_response: AgentTurnResponse | None = None
     pending_observation: PatchSourceObservation | None = None
+    pending_tool_results: tuple[AgentToolResult, ...] = ()
     force_final = False
 
     if consumed_model_turns >= allowed_model_end or consumed_observation_bytes > selected_policy.max_observation_bytes:
@@ -745,6 +757,8 @@ def run_patch_agent_loop(
             for result in base_request.tool_results if isinstance(result.output, Mapping))
         if pending_observation is not None:
             native_observation_ids.add(pending_observation.observation_id)
+        native_observation_ids.update(result.output.get("observation_id") for result in pending_tool_results
+            if isinstance(result.output, Mapping))
         # Keep older non-native observations, but do not duplicate retained native payloads.
         prior_observations = [observation for observation in observations
             if (observation.observation_id if isinstance(observation, PatchSourceObservation)
@@ -759,7 +773,7 @@ def run_patch_agent_loop(
             final_response_format=final_response_format,
             reserve_model_turns=reserve_model_turns,
         )
-        tool_results = (
+        tool_results = pending_tool_results or (
             (
                 AgentToolResult(
                     call_id=pending_response.tool_calls[0].call_id,
@@ -856,8 +870,9 @@ def run_patch_agent_loop(
         usage_by_turn.append(_usage_record(turn_index, response))
         pending_response = None
         pending_observation = None
+        pending_tool_results = ()
 
-        if len(response.tool_calls) > 1:
+        if len(response.tool_calls) > 1 and not selected_policy.allow_batched_reads:
             code = "PATCH_AGENT_PARALLEL_TOOL_CALLS_FORBIDDEN"
             for call in response.tool_calls:
                 tool_call_trace.append(
@@ -880,6 +895,97 @@ def run_patch_agent_loop(
                     turn_index,
                 ),
             )
+
+        if len(response.tool_calls) > 1:
+            calls = response.tool_calls
+            code, reason = _validate_read_batch(calls, source_inspector,
+                inspected_binding_ids=inspected_binding_ids, seen_tool_call_ids=seen_tool_call_ids)
+            if code is None and not any(tool.name == PATCH_SOURCE_INSPECTION_TOOL_NAME for tool in request.tools):
+                code, reason = "PATCH_AGENT_TOOL_FORBIDDEN", "Source inspection is disabled for this turn."
+            if code is not None:
+                for call in calls:
+                    tool_call_trace.append(_tool_trace(call, turn_index=turn_index,
+                        status="rejected_not_executed", code=code, dispatch_started=False))
+                return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                    model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                    total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                    tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                    termination=_termination(code, reason, turn_index))
+            remaining_reads = selected_policy.max_tool_rounds - tool_rounds_used
+            if len(calls) > remaining_reads:
+                code = "PATCH_AGENT_TOOL_BATCH_BUDGET_EXCEEDED"
+                batch_identity = _canonical_sha256(sorted(call.arguments["binding_id"] for call in calls))
+                if rejected_read_batches:
+                    code = ("PATCH_AGENT_REPEATED_TOOL_BATCH" if batch_identity in rejected_read_batches
+                        else "PATCH_AGENT_TOOL_BATCH_BUDGET_RETRY_EXHAUSTED")
+                    for call in calls:
+                        tool_call_trace.append(_tool_trace(call, turn_index=turn_index,
+                            status="rejected_not_executed", code=code, dispatch_started=False))
+                    availability["selection"] = "rejected_not_executed"
+                    return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                        model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                        total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                        tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                        termination=_termination(code, "One bounded batch-budget correction opportunity was already used.", turn_index))
+                rejected_read_batches.add(batch_identity)
+                results = tuple(AgentToolResult(call_id=call.call_id, name=call.name, output={
+                    "status": "not_executed", "error_code": code, "reason": "budget_exceeded",
+                    "binding_id": call.arguments["binding_id"], "requested_read_count": len(calls),
+                    "remaining_read_count": remaining_reads,
+                    "required_action": "Select no more than the remaining read count, or finish from existing context.",
+                    "source_snapshot_sha256": source_inspector.source_snapshot_sha256,
+                }) for call in calls)
+                for call, result in zip(calls, results):
+                    feedback_bytes = len(_canonical_json(result.output).encode("utf-8"))
+                    total_observation_bytes += feedback_bytes
+                    trace = _tool_trace(call, turn_index=turn_index, status="rejected_not_executed",
+                        code=code, dispatch_started=False)
+                    trace["feedback_payload_bytes"] = feedback_bytes
+                    tool_call_trace.append(trace)
+                availability["selection"] = "rejected_not_executed"
+                if total_observation_bytes > selected_policy.max_observation_bytes:
+                    return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                        model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                        total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                        tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                        termination=_termination("PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED",
+                            "The bounded batch rejection feedback exceeds the observation budget.", turn_index))
+                seen_tool_call_ids.update(call.call_id for call in calls)
+                pending_response, pending_tool_results = response, results
+                base_request = _without_loop_states(request)
+                continue
+            batch_results: list[AgentToolResult] = []
+            for index, call in enumerate(calls):
+                tool_rounds_used += 1
+                seen_tool_call_ids.add(call.call_id)
+                try:
+                    observation = source_inspector.inspect(binding_id=call.arguments["binding_id"],
+                        observation_id=f"patch-observation-{tool_rounds_used:03d}")
+                    total_observation_bytes += observation.model_payload_bytes
+                    admitted = total_observation_bytes <= selected_policy.max_observation_bytes
+                    observation_trace.append(_observation_trace(observation, turn_index=turn_index, admitted_to_model=admitted))
+                    if not admitted:
+                        raise PatchAgentLoopError("PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED", stage="tool_execution",
+                            reason="The cumulative source-observation byte budget was exhausted.")
+                except PatchAgentLoopError as exc:
+                    availability["selection"] = "execution_failed"
+                    tool_call_trace.append(_tool_trace(call, turn_index=turn_index, status="rejected",
+                        code=exc.code, dispatch_started=True))
+                    for remaining_call in calls[index + 1:]:
+                        tool_call_trace.append(_tool_trace(remaining_call, turn_index=turn_index,
+                            status="rejected_not_executed", code=exc.code, dispatch_started=False))
+                    return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                        model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                        total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                        tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                        termination=_termination(exc.code, exc.reason, turn_index))
+                inspected_binding_ids.add(call.arguments["binding_id"])
+                observations.append(observation)
+                batch_results.append(AgentToolResult(call_id=call.call_id, name=call.name, output=observation.model_view()))
+                tool_call_trace.append(_tool_trace(call, turn_index=turn_index, status="accepted", dispatch_started=True))
+            pending_response, pending_tool_results = response, tuple(batch_results)
+            base_request = _without_loop_states(request)
+            continue
 
         if response.tool_calls:
             call = response.tool_calls[0]
@@ -1115,6 +1221,32 @@ def run_patch_agent_loop(
     raise AssertionError("Patch Agent loop exceeded its fixed model-turn bound.")
 
 
+def _validate_read_batch(calls: tuple[AgentToolCall, ...], inspector: PlanBoundSourceInspector,
+    *, inspected_binding_ids: set[str], seen_tool_call_ids: set[str]) -> tuple[str | None, str]:
+    if any(call.name == PATCH_UPSTREAM_REQUEST_TOOL_NAME for call in calls):
+        return "PATCH_AGENT_MIXED_TOOL_BATCH_FORBIDDEN", "Upstream requests must be separate from source reads."
+    if any(call.name != PATCH_SOURCE_INSPECTION_TOOL_NAME for call in calls):
+        return "PATCH_AGENT_UNKNOWN_TOOL", "The batch contains an unregistered Patch tool."
+    selected: set[str] = set()
+    call_ids: set[str] = set()
+    for call in calls:
+        if type(call.call_id) is not str or not call.call_id:
+            return "PATCH_AGENT_TOOL_CALL_ID_INVALID", "A provider tool call id is missing."
+        if call.call_id in call_ids or call.call_id in seen_tool_call_ids:
+            return "PATCH_AGENT_TOOL_CALL_ID_REUSED", "The provider reused a tool call id."
+        if (set(call.arguments) != {"binding_id"} or type(call.arguments.get("binding_id")) is not str
+            or not call.arguments["binding_id"]):
+            return "PATCH_AGENT_TOOL_ARGUMENTS_INVALID", "Each source read requires exactly one binding_id."
+        binding_id = call.arguments["binding_id"]
+        if binding_id in selected or binding_id in inspected_binding_ids:
+            return "PATCH_AGENT_REPEATED_TOOL_CALL", "The same Plan binding cannot be inspected twice."
+        if binding_id not in inspector.available_read_binding_ids:
+            return "PATCH_AGENT_BINDING_UNKNOWN", "A batch binding is outside the admitted read scope."
+        call_ids.add(call.call_id)
+        selected.add(binding_id)
+    return None, ""
+
+
 def _source_tool_definition(
     inspector: PlanBoundSourceInspector,
     *,
@@ -1127,6 +1259,7 @@ def _source_tool_definition(
             "Read a bounded current-source excerpt for one exact ImplementationPlan "
             "read binding. Reading supporting source does not grant edit permission. "
             "Registered API bindings return the complete saved Evidence excerpt, not a new live API inspection. "
+            "When batched reads are enabled, calls execute sequentially and each consumes one read budget unit. "
             "Select only a listed binding_id; paths are not accepted."
         ),
         parameters={
@@ -1163,6 +1296,8 @@ def _loop_state_message(
             "allowed_read_binding_ids": list(source_inspector.available_read_binding_ids),
             "source_snapshot_sha256": source_inspector.source_snapshot_sha256,
             "read_source_snapshot_sha256": source_inspector.read_source_snapshot_sha256,
+            **({"read_execution": {"allow_batched_reads": True, "execution": "sequential",
+                "batch_must_fit_remaining_reads": True}} if policy.allow_batched_reads else {}),
             "prior_observations": [
                 observation.model_view() if isinstance(observation, PatchSourceObservation) else deepcopy(dict(observation))
                 for observation in prior_observations
@@ -1273,7 +1408,7 @@ def _tool_trace(
     call: AgentToolCall,
     *,
     turn_index: int,
-    status: Literal["accepted", "rejected"],
+    status: Literal["accepted", "rejected", "rejected_not_executed"],
     code: str | None = None,
     dispatch_started: bool | None = None,
 ) -> dict[str, object]:

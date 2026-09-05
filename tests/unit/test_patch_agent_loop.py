@@ -14,6 +14,7 @@ from src.libs.llm.agent_turn import (
     AgentResponseFormat,
     AgentToolCall,
     AgentTurnProviderError,
+    AgentTurnRequest,
     AgentTurnResponse,
     AgentUsage,
 )
@@ -825,3 +826,82 @@ def test_registered_api_read_uses_same_observation_budget_and_checks_live_drift(
     source.write_text("source drift", encoding="utf-8")
     with pytest.raises(PatchAgentLoopError, match="PATCH_AGENT_SOURCE_SNAPSHOT_DRIFT"):
         inspector.inspect(binding_id="support_api_1", observation_id="api-read-2")
+
+
+def test_real_five_read_response_gets_feedback_then_reselects_within_budget(tmp_path: Path) -> None:
+    from src.libs.llm import OllamaChatAgentAdapter
+    raw = json.loads((Path(__file__).parents[1] / "fixtures" / "patch_multi_read_response_20260905.json").read_text(encoding="utf-8"))
+    recorded = OllamaChatAgentAdapter(base_url="http://127.0.0.1:11434", model="qwen3-coder:30b", max_output_tokens=4096,
+        request_sender=lambda *_: raw).complete_turn(
+            AgentTurnRequest(messages=(AgentMessage(role="user", content="replay recorded response"),)))
+    _, _, _, inspector = _fixture(tmp_path, binding_count=5, policy=PatchAgentLoopPolicy(
+        allow_batched_reads=True, require_source_inspection=False, finalize_after_first_observation=False,
+        max_total_model_turns=4))
+    calls = tuple(_tool_call(f"edit_binding_{index:03d}", turn=index + 10) for index in (1, 2, 3))
+    client = _ScriptedClient([recorded, _response(turn=2, tool_calls=calls), _response(turn=3, content='{"changes":[]}')])
+    result = _run(client, inspector)
+    assert result.completed and result.model_turns_used == 3 and result.tool_rounds_used == 3
+    assert len(result.observation_trace) == 3
+    rejected = result.tool_call_trace[:5]
+    assert all(item["status"] == "rejected_not_executed" and item["dispatch_started"] is False for item in rejected)
+    feedback = client.requests[1].tool_results
+    assert len(feedback) == 5 and client.requests[1].provider_state == recorded.provider_state
+    assert all(item.output["status"] == "not_executed" and item.output["remaining_read_count"] == 3 for item in feedback)
+    assert len(client.requests[2].tool_results) == 3
+    assert all(item["dispatch_started"] for item in result.tool_call_trace[5:])
+
+
+@pytest.mark.parametrize("limit", [0, 6, True])
+def test_model_turn_policy_rejects_limits_outside_shared_cap(limit) -> None:
+    with pytest.raises(PatchAgentLoopError, match="PATCH_AGENT_POLICY_INVALID"):
+        PatchAgentLoopPolicy(max_total_model_turns=limit)
+
+
+def test_batched_reads_reject_duplicates_before_dispatch(tmp_path: Path) -> None:
+    _, _, _, inspector = _fixture(tmp_path, policy=PatchAgentLoopPolicy(allow_batched_reads=True))
+    result = _run(_ScriptedClient([_response(turn=1, tool_calls=(
+        _tool_call("edit_binding_001", turn=1), _tool_call("edit_binding_001", turn=2),
+    ))]), inspector)
+    assert result.termination["code"] == "PATCH_AGENT_REPEATED_TOOL_CALL"
+    assert result.tool_rounds_used == 0 and not result.observation_trace
+
+
+def test_repeated_oversized_batch_stops_even_with_new_call_ids(tmp_path: Path) -> None:
+    _, _, _, inspector = _fixture(tmp_path, binding_count=5, policy=PatchAgentLoopPolicy(
+        allow_batched_reads=True, require_source_inspection=False, finalize_after_first_observation=False,
+        max_total_model_turns=4))
+    initial = tuple(_tool_call(f"edit_binding_{index:03d}", turn=index) for index in range(1, 6))
+    repeated = tuple(_tool_call(f"edit_binding_{index:03d}", turn=index + 10) for index in range(5, 0, -1))
+    client = _ScriptedClient([_response(turn=1, tool_calls=initial), _response(turn=2, tool_calls=repeated)])
+    result = _run(client, inspector)
+    assert result.termination["code"] == "PATCH_AGENT_REPEATED_TOOL_BATCH"
+    assert result.model_turns_used == 2 and result.tool_rounds_used == 0
+    assert len(client.requests) == 2 and not result.observation_trace
+
+
+@pytest.mark.parametrize("tool_name", ["request_patch_upstream", "unregistered_tool"])
+def test_read_batch_rejects_mixed_tools_before_any_read(tmp_path: Path, tool_name) -> None:
+    _, _, _, inspector = _fixture(tmp_path, binding_count=2, policy=PatchAgentLoopPolicy(
+        allow_batched_reads=True, allow_upstream_request=True, require_source_inspection=False))
+    result = _run(_ScriptedClient([_response(turn=1, tool_calls=(
+        _tool_call("edit_binding_001", turn=1), _tool_call("edit_binding_002", turn=2, name=tool_name),
+    ))]), inspector)
+    assert result.tool_rounds_used == 0 and not result.observation_trace
+    assert all(item["status"] == "rejected_not_executed" for item in result.tool_call_trace)
+
+
+def test_batch_stops_on_snapshot_drift_without_executing_remaining_reads(tmp_path: Path) -> None:
+    _, source, _, inspector = _fixture(tmp_path, binding_count=3, policy=PatchAgentLoopPolicy(
+        allow_batched_reads=True, require_source_inspection=False, finalize_after_first_observation=False))
+    original_inspect = inspector.inspect
+    def inspect_then_drift(**kwargs):
+        observation = original_inspect(**kwargs)
+        source.write_text("source drift after first read", encoding="utf-8")
+        return observation
+    inspector.inspect = inspect_then_drift
+    result = _run(_ScriptedClient([_response(turn=1, tool_calls=tuple(
+        _tool_call(f"edit_binding_{index:03d}", turn=index) for index in range(1, 4)
+    ))]), inspector)
+    assert result.termination["code"] == "PATCH_AGENT_SOURCE_SNAPSHOT_DRIFT"
+    assert result.tool_rounds_used == 2
+    assert [item["dispatch_started"] for item in result.tool_call_trace] == [True, True, False]

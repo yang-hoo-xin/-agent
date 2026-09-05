@@ -1200,7 +1200,9 @@ class LocalOllamaInitialPatchAdapter:
                     final_response_format=response_format,
                     source_inspector=inspector,
                     policy=self.patch_agent_loop_policy,
-                    **({"reserve_model_turns": 2 if self.behavior_evaluator is not None else 0,
+                    **({"reserve_model_turns": min(2, self.patch_agent_loop_policy.max_total_model_turns - 3)
+                        if self.behavior_evaluator is not None and self.patch_agent_loop_policy.max_total_model_turns >= 4
+                        else 0,
                         "consumed_observation_bytes": self._recovery_observation_bytes}
                        if self.enable_recovery_loop else {}),
                 )
