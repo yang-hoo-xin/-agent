@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,10 +14,15 @@ from src.mod_agent.evidence import (
     build_requirement_coverage_pack,
     materialize_requirement_coverage_projection,
 )
+from src.mod_agent.evidence.models import LEGACY_RAG_AUXILIARY_AUTHORITY
+from src.mod_agent.evidence.requirement_coverage import validated_requirement_coverage_view
 from src.mod_agent.local_entry import _patch_generation_obligation_projection
+from src.mod_agent.planning import ImplementationPlanner
 from src.mod_agent.planning.model_selection import (
     ModelPlanningTargetSelector,
     PlanningTargetSelectionError,
+    _restore_source_identities,
+    _share_source_identities,
 )
 from src.mod_agent.workflow import build_graph
 from src.mod_agent.workflow.graph import _run_create_implementation_plan
@@ -128,7 +135,7 @@ def test_compiled_graph_installs_model_selector_on_existing_node(tmp_path: Path)
     assert len(client.calls) == 1
 
 
-def test_model_selection_can_differ_from_findings_hints(tmp_path: Path) -> None:
+def _expanded_support_inputs(tmp_path: Path, *, auxiliary: bool = False):
     inputs = _inputs(tmp_path)
     materialized = materialize_requirement_coverage_projection(
         feature_data=inputs.feature_payload,
@@ -144,6 +151,20 @@ def test_model_selection_can_differ_from_findings_hints(tmp_path: Path) -> None:
     hint_ids = findings["findings"][0]["edit_target_evidence_ids"]
     source_ids = [item.evidence_id for item in retrieved.items]
     selected = next(value for value in source_ids if value not in hint_ids)
+    if auxiliary:
+        selected = next(
+            item.evidence_id for item in retrieved.items
+            if item.source_path == "generated_mods/SyntheticMod/Preservation.cs"
+        )
+        retrieved = replace(
+            retrieved,
+            items=tuple(
+                replace(item, authority=LEGACY_RAG_AUXILIARY_AUTHORITY)
+                if item.evidence_id == selected
+                else item
+                for item in retrieved.items
+            ),
+        )
     findings["findings"][0]["evidence_ids"] = source_ids
     evidence = build_requirement_coverage_pack(
         query=str(inputs.feature_payload["user_request"]),
@@ -151,6 +172,11 @@ def test_model_selection_can_differ_from_findings_hints(tmp_path: Path) -> None:
         retrieved_pack=retrieved,
         findings=findings,
     ).to_artifact_payload()
+    return inputs, hint_ids, selected, evidence
+
+
+def test_model_selection_can_differ_from_findings_hints(tmp_path: Path) -> None:
+    inputs, hint_ids, selected, evidence = _expanded_support_inputs(tmp_path)
     evidence_ref = _write_evidence_revision(inputs, payload=evidence)
     client = _Client(override=lambda payload: {**payload, "selected_evidence_ids": [selected]})
     selector = _selector(inputs, client)
@@ -169,6 +195,43 @@ def test_model_selection_can_differ_from_findings_hints(tmp_path: Path) -> None:
         selected
     ]
     assert selected not in hint_ids
+
+
+def test_model_response_must_remain_in_prepared_authoritative_enum(tmp_path: Path) -> None:
+    inputs, _, selected, evidence = _expanded_support_inputs(tmp_path, auxiliary=True)
+    coverage = validated_requirement_coverage_view(evidence)
+    _, old_helper_blocker = ImplementationPlanner._formal_target_selection(
+        raw_selection=(selected,),
+        planning_items=evidence["items"],
+        change_support_evidence_ids=coverage.change_support_evidence_ids,
+    )
+    assert old_helper_blocker is None  # The helper alone does not filter item authority.
+    client = _Client(override=lambda payload: {**payload, "selected_evidence_ids": [selected]})
+    selector = _selector(inputs, client)
+    prepared = selector.prepare(inputs.feature_payload, evidence)
+    assert selected not in prepared.messages[1].content["allowed_edit_evidence_ids"]
+    with pytest.raises(PlanningTargetSelectionError) as caught:
+        selector(inputs.feature_payload, evidence)
+    assert caught.value.code == "PLANNING_MODEL_SELECTION_OUTSIDE_ENUM"
+    assert json.loads(selector.receipt_path.read_text())["status"] == "blocked"
+
+
+def test_source_identity_sharing_is_lossless_for_complete_planning_input(tmp_path: Path) -> None:
+    inputs = _inputs(tmp_path)
+    selector = _selector(inputs, _Client(), feedback=("Preserve existing First Shot effect.",))
+    evidence = inputs.store.read(inputs.evidence_ref)["data"]
+    payload = _restore_source_identities(
+        selector.prepare(inputs.feature_payload, evidence).messages[1].content
+    )
+    payload["source_observations"] *= 3
+    original = deepcopy(payload)
+    encoded = _share_source_identities(payload)
+    assert _restore_source_identities(encoded) == original
+    assert payload == original
+    assert encoded["feature"] == original["feature"]
+    assert encoded["semantic_feedback"] == original["semantic_feedback"]
+    assert encoded["allowed_edit_evidence_ids"] == original["allowed_edit_evidence_ids"]
+    assert len(json.dumps(encoded, sort_keys=True)) < len(json.dumps(original, sort_keys=True))
 
 
 @pytest.mark.parametrize("kind", ["missing", "unknown", "duplicate", "malformed"])
