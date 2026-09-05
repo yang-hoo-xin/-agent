@@ -169,6 +169,22 @@ def test_policy_has_fixed_turn_limits_and_real_context_default() -> None:
     assert policy.finalize_after_first_observation is True
 
 
+def test_loop_keeps_provider_request_identity_in_usage_receipt(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    _, _, _, inspector = _fixture(tmp_path)
+    diagnostic = {"request_identity": {"provider_body_sha256": "a" * 64}}
+    first = replace(
+        _response(turn=1, tool_calls=(_tool_call("edit_binding_001", turn=1),)),
+        provider_diagnostic=diagnostic,
+    )
+    result = _run(_ScriptedClient([first, _response(turn=2, content='{"changes":[]}')]), inspector)
+    assert result.completed
+    assert result.usage_by_turn[0]["provider_diagnostic"] == diagnostic
+    diagnostic["request_identity"]["provider_body_sha256"] = "changed"
+    assert result.usage_by_turn[0]["provider_diagnostic"]["request_identity"]["provider_body_sha256"] == "a" * 64
+
+
 def test_source_inspector_returns_ref_first_bounded_context_without_path(
     tmp_path: Path,
 ) -> None:

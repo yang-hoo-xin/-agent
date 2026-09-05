@@ -184,6 +184,7 @@ def test_patch_agent_context_losslessly_compacts_after_existing_excerpt_projecti
     projected = local_entry._patch_agent_initial_messages(messages)
     encoded = json.loads(projected[1].content)
     assert "patch_agent_context_encoding" in encoded
+    assert encoded["patch_agent_context_encoding"]["version"] == "patch_agent_context_tables_v1"
     restored = local_entry._restore_patch_agent_context(encoded)
     expected = json.loads(original_json)
     for item in expected["supporting_evidence"]:

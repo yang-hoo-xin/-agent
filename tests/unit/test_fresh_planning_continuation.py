@@ -1209,6 +1209,18 @@ def test_exact_plan_runs_bounded_patch_agent_loop_before_dry_run(
     )
     loop = receipt["factory_receipt"]["patch_agent_loop"]
     assert loop["status"] == "completed"
+    projection = receipt["factory_receipt"]["patch_agent_input_projection"]
+    initial_messages = [
+        {"role": item.role, "content": item.content}
+        for item in agent_client.requests[0].messages[:-1]
+    ]
+    assert projection["initial_messages_sha256"] == hashlib.sha256(
+        json.dumps(initial_messages, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert projection["native_prepared_messages_sha256"] != projection["initial_messages_sha256"]
+    assert projection["encoding_version"] in {
+        "patch_agent_context_tables_v1", "patch_ref_first_bounded_excerpt_v1"
+    }
     assert loop["model_turns_used"] == 2
     assert loop["tool_rounds_used"] == 1
     assert loop["observation_trace"][0]["admitted_to_model"] is True

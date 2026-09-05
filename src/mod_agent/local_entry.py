@@ -605,6 +605,9 @@ def _bounded_utf8_prefix(value: str, *, max_bytes: int) -> tuple[str, bool]:
     return "", True
 
 
+_PATCH_AGENT_CONTEXT_ENCODING_VERSION = "patch_agent_context_tables_v1"
+
+
 def _patch_agent_context_json(value: object) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -661,6 +664,8 @@ def _restore_patch_agent_context(payload: Mapping[str, Any]) -> dict[str, Any]:
         tables = restored.pop("patch_agent_context_encoding", None)
         if tables is None:
             return restored
+        if tables.get("version") not in {None, _PATCH_AGENT_CONTEXT_ENCODING_VERSION}:
+            raise ValueError("Unsupported Patch input encoding version.")
         layouts = tables["supporting_evidence_columns"]
         supporting = []
         for layout_index, values in restored["supporting_evidence"]:
@@ -767,12 +772,14 @@ def _compact_patch_agent_context(payload: Mapping[str, Any]) -> dict[str, Any]:
         rows.append([layouts.index(columns), [item[column] for column in columns]])
     compacted["supporting_evidence"] = rows
     compacted["patch_agent_context_encoding"] = {
+        "version": _PATCH_AGENT_CONTEXT_ENCODING_VERSION,
         "guide": (
             "Shared tables are in patch_agent_context_encoding. Supporting rows are "
             "[column-layout index, values]. Resolve source_identity_ref and "
             "member_metadata_ref in their tables. Member rows follow member_metadata_columns; "
             "name is the map key and declaring_type is shared; has_declared_member_types "
-            "rebuilds the type map. Local refs grant no authority; exact edit contexts "
+            "rebuilds the type map. Local refs grant no authority; source identity, excerpts "
+            "and obligations are retained. Member metadata uses refs; native materialization "
             "and final response schema are unchanged."
         ),
         "member_metadata": member_tables,
@@ -1083,12 +1090,32 @@ class LocalOllamaInitialPatchAdapter:
                     implementation_plan=implementation,
                     policy=self.patch_agent_loop_policy,
                 )
-                self._receipt["patch_agent_loop"]["status"] = "running"
-                self._emit("local_patch_agent_loop_started")
                 agent_client = self.agent_turn_client_factory(self.profile)
                 agent_messages = _patch_agent_initial_messages(
                     prepared.messages
                 )
+                initial_user_payload = json.loads(str(agent_messages[1].content))
+                input_encoding = initial_user_payload.get("patch_agent_context_encoding")
+                initial_message_payload = [
+                    {"role": item.role, "content": item.content} for item in agent_messages
+                ]
+                self._receipt["patch_agent_input_projection"] = {
+                    "encoding_version": (
+                        input_encoding["version"]
+                        if isinstance(input_encoding, Mapping)
+                        else "patch_ref_first_bounded_excerpt_v1"
+                    ),
+                    "hash_basis": "canonical_json_utf8_role_content_sequence",
+                    "native_prepared_messages_sha256": _sha256_json([
+                        {"role": item.role, "content": item.content} for item in prepared.messages
+                    ]),
+                    "initial_messages_sha256": _sha256_json(initial_message_payload),
+                    "initial_messages_utf8_bytes": len(
+                        _patch_agent_context_json(initial_message_payload).encode("utf-8")
+                    ),
+                }
+                self._receipt["patch_agent_loop"]["status"] = "running"
+                self._emit("local_patch_agent_loop_started")
                 response_format = AgentResponseFormat(
                     name="patch_generation_v2",
                     description=(

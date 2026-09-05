@@ -247,6 +247,18 @@ class _LoopbackHttpJsonSender:
         return data
 
 
+def _httpx_json_body_identity(url: str, payload: dict[str, object]) -> dict[str, object]:
+    """Use the sender's JSON encoder without changing its dispatched payload."""
+    import httpx
+
+    body = httpx.Request("POST", url, json=payload).content
+    return {
+        "provider_body_sha256": sha256(body).hexdigest(),
+        "provider_body_utf8_bytes": len(body),
+        "hash_basis": "httpx_json_body_bytes",
+    }
+
+
 class OllamaChatAgentAdapter:
     """Ollama native Chat adapter restricted to a literal loopback origin."""
 
@@ -338,6 +350,8 @@ class OllamaChatAgentAdapter:
             payload["format"] = request.response_format.schema
         elif required_single_tool:
             payload["format"] = request.tools[0].parameters
+        request_url = f"{self.base_url}/api/chat"
+        request_identity = _httpx_json_body_identity(request_url, payload)
         context_admission = self._context_admission(payload)
         if (
             self.context_window is not None
@@ -351,14 +365,16 @@ class OllamaChatAgentAdapter:
                         "provider_request_context_budget_exceeded"
                     ),
                     "context_admission": context_admission,
+                    "request_identity": request_identity,
                 },
             )
         request_started = time.perf_counter()
-        data = self._send(
-            f"{self.base_url}/api/chat",
-            payload,
-            {"Content-Type": "application/json"},
-        )
+        try:
+            data = self._send(request_url, payload, {"Content-Type": "application/json"})
+        except AgentTurnProviderError as exc:
+            raise AgentTurnProviderError(
+                str(exc), diagnostic={**exc.diagnostic, "request_identity": request_identity},
+            ) from exc
         client_elapsed_seconds = time.perf_counter() - request_started
         prompt_eval_count = _int_value(data.get("prompt_eval_count"))
         if prompt_eval_count > 0:
@@ -370,20 +386,29 @@ class OllamaChatAgentAdapter:
             )
         message = data.get("message")
         if not isinstance(message, dict):
-            raise AgentTurnProviderError("OLLAMA_CHAT_RESPONSE_INVALID")
+            raise AgentTurnProviderError(
+                "OLLAMA_CHAT_RESPONSE_INVALID", diagnostic={"request_identity": request_identity}
+            )
         raw_tool_calls = message.get("tool_calls") or []
         if not isinstance(raw_tool_calls, list):
-            raise AgentTurnProviderError("OLLAMA_CHAT_TOOL_CALLS_INVALID")
-        if not raw_tool_calls and required_single_tool:
-            raw_tool_calls = [
-                {
-                    "function": {
-                        "name": request.tools[0].name,
-                        "arguments": _parse_arguments(message.get("content")),
+            raise AgentTurnProviderError(
+                "OLLAMA_CHAT_TOOL_CALLS_INVALID", diagnostic={"request_identity": request_identity}
+            )
+        try:
+            if not raw_tool_calls and required_single_tool:
+                raw_tool_calls = [
+                    {
+                        "function": {
+                            "name": request.tools[0].name,
+                            "arguments": _parse_arguments(message.get("content")),
+                        }
                     }
-                }
-            ]
-        tool_calls = tuple(_parse_ollama_tool_call(item) for item in raw_tool_calls)
+                ]
+            tool_calls = tuple(_parse_ollama_tool_call(item) for item in raw_tool_calls)
+        except AgentTurnProviderError as exc:
+            raise AgentTurnProviderError(
+                str(exc), diagnostic={**exc.diagnostic, "request_identity": request_identity},
+            ) from exc
         return AgentTurnResponse(
             provider=self.provider,
             model=str(data.get("model") or self.model),
@@ -408,6 +433,7 @@ class OllamaChatAgentAdapter:
                 client_elapsed_seconds=client_elapsed_seconds,
                 tool_calls=tool_calls,
                 context_admission=context_admission,
+                request_identity=request_identity,
             ),
             raw_response=data,
         )
@@ -862,6 +888,7 @@ def _ollama_provider_diagnostic(
     client_elapsed_seconds: float,
     tool_calls: tuple[AgentToolCall, ...],
     context_admission: dict[str, Any],
+    request_identity: dict[str, object],
 ) -> dict[str, object]:
     """Retain bounded native timing facts without treating them as evidence."""
 
@@ -883,6 +910,7 @@ def _ollama_provider_diagnostic(
         "configured_seed": seed,
         "configured_max_output_tokens": max_output_tokens,
         "context_admission": dict(context_admission),
+        "request_identity": dict(request_identity),
         "client_total_duration_seconds": client_elapsed_seconds,
         "ollama_total_duration_ns": _int_value(data.get("total_duration")),
         "ollama_load_duration_ns": _int_value(data.get("load_duration")),

@@ -298,6 +298,57 @@ def test_qwen_chat_adapter_links_local_tool_result_to_exact_call_id() -> None:
     assert response.content == '{"action":"finish"}'
 
 
+def test_ollama_request_identity_matches_actual_httpx_body(monkeypatch) -> None:
+    import httpx
+
+    captured = []
+
+    def respond(request):
+        captured.append(request.content)
+        return httpx.Response(
+            200,
+            json={"model": "local-code-model", "message": {"content": '{"ok":true}'}},
+        )
+
+    client_type = httpx.Client
+    monkeypatch.setattr(
+        httpx, "Client", lambda **kwargs: client_type(transport=httpx.MockTransport(respond), **kwargs)
+    )
+    adapter = OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434", model="local-code-model", max_output_tokens=128,
+        context_window=4096,
+    )
+    response = adapter.complete_turn(
+        AgentTurnRequest(messages=(AgentMessage(role="user", content={"原文": "保留源码\r\n"}),))
+    )
+    identity = response.provider_diagnostic["request_identity"]
+    assert len(captured) == 1
+    assert identity == {
+        "provider_body_sha256": hashlib.sha256(captured[0]).hexdigest(),
+        "provider_body_utf8_bytes": len(captured[0]),
+        "hash_basis": "httpx_json_body_bytes",
+    }
+
+
+def test_ollama_request_identity_survives_transport_failure() -> None:
+    import httpx
+
+    body = None
+
+    def fail(url, payload, _headers):
+        nonlocal body
+        body = httpx.Request("POST", url, json=payload).content
+        raise AgentTurnProviderError("offline transport failure")
+
+    adapter = OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434", model="local-code-model", max_output_tokens=128,
+        context_window=4096, request_sender=fail,
+    )
+    with pytest.raises(AgentTurnProviderError) as raised:
+        adapter.complete_turn(AgentTurnRequest(messages=(AgentMessage(role="user", content="source"),)))
+    assert raised.value.diagnostic["request_identity"]["provider_body_sha256"] == hashlib.sha256(body).hexdigest()
+
+
 def test_ollama_adapter_uses_native_tools_and_local_usage() -> None:
     captured: list[tuple[str, dict[str, object], dict[str, str]]] = []
 

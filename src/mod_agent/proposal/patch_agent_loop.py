@@ -965,6 +965,10 @@ def _usage_record(turn_index: int, response: AgentTurnResponse) -> dict[str, obj
         "request_id": response.request_id,
         "stop_reason": response.stop_reason,
         "usage": response.usage.to_dict(),
+        **(
+            {"provider_diagnostic": deepcopy(response.provider_diagnostic)}
+            if response.provider_diagnostic is not None else {}
+        ),
     }
 
 
