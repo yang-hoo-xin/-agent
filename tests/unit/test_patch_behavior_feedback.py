@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from src.libs.llm import AgentToolCall
+from src.libs.llm import AgentToolCall, OllamaChatAgentAdapter
 from src.mod_agent.artifacts import ArtifactRef
 from src.mod_agent.fresh_planning_continuation import run_fresh_patch_continuation
 from src.mod_agent.local_entry import (
@@ -193,6 +193,43 @@ def test_behavior_failure_is_corrected_once_and_revalidated_before_proposal(tmp_
     assert oracle.reports[0]["report_ref"]["sha256"] in encoded_refs
     assert oracle.reports[1]["report_ref"]["sha256"] in encoded_refs
     assert factory["model_response"]["output_sha256"] in encoded_refs
+
+
+def test_behavior_correction_keeps_the_observed_source_and_assistant_draft(tmp_path):
+    inputs = _inputs(tmp_path)
+    client = _BehaviorClient()
+    result, factory = _run(inputs, client, _BehaviorOracle(tmp_path / "observations"))
+    assert result.status == "terminal"
+    draft_request, correction_request = client.requests[1:3]
+    assert correction_request.tool_results == draft_request.tool_results
+    assert correction_request.provider_state == draft_request.provider_state
+    assert correction_request.tool_result_insert_index == draft_request.tool_result_insert_index
+    assert correction_request.messages[:len(draft_request.messages)] == draft_request.messages
+    assert correction_request.messages[-2].role == "assistant"
+    assert hashlib.sha256(correction_request.messages[-2].content.encode()).hexdigest() == (
+        factory["model_responses"][0]["output_sha256"]
+    )
+    assert "previous_response" not in correction_request.messages[-1].content
+    assert correction_request.tools == ()
+    payloads = []
+
+    def record_wire(_url, payload, _headers):
+        payloads.append(payload)
+        return {"model": client.model, "message": {"content": "{}"}, "done": True}
+
+    OllamaChatAgentAdapter(
+        base_url="http://127.0.0.1:11434", model=client.model,
+        max_output_tokens=1024, request_sender=record_wire,
+    ).complete_turn(correction_request)
+    messages = payloads[0]["messages"]
+    assert [message["role"] for message in messages] == [
+        "system", "user", "assistant", "tool", "user", "assistant", "user",
+    ]
+    assert json.loads(messages[3]["content"]) == draft_request.tool_results[0].output
+    assert messages[-2]["content"] == correction_request.messages[-2].content
+    original_excerpt = correction_request.tool_results[0].output["excerpt"]
+    draft_request.tool_results[0].output["excerpt"] = "mutated after return"
+    assert correction_request.tool_results[0].output["excerpt"] == original_excerpt
 
 
 def test_behavior_failure_after_one_correction_preserves_both_responses_and_stops(tmp_path):

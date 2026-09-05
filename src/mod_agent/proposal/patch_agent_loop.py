@@ -112,6 +112,8 @@ class PatchAgentLoopResult:
     tool_call_trace: tuple[dict[str, object], ...]
     observation_trace: tuple[dict[str, object], ...]
     termination: dict[str, object]
+    # In-process context for a subsequent correction; deliberately excluded from receipts.
+    final_request: AgentTurnRequest | None = field(default=None, repr=False, compare=False)
 
     @property
     def completed(self) -> bool:
@@ -852,6 +854,7 @@ def run_patch_agent_loop(
             return _loop_result(
                 status="completed",
                 final_content=content,
+                final_request=request,
                 provider=provider,
                 model=model,
                 model_turns_used=turn_index,
@@ -1050,6 +1053,7 @@ def _loop_result(
     tool_call_trace: list[dict[str, object]],
     observation_trace: list[dict[str, object]],
     termination: dict[str, object],
+    final_request: AgentTurnRequest | None = None,
 ) -> PatchAgentLoopResult:
     return PatchAgentLoopResult(
         status=status,
@@ -1063,6 +1067,7 @@ def _loop_result(
         tool_call_trace=tuple(deepcopy(item) for item in tool_call_trace),
         observation_trace=tuple(deepcopy(item) for item in observation_trace),
         termination=deepcopy(termination),
+        final_request=deepcopy(final_request),
     )
 
 
