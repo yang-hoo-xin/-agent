@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-09-01
+Last updated: 2026-09-05
 
 ## 1. Product
 
@@ -39,6 +39,36 @@ Evaluation, schemas, policies, dashboards, MCP, and retrieval mechanisms serve
 this chain. They are not independent product lines.
 
 ### 1.1 Current Development Selection
+
+The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+The current product-code checkpoint is `3694a77`. The September 4 continuation
+has exercised a local Patch source-tool observation, one header-specific
+validator correction, ProposalReview, and a no-write Dry-run.
+It has not exercised this feature's Apply, changed Build, or Runtime.
+
+Full run identities, commands, implementation limits, and the September 4
+buffer reconciliation are recorded once in
+[the progress reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).
+Read the current [queue](IMPLEMENTATION_QUEUE.md) for next work.
+
+The next product action is to check the exact diff against the FeatureSpec's
+First Shot independence obligation and the restart boundary. A clean diff and
+an approving deterministic Review do not settle that semantic question.
+The recorded human semantic decision remains pending. Existing exact-diff
+approval, live-source checks, and separate game-operation authorization remain
+in force. No new approval is created by this documentation update.
+
+Autonomous API discovery, autonomous Planning target selection, general
+multi-round Patch investigation, general correction, full Trace/Langfuse,
+multi-task Eval, and the wider nine-goal/five-line delivery are not complete.
+The timeboxed implementation is not completion of the full chat buffer.
+
+### 1.2 Historical Development Selection (through 2026-09-01)
+
+The following preserved record describes earlier checkpoints, failures, and
+permissions at their recorded time. It is not the current task selector and
+does not override section 1.1 or later explicit user authorization. No historical
+receipt is rewritten or promoted by the current result.
 
 The current product milestone is **Coding Agent v0**. The first integrated
 delivery is **Coding Agent v0 internal alpha**, which composes the existing

@@ -1,11 +1,39 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-09-01
+Last updated: 2026-09-05
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
+
+Product code: `3694a77`, branch `codex/rag-capability-mainline`.
+Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+
+- Last inspected continuation reached no-write Dry-run after one model-selected
+  source inspection and one header-specific model correction.
+- This feature's Apply, changed Build, and Runtime have not run.
+- Human semantic review remains pending. First Shot behavior independence and
+  the exact restart/reload boundary require review before recommending Apply.
+- The full conversation buffer is not complete; use
+  [Implementation Queue](IMPLEMENTATION_QUEUE.md) for current ordering.
+- Primary run references, evidence limits, test results, and corrections to
+  earlier completion claims are in
+  [the progress reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).
+- Engineering cognition currently misses the Fresh API connection and newer
+  continuation receipts; its task packet is stale. The projection is a locator,
+  not completion evidence.
+- `uv.lock`, the CI workflow, context Hook scripts, handoff Skill, and release
+  Skill already exist. Their existence does not prove hosted CI, Desktop Hook
+  lifecycle, environment reconstruction, or release delivery.
+- The six pre-existing WIP documents remain outside this documentation edit.
+  The ten-day drafts remain drafts; this update does not approve their schedule.
+
+### Historical selection snapshot (through 2026-09-01)
+
+The following retained fields and later historical narratives are scoped to
+their original runs. Read the current summary above before interpreting a
+historical `current_*`, `latest_*`, permission, or next-action field.
 
 ```text
 current_product_milestone: CODING-AGENT-V0

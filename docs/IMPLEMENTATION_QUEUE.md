@@ -1,13 +1,53 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-09-01
+Last updated: 2026-09-05
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
 `docs/audits/LOOP_HISTORY.md`, not in this queue.
 
 ## 1. Current Queue
+
+Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+Current implementation is at the pre-approval boundary; the full chat buffer
+is not complete. The exact run, nine commits, and per-requirement coverage are
+recorded in [the reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).
+This queue consolidates previously requested work; it is not a new ten-day
+schedule and does not create approval for product writes or game operations.
+
+| Order | Work / exit condition | Current disposition |
+| --- | --- | --- |
+| P0 | Review the current exact diff against First Shot independence and the explicit restart boundary; establish focused behavioral evidence or record the unresolved obligation | Next product action; previous clean-Dry-run claim is insufficient |
+| P0 | Present the semantically reviewed diff for exact approval; then approved isolated Apply, changed Build, and separately authorized Runtime acceptance | Not executed for this feature |
+| P1 | Complete `PATCH-AGENTIC-EXECUTION-001` beyond its narrow source-tool/header-correction proof: review turn persistence/model identity/budget, correction dispatch, bounded observations and history, then a relevant acceptance | Partial; default is one inspection and only header-specific correction; no new generic runtime |
+| P1 | Repair engineering cognition's Fresh/API and continuation-receipt projections; regenerate a current handoff entry after the selected work | Known stale projection; do not re-run product models merely to fix its view |
+| P1 | `AUTONOMOUS-EVIDENCE-DISCOVERY-001`: model selects API queries/tools and produces usable evidence | Real success not demonstrated |
+| P1 | `AUTONOMOUS-TARGET-SELECTION-001`: model selects modification targets; existing compiler/Binding validates | Current selected Plan still operator-assisted |
+| P1 | `PATCH-EVAL-SUITE-001`: freeze 3-5 real task cases with source/FeatureSpec/verification identities; measure quality, time, calls and corrections | No new frozen Patch suite; do not substitute old retrieval cases |
+| P1 | `MODEL-ROUTING-001`: role to tested profile after comparable qualification results exist | Manual selection exists; formal resolver not delivered; no silent semantic fallback |
+| Delivery support | Complete Trace/Langfuse export, invocation/session association, exit flush and evidence-bound evaluation | Injected exporter exists; real sink/end-to-end delivery unproven |
+| Delivery support | Verify existing lock/CI/setup script in the selected clean environment and hosted CI; verify context Hook trust/lifecycle once | Files exist; do not recreate them; no new scheduler |
+| Later | `RUNTIME-REPAIR-LOOP-001`, full `PROVIDER-CONTEXT-ADMISSION-001`, infrastructure-only fallback | Incomplete; the current token-ratio heuristic is not an exact tokenizer |
+| Release | Use existing release-evidence-packager for manifest, README evidence, demo and resume claims once results exist | Skill exists; deliverables pending |
+| Deferred | Slot filling, cross-stage model-owned-field audit, wider provider schema compatibility, pre-commit/dev-check/profiles, expanded Hooks, branch coverage and security review | Retained, not discarded; activate only per the selected product or release need |
+
+Stable design intent for the remaining work: the model produces semantic
+choices and code; known IDs/hashes/paths/spans, permissions, freshness, and
+state transitions have deterministic owners. Schema shape is not code or
+semantic proof. `rationale` and `rollback_hint` are explanations, not evidence
+or write authority. Keep stage-specific simple schemas and reference-first
+observations; reuse the single graph and existing Artifacts.
+
+The wider nine goals, five lines, and three source notes remain in the existing
+user WIP planning documents. No item is declared complete because the timebox
+ended or because a narrower goal was marked complete.
+
+### Historical queue record (through 2026-09-01)
+
+The following text is retained to avoid losing older decisions while their
+history is reconciled. Its `current_queue`, `next_eligible_slice`, and
+authorization statements are historical, not the current selector above.
 
 ```text
 current_queue: Freeze final-net and RAG B1 test-only integration are complete with local unit/test-double evidence only; B2 and every product execution continuation require separate authorization
